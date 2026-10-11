@@ -223,7 +223,7 @@ RigExecRigEvaluator::GetEpochRestFrameCount() const
 {
     if (!_bakedProgram) return 0;
     const auto &B = _bakedProgram->GetStepGraph();
-    const auto &P = B.providerProgram;
+    const auto &P = B.GetProviderProgram();
     std::map<RigExecValueId, const RigExecProviderOp *> producers;
     for (const auto &op : P.ops) producers.emplace(op.output, &op);
     std::map<RigExecValueId, size_t> raw;

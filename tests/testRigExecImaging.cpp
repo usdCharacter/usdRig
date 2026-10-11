@@ -7112,7 +7112,7 @@ _CheckConnectedPosedSourceGraph(const _UpstreamImaging &imaging)
     CHECK(found->second >= 0 && size_t(found->second) < B.ladders.size());
     if (found->second < 0 || size_t(found->second) >= B.ladders.size()) return;
     CHECK(B.ladders[size_t(found->second)].posedSpaceConnected);
-    CHECK(B.providerProgram.rawInputs.count(kUpSpace) == 1);
+    CHECK(B.GetProviderProgram().rawInputs.count(kUpSpace) == 1);
     SdfPathVector connections;
     CHECK(imaging.stage->GetAttributeAtPath(
         owner.AppendProperty(TfToken("posed:space"))).GetConnections(&connections));

@@ -688,29 +688,46 @@ static void TestUnaffectedProviderContext()
     const auto compare=[](const RigExecProviderProgram &input,RigExecValueId source,
         const std::map<RigExecValueId,RigExecValueId> &frames,
         const std::map<std::string,std::string> &names,bool expected) {
-        auto old=input,now=input;auto keys=input.valueKeys;keys.push_back("additional");
-        RigExecValueId a=99,b=99;size_t ia=99,ib=99;std::string ea,eb;
-        CHECK(BindProviderContextReference(&old,keys,source,SdfPath("/Consumer"),"base",frames,&a,&ia,&ea,names)==expected);
-        CHECK(RigExecBindProviderContext(&now,keys,source,SdfPath("/Consumer"),"base",frames,&b,&ib,&eb,names)==expected);
-        CHECK(a==b&&ia==ib&&ea==eb&&old.valueKeys==now.valueKeys&&old.valueIds==now.valueIds);
-        CHECK(old.ops.size()==now.ops.size()&&old.descriptors.size()==now.descriptors.size());
-        CHECK(old.externalInputs.size()==now.externalInputs.size());
-        for(size_t i=0;i<old.externalInputs.size();++i) {
-            CHECK(old.externalInputs[i].value==now.externalInputs[i].value);
-            CHECK(old.externalInputs[i].owner==now.externalInputs[i].owner);
-            CHECK(old.externalInputs[i].computation==now.externalInputs[i].computation);
-        }
-        for(size_t i=0;i<old.ops.size();++i) {
-            const auto &x=old.ops[i],&y=now.ops[i];
-            CHECK(x.kind==y.kind&&x.owner==y.owner&&x.output==y.output&&x.inputs==y.inputs&&x.scaleAvars==y.scaleAvars);
-            CHECK(x.xforms.size()==y.xforms.size());
-            for(size_t k=0;k<x.xforms.size();++k)
-                CHECK(x.xforms[k].name==y.xforms[k].name&&x.xforms[k].raw==y.xforms[k].raw&&x.xforms[k].type==y.xforms[k].type);
-        }
-        for(size_t i=0;i<old.descriptors.size();++i) {
-            const auto &x=old.descriptors[i],&y=now.descriptors[i];
-            CHECK(x.key==y.key&&x.kind==y.kind&&x.reads==y.reads&&x.writes==y.writes);
-            CHECK(x.predecessors==y.predecessors&&x.volatileInput==y.volatileInput);
+        const auto originalSource=source;
+        for(int mode=0;mode<3;++mode) {
+            source=originalSource;
+            auto old=input,now=input;
+            RigExecProviderContextIndex index;
+            for(int pass=0;pass<(expected?3:1);++pass) {
+                auto keys=old.valueKeys;keys.push_back("additional"+std::to_string(pass));
+                // Exercise checked namespaces and the trusted in-program namespace,
+                // retaining the index while each binding appends operations and leaves.
+                if(mode==2) {
+                    old.valueKeys=keys; old.valueIds.emplace(keys.back(),RigExecValueId(keys.size()-1));
+                    now.valueKeys=keys;
+                    now.valueIds.emplace(keys.back(),RigExecValueId(keys.size()-1));
+                }
+                RigExecValueId a=99,b=99;size_t ia=99,ib=99;std::string ea,eb;
+                CHECK(BindProviderContextReference(&old,keys,source,SdfPath("/Consumer"),"base",frames,&a,&ia,&ea,names)==expected);
+                CHECK(RigExecBindProviderContext(&now,mode==2?now.valueKeys:keys,source,
+                    SdfPath("/Consumer"),"base",frames,&b,&ib,&eb,names,mode?&index:nullptr)==expected);
+                CHECK(a==b&&ia==ib&&ea==eb&&old.valueKeys==now.valueKeys&&old.valueIds==now.valueIds);
+                CHECK(old.ops.size()==now.ops.size()&&old.descriptors.size()==now.descriptors.size());
+                CHECK(old.externalInputs.size()==now.externalInputs.size());
+                for(size_t i=0;i<old.externalInputs.size();++i) {
+                    CHECK(old.externalInputs[i].value==now.externalInputs[i].value);
+                    CHECK(old.externalInputs[i].owner==now.externalInputs[i].owner);
+                    CHECK(old.externalInputs[i].computation==now.externalInputs[i].computation);
+                }
+                for(size_t i=0;i<old.ops.size();++i) {
+                    const auto &x=old.ops[i],&y=now.ops[i];
+                    CHECK(x.kind==y.kind&&x.owner==y.owner&&x.output==y.output&&x.inputs==y.inputs&&x.scaleAvars==y.scaleAvars);
+                    CHECK(x.xforms.size()==y.xforms.size());
+                    for(size_t k=0;k<x.xforms.size();++k)
+                        CHECK(x.xforms[k].name==y.xforms[k].name&&x.xforms[k].raw==y.xforms[k].raw&&x.xforms[k].type==y.xforms[k].type);
+                }
+                for(size_t i=0;i<old.descriptors.size();++i) {
+                    const auto &x=old.descriptors[i],&y=now.descriptors[i];
+                    CHECK(x.key==y.key&&x.kind==y.kind&&x.reads==y.reads&&x.writes==y.writes);
+                    CHECK(x.predecessors==y.predecessors&&x.volatileInput==y.volatileInput);
+                }
+                if(expected)source=a;
+            }
         }
     };
     auto p=make();compare(p,2,{}, {},true);compare(p,2,{{1,1}}, {},true);
@@ -738,6 +755,19 @@ static void TestUnaffectedProviderContext()
     auto unknown=p;unknown.ops[1].inputs={88};compare(unknown,2,{}, {},true);
     compare(p,2,{{1,99}}, {},false);
     auto invalid=p;invalid.descriptors.pop_back();compare(invalid,2,{}, {},false);
+    // All three-producer graphs, including self loops, shared descendants,
+    // disconnected cycles and cycles cut by an explicit frame replacement.
+    // Compare exact identities and descriptors with the whole-program sweep.
+    for(unsigned edges=0;edges<512;++edges) {
+        auto graph=make();
+        for(size_t i=0;i<3;++i) {
+            graph.ops[i].inputs.clear();
+            for(size_t j=0;j<3;++j)
+                if(edges & (1u << (i*3+j)))graph.ops[i].inputs.push_back(RigExecValueId(j+1));
+        }
+        compare(graph,2,{}, {},true);
+        compare(graph,2,{{1,4}}, {},true);
+    }
 }
 
 static void TestIndexedParentDelivery()

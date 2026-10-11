@@ -221,6 +221,8 @@ target_link_libraries(rigExec PUBLIC
 
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecInputValues ts)
+# On Windows the consumers of rigExec need those two archives as well.
+include(cmake/WindowsArchiveLinks.cmake)
 # Scene lowering calls back into the evaluator. The evaluator does not
 # link the scene library; callers that compile a stage do.
 target_link_libraries(rigExecScene PUBLIC rigExec)
@@ -1312,6 +1314,20 @@ foreach(_schedule serial parallel)
         PROPERTY ENVIRONMENT "RIGEXEC_ENABLE_PARALLEL_EVAL=1")
 endforeach()
 
+# A vertex group forwards points its mover does not weight without
+# recomputing its support: a gated chain through the native program, a
+# frame-cache worker and the runtime, and an arm edit on the biped.
+add_executable(testRigExecGroupForwarding tests/testRigExecGroupForwarding.cpp)
+target_link_libraries(testRigExecGroupForwarding PRIVATE
+    rigExec rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecGroupForwarding PRIVATE ${_rigexec_schema_resource_define})
+foreach(_schedule serial parallel)
+    add_test(NAME testRigExecGroupForwarding_${_schedule}
+        COMMAND testRigExecGroupForwarding "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+    set_tests_properties(testRigExecGroupForwarding_${_schedule} PROPERTIES
+        ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule}")
+endforeach()
+
 add_executable(testRigExecCrossDomainInputs tests/testRigExecCrossDomainInputs.cpp)
 target_link_libraries(testRigExecCrossDomainInputs PRIVATE rigExec)
 target_compile_definitions(testRigExecCrossDomainInputs PRIVATE ${_rigexec_schema_resource_define})
@@ -2340,7 +2356,8 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecExecCrossCheckRows testRigExecExternalMovers
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
-    testRigExecGeometryProgram testRigExecGraphBindings testRigExecInputActions
+    testRigExecGeometryProgram testRigExecGraphBindings
+    testRigExecGroupForwarding testRigExecInputActions
     testRigExecInteractive testRigExecLattice testRigExecLeaves
     testRigExecOneLoopAcceptance testRigExecOpTrace
     testRigExecPhaseBindings testRigExecPoseInterpolator

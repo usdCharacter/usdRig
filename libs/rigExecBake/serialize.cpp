@@ -1625,7 +1625,7 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
         common.cycles.push_back(std::move(row));
     }
     RigExecProviderPlainProgram provider;
-    if (!RigExecExportProviderRecords(_program.providerProgram,
+    if (!RigExecExportProviderRecords(_program.GetProviderProgram(),
                                      _program.providerValues, &provider, error)) {
         return false;
     }

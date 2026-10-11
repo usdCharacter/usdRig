@@ -1995,9 +1995,18 @@ struct RigExecBakedProgramImpl {
     std::map<SdfPath,std::set<SdfPath>> poseDependencyPaths;
     std::shared_ptr<const RigExecSceneDescriptors> sceneDescriptors; ///< detached compile facts
     RigExecProviderProgram providerProgram;
+    /// Build publishes the provider graph once; frozen snapshots and worker
+    /// lanes share these immutable descriptors, never their typed values.
+    std::shared_ptr<const RigExecProviderProgram> compiledProviderProgram;
+    const RigExecProviderProgram &GetProviderProgram() const {
+        return compiledProviderProgram ? *compiledProviderProgram : providerProgram;
+    }
     RigExecTypedValueStore providerValues{0};
     RigExecBakedPathLeaves providerLeaves;
     std::vector<uint8_t> providerLeafBlocked;
+    /// Persistent invalidation counts; sampling may consume mustSample before
+    /// the frozen sampler refreshes its independently held raw inputs.
+    std::vector<uint64_t> providerLeafEditSerial;
     /// Built by RigExecBakedCompileOpGraph; null when the provider leaves
     /// are not one dense run of values, and every run re-keys them all.
     std::shared_ptr<const RigExecBakedSpaceLeafIndex> spaceLeafIndex;
@@ -4180,6 +4189,9 @@ RigExecBakedMarkLeaf(RigExecBakedProgramImpl *program, uint32_t id)
         RigExecBakedPathLeaves *leaves = RigExecBakedPathLeavesOf(program, ref);
         if (leaves && ref.key < leaves->mustSample.size()) {
             leaves->mustSample[ref.key] = 1;
+            if (ref.owner == RigExecBakedPathLeafOwner::Provider &&
+                ref.key < program->providerLeafEditSerial.size())
+                ++program->providerLeafEditSerial[ref.key];
         }
         return;
     }
@@ -4252,7 +4264,9 @@ void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *
 void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program);
 bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t index,
     std::vector<uint32_t> *base,std::vector<uint32_t> *fin,
-    const std::function<uint32_t(bool,int)> &allocate);
+    const std::function<uint32_t(bool,int)> &allocate,
+    RigExecProviderContextIndex *contextIndex,
+    const std::vector<std::vector<size_t>> &externalInputsBySlot);
 void RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,RigExecBakedStep *step);
 
 void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);

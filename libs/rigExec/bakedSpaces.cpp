@@ -438,6 +438,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // Preserve the first producer, including duplicates, and extend through
     // every context/delivery suffix before the next indexed delivery lookup.
     std::map<RigExecValueId,size_t> firstProducers;
+    RigExecProviderContextIndex contextIndex;
     size_t indexedOps=0;
     const auto indexAppendedProducers=[&] {
         for(;indexedOps<B.providerProgram.ops.size();++indexedOps)
@@ -457,7 +458,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
                 size_t beginOp=0;
                 if(!RigExecBindProviderContext(&B.providerProgram,B.providerProgram.valueKeys,
                     value,consumer,"base",{},&value,&beginOp,error,
-                    {{"computePointFrame","computeBasePointFrame"}}))return false;
+                    {{"computePointFrame","computeBasePointFrame"}},&contextIndex))return false;
             }
             if(channel==3 && attribute!=scene.attributes.end() &&
                attribute->second.fact.connections.empty()) {
@@ -542,7 +543,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
 }
 const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &B,size_t k)
 {
-    const auto &path=B.providerProgram.sampled[k].attribute;
+    const auto &path=B.GetProviderProgram().sampled[k].attribute;
     if(!B.routedOverrides.empty()) {
         const auto drag=B.routedOverrides.find(path);
         if(drag!=B.routedOverrides.end()) return &drag->second;
@@ -684,19 +685,24 @@ void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program)
 }
 bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t index,
     std::vector<uint32_t> *base,std::vector<uint32_t> *fin,
-    const std::function<uint32_t(bool,int)> &allocate)
+    const std::function<uint32_t(bool,int)> &allocate,
+    RigExecProviderContextIndex *contextIndex,
+    const std::vector<std::vector<size_t>> &externalInputsBySlot)
 {
     auto &B=*program;auto &refresh=B.providerRefreshes[index];auto &p=B.providerProgram;
+    std::vector<size_t> externalRows;
+    for(int slot:B.poseProviderInputs[size_t(refresh.slot)]) {
+        const auto &rows=externalInputsBySlot[size_t(slot)];
+        externalRows.insert(externalRows.end(),rows.begin(),rows.end());
+    }
+    // Keep the original external-input order, including duplicate owners.
+    std::sort(externalRows.begin(),externalRows.end());
+    externalRows.erase(std::unique(externalRows.begin(),externalRows.end()),externalRows.end());
     const auto context=[&](bool basePhase,RigExecValueId *result) {
         std::map<RigExecValueId,RigExecValueId> replacements;
-        const auto externalCount=p.externalInputs.size();
-        for(size_t k=0;k<externalCount;++k) {
-            const auto input=p.externalInputs[k];
-            if(input.computation!="computePointFrame")continue;
+        for(size_t k:externalRows) {
+            const auto &input=p.externalInputs[k];
             const auto found=B.index.find(input.owner);
-            if(found==B.index.end() ||
-               std::find(B.poseProviderInputs[size_t(refresh.slot)].begin(),B.poseProviderInputs[size_t(refresh.slot)].end(),found->second)==
-                   B.poseProviderInputs[size_t(refresh.slot)].end())continue;
             const auto value=RigExecValueId(p.valueKeys.size());
             const std::string key=refresh.key+(basePhase?":base:":":current:")+input.owner.GetString();
             p.valueKeys.push_back(key);p.valueIds.emplace(key,value);
@@ -706,7 +712,7 @@ bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t i
         }
         size_t begin=0;
         return RigExecBindProviderContext(&p,p.valueKeys,B.providerRefreshTemplates[size_t(refresh.slot)],
-            B.paths[size_t(refresh.slot)],refresh.key+(basePhase?":base":":current"),replacements,result,&begin,&B.providerRefreshError);
+            B.paths[size_t(refresh.slot)],refresh.key+(basePhase?":base":":current"),replacements,result,&begin,&B.providerRefreshError,{},contextIndex);
     };
     if(!context(true,&refresh.baseValue) || !context(false,&refresh.currentValue))return false;
     refresh.baseRead=(*base)[size_t(refresh.slot)];refresh.finRead=(*fin)[size_t(refresh.slot)];
@@ -1006,7 +1012,7 @@ void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program,RigExecBakedStep *s
     }
     if(step->part==2) {
         const size_t k=size_t(step->object);
-        const auto &input=B.providerProgram.sampled[k];
+        const auto &input=B.GetProviderProgram().sampled[k];
         const auto *overlay=RigExecBakedSpaceLeafOverlay(B,k);
         const VtValue &value=overlay?*overlay:B.providerLeaves.values[k];
         const bool authoritative=overlay!=nullptr;
@@ -1018,13 +1024,13 @@ void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program,RigExecBakedStep *s
         const size_t k=size_t(step->object);
         VtValue value; std::string diagnostic;
         const bool available=RigExecBakedReadCrossDomain(B,B.providerRoutedReads[k],&value,&diagnostic);
-        B.providerValues.PublishSource(B.providerProgram.routedInputs[k].value,value,!available,true);
+        B.providerValues.PublishSource(B.GetProviderProgram().routedInputs[k].value,value,!available,true);
         if(!diagnostic.empty()) step->diagnostics.push_back(diagnostic);
         return;
     }
     if(step->part==1) {
         const size_t k=size_t(step->object);
-        const auto &input=B.providerProgram.externalInputs[k];
+        const auto &input=B.GetProviderProgram().externalInputs[k];
         const int slot=B.providerExternalSlots[k];
         if(input.computation=="computeRestFrame")
             B.providerValues.Publish(input.value,slot>=0?B.restFrames[size_t(slot)]:RigExecFrameFromMatrix(GfMatrix4d(1.0)));
@@ -1036,8 +1042,8 @@ void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program,RigExecBakedStep *s
         return;
     }
     std::string error;
-    if(!RigExecRunProviderOp(B.providerProgram,uint32_t(step->object),&B.providerValues,&error)) {
-        const auto output=B.providerProgram.ops[size_t(step->object)].output;
+    if(!RigExecRunProviderOp(B.GetProviderProgram(),uint32_t(step->object),&B.providerValues,&error)) {
+        const auto output=B.GetProviderProgram().ops[size_t(step->object)].output;
         B.providerValues.Publish(output,std::monostate(),true,false,0,error);
         B.providerValues.values[size_t(output)].raw=VtValue();
         if(!error.empty()) step->diagnostics.push_back(error);

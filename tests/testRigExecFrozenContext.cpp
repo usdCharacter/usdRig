@@ -3436,6 +3436,11 @@ TestStaticLeavesFollowEdits()
     // a moved digest.
     const UsdAttribute restTzAttr = stage->GetAttributeAtPath(restTzPath);
     CHECK(restTzAttr.Set(restAt(0.75)));
+    // The live run consumes mustSample before warming refreshes its table.
+    // Persistent invalidation must still retire the old provider sample.
+    RigExecBakedSampleSpaces(const_cast<RigExecBakedProgramImpl *>(&B),
+                            UsdTimeCode(2.0), true);
+    CHECK(!B.providerLeaves.mustSample[restTz]);
     const RigExecFrameInputs edited = sample(UsdTimeCode(2.0), {}, {});
     CHECK(edited.staticSamples != nullptr &&
           edited.staticSamples != at2.staticSamples);
@@ -4043,6 +4048,51 @@ TestPatchFrozenAvarConstants()
         RunWarmingJob(&evaluator, rig, patched, at3, &scheduler, nullptr);
     CheckPosesBitIdentical("warmed frame 3 under patched constants", live3,
                            warmed3);
+
+    // A queued patch owns its values even if another edit lands before the
+    // worker materializes it. The worker receives no live program or stage.
+    std::shared_ptr<const RigExecFrozenAvarPatch> captured;
+    CHECK(RigExecCaptureFrozenAvarPatch(*frozen, *liveProgram, &captured, &error));
+    stage->GetAttributeAtPath(SdfPath("/Asset/Rig/AlongX.avars:tx"))
+        .Set(TinyTx(2.0) + 9.0);
+    std::shared_ptr<const RigExecFrozenProgram> detached;
+    bool applied = false;
+    std::thread worker([&] {
+        applied = RigExecApplyFrozenAvarPatch(*frozen, *captured, &detached, &error);
+    });
+    worker.join();
+    CHECK(applied && detached);
+    if (detached) {
+        const auto queued = RunWarmingJob(&evaluator, rig, detached, at3,
+                                          &scheduler, nullptr);
+        CheckPosesBitIdentical("detached patch preserves queued values", live3, queued);
+    }
+    CHECK(!RigExecApplyFrozenAvarPatch(*patched, *captured, &detached, &error));
+    std::shared_ptr<const RigExecFrozenAvarPatch> newer;
+    CHECK(RigExecCaptureFrozenAvarPatch(*frozen, *liveProgram, &newer, &error));
+    const auto newerLive = evaluator.Evaluate(UsdTimeCode(3.0));
+    const auto original = RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
+    auto workspace = RigExecCreateFrozenWorkspace(frozen);
+    RigExecFrozenEvalContext context;
+    context.frozen = frozen.get();
+    context.workspace = workspace.get();
+    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.slotCount = liveProgram->GetProviderCount();
+    context.varyingInputCount = at3.values.size();
+    if (evaluator.GetSolverGuidesEnabled()) context.flags |= kRigExecFrozenSolverGuidesEnabled;
+    if (evaluator.GetPublishWeightFields()) context.flags |= kRigExecFrozenPublishWeightFields;
+    const auto runPatch = [&](const RigExecFrozenAvarPatch *value,
+                              const RigExecRigPose &expected) {
+        context.avarPatch = value;
+        const auto result = RigExecEvaluateFrozen(context, at3,
+            RigExecMakeProductionStepRunner(), nullptr, rig);
+        CheckPosesBitIdentical("retained lane places detached edits", expected, result);
+    };
+    runPatch(captured.get(), live3);
+    runPatch(captured.get(), live3);
+    runPatch(newer.get(), newerLive);
+    runPatch(captured.get(), live3);
+    runPatch(nullptr, original);
 }
 
 // The runner still declines where it cannot prove bit-identity: no frozen
@@ -8136,10 +8186,14 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
         return;
     }
     CHECK(frozen->program.cones.cone.get() == table);
+    const auto *providers = live.compiledProviderProgram.get();
+    CHECK(providers != nullptr);
+    CHECK(frozen->program.compiledProviderProgram.get() == providers);
     auto lane = std::make_unique<RigExecBakedProgramImpl>();
     frozenDetail::_CloneImpl(frozen->program, lane.get(),
                              frozenDetail::_CloneVerdict::Inherit);
     CHECK(lane->cones.cone.get() == table);
+    CHECK(lane->compiledProviderProgram.get() == providers);
 
     const size_t builds = evaluator.GetBakedProgramBuildCount();
     CHECK(evaluator.Compile(&errors));
@@ -8150,10 +8204,12 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
         const RigExecBakedProgramImpl &after = rebuilt->GetStepGraph();
         CHECK(after.cones.cone != nullptr);
         CHECK(after.cones.cone.get() != table);
+        CHECK(after.compiledProviderProgram.get() != providers);
         CHECK(after.cones.Cone().size() == after.clustering.clusters.size());
     }
     CHECK(frozen->program.cones.cone.get() == table);
     CHECK(frozen->program.cones.Cone().size() == clusters);
+    CHECK(&frozen->program.GetProviderProgram() == providers);
     CHECK(lane->cones.cone.get() == table);
 }
 
@@ -8308,6 +8364,8 @@ TestAWorkspaceInheritsTheVerdict()
         return;
     }
     CHECK(patched->program.verifyCloneKeys);
+    CHECK(patched->program.compiledProviderProgram ==
+          base->program.compiledProviderProgram);
     CHECK(patched->program.avarConstantSerial ==
           base->program.avarConstantSerial + 1);
     CHECK(!patched->program.opAdapter.everRan);

@@ -1236,7 +1236,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
     for (size_t i = 0; i < std::min(providerValues.values.size(), program.providerValues.values.size()); ++i) {
         const auto &a = providerValues.values[i]; const auto &b = program.providerValues.values[i];
         const std::string where = "provider value " + std::to_string(i) +
-            (i < program.providerProgram.valueKeys.size() ? " (" + program.providerProgram.valueKeys[i] + ")" : "");
+            (i < program.GetProviderProgram().valueKeys.size() ? " (" + program.GetProviderProgram().valueKeys[i] + ")" : "");
         bool same = a.value.index() == b.value.index();
         if (same) std::visit([&](const auto &value) {
             using T = std::decay_t<decltype(value)>;

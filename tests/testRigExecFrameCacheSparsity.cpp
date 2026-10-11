@@ -126,9 +126,7 @@ SetIs(const RigExecBakedClusterSet &set, std::initializer_list<int> members)
         return false;
     }
     for (int c : members) {
-        const size_t word = size_t(c) >> 6;
-        if (c < 0 || word >= set.words.size() ||
-            ((set.words[word] >> (size_t(c) & 63)) & 1) == 0) {
+        if (!set.Test(c)) {
             return false;
         }
     }
@@ -147,6 +145,43 @@ MakeRetained(uint64_t epoch, size_t clusters, UsdTimeCode time,
 }
 
 }  // namespace
+
+void TestSparseCones()
+{
+    RigExecBakedProgramImpl program{};
+    constexpr size_t count=10000;
+    program.clustering.clusters.resize(count);
+    for(size_t c=0;c<count;++c) {
+        if(c%4==3)continue;
+        program.clustering.clusters[c].succs.push_back(int(c+1));
+        program.clustering.clusters[c+1].preds.push_back(int(c));
+    }
+    RigExecBakedBuildCones(&program);
+    const auto &cones=program.cones.Cone();
+    CHECK(cones.size()==count);
+    CHECK(cones[0].words.empty());
+    CHECK(cones[0].WordCount()==(count+63)/64);
+    CHECK(SetIs(cones[0],{0,1,2,3}));
+    CHECK(SetIs(cones[9998],{9998,9999}));
+    RigExecOutputAffectedIndex index;
+    index.Build(program,1);
+    CHECK(SetIs(index.AffectedClusters(std::vector<int>{0,9998}),{0,1,2,3,9998,9999}));
+    CHECK(SetIs(index.AffectedClusters(cones[9998]),{9998,9999}));
+    RigExecBakedClusterSet sparse=cones[0],dense;
+    dense.Resize(count+64);dense.Set(10001);
+    CHECK(sparse.Union(dense));
+    CHECK(SetIs(sparse,{0,1,2,3,10001}));
+    CHECK(!sparse.Union(sparse));
+    CHECK(dense.Union(sparse));
+    CHECK(SetIs(dense,{0,1,2,3,10001}));
+    CHECK(SetIs(RigExecIntersectClusterSets(sparse,cones[0]),{0,1,2,3}));
+    sparse.Clear();CHECK(!sparse.Any());CHECK(sparse.Count()==0);
+    // Dense fallback preserves every bit, including the last partial word.
+    dense.SetAll(count+65);
+    CHECK(sparse.Union(dense));
+    CHECK(sparse.words==dense.words);
+    CHECK(sparse.Count()==count+65);
+}
 
 // The D2 decision answers from the Stream 0 numbers: GO at ~80 full biped
 // frames under the default cap, no-go when the cap cannot hold a useful
@@ -1370,6 +1405,7 @@ main()
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
 
     TestGoNoGo();
+    TestSparseCones();
     TestOutputAffectedIndex();
     TestLadderLeafUsesUnifiedCone();
     TestTaskListCache();

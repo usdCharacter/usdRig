@@ -4889,7 +4889,7 @@ TestAuthoredPosedSpaceBakesAndAnimatedOneFollows()
         if(node.kind!="SpaceExpression")return false;
         const auto &body=binding.steps[binding.opGraph.ops[node.step].originalIndex];
         if(body.part!=0)return false;
-        const auto &op=binding.providerProgram.ops[size_t(body.object)];
+        const auto &op=binding.GetProviderProgram().ops[size_t(body.object)];
         return op.kind==RigExecProviderOpKind::Attribute &&
             op.owner==child.GetPath().AppendProperty(TfToken("posed:space")) &&
             op.output==RigExecValueId(posedValue) &&

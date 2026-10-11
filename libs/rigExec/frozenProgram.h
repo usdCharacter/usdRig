@@ -18,6 +18,18 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
+/// Detached edit payload relative to one immutable frozen snapshot.
+struct RigExecFrozenAvarPatch {
+    const RigExecFrozenProgram *basis = nullptr; ///< identity only; caller pins the base
+    struct Avar { double constant, value; bool varying; };
+    std::vector<Avar> avars;
+    std::vector<double> constants;
+    std::vector<size_t> promoted;
+    std::vector<uint64_t> editSerial;
+    size_t varyingInputs = 0;
+    uint64_t valueEditSerial = 0, programStamp = 0;
+};
+
 /// An epoch-pinned, worker-safe snapshot of a baked program.
 ///
 /// Built on the UI thread by RigExecFreezeProgram, which deep-copies the

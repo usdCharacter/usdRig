@@ -410,10 +410,12 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.propertyRecords = src.propertyRecords;
     D.propertyRecordById = src.propertyRecordById;
     D.poseDependencyPaths = src.poseDependencyPaths;
-    D.providerProgram = src.providerProgram;
+    D.compiledProviderProgram = src.compiledProviderProgram;
+    if (!D.compiledProviderProgram) D.providerProgram = src.providerProgram;
     D.providerValues = src.providerValues;
     D.providerLeaves = src.providerLeaves;
     D.providerLeafBlocked = src.providerLeafBlocked;
+    D.providerLeafEditSerial = src.providerLeafEditSerial;
     // The leaf keys in opAdapter answer for these samples only together
     // with the reasons publication has not yet consumed.
     D.spaceLeafIndex = src.spaceLeafIndex;

@@ -3049,7 +3049,7 @@ StaleProviderLeaves(const RigExecBakedProgramImpl &B, const std::string &what)
             if (stale < 4) {
                 std::printf("FAIL %s: provider leaf %s kept a stale key\n",
                             what.c_str(),
-                            B.providerProgram.sampled[k].attribute.GetText());
+                            B.GetProviderProgram().sampled[k].attribute.GetText());
             }
             ++stale;
         }

@@ -623,13 +623,13 @@ TestAPropertyChainOnARestRefusesTheEpochPath(const std::string &examplesDir)
     const SdfPath target = RestSpace(stage).GetPath();
     // The shared expression, when a reader keeps it from pruning, is not the
     // value the ladder reads.
-    const auto shared = B.providerProgram.attributeValues.find(target);
+    const auto shared = B.GetProviderProgram().attributeValues.find(target);
     const int ownValue = B.ladders[slot->second].spaceValues[0];
     CHECK(ownValue >= 0);
-    CHECK(shared == B.providerProgram.attributeValues.end() ||
+    CHECK(shared == B.GetProviderProgram().attributeValues.end() ||
           uint32_t(ownValue) != shared->second);
     bool ownFinal = false;
-    for (const auto &route : B.providerProgram.routedInputs)
+    for (const auto &route : B.GetProviderProgram().routedInputs)
         if (route.value == uint32_t(ownValue))
             ownFinal = route.consumer == target && route.source == target &&
                        route.readPhase == TfToken("final");
@@ -1113,7 +1113,7 @@ TestPruningKeepsProviderDiagnostics(const std::string &examplesDir)
         if (!program) return out;
         const RigExecBakedProgramImpl &B = program->GetStepGraph();
         out.cycles = B.opGraph.cycles;
-        out.routed = B.providerProgram.routedInputs.size();
+        out.routed = B.GetProviderProgram().routedInputs.size();
         out.pruned = B.providerStepsPruned;
         out.roots = B.providerPruneRoots;
         out.violations = B.providerPruneViolations;

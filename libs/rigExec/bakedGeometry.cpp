@@ -3365,6 +3365,9 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         return;
     }
     RigExecGroupState<GfVec3f> &state = revision->groups[g];
+    // This run's walk counts: zero unless the sparse walk below runs.
+    state.walk.computed = 0;
+    state.walk.reused = 0;
     if (revision->rangeSetAside) {
         // A cycle set the revision aside: it passes the base through, as an
         // excluded fuse does, and computes nothing.
@@ -3414,10 +3417,13 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     }
     const int k = RigExecGroupScratch(&state, end - begin);
     bool untouched = false;
+    // A sparse walk reuses what it last computed for this group's entries
+    // whose inputs held their bits (`state.walk`).
     const bool ok = RigExecRunRevisionGroup(
         revision->op, revision->parameters, revision->rangeInputs,
         skin ? &view : nullptr, entering.data, state.own[size_t(k)]->data(),
-        count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched);
+        count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched,
+        &state.walk);
     state.ok = ok;
     if (!ok || untouched) {
         RigExecPublishPassedGroup(&state, entering, from);

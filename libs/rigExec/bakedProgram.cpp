@@ -3968,12 +3968,12 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         case K::SpaceExpression: {
             RigExecValueId value=RigExecNoProviderValue;
             const size_t object=size_t(step.object);
-            if(step.part==0) value=B.providerProgram.ops[object].output;
-            else if(step.part==1) value=B.providerProgram.externalInputs[object].value;
-            else if(step.part==2) value=B.providerProgram.sampled[object].value;
-            else if(step.part==3) value=B.providerProgram.routedInputs[object].value;
+            if(step.part==0) value=B.GetProviderProgram().ops[object].output;
+            else if(step.part==1) value=B.GetProviderProgram().externalInputs[object].value;
+            else if(step.part==2) value=B.GetProviderProgram().sampled[object].value;
+            else if(step.part==3) value=B.GetProviderProgram().routedInputs[object].value;
             else if(step.part==4) value=B.providerFrameInputs[object].value;
-            expression=B.providerProgram.valueKeys[size_t(value)]; break;
+            expression=B.GetProviderProgram().valueKeys[size_t(value)]; break;
         }
         case K::SnapshotFinals: expression="retired"; break;
         }
@@ -4035,6 +4035,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     if (_ProgramDigestRequested()) {
         _PrintProgramDigest(B);
     }
+    B.compiledProviderProgram = std::make_shared<const RigExecProviderProgram>(
+        std::move(B.providerProgram));
     return std::unique_ptr<RigExecBakedProgram>(
         new RigExecBakedProgram(std::move(impl)));
 }

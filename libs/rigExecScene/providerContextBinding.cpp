@@ -9,21 +9,35 @@ bool RigExecBindProviderContext(RigExecProviderProgram *program,
     const std::map<RigExecValueId,RigExecValueId> &selectedFrames,
     RigExecValueId *result,size_t *beginOp,std::string *error,
     const std::map<std::string,std::string> &externalNames) {
+    return RigExecBindProviderContext(program,fullValueKeys,sourceResult,consumer,
+        phase,selectedFrames,result,beginOp,error,externalNames,nullptr);
+}
+bool RigExecBindProviderContext(RigExecProviderProgram *program,
+    const std::vector<std::string> &fullValueKeys,RigExecValueId sourceResult,
+    const SdfPath &consumer,const std::string &phase,
+    const std::map<RigExecValueId,RigExecValueId> &selectedFrames,
+    RigExecValueId *result,size_t *beginOp,std::string *error,
+    const std::map<std::string,std::string> &externalNames,
+    RigExecProviderContextIndex *index) {
     if(!program || !result || !beginOp || consumer.IsEmpty() || phase.empty() ||
        program->valueKeys.size()>fullValueKeys.size() || sourceResult>=program->valueKeys.size() ||
        program->ops.size()!=program->descriptors.size())
         return Fail(error,"invalid provider consumer context");
-    for(size_t i=0;i<program->valueKeys.size();++i)if(program->valueKeys[i]!=fullValueKeys[i])
-        return Fail(error,"provider context changed an existing typed value identity");
+    const bool indexedKeys=index && &fullValueKeys==&program->valueKeys;
     std::map<std::string,RigExecValueId> ids;
-    for(size_t i=0;i<fullValueKeys.size();++i)if(!ids.emplace(fullValueKeys[i],RigExecValueId(i)).second)
-        return Fail(error,"duplicate typed value key in provider consumer context: "+fullValueKeys[i]);
+    if(!indexedKeys) {
+        for(size_t i=0;i<program->valueKeys.size();++i)if(program->valueKeys[i]!=fullValueKeys[i])
+            return Fail(error,"provider context changed an existing typed value identity");
+        for(size_t i=0;i<fullValueKeys.size();++i)if(!ids.emplace(fullValueKeys[i],RigExecValueId(i)).second)
+            return Fail(error,"duplicate typed value key in provider consumer context: "+fullValueKeys[i]);
+    }
     for(const auto &[before,after]:selectedFrames)if(before>=program->valueKeys.size() || after>=fullValueKeys.size())
         return Fail(error,"provider consumer context references an unknown frame version");
-    std::map<RigExecValueId,size_t> producers;
-    for(size_t i=0;i<program->ops.size();++i)producers.emplace(program->ops[i].output,i);
-    std::map<RigExecValueId,std::string> externals;
-    for(const auto &input:program->externalInputs)externals.emplace(input.value,input.computation);
+    RigExecProviderContextIndex local;
+    if(!index)index=&local;
+    index->Extend(*program);
+    const auto &producers=index->producers;
+    const auto &externals=index->externals;
     // A back edge is conservatively affected. It is cloned, never normalized
     // away or rejected before cross-domain SCC compilation.
     std::map<RigExecValueId,unsigned char> state;
@@ -31,7 +45,7 @@ bool RigExecBindProviderContext(RigExecProviderProgram *program,
         const auto replacement=selectedFrames.find(value);
         if(replacement!=selectedFrames.end())return replacement->second!=value;
         const auto external=externals.find(value);
-        if(external!=externals.end())return externalNames.count(external->second)!=0;
+        if(external!=externals.end())return externalNames.count(program->externalInputs[external->second].computation)!=0;
         auto &mark=state[value];if(mark)return mark!=2;
         const auto producer=producers.find(value);if(producer==producers.end()){mark=2;return false;}
         mark=1;bool changed=false;
@@ -56,16 +70,18 @@ bool RigExecBindProviderContext(RigExecProviderProgram *program,
             for(const auto &input:op.xforms)share(input.raw);
         }
     } else {
-        // Preserve the original sweep's visitation order, including back edges.
-        state.clear();
-        for(const auto &[value,index]:producers)
-            if(value!=sourceResult && !replacements.count(value) && !affected(value))replacements.emplace(value,value);
+        // The root walk already classified its reachable closure. Cloning
+        // cannot reach other producers; fence only the unaffected producers
+        // it visited. Back edges remain affected and are cloned as before.
+        for(const auto &[value,mark]:state)
+            if(mark==2 && value!=sourceResult && producers.count(value) &&
+               !replacements.count(value))replacements.emplace(value,value);
     }
     const std::string prefix="context:"+consumer.GetString()+":"+phase+":"+
         program->valueKeys[size_t(sourceResult)]+":";
-    program->valueKeys=fullValueKeys;program->valueIds=std::move(ids);
+    if(!indexedKeys) {program->valueKeys=fullValueKeys;program->valueIds=std::move(ids);}
     *beginOp=program->ops.size();
-    if(!RigExecCloneProviderContext(program,sourceResult,prefix,externalNames,replacements,result,error))return false;
+    if(!RigExecCloneProviderContext(program,sourceResult,prefix,externalNames,replacements,result,error,index))return false;
     for(size_t i=*beginOp;i<program->descriptors.size();++i) {
         auto &descriptor=program->descriptors[i];
         for(const auto &xform:program->ops[i].xforms)

@@ -27,12 +27,11 @@ RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
 {
     RigExecBakedClusterSet out;
     const size_t words =
-        std::max(dirty.words.size(), affecting.words.size());
+        std::max(dirty.WordCount(), affecting.WordCount());
     out.words.assign(words, 0);
     for (size_t w = 0; w < words; ++w) {
-        const uint64_t a = w < dirty.words.size() ? dirty.words[w] : 0;
-        const uint64_t b =
-            w < affecting.words.size() ? affecting.words[w] : 0;
+        const uint64_t a = dirty.Word(w);
+        const uint64_t b = affecting.Word(w);
         out.words[w] = a & b;
     }
     return out;
@@ -320,11 +319,9 @@ RigExecOutputAffectedIndex::AffectedClusters(
     RigExecBakedClusterSet out;
     out.Resize(_clusterCount);
     for (size_t c = 0; c < _clusterCount; ++c) {
-        // Test would read past a shorter set's words; missing words are
-        // zero, so only in-range words are consulted.
+        // Missing words in a shorter seed set read as zero.
         const size_t word = c >> 6;
-        const bool set = word < seeds.words.size() &&
-                         ((seeds.words[word] >> (c & 63)) & 1) != 0;
+        const bool set = ((seeds.Word(word) >> (c & 63)) & 1) != 0;
         if (set) {
             out.Union((*_cones)[c]);
         }

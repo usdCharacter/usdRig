@@ -349,6 +349,8 @@ struct _FrozenWorker {
     /// The snapshot `B` was cloned from: its freeze-built keys.
     const RigExecFrozenProgram *snapshot = nullptr;
     RigExecBakedProgramImpl B;
+    std::vector<double> avarPatchValues;
+    bool hadAvarPatch = false;
     RigExecResolvedInputs resolved;
     RigExecProfiler profiler;
     bool guidesEnabled = false;

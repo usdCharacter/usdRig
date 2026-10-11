@@ -52,6 +52,7 @@ struct RigExecFrozenSamplerMemo {
     std::shared_ptr<const RigExecFrozenStaticSamples> samples;
     /// Per provider leaf, its `samples` entry, kPerFrame or kNoSample.
     std::vector<int32_t> providerEntries;
+    std::vector<uint64_t> providerEditSerial;
     /// Per weight object and oracle key, its entry or kPerFrame, and the
     /// paths its read can reach (served only while no override or upstream
     /// value stands on one).
@@ -1033,6 +1034,14 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         memo.serial == serial && memo.atDefault == time.IsDefault()) {
         return memo;
     }
+    const bool keepProviders = memo.built && shaped &&
+        memo.stamp == B.programStamp && memo.atDefault == time.IsDefault() &&
+        memo.providerEditSerial.size() == B.providerFrozenKeys.size() &&
+        B.providerLeafEditSerial.size() == B.providerFrozenKeys.size();
+    const auto oldSamples = memo.samples;
+    const auto oldProviderEntries = std::move(memo.providerEntries);
+    const auto oldProviderSerial = std::move(memo.providerEditSerial);
+    memo.providerEditSerial = B.providerLeafEditSerial;
     memo.built = true;
     memo.stamp = B.programStamp;
     memo.serial = serial;
@@ -1055,6 +1064,21 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     const RigExecBakedPathLeaves &providers = B.providerLeaves;
     memo.providerEntries.assign(B.providerFrozenKeys.size(), Memo::kPerFrame);
     for (size_t k = 0; k < B.providerFrozenKeys.size(); ++k) {
+        if (keepProviders && oldSamples &&
+            oldProviderSerial[k] == B.providerLeafEditSerial[k]) {
+            const int32_t entry = oldProviderEntries[k];
+            if (entry < 0) {
+                memo.providerEntries[k] = entry;
+            } else {
+                memo.providerEntries[k] = int32_t(table->samples.size());
+                auto sample = oldSamples->samples[size_t(entry)];
+                sample.staticSample = memo.providerEntries[k];
+                table->samples.push_back(std::move(sample));
+                table->level1.push_back(oldSamples->level1[size_t(entry)]);
+                table->digestible.push_back(oldSamples->digestible[size_t(entry)]);
+            }
+            continue;
+        }
         const UsdAttribute &attribute = providers.attributes[k];
         if (!attribute.IsValid() || B.providerFrozenKeys[k].IsEmpty()) {
             memo.providerEntries[k] = Memo::kNoSample;

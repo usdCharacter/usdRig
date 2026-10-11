@@ -698,6 +698,7 @@ private:
         /// Impossible until the first refresh verifies one.
         uint64_t frozenSerial = ~uint64_t(0);
         std::shared_ptr<const RigExecFrozenProgram> frozen;
+        std::shared_ptr<const RigExecFrozenAvarPatch> frozenPatch;
         std::shared_ptr<RigExecWarmWorkspacePool> warmWorkspaces;
         /// The named cause of the standing snapshot's freeze refusal, empty
         /// when the last refresh froze (or had no program to freeze): a

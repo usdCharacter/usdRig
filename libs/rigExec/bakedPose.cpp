@@ -1219,10 +1219,24 @@ BindPoseVersions(RigExecBakedProgramImpl *program)
     const auto readBase = [&liveBase, n](int slot) {
         return slot >= 0 && size_t(slot) < n ? liveBase[size_t(slot)] : 0u;
     };
+    RigExecProviderContextIndex refreshContextIndex;
+    // Refresh binding only clones operations and selects frame versions; it
+    // does not append external inputs. Index those fixed rows once, lazily.
+    std::vector<std::vector<size_t>> refreshExternalInputs;
+    if(!B.providerRefreshes.empty()) {
+        refreshExternalInputs.resize(n);
+        for(size_t k=0;k<B.providerProgram.externalInputs.size();++k) {
+            const auto &input=B.providerProgram.externalInputs[k];
+            if(input.computation!="computePointFrame")continue;
+            const auto found=B.index.find(input.owner);
+            if(found!=B.index.end())refreshExternalInputs[size_t(found->second)].push_back(k);
+        }
+    }
     const auto refreshBefore=[&](size_t checkpoint) {
         for(uint32_t index:B.providerRefreshBefore[checkpoint])
             if(!RigExecBakedBindProviderRefresh(&B,index,&liveBase,&liveFin,
-                [&](bool base,int slot) {return base?take(&baseWrites,&baseNext,size_t(slot)):take(&finWrites,&finNext,size_t(slot));}))return false;
+                [&](bool base,int slot) {return base?take(&baseWrites,&baseNext,size_t(slot)):take(&finWrites,&finNext,size_t(slot));},
+                &refreshContextIndex,refreshExternalInputs))return false;
         return true;
     };
     // One solver's frame reads, bound to the versions live where it runs.
@@ -2865,6 +2879,7 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                     uint32_t(d), 0});
         }
     }
+    B.providerLeafEditSerial.assign(B.providerLeaves.decl.keys.size(), 0);
     number(B.providerLeaves,{RigExecBakedPathLeafOwner::Provider,0,0,0});
     const auto declareExact=[&](const RigExecBakedPathLeaves &leaves,RigExecBakedStep *step) {
         // Every declared source opinion participates in the readiness-time

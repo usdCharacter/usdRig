@@ -409,7 +409,7 @@ void PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)
 bool RigExecBakedSpaceLeafKey(const RigExecBakedProgramImpl &B,uint32_t slot,std::string *out)
 {
     out->clear(); Put(out,uint8_t(1)); Put(out,RigExecBakedSlotDomain::SpaceLeaf);
-    if(slot>=B.providerLeaves.values.size() || slot>=B.providerProgram.sampled.size() ||
+    if(slot>=B.providerLeaves.values.size() || slot>=B.GetProviderProgram().sampled.size() ||
        slot>=B.providerLeafBlocked.size()) {
         Invalid(out,RigExecBakedSlotDomain::SpaceLeaf,slot); return false;
     }
@@ -435,7 +435,7 @@ bool RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &B,
         if(boxed) return BoxExact(*boxed);
     }
     if(domain==RigExecBakedSlotDomain::SpaceLeaf) {
-        if(slot>=B.providerLeaves.values.size() || slot>=B.providerProgram.sampled.size() || slot>=B.providerLeafBlocked.size()) return false;
+        if(slot>=B.providerLeaves.values.size() || slot>=B.GetProviderProgram().sampled.size() || slot>=B.providerLeafBlocked.size()) return false;
         const auto *overlay=RigExecBakedSpaceLeafOverlay(B,size_t(slot));
         const bool useOverlay=overlay!=nullptr;
         return BoxExact(useOverlay ? *overlay : B.providerLeaves.values[slot]);
@@ -1053,9 +1053,9 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
     if(effective && step.kind==RigExecBakedStepKind::SpaceExpression) {
         if(step.object<0)invalid();
         else if(step.part==0) {
-            if(size_t(step.object)>=B.providerProgram.ops.size())invalid();
+            if(size_t(step.object)>=B.GetProviderProgram().ops.size())invalid();
             else {
-                const auto &op=B.providerProgram.ops[size_t(step.object)];Put(out,op.kind);
+                const auto &op=B.GetProviderProgram().ops[size_t(step.object)];Put(out,op.kind);
                 auto input=[&](size_t i) {return i<op.inputs.size()?op.inputs[i]:RigExecNoProviderValue;};
                 auto state=[&](RigExecValueId id) {
                     Put(out,id);const bool exists=id<B.providerValues.values.size();Put(out,exists);
@@ -1119,9 +1119,9 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
             }
         } else if(step.part==1) {
             const size_t id=size_t(step.object);
-            if(id>=B.providerProgram.externalInputs.size() || id>=B.providerExternalSlots.size())invalid();
+            if(id>=B.GetProviderProgram().externalInputs.size() || id>=B.providerExternalSlots.size())invalid();
             else {
-                const auto &input=B.providerProgram.externalInputs[id];
+                const auto &input=B.GetProviderProgram().externalInputs[id];
                 const int slot=B.providerExternalSlots[id];
                 Put(out,input.computation);Put(out,slot);
                 if(input.computation=="computeRestFrame") {
@@ -1144,7 +1144,7 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
             }
         } else if(step.part==2) {
             const size_t id=size_t(step.object);
-            if(id>=B.providerProgram.sampled.size() || id>=B.providerLeaves.values.size() || id>=B.providerLeafBlocked.size())invalid();
+            if(id>=B.GetProviderProgram().sampled.size() || id>=B.providerLeaves.values.size() || id>=B.providerLeafBlocked.size())invalid();
             else {
                 const auto *overlay=RigExecBakedSpaceLeafOverlay(B,id);Put(out,overlay!=nullptr);
                 Put(out,bool(!overlay && B.providerLeafBlocked[id]));exact=Box(out,overlay?*overlay:B.providerLeaves.values[id])&&exact;

@@ -1976,9 +1976,9 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             }
         }
     }
-    C.providerLeafSlots.assign(B.providerProgram.sampled.size(), -1);
-    for (size_t k = 0; k < B.providerProgram.sampled.size(); ++k) {
-        const auto &leaf = B.providerProgram.sampled[k];
+    C.providerLeafSlots.assign(B.GetProviderProgram().sampled.size(), -1);
+    for (size_t k = 0; k < B.GetProviderProgram().sampled.size(); ++k) {
+        const auto &leaf = B.GetProviderProgram().sampled[k];
         const auto attribute = B.stage->GetAttributeAtPath(leaf.attribute);
         if (!attribute) continue;
         uint32_t slot = 0;

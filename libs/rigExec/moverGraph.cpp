@@ -7,6 +7,7 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
@@ -456,11 +457,54 @@ _MatrixKernelAccepts(const RigExecMoverParameters &p, size_t count,
 // radial arm's partial for a weight is a pure function of that weight and
 // the transform, so a walk over a subset of the entries writes those points'
 // bits.
+//
+// An entry's result is therefore a pure function of the blend arm, the
+// transform, its weight and its entering point. Given \p memo (a group's
+// own, pointBlocks.h), a walk whose arm and transform are the last walk's
+// records its entries, and an entry whose weight and entering point hold the
+// bits recorded takes the recorded result; only the others are computed.
+// The same bits either way.
 void
 _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
                        const RigExecWeightPacket &w, size_t first,
-                       size_t last, GfVec3f *data, size_t offset = 0)
+                       size_t last, GfVec3f *data, size_t offset = 0,
+                       RigExecSparseWalkMemo<GfVec3f> *memo = nullptr)
 {
+    using Mode = RigExecSparseWalkMode;
+    Mode mode = Mode::Compute;
+    if (memo) {
+        // The arm, then the transform's sixteen doubles.
+        unsigned char params[1 + 16 * sizeof(double)];
+        params[0] = p.radialWeight ? 1 : 0;
+        std::memcpy(params + 1, p.transform.GetArray(), 16 * sizeof(double));
+        mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
+                                      last - first);
+    }
+    // Whether the memo answers for entry k's point; if not and the walk
+    // records, its inputs are noted for the result `keep` stores.
+    const auto reuse = [&](size_t k, GfVec3f *point) {
+        if (mode == Mode::Compute) {
+            return false;
+        }
+        const size_t j = k - first;
+        if (mode == Mode::Reuse &&
+            RigExecSparseWalkHolds(*memo, j, w.indices[k], w.values[k],
+                                   *point)) {
+            *point = memo->out[j];
+            ++memo->reused;
+            return true;
+        }
+        RigExecSparseWalkNote(memo, j, w.indices[k], w.values[k], *point);
+        return false;
+    };
+    const auto keep = [&](size_t k, const GfVec3f &point) {
+        if (mode != Mode::Compute) {
+            memo->out[k - first] = point;
+        }
+        if (memo) {
+            ++memo->computed;
+        }
+    };
     if (p.radialWeight) {
         // The sparse walk must take the same arc the dense kernel
         // does. A painted cluster falloff is almost always sparse --
@@ -478,6 +522,10 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
         bool haveDecomposition=false;
         GfMatrix4d partial(1.0);
         for (size_t k = first; k < last; ++k) {
+            GfVec3f &point = data[size_t(w.indices[k]) - offset];
+            if (reuse(k, &point)) {
+                continue;
+            }
             const double value = w.values[k];
             if (value != cachedWeight) {
                 const double clamped=GfClamp(value,0.0,1.0);
@@ -492,15 +540,19 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
                 }
                 cachedWeight = value;
             }
-            GfVec3f &point = data[size_t(w.indices[k]) - offset];
             point = GfVec3f(partial.TransformAffine(GfVec3d(point)));
+            keep(k, point);
         }
         return;
     }
     for (size_t k = first; k < last; ++k) {
         GfVec3f &point = data[size_t(w.indices[k]) - offset];
+        if (reuse(k, &point)) {
+            continue;
+        }
         point = GfVec3f(RigExecApplyWeightedMatrix(
             GfVec3d(point), p.transform, w.values[k]));
+        keep(k, point);
     }
 }
 
@@ -1471,7 +1523,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         const GfVec3f *in, GfVec3f *out, size_t count,
                         size_t begin, size_t end,
                         const float *separateEnvelope, bool useSimd,
-                        bool *untouched)
+                        bool *untouched,
+                        RigExecSparseWalkMemo<GfVec3f> *walk)
 {
     if (untouched) {
         *untouched = false;
@@ -1514,7 +1567,7 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                 return passThrough();
             }
             seed();
-            _ApplyMatrixSparseWalk(p, w, first, last, out, begin);
+            _ApplyMatrixSparseWalk(p, w, first, last, out, begin, walk);
             return true;
         }
         if (prepared.matrixWeights.size() != count) {

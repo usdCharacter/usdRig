@@ -44,6 +44,8 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
+template <class Point> struct RigExecSparseWalkMemo;
+
 /// The read phase declared for \p property: its rigExecReadPhase metadata,
 /// or Base when none is authored.
 ///
@@ -888,12 +890,18 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// (RigExecSkinLayoutIsUsable, RigExecSkinTransformsAreUsable), as for
 /// RigExecApplySkinKernelRange. Pure: concurrent calls for distinct groups
 /// of one revision are safe.
+/// \p walk, when given, is the group's own memo (pointBlocks.h), which only
+/// this call writes: a sparse Matrix walk whose transform and blend arm are
+/// its last walk's records its entries there, and takes from it each entry
+/// whose weight and entering point hold the bits recorded. The bits written
+/// are the same with and without it.
 bool RigExecRunRevisionGroup(
     RigExecRevisionOp op, const RigExecMoverParameters &p,
     const RigExecRevisionRangeInputs &prepared,
     const RigExecSkinTransformsView *skin, const GfVec3f *in, GfVec3f *out,
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
-    bool useSimd, bool *untouched = nullptr);
+    bool useSimd, bool *untouched = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 
 /// Points [begin, end) of a revision that applies: \p out (sized \p count)
 /// receives at those indices exactly what RigExecRunRevisionKernel writes

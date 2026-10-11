@@ -59,6 +59,14 @@ struct RigExecProviderProgram {
     std::vector<std::string> ownerTexts;
     RigExecValueId FindValue(const std::string &key) const;
 };
+/// Owning-thread, compilation-local indexes for an append-only program.
+/// First producers win, including duplicate outputs. Discard these indexes
+/// if existing rows are changed or removed, or before using another program.
+struct RigExecProviderContextIndex {
+    std::map<RigExecValueId,size_t> producers, externals;
+    size_t indexedOps=0, indexedExternals=0;
+    void Extend(const RigExecProviderProgram &program);
+};
 /// Spells the owner of every op that has no text yet into ownerTexts, once
 /// per distinct owner. The owning thread calls it after adding ops; a copied
 /// op keeps its text.
@@ -79,6 +87,11 @@ bool RigExecCloneProviderContext(RigExecProviderProgram *,RigExecValueId result,
     const std::string &prefix,const std::map<std::string,std::string> &externalNames,
     const std::map<RigExecValueId,RigExecValueId> &replacements,
     RigExecValueId *output,std::string *error=nullptr);
+/// Reuses and extends the compilation-local producer indexes.
+bool RigExecCloneProviderContext(RigExecProviderProgram *,RigExecValueId result,
+    const std::string &prefix,const std::map<std::string,std::string> &externalNames,
+    const std::map<RigExecValueId,RigExecValueId> &replacements,
+    RigExecValueId *output,std::string *error,RigExecProviderContextIndex *index);
 bool RigExecRunProviderOp(const RigExecProviderProgram &program,uint32_t originalIndex,
     RigExecTypedValueStore *store,std::string *error=nullptr);
 /// Whether op \p index of \p program can run at all: it exists, its output

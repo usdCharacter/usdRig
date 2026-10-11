@@ -117,8 +117,8 @@ bool RigExecBakedBindConnectionValue(const RigExecBakedProgramImpl &B,
         *read = std::move(out);
         return true;
     }
-    const auto space = B.providerProgram.attributeValues.find(source);
-    if (space != B.providerProgram.attributeValues.end()) {
+    const auto space = B.GetProviderProgram().attributeValues.find(source);
+    if (space != B.GetProviderProgram().attributeValues.end()) {
         out.kind = RigExecCrossDomainRead::Kind::SpaceValue;
         out.spaceValue = int(space->second);
         *read = std::move(out);

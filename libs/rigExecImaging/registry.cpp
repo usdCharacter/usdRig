@@ -37,16 +37,15 @@
 
 namespace rigExec {
 
-// A snapshot and its epoch own independent worker lanes. A lease protects
-// both lazy construction and the mutable retained execution state.
+// A session owns independent worker lanes. A lease protects lazy construction,
+// snapshot replacement and the mutable retained execution state.
 struct RigExecWarmWorkspacePool {
     struct Lane {
         std::atomic<bool> busy{false};
+        std::shared_ptr<const RigExecFrozenProgram> snapshot;
+        uint64_t programDigest = 0;
         std::unique_ptr<RigExecFrozenWorkspace> workspace;
     };
-    std::shared_ptr<const RigExecFrozenProgram> snapshot;
-    uint64_t epoch = 0;
-    uint64_t programDigest = 0;
     std::array<Lane, kRigExecBackgroundSchedulerMaxWorkers> lanes;
 
     Lane *Acquire() {
@@ -867,6 +866,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
         refreshPins();
         if (!program) {
             session->frozen.reset();
+            session->frozenPatch.reset();
             session->frozenAvarDigest = 0;
             session->frozenError.clear();
             session->frozenSerial = serial;
@@ -874,8 +874,9 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
         }
         // Same program, same epoch: what may have moved is the avar region
         // (ApplyAvarValueEdits), the inputs a routed value edit marked
-        // (ApplyValueEdits), and the program stamp. None re-clones the
-        // epoch: all three carry onto a copy. The last two move no digest,
+        // (ApplyValueEdits), and the program stamp. Capture those values;
+        // each worker materializes its copy under its lane lease. The last
+        // two move no digest,
         // and the snapshot's history predates them either way, so they are
         // asked of the snapshot itself. A refused patch (a shape change
         // wearing a patch's clothes) falls through to a re-freeze.
@@ -889,11 +890,11 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
             return;
         }
         if (session->frozen) {
-            std::shared_ptr<const RigExecFrozenProgram> patched;
+            std::shared_ptr<const RigExecFrozenAvarPatch> patched;
             std::string ignored;
-            if (RigExecPatchFrozenAvarConstants(*session->frozen, *program,
+            if (RigExecCaptureFrozenAvarPatch(*session->frozen, *program,
                                                 &patched, &ignored)) {
-                session->frozen = std::move(patched);
+                session->frozenPatch = std::move(patched);
                 session->frozenAvarDigest = avarDigest;
                 session->frozenSerial = serial;
                 return;
@@ -904,6 +905,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
     // the live state. A refusal parks a validly empty entry -- production
     // jobs decline and the frame evaluates live when asked.
     session->frozen.reset();
+    session->frozenPatch.reset();
     session->frozenProgram = program;
     session->frozenEpoch = epoch;
     session->frozenAvarDigest = 0;
@@ -2237,16 +2239,8 @@ RigExecImagingRegistry::BuildWarmWork(
     // before sampling above (the lock never dropped between, so the
     // session cannot have swapped it out from under this build).
     context.frozen = session->frozen.get();
-    if (!session->warmWorkspaces ||
-        session->warmWorkspaces->snapshot != session->frozen ||
-        session->warmWorkspaces->epoch != context.epochDigest ||
-        session->warmWorkspaces->programDigest != context.programDigest) {
-        auto pool = std::make_shared<RigExecWarmWorkspacePool>();
-        pool->snapshot = session->frozen;
-        pool->epoch = context.epochDigest;
-        pool->programDigest = context.programDigest;
-        session->warmWorkspaces = std::move(pool);
-    }
+    if (!session->warmWorkspaces)
+        session->warmWorkspaces = std::make_shared<RigExecWarmWorkspacePool>();
     auto workspaces = session->warmWorkspaces;
     RigExecFrameCacheKey key;
     // The same epoch half the bridge's lookup computes (epoch structure +
@@ -2304,6 +2298,7 @@ RigExecImagingRegistry::BuildWarmWork(
     // and its destructor (Deactivate stopping the context's pool) joins
     // the workers before it goes.
     std::shared_ptr<const RigExecFrozenProgram> frozen = session->frozen;
+    const auto frozenPatch = session->frozenPatch;
     // The source snapshot and dependency record travel with the pose.
     RigExecRetainedFrameState retainedState = RigExecCaptureRetainedState(
         inputs, overrides, key.epochDigest,
@@ -2322,7 +2317,7 @@ RigExecImagingRegistry::BuildWarmWork(
     std::shared_ptr<const RigExecFrameInputs> jobInputs =
         std::make_shared<RigExecFrameInputs>(std::move(inputs));
     RigExecWarmWork work = [jobInputs, context, key, cache, scheduler, rig,
-                              runner, frozen, workspaces, warmIndex, retained,
+                              runner, frozen, frozenPatch, workspaces, warmIndex, retained,
                               retainedBytes, provenance, progressPublication, publishObserver](
                                  const RigExecWarmRequest &request) {
         RigExecProfiler *workerProfiler = scheduler ? scheduler->MutableProfiler() : nullptr;
@@ -2341,11 +2336,18 @@ RigExecImagingRegistry::BuildWarmWork(
             ~Lease() { if (lane) lane->busy.store(false); }
         } lease{lane};
         if (lane) {
-            if (!lane->workspace) {
+            // The leased worker retires its old arena. A value edit must not
+            // destroy every lane's potentially large arena on the UI thread.
+            if (!lane->workspace || lane->snapshot != frozen ||
+                lane->programDigest != context.programDigest) {
+                lane->workspace.reset();
+                lane->snapshot = frozen;
+                lane->programDigest = context.programDigest;
                 lane->workspace = RigExecCreateFrozenWorkspace(frozen);
             }
             laneContext.workspace = lane->workspace.get();
         }
+        laneContext.avarPatch = frozenPatch.get();
         workerPhase("Warm.WorkerLane");
         const RigExecRigPose pose = RigExecEvaluateFrozen(
             laneContext, *jobInputs, runner, scheduler, rig);

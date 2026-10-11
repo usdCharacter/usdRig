@@ -64,6 +64,16 @@ using RigExecFrameGeneration = uint64_t;
 /// thread by RigExecFreezeProgram. See that function for the contract;
 /// frozenProgram.h defines it.
 struct RigExecFrozenProgram;
+struct RigExecFrozenAvarPatch;
+
+/// Capture live edit values on the owner thread. Applying the captured patch
+/// clones only detached state and may run on an existing warming worker.
+bool RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
+    const RigExecBakedProgram &live,
+    std::shared_ptr<const RigExecFrozenAvarPatch> *out, std::string *error);
+bool RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
+    const RigExecFrozenAvarPatch &patch,
+    std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error);
 
 /// Burst-cache route of one sampled input. Fresh samples fold fresh;
 /// static samples fold the memoized level-1 the sampler recorded when it
@@ -308,7 +318,7 @@ constexpr uint32_t kRigExecFrozenBakeRefused = 1u << 2;
 /// change that only patches its avar constants
 /// (RigExecBakedProgram::ApplyAvarValueEdits) needs only
 /// RigExecPatchFrozenAvarConstants, which carries the patched region onto a
-/// copy without re-cloning the epoch. The registry's session cache owns
+/// copy. Capture/apply splits that work at the worker boundary. The registry owns
 /// that discipline in production (see RigExecImagingRegistry); direct
 /// callers re-freeze around their own edits.
 ///
@@ -454,6 +464,9 @@ struct RigExecFrozenEvalContext {
     /// it. Null declines a production job -- the runner cannot evaluate
     /// without a program -- while an injected test kernel ignores it.
     const RigExecFrozenProgram *frozen = nullptr;
+    /// Optional detached edit values relative to frozen. The job owns this
+    /// payload; source placement applies it to the worker's private arena.
+    const RigExecFrozenAvarPatch *avarPatch = nullptr;
     /// Optional caller-owned execution lane. Snapshot identity, epoch, and
     /// program digest must match every job on this workspace. Null gives a
     /// fresh independent job without retained value or readiness state.

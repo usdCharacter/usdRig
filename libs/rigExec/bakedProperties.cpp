@@ -296,8 +296,8 @@ struct BindState {
                     read.provider = provider->second;
                     cross = true;
                 } else {
-                    const auto space = B.providerProgram.attributeValues.find(hop.path);
-                    if (space != B.providerProgram.attributeValues.end()) {
+                    const auto space = B.GetProviderProgram().attributeValues.find(hop.path);
+                    if (space != B.GetProviderProgram().attributeValues.end()) {
                         read.kind = RigExecCrossDomainRead::Kind::SpaceValue;
                         read.spaceValue = int(space->second);
                         cross = true;

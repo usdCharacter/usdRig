@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(_MSC_VER)
@@ -109,16 +110,42 @@ inline size_t _RigExecPopcount64(uint64_t word)
 struct RigExecBakedClusterSet {
     std::vector<uint64_t> words;
 
+    /// Large immutable closure tables store only nonzero words. Mutable run
+    /// sets and small rigs keep the dense representation and word unions.
+    void ResizeSparse(size_t clusters) {
+        words.clear();
+        _sparse.clear();
+        _sparseWidth=(clusters+63)/64;
+    }
+    size_t WordCount() const {return _sparseWidth?_sparseWidth:words.size();}
+    uint64_t Word(size_t w) const {
+        if(!_sparseWidth)return w<words.size()?words[w]:0;
+        const auto found=std::lower_bound(_sparse.begin(),_sparse.end(),w,
+            [](const auto &entry,size_t index){return entry.first<index;});
+        return found!=_sparse.end() && found->first==w?found->second:0;
+    }
+
     void Resize(size_t clusters) {
+        _sparseWidth=0;
+        _sparse.clear();
         words.assign((clusters + 63) / 64, 0);
     }
-    void Clear() { std::fill(words.begin(), words.end(), uint64_t(0)); }
+    void Clear() { _sparse.clear(); std::fill(words.begin(), words.end(), uint64_t(0)); }
     bool Test(int cluster) const {
         return cluster >= 0 &&
-               (words[size_t(cluster) >> 6] >> (size_t(cluster) & 63)) & 1;
+               (Word(size_t(cluster) >> 6) >> (size_t(cluster) & 63)) & 1;
     }
     void Set(int cluster) {
         if (cluster >= 0) {
+            if(_sparseWidth) {
+                const size_t w=size_t(cluster)>>6;
+                auto found=std::lower_bound(_sparse.begin(),_sparse.end(),w,
+                    [](const auto &entry,size_t index){return entry.first<index;});
+                if(found==_sparse.end() || found->first!=w)
+                    found=_sparse.insert(found,{w,0});
+                found->second|=uint64_t(1)<<(size_t(cluster)&63);
+                return;
+            }
             words[size_t(cluster) >> 6] |=
                 uint64_t(1) << (size_t(cluster) & 63);
         }
@@ -134,7 +161,43 @@ struct RigExecBakedClusterSet {
     /// RigExecIntersectClusterSets rule), and a wider one grows this set
     /// rather than dropping its high members.
     bool Union(const RigExecBakedClusterSet &other) {
+        if(_sparseWidth) {
+            std::vector<std::pair<size_t,uint64_t>> merged;
+            auto at=_sparse.begin();
+            const auto append=[&](size_t w,uint64_t value) {
+                while(at!=_sparse.end() && at->first<w)merged.push_back(*at++);
+                if(at!=_sparse.end() && at->first==w)value|=(at++)->second;
+                merged.emplace_back(w,value);
+            };
+            if(other._sparseWidth) {
+                for(const auto &entry:other._sparse)append(entry.first,entry.second);
+            } else {
+                for(size_t w=0;w<other.words.size();++w)
+                    if(other.words[w])append(w,other.words[w]);
+            }
+            merged.insert(merged.end(),at,_sparse.end());
+            const bool grew=merged!=_sparse;
+            _sparse.swap(merged);
+            _sparseWidth=std::max(_sparseWidth,other.WordCount());
+            // A dense closure costs less once half its words are nonzero.
+            if(_sparse.size()*sizeof(_sparse[0])>=_sparseWidth*sizeof(uint64_t)) {
+                words.assign(_sparseWidth,0);
+                for(const auto &entry:_sparse)words[entry.first]=entry.second;
+                _sparseWidth=0;
+                std::vector<std::pair<size_t,uint64_t>>().swap(_sparse);
+            }
+            return grew;
+        }
         bool grew = false;
+        if(other._sparseWidth) {
+            if(words.size()<other._sparseWidth)words.resize(other._sparseWidth,0);
+            for(const auto &entry:other._sparse) {
+                const auto before=words[entry.first];
+                words[entry.first]|=entry.second;
+                grew=grew || words[entry.first]!=before;
+            }
+            return grew;
+        }
         if (words.size() < other.words.size()) {
             words.resize(other.words.size(), 0);
         }
@@ -148,6 +211,7 @@ struct RigExecBakedClusterSet {
         return grew;
     }
     bool Any() const {
+        if(_sparseWidth)return !_sparse.empty();
         for (const uint64_t word : words) {
             if (word) return true;
         }
@@ -155,11 +219,18 @@ struct RigExecBakedClusterSet {
     }
     size_t Count() const {
         size_t count = 0;
+        if(_sparseWidth) {
+            for(const auto &entry:_sparse)count+=_RigExecPopcount64(entry.second);
+            return count;
+        }
         for (const uint64_t word : words) {
             count += _RigExecPopcount64(word);
         }
         return count;
     }
+private:
+    size_t _sparseWidth=0;
+    std::vector<std::pair<size_t,uint64_t>> _sparse;
 };
 
 }  // namespace rigExec

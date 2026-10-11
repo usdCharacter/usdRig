@@ -2203,12 +2203,12 @@ ConeRecurrenceViolations(const RigExecBakedClustering &graph,
         for(int next:graph.clusters[c].succs) {
             ++*edges;
             for(size_t w=0;w<words;++w) {
-                expected[w]|=cones[size_t(next)].words[w]; ++*wordChecks;
+                expected[w]|=cones[size_t(next)].Word(w); ++*wordChecks;
             }
         }
         for(size_t w=0;w<words;++w) {
             ++*wordChecks;
-            if(expected[w]!=cones[c].words[w])++broken;
+            if(expected[w]!=cones[c].Word(w))++broken;
         }
     }
     return broken;
@@ -2250,8 +2250,8 @@ TestTheConeClosuresAreSound(const BuiltProgram &built, const char *name)
         rank[size_t(c)]=int(i);
     }
     for(size_t c=0;c<clusters;++c) {
-        CHECK(B.cones.Cone()[c].words.size()==words);
-        if(B.cones.Cone()[c].words.size()!=words)return;
+        CHECK(B.cones.Cone()[c].WordCount()==words);
+        if(B.cones.Cone()[c].WordCount()!=words)return;
         for(int next:B.clustering.clusters[c].succs) {
             CHECK(next>=0 && size_t(next)<clusters);
             if(next<0 || size_t(next)>=clusters)return;
@@ -2260,7 +2260,7 @@ TestTheConeClosuresAreSound(const BuiltProgram &built, const char *name)
         }
         if(clusters%64) {
             const uint64_t mask=(uint64_t(1)<<(clusters%64))-1;
-            CHECK((B.cones.Cone()[c].words.back()&~mask)==0);
+            CHECK((B.cones.Cone()[c].Word(words-1)&~mask)==0);
         }
     }
     size_t edges=0,wordChecks=0;
@@ -2827,8 +2827,8 @@ TestALeafControlDragRunsOnlyItsCone(const std::string &stagePath,
     // so they are read only when that pass did not run.
     std::vector<int> sourceSeeds{B.cones.avarStep[size_t(slot->second)]};
     const SdfPath source = control.AppendProperty(avar);
-    for (size_t k=0;k<B.providerProgram.sampled.size();++k) {
-        if (B.providerProgram.sampled[k].attribute != source) continue;
+    for (size_t k=0;k<B.GetProviderProgram().sampled.size();++k) {
+        if (B.GetProviderProgram().sampled[k].attribute != source) continue;
         for (size_t s=0;s<B.steps.size();++s)
             if (B.steps[s].kind == RigExecBakedStepKind::SpaceExpression &&
                 B.steps[s].part == 2 && B.steps[s].object == int(k))
@@ -9379,11 +9379,11 @@ TestPruningKeepsEveryValue(const std::string &examplesDir)
     CHECK(P.providerPruneRoots == 0);
     CHECK(P.steps.size() < U.steps.size());
     CHECK(P.steps.size() + P.providerStepsPruned == U.steps.size());
-    CHECK(P.providerProgram.routedInputs.size() ==
-          U.providerProgram.routedInputs.size());
+    CHECK(P.GetProviderProgram().routedInputs.size() ==
+          U.GetProviderProgram().routedInputs.size());
     CHECK(P.opGraph.cycles == U.opGraph.cycles);
     // Every written SpaceValue of a kept step has a reader or is a root.
-    std::vector<char> read(P.providerProgram.valueKeys.size(), 0);
+    std::vector<char> read(P.GetProviderProgram().valueKeys.size(), 0);
     const auto mark = [&read](int64_t id) {
         if (id >= 0 && uint64_t(id) < read.size()) {
             read[size_t(id)] = 1;
@@ -9436,7 +9436,7 @@ TestPruningKeepsEveryValue(const std::string &examplesDir)
     std::printf("  provider pruning on Biped_anim: %zu of %zu steps "
                 "pruned, %zu routed inputs, %zu other roots\n",
                 P.providerStepsPruned, U.steps.size(),
-                P.providerProgram.routedInputs.size(),
+                P.GetProviderProgram().routedInputs.size(),
                 P.providerPruneRoots);
 }
 
@@ -9476,7 +9476,7 @@ TestAnEditOnAPrunedAttributeStillRebuilds()
         if (!program) {
             return out;
         }
-        for (const auto &leaf : program->GetStepGraph().providerProgram.sampled) {
+        for (const auto &leaf : program->GetStepGraph().GetProviderProgram().sampled) {
             out.sampled = out.sampled || leaf.attribute == restTx;
         }
         const size_t builds = rig.GetBakedProgramBuildCount();

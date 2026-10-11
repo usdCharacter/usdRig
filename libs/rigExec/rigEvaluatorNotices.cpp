@@ -632,6 +632,9 @@ RigExecRigEvaluator::_OnObjectsChanged(
         } else if (_lastNoticeDisposition ==
                    RigExecNoticeDisposition::Stale) {
             _bakedProgramStale = true;
+            // Input sampling may precede the lazy rebuild. Retire held raw
+            // reads too; a structural notice has no routed leaf edits.
+            _bakedProgram->BumpProgramStamp();
             // The rebuild is allowed to refuse where the standing program did
             // not, and a refusal remembered from before this notice would
             // otherwise answer for a stage that has since changed.

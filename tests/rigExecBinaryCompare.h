@@ -3763,7 +3763,7 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
         for (const char *name : {"inputs:sourceWeights", "inputs:translationOffsets", "inputs:rotationOffsets", "inputs:poleVectorWeights"})
             add(arrays.prim.GetPath().AppendProperty(TfToken(name)), true, "constraint raw arrays");
     }
-    for (const auto &leaf : program.providerProgram.sampled) add(leaf.attribute, true, "provider raw leaf");
+    for (const auto &leaf : program.GetProviderProgram().sampled) add(leaf.attribute, true, "provider raw leaf");
     for (const auto &read : program.crossDomainReads) {
         if (read.rawLeaf >= 0) add(program.headLeaves[size_t(read.rawLeaf)].path, true, "cross-domain raw fallback");
     }
@@ -3984,9 +3984,9 @@ _BinaryCompareProgram(rigExec::RigExecRigEvaluator &evaluator,
     }
     CHECK(file.providerProgram);
     if (file.providerProgram) {
-        CHECK(program.providerProgram.sampled.size() == file.providerProgram->sampled.size());
-        for (size_t i = 0; i < program.providerProgram.sampled.size() && i < file.providerProgram->sampled.size(); ++i) {
-            const auto &live = program.providerProgram.sampled[i];
+        CHECK(program.GetProviderProgram().sampled.size() == file.providerProgram->sampled.size());
+        for (size_t i = 0; i < program.GetProviderProgram().sampled.size() && i < file.providerProgram->sampled.size(); ++i) {
+            const auto &live = program.GetProviderProgram().sampled[i];
             const auto &wire = file.providerProgram->sampled[i];
             CHECK(live.attribute.GetString() == wire.path && wire.computation.empty() && live.value == wire.value);
             const auto a = program.stage->GetAttributeAtPath(live.attribute);

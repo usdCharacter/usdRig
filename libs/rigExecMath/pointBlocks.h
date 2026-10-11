@@ -48,11 +48,45 @@ struct RigExecGroupSource {
     bool operator!=(const RigExecGroupSource &o) const { return !(*this == o); }
 };
 
+/// What one group's sparse per-point walk last computed, entry by entry. A
+/// walk whose result for an entry is a pure function of its per-revision
+/// inputs, the entry's weight and the entry's entering point reuses that
+/// result while all of them hold the bits they held (memcmp: NaN payloads and
+/// signed zeros count). A rerun that only forwards points moved elsewhere in
+/// the group then recomputes nothing. Holds what it compares, so it stands
+/// on no publication, reset or run order; a copy is independent.
+///
+/// Entries are recorded only by a walk whose per-revision inputs are the
+/// last walk's: a mover whose inputs move on every run (playback) records
+/// nothing and pays one compare of those inputs per walk.
+template <class Point>
+struct RigExecSparseWalkMemo {
+    /// The last walk's per-revision inputs, as its kernel spells them.
+    std::vector<unsigned char> params;
+    /// The recorded entries; empty while none are.
+    std::vector<int> indices;
+    std::vector<float> weights;
+    std::vector<Point> in, out;
+    /// Entries the last walk computed and reused. Observability only.
+    uint32_t computed = 0, reused = 0;
+};
+
+/// What a walk does with its memo (RigExecSparseWalkBegin).
+enum class RigExecSparseWalkMode {
+    /// Its per-revision inputs moved: compute every entry, record none.
+    Compute,
+    /// They held and nothing is recorded: compute and record every entry.
+    Record,
+    /// They held over recorded entries: reuse each one that still answers
+    /// (RigExecSparseWalkHolds), compute and record the others.
+    Reuse,
+};
+
 /// One vertex group of one writer. Two writers may share a state only as a
 /// speculative chunk and its fuse: the chunk owns `own`, `ownComputed`,
-/// `computedVersion`, `computedRan` and `ok`; the fuse owns `published`,
-/// `version`, `ran`, `passedFrom` and `ownPublished`. A copy (a program
-/// clone) shares buffers. Versions never go down.
+/// `computedVersion`, `computedRan`, `ok` and `walk`; the fuse owns
+/// `published`, `version`, `ran`, `passedFrom` and `ownPublished`. A copy (a
+/// program clone) shares buffers. Versions never go down.
 template <class Point>
 struct RigExecGroupState {
     RigExecPointsRef<Point> published;
@@ -73,7 +107,31 @@ struct RigExecGroupState {
     int ownComputed = -1;
     uint64_t computedVersion = 0;
     bool computedRan = false;
+    /// A group step's sparse walk over this group (RigExecSparseWalkMemo).
+    RigExecSparseWalkMemo<Point> walk;
 };
+
+/// Readies \p memo for a walk of \p entries entries whose per-revision
+/// inputs are the \p size bytes at \p params, and answers how the walk uses
+/// it. Compute keeps the bytes and forgets every entry; Record sizes it for
+/// this walk with no entry answering yet. Clears the counts.
+template <class Point>
+RigExecSparseWalkMode RigExecSparseWalkBegin(
+    RigExecSparseWalkMemo<Point> *memo, const void *params, size_t size,
+    size_t entries);
+
+/// Whether entry \p j of a memo in the Reuse mode was computed for point
+/// \p index at \p weight from entering point \p point: then `out[j]` is the
+/// walk's result for it.
+template <class Point>
+bool RigExecSparseWalkHolds(const RigExecSparseWalkMemo<Point> &memo, size_t j,
+                            int index, float weight, const Point &point);
+
+/// Records entry \p j's inputs ahead of computing it; the caller stores the
+/// result in `out[j]`.
+template <class Point>
+void RigExecSparseWalkNote(RigExecSparseWalkMemo<Point> *memo, size_t j,
+                           int index, float weight, const Point &point);
 
 /// An own buffer index the writer may overwrite with \p count points: never
 /// `ownPublished` or `ownComputed`. If both are taken and differ (a chunk ran
@@ -136,6 +194,56 @@ void RigExecGatherGroups(const RigExecPointsRef<Point> *const *groups,
 // nothing here takes a lock; the only synchronization is the refcount and
 // the acquire fence that makes a released holder's reads happen before the
 // writer overwrites the buffer.
+
+template <class Point>
+RigExecSparseWalkMode
+RigExecSparseWalkBegin(RigExecSparseWalkMemo<Point> *memo, const void *params,
+                       size_t size, size_t entries)
+{
+    memo->computed = 0;
+    memo->reused = 0;
+    const unsigned char *bytes = static_cast<const unsigned char *>(params);
+    if (memo->params.size() != size ||
+        (size != 0 && std::memcmp(memo->params.data(), bytes, size) != 0)) {
+        memo->params.assign(bytes, bytes + size);
+        memo->indices.clear();
+        memo->weights.clear();
+        memo->in.clear();
+        memo->out.clear();
+        return RigExecSparseWalkMode::Compute;
+    }
+    if (entries != 0 && memo->indices.size() == entries &&
+        memo->weights.size() == entries && memo->in.size() == entries &&
+        memo->out.size() == entries) {
+        return RigExecSparseWalkMode::Reuse;
+    }
+    // No point has a negative index, so no entry answers until noted.
+    memo->indices.assign(entries, -1);
+    memo->weights.assign(entries, 0.0f);
+    memo->in.resize(entries);
+    memo->out.resize(entries);
+    return RigExecSparseWalkMode::Record;
+}
+
+template <class Point>
+bool
+RigExecSparseWalkHolds(const RigExecSparseWalkMemo<Point> &memo, size_t j,
+                       int index, float weight, const Point &point)
+{
+    return memo.indices[j] == index &&
+           std::memcmp(&memo.weights[j], &weight, sizeof(float)) == 0 &&
+           std::memcmp(&memo.in[j], &point, sizeof(Point)) == 0;
+}
+
+template <class Point>
+void
+RigExecSparseWalkNote(RigExecSparseWalkMemo<Point> *memo, size_t j, int index,
+                      float weight, const Point &point)
+{
+    memo->indices[j] = index;
+    memo->weights[j] = weight;
+    memo->in[j] = point;
+}
 
 template <class Point>
 int

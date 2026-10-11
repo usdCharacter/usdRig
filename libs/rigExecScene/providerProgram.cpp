@@ -415,16 +415,32 @@ void RigExecSpellProviderOwners(RigExecProviderProgram *program) {
     }
 }
 
+void RigExecProviderContextIndex::Extend(const RigExecProviderProgram &program) {
+    for(;indexedOps<program.ops.size();++indexedOps)
+        producers.emplace(program.ops[indexedOps].output,indexedOps);
+    for(;indexedExternals<program.externalInputs.size();++indexedExternals)
+        externals.emplace(program.externalInputs[indexedExternals].value,indexedExternals);
+}
+
 bool RigExecCloneProviderContext(RigExecProviderProgram *program,RigExecValueId result,
     const std::string &prefix,const std::map<std::string,std::string> &externalNames,
     const std::map<RigExecValueId,RigExecValueId> &replacements,
     RigExecValueId *output,std::string *error) {
+    return RigExecCloneProviderContext(program,result,prefix,externalNames,
+        replacements,output,error,nullptr);
+}
+bool RigExecCloneProviderContext(RigExecProviderProgram *program,RigExecValueId result,
+    const std::string &prefix,const std::map<std::string,std::string> &externalNames,
+    const std::map<RigExecValueId,RigExecValueId> &replacements,
+    RigExecValueId *output,std::string *error,RigExecProviderContextIndex *index) {
     if(!program || !output || result>=program->valueKeys.size() ||
         program->ops.size()!=program->descriptors.size())
         return Fail(error,"invalid provider context clone binding");
-    std::map<RigExecValueId,size_t> producer,external;
-    for(size_t k=0;k<program->ops.size();++k)producer.emplace(program->ops[k].output,k);
-    for(size_t k=0;k<program->externalInputs.size();++k)external.emplace(program->externalInputs[k].value,k);
+    RigExecProviderContextIndex local;
+    if(!index)index=&local;
+    index->Extend(*program);
+    const auto &producer=index->producers;
+    const auto &external=index->externals;
     std::map<RigExecValueId,RigExecValueId> remap;
     std::function<RigExecValueId(RigExecValueId)> clone=[&](RigExecValueId value)->RigExecValueId {
         if(value==RigExecNoProviderValue)return value;

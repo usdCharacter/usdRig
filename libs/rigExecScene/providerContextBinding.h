@@ -13,6 +13,17 @@ bool RigExecBindProviderContext(RigExecProviderProgram *,
     const std::map<RigExecValueId,RigExecValueId> &selectedFrames,
     RigExecValueId *result,size_t *beginOp,std::string *error=nullptr,
     const std::map<std::string,std::string> &externalNames={});
+/// Append-only compilation overload. When fullValueKeys aliases the program's
+/// valueKeys, its existing valueIds must already index every key exactly once.
+/// Other namespaces retain the checked binding path. The index is extended
+/// lazily and must not outlive the append-only construction of this program.
+bool RigExecBindProviderContext(RigExecProviderProgram *,
+    const std::vector<std::string> &fullValueKeys,RigExecValueId sourceResult,
+    const SdfPath &consumer,const std::string &phase,
+    const std::map<RigExecValueId,RigExecValueId> &selectedFrames,
+    RigExecValueId *result,size_t *beginOp,std::string *error,
+    const std::map<std::string,std::string> &externalNames,
+    RigExecProviderContextIndex *index);
 /// A native ladder selects an unconnected parent matrix only when authored.
 /// Its namespace fallback is supplied by the compose's exact parent version.
 /// Keep the full expression identity available to other consumers.

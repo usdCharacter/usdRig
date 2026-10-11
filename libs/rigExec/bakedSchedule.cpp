@@ -1871,7 +1871,8 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     cones.always.Resize(count);
     cones.poseClusters.Resize(count);
     for (size_t c = 0; c < count; ++c) {
-        closures[c].Resize(count);
+        if(count>8192)closures[c].ResizeSparse(count);
+        else closures[c].Resize(count);
     }
     cones.alwaysSteps.Resize(stepCount);
     cones.poseSteps.Resize(stepCount);
@@ -2671,13 +2672,13 @@ StepLabel(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step,
         RigExecValueId value=RigExecNoProviderValue;
         if(step.object>=0) {
             const size_t object=size_t(step.object);
-            if(step.part==0 && object<B.providerProgram.ops.size()) value=B.providerProgram.ops[object].output;
-            else if(step.part==1 && object<B.providerProgram.externalInputs.size()) value=B.providerProgram.externalInputs[object].value;
-            else if(step.part==2 && object<B.providerProgram.sampled.size()) value=B.providerProgram.sampled[object].value;
-            else if(step.part==3 && object<B.providerProgram.routedInputs.size()) value=B.providerProgram.routedInputs[object].value;
+            if(step.part==0 && object<B.GetProviderProgram().ops.size()) value=B.GetProviderProgram().ops[object].output;
+            else if(step.part==1 && object<B.GetProviderProgram().externalInputs.size()) value=B.GetProviderProgram().externalInputs[object].value;
+            else if(step.part==2 && object<B.GetProviderProgram().sampled.size()) value=B.GetProviderProgram().sampled[object].value;
+            else if(step.part==3 && object<B.GetProviderProgram().routedInputs.size()) value=B.GetProviderProgram().routedInputs[object].value;
             else if(step.part==4 && object<B.providerFrameInputs.size()) value=B.providerFrameInputs[object].value;
         }
-        return value<B.providerProgram.valueKeys.size() ? B.providerProgram.valueKeys[size_t(value)] : "invalid provider value";
+        return value<B.GetProviderProgram().valueKeys.size() ? B.GetProviderProgram().valueKeys[size_t(value)] : "invalid provider value";
     }
 
     case RigExecBakedStepKind::ComposeSubtree:

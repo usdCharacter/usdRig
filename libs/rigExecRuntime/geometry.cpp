@@ -1091,11 +1091,56 @@ RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
 // entries whose indices fall in it, \p data[index - offset] holding point
 // index. The radial arc's per-weight memo only skips recomputing a pure
 // function of the weight, so where a walk starts changes no bit.
+//
+// An entry's result is a pure function of the blend arm, the transform, its
+// weight and its entering point. Given \p memo (a group's own,
+// pointBlocks.h), a walk whose arm and transform are the last walk's records
+// its entries, and an entry whose weight and entering point hold the bits
+// recorded takes the recorded result, as _ApplyMatrixSparseWalk does: the
+// same bits either way.
 void
 RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
-                           size_t kEnd, RrVec3f *data, size_t offset = 0)
+                           size_t kEnd, RrVec3f *data, size_t offset = 0,
+                           RigExecSparseWalkMemo<RrVec3f> *memo = nullptr)
 {
     const RrGeoWeightPacket &w = p.weights;
+    using Mode = RigExecSparseWalkMode;
+    Mode mode = Mode::Compute;
+    if (memo) {
+        // The arm, then the transform's sixteen doubles.
+        static_assert(sizeof(RrMat4d) == 16 * sizeof(double),
+                      "the transform keys by its sixteen doubles");
+        unsigned char params[1 + sizeof(RrMat4d)];
+        params[0] = p.radialWeight ? 1 : 0;
+        std::memcpy(params + 1, &p.transform, sizeof(RrMat4d));
+        mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
+                                      kEnd - kBegin);
+    }
+    // Whether the memo answers for entry k's point; if not and the walk
+    // records, its inputs are noted for the result `keep` stores.
+    const auto reuse = [&](size_t k, RrVec3f *point) {
+        if (mode == Mode::Compute) {
+            return false;
+        }
+        const size_t j = k - kBegin;
+        if (mode == Mode::Reuse &&
+            RigExecSparseWalkHolds(*memo, j, w.Indices()[k], w.Values()[k],
+                                   *point)) {
+            *point = memo->out[j];
+            ++memo->reused;
+            return true;
+        }
+        RigExecSparseWalkNote(memo, j, w.Indices()[k], w.Values()[k], *point);
+        return false;
+    };
+    const auto keep = [&](size_t k, const RrVec3f &point) {
+        if (mode != Mode::Compute) {
+            memo->out[k - kBegin] = point;
+        }
+        if (memo) {
+            ++memo->computed;
+        }
+    };
     if (p.radialWeight) {
         // The sparse walk takes the same arc the dense kernel does; a
         // painted cluster falloff is almost always sparse, so this is
@@ -1105,6 +1150,10 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
         bool haveDecomposition=false;
         RrMat4d partial(1.0);
         for (size_t k = kBegin; k < kEnd; ++k) {
+            RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
+            if (reuse(k, &point)) {
+                continue;
+            }
             const double value = w.Values()[k];
             if (value != cachedWeight) {
                 const double clamped=RrClamp(value,0.0,1.0);
@@ -1119,16 +1168,20 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
                 }
                 cachedWeight = value;
             }
-            RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
             point = RrGeoToVec3f(
                 partial.TransformAffine(RrGeoToVec3d(point)));
+            keep(k, point);
         }
         return;
     }
     for (size_t k = kBegin; k < kEnd; ++k) {
         RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
+        if (reuse(k, &point)) {
+            continue;
+        }
         point = RrGeoToVec3f(RrGeoApplyWeightedMatrix(
             RrGeoToVec3d(point), p.transform, w.Values()[k]));
+        keep(k, point);
     }
 }
 
@@ -3647,12 +3700,15 @@ RrGeoPrepareRevisionRanges(
 // blends one below full strength, else null. \p untouched, when given,
 // receives whether the result is \p in itself, and then \p out is not
 // written. Reads only \p prepared and the packet, so groups are independent.
+// \p walk, when given, is the group's own memo, which only this call writes:
+// a sparse Matrix walk reuses through it (RrGeoApplyMatrixSparseWalk).
 bool
 RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
                       const RrGeoRevisionRangeInputs &prepared,
                       const RrVec3f *in, RrVec3f *out, size_t count,
                       size_t begin, size_t end, const float *separateEnvelope,
-                      bool useSimd, bool *untouched = nullptr)
+                      bool useSimd, bool *untouched = nullptr,
+                      RigExecSparseWalkMemo<RrVec3f> *walk = nullptr)
 {
     if (untouched) {
         *untouched = false;
@@ -3702,7 +3758,7 @@ RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
                 return passThrough();
             }
             seed();
-            RrGeoApplyMatrixSparseWalk(p, kBegin, kEnd, out, begin);
+            RrGeoApplyMatrixSparseWalk(p, kBegin, kEnd, out, begin, walk);
             return true;
         }
         if (prepared.matrixWeights.size() != count) {
@@ -8061,6 +8117,9 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
                   size_t g, bool useSimd, std::string *error)
 {
     RigExecGroupState<RrVec3f> &state = rev->groups[g];
+    // This run's walk counts: zero unless the sparse walk below runs.
+    state.walk.computed = 0;
+    state.walk.reused = 0;
     if (rev->rangeSetAside) {
         // A cycle set the revision aside: the base, as every reader past it
         // resolves.
@@ -8117,7 +8176,8 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
             ok = RrGeoRunRevisionGroup(rev->op, rev->parameters,
                                        rev->rangeInputs, entering.data,
                                        buffer.data(), count, begin, end,
-                                       envelope, useSimd, &untouched);
+                                       envelope, useSimd, &untouched,
+                                       &state.walk);
             if (ok && !untouched) {
                 RigExecPublishOwnGroup(&state, k);
                 state.ok = true;

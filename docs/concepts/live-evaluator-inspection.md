@@ -48,6 +48,19 @@ Detached frame warming is not captured. A polling UI may skip intermediate runs
 and must describe its trace as the last observed generation, not a complete
 record of every frame or of end-to-end UI latency.
 
+A vertex-chunk operation in the trace ran its body, which is not the same as
+deforming points. A range chain versions its points per vertex group, a
+contiguous index range, so every mover that writes a group republishes it when
+any point of it moved upstream, including points the mover does not weight. A
+sparse matrix mover then copies the entering group and keeps each weighted
+point's previous result while that point, its weight and the mover's transform
+hold the same bits. It starts keeping results once its transform has held for
+one run, so a mover that moves on every frame pays nothing for it. Each group's
+`walk` in `pointBlocks.h` records how many weighted entries the last run
+computed and how many it reused; read it on the owner thread after a run. `testRigExecGroupForwarding` checks this on a gated
+chain through the evaluator, a frame-cache worker and the runtime, and on the
+biped, where an arm edit reaches the face clusters this way.
+
 Verification: `testRigExecLiveDebug_serial` and `_parallel` exercise active-session
 routing, incremental snapshots, timestamps and phases, recording shutdown,
 unchanged source layers, and evaluation/profiler counters.

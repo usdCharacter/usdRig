@@ -461,7 +461,7 @@ void BuildSpaceLeafIndex(RigExecBakedProgramImpl *program)
 {
     auto &B=*program; const auto &state=B.opAdapter;
     B.spaceLeafIndex.reset(); B.spaceLeafRekey.clear(); B.spaceLeafKeys=0;
-    const size_t count=B.providerProgram.sampled.size();
+    const size_t count=B.GetProviderProgram().sampled.size();
     if(!count || B.providerLeaves.values.size()!=count || B.providerLeafBlocked.size()!=count) return;
     auto index=std::make_shared<RigExecBakedSpaceLeafIndex>();
     size_t found=0;
@@ -478,7 +478,7 @@ void BuildSpaceLeafIndex(RigExecBakedProgramImpl *program)
     if(found!=count) return;
     index->headSlot.assign(count,-1); index->numberBegin.assign(count+1,0);
     for(size_t k=0;k<count;++k) {
-        const SdfPath &path=B.providerProgram.sampled[k].attribute;
+        const SdfPath &path=B.GetProviderProgram().sampled[k].attribute;
         index->byPath.emplace_back(path,uint32_t(k));
         const auto head=B.headOverrideSlots.find(path);
         if(head!=B.headOverrideSlots.end()) {

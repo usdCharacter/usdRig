@@ -363,9 +363,9 @@ RigExecConstantRegionsForPaths(const RigExecBakedProgram &program,
 }
 
 bool
-RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
+RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
                                 const RigExecBakedProgram &live,
-                                std::shared_ptr<const RigExecFrozenProgram> *out,
+                                std::shared_ptr<const RigExecFrozenAvarPatch> *out,
                                 std::string *error)
 {
     const auto fail = [&error](const std::string &why) {
@@ -392,39 +392,52 @@ RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
         S.avarConstants.size() != L.avarConstants.size()) {
         return fail("avar region changed shape: re-freeze, do not patch");
     }
+    if (S.avars.size() != L.avars.size()) return fail("avar table changed shape");
+    auto patch = std::make_shared<RigExecFrozenAvarPatch>();
+    patch->basis = &base;
+    for (size_t i = 0; i < L.avarConstantBindings.size(); ++i) {
+        const auto &binding = L.avarConstantBindings[i];
+        if (binding.slot >= L.avars.size() || binding.slot != S.avarConstantBindings[i].slot)
+            return fail("avar slot changed: re-freeze, do not patch");
+        patch->avars.push_back({binding.input.constant, L.avars[binding.slot],
+                                binding.input.varying});
+    }
+    patch->constants = L.avarConstants;
+    patch->promoted = L.promotedAvars;
+    patch->varyingInputs = L.varyingInputs;
+    patch->editSerial = L.editSerial;
+    patch->valueEditSerial = L.valueEditSerial;
+    patch->programStamp = L.programStamp;
+    *out = std::move(patch);
+    return true;
+}
+
+bool
+RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
+    const RigExecFrozenAvarPatch &patch,
+    std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error)
+{
+    const auto &S = base.program;
+    if (!out || patch.basis != &base ||
+        patch.avars.size() != S.avarConstantBindings.size() ||
+        patch.constants.size() != S.avarConstants.size()) {
+        if (error) *error = "captured avar patch does not match frozen snapshot";
+        return false;
+    }
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
-    // Settled after the patch below; the copy's lanes inherit that verdict.
     _CloneImpl(S, &snapshot->program, _CloneVerdict::Defer);
     RigExecBakedProgramImpl &P = snapshot->program;
-    // Every field the live patch writes, carried onto the copy. The
-    // consumed table for constant slots comes along too: no run recomputes
-    // those slots (only a drag walks them), so the patch's write into
-    // avars is the value, not history -- without it the copy would warm
-    // the pre-edit constant. lastAvars is untouched on both sides, so the
-    // next run's cones include the changed slots alike. Copied query and
-    // resolved handles are dead by construction; the worker nulls them as
-    // it patches.
-    if (P.avars.size() != L.avars.size()) {
-        return fail("avar table changed shape: re-freeze, do not patch");
+    for (size_t i = 0; i < patch.avars.size(); ++i) {
+        auto &binding = P.avarConstantBindings[i];
+        binding.input.constant = patch.avars[i].constant;
+        binding.input.varying = patch.avars[i].varying;
+        binding.input.query = UsdAttributeQuery();
+        binding.input.resolvedAttr = UsdAttribute();
+        P.avars[binding.slot] = patch.avars[i].value;
     }
-    for (size_t i = 0; i < L.avarConstantBindings.size(); ++i) {
-        P.avarConstantBindings[i].input.constant =
-            L.avarConstantBindings[i].input.constant;
-        P.avarConstantBindings[i].input.varying =
-            L.avarConstantBindings[i].input.varying;
-        P.avarConstantBindings[i].input.query =
-            L.avarConstantBindings[i].input.query;
-        P.avarConstantBindings[i].input.resolvedAttr =
-            L.avarConstantBindings[i].input.resolvedAttr;
-        const size_t slot = L.avarConstantBindings[i].slot;
-        if (slot >= P.avars.size()) {
-            return fail("avar slot out of range: re-freeze, do not patch");
-        }
-        P.avars[slot] = L.avars[slot];
-    }
-    P.promotedAvars = L.promotedAvars;
-    P.varyingInputs = L.varyingInputs;
-    P.avarConstants = L.avarConstants;
+    P.promotedAvars = patch.promoted;
+    P.varyingInputs = patch.varyingInputs;
+    P.avarConstants = patch.constants;
     ++P.avarConstantSerial;
     // And every value edit routed since the snapshot was taken or last
     // patched, added to the copy's own pending ones: the copy's first run
@@ -432,22 +445,22 @@ RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
     // program's pending flags, because a live run consumes those -- an edit
     // the live program has already answered is one the snapshot's history
     // has still never seen.
-    if (L.valueEditSerial != S.valueEditSerial) {
-        P.edited.resize(std::max(P.edited.size(), L.editSerial.size()), 0);
-        for (size_t i = 0; i < L.editSerial.size(); ++i) {
-            if (L.editSerial[i] > S.valueEditSerial) {
+    if (patch.valueEditSerial != S.valueEditSerial) {
+        P.edited.resize(std::max(P.edited.size(), patch.editSerial.size()), 0);
+        for (size_t i = 0; i < patch.editSerial.size(); ++i) {
+            if (patch.editSerial[i] > S.valueEditSerial) {
                 P.edited[i] = 1;
                 P.anyEdited = true;
             }
         }
-        P.valueEditSerial = L.valueEditSerial;
-        P.editSerial = L.editSerial;
+        P.valueEditSerial = patch.valueEditSerial;
+        P.editSerial = patch.editSerial;
     }
     // And a stamp bumped since: a notice the index could not place, which
     // the live program answered by running whole once. The copy owes the
     // same run -- its stamp moves past the one its last run recorded.
-    if (L.programStamp != S.programStamp) {
-        P.programStamp = L.programStamp;
+    if (patch.programStamp != S.programStamp) {
+        P.programStamp = patch.programStamp;
     }
     // The epoch's side-tables, unchanged by a constant patch.
     snapshot->jointSolverBinding = base.jointSolverBinding;
@@ -469,6 +482,16 @@ RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
     _SettleCloneVerdict(&P);
     *out = std::move(snapshot);
     return true;
+}
+
+bool
+RigExecPatchFrozenAvarConstants(const RigExecFrozenProgram &base,
+    const RigExecBakedProgram &live,
+    std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error)
+{
+    std::shared_ptr<const RigExecFrozenAvarPatch> patch;
+    return RigExecCaptureFrozenAvarPatch(base, live, &patch, error) &&
+        RigExecApplyFrozenAvarPatch(base, *patch, out, error);
 }
 
 } // namespace rigExec

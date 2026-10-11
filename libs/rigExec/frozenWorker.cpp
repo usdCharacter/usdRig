@@ -100,7 +100,8 @@ bool
 _PatchInputs(RigExecBakedProgramImpl &B,
              const RigExecFrozenProgram &snapshot,
              const std::map<SdfPath, size_t> &index,
-             const RigExecFrameInputs &inputs)
+             const RigExecFrameInputs &inputs,
+             const RigExecFrozenAvarPatch *edits)
 {
     size_t walked = 0;
     bool ok = true;
@@ -114,7 +115,16 @@ _PatchInputs(RigExecBakedProgramImpl &B,
             return;
         }
         const SdfPath &key = snapshot.inputHeadPaths[walked];
-        if (!_SampleHolds(snapshot.inputConstants[walked], &input.constant)) {
+        bool held = false;
+        using T = std::decay_t<decltype(input.constant)>;
+        if constexpr (std::is_same_v<T, double>) {
+            if (edits && walked >= B.avarBindings.size() &&
+                walked - B.avarBindings.size() < edits->avars.size()) {
+                input.constant = edits->avars[walked - B.avarBindings.size()].constant;
+                held = true;
+            }
+        }
+        if (!held && !_SampleHolds(snapshot.inputConstants[walked], &input.constant)) {
             ok = false;
             return;
         }
@@ -705,6 +715,46 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
     } release{context.workspace};
     _FrozenWorker &worker = *lane;
     RigExecBakedProgramImpl &B = worker.B;
+    const auto *edits = context.avarPatch;
+    const auto &origin = snapshot.program;
+    if (edits && (edits->basis != &snapshot ||
+        edits->avars.size() != B.avarConstantBindings.size() ||
+        edits->constants.size() != B.avarConstants.size())) return false;
+    // Place captured source facts in the existing arena. Operations and
+    // their retained outputs remain owned by this lane and the shared graph.
+    if (edits || worker.hadAvarPatch) {
+        if (worker.avarPatchValues.empty()) {
+            for (const auto &binding : origin.avarConstantBindings)
+                worker.avarPatchValues.push_back(origin.avars[binding.slot]);
+        }
+        for (size_t i = 0; i < B.avarConstantBindings.size(); ++i) {
+            auto &binding = B.avarConstantBindings[i];
+            const bool varying = edits ? edits->avars[i].varying
+                                       : origin.avarConstantBindings[i].input.varying;
+            const bool modeChanged = binding.input.varying != varying;
+            if (modeChanged) ++B.avarConstantSerial;
+            binding.input.varying = varying;
+            const double value = edits ? edits->avars[i].value : origin.avars[binding.slot];
+            if (modeChanged || std::memcmp(&value, &worker.avarPatchValues[i], sizeof(value)))
+                B.avars[binding.slot] = value;
+            worker.avarPatchValues[i] = value;
+        }
+        B.avarConstants = edits ? edits->constants : origin.avarConstants;
+        B.promotedAvars = edits ? edits->promoted : origin.promotedAvars;
+        B.varyingInputs = edits ? edits->varyingInputs : origin.varyingInputs;
+        const auto &serials = edits ? edits->editSerial : origin.editSerial;
+        const size_t count = std::max(serials.size(), B.editSerial.size());
+        B.edited.resize(std::max(count, B.edited.size()), 0);
+        for (size_t i = 0; i < count; ++i) {
+            const auto before = i < B.editSerial.size() ? B.editSerial[i] : 0;
+            const auto after = i < serials.size() ? serials[i] : 0;
+            if (before != after) { B.edited[i] = 1; B.anyEdited = true; }
+        }
+        B.editSerial = serials;
+        B.valueEditSerial = edits ? edits->valueEditSerial : origin.valueEditSerial;
+        B.programStamp = edits ? edits->programStamp : origin.programStamp;
+        worker.hadAvarPatch = edits != nullptr;
+    }
     B.resolvedInputs = &worker.resolved;
     B.profiler = &worker.profiler;
     B.interactiveOverrides = &inputs.overrides;
@@ -741,7 +791,7 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
     for (size_t i = 0; i < inputs.values.size(); ++i) {
         index.emplace(inputs.values[i].path, i);
     }
-    if (!_PatchInputs(B, snapshot, index, inputs)) {
+    if (!_PatchInputs(B, snapshot, index, inputs, edits)) {
         return false;
     }
 
