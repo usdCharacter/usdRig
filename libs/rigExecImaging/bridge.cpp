@@ -909,6 +909,8 @@ RigExecImagingBridge::RigExecImagingBridge(
     // No overlay is selected yet, so nothing consumes the per-point influence
     // field. SetWeightOverlay turns it back on the moment one is.
     _evaluator->SetPublishWeightFields(false);
+    // The results scene index draws a deform program in shader mode.
+    _evaluator->SetAcceptsGpuDeformPublications(true);
     // Viewport profiling: the evaluator's own phases plus the imaging
     // layer's (see EvaluateAndPublishResult and the registry), dumped with
     // RigExecImaging_WriteProfileSummary. Off by default; recording changes

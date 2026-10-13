@@ -522,6 +522,18 @@ public:
     void SetPublishWeightFields(bool publish);
     bool GetPublishWeightFields() const { return _publishWeightFields; }
 
+    /// Whether this evaluator's consumer draws a deform program in place of
+    /// points (RigExecGpuDeformPublication, the imaging bridge). Without it,
+    /// RIGEXEC_GPU_DEFORM=shader runs the program and reads the points
+    /// back, so a consumer that reads `points` always finds points. Read
+    /// when the program is built: set it before Compile.
+    void SetAcceptsGpuDeformPublications(bool accepts) {
+        _acceptsGpuDeformPublications = accepts;
+    }
+    bool GetAcceptsGpuDeformPublications() const {
+        return _acceptsGpuDeformPublications;
+    }
+
     /// The rig prim this evaluator was constructed with, for tools that
     /// report on the bake (a .rigexec file's rig field names it).
     const SdfPath &GetRigPath() const { return _rigPath; }
@@ -1581,6 +1593,7 @@ private:
     std::set<SdfPath> _nativeVolumeProviders;
 
     bool _publishWeightFields = true;
+    bool _acceptsGpuDeformPublications = false;
     /// The compiled epoch flattened into an exec-free op list, built at the
     /// end of Compile when the mode asks for one.
     ///

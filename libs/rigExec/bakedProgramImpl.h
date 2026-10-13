@@ -3215,6 +3215,10 @@ struct RigExecBakedProgramImpl {
         bool gpuOwned = false;
         std::vector<RigExecBlendChannel> gpuChannels;
         bool gpuApplies = false;
+        /// A step that feeds the program (its packet, its influence table or
+        /// its fuse) ran this run: the boundary lowers the chain. Each step
+        /// writes only its own revision's flag.
+        bool gpuTouched = false;
         /// This revision's own wire-basis memo: only its step runs its
         /// kernel (a range-pipelined revision's RevisionStatic, which its
         /// range steps follow), so nothing else touches it. A clone shares
@@ -3641,6 +3645,9 @@ struct RigExecBakedProgramImpl {
         std::vector<GfVec3f> gpuScratch;
         /// The Derived steps that read this chain, in program order.
         std::vector<int> gpuDerivedSteps;
+        /// The ops whose values the boundary writes outside the graph (the
+        /// chain's ChainStatus and its Derived steps), re-keyed there.
+        std::vector<uint32_t> gpuKeyOps;
         /// Shader mode: what ChainStatus publishes in place of the points,
         /// the version its frame carries, and the extent sample with the
         /// layout and base it was chosen for.

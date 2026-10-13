@@ -94,9 +94,18 @@ struct RigExecGpuDeformPublication {
     /// Moves whenever the frame's floats do.
     uint64_t frameVersion = 0;
 
+    /// Equal programs over equal points: the versions are per program (a
+    /// frozen clone counts its own), so they only short-cut the compare.
     bool operator==(const RigExecGpuDeformPublication &o) const {
-        return layout == o.layout && baseVersion == o.baseVersion &&
-               frameVersion == o.frameVersion;
+        const bool sameLayout =
+            layout == o.layout ||
+            (layout && o.layout && layout->pointCount == o.layout->pointCount &&
+             layout->frameFloats == o.layout->frameFloats &&
+             layout->ops == o.layout->ops && layout->staticF == o.layout->staticF &&
+             layout->staticI == o.layout->staticI);
+        const bool sameFrame =
+            frame == o.frame || (frame && o.frame && *frame == *o.frame);
+        return sameLayout && sameFrame && base == o.base;
     }
     bool operator!=(const RigExecGpuDeformPublication &o) const {
         return !(*this == o);

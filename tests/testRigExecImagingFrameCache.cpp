@@ -249,6 +249,18 @@ _CaptureGeometry(const RigExecImagingSnapshotConstPtr &snapshot)
     for (const auto &[path, prim] : snapshot->prims) {
         if (prim.hasPoints) {
             out.points[path] = prim.points;
+        } else if (prim.gpuDeform && prim.gpuDeform->layout &&
+                   prim.gpuDeform->frame) {
+            // A deform program in place of points (RIGEXEC_GPU_DEFORM=
+            // shader): the points the CPU judge computes from it, so a
+            // served frame compares with live as the points would.
+            const RigExecGpuDeformFrame frame{prim.gpuDeform->layout,
+                                              *prim.gpuDeform->frame};
+            VtVec3fArray points = prim.gpuDeform->base;
+            RigExecRunGpuDeformProgram(
+                frame, reinterpret_cast<float *>(points.data()), 0,
+                points.size());
+            out.points[path] = points;
         }
         if (prim.hasNormals) {
             out.normals[path] = prim.normals;

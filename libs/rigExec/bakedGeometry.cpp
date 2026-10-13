@@ -4147,6 +4147,33 @@ ResolveShaderChains(RigExecBakedProgramImpl &B)
     }
 }
 
+// The graph's keys for what the boundary wrote -- a chain's points or
+// program and its derived outputs -- published from their current contents,
+// so a snapshot of the program finds every key standing. This run's changes
+// have propagated already: the flags stay clear.
+void
+RekeyGpuChains(RigExecBakedProgramImpl &B,
+               const std::vector<RigExecBakedProgramImpl::GeomChain *> &chains)
+{
+    const auto sample = [&B](uint32_t d, uint32_t slot, std::string *key) {
+        RigExecBakedOpValueKey(B, RigExecBakedSlotDomain(d), slot, key);
+    };
+    for (const RigExecBakedProgramImpl::GeomChain *chain : chains) {
+        for (const uint32_t c : chain->gpuKeyOps) {
+            if (c >= B.opGraph.ops.size()) continue;
+            for (const RigExecValueId id : B.opGraph.ops[c].descriptor.writes) {
+                if (size_t(id) >= B.opAdapter.values.size()) continue;
+                RigExecOpValueState &value = B.opAdapter.values[size_t(id)];
+                if (!value.initialized) continue;
+                if (!RigExecBakedPublishSmallValue(B, &value)) {
+                    RigExecOpPublishValue(&value, sample);
+                }
+                value.changed = 0;
+            }
+        }
+    }
+}
+
 // Which chain a slot of a point-carrying domain belongs to, or -1.
 int
 GpuSlotChain(const RigExecBakedProgramImpl &B, RigExecBakedSlotDomain domain,
@@ -4199,6 +4226,12 @@ RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
     B.gpuDeformMode = RigExecGpuDeformModeFromEnv();
+    // Only a consumer that draws the program is handed one; any other
+    // reads points, so its chains read the points back.
+    if (B.gpuDeformMode == RigExecGpuDeformMode::Shader &&
+        !(B.evaluator && B.evaluator->GetAcceptsGpuDeformPublications())) {
+        B.gpuDeformMode = RigExecGpuDeformMode::Readback;
+    }
     for (auto &chain : B.chains) {
         chain.gpu = false;
         chain.gpuDerivedSteps.clear();
@@ -4268,7 +4301,10 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
 {
     RigExecBakedProgramImpl &B = *program;
     if (B.gpuDeformMode != RigExecGpuDeformMode::Off && !B.gpuDerivedIndexed) {
-        for (auto &chain : B.chains) chain.gpuDerivedSteps.clear();
+        for (auto &chain : B.chains) {
+            chain.gpuDerivedSteps.clear();
+            chain.gpuKeyOps.clear();
+        }
         for (size_t i = 0; i < B.steps.size(); ++i) {
             const RigExecBakedStep &step = B.steps[i];
             if (step.kind != RigExecBakedStepKind::Derived) continue;
@@ -4276,10 +4312,43 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
             if (chain >= 0 && B.chains[size_t(chain)].gpu)
                 B.chains[size_t(chain)].gpuDerivedSteps.push_back(int(i));
         }
+        for (uint32_t c = 0; c < B.opGraph.ops.size(); ++c) {
+            const RigExecBakedStep &step = B.steps[B.opGraph.ops[c].originalIndex];
+            if (step.kind != RigExecBakedStepKind::ChainStatus &&
+                step.kind != RigExecBakedStepKind::Derived) continue;
+            const int chain = GpuStepChain(B, step);
+            if (chain >= 0 && B.chains[size_t(chain)].gpu)
+                B.chains[size_t(chain)].gpuKeyOps.push_back(c);
+        }
         B.gpuDerivedIndexed = true;
+    }
+    // The chains a fuse touched this run, lowered from their revisions'
+    // persisted packets here rather than by ChainStatus: whether a run
+    // reaches ChainStatus depends on the history its skips branch from, a
+    // frozen clone's included. Side by side, except on a frozen worker.
+    std::vector<RigExecBakedProgramImpl::GeomChain *> lower;
+    for (auto &chain : B.chains) {
+        if (!chain.gpu) continue;
+        for (auto &revision : chain.revisions) {
+            chain.gpuPending = chain.gpuPending || revision.gpuTouched;
+            revision.gpuTouched = false;
+        }
+        if (chain.gpuPending && chain.haveBase) {
+            lower.push_back(&chain);
+        }
+    }
+    const auto lowerRange = [&B, &lower](size_t begin, size_t end) {
+        for (size_t k = begin; k < end; ++k) LowerGpuChain(B, lower[k]);
+    };
+    if (lower.size() > 1 && RigExecParallelEvaluationEnabled() &&
+        !RigExecFrozenSerialActive()) {
+        WorkParallelForN(lower.size(), lowerRange, 1);
+    } else {
+        lowerRange(0, lower.size());
     }
     if (B.gpuDeformMode == RigExecGpuDeformMode::Shader) {
         ResolveShaderChains(B);
+        RekeyGpuChains(B, lower);
         return;
     }
     if (B.gpuDeformMode != RigExecGpuDeformMode::Readback) {
@@ -4372,6 +4441,7 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
         runDerived(0, derived.size());
     }
     B.gpuBoundary = false;
+    RekeyGpuChains(B, lower);
     static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
     if (stats) {
         const auto t2 = std::chrono::steady_clock::now();
@@ -4522,7 +4592,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         }
         step->counters.chainsBuilt = 1;
         if (chain.gpu) {
-            LowerGpuChain(B, &chain);
+            chain.gpuPending = true;  // lowered at the boundary
             return;
         }
         const size_t last = chain.revisions.size();
@@ -4611,6 +4681,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     switch (step->kind) {
     case RigExecBakedStepKind::InfluenceFold: {
         revision.influencesChanged = FoldInfluences(B, &revision);
+        if (revision.gpuOwned) revision.gpuTouched = true;
         // The finite/affine check the dynamic path's assembler makes over the
         // same matrices. It is the fold's because the packet no longer
         // carries them, and the fuse ANDs it in where the assembler's answer
@@ -4788,6 +4859,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             }
         }
         if (revision.gpuOwned) {
+            revision.gpuTouched = true;
             // A GPU chain's revision moves no points here: only the
             // acceptance its fuse reads, made as the CPU path makes it.
             const size_t count = chain.lastBase.size();
@@ -5053,8 +5125,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             if (!revision.gpuApplies && revision.status.AllowsApply()) {
                 revision.resultStatus = _tokens->moverFailed;
             }
-            // ChainStatus lowers whenever any fuse of its chain ran.
+            // The boundary lowers the chain whenever any of its fuses ran.
             ++revision.doneVersion;
+            revision.gpuTouched = true;
             revision.lastStatus = revision.status;
             revision.ran = true;
             return;

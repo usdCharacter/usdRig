@@ -305,6 +305,10 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.timedClusters = src.timedClusters;
     D.jointMatrixPublished = src.jointMatrixPublished;
     D.chains = src.chains;
+    // The chains' GPU ownership travels with them, so the mode does too;
+    // the clone indexes its own derived steps at its first boundary.
+    D.gpuDeformMode = src.gpuDeformMode;
+    D.gpuDerivedIndexed = false;
     // Per-consumer overlays borrow the live source layer only during a body.
     // A frozen clone rebases them on its own source layer when consumed.
     // Published and computed vertex groups stay shared with the source; the
