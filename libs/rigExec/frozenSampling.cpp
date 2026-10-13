@@ -72,6 +72,8 @@ struct RigExecFrozenSamplerMemo {
     /// Per leaf of the double and GfVec3d pools: the `samples` entry of the
     /// source-backed binding numbered there (its query read), or kPerFrame.
     std::vector<int32_t> sourceDouble, sourceVec3d;
+    /// Each source leaf's pool `editSerial` when its entry was read.
+    std::vector<uint64_t> sourceDoubleSerial, sourceVec3dSerial;
     /// Per chain, and per chain and derived target: the base query's
     /// entry, or kPerFrame.
     std::vector<int32_t> chainBase;
@@ -342,35 +344,129 @@ _HeadLeafConstants(const RigExecRigEvaluator &evaluator,
     const uint64_t serial = evaluator.GetStageEditSerial();
     const std::shared_ptr<const RigExecHeadLeafConstants> memo =
         B.headLeafConstants;
-    if (memo && B.headLeafConstantsStamp == B.programStamp &&
-        B.headLeafConstantsSerial == serial &&
-        B.headLeafConstantsDefault == time.IsDefault()) {
+    const bool sameState = memo &&
+                           B.headLeafConstantsStamp == B.programStamp &&
+                           B.headLeafConstantsDefault == time.IsDefault();
+    if (sameState && B.headLeafConstantsSerial == serial) {
         return memo;
     }
     B.headLeafConstantsStamp = B.programStamp;
     B.headLeafConstantsSerial = serial;
     B.headLeafConstantsDefault = time.IsDefault();
-    auto table = std::make_shared<RigExecHeadLeafConstants>();
-    RigExecFrameInputs asSamples;
-    uint64_t digest = 1469598103934665603ull;
+    std::vector<const RigExecBakedHeadLeaf *> leaves;
+    std::vector<uint64_t> leafSerials;
     RigExecForEachHeadLeaf(B, [&](const RigExecBakedHeadLeaf &leaf) {
+        leaves.push_back(&leaf);
+        leafSerials.push_back(leaf.editSerial);
+    });
+    // One entry, read off the stage: whether it varies, its value when it
+    // does not, and what the table's digests fold for it.
+    RigExecFrameInputs one;
+    const auto readEntry = [&](const RigExecBakedHeadLeaf &leaf,
+                               RigExecHeadLeafConstants *table, size_t j) {
         const bool varies = RigExecBakedHeadLeafVaries(leaf);
         VtValue value;
+        uint64_t entryDigest = 0;
+        char hashable = 1;
         if (!varies) {
             value = RigExecBakedReadHeadLeaf(leaf, time);
+            one.values.clear();
+            one.Add(leaf.frozenKey, value, !value.IsEmpty());
+            entryDigest = RigExecSampleDigest(one.values.back());
+            hashable = RigExecControlStateDigestible(one) ? 1 : 0;
         }
-        table->keys.push_back(leaf.frozenKey);
-        table->varying.push_back(varies ? 1 : 0);
-        digest = _MixWord(digest, varies ? 1u : 0u);
-        if (!varies) {
-            asSamples.Add(leaf.frozenKey, value, !value.IsEmpty());
-            digest = _MixWord(digest,
-                              RigExecSampleDigest(asSamples.values.back()));
+        table->varying[j] = varies ? 1 : 0;
+        table->values[j] = std::move(value);
+        table->entryDigests[j] = entryDigest;
+        table->entryHashable[j] = hashable;
+    };
+    const auto fold = [](RigExecHeadLeafConstants *table) {
+        uint64_t digest = 1469598103934665603ull;
+        bool digestible = true;
+        for (size_t j = 0; j < table->keys.size(); ++j) {
+            const bool varies = table->varying[j] != 0;
+            digest = _MixWord(digest, varies ? 1u : 0u);
+            if (!varies) {
+                digest = _MixWord(digest, table->entryDigests[j]);
+                digestible = digestible && table->entryHashable[j];
+            }
         }
-        table->values.push_back(std::move(value));
-    });
-    table->digest = _MixWord(digest, uint64_t(table->keys.size()));
-    table->digestible = RigExecControlStateDigestible(asSamples);
+        table->digest = _MixWord(digest, uint64_t(table->keys.size()));
+        table->digestible = digestible;
+    };
+    // Every entry read again, for RIGEXEC_VERIFY_FROZEN_STATIC to hold an
+    // incremental answer against.
+    const auto verify = [&](const RigExecHeadLeafConstants &answer) {
+        if (!B.verifyFrozenStatic) {
+            return;
+        }
+        RigExecHeadLeafConstants full;
+        const size_t n = leaves.size();
+        full.keys.resize(n);
+        full.varying.resize(n);
+        full.values.resize(n);
+        full.entryDigests.resize(n);
+        full.entryHashable.resize(n);
+        for (size_t j = 0; j < n; ++j) {
+            readEntry(*leaves[j], &full, j);
+        }
+        fold(&full);
+        bool same = full.varying == answer.varying &&
+                    full.digest == answer.digest &&
+                    full.digestible == answer.digestible;
+        for (size_t j = 0; same && j < n; ++j) {
+            same = RigExecBakedHeadValueSame(full.values[j],
+                                             answer.values[j]);
+        }
+        TF_VERIFY(same, "the incremental head leaf constants differ from "
+                        "a full read");
+    };
+    // The same program at the same Default-ness, past routed edits only:
+    // every leaf an edit reached was marked (the live sample's own rule),
+    // so only the marked ones are read again.
+    if (sameState && memo->keys.size() == leaves.size() &&
+        memo->entryDigests.size() == leaves.size() &&
+        B.headLeafConstantsLeafSerials.size() == leaves.size()) {
+        std::vector<size_t> moved;
+        for (size_t j = 0; j < leaves.size(); ++j) {
+            if (leafSerials[j] != B.headLeafConstantsLeafSerials[j]) {
+                moved.push_back(j);
+            }
+        }
+        B.headLeafConstantsLeafSerials = std::move(leafSerials);
+        if (moved.empty()) {
+            verify(*memo);
+            return memo;
+        }
+        auto table = std::make_shared<RigExecHeadLeafConstants>(*memo);
+        bool same = true;
+        for (const size_t j : moved) {
+            readEntry(*leaves[j], table.get(), j);
+            same = same && table->varying[j] == memo->varying[j] &&
+                   RigExecBakedHeadValueSame(memo->values[j],
+                                             table->values[j]);
+        }
+        if (same) {
+            verify(*memo);
+            return memo;
+        }
+        fold(table.get());
+        verify(*table);
+        B.headLeafConstants = table;
+        return table;
+    }
+    B.headLeafConstantsLeafSerials = std::move(leafSerials);
+    auto table = std::make_shared<RigExecHeadLeafConstants>();
+    const size_t n = leaves.size();
+    table->varying.resize(n);
+    table->values.resize(n);
+    table->entryDigests.resize(n);
+    table->entryHashable.resize(n);
+    for (size_t j = 0; j < n; ++j) {
+        table->keys.push_back(leaves[j]->frozenKey);
+        readEntry(*leaves[j], table.get(), j);
+    }
+    fold(table.get());
     if (memo && memo->keys == table->keys &&
         memo->varying == table->varying &&
         memo->values.size() == table->values.size()) {
@@ -1034,22 +1130,49 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         memo.serial == serial && memo.atDefault == time.IsDefault()) {
         return memo;
     }
-    const bool keepProviders = memo.built && shaped &&
-        memo.stamp == B.programStamp && memo.atDefault == time.IsDefault() &&
+    const bool sameState = memo.built && shaped &&
+        memo.stamp == B.programStamp && memo.atDefault == time.IsDefault();
+    const bool keepProviders = sameState &&
         memo.providerEditSerial.size() == B.providerFrozenKeys.size() &&
         B.providerLeafEditSerial.size() == B.providerFrozenKeys.size();
+    // Past value edits alone, a read whose hops no edited path stands on
+    // reads what it read then: it is kept, and only the rest are read again.
+    std::vector<SdfPath> edited;
+    const bool keepUnedited =
+        sameState && memo.samples &&
+        evaluator.GetValueEditsSince(memo.serial, &edited);
     const auto oldSamples = memo.samples;
     const auto oldProviderEntries = std::move(memo.providerEntries);
     const auto oldProviderSerial = std::move(memo.providerEditSerial);
+    const auto oldOracleEntries = std::move(memo.oracleEntries);
+    const auto oldOracleHops = std::move(memo.oracleHops);
+    const auto oldChainBase = std::move(memo.chainBase);
+    const auto oldDerivedBase = std::move(memo.derivedBase);
+    const auto oldBlend = std::move(memo.blend);
     memo.providerEditSerial = B.providerLeafEditSerial;
     memo.built = true;
     memo.stamp = B.programStamp;
     memo.serial = serial;
     memo.atDefault = time.IsDefault();
-    memo.revisionRows.assign(B.revisionIndex.size(), Memo::Row());
-    memo.derivedRows.assign(B.derivedIndex.size(), Memo::Row());
-    memo.layoutRows.assign(B.revisionIndex.size() + B.derivedIndex.size(),
-                           Memo::Row());
+    if (keepUnedited) {
+        for (auto *rows :
+             {&memo.revisionRows, &memo.derivedRows, &memo.layoutRows}) {
+            for (Memo::Row &row : *rows) {
+                for (size_t k = 0; k < row.state.size(); ++k) {
+                    if (row.state[k] != Memo::kUnknown &&
+                        _HopsTouched(row.hops[k], edited)) {
+                        row.state[k] = Memo::kUnknown;
+                        row.values[k] = VtValue();
+                    }
+                }
+            }
+        }
+    } else {
+        memo.revisionRows.assign(B.revisionIndex.size(), Memo::Row());
+        memo.derivedRows.assign(B.derivedIndex.size(), Memo::Row());
+        memo.layoutRows.assign(B.revisionIndex.size() + B.derivedIndex.size(),
+                               Memo::Row());
+    }
     auto table = std::make_shared<RigExecFrozenStaticSamples>();
     const auto add = [&table](RigExecSampledInput sample) {
         const int32_t entry = int32_t(table->samples.size());
@@ -1059,6 +1182,20 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         table->samples.push_back(std::move(sample));
         return entry;
     };
+    // The old table's \p entry carried into the new one, digests and all;
+    // kPerFrame and kNoSample carry as they are.
+    const auto keep = [&table, &oldSamples](int32_t entry) {
+        if (entry < 0) {
+            return entry;
+        }
+        const int32_t kept = int32_t(table->samples.size());
+        auto sample = oldSamples->samples[size_t(entry)];
+        sample.staticSample = kept;
+        table->samples.push_back(std::move(sample));
+        table->level1.push_back(oldSamples->level1[size_t(entry)]);
+        table->digestible.push_back(oldSamples->digestible[size_t(entry)]);
+        return kept;
+    };
     RigExecFrameInputs read;
     std::vector<SdfPath> hops;
     const RigExecBakedPathLeaves &providers = B.providerLeaves;
@@ -1066,17 +1203,7 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     for (size_t k = 0; k < B.providerFrozenKeys.size(); ++k) {
         if (keepProviders && oldSamples &&
             oldProviderSerial[k] == B.providerLeafEditSerial[k]) {
-            const int32_t entry = oldProviderEntries[k];
-            if (entry < 0) {
-                memo.providerEntries[k] = entry;
-            } else {
-                memo.providerEntries[k] = int32_t(table->samples.size());
-                auto sample = oldSamples->samples[size_t(entry)];
-                sample.staticSample = memo.providerEntries[k];
-                table->samples.push_back(std::move(sample));
-                table->level1.push_back(oldSamples->level1[size_t(entry)]);
-                table->digestible.push_back(oldSamples->digestible[size_t(entry)]);
-            }
+            memo.providerEntries[k] = keep(oldProviderEntries[k]);
             continue;
         }
         const UsdAttribute &attribute = providers.attributes[k];
@@ -1103,9 +1230,18 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         const size_t n = leaves.decl.keys.size();
         memo.oracleEntries[o].assign(n, Memo::kPerFrame);
         memo.oracleHops[o].assign(n, std::vector<SdfPath>());
+        const bool keepObject = keepUnedited &&
+                                o < oldOracleEntries.size() &&
+                                oldOracleEntries[o].size() == n &&
+                                oldOracleHops[o].size() == n;
         for (size_t k = 0; k < n; ++k) {
             const RigExecRevisionLeafKey &key = leaves.decl.keys[k];
             if (key.path.IsEmpty()) {
+                continue;
+            }
+            if (keepObject && !_HopsTouched(oldOracleHops[o][k], edited)) {
+                memo.oracleEntries[o][k] = keep(oldOracleEntries[o][k]);
+                memo.oracleHops[o][k] = oldOracleHops[o][k];
                 continue;
             }
             bool varying = false;
@@ -1122,23 +1258,60 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         }
     }
     // Source-backed bindings: _SampleBinding's query read, a single-hop
-    // raw read held while the query cannot vary with the time.
-    memo.sourceDouble.assign(B.leaves.Of<double>().value.size(),
-                             Memo::kPerFrame);
-    memo.sourceVec3d.assign(B.leaves.Of<GfVec3d>().value.size(),
-                            Memo::kPerFrame);
+    // raw read held while the query cannot vary with the time. Under the
+    // same program and Default-ness an entry is kept while its leaf has not
+    // been marked since it was read: every edit that reaches the input
+    // marks it (the live sampler's own rule).
+    const size_t nDouble = B.leaves.Of<double>().value.size();
+    const size_t nVec3d = B.leaves.Of<GfVec3d>().value.size();
+    const bool keepSources = keepProviders &&
+        memo.sourceDoubleSerial.size() == nDouble &&
+        memo.sourceVec3dSerial.size() == nVec3d;
+    const auto oldSourceDouble = std::move(memo.sourceDouble);
+    const auto oldSourceVec3d = std::move(memo.sourceVec3d);
+    const auto oldSourceDoubleSerial = std::move(memo.sourceDoubleSerial);
+    const auto oldSourceVec3dSerial = std::move(memo.sourceVec3dSerial);
+    memo.sourceDouble.assign(nDouble, Memo::kPerFrame);
+    memo.sourceVec3d.assign(nVec3d, Memo::kPerFrame);
+    memo.sourceDoubleSerial.assign(nDouble, 0);
+    memo.sourceVec3dSerial.assign(nVec3d, 0);
+    for (size_t k = 0; k < nDouble; ++k) {
+        memo.sourceDoubleSerial[k] =
+            RigExecBakedPoolLeafEditSerial(B.leaves.Of<double>(), k);
+    }
+    for (size_t k = 0; k < nVec3d; ++k) {
+        memo.sourceVec3dSerial[k] =
+            RigExecBakedPoolLeafEditSerial(B.leaves.Of<GfVec3d>(), k);
+    }
     _ForEachPatchableInput(B, [&](const auto &input) {
         using T = std::decay_t<decltype(input.constant)>;
         std::vector<int32_t> *entries = nullptr;
+        const std::vector<int32_t> *oldEntries = nullptr;
+        const std::vector<uint64_t> *oldSerials = nullptr;
+        const std::vector<uint64_t> *serials = nullptr;
         if constexpr (std::is_same_v<T, double>) {
             entries = &memo.sourceDouble;
+            oldEntries = &oldSourceDouble;
+            oldSerials = &oldSourceDoubleSerial;
+            serials = &memo.sourceDoubleSerial;
         } else if constexpr (std::is_same_v<T, GfVec3d>) {
             entries = &memo.sourceVec3d;
+            oldEntries = &oldSourceVec3d;
+            oldSerials = &oldSourceVec3dSerial;
+            serials = &memo.sourceVec3dSerial;
         }
         if (!entries || !input.sourceBacked || input.varying ||
             input.walk >= 0 || input.leaf < 0 ||
-            size_t(input.leaf) >= entries->size() ||
-            !input.query.IsValid() || !input.head.IsValid() ||
+            size_t(input.leaf) >= entries->size()) {
+            return;
+        }
+        const size_t k = size_t(input.leaf);
+        if (keepSources && oldSamples && k < oldEntries->size() &&
+            (*oldEntries)[k] >= 0 && (*oldSerials)[k] == (*serials)[k]) {
+            (*entries)[k] = keep((*oldEntries)[k]);
+            return;
+        }
+        if (!input.query.IsValid() || !input.head.IsValid() ||
             input.query.ValueMightBeTimeVarying()) {
             return;
         }
@@ -1150,9 +1323,18 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
         }
     });
     // Chain and derived bases: the query alone, held while it cannot vary.
+    // The read is raw, so its attribute is its only hop.
     const auto holdQuery = [&](const SdfPath &key,
-                               const UsdAttributeQuery &query) {
-        if (!query.IsValid() || query.ValueMightBeTimeVarying()) {
+                               const UsdAttributeQuery &query,
+                               const int32_t *old) {
+        if (!query.IsValid()) {
+            return Memo::kPerFrame;
+        }
+        if (old && !std::binary_search(edited.begin(), edited.end(),
+                                       query.GetAttribute().GetPath())) {
+            return keep(*old);
+        }
+        if (query.ValueMightBeTimeVarying()) {
             return Memo::kPerFrame;
         }
         read.values.clear();
@@ -1165,8 +1347,14 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     RigExecResolvedInputs none;
     const auto holdResolved = [&](const UsdAttribute &attribute,
                                   Memo::HeldRead *held,
+                                  const Memo::HeldRead *old,
                                   const auto &sample) {
         if (!attribute.IsValid()) {
+            return;
+        }
+        if (old && !_HopsTouched(old->hops, edited)) {
+            held->entry = keep(old->entry);
+            held->hops = old->hops;
             return;
         }
         bool varying = false;
@@ -1183,27 +1371,46 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
     memo.chainBase.assign(B.chains.size(), Memo::kPerFrame);
     memo.derivedBase.assign(B.chains.size(), {});
     memo.blend.assign(B.chains.size(), {});
+    // The held reads of the old memo, where it is kept and shaped alike.
+    const bool keepChains = keepUnedited &&
+                            oldChainBase.size() == B.chains.size() &&
+                            oldDerivedBase.size() == B.chains.size() &&
+                            oldBlend.size() == B.chains.size();
     for (size_t c = 0; c < B.chains.size(); ++c) {
         const RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
-        memo.chainBase[c] = holdQuery(chain.target, chain.baseQuery);
+        memo.chainBase[c] = holdQuery(chain.target, chain.baseQuery,
+                                      keepChains ? &oldChainBase[c] : nullptr);
         memo.derivedBase[c].assign(chain.derived.size(), Memo::kPerFrame);
+        const bool keepDerived =
+            keepChains && oldDerivedBase[c].size() == chain.derived.size();
         for (size_t d = 0; d < chain.derived.size(); ++d) {
-            memo.derivedBase[c][d] = holdQuery(chain.derived[d].target,
-                                               chain.derived[d].baseQuery);
+            memo.derivedBase[c][d] = holdQuery(
+                chain.derived[d].target, chain.derived[d].baseQuery,
+                keepDerived ? &oldDerivedBase[c][d] : nullptr);
         }
         memo.blend[c].assign(chain.revisions.size(), {});
+        const bool keepRevisions =
+            keepChains && oldBlend[c].size() == chain.revisions.size();
         for (size_t r = 0; r < chain.revisions.size(); ++r) {
             const auto &channels = chain.revisions[r].blendChannels;
             std::vector<Memo::HeldChannel> &held = memo.blend[c][r];
             held.assign(channels.size(), Memo::HeldChannel());
+            const bool keepChannels =
+                keepRevisions && oldBlend[c][r].size() == channels.size();
             for (size_t h = 0; h < channels.size(); ++h) {
                 const RigExecBakedProgramImpl::GeomBlendChannel &channel =
                     channels[h];
+                const Memo::HeldChannel *old =
+                    keepChannels ? &oldBlend[c][r][h] : nullptr;
+                const bool keepSamples =
+                    old && old->activation.size() == channel.samples.size() &&
+                    old->points.size() == channel.samples.size();
                 // A pose-driven weight samples only under an override at
                 // its head, which no held read serves.
                 if (channel.poseWeight < 0) {
                     holdResolved(
                         channel.weight, &held[h].weight,
+                        old ? &old->weight : nullptr,
                         [&](RigExecFrameInputs *into) {
                             _SampleMoverScalar(channel.weight.GetPath(),
                                                channel.weight, 0.0f, time,
@@ -1217,6 +1424,7 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
                         &sample = channel.samples[s];
                     holdResolved(
                         sample.activation, &held[h].activation[s],
+                        keepSamples ? &old->activation[s] : nullptr,
                         [&](RigExecFrameInputs *into) {
                             _SampleMoverScalar(sample.activation.GetPath(),
                                                sample.activation, 1.0f, time,
@@ -1224,6 +1432,7 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
                         });
                     holdResolved(
                         sample.points, &held[h].points[s],
+                        keepSamples ? &old->points[s] : nullptr,
                         [&](RigExecFrameInputs *into) {
                             _SampleBlendPoints(
                                 _FrozenBlendInputKey(sample.samplePath,
@@ -1332,7 +1541,10 @@ _AttachDigestOrder(const RigExecBakedProgramImpl &B,
                     orders.begin() + found + 1);
     } else {
         std::rotate(orders.begin(), orders.end() - 1, orders.end());
-        orders.front() = RigExecRecordFrameDigestOrder(sampled->values);
+        // The most recent order is the nearest sequence: a first key, say,
+        // adds one sample to it.
+        orders.front() =
+            RigExecRecordFrameDigestOrder(sampled->values, orders[1].get());
     }
     sampled->digestOrder = orders.front();
     if (B.verifyFrozenStatic) {
@@ -2520,10 +2732,29 @@ _SampleConstraintArrays(const RigExecRigEvaluator &evaluator,
     using Arrays = RigExecBakedProgramImpl::ConstraintArrays;
     using Memo = RigExecBakedProgramImpl::FrozenArraySample;
     const uint64_t serial = evaluator.GetStageEditSerial();
-    if (!B.frozenArrayBuilt || B.frozenArrayStamp != B.programStamp ||
-        B.frozenArraySerial != serial ||
-        B.frozenArrayDefault != time.IsDefault() ||
-        B.frozenArraySamples.size() != B.constraintArrays.size()) {
+    const bool sameState = B.frozenArrayBuilt &&
+                           B.frozenArrayStamp == B.programStamp &&
+                           B.frozenArrayDefault == time.IsDefault() &&
+                           B.frozenArraySamples.size() ==
+                               B.constraintArrays.size();
+    std::vector<SdfPath> edited;
+    if (sameState && B.frozenArraySerial != serial &&
+        evaluator.GetValueEditsSince(B.frozenArraySerial, &edited)) {
+        // Past value edits alone: a raw read reaches its own attribute
+        // only, so the channels on no edited path stand.
+        for (size_t row = 0; row < B.constraintArrays.size(); ++row) {
+            const Arrays &arrays = B.constraintArrays[row];
+            for (size_t channel = 0; channel < 4; ++channel) {
+                if (arrays.Sampled(channel) &&
+                    std::binary_search(
+                        edited.begin(), edited.end(),
+                        arrays.attributes[channel].GetPath())) {
+                    B.frozenArraySamples[row][channel] = Memo();
+                }
+            }
+        }
+        B.frozenArraySerial = serial;
+    } else if (!sameState || B.frozenArraySerial != serial) {
         B.frozenArraySamples.assign(B.constraintArrays.size(),
                                     std::array<Memo, 4>());
         B.frozenArrayBuilt = true;
@@ -2545,6 +2776,21 @@ _SampleConstraintArrays(const RigExecRigEvaluator &evaluator,
                 if (memo.present) {
                     out->Add(arrays.keys[channel], memo.value, memo.hasValue,
                              /*viaChain=*/false, memo.blocked);
+                }
+                if (B.verifyFrozenStatic) {
+                    RigExecFrameInputs fresh;
+                    _SampleAttribute(arrays.keys[channel],
+                                     arrays.attributes[channel], time,
+                                     &fresh);
+                    if (TF_VERIFY(fresh.values.size() ==
+                                      (memo.present ? 1u : 0u),
+                                  "frozen constraint array <%s> changed "
+                                  "presence",
+                                  arrays.keys[channel].GetText()) &&
+                        memo.present) {
+                        _VerifyServedSample(out->values.back(),
+                                            fresh.values.back());
+                    }
                 }
                 continue;
             }
@@ -2638,11 +2884,15 @@ _SampleWithPinnedChainBindings(
     // worker runs the head tier and resolves the walks from these.
     _SampleHeadLeaves(evaluator, B, time, &sampled, layer);
     _SampleOracleReference(evaluator,B,time,overrides,upstreamLayer,overrideFlags,&sampled);
+
+
     // The reads that cannot move with the time, held while the stage and
     // the program stand; the job's overrides and upstream values reach
     // `touched`, whose leaf reads are taken fresh.
     RigExecFrozenSamplerMemo &memo = _FrozenSamplerMemo(evaluator, B, time);
     sampled.staticSamples = memo.samples;
+
+
     const std::vector<SdfPath> touched =
         _TouchedPaths(sampled.overridePaths, layer);
 
@@ -2775,6 +3025,8 @@ _SampleWithPinnedChainBindings(
     }
     // Constraint operator arrays: read raw off the prim.
     _SampleConstraintArrays(evaluator, B, time, &sampled);
+
+
     // Chain base points: the prologue reads every chain base off the stage
     // (or the upstream layer) per frame, and a worker cannot -- so the UI
     // thread samples these too, a base the memo holds from it.
@@ -2925,6 +3177,8 @@ _SampleWithPinnedChainBindings(
     _SampleLayoutLeaves(B, &refreshed, time, &sampled, layer, &memo,
                         touched);
     _SampleProviderLeaves(B, memo, time, &sampled);
+
+
     _SampleRevisionLeaves(B, &refreshed, time, &sampled, layer, &memo,
                           touched);
     if (!_AppendSparseLayoutSources(B, &sampled))
@@ -2956,6 +3210,8 @@ _SampleWithPinnedChainBindings(
         }
     }
     _AttachDigestOrder(B, &memo, &sampled);
+
+
 
     *out = std::move(sampled);
     return true;

@@ -142,12 +142,35 @@ class HoverPickerOverlay(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
         self.setFocusPolicy(QtCore.Qt.NoFocus)
+        # The tabs as last painted. The viewport redraws far more often
+        # than anything the picker shows changes, and each redraw repaints
+        # this overlay; MarkDirty is called for every change that does.
+        self._cache = None
+        self._dirty = True
+
+    def MarkDirty(self):
+        self._dirty = True
 
     def paintEvent(self, event):
+        ratio = self.devicePixelRatioF()
+        size = QtCore.QSize(int(self.width() * ratio),
+                            int(self.height() * ratio))
+        if (self._dirty or self._cache is None or
+                self._cache.size() != size):
+            cache = QtGui.QPixmap(size)
+            cache.setDevicePixelRatio(ratio)
+            cache.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(cache)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            try:
+                self._controller.Paint(painter, self.width(), self.height())
+            finally:
+                painter.end()
+            self._cache = cache
+            self._dirty = False
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         try:
-            self._controller.Paint(painter, self.width(), self.height())
+            painter.drawPixmap(0, 0, self._cache)
         finally:
             painter.end()
 
@@ -213,6 +236,7 @@ class HoverPickerController(QtCore.QObject):
             if not self._tabs:
                 self._panel.Reload()
             self._overlay.resize(self._view.size())
+            self._Place()
         self._overlay.setVisible(bool(visible))
         if visible:
             QtCore.QTimer.singleShot(0, self._Raise)
@@ -226,8 +250,10 @@ class HoverPickerController(QtCore.QObject):
             self._overlay.raise_()
 
     def _Update(self):
-        if self._overlay is not None and self._overlay.isVisible():
-            self._overlay.update()
+        if self._overlay is not None:
+            self._overlay.MarkDirty()
+            if self._overlay.isVisible():
+                self._overlay.update()
 
     def _Rebuild(self):
         tabs = []
@@ -244,7 +270,27 @@ class HoverPickerController(QtCore.QObject):
         self._layout.Ensure([t.key for t in tabs], fits)
         if len(self._layout.tabs) != before:
             SaveLayout(self._layout)
+        self._Place()
         self._Update()
+
+    def _ViewSize(self):
+        if self._view is None:
+            return (0.0, 0.0)
+        return (float(self._view.width()), float(self._view.height()))
+
+    def _Place(self):
+        """Put every tab where its saved corner says for the viewport's
+        size now, kept on screen (pickerHoverModel.TabLayout.Place)."""
+        width, height = self._ViewSize()
+        if width <= 0.0 or height <= 0.0:
+            return
+        sizes = {}
+        for tab in self._tabs:
+            layout = self._layout.Tab(tab.key)
+            if layout is not None:
+                sizes[tab.key] = (tab.cw * layout.scale,
+                                  tab.ch * layout.scale)
+        self._layout.Place(width, height, sizes)
 
     def _OnPanel(self, what):
         if what == "reload":
@@ -405,6 +451,9 @@ class HoverPickerController(QtCore.QObject):
         kind = event.type()
         if kind in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
             self._overlay.resize(self._view.size())
+            # The tabs follow their corners as the viewport resizes.
+            self._Place()
+            self._Update()
             QtCore.QTimer.singleShot(0, self._Raise)
             return False
         if not self._overlay.isVisible():
@@ -457,6 +506,7 @@ class HoverPickerController(QtCore.QObject):
             if what == "handle":
                 layout = self._layout.Tab(tab.key)
                 layout.collapsed = not layout.collapsed
+                self._Place()
                 SaveLayout(self._layout)
                 self._Update()
                 return True
@@ -520,13 +570,18 @@ class HoverPickerController(QtCore.QObject):
                                point[0] - gesture["start"][0])
         elif kind == "move":
             last = gesture["last"]
-            self._layout.Tab(gesture["tab"].key).Moved(point[0] - last[0],
-                                                       point[1] - last[1])
+            layout = self._layout.Tab(gesture["tab"].key)
+            layout.Moved(point[0] - last[0], point[1] - last[1])
+            # Saved against whichever corner it is now nearest, and kept
+            # on screen while it is dragged.
+            layout.Anchor(*self._ViewSize())
+            self._Place()
             gesture["last"] = point
         elif kind == "scale":
             start = gesture["start"]
             self._layout.Tab(gesture["tab"].key).Scaled(
                 gesture["scale"], point[0] - start[0], point[1] - start[1])
+            self._Place()
         elif kind == "fade":
             self._layout.Tab(gesture["tab"].key).Faded(
                 gesture["opacity"], point[0] - gesture["start"][0])
@@ -637,6 +692,11 @@ class HoverPickerHotkey(QtCore.QObject):
             if event.key() != QtCore.Qt.Key_P:
                 return False
             if not sessionRegistry.SessionOfEvent(obj, self._MainWindow()):
+                return False
+            # The main window itself, not a panel it owns: TouchPose's
+            # panel has a P of its own (Paint).
+            window = obj.window() if isinstance(obj, QtWidgets.QWidget)                 else QtWidgets.QApplication.activeWindow()
+            if window is not self._MainWindow():
                 return False
             if kind == QtCore.QEvent.KeyRelease:
                 if event.isAutoRepeat():

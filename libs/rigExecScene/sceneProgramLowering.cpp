@@ -572,6 +572,8 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         } else if(a.domain==RigExecSceneDomain::Constraint) {
             RigExecSceneConstraintDescriptor source;RigExecConstraintGraphBinding bound;RigExecConstraintGraphTarget target;
             if(!RigExecLowerSceneConstraint(scene,a.owner,{a.target},&source,error))return false;
+            if(source.record.kind==RigExecConstraintKind::IkFkMatch)
+                return Fail(error,"the scene program does not run an IK/FK match: "+a.owner.GetString());
             target.incoming=application.incoming;target.output=application.candidate;
             RigExecSceneCompileInputs facts(scene);const auto weightTargets=facts.Targets(a.owner.AppendProperty(TfToken("rigExec:weightObject")));
             if(!weightTargets.empty() && !bindField(a.owner,weightTargets.front(),a.target,UINT64_MAX,key,&target.weight))return false;

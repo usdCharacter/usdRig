@@ -53,8 +53,10 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
         RigExecSceneGraphReadRequest request;request.consumer=path;request.reader=path;
         request.source=provider;request.domain=RigExecSceneValueDomain::Pose;
         // Own descendants are measured on the entering revision, avoiding
-        // self-feedback. Independent providers keep their final producers.
-        request.phase=TfToken(provider.HasPrefix(target)?"preceding":"final");
+        // self-feedback. Independent providers are read as their channels
+        // put them, as the solvers read them, not as a constraint revises
+        // them later.
+        request.phase=TfToken(provider.HasPrefix(target)?"preceding":"base");
         if(computation)request.computation=computation;
         if(!context.resolve(request,&result.frames[index],error))return false;
         result.reads.push_back(result.frames[index]);return true;

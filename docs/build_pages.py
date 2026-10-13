@@ -445,7 +445,7 @@ def render_page(key, note, classes):
 
 def render_index(concepts=()):
     lines = []
-    lines.append("# UsdRig")
+    lines.append("# Node reference")
     lines.append("")
     lines.append("One page per operator: what it does, how to wire it, every")
     lines.append("parameter, and a minimal animated example. Each example stage")

@@ -6,6 +6,9 @@
 #include "rigExecScene/providerContextBinding.h"
 #include "rigExecGraph/providerRefresh.h"
 #include "parallel.h"
+#include "frameExtraction.h"
+#include "rigExecMath/spaceMatchKernel.h"
+#include "rigExecScene/poseProgram.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/usd/sdf/types.h"
@@ -1049,4 +1052,53 @@ void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program,RigExecBakedStep *s
         if(!error.empty()) step->diagnostics.push_back(error);
     }
 }
+void
+RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
+                          RigExecBakedProgramImpl::SpaceSwitch &sw, int slot,
+                          const RigExecSpaceSwitchInputs &input,
+                          const RigExecPointFrame &posed)
+{
+    sw.matchValid = false;
+    const size_t spaces = input.sources.size();
+    if (!spaces) return;
+    RigExecIkFkMatchChannels current;
+    RigExecBakedMatchChannelsOf(B, slot, &current);
+    RigExecSpaceSwitchInputs trial = input;
+    const auto run = [&](const double *avars, double active, double *out) {
+        std::copy(avars, avars + 16, trial.avars.data());
+        trial.active = active;
+        RigExecPointFrame frame;
+        GfMatrix4d matrix;
+        if (!RigExecRunSpaceSwitch(sw.kernelRecord, trial, &frame) ||
+            !RigExecPointsToMatrix(RigExecIdentityLandmarks(), frame.points,
+                                   &matrix)) {
+            return false;
+        }
+        std::copy(matrix.data(), matrix.data() + 16, out);
+        return true;
+    };
+    // The target is read off the composed frame, as the runs are.
+    GfMatrix4d target;
+    if (!RigExecPointsToMatrix(RigExecIdentityLandmarks(), posed.points,
+                               &target)) {
+        return;
+    }
+    sw.matchValues.resize(spaces * RigExecSpaceMatchStride);
+    sw.matchValid = RigExecSpaceMatchSolveAll(target.data(), current, spaces,
+                                              run, sw.matchValues.data());
+}
+
+void
+RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
+                                RigExecRigPose *pose)
+{
+    static const TfToken kMatchValues("spaces:matchValues");
+    for (const auto &sw : B.spaceSwitches) {
+        if (!sw.matchValid || sw.slot < 0) continue;
+        pose->movedProperties[B.paths[size_t(sw.slot)].AppendProperty(
+            kMatchValues)] =
+            VtValue(VtDoubleArray(sw.matchValues.begin(), sw.matchValues.end()));
+    }
+}
+
 }

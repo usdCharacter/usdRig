@@ -1049,7 +1049,9 @@ def ApplySpline(stage, attrPath, spline, undoStack, label):
         if spline.IsEmpty():
             ClearSpline(stage, path)
         else:
-            attr.SetSpline(spline)
+            # One notice: a first key creates the spec, then the spline.
+            with Sdf.ChangeBlock():
+                attr.SetSpline(spline)
     except Exception:
         recorder.Abort()
         raise

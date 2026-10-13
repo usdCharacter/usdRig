@@ -3,6 +3,7 @@
 
 #include "registry.h"
 
+#include "pxr/base/trace/trace.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/range3d.h"
@@ -12,6 +13,13 @@
 #include "pxr/imaging/hd/containerDataSourceEditor.h"
 #include "pxr/imaging/hd/cubeSchema.h"
 #include "pxr/imaging/hd/dataSource.h"
+#include "pxr/imaging/hd/extComputationContext.h"
+#include "pxr/imaging/hd/extComputationCpuCallback.h"
+#include "pxr/imaging/hd/extComputationInputComputationSchema.h"
+#include "pxr/imaging/hd/extComputationOutputSchema.h"
+#include "pxr/imaging/hd/extComputationPrimvarSchema.h"
+#include "pxr/imaging/hd/extComputationPrimvarsSchema.h"
+#include "pxr/imaging/hd/extComputationSchema.h"
 #include "pxr/imaging/hd/extentSchema.h"
 #include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
 #include "pxr/imaging/hd/meshSchema.h"
@@ -27,6 +35,11 @@
 #include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/imaging/hd/visibilitySchema.h"
 #include "pxr/imaging/hd/xformSchema.h"
+
+#include "rigExecGpu/gpuDeformShader.h"
+#include "rigExecMath/gpuDeformProgram.h"
+
+#include "pxr/base/work/loops.h"
 
 #include <algorithm>
 #include <cmath>
@@ -177,6 +190,7 @@ RigExecInternalPrimPruningSceneIndex::_IsOwned(const SdfPath &path) const
 HdSceneIndexPrim
 RigExecInternalPrimPruningSceneIndex::GetPrim(const SdfPath &primPath) const
 {
+    TRACE_FUNCTION();
     if (_IsOwned(primPath)) {
         return {TfToken(), nullptr};
     }
@@ -300,6 +314,7 @@ RigExecBindingResolvingSceneIndex::SetBindingEpoch(BindingEpochConstPtr epoch)
 HdSceneIndexPrim
 RigExecBindingResolvingSceneIndex::GetPrim(const SdfPath &primPath) const
 {
+    TRACE_FUNCTION();
     // Compiled output addresses are stage paths under the USD backend:
     // the prim shell passes through; the results index overlays values.
     return _GetInputSceneIndex()->GetPrim(primPath);
@@ -749,6 +764,192 @@ _BuildGuidePrim(
 // there is exactly one guide per control, so a name that had to be parsed
 // back into a number would be carrying information that does not exist.
 const TfToken _controlGuideName("rigGuideCtrl");
+
+// Shader mode: the two ExtComputation children of a mesh published as its
+// deform program. The inputs child aggregates what a layout fixes; the
+// deform child runs the kernel over this frame's values.
+const TfToken _gpuDeformInputsName("rigExecDeformInputs");
+const TfToken _gpuDeformName("rigExecDeform");
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _gpuTokens,
+    (rxOps)
+    (rxStaticF)
+    (rxStaticI)
+    (rxBase)
+    (rxOpCount)
+    (rxFrame)
+    (rxPrevFrame)
+    (rxVelocityScale)
+);
+
+bool
+_HasGpuDeform(const RigExecPublishedPrim &published)
+{
+    return published.gpuDeform && published.gpuDeformStatic;
+}
+
+// The deform kernel on the CPU, for a renderer without Storm's GPU
+// computations: the judge over Hydra's own copies of the inputs.
+class _GpuDeformCpuCallback : public HdExtComputationCpuCallback {
+public:
+    void Compute(HdExtComputationContext *ctx) override {
+        const VtValue &ops = ctx->GetInputValue(_gpuTokens->rxOps);
+        const VtValue &staticF = ctx->GetInputValue(_gpuTokens->rxStaticF);
+        const VtValue &staticI = ctx->GetInputValue(_gpuTokens->rxStaticI);
+        const VtValue &base = ctx->GetInputValue(_gpuTokens->rxBase);
+        const VtValue &frame = ctx->GetInputValue(_gpuTokens->rxFrame);
+        const VtValue &previous = ctx->GetInputValue(_gpuTokens->rxPrevFrame);
+        const VtValue &scale = ctx->GetInputValue(_gpuTokens->rxVelocityScale);
+        if (!ops.IsHolding<VtIntArray>() || !staticF.IsHolding<VtFloatArray>() ||
+            !staticI.IsHolding<VtIntArray>() || !base.IsHolding<VtVec3fArray>() ||
+            !frame.IsHolding<VtFloatArray>() ||
+            !previous.IsHolding<VtFloatArray>() || !scale.IsHolding<float>()) {
+            ctx->RaiseComputationError();
+            return;
+        }
+        const VtVec3fArray &points = base.UncheckedGet<VtVec3fArray>();
+        RigExecGpuDeformView view;
+        view.ops = ops.UncheckedGet<VtIntArray>().cdata();
+        view.opCount = ops.UncheckedGet<VtIntArray>().size() / RigExecGpuOpStride;
+        view.staticF = staticF.UncheckedGet<VtFloatArray>().cdata();
+        view.staticI = staticI.UncheckedGet<VtIntArray>().cdata();
+        view.frame = frame.UncheckedGet<VtFloatArray>().cdata();
+        RigExecGpuDeformView before = view;
+        before.frame = previous.UncheckedGet<VtFloatArray>().cdata();
+        const float k = scale.UncheckedGet<float>();
+        VtVec3fArray out(points.size()), velocities(points.size());
+        GfVec3f *o = out.data();
+        GfVec3f *v = velocities.data();
+        WorkParallelForN(points.size(), [&](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i) {
+                float p[3] = {points[i][0], points[i][1], points[i][2]};
+                float q[3] = {p[0], p[1], p[2]};
+                RigExecRunGpuDeformPoint(view, i, p);
+                RigExecRunGpuDeformPoint(before, i, q);
+                o[i] = GfVec3f(p[0], p[1], p[2]);
+                v[i] = GfVec3f(p[0] - q[0], p[1] - q[1], p[2] - q[2]) * k;
+            }
+        });
+        ctx->SetOutputValue(HdTokens->points, VtValue(out));
+        ctx->SetOutputValue(HdTokens->velocities, VtValue(velocities));
+    }
+};
+
+HdContainerDataSourceHandle
+_BuildGpuDeformInputsPrim(const RigExecPublishedPrim &published)
+{
+    const auto &tables = *published.gpuDeformStatic;
+    const TfToken names[] = {
+        _gpuTokens->rxOps, _gpuTokens->rxStaticF, _gpuTokens->rxStaticI,
+        _gpuTokens->rxBase, _gpuTokens->rxOpCount};
+    const HdDataSourceBaseHandle values[] = {
+        HdRetainedTypedSampledDataSource<VtIntArray>::New(tables.ops),
+        HdRetainedTypedSampledDataSource<VtFloatArray>::New(tables.staticF),
+        HdRetainedTypedSampledDataSource<VtIntArray>::New(tables.staticI),
+        HdRetainedTypedSampledDataSource<VtVec3fArray>::New(
+            published.gpuDeform->base),
+        HdRetainedTypedSampledDataSource<int>::New(tables.opCount)};
+    static const TfToken schema = HdExtComputationSchema::GetSchemaToken();
+    const HdDataSourceBaseHandle computation =
+        HdExtComputationSchema::Builder()
+            .SetInputValues(HdRetainedContainerDataSource::New(
+                std::size(names), names, values))
+            .Build();
+    return HdRetainedContainerDataSource::New(1, &schema, &computation);
+}
+
+HdContainerDataSourceHandle
+_BuildGpuDeformPrim(const SdfPath &meshPath,
+                    const RigExecPublishedPrim &published)
+{
+    const TfToken inputNames[] = {
+        _gpuTokens->rxFrame, _gpuTokens->rxPrevFrame,
+        _gpuTokens->rxVelocityScale};
+    const HdDataSourceBaseHandle inputValues[] = {
+        HdRetainedTypedSampledDataSource<VtFloatArray>::New(
+            published.gpuDeformFrame),
+        HdRetainedTypedSampledDataSource<VtFloatArray>::New(
+            published.gpuDeformPreviousFrame),
+        HdRetainedTypedSampledDataSource<float>::New(
+            published.gpuDeformVelocityScale)};
+    const TfToken aggregated[] = {
+        _gpuTokens->rxOps, _gpuTokens->rxStaticF, _gpuTokens->rxStaticI,
+        _gpuTokens->rxBase, _gpuTokens->rxOpCount};
+    const HdPathDataSourceHandle source =
+        HdRetainedTypedSampledDataSource<SdfPath>::New(
+            meshPath.AppendChild(_gpuDeformInputsName));
+    std::vector<HdDataSourceBaseHandle> computations;
+    for (const TfToken &name : aggregated) {
+        computations.push_back(
+            HdExtComputationInputComputationSchema::Builder()
+                .SetSourceComputation(source)
+                .SetSourceComputationOutputName(
+                    HdRetainedTypedSampledDataSource<TfToken>::New(name))
+                .Build());
+    }
+    const TfToken outputNames[] = {HdTokens->points, HdTokens->velocities};
+    const HdDataSourceBaseHandle output =
+        HdExtComputationOutputSchema::Builder()
+            .SetValueType(HdRetainedTypedSampledDataSource<HdTupleType>::New(
+                HdTupleType{HdTypeFloatVec3, 1}))
+            .Build();
+    const HdDataSourceBaseHandle outputs[] = {output, output};
+    static const HdExtComputationCpuCallbackDataSourceHandle callback =
+        HdRetainedTypedSampledDataSource<
+            HdExtComputationCpuCallbackSharedPtr>::New(
+                std::make_shared<_GpuDeformCpuCallback>());
+    static const HdStringDataSourceHandle kernel =
+        HdRetainedTypedSampledDataSource<std::string>::New(
+            RigExecGpuDeformStormKernel());
+    const HdSizetDataSourceHandle count =
+        HdRetainedTypedSampledDataSource<size_t>::New(
+            published.gpuDeformStatic->pointCount);
+    static const TfToken schema = HdExtComputationSchema::GetSchemaToken();
+    const HdDataSourceBaseHandle computation =
+        HdExtComputationSchema::Builder()
+            .SetInputValues(HdRetainedContainerDataSource::New(
+                std::size(inputNames), inputNames, inputValues))
+            .SetInputComputations(
+                HdExtComputationInputComputationContainerSchema::BuildRetained(
+                    std::size(aggregated), aggregated, computations.data()))
+            .SetOutputs(HdExtComputationOutputContainerSchema::BuildRetained(
+                std::size(outputNames), outputNames, outputs))
+            .SetGlslKernel(kernel)
+            .SetCpuCallback(callback)
+            .SetDispatchCount(count)
+            .SetElementCount(count)
+            .Build();
+    return HdRetainedContainerDataSource::New(1, &schema, &computation);
+}
+
+// The mesh's points and velocities, computed by its deform child.
+HdContainerDataSourceHandle
+_BuildGpuDeformPrimvars(const SdfPath &meshPath)
+{
+    const HdPathDataSourceHandle source =
+        HdRetainedTypedSampledDataSource<SdfPath>::New(
+            meshPath.AppendChild(_gpuDeformName));
+    const auto primvar = [&source](const TfToken &name, const TfToken &role) {
+        return HdExtComputationPrimvarSchema::Builder()
+            .SetInterpolation(
+                HdExtComputationPrimvarSchema::BuildInterpolationDataSource(
+                    HdPrimvarSchemaTokens->vertex))
+            .SetRole(HdExtComputationPrimvarSchema::BuildRoleDataSource(role))
+            .SetSourceComputation(source)
+            .SetSourceComputationOutputName(
+                HdRetainedTypedSampledDataSource<TfToken>::New(name))
+            .SetValueType(HdRetainedTypedSampledDataSource<HdTupleType>::New(
+                HdTupleType{HdTypeFloatVec3, 1}))
+            .Build();
+    };
+    const TfToken names[] = {HdTokens->points, HdTokens->velocities};
+    const HdDataSourceBaseHandle values[] = {
+        primvar(HdTokens->points, HdPrimvarSchemaTokens->point),
+        primvar(HdTokens->velocities, HdPrimvarSchemaTokens->vector)};
+    return HdExtComputationPrimvarsSchema::BuildRetained(
+        std::size(names), names, values);
+}
 
 // One unit shape, ready to publish.
 // Every shape here is a UNIT shape centred on the frame origin with
@@ -1511,7 +1712,8 @@ _ShaderMatrixXformLocators(const RigExecImagingSnapshot &snapshot,
 // (spec §10.3.1): standard schemas only.
 HdContainerDataSourceHandle
 _BuildStrongRoot(const RigExecPublishedPrim &published,
-                 const HdContainerDataSourceHandle &resolvedTarget)
+                 const HdContainerDataSourceHandle &resolvedTarget,
+                 const SdfPath &primPath)
 {
     TfTokenVector names;
     std::vector<HdDataSourceBaseHandle> values;
@@ -1570,6 +1772,19 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
                 .SetPrimvarValue(value)
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->constant))
                 .Build());
+    }
+    if (_HasGpuDeform(published)) {
+        // The deform child computes the points and velocities; the
+        // authored ones are blocked so only the computed ones reach a
+        // renderer, as UsdSkel's computed points do.
+        primvarNames.push_back(HdTokens->points);
+        primvarValues.push_back(HdBlockDataSource::New());
+        primvarNames.push_back(HdTokens->velocities);
+        primvarValues.push_back(HdBlockDataSource::New());
+        primvarNames.push_back(HdTokens->accelerations);
+        primvarValues.push_back(HdBlockDataSource::New());
+        names.push_back(HdExtComputationPrimvarsSchema::GetSchemaToken());
+        values.push_back(_BuildGpuDeformPrimvars(primPath));
     }
     if (published.hasNormals) {
         primvarNames.push_back(HdTokens->normals);
@@ -1756,6 +1971,7 @@ RigExecResultsSceneIndex::_ComputeDrivenXform(
 HdSceneIndexPrim
 RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
 {
+    TRACE_FUNCTION();
     // Synthesized guide children exist only in this index: pulls read the
     // current atomic snapshot and never compute (spec §10.3). Authored
     // prims win the name — only paths absent upstream are served as
@@ -1789,6 +2005,30 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
                                 ? snapshot->assetRoot
                                 : it->second.assetRoot,
                             *snapshot));
+                    return prim;
+                }
+            }
+        }
+        return HdSceneIndexPrim();
+    }
+    // The deform computation children, on the same rules: authored prims
+    // win the name, the mesh must exist upstream and publish its program.
+    if (primPath.IsPrimPath() && !primPath.IsAbsoluteRootPath() &&
+        (primPath.GetNameToken() == _gpuDeformName ||
+         primPath.GetNameToken() == _gpuDeformInputsName) &&
+        !_GetInputSceneIndex()->GetPrim(primPath).dataSource) {
+        const SdfPath meshPath = primPath.GetParentPath();
+        if (_GetInputSceneIndex()->GetPrim(meshPath).dataSource) {
+            if (const RigExecImagingSnapshotConstPtr snapshot =
+                    _CurrentSnapshot()) {
+                const auto it = snapshot->prims.find(meshPath);
+                if (it != snapshot->prims.end() && _HasGpuDeform(it->second)) {
+                    HdSceneIndexPrim prim;
+                    prim.primType = HdPrimTypeTokens->extComputation;
+                    prim.dataSource =
+                        primPath.GetNameToken() == _gpuDeformName
+                            ? _BuildGpuDeformPrim(meshPath, it->second)
+                            : _BuildGpuDeformInputsPrim(it->second);
                     return prim;
                 }
             }
@@ -1940,7 +2180,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
         return prim;
     }
     if (HdContainerDataSourceHandle strongRoot =
-            _BuildStrongRoot(it->second, prim.dataSource)) {
+            _BuildStrongRoot(it->second, prim.dataSource, primPath)) {
         // Container-on-container overlap composes recursively: owned
         // value leaves win while topology, descriptors, and unrelated
         // schemas continue to come from upstream (spec §10.3.1).
@@ -1963,7 +2203,7 @@ RigExecResultsSceneIndex::GetChildPrimPaths(const SdfPath &primPath) const
     const auto it = snapshot->prims.find(primPath);
     if (it == snapshot->prims.end() ||
         (!it->second.hasGuides && !it->second.hasControlGuide &&
-         !it->second.hasVolumeGuides) ||
+         !it->second.hasVolumeGuides && !_HasGpuDeform(it->second)) ||
         !_GetInputSceneIndex()->GetPrim(primPath).dataSource) {
         return children;
     }
@@ -2002,6 +2242,10 @@ RigExecResultsSceneIndex::GetChildPrimPaths(const SdfPath &primPath) const
             append(primPath.AppendChild(_VolumeGuideName(i)));
         }
     }
+    if (_HasGpuDeform(it->second)) {
+        append(primPath.AppendChild(_gpuDeformInputsName));
+        append(primPath.AppendChild(_gpuDeformName));
+    }
     return children;
 }
 
@@ -2034,6 +2278,28 @@ RigExecResultsSceneIndex::_DesiredGuideTopology(const SdfPath &path) const
         }
     }
     return result;
+}
+
+// Whether \p path publishes its deform program now, under the same
+// upstream-parent gate as the guides.
+bool
+RigExecResultsSceneIndex::_DesiredGpuDeform(const SdfPath &path) const
+{
+    const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
+    if (!snapshot) return false;
+    const auto it = snapshot->prims.find(path);
+    return it != snapshot->prims.end() && _HasGpuDeform(it->second) &&
+           _GetInputSceneIndex()->GetPrim(path).dataSource;
+}
+
+void
+RigExecResultsSceneIndex::_RefreshAnnouncedGpuDeform(const SdfPath &path)
+{
+    if (_DesiredGpuDeform(path)) {
+        _announcedGpuDeforms.insert(path);
+    } else {
+        _announcedGpuDeforms.erase(path);
+    }
 }
 
 // Records the guide topology without emitting anything. Must run even while
@@ -2431,6 +2697,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             _RefreshAnnouncedGuides(entry.path);
             _RefreshAnnouncedControlGuide(entry.path);
             _RefreshAnnouncedVolumeGuides(entry.path);
+            _RefreshAnnouncedGpuDeform(entry.path);
         }
         return;
     }
@@ -2492,6 +2759,44 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                     if (!primType.IsEmpty()) {
                         addedGuides.emplace_back(entry.path, primType);
                     }
+                }
+            }
+
+            // The deform computation children, and the mesh with them: a
+            // program publication beginning or ending swaps authored points
+            // for computed ones, which changes the mesh's primvar
+            // descriptors -- a resync, exactly as the overlay above.
+            {
+                const bool was = _announcedGpuDeforms.count(entry.path) != 0;
+                const bool is = _DesiredGpuDeform(entry.path);
+                if (was != is) {
+                    const SdfPath inputsPath =
+                        entry.path.AppendChild(_gpuDeformInputsName);
+                    const SdfPath deformPath =
+                        entry.path.AppendChild(_gpuDeformName);
+                    if (is) {
+                        _announcedGpuDeforms.insert(entry.path);
+                        addedGuides.emplace_back(
+                            inputsPath, HdPrimTypeTokens->extComputation);
+                        addedGuides.emplace_back(
+                            deformPath, HdPrimTypeTokens->extComputation);
+                    } else {
+                        _announcedGpuDeforms.erase(entry.path);
+                        removedGuides.emplace_back(inputsPath);
+                        removedGuides.emplace_back(deformPath);
+                    }
+                    const TfToken primType =
+                        _GetInputSceneIndex()->GetPrim(entry.path).primType;
+                    if (!primType.IsEmpty()) {
+                        addedGuides.emplace_back(entry.path, primType);
+                    }
+                } else if (is) {
+                    entries.emplace_back(
+                        entry.path.AppendChild(_gpuDeformInputsName),
+                        HdDataSourceLocatorSet::UniversalSet());
+                    entries.emplace_back(
+                        entry.path.AppendChild(_gpuDeformName),
+                        HdDataSourceLocatorSet::UniversalSet());
                 }
             }
 
@@ -2616,6 +2921,56 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                         : controlGuideXform);
             }
         }
+        if ((entry.changes & RigExecChangeGuideXform) &&
+            !(entry.changes & RigExecChangeGuides)) {
+            // Frames, or lengths that kept every cone: the announced
+            // children are exactly the desired ones, and each needs only its
+            // transform (and a cone its height) re-pulled -- not the
+            // universal set, which makes
+            // the implicit-surface stage regenerate every sphere and cone
+            // mesh on every drag sample.
+            const auto announcedIt = _announcedGuides.find(entry.path);
+            if (announcedIt == _announcedGuides.end()) {
+                _SyncGuideChildren(entry.path, &addedGuides, &removedGuides);
+            } else {
+                static const HdDataSourceLocatorSet guideXform =
+                    HdContainerDataSourceEditor::ComputeDirtyLocators(
+                        HdDataSourceLocatorSet{HdDataSourceLocator(
+                            HdXformSchemaTokens->xform,
+                            HdXformSchemaTokens->matrix)});
+                // A changed length moves a cone's height with its offset.
+                static const HdDataSourceLocatorSet coneLength =
+                    HdContainerDataSourceEditor::ComputeDirtyLocators(
+                        HdDataSourceLocatorSet{
+                            HdDataSourceLocator(HdXformSchemaTokens->xform,
+                                                HdXformSchemaTokens->matrix),
+                            HdConeSchema::GetDefaultLocator().Append(
+                                HdConeSchemaTokens->height)});
+                const bool lengths =
+                    (entry.changes & RigExecChangeGuideLengths) != 0;
+                const std::vector<uint8_t> &announced = announcedIt->second;
+                for (size_t i = 0; i < announced.size(); ++i) {
+                    for (const bool isCone : {false, true}) {
+                        if (!(announced[i] &
+                              (isCone ? _GuideConeBit : _GuideSphereBit))) {
+                            continue;
+                        }
+                        const SdfPath childPath =
+                            entry.path.AppendChild(_GuideName(isCone, i));
+                        // Authored prims occupying a guide name are not
+                        // ours to dirty.
+                        if (_GetInputSceneIndex()
+                                ->GetPrim(childPath)
+                                .dataSource) {
+                            continue;
+                        }
+                        entries.emplace_back(
+                            childPath,
+                            isCone && lengths ? coneLength : guideXform);
+                    }
+                }
+            }
+        }
         if (entry.changes & RigExecChangeGuides) {
             // Reconcile even when the element count is unchanged: a joint
             // length crossing zero adds or removes its cone while its sphere
@@ -2725,6 +3080,32 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
             leaves.insert(HdDataSourceLocator(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->accelerations));
+        }
+        if (entry.changes &
+            (RigExecChangeGpuDeform | RigExecChangeGpuDeformStatic)) {
+            // The kernel's per-frame inputs (and with a new layout or base
+            // the aggregated tables), then the mesh's computed points: the
+            // points dirty is what makes Storm run the kernel again.
+            static const HdDataSourceLocatorSet frameInputs =
+                HdContainerDataSourceEditor::ComputeDirtyLocators(
+                    HdDataSourceLocatorSet{
+                        HdExtComputationSchema::GetInputValuesLocator()});
+            if (_announcedGpuDeforms.count(entry.path)) {
+                entries.emplace_back(
+                    entry.path.AppendChild(_gpuDeformName),
+                    entry.changes & RigExecChangeGpuDeformStatic
+                        ? HdDataSourceLocatorSet::UniversalSet()
+                        : frameInputs);
+                if (entry.changes & RigExecChangeGpuDeformStatic) {
+                    entries.emplace_back(
+                        entry.path.AppendChild(_gpuDeformInputsName),
+                        HdDataSourceLocatorSet::UniversalSet());
+                }
+            }
+            leaves.insert(HdDataSourceLocator(
+                HdPrimvarsSchemaTokens->primvars, HdTokens->points));
+            leaves.insert(HdDataSourceLocator(
+                HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
         }
         if (entry.changes & RigExecChangeShaderMatrix) {
             // The primvars CONTAINER, not one named leaf: the flag says a
@@ -3529,6 +3910,7 @@ RigExecXformOverrideSceneIndex::SetWorldDeltas(
 HdSceneIndexPrim
 RigExecXformOverrideSceneIndex::GetPrim(const SdfPath &primPath) const
 {
+    TRACE_FUNCTION();
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
     if (!prim.dataSource) {
         return prim;

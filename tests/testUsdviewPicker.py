@@ -32,6 +32,24 @@ def _Check(condition, message):
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 
+def _GuideDrawnVisible(controlPath):
+    """Whether the terminal Hydra scene index draws `controlPath`'s guide
+    visible: True, False, or None when it has no guide or no visibility."""
+    from pxr.Usdviewq._usdviewq import HydraObserver
+    names = HydraObserver.GetRegisteredSceneIndexNames()
+    if not names:
+        return None
+    observer = HydraObserver()
+    observer.TargetToNamedSceneIndex(names[-1])
+    _, dataSource = observer.GetPrim(
+        Sdf.Path(controlPath).AppendChild("rigGuideCtrl"))
+    if not dataSource or "visibility" not in dataSource.GetNames():
+        return None
+    visibility = dataSource.Get("visibility")
+    value = visibility.Get("visibility") if visibility else None
+    return bool(value.GetValue(0.0)) if value else None
+
+
 def _RigExecMenu(appController):
     menus = {}
     for child in appController._mainWindow.menuBar().children():
@@ -370,6 +388,50 @@ def testUsdviewInputFunction(appController):
         _Check(float(rightSwitch.Get(frame)) == right.fkValue,
                "undo put R_Arm back in FK")
 
+    # --- 6d. selecting the half the limb is not using switches it ---------
+    # In FK the IK control is drawn on the joints (the rig presents it), so
+    # selecting it switches L_Arm to IK, matched, before any drag. The
+    # picker and the right-click menu follow that switch like any other.
+    import gizmoUI
+    gizmo = gizmoUI.GetController()
+    _Check(gizmo is not None, "the gizmo controller is installed")
+    for path, value in pose.items():
+        gizmoMath.SetAnimated(stage.GetAttributeAtPath(path), value, frame)
+    appController._processEvents()
+    jointsBefore = [ikfkMatch.JointFrame(evaluate({}, frame), j)
+                    for j in limb.joints]
+    api.ClearPrimSelection()
+    api.AddPrimToSelection(stage.GetPrimAtPath(limb.ikControl))
+    appController._processEvents()
+    _Check(float(switchAttr.Get(frame)) == limb.ikValue,
+           "selecting L_ArmIK put L_Arm in IK, got %g"
+           % float(switchAttr.Get(frame)))
+    moved = max((a.ExtractTranslation() - ikfkMatch.JointFrame(
+        evaluate({}, frame), j).ExtractTranslation()).GetLength()
+        for a, j in zip(jointsBefore, limb.joints))
+    _Check(moved < 1e-5, "the select switch moved L_Arm's joints by %.3g"
+           % moved)
+    armDial = str(limb.switchPath)
+    _Check(view._modes.get(armDial) == "ik" and arm.value == "IK",
+           "the picker followed the select switch: mode %r, label %r"
+           % (view._modes.get(armDial), arm.value))
+    menu = QtWidgets.QMenu()
+    action = container.AppendIkFkItem(
+        menu, stage.GetPrimAtPath(limb.fkControls[2]))
+    _Check(action is not None and action.text() == "Switch L_Arm to FK",
+           "the right-click menu followed it: %r"
+           % (action.text() if action is not None else None))
+    _Check(not gizmo._SwitchPresentedLimbs(),
+           "grabbing L_ArmIK, now driving, switches nothing")
+    _Check(gizmo.undoStack.Undo(), "the select switch is one undo entry")
+    appController._processEvents()
+    _Check(float(switchAttr.Get(frame)) == limb.fkValue and
+           view._modes.get(armDial) == "fk" and arm.value == "FK",
+           "undo put L_Arm back in FK, in the picker too: %g %r %r"
+           % (float(switchAttr.Get(frame)), view._modes.get(armDial),
+              arm.value))
+    api.ClearPrimSelection()
+
 
 
 
@@ -459,11 +521,23 @@ def testUsdviewInputFunction(appController):
            "it finds the Controls prim under Aux: %s"
            % (controls.GetPath() if controls else None))
     _Check(vis.checked, "ticked while the controls are visible")
+    # What Hydra draws, not only what the stage says: hiding the controls
+    # changes no rig output, so nothing republishes, and the guides follow
+    # their controls' visibility through the scene index alone.
+    hand = next(p for p in Usd.PrimRange(controls)
+                if p.GetName() == "L_Hand" and
+                p.GetTypeName() == "RigExecControl")
+    _Check(_GuideDrawnVisible(hand.GetPath()) is True,
+           "L_Hand's guide is drawn visible before the click, got %r"
+           % _GuideDrawnVisible(hand.GetPath()))
     view.picked.emit([vis], "replace")
     appController._processEvents()
     imageable = UsdGeom.Imageable(controls)
     _Check(imageable.ComputeVisibility() == UsdGeom.Tokens.invisible,
            "a click hides the controls")
+    _Check(_GuideDrawnVisible(hand.GetPath()) is False,
+           "and Hydra draws L_Hand's guide hidden, got %r"
+           % _GuideDrawnVisible(hand.GetPath()))
     session = stage.GetSessionLayer().GetPropertyAtPath(
         controls.GetPath().AppendProperty("visibility"))
     _Check(session is not None,
@@ -473,6 +547,9 @@ def testUsdviewInputFunction(appController):
     appController._processEvents()
     _Check(imageable.ComputeVisibility() != UsdGeom.Tokens.invisible,
            "a second click shows them again")
+    _Check(_GuideDrawnVisible(hand.GetPath()) is True,
+           "and Hydra draws L_Hand's guide again, got %r"
+           % _GuideDrawnVisible(hand.GetPath()))
     _Check(vis.checked, "and the tick comes back")
     # Hidden from outside the picker: the tick follows.
     with Usd.EditContext(stage, stage.GetSessionLayer()):
@@ -512,7 +589,13 @@ def testUsdviewInputFunction(appController):
     now = panel._Frame()
     before = ikfkMatch.ControlFrame(evaluate({}, now), Sdf.Path(swing))
     panel._WriteSwitch(space_button, "world")
+    _Check(space_button.value == "world",
+           "the button reads world before the commit lands, got %r"
+           % space_button.value)
     appController._processEvents()
+    _Check(space_button.value == "world",
+           "the button still reads world after the commit, got %r"
+           % space_button.value)
     after = ikfkMatch.ControlFrame(evaluate({}, now), Sdf.Path(swing))
     off = max(abs(before[i][j] - after[i][j])
               for i in range(4) for j in range(4))

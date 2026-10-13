@@ -1,0 +1,175 @@
+#usda 1.0
+(
+    defaultPrim = "Biped"
+    doc = "The IK/FK matches: on each limb, the half its switch is not on follows the joints, and each match publishes the channel values a switch authors. Adds prims only, so dropping this sublayer leaves the character exactly as it was."
+)
+
+over "Biped"
+{
+    over "Rig"
+    {
+        reorder nameChildren = ["Movers", "IkFkMatch", "Main"]
+        def Scope "IkFkMatch"
+        {
+            def RigExecIkFkMatchConstraint "arm_l_match" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                double inputs:lowerScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:stretchBottom>
+                double inputs:pin.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:pvPin>
+                double inputs:softDistance.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:softStretch>
+                double inputs:stretch.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:stretch>
+                double inputs:switch.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:ikfk>
+                double inputs:twist.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:twist>
+                double inputs:upperScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Arm.avars:stretchTop>
+                rel rigExec:effector = </Biped/Rig/Main/Shot/Aux/Controls/L_ArmIK/wrist_l_ikOrient>
+                rel rigExec:fkControls = [
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm/L_Hand>,
+                ]
+                rel rigExec:ikControl = </Biped/Rig/Main/Shot/Aux/Controls/L_ArmIK>
+                uniform double rigExec:ikValue = 1
+                rel rigExec:limbJoints = [
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_l_def/shoulder_l_def>,
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_l_def/shoulder_l_def/elbow_l_def>,
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_l_def/shoulder_l_def/elbow_l_def/wrist_l_def>,
+                ]
+                rel rigExec:moves = [
+                    </Biped/Rig/Main/Shot/Aux/Controls/L_ArmIK>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/L_ArmPV>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing/L_UpArm/L_LoArm/L_Hand>,
+                ]
+                rel rigExec:poleControl = </Biped/Rig/Main/Shot/Aux/Controls/L_ArmPV>
+                rel rigExec:rootControl = </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/L_Shldr/L_UpArmSwing>
+                rel rigExec:space = </Biped/Rig/Main/Shot/Aux>
+                uniform token rigExec:stretchPolicy = "softDistance"
+            }
+
+            def RigExecIkFkMatchConstraint "arm_r_match" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                double inputs:lowerScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:stretchBottom>
+                double inputs:pin.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:pvPin>
+                double inputs:softDistance.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:softStretch>
+                double inputs:stretch.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:stretch>
+                double inputs:switch.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:ikfk>
+                double inputs:twist.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:twist>
+                double inputs:upperScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Arm.avars:stretchTop>
+                rel rigExec:effector = </Biped/Rig/Main/Shot/Aux/Controls/R_ArmIK/wrist_r_ikOrient>
+                rel rigExec:fkControls = [
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm/R_LoArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm/R_LoArm/R_Hand>,
+                ]
+                rel rigExec:ikControl = </Biped/Rig/Main/Shot/Aux/Controls/R_ArmIK>
+                uniform double rigExec:ikValue = 1
+                rel rigExec:limbJoints = [
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_r_def/shoulder_r_def>,
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_r_def/shoulder_r_def/elbow_r_def>,
+                    </Biped/Rig/Main/Shot/Aux/Joints/hips_def/spine_0_def/spine_1_def/spine_2_def/spine_3_def/spine_4_def/spine_5_def/chest_def/clavicle_r_def/shoulder_r_def/elbow_r_def/wrist_r_def>,
+                ]
+                rel rigExec:moves = [
+                    </Biped/Rig/Main/Shot/Aux/Controls/R_ArmIK>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/R_ArmPV>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm/R_LoArm>,
+                    </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing/R_UpArm/R_LoArm/R_Hand>,
+                ]
+                rel rigExec:poleControl = </Biped/Rig/Main/Shot/Aux/Controls/R_ArmPV>
+                rel rigExec:rootControl = </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_Torso/M_Chest/M_ChestTop/R_Shldr/R_UpArmSwing>
+                rel rigExec:space = </Biped/Rig/Main/Shot/Aux>
+                uniform token rigExec:stretchPolicy = "softDistance"
+            }
+        }
+
+        over "Movers"
+        {
+            over "ankle_l_bind_scAim"
+            {
+                def RigExecIkFkMatchConstraint "leg_l_match" (
+                    prepend apiSchemas = ["RigExecMoverAPI"]
+                )
+                {
+                    double inputs:lowerScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:stretchBottom>
+                    double inputs:pin.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:pvPin>
+                    double inputs:softDistance.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:softStretch>
+                    double inputs:stretch.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:stretch>
+                    double inputs:switch.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:ikfk>
+                    double inputs:twist.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:twist>
+                    double inputs:upperScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/L_Leg.avars:stretchTop>
+                    rel rigExec:effector = </Biped/Rig/Main/Shot/Aux/Controls/L_LegIK/ankle_l_pivot/bankIn_l_pivot/bankOut_l_pivot/heel_l_roll/L_Heel/ball_l_pivot/toe_l_roll/L_Toe/ballRoll_l_up/ballRoll_l_down/L_BallRoll/ankle_l_ikTarget>
+                    rel rigExec:fkControls = [
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg/L_LoLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg/L_LoLeg/L_Foot>,
+                    ]
+                    rel rigExec:ikControl = </Biped/Rig/Main/Shot/Aux/Controls/L_LegIK>
+                    uniform double rigExec:ikValue = 1
+                    rel rigExec:limbJoints = [
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_l_def/thigh_l_def>,
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_l_def/thigh_l_def/knee_l_def>,
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_l_def/thigh_l_def/knee_l_def/ankle_l_def>,
+                    ]
+                    rel rigExec:moves = [
+                        </Biped/Rig/Main/Shot/Aux/Controls/L_LegIK>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/L_LegPV>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg/L_LoLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing/L_UpLeg/L_LoLeg/L_Foot>,
+                    ]
+                    rel rigExec:poleControl = </Biped/Rig/Main/Shot/Aux/Controls/L_LegPV>
+                    rel rigExec:rootControl = </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/L_Hip/L_UpLegSwing>
+                    uniform double rigExec:scaleCalibration = 0.001970703015103936
+                    rel rigExec:space = </Biped/Rig/Main/Shot/Aux>
+                    uniform token rigExec:stretchPolicy = "softDistance"
+                }
+            }
+
+            over "ankle_r_bind_scAim"
+            {
+                def RigExecIkFkMatchConstraint "leg_r_match" (
+                    prepend apiSchemas = ["RigExecMoverAPI"]
+                )
+                {
+                    double inputs:lowerScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:stretchBottom>
+                    double inputs:pin.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:pvPin>
+                    double inputs:softDistance.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:softStretch>
+                    double inputs:stretch.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:stretch>
+                    double inputs:switch.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:ikfk>
+                    double inputs:twist.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:twist>
+                    double inputs:upperScale.connect = </Biped/Rig/Main/Shot/Aux/Controls/R_Leg.avars:stretchTop>
+                    rel rigExec:effector = </Biped/Rig/Main/Shot/Aux/Controls/R_LegIK/ankle_r_pivot/bankIn_r_pivot/bankOut_r_pivot/heel_r_roll/R_Heel/ball_r_pivot/toe_r_roll/R_Toe/ballRoll_r_up/ballRoll_r_down/R_BallRoll/ankle_r_ikTarget>
+                    rel rigExec:fkControls = [
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg/R_LoLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg/R_LoLeg/R_Foot>,
+                    ]
+                    rel rigExec:ikControl = </Biped/Rig/Main/Shot/Aux/Controls/R_LegIK>
+                    uniform double rigExec:ikValue = 1
+                    rel rigExec:limbJoints = [
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_r_def/thigh_r_def>,
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_r_def/thigh_r_def/knee_r_def>,
+                        </Biped/Rig/Main/Shot/Aux/Joints/hips_def/pelvis_r_def/thigh_r_def/knee_r_def/ankle_r_def>,
+                    ]
+                    rel rigExec:moves = [
+                        </Biped/Rig/Main/Shot/Aux/Controls/R_LegIK>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/R_LegPV>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg/R_LoLeg>,
+                        </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing/R_UpLeg/R_LoLeg/R_Foot>,
+                    ]
+                    rel rigExec:poleControl = </Biped/Rig/Main/Shot/Aux/Controls/R_LegPV>
+                    rel rigExec:rootControl = </Biped/Rig/Main/Shot/Aux/Controls/M_Body/M_HipSwivel/M_BodyGimbal/R_Hip/R_UpLegSwing>
+                    uniform double rigExec:scaleCalibration = 0.001970703015103936
+                    rel rigExec:space = </Biped/Rig/Main/Shot/Aux>
+                    uniform token rigExec:stretchPolicy = "softDistance"
+                }
+            }
+        }
+    }
+}
+

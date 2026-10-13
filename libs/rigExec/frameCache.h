@@ -180,9 +180,13 @@ bool RigExecSampleDigestible(const RigExecSampledInput &sample);
 /// recorded path sequence elementwise.
 struct RigExecFrameDigestOrder;
 
-/// Records the fold order of \p values' path sequence.
+/// Records the fold order of \p values' path sequence. With \p previous,
+/// an order recorded from a nearby sequence, its sorted paths and their
+/// level-1 states are reused and only the paths it lacks are sorted in:
+/// the result is the same order either way.
 std::shared_ptr<const RigExecFrameDigestOrder> RigExecRecordFrameDigestOrder(
-    const std::vector<RigExecSampledInput> &values);
+    const std::vector<RigExecSampledInput> &values,
+    const RigExecFrameDigestOrder *previous = nullptr);
 
 /// Whether \p order was recorded from \p values' path sequence; false for a
 /// null order.

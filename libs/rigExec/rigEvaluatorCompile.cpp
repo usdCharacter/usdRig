@@ -1738,6 +1738,95 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
                     return false;
                 }
             }
+        } else if (mover.schemaType == "RigExecIkFkMatchConstraint") {
+            // It revises no frame a reader sees: its controls' revised
+            // frames are presentation, applied where control frames are
+            // published. So it has no targets, and reads, in order, the
+            // three joints, the IK root, the effector, then its controls --
+            // IK control, pole, the three FK controls.
+            const auto one = [&](const char *name, SdfPath *out) {
+                const SdfPathVector rows = getTargets(moverPrim, name);
+                if (rows.size() != 1 || !rows[0].IsPrimPath()) {
+                    return fail("RigExecIkFkMatchConstraint " +
+                                mover.moverPath.GetString() +
+                                " requires exactly one " + name,
+                                {mover.moverPath});
+                }
+                *out = rows[0];
+                return true;
+            };
+            SdfPath ik, pole, root, effector;
+            if (!one("rigExec:ikControl", &ik) ||
+                !one("rigExec:poleControl", &pole) ||
+                !one("rigExec:rootControl", &root) ||
+                !one("rigExec:effector", &effector)) {
+                return false;
+            }
+            const SdfPathVector fk = getTargets(moverPrim, "rigExec:fkControls");
+            const SdfPathVector joints =
+                getTargets(moverPrim, "rigExec:limbJoints");
+            if (fk.size() != 3 || joints.size() != 3) {
+                return fail("RigExecIkFkMatchConstraint " +
+                            mover.moverPath.GetString() +
+                            " requires three FK controls and three joints",
+                            {mover.moverPath});
+            }
+            const SdfPathVector controls = {ik, pole, fk[0], fk[1], fk[2]};
+            for (const SdfPath &target : controls) {
+                const UsdPrim control = _stage->GetPrimAtPath(target);
+                if (!control || control.GetTypeName() != "RigExecControl") {
+                    return fail("RigExecIkFkMatchConstraint " +
+                                mover.moverPath.GetString() + " revises " +
+                                target.GetString() +
+                                ", which is not a RigExecControl",
+                                {mover.moverPath});
+                }
+            }
+            if (std::set<SdfPath>(mover.targets.begin(), mover.targets.end()) !=
+                std::set<SdfPath>(controls.begin(), controls.end())) {
+                return fail("RigExecIkFkMatchConstraint " +
+                            mover.moverPath.GetString() +
+                            " rigExec:moves must name exactly its IK control, "
+                            "pole and FK controls", {mover.moverPath});
+            }
+            const SdfPathVector reads = {joints[0], joints[1], joints[2],
+                                         root,      effector,  ik,
+                                         pole,      fk[0],     fk[1],
+                                         fk[2]};
+            for (const SdfPath &read : reads) {
+                _FrameSourceBinding binding;
+                if (!bindFrameSource(mover.moverPath, read,
+                                     "RigExecIkFkMatchConstraint " +
+                                         mover.moverPath.GetString() +
+                                         " input",
+                                     &binding)) {
+                    return false;
+                }
+                if (!binding.xformPath.IsEmpty()) {
+                    return fail("RigExecIkFkMatchConstraint " +
+                                mover.moverPath.GetString() + " reads " +
+                                read.GetString() +
+                                ", which is not a RigExec transform provider",
+                                {mover.moverPath});
+                }
+                constraint.sources.push_back(binding);
+            }
+            const SdfPathVector space = getTargets(moverPrim, "rigExec:space");
+            if (space.size() > 1) {
+                return fail("RigExecIkFkMatchConstraint " +
+                            mover.moverPath.GetString() +
+                            " has more than one rigExec:space",
+                            {mover.moverPath});
+            }
+            if (!space.empty()) {
+                const UsdPrim spacePrim = _stage->GetPrimAtPath(space[0]);
+                const TfToken spaceType =
+                    spacePrim ? spacePrim.GetTypeName() : TfToken();
+                if (spaceType == "RigExecControl" ||
+                    spaceType == "RigExecJoint") {
+                    constraint.spacePath = space[0];
+                }
+            }
         } else {
             // FBX SingleChainIK names endpoints, not an ordered output list.
             // RigExec joint hierarchy is namespace nesting, so the exact

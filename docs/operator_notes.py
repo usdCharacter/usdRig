@@ -19,7 +19,8 @@ CATEGORIES = [
                  "blend_point_frames", "twist_distribution", "ribbon"]),
     ("Constraints", ["aim_constraint", "position_constraint",
                      "rotation_constraint", "scale_constraint",
-                     "parent_constraint", "single_chain_ik_constraint", "constraint_frame"]),
+                     "parent_constraint", "single_chain_ik_constraint",
+                     "ikfk_match_constraint", "constraint_frame"]),
     ("Geometry movers", ["matrix_mover", "skin_mover", "layered_skin_mover", "blendshape_mover",
                          "curve_mover", "lattice_mover", "surface_mover", "surface_binding_mover",
                          "smooth_mover", "delta_mush_mover", "wrinkle_mover", "volume_correct_mover"]),
@@ -1232,6 +1233,64 @@ home.""",
             ("matrix_mover", "Matrix Mover"),
         ],
     },
+    "ikfk_match_constraint": {
+        "title": "IK/FK Match Constraint",
+        "schema": "RigExecIkFkMatchConstraint",
+        "summary": "Keeps a switchable limb's inactive half on its joints and publishes the values a switch authors.",
+        "no_gif": True,
+        "description": """A limb that switches between an FK chain and a two-bone IK
+has two sets of controls, and only one of them drives the joints. This
+constraint keeps the other set on the limb: while the switch is on FK, the IK
+control and the pole are drawn where the joints are; while it is on IK, the
+three FK controls are. Every frame it also publishes `outputs:ikValues` and
+`outputs:fkValues`, the channel values each half needs to drive the joints
+exactly where they are. A switch authors one of those sets together with the
+switch value, so the limb does not move and nothing is solved at the click.""",
+        "how_it_works": """The constraint reads the limb's joints where it stands in the
+pose stack, the IK solve's root and effector, its five controls and their
+channels, and the IK solve's stretch, pin and twist channels. From them a
+shared kernel (`ikFkMatchKernel.h`) computes both halves' values in one pass:
+the IK control from the end joint and the effector's offset from the control,
+the pole on the bend plane (turned back by the twist; on the middle joint when
+the solve pins), the stretch scales by Newton's method on the limb lengths, and
+the FK controls from their joints with each parent carried by the control above
+it. The pole's parent after the switch is its own space switch re-run with the
+IK control moved. The revision of the inactive controls is presentation only:
+it is applied where control frames are published, after the walk, and every
+control under a presented one rides with it. No solver, constraint or mover
+reads it, so the rig evaluates exactly as it would without the constraint.
+Between the two switch values neither half is presented. Native, frozen and
+binary playback run the same kernel.""",
+        "wiring": [
+            ("`rigExec:ikControl`, `rigExec:poleControl`", "The IK control and the IK solve's pole.", "yes"),
+            ("`rigExec:fkControls`", "The FK chain's three controls, root to end.", "yes"),
+            ("`rigExec:limbJoints`", "The three joints the limb's blend writes.", "yes"),
+            ("`rigExec:rootControl`, `rigExec:effector`", "The IK solve's root and the frame it reaches for.", "yes"),
+            ("`rigExec:moves`", "The IK control, pole and three FK controls, restated.", "yes"),
+            ("`rigExec:space`", "The IK solve's space, which carries its rest lengths.", "no"),
+            ("`inputs:switch`", "Connected to the limb's switch channel.", "yes"),
+            ("`inputs:stretch`, `inputs:softDistance`, `inputs:upperScale`, `inputs:lowerScale`, `inputs:twist`",
+             "Connected to the same channels as the IK solve's inputs.", "no"),
+            ("`inputs:pin`", "Connected to the animator's pin channel, not to a pin the switch scales.", "no"),
+        ],
+        "param_groups": [
+            ("Common mover envelope", "RigExecMoverAPI"),
+            ("Constraint base", "RigExecConstraint"),
+        ],
+        "example": """The biped's `Biped_ikfk_match.usda` layer adds one match per
+limb. The arms' matches run just above the solvers; each leg's runs inside its
+ankle aim's scope, after the foot-roll revisions the leg's IK reads and before
+the aim revises the ankle. The picker's IK/FK buttons and the right-click
+"Switch to IK / FK" author the published values.""",
+        "tips": [
+            "Place the match after the limb's blend and before any constraint that revises its joints.",
+            "A switch to FK also sets the pin and twist channels to zero; both belong to the IK solve.",
+            "The FK chain must lengthen by the stretch scales in proportion, as the biped's limbs do.",
+        ],
+        "see_also": [("blend_point_frames", "Blend Point Frames"), ("two_bone_ik", "Two Bone IK"),
+                     ("fk_chain", "FK Chain")],
+    },
+
     "single_chain_ik_constraint": {
         "title": "Single-Chain IK Constraint",
         "schema": "RigExecSingleChainIkConstraint",

@@ -23,6 +23,7 @@
     subLayers = [
         @./Biped_spaces.usda@,
         @./Biped_autoclav.usda@,
+        @./Biped_ikfk_match.usda@,
         @./Biped_squetch.usda@,
         @./Biped_face_rig.usda@,
         @./Biped_body.usda@

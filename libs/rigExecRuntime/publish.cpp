@@ -343,6 +343,43 @@ RrPublishPose(RrProgram *program,
         store.controlFrames[meta.controlPaths[k]] =
             store.fin[size_t(store.finLast[slot])];
     }
+    // IK/FK matches present the half that is not driving on the joints, and
+    // every control under a presented one rides its revision
+    // (PresentIkFkMatches, bakedPose.cpp).
+    const auto &constraints = program->poses->constraints;
+    for (size_t ci = 0; ci < constraints.size() &&
+                        ci < store.matchShownMask.size(); ++ci) {
+        const RigExecWireConstraint &c = constraints[ci];
+        if (!c.ikFkMatch || !store.matchShownMask[ci] || c.sources.size() != 10)
+            continue;
+        RrMat4d delta[5];
+        bool deltaOk[5] = {false, false, false, false, false};
+        for (size_t k = 0; k < 5; ++k) {
+            if (!(store.matchShownMask[ci] & (1u << k))) continue;
+            const auto found = store.controlFrames.find(
+                meta.paths[size_t(c.sources[5 + k])]);
+            if (found == store.controlFrames.end()) continue;
+            RrMat4d before, after;
+            deltaOk[k] =
+                RrPointsToMatrix(RrIdentityLandmarks(), found->second.points,
+                                 &before) &&
+                RrPointsToMatrix(RrIdentityLandmarks(),
+                                 store.matchShown[ci][k].points, &after);
+            if (deltaOk[k]) delta[k] = before.GetInverse() * after;
+            found->second = store.matchShown[ci][k];
+        }
+        for (const auto &[slot, rides] : store.matchRiders[ci]) {
+            if (!deltaOk[size_t(rides)]) continue;
+            const auto found =
+                store.controlFrames.find(meta.paths[size_t(slot)]);
+            if (found == store.controlFrames.end()) continue;
+            RrMat4d frame;
+            if (RrPointsToMatrix(RrIdentityLandmarks(), found->second.points,
+                                 &frame)) {
+                found->second = RrFrameFromMatrix(frame * delta[size_t(rides)]);
+            }
+        }
+    }
 
     _RrAppendStepLines(program, RrStepLines::Interpolator, poseDiagnostics);
     // Pose outputs publish after property chains, as the native epilogue does.

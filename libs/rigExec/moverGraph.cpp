@@ -3940,7 +3940,13 @@ RigExecRevisionLeafHops(const RigExecRevisionLeafKey &key,
             break;
         }
         a = a.GetPrim().GetStage()->GetAttributeAtPath(connections[0]);
-        if (!a || !visiting.insert(a.GetPath()).second) {
+        if (!a) {
+            // A target with no attribute yet ends the walk, and is still
+            // where the read can reach: authoring it changes the answer.
+            hops->push_back(connections[0]);
+            break;
+        }
+        if (!visiting.insert(a.GetPath()).second) {
             break;
         }
         hops->push_back(a.GetPath());

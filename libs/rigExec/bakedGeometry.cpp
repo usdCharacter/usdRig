@@ -31,6 +31,7 @@
 #include "pxr/usd/usdSkel/blendShape.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/work/loops.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/array.h"
@@ -40,6 +41,8 @@
 #include "pxr/usd/usd/stage.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -2938,6 +2941,18 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
                          });
         channels.push_back(std::move(channel));
     }
+    if (revision->gpuOwned) {
+        // The program sums the channels on the device. The packet keeps the
+        // sum's shape, zero deltas, so its validity and status are the
+        // CPU path's; a structural failure empties it as below.
+        if (RigExecBlendChannelsAreUsable(channels, values->BasePointCount())) {
+            values->blendDeltas.assign(values->BasePointCount(), GfVec3f(0));
+        } else {
+            values->blendDeltas.clear();
+        }
+        revision->gpuChannels = std::move(channels);
+        return;
+    }
     // A structural failure leaves blendDeltas empty, which is what makes
     // the assembled packet invalid -- the same atomic MoverFailed
     // pass-through the kernel produces.
@@ -3930,6 +3945,452 @@ RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
     }
 }
 
+namespace {
+
+// A GPU chain's revisions as the lowering reads them: the packets this
+// generation assembled, the folded skin tables, the unsummed channels and
+// each fuse's decision.
+void
+LowerGpuChain(const RigExecBakedProgramImpl &B,
+              RigExecBakedProgramImpl::GeomChain *chain)
+{
+    std::vector<RigExecGpuRevisionInput> inputs;
+    inputs.reserve(chain->revisions.size());
+    for (RigExecBakedProgramImpl::GeomRevision &revision : chain->revisions) {
+        RigExecGpuRevisionInput in;
+        in.op = revision.op;
+        in.parameters = &revision.parameters;
+        if (revision.op == RigExecRevisionOp::Skin) {
+            in.influences = &revision.influences;
+        }
+        if (revision.op == RigExecRevisionOp::BlendShape) {
+            in.channels = &revision.gpuChannels;
+        }
+        in.applies = revision.gpuApplies;
+        // The shared packet's op value revision names it exactly.
+        if (revision.weightObject >= 0 && !revision.weightCurrentPhase &&
+            revision.weightPacketValue >= 0 &&
+            size_t(revision.weightPacketValue) < B.opAdapter.values.size()) {
+            in.weightsObject = revision.weightObject;
+            in.weightsRevision =
+                B.opAdapter.values[size_t(revision.weightPacketValue)].revision;
+        }
+        inputs.push_back(in);
+    }
+    chain->gpuLowered = chain->gpuLowering.Lower(
+        inputs, chain->lastBase.size(), &chain->gpuFrame);
+    chain->gpuPending = true;
+}
+
+// The chain through its CPU revision kernels, in order, on the decisions
+// its fuses made: the boundary's answer where no device ran the program or
+// the device refused it (a degenerate dual-quaternion blend fails its
+// revision atomically here, as on the CPU path).
+void
+RunGpuChainOnCpu(RigExecBakedProgramImpl &B,
+                 RigExecBakedProgramImpl::GeomChain *chain,
+                 std::vector<GfVec3f> *points)
+{
+    points->assign(chain->lastBase.begin(), chain->lastBase.end());
+    std::vector<GfVec3f> before;
+    for (RigExecBakedProgramImpl::GeomRevision &revision : chain->revisions) {
+        if (!revision.gpuApplies) {
+            continue;
+        }
+        RigExecMoverParameters p = revision.parameters;
+        if (revision.op == RigExecRevisionOp::Skin) {
+            p.skinTransforms = revision.influences;
+        } else if (revision.op == RigExecRevisionOp::BlendShape &&
+                   !RigExecGeometryBlendDeltas(revision.gpuChannels,
+                                               chain->lastBase.cdata(),
+                                               chain->lastBase.size(),
+                                               &p.blendDeltas)) {
+            p.blendDeltas.clear();
+        }
+        before = *points;
+        if (!RigExecRunGeometry(revision.op, p, points, B.useSimd,
+                                &revision.wireBasis, &revision.surfaceCache)) {
+            points->swap(before);
+            if (revision.status.AllowsApply()) {
+                revision.resultStatus = _tokens->moverFailed;
+            }
+        }
+    }
+}
+
+// The shader-mode boundary: each lowered chain publishes its program in
+// place of its points, and its derived extents are measured from the
+// extent sample. A chain that did not lower runs its CPU kernels and
+// publishes points as always.
+void
+ResolveShaderChains(RigExecBakedProgramImpl &B)
+{
+    std::vector<GfVec3f> points;
+    std::vector<RigExecBakedProgramImpl::GeomChain *> measure;
+    for (RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
+        if (!chain.gpu || !chain.gpuPending) continue;
+        chain.gpuPending = false;
+        if (!chain.haveBase) continue;
+        if (!chain.gpuLowered || !chain.gpuFrame.layout) {
+            RunGpuChainOnCpu(B, &chain, &points);
+            chain.spare.clear();
+            chain.spare.resize(points.size(), [&points](GfVec3f *out, GfVec3f *end) {
+                std::uninitialized_copy(points.begin(), points.begin() + (end - out), out);
+            });
+            if (!SamePoints(chain.spare, chain.result)) ++chain.resultVersion;
+            chain.result.swap(chain.spare);
+            chain.haveResult = true;
+            chain.gpuPublication.reset();
+            chain.gpuLastSerial = 0;
+            continue;
+        }
+        const RigExecGpuDeformLayout &layout = *chain.gpuFrame.layout;
+        const bool same =
+            chain.gpuPublication && layout.serial == chain.gpuLastSerial &&
+            chain.gpuLastBaseVersion == chain.baseVersion &&
+            chain.gpuFrame.frame == chain.gpuLastFrame;
+        if (same) continue;
+        if (chain.gpuFrame.frame != chain.gpuLastFrame ||
+            layout.serial != chain.gpuLastSerial) {
+            ++chain.gpuFrameVersion;
+        }
+        auto publication = std::make_shared<RigExecGpuDeformPublication>();
+        publication->layout = chain.gpuFrame.layout;
+        publication->frame =
+            std::make_shared<const std::vector<float>>(chain.gpuFrame.frame);
+        publication->base = chain.lastBase;
+        publication->baseVersion = chain.baseVersion;
+        publication->frameVersion = chain.gpuFrameVersion;
+        chain.gpuPublication = std::move(publication);
+        chain.gpuLastFrame = chain.gpuFrame.frame;
+        chain.gpuLastSerial = layout.serial;
+        chain.gpuLastBaseVersion = chain.baseVersion;
+        ++chain.resultVersion;
+        chain.haveResult = true;
+        if (chain.derived.empty()) continue;
+        if (chain.gpuExtentSerial != layout.serial ||
+            chain.gpuExtentBaseVersion != chain.baseVersion) {
+            chain.gpuExtentSample = RigExecGpuDeformExtentSample(
+                layout, chain.lastBase.cdata(), chain.lastBase.size());
+            chain.gpuExtentSerial = layout.serial;
+            chain.gpuExtentBaseVersion = chain.baseVersion;
+        }
+        measure.push_back(&chain);
+    }
+    // The extents: every measured chain's sample in pieces, side by side
+    // (on one thread on a frozen worker), each piece growing its own box.
+    struct Piece {
+        RigExecBakedProgramImpl::GeomChain *chain;
+        size_t begin, end;
+        GfVec3f lo, hi;
+        bool ok;
+    };
+    constexpr size_t kPiece = 128;
+    const GfVec3f wide((std::numeric_limits<float>::max)());
+    std::vector<Piece> pieces;
+    for (RigExecBakedProgramImpl::GeomChain *chain : measure) {
+        const size_t n = chain->gpuExtentSample.size();
+        for (size_t b = 0; b < n; b += kPiece)
+            pieces.push_back({chain, b, std::min(n, b + kPiece), wide, -wide, false});
+    }
+    const auto runPieces = [&pieces](size_t begin, size_t end) {
+        for (size_t k = begin; k < end; ++k) {
+            Piece &piece = pieces[k];
+            piece.ok = RigExecGpuDeformSampleBounds(
+                piece.chain->gpuFrame, piece.chain->lastBase.cdata(),
+                piece.chain->gpuExtentSample, piece.begin, piece.end,
+                &piece.lo, &piece.hi);
+        }
+    };
+    static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+    const auto t0 = std::chrono::steady_clock::now();
+    if (pieces.size() > 1 && RigExecParallelEvaluationEnabled() &&
+        !RigExecFrozenSerialActive()) {
+        WorkParallelForN(pieces.size(), runPieces, 1);
+    } else {
+        runPieces(0, pieces.size());
+    }
+    if (stats) {
+        std::fprintf(stderr, "GPUSHADER extents %zu chains %zu pieces %.3f ms\n",
+            measure.size(), pieces.size(),
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
+    }
+    size_t k = 0;
+    for (RigExecBakedProgramImpl::GeomChain *chain : measure) {
+        GfVec3f lo = wide, hi = -wide;
+        bool measured = !chain->gpuExtentSample.empty();
+        for (; k < pieces.size() && pieces[k].chain == chain; ++k) {
+            measured = measured && pieces[k].ok;
+            for (int axis = 0; axis < 3; ++axis) {
+                lo[axis] = std::min(lo[axis], pieces[k].lo[axis]);
+                hi[axis] = std::max(hi[axis], pieces[k].hi[axis]);
+            }
+        }
+        if (measured) RigExecGpuDeformPadExtent(&lo, &hi);
+        for (const int index : chain->gpuDerivedSteps) {
+            RigExecBakedStep &step = B.steps[size_t(index)];
+            const auto &[chainIndex, derivedIndex] =
+                B.derivedIndex[size_t(step.object)];
+            RigExecBakedProgramImpl::GeomChain::Derived &derived =
+                chain->derived[size_t(derivedIndex)];
+            step.diagnostics.clear();
+            RigExecBakedPrepareDerivedBase(&derived, &step);
+            if (!derived.haveBase || !measured) continue;
+            VtVec3fArray extent(2);
+            extent[0] = lo;
+            extent[1] = hi;
+            if (!SamePoints(extent, derived.result)) ++derived.resultVersion;
+            derived.result = extent;
+            derived.haveResult = true;
+        }
+    }
+}
+
+// Which chain a slot of a point-carrying domain belongs to, or -1.
+int
+GpuSlotChain(const RigExecBakedProgramImpl &B, RigExecBakedSlotDomain domain,
+             uint32_t slot)
+{
+    switch (domain) {
+    case RigExecBakedSlotDomain::ChainPoints:
+        return slot < B.chains.size() ? int(slot) : -1;
+    case RigExecBakedSlotDomain::RevisionOut:
+        if (slot < B.chunkRevision.size()) {
+            const int id = B.chunkRevision[slot];
+            if (id >= 0 && size_t(id) < B.revisionIndex.size())
+                return B.revisionIndex[size_t(id)].first;
+        }
+        return -1;
+    case RigExecBakedSlotDomain::RevisionDone:
+    case RigExecBakedSlotDomain::ChainDirty:
+        return slot < B.revisionIndex.size() ? B.revisionIndex[slot].first : -1;
+    default:
+        return -1;
+    }
+}
+
+// The chain a geometry step works on, or -1 for every other step.
+int
+GpuStepChain(const RigExecBakedProgramImpl &B, const RigExecBakedStep &step)
+{
+    switch (step.kind) {
+    case RigExecBakedStepKind::ChainInputs:
+    case RigExecBakedStepKind::ChainStatus:
+        return step.object;
+    case RigExecBakedStepKind::InfluenceFold:
+    case RigExecBakedStepKind::RevisionStatic:
+    case RigExecBakedStepKind::RevisionChunk:
+    case RigExecBakedStepKind::RevisionFuse:
+        return size_t(step.object) < B.revisionIndex.size()
+                   ? B.revisionIndex[size_t(step.object)].first : -1;
+    case RigExecBakedStepKind::Derived:
+        return size_t(step.object) < B.derivedIndex.size()
+                   ? B.derivedIndex[size_t(step.object)].first : -1;
+    default:
+        return -1;
+    }
+}
+
+}  // namespace
+
+void
+RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
+{
+    RigExecBakedProgramImpl &B = *program;
+    B.gpuDeformMode = RigExecGpuDeformModeFromEnv();
+    for (auto &chain : B.chains) {
+        chain.gpu = false;
+        chain.gpuDerivedSteps.clear();
+        for (auto &revision : chain.revisions) revision.gpuOwned = false;
+    }
+    if (B.gpuDeformMode == RigExecGpuDeformMode::Off) {
+        return;
+    }
+    const bool shader = B.gpuDeformMode == RigExecGpuDeformMode::Shader;
+    // A chain whose points, versions or statuses a step outside it reads
+    // must produce them inside the graph, which a GPU chain does not.
+    std::vector<char> blocked(B.chains.size(), 0);
+    for (const RigExecBakedStep &step : B.steps) {
+        const int own = GpuStepChain(B, step);
+        for (const RigExecBakedSlotRange &read : step.reads) {
+            for (uint32_t slot = read.begin; slot < read.end; ++slot) {
+                const int chain = GpuSlotChain(B, read.domain, slot);
+                if (chain >= 0 && chain != own) blocked[size_t(chain)] = 1;
+            }
+        }
+    }
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        bool eligible = !blocked[c] && !chain.revisions.empty();
+        for (const auto &revision : chain.revisions) {
+            if (!eligible) break;
+            switch (revision.op) {
+            case RigExecRevisionOp::Matrix:
+            case RigExecRevisionOp::Skin:
+            case RigExecRevisionOp::Wire:
+                break;
+            case RigExecRevisionOp::BlendShape:
+                // Sparse samples only: a dense sample's delta is measured
+                // against a base the program does not hold.
+                for (const auto &channel : revision.blendChannels)
+                    for (const auto &sample : channel.samples)
+                        if (sample.blendShape.IsEmpty()) eligible = false;
+                break;
+            default:
+                eligible = false;
+            }
+            // A current-phase weight field or a snapshot reads the points
+            // entering a revision.
+            if (revision.snapshotAfter || revision.weightCurrentPhase)
+                eligible = false;
+        }
+        // A shader chain's points never come back: a derived step that
+        // reads them all (normals, a surface projector) keeps the chain on
+        // its CPU kernels. An extent is measured from a sample.
+        for (const auto &derived : chain.derived) {
+            if (shader && (derived.matrixTarget ||
+                           derived.revision.op != RigExecRevisionOp::RecomputeExtent))
+                eligible = false;
+        }
+        if (!eligible) continue;
+        chain.gpu = true;
+        for (auto &revision : chain.revisions) revision.gpuOwned = true;
+    }
+    // The derived steps are indexed at the first boundary: compiling the
+    // graph reorders the steps after this.
+    B.gpuDerivedIndexed = false;
+}
+
+void
+RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
+                             UsdTimeCode time)
+{
+    RigExecBakedProgramImpl &B = *program;
+    if (B.gpuDeformMode != RigExecGpuDeformMode::Off && !B.gpuDerivedIndexed) {
+        for (auto &chain : B.chains) chain.gpuDerivedSteps.clear();
+        for (size_t i = 0; i < B.steps.size(); ++i) {
+            const RigExecBakedStep &step = B.steps[i];
+            if (step.kind != RigExecBakedStepKind::Derived) continue;
+            const int chain = GpuStepChain(B, step);
+            if (chain >= 0 && B.chains[size_t(chain)].gpu)
+                B.chains[size_t(chain)].gpuDerivedSteps.push_back(int(i));
+        }
+        B.gpuDerivedIndexed = true;
+    }
+    if (B.gpuDeformMode == RigExecGpuDeformMode::Shader) {
+        ResolveShaderChains(B);
+        return;
+    }
+    if (B.gpuDeformMode != RigExecGpuDeformMode::Readback) {
+        return;
+    }
+    std::vector<size_t> device, cpu, moved;
+    std::vector<RigExecGpuDeformJob> jobs;
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        if (!chain.gpu || !chain.gpuPending) continue;
+        chain.gpuPending = false;
+        if (!chain.haveBase) continue;
+        const bool unchanged =
+            chain.gpuLowered && chain.haveResult && chain.gpuFrame.layout &&
+            chain.gpuFrame.layout->serial == chain.gpuLastSerial &&
+            chain.gpuLastBaseVersion == chain.baseVersion &&
+            chain.gpuFrame.frame == chain.gpuLastFrame;
+        if (unchanged) continue;
+        if (!chain.gpuLowered) {
+            cpu.push_back(c);
+            continue;
+        }
+        chain.gpuScratch.resize(chain.lastBase.size());
+        RigExecGpuDeformJob job;
+        // The chain's own address names its device buffers: a frozen clone
+        // holds its chains apart from the live program's.
+        job.chain = uint64_t(reinterpret_cast<uintptr_t>(&chain));
+        job.frame = &chain.gpuFrame;
+        job.base = reinterpret_cast<const float *>(chain.lastBase.cdata());
+        job.baseVersion = chain.baseVersion;
+        job.out = reinterpret_cast<float *>(chain.gpuScratch.data());
+        jobs.push_back(job);
+        device.push_back(c);
+    }
+    const RigExecGpuDeformRunner runner = RigExecGetGpuDeformRunner();
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool ran = !jobs.empty() && runner && runner(&jobs);
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto publish = [&B, &moved](size_t c, const std::vector<GfVec3f> &points) {
+        RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        chain.spare.clear();
+        chain.spare.resize(points.size(), [&points](GfVec3f *out, GfVec3f *end) {
+            std::uninitialized_copy(points.begin(), points.begin() + (end - out), out);
+        });
+        if (!SamePoints(chain.spare, chain.result)) ++chain.resultVersion;
+        chain.result.swap(chain.spare);
+        chain.haveResult = true;
+        if (chain.gpuFrame.layout) {
+            chain.gpuLastFrame = chain.gpuFrame.frame;
+            chain.gpuLastSerial = chain.gpuFrame.layout->serial;
+        }
+        chain.gpuLastBaseVersion = chain.baseVersion;
+        moved.push_back(c);
+    };
+    for (size_t j = 0; j < device.size(); ++j) {
+        if (ran && jobs[j].ok) {
+            publish(device[j], B.chains[device[j]].gpuScratch);
+        } else {
+            cpu.push_back(device[j]);
+        }
+    }
+    std::vector<GfVec3f> points;
+    for (const size_t c : cpu) {
+        RunGpuChainOnCpu(B, &B.chains[c], &points);
+        publish(c, points);
+        // Not this frame's program: the next one deforms again.
+        B.chains[c].gpuLastSerial = 0;
+    }
+    // The derived steps, on the published points, as the graph would have
+    // run them after ChainStatus.
+    // Each writes only its own target's state, as in the graph, so they run
+    // side by side -- except on a frozen worker, which owns one thread.
+    std::vector<int> derived;
+    for (const size_t c : moved) {
+        derived.insert(derived.end(), B.chains[c].gpuDerivedSteps.begin(),
+                       B.chains[c].gpuDerivedSteps.end());
+    }
+    B.gpuBoundary = true;
+    const auto runDerived = [&B, &derived, time](size_t begin, size_t end) {
+        for (size_t k = begin; k < end; ++k) {
+            RigExecBakedStep &step = B.steps[size_t(derived[k])];
+            step.diagnostics.clear();
+            RigExecBakedRunGeometryStep(&B, &step, time);
+        }
+    };
+    if (derived.size() > 1 && RigExecParallelEvaluationEnabled() &&
+        !RigExecFrozenSerialActive()) {
+        WorkParallelForN(derived.size(), runDerived, 1);
+    } else {
+        runDerived(0, derived.size());
+    }
+    B.gpuBoundary = false;
+    static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+    if (stats) {
+        const auto t2 = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "GPUSTATS device %zu cpu %zu moved %zu run %.3f ms after %.3f ms\n",
+            device.size(), cpu.size(), moved.size(),
+            std::chrono::duration<double, std::milli>(t1 - t0).count(),
+            std::chrono::duration<double, std::milli>(t2 - t1).count());
+        for (const size_t c : device)
+            std::fprintf(stderr, "GPUSTATS chain %s builds %zu points %zu ops %zu staticF %zu\n",
+                B.chains[c].target.GetText(), B.chains[c].gpuLowering.LayoutBuilds(),
+                B.chains[c].lastBase.size(), B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->OpCount() : 0,
+                B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->staticF.size() : 0);
+        for (size_t j = 0; j < device.size(); ++j)
+            if (!(ran && jobs[j].ok))
+                std::fprintf(stderr, "GPUSTATS fallback %s (ran %d)\n",
+                    B.chains[device[j]].target.GetText(), int(ran));
+    }
+}
+
 void
 RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                             RigExecBakedStep *step, UsdTimeCode time)
@@ -3946,6 +4407,11 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             B.chains[size_t(chainIndex)];
         RigExecBakedProgramImpl::GeomChain::Derived &derived =
             chain.derived[size_t(derivedIndex)];
+        // A GPU chain's points arrive at the publication boundary, which
+        // runs this step then (RigExecBakedResolveGpuChains).
+        if (chain.gpu && !B.gpuBoundary) {
+            return;
+        }
         // DerivedOut's content version moves exactly when this step leaves
         // `result` holding other bytes than it published last, a size reset
         // included. Held by handle, so the compare costs no copy.
@@ -4055,6 +4521,10 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             }
         }
         step->counters.chainsBuilt = 1;
+        if (chain.gpu) {
+            LowerGpuChain(B, &chain);
+            return;
+        }
         const size_t last = chain.revisions.size();
         if (chain.groupBounds.size() >= 2 && last > 0) {
             // A chain cut into groups: the content ids of version n's groups
@@ -4317,6 +4787,27 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 revision.weightFieldPublished = true;
             }
         }
+        if (revision.gpuOwned) {
+            // A GPU chain's revision moves no points here: only the
+            // acceptance its fuse reads, made as the CPU path makes it.
+            const size_t count = chain.lastBase.size();
+            revision.precedingCount = count;
+            revision.envelopeOk = true;
+            revision.fullStrength = true;
+            if (skin) {
+                revision.layoutUsable =
+                    RigExecSkinLayoutIsUsable(revision.parameters, count);
+                revision.fullStrength =
+                    RigExecEnvelopeIsFullStrength(revision.parameters.weights);
+                if (!revision.fullStrength) ResolveEnvelope(&revision, count);
+                revision.acceptance = SkinAcceptance(revision);
+            } else {
+                revision.acceptance = RigExecRevisionKernelAcceptance(
+                    revision.op, revision.parameters, count,
+                    &revision.envelopeOk);
+            }
+            return;
+        }
         // Every revision of a chain is applied to the same number of points:
         // a kernel that resized its output failed the application, so no
         // buffer the chain ever reads holds a different count. Sizing the
@@ -4450,6 +4941,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     }
 
     case RigExecBakedStepKind::RevisionChunk: {
+        if (revision.gpuOwned) {
+            return;
+        }
         if (revision.role == RigExecBakedRevisionRole::Range) {
             RunGroupStep(B, chain, chainIndex, &revision,
                          size_t(revisionIndex), size_t(step->part));
@@ -4540,6 +5034,31 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     }
 
     case RigExecBakedStepKind::RevisionFuse: {
+        if (revision.gpuOwned) {
+            // The CPU fuse's status decision without its points: the
+            // program applies what this fuse would have applied, and a
+            // degenerate dual-quaternion blend (the one Deferred answer)
+            // sends the chain to its CPU kernels at the boundary.
+            const bool packetValid =
+                revision.parameters.valid &&
+                (!skin || revision.influencesValid);
+            EmitInvalidPacketLine(B, revision, packetValid,
+                                  &step->diagnostics);
+            revision.executed = true;
+            step->counters.revisionsExecuted = 1;
+            revision.resultStatus = revision.status.state;
+            revision.gpuApplies =
+                packetValid && revision.status.AllowsApply() &&
+                revision.acceptance != RigExecRevisionAcceptance::Refuses;
+            if (!revision.gpuApplies && revision.status.AllowsApply()) {
+                revision.resultStatus = _tokens->moverFailed;
+            }
+            // ChainStatus lowers whenever any fuse of its chain ran.
+            ++revision.doneVersion;
+            revision.lastStatus = revision.status;
+            revision.ran = true;
+            return;
+        }
         if (revision.role == RigExecBakedRevisionRole::Range) {
             RunJoin(B, chain, chainIndex, &revision, step->object,
                     size_t(revisionIndex), step);
@@ -4864,7 +5383,8 @@ RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
             RigExecBakedProgramImpl::GeomChain &chain =
                 B.chains[size_t(step.object)];
             if (chain.haveBase) {
-                pose->movedProperties[chain.target] = VtValue(chain.result);
+                pose->movedProperties[chain.target] =
+                    RigExecBakedChainPublication(chain);
             }
         } else if (step.kind == RigExecBakedStepKind::Derived) {
             const auto &[chainIndex, derivedIndex] =
@@ -4884,6 +5404,15 @@ RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
             }
         }
     }
+}
+
+VtValue
+RigExecBakedChainPublication(const RigExecBakedProgramImpl::GeomChain &chain)
+{
+    if (chain.gpu && chain.gpuPublication) {
+        return VtValue(*chain.gpuPublication);
+    }
+    return VtValue(chain.result);
 }
 
 RigExecSurfaceProjectorFrames

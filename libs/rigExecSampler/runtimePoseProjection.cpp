@@ -1,5 +1,6 @@
 #include "runtimePoseProjection.h"
 #include "pxr/base/vt/array.h"
+#include "pxr/base/vt/types.h"
 #include <algorithm>
 #include <utility>
 
@@ -81,6 +82,17 @@ bool RigExecProjectRuntimePose(const RigExecRuntimeReader &reader,
     }
     for (const auto &property : reader.GetMatrixPrimvars())
         if (!Add(&result.movedProperties, property.path, VtValue(Matrix(property.matrix)), error)) return false;
+    for (const auto &match : reader.GetIkFkMatches()) {
+        if (!Add(&result.movedProperties, match.path + ".outputs:ikValues",
+                 VtValue(VtDoubleArray(match.ikValues.begin(), match.ikValues.end())), error) ||
+            !Add(&result.movedProperties, match.path + ".outputs:fkValues",
+                 VtValue(VtDoubleArray(match.fkValues.begin(), match.fkValues.end())), error)) return false;
+    }
+    for (const auto &match : reader.GetSpaceMatches()) {
+        if (!Add(&result.movedProperties, match.path + ".spaces:matchValues",
+                 VtValue(VtDoubleArray(match.values.begin(), match.values.end())), error))
+            return false;
+    }
     for (const auto &field : reader.GetWeightFields()) {
         RigExecResolvedWeightField value;
         value.target = SdfPath(field.target);

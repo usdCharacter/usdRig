@@ -8413,6 +8413,13 @@ struct RigExecWireConstraint : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireInput> twistDegrees{};
   int32_t weightField = -1;
   std::unique_ptr<rigExec::fb::RigExecWireInput> stretch{};
+  bool ikFkMatch = false;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireInput>> matchScalars{};
+  std::vector<double> matchConstants{};
+  bool matchStretchLimb = false;
+  int32_t matchPoleSwitch = -1;
+  std::vector<uint8_t> matchPoleSourceRides{};
+  bool matchPoleParentRides = false;
   RigExecWireConstraint() = default;
   RigExecWireConstraint(const RigExecWireConstraint &o);
   RigExecWireConstraint(RigExecWireConstraint&&) FLATBUFFERS_NOEXCEPT = default;
@@ -8484,7 +8491,14 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_POLEVECTOR = 112,
     VT_TWISTDEGREES = 114,
     VT_WEIGHTFIELD = 116,
-    VT_STRETCH = 118
+    VT_STRETCH = 118,
+    VT_IKFKMATCH = 120,
+    VT_MATCHSCALARS = 122,
+    VT_MATCHCONSTANTS = 124,
+    VT_MATCHSTRETCHLIMB = 126,
+    VT_MATCHPOLESWITCH = 128,
+    VT_MATCHPOLESOURCERIDES = 130,
+    VT_MATCHPOLEPARENTRIDES = 132
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -8669,6 +8683,32 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Input *stretch() const {
     return GetPointer<const rigExec::fb::Input *>(VT_STRETCH);
   }
+  bool ikFkMatch() const {
+    return GetField<uint8_t>(VT_IKFKMATCH, 0) != 0;
+  }
+  /// inputs:switch, stretch, softDistance, upperScale, lowerScale, pin and
+  /// twist, each a Float or a Double read.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *matchScalars() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_MATCHSCALARS);
+  }
+  /// rigExec:ikValue, scaleCalibration, upperLengthOffset, lowerLengthOffset.
+  const ::flatbuffers::Vector<double> *matchConstants() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_MATCHCONSTANTS);
+  }
+  bool matchStretchLimb() const {
+    return GetField<uint8_t>(VT_MATCHSTRETCHLIMB, 0) != 0;
+  }
+  /// pose.space_switches[] index of the pole's switch, or -1.
+  int32_t matchPoleSwitch() const {
+    return GetField<int32_t>(VT_MATCHPOLESWITCH, -1);
+  }
+  /// 0/1 per source of that switch: the source rides the IK control.
+  const ::flatbuffers::Vector<uint8_t> *matchPoleSourceRides() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_MATCHPOLESOURCERIDES);
+  }
+  bool matchPoleParentRides() const {
+    return GetField<uint8_t>(VT_MATCHPOLEPARENTRIDES, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -8759,6 +8799,17 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<int32_t>(verifier, VT_WEIGHTFIELD, 4) &&
            VerifyOffset(verifier, VT_STRETCH) &&
            verifier.VerifyTable(stretch()) &&
+           VerifyField<uint8_t>(verifier, VT_IKFKMATCH, 1) &&
+           VerifyOffset(verifier, VT_MATCHSCALARS) &&
+           verifier.VerifyVector(matchScalars()) &&
+           verifier.VerifyVectorOfTables(matchScalars()) &&
+           VerifyOffset(verifier, VT_MATCHCONSTANTS) &&
+           verifier.VerifyVector(matchConstants()) &&
+           VerifyField<uint8_t>(verifier, VT_MATCHSTRETCHLIMB, 1) &&
+           VerifyField<int32_t>(verifier, VT_MATCHPOLESWITCH, 4) &&
+           VerifyOffset(verifier, VT_MATCHPOLESOURCERIDES) &&
+           verifier.VerifyVector(matchPoleSourceRides()) &&
+           VerifyField<uint8_t>(verifier, VT_MATCHPOLEPARENTRIDES, 1) &&
            verifier.EndTable();
   }
   RigExecWireConstraint *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -8944,6 +8995,27 @@ struct ConstraintBuilder {
   void add_stretch(::flatbuffers::Offset<rigExec::fb::Input> stretch) {
     fbb_.AddOffset(Constraint::VT_STRETCH, stretch);
   }
+  void add_ikFkMatch(bool ikFkMatch) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_IKFKMATCH, static_cast<uint8_t>(ikFkMatch), 0);
+  }
+  void add_matchScalars(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> matchScalars) {
+    fbb_.AddOffset(Constraint::VT_MATCHSCALARS, matchScalars);
+  }
+  void add_matchConstants(::flatbuffers::Offset<::flatbuffers::Vector<double>> matchConstants) {
+    fbb_.AddOffset(Constraint::VT_MATCHCONSTANTS, matchConstants);
+  }
+  void add_matchStretchLimb(bool matchStretchLimb) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_MATCHSTRETCHLIMB, static_cast<uint8_t>(matchStretchLimb), 0);
+  }
+  void add_matchPoleSwitch(int32_t matchPoleSwitch) {
+    fbb_.AddElement<int32_t>(Constraint::VT_MATCHPOLESWITCH, matchPoleSwitch, -1);
+  }
+  void add_matchPoleSourceRides(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> matchPoleSourceRides) {
+    fbb_.AddOffset(Constraint::VT_MATCHPOLESOURCERIDES, matchPoleSourceRides);
+  }
+  void add_matchPoleParentRides(bool matchPoleParentRides) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_MATCHPOLEPARENTRIDES, static_cast<uint8_t>(matchPoleParentRides), 0);
+  }
   explicit ConstraintBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -9035,8 +9107,19 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraint(
     ::flatbuffers::Offset<rigExec::fb::Input> poleVector = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> twistDegrees = 0,
     int32_t weightField = -1,
-    ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0) {
+    ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
+    bool ikFkMatch = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> matchScalars = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> matchConstants = 0,
+    bool matchStretchLimb = false,
+    int32_t matchPoleSwitch = -1,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> matchPoleSourceRides = 0,
+    bool matchPoleParentRides = false) {
   ConstraintBuilder builder_(_fbb);
+  builder_.add_matchPoleSourceRides(matchPoleSourceRides);
+  builder_.add_matchPoleSwitch(matchPoleSwitch);
+  builder_.add_matchConstants(matchConstants);
+  builder_.add_matchScalars(matchScalars);
   builder_.add_stretch(stretch);
   builder_.add_weightField(weightField);
   builder_.add_twistDegrees(twistDegrees);
@@ -9086,6 +9169,9 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraint(
   builder_.add_weightObject(weightObject);
   builder_.add_type(type);
   builder_.add_path(path);
+  builder_.add_matchPoleParentRides(matchPoleParentRides);
+  builder_.add_matchStretchLimb(matchStretchLimb);
+  builder_.add_ikFkMatch(ikFkMatch);
   builder_.add_useAnimatedTs(useAnimatedTs);
   builder_.add_poleModeObject(poleModeObject);
   builder_.add_ikMode(ikMode);
@@ -9162,7 +9248,14 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
     ::flatbuffers::Offset<rigExec::fb::Input> poleVector = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> twistDegrees = 0,
     int32_t weightField = -1,
-    ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0) {
+    ::flatbuffers::Offset<rigExec::fb::Input> stretch = 0,
+    bool ikFkMatch = false,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *matchScalars = nullptr,
+    const std::vector<double> *matchConstants = nullptr,
+    bool matchStretchLimb = false,
+    int32_t matchPoleSwitch = -1,
+    const std::vector<uint8_t> *matchPoleSourceRides = nullptr,
+    bool matchPoleParentRides = false) {
   auto targetSlots__ = targetSlots ? _fbb.CreateVector<int32_t>(*targetSlots) : 0;
   auto sources__ = sources ? _fbb.CreateVector<int32_t>(*sources) : 0;
   auto sourceNatives__ = sourceNatives ? _fbb.CreateVector<int32_t>(*sourceNatives) : 0;
@@ -9170,6 +9263,9 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
   auto ikRestLive__ = ikRestLive ? _fbb.CreateVector<uint8_t>(*ikRestLive) : 0;
   auto poleObjects__ = poleObjects ? _fbb.CreateVector<int32_t>(*poleObjects) : 0;
   auto poleObjectNatives__ = poleObjectNatives ? _fbb.CreateVector<int32_t>(*poleObjectNatives) : 0;
+  auto matchScalars__ = matchScalars ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*matchScalars) : 0;
+  auto matchConstants__ = matchConstants ? _fbb.CreateVector<double>(*matchConstants) : 0;
+  auto matchPoleSourceRides__ = matchPoleSourceRides ? _fbb.CreateVector<uint8_t>(*matchPoleSourceRides) : 0;
   return rigExec::fb::CreateConstraint(
       _fbb,
       path,
@@ -9229,7 +9325,14 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
       poleVector,
       twistDegrees,
       weightField,
-      stretch);
+      stretch,
+      ikFkMatch,
+      matchScalars__,
+      matchConstants__,
+      matchStretchLimb,
+      matchPoleSwitch,
+      matchPoleSourceRides__,
+      matchPoleParentRides);
 }
 
 ::flatbuffers::Offset<Constraint> CreateConstraint(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireConstraint *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -21892,7 +21995,15 @@ inline RigExecWireConstraint::RigExecWireConstraint(const RigExecWireConstraint 
         poleVector((o.poleVector) ? new rigExec::fb::RigExecWireInput(*o.poleVector) : nullptr),
         twistDegrees((o.twistDegrees) ? new rigExec::fb::RigExecWireInput(*o.twistDegrees) : nullptr),
         weightField(o.weightField),
-        stretch((o.stretch) ? new rigExec::fb::RigExecWireInput(*o.stretch) : nullptr) {
+        stretch((o.stretch) ? new rigExec::fb::RigExecWireInput(*o.stretch) : nullptr),
+        ikFkMatch(o.ikFkMatch),
+        matchConstants(o.matchConstants),
+        matchStretchLimb(o.matchStretchLimb),
+        matchPoleSwitch(o.matchPoleSwitch),
+        matchPoleSourceRides(o.matchPoleSourceRides),
+        matchPoleParentRides(o.matchPoleParentRides) {
+  matchScalars.reserve(o.matchScalars.size());
+  for (const auto &matchScalars_ : o.matchScalars) { matchScalars.emplace_back((matchScalars_) ? new rigExec::fb::RigExecWireInput(*matchScalars_) : nullptr); }
 }
 
 inline RigExecWireConstraint &RigExecWireConstraint::operator=(RigExecWireConstraint o) FLATBUFFERS_NOEXCEPT {
@@ -21954,6 +22065,13 @@ inline RigExecWireConstraint &RigExecWireConstraint::operator=(RigExecWireConstr
   std::swap(twistDegrees, o.twistDegrees);
   std::swap(weightField, o.weightField);
   std::swap(stretch, o.stretch);
+  std::swap(ikFkMatch, o.ikFkMatch);
+  std::swap(matchScalars, o.matchScalars);
+  std::swap(matchConstants, o.matchConstants);
+  std::swap(matchStretchLimb, o.matchStretchLimb);
+  std::swap(matchPoleSwitch, o.matchPoleSwitch);
+  std::swap(matchPoleSourceRides, o.matchPoleSourceRides);
+  std::swap(matchPoleParentRides, o.matchPoleParentRides);
   return *this;
 }
 
@@ -22024,6 +22142,13 @@ inline void Constraint::UnPackTo(RigExecWireConstraint *_o, const ::flatbuffers:
   { auto _e = twistDegrees(); if (_e) { if(_o->twistDegrees) { _e->UnPackTo(_o->twistDegrees.get(), _resolver); } else { _o->twistDegrees = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->twistDegrees) { _o->twistDegrees.reset(); } }
   { auto _e = weightField(); _o->weightField = _e; }
   { auto _e = stretch(); if (_e) { if(_o->stretch) { _e->UnPackTo(_o->stretch.get(), _resolver); } else { _o->stretch = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->stretch) { _o->stretch.reset(); } }
+  { auto _e = ikFkMatch(); _o->ikFkMatch = _e; }
+  { auto _e = matchScalars(); if (_e) { _o->matchScalars.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->matchScalars[_i]) { _e->Get(_i)->UnPackTo(_o->matchScalars[_i].get(), _resolver); } else { _o->matchScalars[_i] = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->matchScalars.resize(0); } }
+  { auto _e = matchConstants(); if (_e) { _o->matchConstants.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->matchConstants[_i] = _e->Get(_i); } } else { _o->matchConstants.resize(0); } }
+  { auto _e = matchStretchLimb(); _o->matchStretchLimb = _e; }
+  { auto _e = matchPoleSwitch(); _o->matchPoleSwitch = _e; }
+  { auto _e = matchPoleSourceRides(); if (_e) { _o->matchPoleSourceRides.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->matchPoleSourceRides.begin()); } }
+  { auto _e = matchPoleParentRides(); _o->matchPoleParentRides = _e; }
 }
 
 inline ::flatbuffers::Offset<Constraint> CreateConstraint(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireConstraint *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -22092,6 +22217,13 @@ inline ::flatbuffers::Offset<Constraint> Constraint::Pack(::flatbuffers::FlatBuf
   auto _twistDegrees = _o->twistDegrees ? CreateInput(_fbb, _o->twistDegrees.get(), _rehasher) : 0;
   auto _weightField = _o->weightField;
   auto _stretch = _o->stretch ? CreateInput(_fbb, _o->stretch.get(), _rehasher) : 0;
+  auto _ikFkMatch = _o->ikFkMatch;
+  auto _matchScalars = _o->matchScalars.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->matchScalars.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, __va->__o->matchScalars[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _matchConstants = _o->matchConstants.size() ? _fbb.CreateVector(_o->matchConstants) : 0;
+  auto _matchStretchLimb = _o->matchStretchLimb;
+  auto _matchPoleSwitch = _o->matchPoleSwitch;
+  auto _matchPoleSourceRides = _o->matchPoleSourceRides.size() ? _fbb.CreateVector(_o->matchPoleSourceRides) : 0;
+  auto _matchPoleParentRides = _o->matchPoleParentRides;
   return rigExec::fb::CreateConstraint(
       _fbb,
       _path,
@@ -22151,7 +22283,14 @@ inline ::flatbuffers::Offset<Constraint> Constraint::Pack(::flatbuffers::FlatBuf
       _poleVector,
       _twistDegrees,
       _weightField,
-      _stretch);
+      _stretch,
+      _ikFkMatch,
+      _matchScalars,
+      _matchConstants,
+      _matchStretchLimb,
+      _matchPoleSwitch,
+      _matchPoleSourceRides,
+      _matchPoleParentRides);
 }
 
 inline RigExecWireWalkStep *WalkStep::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -27227,14 +27366,21 @@ inline const ::flatbuffers::TypeTable *ConstraintTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_INT, 0, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
     rigExec::fb::Vec3dTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 58, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 65, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

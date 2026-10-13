@@ -1484,6 +1484,147 @@ class RigExecSingleChainIkConstraint "RigExecSingleChainIkConstraint" (
     )
 }
 
+class RigExecIkFkMatchConstraint "RigExecIkFkMatchConstraint" (
+    inherits = </RigExecConstraint>
+    customData = {
+        string className = "IkFkMatchConstraint"
+    }
+    doc = """Keeps the half of a switchable limb that is not driving its
+    joints on those joints, and publishes the channel values that would make
+    it drive them unchanged.
+
+    A limb here is three joints a RigExecBlendPointFrames writes from a
+    RigExecFkChain and a RigExecTwoBoneIk, selected by the switch. While the
+    switch sits exactly on its FK value the IK control and the pole are
+    revised onto where the joints are; on its IK value the three FK
+    controls are. Between the two nothing is revised. Every control under a
+    revised one rides with it, as under any constraint, so a foot's roll
+    controls follow the IK control. The revision is a later version of each
+    control: the solvers below this constraint read the controls as their
+    own channels put them, so the limb itself does not move.
+
+    Each frame it also publishes, whichever half drives:
+
+        outputs:ikValues  = [ikControl tx ty tz rx ry rz,
+                             poleControl tx ty tz,
+                             upperScale, lowerScale]
+        outputs:fkValues  = [fkControls[0] tx ty tz rx ry rz,
+                             fkControls[1] tx ty tz rx ry rz,
+                             fkControls[2] tx ty tz rx ry rz,
+                             upperScale, lowerScale]
+
+    the values that half's channels need for the joints to stay where they
+    are once it drives them. A switch authors one of those sets and the
+    switch value at the same time; nothing is solved at the switch. Rotations
+    are raw channel values (before avars:rotationSign), nearest the
+    channels' current values. Scale and spin are never written.
+
+    How each value is found, in row-vector convention, a control's frame
+    being A * P with A its channels and P what they compose onto:
+
+        IK control  the solve ends on its effector and copies the effector's
+                    orientation onto the end joint, so the effector's target
+                    is the end joint's frame, and the IK control's follows by
+                    the effector's current offset from it.
+        pole        on the bend plane, turned back by inputs:twist, past the
+                    middle joint by its rest distance from it; on the middle
+                    joint when inputs:pin is above zero. Its P is the one its
+                    own space gives once the IK control has moved.
+        FK controls each control's rest offset from its joint, carried by the
+                    joint. The P of controls 1 and 2 rides the control above
+                    as the match moves it, its bone offset lengthened in
+                    proportion to the new upper or lower scale.
+        scales      softDistance: the IK pair is solved (Newton's method on
+                    the limb lengths of RigExecTwoBoneIk) so the bones come
+                    out the joints' lengths; the FK pair is each bone's
+                    length over its rest length in rigExec:space.
+
+    The switch's other channels -- the pin and the twist -- are the IK
+    solve's own; a switch to FK leaves them for the tool to set."""
+)
+{
+    rel rigExec:ikControl (
+        doc = """The control the animator moves to place the IK effector.
+        Exactly one."""
+    )
+    rel rigExec:poleControl (
+        doc = """The IK solve's pole control. Exactly one."""
+    )
+    rel rigExec:fkControls (
+        doc = """The FK chain's three controls, root to end."""
+    )
+    rel rigExec:limbJoints (
+        doc = """The limb's three joints, root to end: the ones its blend
+        writes. Read as the solvers below this constraint leave them. Not
+        rigExec:joints, which names the joints a solver writes."""
+    )
+    rel rigExec:rootControl (
+        doc = """The IK solve's root control. Exactly one."""
+    )
+    rel rigExec:effector (
+        doc = """The frame the IK solve reaches for: the IK control or a
+        frame riding it. Exactly one."""
+    )
+    rel rigExec:space (
+        doc = """Optional: the IK solve's rigExec:space. Its rest-to-posed
+        map carries the rest bone lengths, as it does for the solve."""
+    )
+    double inputs:switch = 0 (
+        doc = """The limb's switch: connect it to the channel the blend's
+        inputs:weight reads."""
+    )
+    uniform double rigExec:ikValue = 1 (
+        doc = """The value of inputs:switch that means fully IK;
+        1 - ikValue means fully FK."""
+    )
+    uniform token rigExec:stretchPolicy = "softDistance" (
+        allowedTokens = ["none", "softDistance"]
+        doc = """softDistance: the limb stretches as RigExecTwoBoneIk's
+        softDistance policy does, and its FK chain lengthens by the same
+        upper and lower scales, so a match carries the bone lengths across
+        in them. none: the scales are published unchanged."""
+    )
+    double inputs:stretch = 1 (
+        doc = "The IK solve's inputs:stretch: connect it to the same channel."
+    )
+    double inputs:softDistance = 0 (
+        doc = "The IK solve's inputs:softDistance: connect it to the same channel."
+    )
+    double inputs:upperScale = 1 (
+        doc = """The IK solve's inputs:upperScale: connect it to the same
+        channel. A match writes this channel."""
+    )
+    double inputs:lowerScale = 1 (
+        doc = """The IK solve's inputs:lowerScale: connect it to the same
+        channel. A match writes this channel."""
+    )
+    double inputs:pin = 0 (
+        doc = """How far the IK solve pins its middle joint to the pole once
+        the limb is IK: connect it to the animator's pin channel, not to a
+        pin the switch itself scales."""
+    )
+    double inputs:twist = 0 (
+        doc = "The IK solve's inputs:twist, in degrees: connect it to the same channel."
+    )
+    uniform double rigExec:scaleCalibration = 0 (
+        doc = "The IK solve's rigExec:scaleCalibration."
+    )
+    uniform double rigExec:upperLengthOffset = 0 (
+        doc = "The IK solve's rigExec:upperLengthOffset."
+    )
+    uniform double rigExec:lowerLengthOffset = 0 (
+        doc = "The IK solve's rigExec:lowerLengthOffset."
+    )
+    double[] outputs:ikValues (
+        doc = """Computed each frame, never authored: the IK half's channel
+        values that reproduce the joints. See the class doc for the layout."""
+    )
+    double[] outputs:fkValues (
+        doc = """Computed each frame, never authored: the FK half's channel
+        values that reproduce the joints. See the class doc for the layout."""
+    )
+}
+
 class RigExecSpaceSwitch "RigExecSpaceSwitch" (
     inherits = </RigExecSourceConstraint>
     customData = {

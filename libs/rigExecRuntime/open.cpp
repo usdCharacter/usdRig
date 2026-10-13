@@ -596,6 +596,33 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     }
     store.arrays.assign(poses.constraintArrays.size(),
                         RrConstraintArraysLive());
+    store.matchValues.assign(poses.constraints.size(), {});
+    store.matchValid.assign(poses.constraints.size(), 0);
+    store.spaceMatchValues.assign(poses.spaceSwitches.size(), {});
+    store.spaceMatchValid.assign(poses.spaceSwitches.size(), 0);
+    store.matchShown.assign(poses.constraints.size(), {});
+    store.matchShownMask.assign(poses.constraints.size(), 0);
+    store.matchRiders.assign(poses.constraints.size(), {});
+    for (size_t i = 0; i < poses.constraints.size(); ++i) {
+        const RigExecWireConstraint &c = poses.constraints[i];
+        if (!c.ikFkMatch || c.sources.size() != 10) continue;
+        const RigExecWireSlotMeta &meta = *program.slotMeta;
+        // Each slot rides the nearest of the five controls above it; the
+        // five themselves ride none.
+        for (size_t slot = 0; slot < meta.parent.size(); ++slot) {
+            if (meta.slotKind[slot] != RigExecWireSlotKind::FirstFramePose)
+                continue;
+            int32_t rides = -1;
+            bool own = false;
+            for (size_t k = 5; k < 10; ++k) own = own || c.sources[k] == int32_t(slot);
+            for (int32_t at = meta.parent[slot]; !own && at >= 0 && rides < 0;
+                 at = meta.parent[size_t(at)]) {
+                for (size_t k = 5; k < 10; ++k)
+                    if (c.sources[k] == at) rides = int32_t(k - 5);
+            }
+            if (rides >= 0) store.matchRiders[i].emplace_back(int32_t(slot), rides);
+        }
+    }
     for (size_t i = 0; i < poses.constraintArrays.size(); ++i) {
         store.arrays[i].readPole =
             poses.constraintArrays[i].readPole;
@@ -776,6 +803,12 @@ RigExecRuntimeReader::GetProviderFramePublications() const
         value.publicationRole=meta.publicationRoles[slot];
         value.baseVersion=store.baseLast[slot]; value.finalVersion=store.finLast[slot];
         value.base=store.base[value.baseVersion]; value.final=store.fin[value.finalVersion];
+        // A control publishes the frame the last run published for it, which
+        // an IK/FK match may present elsewhere than its final version.
+        if(value.publicationRole&2) {
+            const auto published=store.controlFrames.find(meta.paths[slot]);
+            if(published!=store.controlFrames.end()) value.final=published->second;
+        }
         result.push_back(std::move(value));
     }
     return result;

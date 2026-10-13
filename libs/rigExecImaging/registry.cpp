@@ -1,11 +1,13 @@
 // RigExec imaging registry and C activation surface.
 #include <fstream>
 #include "registry.h"
+#include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCacheSparsity.h"
 
 #include "rigExecMath/avarScale.h"
 
+#include "pxr/base/work/utils.h"
 #include "pxr/base/gf/bbox3d.h"
 #include "pxr/base/gf/range3d.h"
 #include "pxr/base/gf/rotation.h"
@@ -27,6 +29,7 @@
 #include "pxr/usd/usdUtils/stageCache.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -558,6 +561,9 @@ RigExecImagingRegistry::RigExecImagingRegistry(
     , _store(std::make_shared<RigExecSnapshotStore>())
     , _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
 {
+    // RIGEXEC_GPU_DEFORM=readback deforms on the GPU executor; the device
+    // starts on its first run, not here.
+    RigExecGpuRegisterDeformRunner();
     // No scheduler: a context without an active rig owns no threads. The
     // first activation starts one (see Activate).
 }
@@ -1205,6 +1211,8 @@ RigExecImagingRegistry::_EvaluateSessions(
             }
             if (result.epoch) session.epoch = result.epoch;
             session.dirty = false;
+            // Usually the last reference to the replaced generation.
+            WorkMoveDestroyAsync(rigSnapshot);
             rigSnapshot = session.store->Get();
         }
         // No frozen-snapshot refresh here: only warming reads the snapshot,
@@ -1258,6 +1266,8 @@ RigExecImagingRegistry::_EvaluateSessions(
         // insert is right.
         combined->movedFloats.insert(rigSnapshot->movedFloats.begin(),
                                      rigSnapshot->movedFloats.end());
+        combined->movedArrays.insert(rigSnapshot->movedArrays.begin(),
+                                     rigSnapshot->movedArrays.end());
 
         if (firstRoot) {
             commonAssetRoot = session.assetRoot;
@@ -1266,8 +1276,12 @@ RigExecImagingRegistry::_EvaluateSessions(
             commonAssetRoot = SdfPath();
         }
 
+        // In path order, so a lone rig's prims each land at the end.
         for (const auto &[path, published] : rigSnapshot->prims) {
-            if (!combined->prims.emplace(path, published).second) {
+            const size_t size = combined->prims.size();
+            combined->prims.emplace_hint(combined->prims.end(), path,
+                                         published);
+            if (combined->prims.size() == size) {
                 if (errors) {
                     errors->push_back(
                         "two rigs publish the same Hydra prim " +
@@ -1287,6 +1301,7 @@ RigExecImagingRegistry::_EvaluateSessions(
     return true;
 }
 
+
 RigExecImagingBridge::PublishResult
 RigExecImagingRegistry::_Publish(
     std::shared_ptr<RigExecImagingSnapshot> snapshot,
@@ -1294,7 +1309,11 @@ RigExecImagingRegistry::_Publish(
 {
     RigExecImagingBridge::PublishResult result;
     snapshot->generation = ++_generation;
+    // The generation this replaces is freed on a worker: a thousand
+    // published prims take longer to destroy than to diff.
+    RigExecImagingSnapshotConstPtr replaced = _store->Get();
     result.dirtied = _store->Publish(std::move(snapshot));
+    WorkMoveDestroyAsync(replaced);
     if (epoch && epoch->id != _publishedEpochId) {
         result.epoch = epoch;
         _publishedEpochId = epoch->id;
@@ -1479,6 +1498,9 @@ RigExecImagingRegistry::_Activate(
         if (!session.playback) {
             session.bridge = std::make_unique<RigExecImagingBridge>(
                 stage, path, session.store);
+            // The combined generation is diffed in _Publish; the
+            // session's own changed-leaf sets would go unread.
+            session.bridge->SetPublishesDirtied(false);
             session.bridge->SetWarmFrameIndex(_warmIndex);
             if (std::shared_ptr<RigExecFrameCache> cache =
                     session.bridge->GetFrameCache()) {
@@ -4007,8 +4029,9 @@ RigExecImagingRegistry::_OnObjectsChanged(
             // and connection/relationship edits may introduce a new external
             // input even when the evaluator's binding epoch stays unchanged.
             // A property resync that names only a value (a spec created by
-            // its first authored value, or removed by the undo of it) is a
-            // value edit here too: a new connection or target would arrive
+            // its first authored value, stating `custom` and `variability`
+            // with it, or removed by the undo of it) is a value edit here
+            // too: a new connection or target would arrive
             // as its own field, and a removed one leaves the cached regions
             // a superset of what is read, which is safe. The one input a
             // removal can reveal is a weaker layer's connection the removed
@@ -4034,7 +4057,8 @@ RigExecImagingRegistry::_OnObjectsChanged(
                 }
                 for (const TfToken &field : notice.GetChangedFields(path)) {
                     if (field != "typeName" && field != "default" &&
-                        field != "timeSamples" && field != "spline") {
+                        field != "timeSamples" && field != "spline" &&
+                        field != "custom" && field != "variability") {
                         _readRootsDirty = true;
                         break;
                     }
@@ -5598,6 +5622,40 @@ RigExecImaging_GetMovedFloatsForStage(
         return 0;
     }
     return _MovedFloats(*context, packedPaths, out, count);
+}
+
+int
+RigExecImaging_GetMovedDoublesForStage(
+    long long stageCacheId, const char *propertyPath, double frame,
+    int isDefault, double *out, int capacity)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !propertyPath ||
+        !PXR_NS::SdfPath::IsValidPathString(propertyPath) ||
+        (!isDefault && !std::isfinite(frame))) {
+        return -1;
+    }
+    const auto stage = PXR_NS::UsdUtilsStageCache::Get().Find(
+        PXR_NS::UsdStageCache::Id::FromLongInt(
+            static_cast<long int>(stageCacheId)));
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot =
+        context->GetStore()->Get();
+    // Only a generation of the stage as it stands, at this time: values
+    // from an earlier one would match a pose the stage no longer holds.
+    const auto time = isDefault ? PXR_NS::UsdTimeCode::Default()
+                                : PXR_NS::UsdTimeCode(frame);
+    if (!stage || !snapshot || !snapshot->Describes(stage, time)) {
+        return -1;
+    }
+    const auto it = snapshot->movedArrays.find(PXR_NS::SdfPath(propertyPath));
+    if (it == snapshot->movedArrays.end()) {
+        return -1;
+    }
+    const int size = int(it->second.size());
+    for (int i = 0; out && i < size && i < capacity; ++i) {
+        out[i] = it->second[size_t(i)];
+    }
+    return size;
 }
 
 int

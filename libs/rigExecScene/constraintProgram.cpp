@@ -30,6 +30,9 @@ bool RigExecRunConstraint(const RigExecConstraintRecord &record,
         output->frame=RigExecApplyAimConstraint(input.incoming,input.aimTarget,record.aim);return true;
     case RigExecConstraintKind::SingleChainIk:
         output->chain=RigExecSolveSingleChainIk(input.chain,input.effector,record.singleChain);return true;
+    case RigExecConstraintKind::IkFkMatch:
+        if(error)*error="an IK/FK match runs in the pose walk, not as a frame kernel";
+        return false;
     }
     if(error)*error="unknown constraint kind";
     return false;

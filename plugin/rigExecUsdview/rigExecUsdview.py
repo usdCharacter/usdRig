@@ -124,6 +124,13 @@ def _LoadRigExecImaging():
         lib.RigExecImaging_GetControlFrameAssetSpace.restype = ctypes.c_int
     except AttributeError:
         pass  # Older libraries cannot supply deformation-relative gizmos.
+    try:
+        lib.RigExecImaging_GetMovedDoublesForStage.argtypes = [
+            ctypes.c_longlong, ctypes.c_char_p, ctypes.c_double,
+            ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
+        lib.RigExecImaging_GetMovedDoublesForStage.restype = ctypes.c_int
+    except AttributeError:
+        pass  # Older libraries publish no IK/FK match values.
 
     # The manipulation preview is optional in exactly the same way, and its
     # absence is not worth a warning: a session without it authors on release
@@ -785,14 +792,56 @@ class RigExecUsdviewContainer(PluginContainer):
         was on last session."""
         if getattr(self, "_hoverPickerRestored", False):
             return
-        self._hoverPickerRestored = True
         try:
             module = self._ImportHoverPicker()
             module.InstallHotkey(self._api, self._UndoStack())
-            if module.WasEnabled() and module.StageView(self._api):
-                module.InstallHoverPicker(self._api, self._UndoStack())
+            # A scripted session (testusdview --testScript) starts from
+            # defaults, not from the user's saved viewer state.
+            if not module.WasEnabled() or "--testScript" in sys.argv:
+                self._hoverPickerRestored = True
+                return
+            if module.StageView(self._api) is None:
+                # The first stage can arrive before the stage view is
+                # built; try again shortly rather than never.
+                tries = getattr(self, "_hoverPickerTries", 0)
+                if tries < 50:
+                    self._hoverPickerTries = tries + 1
+                    from pxr.Usdviewq.qt import QtCore
+                    QtCore.QTimer.singleShot(100, self._RestoreHoverPicker)
+                return
+            self._hoverPickerRestored = True
+            module.InstallHoverPicker(self._api, self._UndoStack())
         except Exception as error:
             Tf.Warn("rigExecUsdview: hover picker unavailable: %s" % error)
+
+    def _EnsureMarkingMenu(self):
+        """Install the viewport's right-click marking menu for rig
+        controls, once the stage view exists."""
+        if getattr(self, "_markingMenu", None) is not None or \
+                getattr(self, "_markingMenuFailed", False):
+            return getattr(self, "_markingMenu", None)
+        try:
+            try:
+                import markingMenuUI
+            except ImportError:
+                sys.path.insert(
+                    0, os.path.dirname(os.path.abspath(__file__)))
+                import markingMenuUI
+            self._markingMenu = markingMenuUI.InstallMarkingMenu(
+                self._api, self._UndoStack(), switchIkFk=self.SwitchIkFk,
+                knownLimbs=self._IkFkLimbs)
+            if self._markingMenu is None and                     getattr(self, "_markingMenuTries", 0) < 50:
+                # The first stage can arrive before the stage view is
+                # built; try again shortly rather than never.
+                self._markingMenuTries = getattr(
+                    self, "_markingMenuTries", 0) + 1
+                from pxr.Usdviewq.qt import QtCore
+                QtCore.QTimer.singleShot(100, self._EnsureMarkingMenu)
+        except Exception as error:
+            Tf.Warn("rigExecUsdview: marking menu unavailable: %s" % error)
+            self._markingMenu = None
+            self._markingMenuFailed = True
+        return self._markingMenu
 
     def _OpenGraphEditor(self, usdviewApi=None):
         """
@@ -866,6 +915,9 @@ class RigExecUsdviewContainer(PluginContainer):
             # stage's imaging context.
             gizmoMath.SetPublishedControlFrameReader(
                 self._ReadPublishedControlFrame, session=self._api)
+            import ikfkMatch
+            ikfkMatch.SetPublishedValuesReader(
+                self._ReadPublishedValues, session=self._api)
             gizmoPreview.SetSink(self._PreviewSink(), session=self._api)
             self._viewportTools = gizmoUI.InstallViewportTools(
                 self._api, self._UndoStack(),
@@ -959,6 +1011,43 @@ class RigExecUsdviewContainer(PluginContainer):
             return None
         return Gf.Matrix4d(*[tuple(values[r*4:(r+1)*4]) for r in range(4)])
 
+    def _ReadPublishedValues(self, stage, path, time):
+        # The double array this session's rig published at `path` (an IK/FK
+        # match's values) for the stage as it stands at `time`; THIS
+        # session's stage only, as _ReadPublishedControlFrame. When the last
+        # drawn generation is older than the stage, the viewport draws once
+        # and the read is asked again.
+        if not self._active or self._lib is None or stage != self._cachedStage:
+            return None
+        read = getattr(self._lib, "RigExecImaging_GetMovedDoublesForStage",
+                       None)
+        if read is None:
+            return None
+        cacheId = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
+        key = str(path).encode("utf-8")
+        isDefault = time.IsDefault()
+        frame = 0.0 if isDefault else time.GetValue()
+        values = (ctypes.c_double * 32)()
+        count = read(cacheId, key, frame, int(isDefault), values, 32)
+        if count < 0:
+            self._DrawNow()
+            count = read(cacheId, key, frame, int(isDefault), values, 32)
+        if count < 0:
+            return None
+        if count > 32:
+            values = (ctypes.c_double * count)()
+            count = read(cacheId, key, frame, int(isDefault), values, count)
+        return [values[i] for i in range(count)]
+
+    def _DrawNow(self):
+        """Have the viewport draw the stage as it stands, now."""
+        try:
+            from pxr.Usdviewq.qt import QtWidgets
+            self._api.UpdateViewport()
+            QtWidgets.QApplication.processEvents()
+        except Exception:
+            pass
+
     def _IkFkLimbs(self, stage):
         """The stage's switchable limbs, found once per stage."""
         try:
@@ -969,7 +1058,6 @@ class RigExecUsdviewContainer(PluginContainer):
         if getattr(self, "_ikfkStage", None) is not stage:
             self._ikfkStage = stage
             self._ikfkLimbs = ikfkMatch.FindLimbs(stage)
-            self._ikfkRest = {}
         return ikfkMatch, self._ikfkLimbs
 
     def _IkFkTargets(self, api, prim):
@@ -1045,7 +1133,7 @@ class RigExecUsdviewContainer(PluginContainer):
             pass
         try:
             done = ikfkMatch.SwitchLimbs(stage, chosen, time, mode,
-                                         self._UndoStack(), self._ikfkRest)
+                                         self._UndoStack())
         except Exception as error:
             self._ShowStatus(api, "Switch IK / FK failed: %s" % error)
             return []
@@ -1281,6 +1369,12 @@ class RigExecUsdviewContainer(PluginContainer):
         self._SleepWarmingDriver()
         self._ScheduleWarmingFlush()
         self._ScheduleCacheDisplayRefresh()
+        # A root appears, goes or changes type only by a prim resync; a
+        # running rig skips the whole-stage walk on every other edit.
+        if self._active and not any(
+                p.IsPrimPath() or p.IsAbsoluteRootPath()
+                for p in notice.GetResyncedPaths()):
+            return
         rigPaths = self._FindRigPaths(stage)
         if not (rigPaths != self._rigPaths or
                 (rigPaths and not self._active)):
@@ -1329,6 +1423,7 @@ class RigExecUsdviewContainer(PluginContainer):
         self._EnsureViewCube()
         self._EnsureViewAxis()
         self._RestoreHoverPicker()
+        self._EnsureMarkingMenu()
 
     def _ActivateCurrentStage(self):
         stage = self._api.dataModel.stage

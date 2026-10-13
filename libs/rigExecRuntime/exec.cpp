@@ -519,6 +519,45 @@ RigExecRuntimeReader::GetPropertyValues() const
     return out;
 }
 
+std::vector<RigExecRuntimeIkFkMatch>
+RigExecRuntimeReader::GetIkFkMatches() const
+{
+    std::vector<RigExecRuntimeIkFkMatch> out;
+    const auto &constraints = _program->poses->constraints;
+    const RrStore &store = _program->store;
+    for (size_t i = 0; i < constraints.size() && i < store.matchValid.size();
+         ++i) {
+        if (!constraints[i].ikFkMatch || !store.matchValid[i]) continue;
+        const auto &values = store.matchValues[i];
+        out.push_back({_program->TextOrEmpty(constraints[i].path),
+                       std::vector<double>(values.begin(), values.begin() + 11),
+                       std::vector<double>(values.begin() + 11, values.end())});
+    }
+    _SortByPath(&out);
+    return out;
+}
+
+std::vector<RigExecRuntimeSpaceMatch>
+RigExecRuntimeReader::GetSpaceMatches() const
+{
+    std::vector<RigExecRuntimeSpaceMatch> out;
+    const auto &switches = _program->poses->spaceSwitches;
+    const RrStore &store = _program->store;
+    const RigExecWireSlotMeta &meta = *_program->slotMeta;
+    for (size_t i = 0; i < switches.size() && i < store.spaceMatchValid.size();
+         ++i) {
+        const int slot = switches[i].slot;
+        if (!store.spaceMatchValid[i] || slot < 0 ||
+            size_t(slot) >= meta.paths.size()) {
+            continue;
+        }
+        out.push_back({_program->TextOrEmpty(meta.paths[size_t(slot)]),
+                       store.spaceMatchValues[i]});
+    }
+    _SortByPath(&out);
+    return out;
+}
+
 const std::vector<RrPointFrame> &
 RigExecRuntimeReader::GetFinFrames() const
 {

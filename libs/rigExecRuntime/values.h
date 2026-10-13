@@ -165,6 +165,22 @@ struct RrInputValue {
     bool operator!=(const RrInputValue &o) const { return !(*this == o); }
 };
 
+// One IK/FK match's published values (RigExecIkFkMatchConstraint
+// outputs:ikValues and outputs:fkValues), by the constraint's prim path.
+struct RigExecRuntimeIkFkMatch {
+    std::string path;
+    std::vector<double> ikValues;
+    std::vector<double> fkValues;
+};
+
+// One space switch's space match (`<control>.spaces:matchValues`): six
+// channels, tx ty tz rx ry rz, per source index, by the switched control's
+// prim path.
+struct RigExecRuntimeSpaceMatch {
+    std::string path;
+    std::vector<double> values;
+};
+
 // One input of a .rigexec: an attribute whose authored value the rig reads.
 struct RigExecRuntimeInputInfo {
     /// The attribute path, e.g. "/Rig/Controls/Hips.avars:tx".

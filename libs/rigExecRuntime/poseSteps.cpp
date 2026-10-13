@@ -209,6 +209,164 @@ _RrStepHead(const RrProgram *program, size_t step)
            std::to_string(wire.part);
 }
 
+// An IK/FK match's pole: the frame its space switch composes avars onto,
+// with each source flagged in \p rides carried by \p moved (the IK
+// control's move). The switch's inputs are gathered as the compose step
+// gathers them, with the avars at identity. False when they cannot be read.
+bool
+_RrMatchPoleParent(RrProgram *program, int switchIndex,
+                   const std::vector<uint8_t> &rides, const RrMat4d &moved,
+                   RrMat4d *out)
+{
+    const RrPoseScratch *scratch = _RrScratch(program);
+    const RigExecWireSlotMeta &meta = *program->slotMeta;
+    if (switchIndex < 0 ||
+        size_t(switchIndex) >= program->poses->spaceSwitches.size()) {
+        return false;
+    }
+    const RigExecWireSpaceSwitch &sw =
+        program->poses->spaceSwitches[size_t(switchIndex)];
+    const size_t i = size_t(sw.slot);
+    if (sw.slot < 0 || i >= meta.parent.size() ||
+        i >= scratch->posedD.size() || i >= scratch->parentDinv.size() ||
+        sw.sourceReads.size() != sw.sourceSlots.size() ||
+        !_RrVersionReadable(*program, *scratch, *sw.parentRead) ||
+        !_RrVersionReadable(*program, *scratch, *sw.spaceRead)) {
+        return false;
+    }
+    for (const RigExecWireFrameVersion &read : sw.sourceReads) {
+        if (!_RrVersionReadable(*program, *scratch, read)) return false;
+    }
+    const int parent = meta.parent[i];
+    if (parent >= 0 && size_t(parent) >= scratch->defaultRoundTrip.size()) {
+        return false;
+    }
+    RigExecSpaceSwitchRecordT<RrVec3d> record;
+    record.filters.assign(sw.filters.begin(), sw.filters.end());
+    record.twistAxis = RrVec3d(sw.twistAxis[0], sw.twistAxis[1], sw.twistAxis[2]);
+    std::copy(sw.affectTranslation.begin(), sw.affectTranslation.end(),
+              record.affectTranslation.begin());
+    std::copy(sw.affectRotation.begin(), sw.affectRotation.end(),
+              record.affectRotation.begin());
+    std::copy(sw.affectScale.begin(), sw.affectScale.end(),
+              record.affectScale.begin());
+    RigExecSpaceSwitchInputsT<RrMat4d> input;
+    input.avars = _RrIdentity();
+    input.posedDefault = scratch->posedD[i];
+    input.parentDefaultInverse = scratch->parentDinv[i];
+    input.parentPosed = _RrReadFrameVersion(*program, *scratch, *sw.parentRead);
+    input.parentDefault = parent >= 0
+                              ? scratch->defaultRoundTrip[size_t(parent)]
+                              : _RrIdentity();
+    const auto selector = program->ReadSpaceSwitch(size_t(switchIndex));
+    input.active = selector.f64;
+    if (sw.tokenIndex) {
+        input.active = 0.0;
+        const auto text = program->TextOrEmpty(selector.token);
+        const auto found = std::find(sw.labels.begin(), sw.labels.end(), text);
+        if (found != sw.labels.end()) {
+            input.active = double(found - sw.labels.begin());
+        }
+    }
+    input.hasCarry = sw.spaceSlot >= 0;
+    if (input.hasCarry) {
+        input.spaceDefault = scratch->defaultRoundTrip[size_t(sw.spaceSlot)];
+        input.spacePosed = _RrReadFrameVersion(*program, *scratch, *sw.spaceRead);
+    }
+    for (size_t source = 0; source < sw.sourceSlots.size(); ++source) {
+        RigExecSpaceSwitchSourceT<RrMat4d> value;
+        const int slot = sw.sourceSlots[source];
+        value.world = slot < 0;
+        if (slot >= 0) {
+            value.defaultSpace = scratch->defaultRoundTrip[size_t(slot)];
+            value.posedSpace =
+                _RrReadFrameVersion(*program, *scratch, sw.sourceReads[source]);
+            if (source < rides.size() && rides[source]) {
+                value.posedSpace = value.posedSpace * moved;
+            }
+        }
+        input.sources.push_back(value);
+    }
+    RrMat4d output;
+    if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, input,
+                                                            &output)) {
+        return false;
+    }
+    // The compose publishes the frame of this matrix; read it back the same
+    // way, so the parent is the one a frame read of the pole would give.
+    const RrPointFrame frame = RrFrameFromMatrix(output);
+    return RrFrameUsable(frame) &&
+           RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
+}
+
+RigExecIkFkMatchChannels
+_RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
+                   size_t slot)
+{
+    RigExecIkFkMatchChannels channels;
+    const double *a = &program.store.avars[slot * 11];
+    const bool noScale = scratch.noScaleAvars[slot] != 0;
+    const unsigned sign = slot < scratch.rotationSign.size()
+                              ? scratch.rotationSign[slot]
+                              : 0u;
+    for (int k = 0; k < 3; ++k) {
+        channels.t[k] = a[k];
+        channels.s[k] = noScale ? 1.0 : a[3 + k];
+        channels.r[k] = a[6 + k];
+        channels.sign[k] = (sign & (1u << k)) ? -1.0 : 1.0;
+    }
+    channels.spin = a[9];
+    channels.units = a[10];
+    const std::string order = program.TextOrEmpty(scratch.rotOrder[slot]);
+    if (order.size() == 3) {
+        std::copy(order.begin(), order.end(), channels.order);
+    }
+    return channels;
+}
+
+// A switch's space match (spaceMatchKernel.h), with the inputs its compose
+// just ran on: the channels per source index that keep the control on the
+// frame it composed.
+static void
+_RrRunSpaceMatch(RrProgram *program, const RrPoseScratch &scratch,
+                 size_t switchIndex, size_t slot,
+                 const RigExecSpaceSwitchRecordT<RrVec3d> &record,
+                 const RigExecSpaceSwitchInputsT<RrMat4d> &input,
+                 const RrPointFrame &posed)
+{
+    RrStore &store = program->store;
+    if (switchIndex >= store.spaceMatchValid.size()) return;
+    store.spaceMatchValid[switchIndex] = 0;
+    const size_t spaces = input.sources.size();
+    RrMat4d target;
+    if (!spaces ||
+        !RrPointsToMatrix(RrIdentityLandmarks(), posed.points, &target)) {
+        return;
+    }
+    RigExecSpaceSwitchInputsT<RrMat4d> trial = input;
+    const auto run = [&](const double *avars, double active, double *out) {
+        std::copy(avars, avars + 16, &trial.avars._mtx[0][0]);
+        trial.active = active;
+        RrMat4d composed, matrix;
+        if (!RigExecRunSpaceSwitchArithmetic<RrSpaceSwitchMath>(record, trial,
+                                                                &composed)) {
+            return false;
+        }
+        const RrPointFrame frame = RrFrameFromMatrix(composed);
+        if (!RrFrameUsable(frame) ||
+            !RrPointsToMatrix(RrIdentityLandmarks(), frame.points, &matrix)) {
+            return false;
+        }
+        std::copy(&matrix._mtx[0][0], &matrix._mtx[0][0] + 16, out);
+        return true;
+    };
+    std::vector<double> &values = store.spaceMatchValues[switchIndex];
+    values.resize(spaces * RigExecSpaceMatchStride);
+    store.spaceMatchValid[switchIndex] = RigExecSpaceMatchSolveAll(
+        &target._mtx[0][0], _RrMatchChannelsOf(*program, scratch, slot),
+        spaces, run, values.data()) ? 1 : 0;
+}
+
 // The hierarchy delta each candidate of the commit carries, once
 // (ComputeCommitDeltas, bakedPose.cpp).
 bool
@@ -700,6 +858,8 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                         return false;
                     }
                     store.base[size_t(i)]=RrFrameFromMatrix(output);
+                    _RrRunSpaceMatch(program,*scratch,size_t(switchIndex),size_t(i),
+                                     record,input,store.base[size_t(i)]);
                 }
             }
             for(size_t acIndex=0;acIndex<program->poses->autoClavicles.size();++acIndex) {
@@ -717,7 +877,7 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                             else matrices[k]=RrRoundTrip(_RrComposeAvarsOf(*program,*scratch,size_t(child))*scratch->posedD[size_t(child)]*
                                 scratch->parentDinv[size_t(child)]*(scratch->parentSpaceAuthored[size_t(child)]?scratch->parentSpaceM[size_t(child)]:matrices[k]));
                         }
-                    } else matrices[k]=_RrSpaceOfFrame(store.fin[store.finLast[size_t(read.slot)]]);
+                    } else matrices[k]=_RrSpaceOfFrame(store.fin[size_t(read.slot)]);
                     for(int row=0;row<4;++row)for(int col=0;col<4;++col)usable=usable && std::isfinite(matrices[k][row][col]);
                 }
                 if(!usable)continue;

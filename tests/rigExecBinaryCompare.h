@@ -1612,6 +1612,26 @@ _BinaryCompareConstraint(
     _BinaryCheckEqual(live.poleObjectNatives, wire.poleObjectNatives);
     _BinaryCompareInput(live.poleVector, wire.poleVector, file);
     _BinaryCompareInput(live.twistDegrees, wire.twistDegrees, file);
+    CHECK(live.ikFkMatch == wire.ikFkMatch);
+    if (live.ikFkMatch) {
+        CHECK(wire.matchScalars.size() == live.matchScalars.size());
+        for (size_t k = 0; k < live.matchScalars.size() &&
+                           k < wire.matchScalars.size(); ++k) {
+            const auto &scalar = live.matchScalars[k];
+            if (scalar.isFloat) {
+                _BinaryCompareInput(scalar.narrow, wire.matchScalars[k], file);
+            } else {
+                _BinaryCompareInput(scalar.wide, wire.matchScalars[k], file);
+            }
+        }
+        CHECK(wire.matchConstants ==
+              std::vector<double>({live.matchIkValue, live.matchScaleCalibration,
+                                   live.matchUpperOffset, live.matchLowerOffset}));
+        CHECK(live.matchStretchLimb == wire.matchStretchLimb);
+        CHECK(int64_t(live.matchPoleSwitch) == int64_t(wire.matchPoleSwitch));
+        _BinaryCompareFlags(live.matchPoleSourceRides, wire.matchPoleSourceRides);
+        CHECK(live.matchPoleParentRides == wire.matchPoleParentRides);
+    }
 }
 
 void
@@ -3499,6 +3519,7 @@ _BinaryForEachRead(const _BinaryFile &file,
                   &c.twistDegrees, &c.stretch}) {
                 one(*read);
             }
+            for (const auto &read : c.matchScalars) one(read);
         }
         for (const auto &ac : pose.autoClavicles)
             for (const auto &read : ac.scalars) visit(read);

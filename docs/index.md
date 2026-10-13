@@ -1,4 +1,4 @@
-# UsdRig
+# Node reference
 
 One page per operator: what it does, how to wire it, every
 parameter, and a minimal animated example. Each example stage
@@ -61,6 +61,7 @@ Storm viewport with the rig guides on.
 | ![Scale Constraint](../icons/scale_constraint.png) | [Scale Constraint](nodes/scale_constraint.md) | Copies blended source scale onto one target, per axis. |
 | ![Parent Constraint](../icons/parent_constraint.png) | [Parent Constraint](nodes/parent_constraint.md) | Carries a target with its sources — position and rotation — under a per-source offset; weight attaches and releases. |
 | ![Single-Chain IK Constraint](../icons/single_chain_ik_constraint.png) | [Single-Chain IK Constraint](nodes/single_chain_ik_constraint.md) | Re-poses an existing joint chain of any length onto an effector goal. |
+| ![IK/FK Match Constraint](../icons/concept.png) | [IK/FK Match Constraint](nodes/ikfk_match_constraint.md) | Keeps a switchable limb's inactive half on its joints and publishes the values a switch authors. |
 | ![Constraint Frame](../icons/concept.png) | [Constraint Frame](nodes/constraint_frame.md) | Computes ordered affine constraints in explicit owner and target spaces. |
 
 ## Geometry movers

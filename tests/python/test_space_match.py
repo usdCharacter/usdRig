@@ -15,8 +15,9 @@ Biped_spaces.usda) and plugin/rigExecUsdview/spaceMatch.py:
      rotation. The auto clavicles are held off for this, since they move
      the swing on purpose.
   3. Independent shared-graph evaluations agree on those frames.
-  4. A space switch planned by spaceMatch leaves the control's posed frame
-     where it was, for a rotation-only space and for a full one.
+  4. A space switch planned by spaceMatch from the values the rig
+     publishes (`<control>.spaces:matchValues`) leaves the control's posed
+     frame where it was, for a rotation-only space and for a full one.
 
 The pose under test is applied as interactive overrides, never authored.
 
@@ -178,8 +179,10 @@ def TestMatch(session):
         (HEAD, {_Attr(CHEST, "avars:rx"): -25.0,
                 _Attr(HEAD, "avars:rx"): -10.0,
                 _Attr(HEAD, "avars:space"): 1.0}, 0.0),
-        # Full: an IK hand moved in world, carried into the chest.
-        (C + "/L_ArmIK", {_Attr(CHEST, "avars:rz"): -20.0,
+        # Full: an IK hand moved in world, carried into the chest. The arm
+        # drives from IK: in FK its IK hand is presented on the wrist.
+        (C + "/L_ArmIK", {_Attr(C + "/L_Arm", "avars:ikfk"): 1.0,
+                          _Attr(CHEST, "avars:rz"): -20.0,
                           _Attr(C + "/L_ArmIK", "avars:tx"): 5.0,
                           _Attr(C + "/L_ArmIK", "avars:rz"): 30.0,
                           _Attr(C + "/L_ArmIK", "avars:space"): 0.0}, 1.0),
@@ -191,8 +194,9 @@ def TestMatch(session):
         _Check(spaceMatch.SwitchTarget(session.stage, space)
                == Sdf.Path(control),
                "SwitchTarget finds %s from its dial" % control)
+        published = ikfkMatch.PoseValueReader(session.Evaluate({}, TIME))
         plan = spaceMatch.Plan(session.stage, control, space, value, TIME,
-                               session.Evaluate, current=session.base)
+                               read=published)
         after = session.Frame(control, plan)
         unmatched = session.Frame(control, {space: value})
         _Check(_Max(after, before) < _POSITION,

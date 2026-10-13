@@ -640,7 +640,8 @@ _FrozenPublishGeometry(RigExecBakedProgramImpl &B, RigExecRigPose *pose)
             RigExecBakedProgramImpl::GeomChain &chain =
                 B.chains[size_t(step.object)];
             if (chain.haveBase) {
-                pose->movedProperties[chain.target] = VtValue(chain.result);
+                pose->movedProperties[chain.target] =
+                    RigExecBakedChainPublication(chain);
             }
         } else if (step.kind == RigExecBakedStepKind::Derived) {
             const auto &[chainIndex, derivedIndex] =
@@ -833,6 +834,7 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
     // Live's key set (placedVolumes). A placement step the closure skipped
     // kept the clone's placement; its inputs are unchanged.
     RigExecBakedPublishVolumePlacements(B, &working.weightFrames);
+    RigExecBakedResolveGpuChains(&B, time);
     _FrozenPublishGeometry(B, &working);
     RigExecBakedAppendCycleDiagnostics(B,&working);
     const bool scalarReferenceValid=RigExecBakedRunScalarReference(&B,time,&working);

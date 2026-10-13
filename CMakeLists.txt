@@ -172,6 +172,7 @@ add_library(rigExec SHARED
     libs/rigExec/movers/curveMover.cpp
     libs/rigExec/movers/mathMovers.cpp
     libs/rigExec/moverGraph.cpp
+    libs/rigExec/gpuDeformLowering.cpp
     libs/rigExec/tapSet.cpp
     libs/rigExec/rigEvaluator.cpp
     libs/rigExec/rigEvaluatorChainPlan.cpp
@@ -188,6 +189,7 @@ add_library(rigExec SHARED
     libs/rigExec/bakedProgram.cpp
     libs/rigExec/crossDomainInputs.cpp
     libs/rigExec/bakedSpaces.cpp
+    libs/rigExec/bakedIkFkMatch.cpp
     libs/rigExec/bakedPose.cpp
     libs/rigExec/bakedProperties.cpp
     libs/rigExec/bakedOpValues.cpp
@@ -287,6 +289,22 @@ target_link_libraries(rigExecRigging PUBLIC
     sdf tf gf vt usd)
 target_link_libraries(rigExecRigging PRIVATE rigExecMath)
 
+# rigExecGpu: the per-vertex deform program on the GPU as an OpenGL 4.5
+# compute shader, on a worker thread that owns its own hidden context, and
+# the GLSL body the Storm ExtComputation kernel shares.
+add_library(rigExecGpu SHARED
+    libs/rigExecGpu/glContext.cpp
+    libs/rigExecGpu/gpuDeformExecutor.cpp
+    libs/rigExecGpu/gpuDeformShader.cpp)
+target_include_directories(rigExecGpu PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
+    $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
+target_link_libraries(rigExecGpu PUBLIC rigExec tf gf)
+target_link_libraries(rigExecGpu PRIVATE garch)
+if(WIN32)
+    target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
+endif()
+
 # rigExecImaging: Hydra 2.0 scene-index publication (spec §10).
 add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
@@ -320,7 +338,7 @@ target_link_libraries(rigExecImaging PUBLIC
     sdr
     work
 )
-target_link_libraries(rigExecImaging PRIVATE rigExecRuntime rigExecSampler rigExecScene)
+target_link_libraries(rigExecImaging PRIVATE rigExecRuntime rigExecSampler rigExecScene rigExecGpu)
 target_compile_definitions(rigExecImaging PRIVATE RIGEXEC_IMAGING_EXPORTS)
 
 # The vendored FlatBuffers C++ runtime headers (Apache-2.0, unmodified; see
@@ -514,6 +532,9 @@ add_executable(testRigExecSingleChainIk tests/testRigExecSingleChainIk.cpp)
 target_link_libraries(testRigExecSingleChainIk PRIVATE rigExecMath)
 add_test(NAME testRigExecSingleChainIk COMMAND testRigExecSingleChainIk)
 
+add_executable(testRigExecGpuDeform tests/testRigExecGpuDeform.cpp)
+target_link_libraries(testRigExecGpuDeform PRIVATE rigExec rigExecGpu)
+add_test(NAME testRigExecGpuDeform COMMAND testRigExecGpuDeform)
 add_executable(testRigExecDualQuat tests/testRigExecDualQuat.cpp)
 target_link_libraries(testRigExecDualQuat PRIVATE rigExecMath)
 add_test(NAME testRigExecDualQuat COMMAND testRigExecDualQuat)
@@ -2390,14 +2411,14 @@ endforeach()
 # Install
 include(CMakePackageConfigHelpers)
 
-install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecRigging rigExecImaging rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecRigging rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${RIGEXEC_INSTALL_LIBDIR}")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecRigging rigExecImaging rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecRigging rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

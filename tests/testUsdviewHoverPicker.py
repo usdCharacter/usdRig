@@ -15,7 +15,9 @@
 #     fades every tab;
 #   * hovering a button lights it and hovering a handle names its tab;
 #   * P shows and hides it;
-#   * the layout is saved per user and comes back as it was left.
+#   * the layout is saved per user and comes back as it was left;
+#   * shrinking the window keeps every tab on screen, and growing it back
+#     returns them to their places.
 #
 # The user's own saved layout is put back afterwards.
 #
@@ -297,6 +299,30 @@ def _Run(appController, api, hm, pickerHoverUI):
     _Check(pickerHoverUI.LoadLayout().ToJson() ==
            controller.Layout().ToJson(),
            "the layout on disk is the layout on screen")
+    # --- resizing the window keeps every tab on screen ------------------
+    window = appController._mainWindow
+    before = window.size()
+    firstLayout.x, firstLayout.y = view.width() - 60.0, 60.0
+    firstLayout.Anchor(view.width(), view.height())
+    placed = [(l.x, l.y) for l in layouts]
+    window.resize(max(400, before.width() // 2),
+                  max(300, before.height() // 2))
+    appController._processEvents()
+    for layout in layouts:
+        _Check(0.0 <= layout.x <= view.width() and
+               0.0 <= layout.y <= view.height(),
+               "%s stays on screen in a %dx%d view: (%.0f, %.0f)"
+               % (layout.key, view.width(), view.height(), layout.x,
+                  layout.y))
+    _Check(abs((view.width() - firstLayout.x) - 60.0) < 1.0 or
+           firstLayout.x <= view.width(),
+           "a tab put down on the right follows the right edge")
+    window.resize(before)
+    appController._processEvents()
+    _Check(all(abs(l.x - p[0]) < 1.0 and abs(l.y - p[1]) < 1.0
+               for l, p in zip(layouts, placed)),
+           "growing the window back puts them where they were")
+
     mouse.Key(QtCore.Qt.Key_P)
     _Check(not controller.IsVisible(), "P hides it")
     mouse.Key(QtCore.Qt.Key_P)

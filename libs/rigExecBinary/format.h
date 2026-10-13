@@ -524,7 +524,10 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// influences. A format-20 file holds none of them, so its Delta Mush,
 /// lattice and surface revisions play the legacy deformers. Format 21 also
 /// adds affine frame expressions to the provider program.
-inline constexpr uint32_t RigExecFormatVersion = 21;
+///
+/// Format 22 adds the IK/FK match constraint's fields to Constraint
+/// (ik_fk_match and the match_* fields). A format-21 file holds no match.
+inline constexpr uint32_t RigExecFormatVersion = 22;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

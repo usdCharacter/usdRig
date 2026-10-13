@@ -75,14 +75,19 @@ void Put(std::string *out, const TfToken &value)
 {
     Put(out, uint64_t(value.size())); out->append(value.GetText(), value.size());
 }
-void Put(std::string *out, const GfVec2f &v) { for (int i=0;i<2;++i) Put(out,v[i]); }
-void Put(std::string *out, const GfVec3f &v) { for (int i=0;i<3;++i) Put(out,v[i]); }
-void Put(std::string *out, const GfVec3d &v) { for (int i=0;i<3;++i) Put(out,v[i]); }
-void Put(std::string *out, const GfVec3i &v) { for (int i=0;i<3;++i) Put(out,v[i]); }
+// The element-by-element bytes in one append: these are padding-free, in
+// row-major element order (static_assert below).
+void Put(std::string *out, const GfVec2f &v) { out->append(reinterpret_cast<const char *>(v.data()), sizeof(float)*2); }
+void Put(std::string *out, const GfVec3f &v) { out->append(reinterpret_cast<const char *>(v.data()), sizeof(float)*3); }
+void Put(std::string *out, const GfVec3d &v) { out->append(reinterpret_cast<const char *>(v.data()), sizeof(double)*3); }
+void Put(std::string *out, const GfVec3i &v) { out->append(reinterpret_cast<const char *>(v.data()), sizeof(int)*3); }
 void Put(std::string *out, const GfMatrix4d &v)
 {
-    for (int r=0;r<4;++r) for (int c=0;c<4;++c) Put(out,v[r][c]);
+    out->append(reinterpret_cast<const char *>(v.data()), sizeof(double)*16);
 }
+static_assert(sizeof(GfVec2f)==sizeof(float)*2 && sizeof(GfVec3f)==sizeof(float)*3 &&
+              sizeof(GfVec3d)==sizeof(double)*3 && sizeof(GfVec3i)==sizeof(int)*3 &&
+              sizeof(GfMatrix4d)==sizeof(double)*16,"key fields are padding-free");
 // Put writes these element types as their object bytes in memory order:
 // integers, float, double and the padding-free vectors above. A contiguous
 // run of them is one append.

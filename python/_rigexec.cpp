@@ -21,6 +21,7 @@
 #include "pxr/usd/usd/timeCode.h"
 
 #include "rigExec/rigEvaluator.h"
+#include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/geometryKernels.h"
@@ -170,6 +171,10 @@ _VtToPython(const VtValue &v)
     }
     if (v.IsHolding<TfToken>()) {
         return py::cast(v.Get<TfToken>().GetString());
+    }
+    if (v.IsHolding<VtDoubleArray>()) {
+        const VtDoubleArray &a = v.UncheckedGet<VtDoubleArray>();
+        return py::cast(std::vector<double>(a.begin(), a.end()));
     }
     // Fallback: the value's string form, never a silent loss.
     std::ostringstream oss;
@@ -747,6 +752,8 @@ _RbfSolverFromTable(const py::dict &table)
 PYBIND11_MODULE(_rigexec, m) {
     m.doc() = "RigExec native bindings: rigging API (spec section 4) and the staged rig evaluator.";
     m.attr("__version__") = "0.1.0";
+    // RIGEXEC_GPU_DEFORM=readback deforms on this executor.
+    rigExec::RigExecGpuRegisterDeformRunner();
 
 
     py::class_<rigExec::RigExecPointFrame>(m, "PointFrame",

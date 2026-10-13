@@ -651,6 +651,23 @@ public:
     /// the evaluator's own caches are dropped from.
     uint64_t GetStageEditSerial() const { return _stageEditSerial; }
 
+    /// Advances for every stage notice the program could not absorb as
+    /// values (any disposition but Patched or Edited). For a consumer that
+    /// caches a judgement about the stage's STRUCTURE -- connections, prims,
+    /// types -- which GetStageEditSerial would drop on every value edit.
+    uint64_t GetStageStructureSerial() const { return _stageStructureSerial; }
+
+    /// The property paths the notices after stage edit serial \p serial
+    /// changed, sorted and unique, into \p paths. True only when every one
+    /// of those notices was a value edit the program absorbed (Patched or
+    /// Edited) naming property paths alone -- changed info or a property
+    /// resync, never a prim path -- and the log still reaches back to
+    /// \p serial. A consumer
+    /// holding reads taken at \p serial may keep each read none of those
+    /// paths can reach; on false it reads everything again.
+    bool GetValueEditsSince(uint64_t serial,
+                            std::vector<SdfPath> *paths) const;
+
     /// Classifies \p notice against the standing baked program without
     /// mutating anything: Patched (plus the property paths a patch would
     /// write, in \p patchedPaths) when the notice is nothing but
@@ -908,6 +925,22 @@ private:
         /// attribute of a closure prim that is not here was unconnected.
         std::unordered_map<SdfPath, SdfPathVector, SdfPath::Hash>
             closureConnections;
+        /// Every attribute of a closure prim, with the type the digest
+        /// wrote: an attribute appearing on, or retyped on, one of those
+        /// prims moves the digest; a value on it does not.
+        std::unordered_map<SdfPath, TfToken, SdfPath::Hash>
+            closureAttributes;
+        /// Every attribute whose VALUE or time-sample count the digest
+        /// writes -- a policy token, a cardinality, a weight array's size,
+        /// an activation -- whether or not it existed. A value edit
+        /// anywhere else cannot move the digest
+        /// (_NoticeIsDigestValueNeutral).
+        std::unordered_set<SdfPath, SdfPath::Hash> valueReads;
+        /// Every attribute on a connection walk the digest writes, with the
+        /// type it wrote (empty where it wrote "missing"): the walk writes
+        /// each one's type and time-sample count, never its value, so only
+        /// a sample, a retype or the attribute appearing moves the digest.
+        std::unordered_map<SdfPath, TfToken, SdfPath::Hash> sampleCountReads;
     };
     struct _DigestFootprint {
         /// Prims the digest looked at: an edit on, under or above one is
@@ -938,6 +971,14 @@ private:
     /// certain footprints out of.
     static _DigestGate _MakeDigestGate(
         _DigestFootprint (&parts)[_DigestSegmentCount]);
+    /// Whether \p notice moves only values the committed digest never
+    /// writes: property values and samples outside every recorded value
+    /// read, and no attribute appearing or retyped on a prim whose
+    /// attributes the digest lists. Such a notice cannot move the digest,
+    /// so the settle owes it no recompute; the digest being blind to
+    /// values is what makes the answer provable rather than a guess.
+    bool _NoticeIsDigestValueNeutral(
+        const UsdNotice::ObjectsChanged &notice) const;
     /// Notes the paths of a digest-suspect \p notice that could make the
     /// edit certainly structural, for _EditIsCertainlyStructural to judge at
     /// the next settle.
@@ -1283,6 +1324,9 @@ private:
     /// graphs' pushed base points -- and nothing else (spec rule S5).
     void _ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
                            bool avarValuesOnly);
+    /// Records \p notice in the value-edit log (GetValueEditsSince), or
+    /// floors the log where the notice is not a covered value edit.
+    void _LogValueEdit(const UsdNotice::ObjectsChanged &notice);
     /// The same caches dropped whole, as every notice used to drop them.
     /// What a shadow evaluator runs (RIGEXEC_VERIFY_SCOPED_CLEARS), and what
     /// a notice at the root, on a resolved asset or inside a prototype runs.
@@ -1598,6 +1642,17 @@ private:
     bool _certainCandidatesOverflowed = false;
     /// See GetStageEditSerial.
     uint64_t _stageEditSerial = 0;
+    /// See GetStageStructureSerial.
+    uint64_t _stageStructureSerial = 0;
+    /// See GetValueEditsSince: the last value edits by stage edit serial,
+    /// oldest first, and the serial at or below which the log answers
+    /// nothing (a notice it does not cover, or one it dropped for length).
+    struct _ValueEdit {
+        uint64_t serial = 0;
+        std::vector<SdfPath> paths;
+    };
+    std::vector<_ValueEdit> _valueEdits;
+    uint64_t _valueEditsFloor = 0;
     /// The last settle-path compile, when it failed.
     ///
     /// A compile's outcome is a function of the composed stage. Every notice

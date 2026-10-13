@@ -7,7 +7,10 @@ rem   stage defaults to an empty stage carrying a single World Xform, so that
 rem     opening the app to build something is the no-argument case; pass
 rem     examples\ArmShotAnim.usda for the rig that deforms on the timeline.
 rem   a bare second argument is the renderer (e.g. Embree); anything starting
-rem   with - is passed to usdview untouched.
+rem   with - is passed to usdview untouched, except
+rem   --deform cpu^|gpu^|shader, which picks how deformers run: on the CPU
+rem   (the default), on the GPU with the points read back, or in Storm's
+rem   own compute shaders. Sets RIGEXEC_GPU_DEFORM.
 setlocal EnableDelayedExpansion
 call "%~dp0_vcvars.bat"
 call "%~dp0_env.bat"
@@ -105,10 +108,17 @@ shift
 
 :collect
 if "%~1"=="" goto :run
+if /i "%~1"=="--deform" (
+    if /i "%~2"=="cpu" (set "RIGEXEC_GPU_DEFORM=") else set "RIGEXEC_GPU_DEFORM=%~2"
+    shift
+    shift
+    goto :collect
+)
 set "FLAGS=!FLAGS! %1"
 shift
 goto :collect
 
 :run
+if defined RIGEXEC_GPU_DEFORM (echo deformers: !RIGEXEC_GPU_DEFORM!) else echo deformers: cpu
 "%PY%" "%USDVIEW%" !RENDERER!!FLAGS! "%STAGE%"
 exit /b %errorlevel%

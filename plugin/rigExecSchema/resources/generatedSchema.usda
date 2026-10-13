@@ -1836,6 +1836,184 @@ class RigExecSingleChainIkConstraint "RigExecSingleChainIkConstraint" (
     )
 }
 
+class RigExecIkFkMatchConstraint "RigExecIkFkMatchConstraint" (
+    customData = {
+        string userDocBrief = """Keeps the half of a switchable limb that is not driving its
+    joints on those joints, and publishes the channel values that would make
+    it drive them unchanged."""
+    }
+)
+{
+    bool inputs:affectRotationX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis rotation mask."
+        }
+    )
+    bool inputs:affectRotationY = 1
+    bool inputs:affectRotationZ = 1
+    bool inputs:affectScaleX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis scale mask."
+        }
+    )
+    bool inputs:affectScaleY = 1
+    bool inputs:affectScaleZ = 1
+    bool inputs:affectTranslationX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis translation mask."
+        }
+    )
+    bool inputs:affectTranslationY = 1
+    bool inputs:affectTranslationZ = 1
+    double inputs:lowerScale = 1 (
+        customData = {
+            string userDocBrief = """The IK solve's inputs:lowerScale: connect it to the same
+        channel."""
+        }
+    )
+    double inputs:pin = 0 (
+        customData = {
+            string userDocBrief = """How far the IK solve pins its middle joint to the pole once
+        the limb is IK: connect it to the animator's pin channel, not to a
+        pin the switch itself scales."""
+        }
+    )
+    double3 inputs:rotationOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = "Additive Euler rotation offset in degrees, applied after the blend."
+        }
+    )
+    double3 inputs:scaleOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = """ADDITIVE scale offset applied after the blend, which is why
+        its identity is (0, 0, 0) and not (1, 1, 1): the kernel computes
+        blendedScale + offset."""
+        }
+    )
+    double inputs:softDistance = 0 (
+        customData = {
+            string userDocBrief = "The IK solve's inputs:softDistance: connect it to the same channel."
+        }
+    )
+    double inputs:stretch = 1 (
+        customData = {
+            string userDocBrief = "The IK solve's inputs:stretch: connect it to the same channel."
+        }
+    )
+    double inputs:switch = 0 (
+        customData = {
+            string userDocBrief = """The limb's switch: connect it to the channel the blend's
+        inputs:weight reads."""
+        }
+    )
+    double3 inputs:translationOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = "Additive translation offset applied after the source blend."
+        }
+    )
+    double inputs:twist = 0 (
+        customData = {
+            string userDocBrief = "The IK solve's inputs:twist, in degrees: connect it to the same channel."
+        }
+    )
+    double inputs:upperScale = 1 (
+        customData = {
+            string userDocBrief = """The IK solve's inputs:upperScale: connect it to the same
+        channel."""
+        }
+    )
+    double[] outputs:fkValues (
+        customData = {
+            string userDocBrief = """Computed each frame, never authored: the FK half's channel
+        values that reproduce the joints."""
+        }
+    )
+    double[] outputs:ikValues (
+        customData = {
+            string userDocBrief = """Computed each frame, never authored: the IK half's channel
+        values that reproduce the joints."""
+        }
+    )
+    rel rigExec:effector (
+        customData = {
+            string userDocBrief = """The frame the IK solve reaches for: the IK control or a
+        frame riding it."""
+        }
+    )
+    rel rigExec:fkControls (
+        customData = {
+            string userDocBrief = "The FK chain's three controls, root to end."
+        }
+    )
+    rel rigExec:ikControl (
+        customData = {
+            string userDocBrief = "The control the animator moves to place the IK effector."
+        }
+    )
+    uniform double rigExec:ikValue = 1 (
+        customData = {
+            string userDocBrief = """The value of inputs:switch that means fully IK;
+        1 - ikValue means fully FK."""
+        }
+    )
+    rel rigExec:limbJoints (
+        customData = {
+            string userDocBrief = """The limb's three joints, root to end: the ones its blend
+        writes."""
+        }
+    )
+    uniform bool rigExec:locked = 0 (
+        customData = {
+            string userDocBrief = "Authoring lock metadata for application interchange."
+        }
+    )
+    uniform double rigExec:lowerLengthOffset = 0 (
+        customData = {
+            string userDocBrief = "The IK solve's rigExec:lowerLengthOffset."
+        }
+    )
+    rel rigExec:poleControl (
+        customData = {
+            string userDocBrief = "The IK solve's pole control."
+        }
+    )
+    rel rigExec:rootControl (
+        customData = {
+            string userDocBrief = "The IK solve's root control."
+        }
+    )
+    uniform token rigExec:rotationOrder = "XYZ" (
+        allowedTokens = ["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"]
+        customData = {
+            string userDocBrief = "Euler order for the operators that compose a rotation."
+        }
+    )
+    uniform double rigExec:scaleCalibration = 0 (
+        customData = {
+            string userDocBrief = "The IK solve's rigExec:scaleCalibration."
+        }
+    )
+    rel rigExec:space (
+        customData = {
+            string userDocBrief = "Optional: the IK solve's rigExec:space."
+        }
+    )
+    uniform token rigExec:stretchPolicy = "softDistance" (
+        allowedTokens = ["none", "softDistance"]
+        customData = {
+            string userDocBrief = """softDistance: the limb stretches as RigExecTwoBoneIk's
+        softDistance policy does, and its FK chain lengthens by the same
+        upper and lower scales, so a match carries the bone lengths across
+        in them."""
+        }
+    )
+    uniform double rigExec:upperLengthOffset = 0 (
+        customData = {
+            string userDocBrief = "The IK solve's rigExec:upperLengthOffset."
+        }
+    )
+}
+
 class RigExecSpaceSwitch "RigExecSpaceSwitch" (
     customData = {
         string userDocBrief = """A labelled list of parent spaces for one xformable, with a live

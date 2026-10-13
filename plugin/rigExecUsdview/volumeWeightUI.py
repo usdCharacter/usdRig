@@ -185,7 +185,9 @@ def _SetAtTime(attr, value, time):
             typeName=valueType.typeName, time=frame, value=value,
             nextInterp=Ts.InterpCurve)
     spline.SetKnot(knot)
-    attr.SetSpline(spline)
+    # One notice: a first key creates the spec and then sets the spline.
+    with Sdf.ChangeBlock():
+        attr.SetSpline(spline)
 
 
 def SetVisibleAtTime(attr, value, time=None):

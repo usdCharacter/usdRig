@@ -260,6 +260,10 @@ def _Gesture(clock, menu=None, context=None):
                       clock=clock)
 
 
+def _Close(a, b, eps=1e-6):
+    return abs(a[0] - b[0]) <= eps and abs(a[1] - b[1]) <= eps
+
+
 def _At(direction, distance, centre=CENTRE):
     dx, dy = mm.DIRECTION_VECTORS[direction]
     return (centre[0] + dx * distance, centre[1] + dy * distance)
@@ -391,26 +395,31 @@ def TestSubmenuUnfolds():
     edge = _At("E", mm.RADIUS_PX)
     opened = _One(gesture.Move(*edge), mm.OPEN, "past the ring")
     _Check(gesture.depth == 1, "the child is open")
-    _Check(opened.centre == edge,
-           "and it is recentred where the cursor is, so the stroke just "
-           "carries on: %s" % (opened.centre,))
-    _Check([r.id for r in opened.menu.items] ==
-           ["space.world", "space.parent"],
+    _Check(_Close(opened.centre, _At("E", mm.CLEAR_PX)),
+           "recentred along the stroke, just far enough out that the "
+           "parent's back circle lies outside the child's ring: %s"
+           % (opened.centre,))
+    _Check(sorted(r.id for r in opened.menu.items) ==
+           ["space.parent", "space.world"],
            "the children came from the context, at open time: %s"
            % (opened.menu.items,))
-    _Check(gesture.direction is None,
-           "the cursor is at the new centre, so it aims at nothing yet")
+    # West of the child is where the parent's circle is: no button goes
+    # there, so World, pinned West, takes the next free slot.
+    _Check("W" in opened.menu.blocked and opened.menu.Slot("W") is None,
+           "the way back is left empty: %s" % (opened.menu.blocked,))
+    world = opened.menu.Find("space.world")
+    _Check(world.direction == "S", "World moved to %s" % world.direction)
 
     # The stroke continues in the child, from the new centre.
     clock.t = 200.0
-    highlight = _One(gesture.Move(*_At("W", 40.0, edge)), mm.HIGHLIGHT,
-                     "aim in the child")
+    highlight = _One(gesture.Move(*_At("S", 40.0, opened.centre)),
+                     mm.HIGHLIGHT, "aim in the child")
     _Check(highlight.item.id == "space.world",
-           "West in the CHILD, measured from the child's centre: %s"
+           "South in the CHILD, measured from the child's centre: %s"
            % (highlight,))
     clock.t = 220.0
-    confirm = _One(gesture.Release(*_At("W", 60.0, edge)), mm.CONFIRM,
-                   "release in the child")
+    confirm = _One(gesture.Release(*_At("S", 60.0, opened.centre)),
+                   mm.CONFIRM, "release in the child")
     _Check(confirm.item.id == "space.world",
            "and the child item is what runs: %s" % (confirm,))
 
@@ -434,9 +443,172 @@ def TestSubmenuUnfoldsOnDwell():
     clock.t = 170.0 + mm.UNFOLD_MS
     opened = _One(gesture.Tick(), mm.OPEN, "dwelled")
     _Check(gesture.depth == 1, "the dwell opened it")
-    _Check(opened.centre == mm.PointFor(CENTRE, "W"),
-           "a dwell recentres on the item's own label, not on wherever "
-           "in the sector the cursor happens to rest: %s" % (opened.centre,))
+    _Check(_Close(opened.centre, _At("W", mm.CLEAR_PX)),
+           "a dwell recentres along the item's own direction, not on "
+           "wherever in the sector the cursor happens to rest, and clear "
+           "of the parent: %s" % (opened.centre,))
+
+
+def _Nested():
+    """A root with submenu `a` (E), which holds submenu `b` (E), which
+    holds the action `b.go` (E)."""
+    items = _Items(4)
+    items[1] = dict(id="a", label="A", kind=mm.SUBMENU, dir="E", items=[
+        dict(id="a.stay", label="Stay", dir="W"),
+        dict(id="b", label="B", kind=mm.SUBMENU, dir="E", items=[
+            dict(id="b.go", label="Go", dir="E")]),
+    ])
+    return mm.Menu("m", items)
+
+
+def TestBackCircles():
+    clock = _Clock()
+    gesture = _Gesture(clock, _Nested())
+    gesture.Press(*CENTRE)
+    clock.t = 160.0
+    _One(gesture.Tick(), mm.SHOW, "shown")
+    clock.t = 170.0
+    gesture.Move(*_At("E", 50.0))
+    first = _One(gesture.Move(*_At("E", mm.RADIUS_PX)), mm.OPEN,
+                 "into a").centre
+    clock.t = 180.0
+    gesture.Move(*_At("E", 50.0, first))
+    second = _One(gesture.Move(*_At("E", mm.RADIUS_PX, first)), mm.OPEN,
+                  "into b").centre
+    _Check(gesture.depth == 2, "two submenus deep")
+    _Check(gesture.parentCentres == [CENTRE, first],
+           "a circle where each menu above sat: %s"
+           % (gesture.parentCentres,))
+
+    # Back past BOTH submenus at once, to the root.
+    clock.t = 200.0
+    back = _One(gesture.Move(*_At("NE", mm.BACK_RADIUS_PX - 2.0)),
+                mm.OPEN, "onto the root's circle")
+    _Check(back.reason == "back" and back.centre == CENTRE and
+           back.menu.id == "m", "the root, at its own centre: %s" % (back,))
+    _Check(gesture.depth == 0 and not gesture.parentCentres,
+           "every submenu below it closed")
+
+    # Resting on the circle never opens the submenu again.
+    clock.t = 200.0 + mm.UNFOLD_MS * 3
+    _Check(_Kind(gesture.Tick(), "resting on the circle") != mm.OPEN,
+           "a dwell on the back circle does not reopen")
+    _Check(gesture.depth == 0, "still at the root")
+
+    # Down again, and back ONE level: the nearer circle wins.
+    clock.t = 300.0
+    gesture.Move(*_At("E", 50.0))
+    _One(gesture.Move(*_At("E", mm.RADIUS_PX)), mm.OPEN, "into a again")
+    clock.t = 310.0
+    gesture.Move(*_At("E", 50.0, first))
+    _One(gesture.Move(*_At("E", mm.RADIUS_PX, first)), mm.OPEN,
+         "into b again")
+    clock.t = 320.0
+    back = _One(gesture.Move(*_At("S", 4.0, first)), mm.OPEN, "onto a")
+    _Check(back.menu.id == "a" and gesture.depth == 1 and
+           gesture.parentCentres == [CENTRE],
+           "back to a, b closed, the root's circle still there: %s"
+           % (gesture.parentCentres,))
+    # And a stays live: a.stay (pinned West, where the root's circle
+    # is, so moved to South) runs.
+    clock.t = 340.0
+    confirm = _One(gesture.Release(*_At("S", 60.0, first)), mm.CONFIRM,
+                   "release in a")
+    _Check(confirm.item.id == "a.stay", "a's own item runs: %s" % (confirm,))
+
+
+def _Fan(depth):
+    """A menu with a submenu in all eight directions, `depth` deep."""
+    if depth == 0:
+        return [dict(id="leaf.%s" % d, label="Leaf", dir=d)
+                for d in mm.FILL_ORDER]
+    return [dict(id="sub%d.%s" % (depth, d), label="Sub", dir=d,
+                 kind=mm.SUBMENU, items=_Fan(depth - 1))
+            for d in mm.FILL_ORDER]
+
+
+def TestCirclesNeverInARing():
+    # Every way down two levels, from every direction a submenu can be
+    # opened toward -- including doubling straight back: no back circle
+    # is ever inside the open menu's ring, and no button points at one.
+    root = mm.Menu("fan", _Fan(2))
+    checked = 0
+    for first in mm.FILL_ORDER:
+        for second in mm.FILL_ORDER:
+            clock = _Clock()
+            gesture = _Gesture(clock, root)
+            gesture.Press(*CENTRE)
+            clock.t = 160.0
+            gesture.Tick()
+            path = [first, second]
+            for level, direction in enumerate(path):
+                if gesture.resolved.Slot(direction) is None:
+                    break                  # blocked: no submenu that way
+                clock.t += 20.0
+                gesture.Move(*_At(direction, 50.0, gesture.centre))
+                clock.t += 20.0
+                gesture.Move(*_At(direction, mm.RADIUS_PX + 1.0,
+                                  gesture.centre))
+                _Check(gesture.depth == level + 1,
+                       "%s opened level %d" % (path, level + 1))
+                for circle in gesture.parentCentres:
+                    _Check(mm.Distance(circle, gesture.centre) >=
+                           mm.CLEAR_PX - 1e-6,
+                           "%s: a back circle %.1f px from the centre, "
+                           "inside the ring" % (path, mm.Distance(
+                               circle, gesture.centre)))
+                    toward = mm.SectorFor(circle[0] - gesture.centre[0],
+                                          circle[1] - gesture.centre[1])
+                    _Check(gesture.resolved.Slot(toward) is None,
+                           "%s: a button points at a back circle (%s)"
+                           % (path, toward))
+                checked += 1
+    _Check(checked > 64, "every first level and most second levels were "
+           "opened: %d" % checked)
+
+
+def TestBackCircleInClickMode():
+    clock = _Clock()
+    gesture = _Gesture(clock, _Nested())
+    gesture.Press(*CENTRE)
+    clock.t = 50.0
+    gesture.Release(*CENTRE)                    # a tap: up for clicking
+    clock.t = 100.0
+    opened = _One(gesture.Press(*_At("E", 60.0)), mm.OPEN, "click a")
+    _Check(gesture.depth == 1, "a is open")
+    clock.t = 150.0
+    back = _One(gesture.Press(*_At("N", 5.0)), mm.OPEN,
+                "click the root's circle")
+    _Check(back.reason == "back" and gesture.depth == 0 and
+           gesture.state == mm.STATE_CLICK,
+           "back at the root, still up for clicking: %s" % (back,))
+    _Check(opened.centre != back.centre, "and centred where it was")
+
+
+def TestReleaseOnANamedItem():
+    # The widget names what is drawn under a release; that outranks the
+    # sector, so an overflow row (no sector at all) can be released on.
+    items = _Items(8) + [dict(id="row", label="Row", overflow=True)]
+    clock = _Clock()
+    gesture = _Gesture(clock, mm.Menu("m", items))
+    gesture.Press(*CENTRE)
+    clock.t = 160.0
+    _One(gesture.Tick(), mm.SHOW, "shown")
+    clock.t = 400.0
+    below = (CENTRE[0], CENTRE[1] + mm.RADIUS_PX * 1.5)
+    gesture.Move(*below)
+    confirm = _One(gesture.Release(below[0], below[1], itemId="row"),
+                   mm.CONFIRM, "released on the row")
+    _Check(confirm.item.id == "row", "the row runs, not South: %s"
+           % (confirm,))
+    # Before anything is drawn there is nothing to name: a flick still
+    # goes by its direction.
+    gesture.Press(*CENTRE)
+    clock.t = 420.0
+    confirm = _One(gesture.Release(*_At("W", 40.0), itemId="row"),
+                   mm.CONFIRM, "a flick")
+    _Check(confirm.item.id == "a0", "the flick's direction wins: %s"
+           % (confirm,))
 
 
 def TestReleaseOnAFoldedSubmenu():
@@ -683,8 +855,7 @@ def TestBuiltInSelectionMenu():
     expected = {"W": "selection.key", "E": "selection.reset",
                 "S": "selection.zero", "N": "selection.frame",
                 "NW": "selection.fkik", "NE": "selection.space",
-                "SW": "selection.counterpart",
-                "SE": "selection.addToPicker"}
+                "SW": "selection.counterpart"}
     _Check(_Kinds(resolved) == expected,
            "the Selection ring is laid out as the plan names it: %s"
            % (_Kinds(resolved),))
@@ -692,8 +863,8 @@ def TestBuiltInSelectionMenu():
            "with usdview's own prim menu in the overflow column")
     _Check(resolved.Slot("NW").checked is True,
            "the FK/IK toggle reports the limb's current state")
-    _Check(resolved.Slot("SW").stub and resolved.Slot("SE").stub,
-           "and the two items with no action behind them say so")
+    _Check(not resolved.Slot("SW").stub,
+           "Select counterpart has an action behind it")
 
     # Nothing useful selected: the four unconditional commands stay
     # exactly where the hand left them.
@@ -746,6 +917,10 @@ def main():
     TestSubmenuUnfolds()
     TestSubmenuUnfoldsOnDwell()
     TestReleaseOnAFoldedSubmenu()
+    TestBackCircles()
+    TestCirclesNeverInARing()
+    TestBackCircleInClickMode()
+    TestReleaseOnANamedItem()
     TestEscapeAndOutsideClickCancel()
     TestSecondPressIgnored()
     TestEmptySectorAndDisabledItem()

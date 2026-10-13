@@ -62,6 +62,19 @@ UNFOLD_MS = 250.0       # dwell this long on a submenu and it opens even
 # a click at the scene behind it and cancels. Twice the ring keeps the
 # whole widget (labels stick out past RADIUS_PX) inside the live area.
 OUTSIDE_PX = RADIUS_PX * 2.0
+# A submenu leaves a circle where each menu above it was centred. The
+# cursor coming within this of one goes back to that menu, closing every
+# submenu below it. Larger than THRESHOLD_PX so the circle is an easy
+# target, and well inside RADIUS_PX so it never sits on a label.
+BACK_RADIUS_PX = 16.0
+# No back circle ever sits inside a menu's ring: a submenu is centred at
+# least this far from every menu above it -- the ring, the circle and a
+# margin -- however close to its parent the cursor opened it.
+CLEAR_PX = RADIUS_PX + BACK_RADIUS_PX + 12.0
+# And no button ever points at one: a submenu leaves empty every
+# direction in which a back circle lies within this distance, which is
+# past the end of the longest label a ring draws.
+BLOCK_PX = RADIUS_PX * 3.5
 
 
 # --- The eight directions ---------------------------------------------
@@ -392,13 +405,15 @@ class ResolvedMenu(object):
     re-ask, because the two modes disagree about hidden versus disabled.
     """
 
-    def __init__(self, source, mode, slots, overflow):
+    def __init__(self, source, mode, slots, overflow, blocked=()):
         self.source = source
         self.id = source.id
         self.label = source.label
         self.mode = mode
         self.slots = slots          # direction -> ResolvedItem
         self.overflow = list(overflow)
+        # Directions left empty because a back circle lies that way.
+        self.blocked = frozenset(blocked)
 
     @property
     def items(self):
@@ -422,7 +437,7 @@ class ResolvedMenu(object):
             self.id, len(self.slots), len(self.overflow))
 
 
-def Layout(items):
+def Layout(items, blocked=()):
     """Place resolved items into the ring, and return (slots, overflow).
 
     Two passes, and the order matters. Pinned items claim their slots
@@ -448,8 +463,13 @@ def Layout(items):
     record, rather than depending on how many items happened to survive
     this resolve.
 
+    `blocked` directions take no item at all: a submenu passes the
+    directions of the back circles around it, and an item pinned to one
+    joins the fill instead.
+
     `items` are ResolvedItem instances; this mutates their `direction`.
     """
+    blocked = frozenset(blocked)
     slots = {}
     fill = []
     column = []
@@ -459,12 +479,12 @@ def Layout(items):
             column.append(resolved)
             continue
         pin = resolved.item.dir
-        if pin is not None and pin not in slots:
+        if pin is not None and pin not in slots and pin not in blocked:
             resolved.direction = pin
             slots[pin] = resolved
         else:
             fill.append(resolved)
-    free = [d for d in FILL_ORDER if d not in slots]
+    free = [d for d in FILL_ORDER if d not in slots and d not in blocked]
     overflow = column
     for resolved in fill:
         if free:
@@ -477,7 +497,7 @@ def Layout(items):
     return slots, overflow
 
 
-def Resolve(menu, context, mode=MODE_FLICK):
+def Resolve(menu, context, mode=MODE_FLICK, blocked=()):
     """Turn an authored menu into the menu for THIS selection.
 
     Asks the context one question per item -- is your `when` satisfied,
@@ -498,8 +518,8 @@ def Resolve(menu, context, mode=MODE_FLICK):
         resolved.append(ResolvedItem(
             item, label if label is not None else item.label,
             available, CheckedState(item, context)))
-    slots, overflow = Layout(resolved)
-    return ResolvedMenu(menu, mode, slots, overflow)
+    slots, overflow = Layout(resolved, blocked)
+    return ResolvedMenu(menu, mode, slots, overflow, blocked)
 
 
 def CheckedState(item, context):
@@ -516,7 +536,7 @@ def CheckedState(item, context):
     return None
 
 
-def ResolveChild(item, context, mode=MODE_FLICK):
+def ResolveChild(item, context, mode=MODE_FLICK, blocked=()):
     """The menu behind a SUBMENU item, resolved and laid out.
 
     Inline `items` and a `children` provider name are not alternatives:
@@ -529,7 +549,47 @@ def ResolveChild(item, context, mode=MODE_FLICK):
     if item.children:
         records.extend(_Ask(context, "Children", (), item.children) or ())
     child = Menu(item.id, records, label=item.label)
-    return Resolve(child, context, mode)
+    return Resolve(child, context, mode, blocked)
+
+
+def ClearCentre(centre, toward, ancestors):
+    """Where a submenu opened from `centre` toward the point `toward` is
+    centred: `toward` itself when that is far enough out, else pushed on
+    along the same line until it is at least CLEAR_PX from `centre` and
+    from every point in `ancestors` -- so no back circle lies inside the
+    submenu's ring."""
+    dx, dy = toward[0] - centre[0], toward[1] - centre[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        dx, dy, length = 1.0, 0.0, 1.0
+    ux, uy = dx / length, dy / length
+    distance = max(length, CLEAR_PX)
+    others = list(ancestors) + [centre]
+    for _ in range(200):
+        point = (centre[0] + ux * distance, centre[1] + uy * distance)
+        if all(Distance(point, a) >= CLEAR_PX for a in others):
+            return point
+        distance += 4.0
+    return point
+
+
+def BlockedDirections(centre, circles):
+    """Every direction from `centre` in which some back circle in
+    `circles` lies, near enough to meet a label drawn that way. The
+    circle's whole width counts, so one that straddles two sectors
+    blocks both."""
+    blocked = set()
+    for cx, cy in circles:
+        if Distance(centre, (cx, cy)) > BLOCK_PX:
+            continue
+        r = BACK_RADIUS_PX + 6.0
+        for ox, oy in ((0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r),
+                       (0.0, -r)):
+            direction = SectorFor(cx + ox - centre[0], cy + oy - centre[1],
+                                  threshold=0.0)
+            if direction is not None:
+                blocked.add(direction)
+    return blocked
 
 
 # --- The gesture ------------------------------------------------------
@@ -625,16 +685,25 @@ class Gesture(object):
       * a highlighted SUBMENU unfolds when the cursor passes RADIUS_PX
         from the current centre, or dwells on it for UNFOLD_MS, and the
         child is recentred at that point so the stroke simply continues;
+      * each open submenu leaves its parent's centre behind as a circle,
+        and the cursor coming within BACK_RADIUS_PX of one goes back to
+        that menu, closing the submenus below it;
       * Escape, and a click outside the ring once it is up, cancel.
     """
 
-    def __init__(self, menu, context, clock=None, resolver=None):
+    def __init__(self, menu, context, clock=None, resolver=None,
+                 blocker=None):
         self.menu = MenuFrom(menu)
         self.context = context
         self.clock = clock if clock is not None else _WallClock
         # Injected so a test can watch the resolves happen, and so a
         # caller with a cached resolve can hand one in.
         self.resolver = resolver if resolver is not None else Resolve
+        # blocker(resolvedMenu, centre, circles) -> directions whose items,
+        # as the widget DRAWS them, would cover one of the back circles.
+        # Only the widget knows how wide a label is; a submenu leaves those
+        # directions empty too, so nothing drawn ever sits on a circle.
+        self.blocker = blocker
         self.Reset()
 
     # -- state ---------------------------------------------------------
@@ -658,6 +727,21 @@ class Gesture(object):
     def depth(self):
         """How many submenus deep the stroke has gone. 0 at the root."""
         return len(self.stack)
+
+    @property
+    def parentCentres(self):
+        """Where each menu above the current one is centred, root first:
+        the circles that go back to them."""
+        return [centre for _menu, centre in self.stack]
+
+    def BackTarget(self, x, y):
+        """The depth a point goes back to -- the index of the parent whose
+        circle it is on, the nearest parent winning -- or None."""
+        point = (float(x), float(y))
+        for index in range(len(self.stack) - 1, -1, -1):
+            if Distance(self.stack[index][1], point) <= BACK_RADIUS_PX:
+                return index
+        return None
 
     def _Now(self, t_ms):
         return float(t_ms) if t_ms is not None else float(self.clock())
@@ -708,6 +792,9 @@ class Gesture(object):
             return [Emission(IDLE)]
         now = self._Now(t_ms)
         self.point = (float(x), float(y))
+        back = self.BackTarget(x, y)
+        if back is not None:
+            return self._Back(back, now)
         emissions = []
         if self.state in (STATE_ARMED, STATE_STROKE):
             emissions.extend(self._MaybeShow(now))
@@ -731,12 +818,16 @@ class Gesture(object):
         emissions.extend(self._MaybeUnfold(now))
         return emissions or [Emission(IDLE)]
 
-    def Release(self, x, y, t_ms=None):
+    def Release(self, x, y, t_ms=None, itemId=None):
         """Mouse up. Where the whole gesture is decided.
 
         In click mode the release is the tail of the click that already
         confirmed on the press, so it does nothing; everywhere else this
         confirms, opens, taps or cancels and the gesture ends.
+
+        `itemId` names the item the widget found drawn under the release
+        -- a label that reaches past its own sector, or an overflow row,
+        which has no sector at all -- and it outranks the direction.
         """
         if self.state in (STATE_IDLE, STATE_CLICK):
             return [Emission(IDLE)]
@@ -744,6 +835,10 @@ class Gesture(object):
         self.point = (float(x), float(y))
         direction = SectorFor(self.point[0] - self.centre[0],
                               self.point[1] - self.centre[1])
+        if itemId is not None and self.shown:
+            named = self.resolved.Find(itemId)
+            if named is not None:
+                return self._ReleaseOn(named, now)
         if direction is None:
             # Nothing was aimed at. Quick enough and it was a tap: put
             # the menu up and leave it up. Slow enough and it was a hold
@@ -755,6 +850,10 @@ class Gesture(object):
         item = self.resolved.Slot(direction)
         if item is None:
             return self._Cancel("released on an empty sector")
+        return self._ReleaseOn(item, now)
+
+    def _ReleaseOn(self, item, now):
+        """A release on `item`: run it, or open it if it is a submenu."""
         if not item.enabled:
             return self._Cancel("released on a disabled item")
         if item.isSubmenu:
@@ -854,6 +953,10 @@ class Gesture(object):
         reach = Distance(self.centre, self.point)
         if reach >= RADIUS_PX:
             return self._Unfold(item, self.point, now)
+        # A cursor still on the centre's back circle has just come back
+        # from this submenu: resting there must not open it again.
+        if reach < BACK_RADIUS_PX:
+            return []
         if self._dwellFrom is not None and now - self._dwellFrom >= UNFOLD_MS:
             return self._Unfold(item, PointFor(self.centre, self.direction),
                                 now)
@@ -866,8 +969,26 @@ class Gesture(object):
         the child's dead zone starts under the cursor, so the artist
         flicks again from where they already are instead of travelling
         back to the original press point.
+
+        Except where that would put a back circle inside the child's
+        ring: then the child is pushed on along the same line until every
+        circle is clear (ClearCentre), and whichever way a circle lies is
+        left empty (BlockedDirections), so no button is ever drawn on one.
         """
-        child = ResolveChild(item.item, self.context, self.mode)
+        parents = [c for _menu, c in self.stack] + [self.centre]
+        centre = ClearCentre(self.centre, centre, parents[:-1])
+        blocked = set(BlockedDirections(centre, parents))
+        child = ResolveChild(item.item, self.context, self.mode, blocked)
+        if self.blocker is not None:
+            # Blocking a direction moves its item to another slot, whose
+            # label may then cover a circle in turn: settle it.
+            for _ in range(SLOT_COUNT):
+                more = set(self.blocker(child, centre, parents)) - blocked
+                if not more:
+                    break
+                blocked |= more
+                child = ResolveChild(item.item, self.context, self.mode,
+                                     blocked)
         self.stack.append((self.resolved, self.centre))
         self.resolved = child
         self.centre = (float(centre[0]), float(centre[1]))
@@ -881,6 +1002,19 @@ class Gesture(object):
             self.shown = True
         return [Emission(OPEN, menu=child, centre=self.centre,
                          mode=self.mode, item=item)]
+
+    def _Back(self, index, now):
+        """Go back to the menu at depth `index`, closing every submenu
+        below it. Answered with an OPEN of that menu at its own centre."""
+        menu, centre = self.stack[index]
+        del self.stack[index:]
+        self.resolved = menu
+        self.centre = centre
+        self.direction = None
+        self._highlighted = None
+        self._dwellFrom = now
+        return [Emission(OPEN, menu=menu, centre=centre, mode=self.mode,
+                         reason="back")]
 
     def _EnterClickMode(self, now):
         """The menu stops being a stroke and becomes a thing to click.
@@ -905,6 +1039,9 @@ class Gesture(object):
     def _ClickPress(self, x, y, now):
         """A press while the menu is up for clicking."""
         self.point = (float(x), float(y))
+        back = self.BackTarget(x, y)
+        if back is not None:
+            return self._Back(back, now)
         direction = SectorFor(self.point[0] - self.centre[0],
                               self.point[1] - self.centre[1])
         reach = Distance(self.centre, self.point)

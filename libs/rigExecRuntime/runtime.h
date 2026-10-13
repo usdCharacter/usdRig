@@ -386,6 +386,14 @@ public:
     // consumers) as the last Execute computed them, in path order.
     std::vector<RigExecRuntimePropertyValue> GetPropertyValues() const;
 
+    // Every IK/FK match's values as the last Execute computed them, in path
+    // order. A match that could not compute this run is not listed.
+    std::vector<RigExecRuntimeIkFkMatch> GetIkFkMatches() const;
+
+    // Every space switch's match as the last Execute computed it, in path
+    // order. A switch that could not compute this run is not listed.
+    std::vector<RigExecRuntimeSpaceMatch> GetSpaceMatches() const;
+
     // Final asset-space skinning deltas (rest -> posed), in path order.
     const std::vector<RigExecRuntimeJointMatrix> &GetJointMatrices() const
     {

@@ -508,6 +508,9 @@ class _PosedPaths(set):
     def __init__(self, *args):
         super(_PosedPaths, self).__init__(*args)
         self.spaceSwitched = set()
+        # One record per IK/FK match (ikfkMatch.MatchHalf): the controls it
+        # presents on the joints while its switch is on the other half.
+        self.matchHalves = []
 
 
 def SolverPosedPaths(rigRoot):
@@ -582,7 +585,20 @@ def SolverPosedPaths(rigRoot):
             switched = set(rel.GetTargets())
             paths.update(switched)
             paths.spaceSwitched.update(switched)
+        if prim.GetTypeName() == "RigExecIkFkMatchConstraint":
+            import ikfkMatch
+            half = ikfkMatch.MatchHalf.From(prim)
+            if half is not None:
+                paths.matchHalves.append(half)
     return paths
+
+
+def PresentedBy(stage, path, time, solverPosed):
+    """The IK/FK match presenting `path` at `time` (ikfkMatch.MatchHalf), or
+    None: the halves come with the memoised posed set."""
+    import ikfkMatch
+    return ikfkMatch.PresentedBy(stage, path, time,
+                                 getattr(solverPosed, "matchHalves", ()))
 
 
 class SolverPosedCache(object):
@@ -1284,9 +1300,10 @@ def _PreferPublishedFrame(stage, prim, time, solverPosed, frames, ctx):
     no reader at all; every one of those falls back to the composition,
     which is the behaviour that was correct for them all along.
     """
-    if not solverPosed or not _HasPublishedControlFrameReader():
+    if solverPosed is None or not _HasPublishedControlFrameReader():
         return frames
-    if prim.GetPath() not in solverPosed:
+    if prim.GetPath() not in solverPosed and \
+            PresentedBy(stage, prim.GetPath(), time, solverPosed) is None:
         return frames
     published = _ReadPublishedControlFrame(stage, prim.GetPath(), time)
     if published is None:
@@ -1537,7 +1554,10 @@ def SetAnimated(attr, value, time):
     import graphModel
     spline = graphModel.SplineFor(attr)
     graphModel.AuthorKnot(spline, time.GetValue(), value)
-    attr.SetSpline(spline)
+    # One notice, not two: on a channel's first key USD creates the spec
+    # and then sets the spline, and the rig would update for each.
+    with Sdf.ChangeBlock():
+        attr.SetSpline(spline)
 
 
 class Writer(object):

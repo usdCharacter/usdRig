@@ -1654,6 +1654,7 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
     const RigExecWireConstraint &c = program->poses->constraints[ci];
     const std::string cpath = program->TextOrEmpty(c.path);
     RrStepOutput &output = store.stepOutputs[step];
+    if (ci < store.matchValid.size()) store.matchValid[ci] = 0;
     commit.abandoned = true;
     std::fill(commit.present.begin(), commit.present.end(), 0);
 
@@ -1697,6 +1698,196 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
         // Published for the geometry fold (the store pair mirrors the
         // baked B.deltaValues/deltaPresent the fold consumes).
         store.deltaPresent[size_t(deltaBase)] = 0;
+    }
+    if (ci < store.matchShownMask.size()) store.matchShownMask[ci] = 0;
+    if (c.ikFkMatch) {
+        // RunIkFkMatch (bakedPose.cpp), on the runtime's own stores:
+        // presentation and values only, so the commit stays abandoned.
+        if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
+            return finish();
+        }
+        const double envelope = double(
+            program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+        const double weight = std::isfinite(envelope) ? envelope : 0.0;
+        const auto matrixOf = [](const RrPointFrame &frame, RrMat4d *out) {
+            return RrFrameUsable(frame) &&
+                   RrPointsToMatrix(RrIdentityLandmarks(), frame.points, out);
+        };
+        const auto raw = [](const RrMat4d &m) { return &m._mtx[0][0]; };
+        if (c.sources.size() != 10 || wireCommit.sourceReads.size() < 10 ||
+            c.matchConstants.size() != 4 || ci >= store.matchValues.size() ||
+            ci >= store.matchShown.size()) {
+            if (error) {
+                *error = _RrStepHead(program, step) +
+                         " names an incomplete IK/FK match";
+            }
+            return false;
+        }
+        // Sources: joints 0-2, IK root 3, effector 4, IK control 5, pole 6,
+        // FK controls 7-9. Rests: joints 0-2, then the controls' at 3-7.
+        RrMat4d input[10], rest[8];
+        bool usable = true;
+        for (size_t i = 0; usable && i < 10; ++i) {
+            usable = c.sources[i] >= 0 &&
+                     size_t(wireCommit.sourceReads[i]) < store.fin.size() &&
+                     matrixOf(store.fin[size_t(wireCommit.sourceReads[i])],
+                              &input[i]);
+        }
+        const auto restOf = [&](int slot, RrMat4d *out) {
+            return slot >= 0 && size_t(slot) < scratch->restFrames.size() &&
+                   matrixOf(scratch->restFrames[size_t(slot)], out);
+        };
+        for (size_t i = 0; usable && i < 3; ++i) {
+            usable = restOf(c.sources[i], &rest[i]);
+        }
+        for (size_t i = 0; usable && i < 5; ++i) {
+            usable = restOf(c.sources[5 + i], &rest[3 + i]);
+        }
+        if (!usable) {
+            output.diagnostics.push_back(
+                cpath + " could not read its limb; constraint passed through");
+            return finish();
+        }
+        const RrMat4d *control = input + 5;
+        const auto channelsOf = [&](int slot) {
+            return _RrMatchChannelsOf(*program, *scratch, size_t(slot));
+        };
+        RigExecIkFkMatchChannels channels[5];
+        for (size_t i = 0; i < 5; ++i) {
+            channels[i] = channelsOf(c.sources[5 + i]);
+        }
+        const auto scalar = [&](int k) {
+            const RrInputValue value =
+                program->ReadConstraint(ci, RrConstraintMatchFirst + k);
+            return value.tag == RrInputTag::Float ? double(value.f32)
+                                                  : value.f64;
+        };
+        const double ikValue = c.matchConstants[0];
+        const double switchValue = scalar(0);
+        RigExecLimbStretch limb;
+        limb.stretch = scalar(1);
+        limb.softDistance = scalar(2);
+        limb.upperScale = scalar(3);
+        limb.lowerScale = scalar(4);
+        limb.pin = scalar(5);
+        limb.scaleCalibration = c.matchConstants[1];
+        const double twistDegrees = scalar(6);
+
+        double space[16];
+        const double *spaceMatrix = nullptr;
+        if (c.spaceSlot >= 0 && size_t(c.spaceSlot) < store.posedM.size()) {
+            RrMat4d spaceRest;
+            const RrMat4d spacePosed = store.posedM[size_t(c.spaceSlot)];
+            if (restOf(c.spaceSlot, &spaceRest) &&
+                std::isfinite(spacePosed[3][0])) {
+                const RrMat4d carry = spaceRest.GetInverse() * spacePosed;
+                std::copy(raw(carry), raw(carry) + 16, space);
+                spaceMatrix = space;
+            }
+        }
+        double restOrigins[3][3], restUpper = 0, restLower = 0,
+            spaceFactor = 1;
+        for (size_t i = 0; i < 3; ++i) {
+            for (int k = 0; k < 3; ++k) restOrigins[i][k] = rest[i][3][k];
+        }
+        RigExecIkFkMatchRestLengths(restOrigins, spaceMatrix,
+                                    c.matchConstants[2], c.matchConstants[3],
+                                    &restUpper, &restLower, &spaceFactor);
+        limb.softDistance *= spaceFactor;
+
+        RigExecIkFkMatchIkInputs ikIn;
+        for (size_t i = 0; i < 3; ++i) ikIn.joints[i] = raw(input[i]);
+        ikIn.root = raw(input[3]);
+        ikIn.effectorPosed = raw(input[4]);
+        ikIn.ikPosed = raw(control[0]);
+        ikIn.ik = channels[0];
+        ikIn.twistRadians = twistDegrees * std::acos(-1.0) / 180.0;
+        ikIn.poleDistance =
+            (rest[4].ExtractTranslation() - rest[1].ExtractTranslation())
+                .GetLength() * spaceFactor;
+        ikIn.polePosed = raw(control[1]);
+        ikIn.hasStretch = c.matchStretchLimb;
+        ikIn.limb = limb;
+        ikIn.restUpper = restUpper;
+        ikIn.restLower = restLower;
+        RigExecIkFkMatchIkResult ik;
+        RigExecIkFkMatchIk(ikIn, &ik);
+
+        RigExecIkFkMatchChannels pole = channels[1];
+        double poleFrame[16];
+        bool poleOk = false;
+        if (ik.ok) {
+            RrMat4d ikNew;
+            std::copy(ik.ikFrame, ik.ikFrame + 16, &ikNew._mtx[0][0]);
+            const RrMat4d moved = control[0].GetInverse() * ikNew;
+            const auto composed = ikFkMatchKernel::Compose(channels[1]);
+            RrMat4d avars;
+            std::copy(composed.begin(), composed.end(), &avars._mtx[0][0]);
+            RrMat4d parent = avars.GetInverse() * control[1];
+            const int poleSlot = c.sources[6];
+            if (c.matchPoleSwitch >= 0 &&
+                !scratch->posedAuthored[size_t(poleSlot)]) {
+                RrMat4d switched;
+                if (_RrMatchPoleParent(program, c.matchPoleSwitch,
+                                       c.matchPoleSourceRides, moved,
+                                       &switched)) {
+                    parent = switched;
+                }
+            } else if (c.matchPoleParentRides) {
+                parent = parent * moved;
+            }
+            poleOk = RigExecIkFkMatchPole(ik.poleTarget, raw(parent), &pole,
+                                          poleFrame);
+        }
+
+        RigExecIkFkMatchFkInputs fkIn;
+        RrMat4d offsets[3];
+        for (size_t i = 0; i < 3; ++i) {
+            fkIn.joints[i] = raw(input[i]);
+            fkIn.fkPosed[i] = raw(control[2 + i]);
+            fkIn.fk[i] = channels[2 + i];
+            offsets[i] = rest[5 + i] * rest[i].GetInverse();
+            fkIn.offsets[i] = raw(offsets[i]);
+        }
+        fkIn.hasStretch = c.matchStretchLimb;
+        fkIn.upperScale = limb.upperScale;
+        fkIn.lowerScale = limb.lowerScale;
+        fkIn.restUpper = restUpper;
+        fkIn.restLower = restLower;
+        RigExecIkFkMatchFkResult fk;
+        RigExecIkFkMatchFk(fkIn, &fk);
+
+        if (ik.ok && poleOk && fk.ok) {
+            double *v = store.matchValues[ci].data();
+            RigExecIkFkMatchPack(ik, pole, fk, v, v + 11);
+            store.matchValid[ci] = 1;
+        } else {
+            output.diagnostics.push_back(
+                cpath + " could not match its limb's other half");
+        }
+
+        const auto show = [&](size_t k, const double *frame) {
+            RrMat4d matrix;
+            std::copy(frame, frame + 16, &matrix._mtx[0][0]);
+            store.matchShown[ci][k] = RrFrameFromMatrix(matrix);
+            store.matchShownMask[ci] |= uint8_t(1u << k);
+        };
+        switch (RigExecIkFkMatchShownSide(switchValue, ikValue, weight)) {
+        case RigExecIkFkMatchShown::IkSide:
+            if (ik.ok && poleOk) {
+                show(0, ik.ikFrame);
+                show(1, poleFrame);
+            }
+            break;
+        case RigExecIkFkMatchShown::FkSide:
+            if (fk.ok) {
+                for (size_t i = 0; i < 3; ++i) show(2 + i, fk.frames[i]);
+            }
+            break;
+        case RigExecIkFkMatchShown::None:
+            break;
+        }
+        return finish();
     }
     if (c.target < 0) {
         return finish();

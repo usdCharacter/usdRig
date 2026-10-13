@@ -112,7 +112,10 @@ enum RrConstraintField : int {
     RrConstraintPoleVector = 19,
     RrConstraintTwistDegrees = 20,
     RrConstraintStretch=21,
-    RrConstraintFieldCount = 22,
+    // An IK/FK match's scalars: switch, stretch, softDistance, upperScale,
+    // lowerScale, pin, twist. Absent on every other constraint.
+    RrConstraintMatchFirst = 22,
+    RrConstraintFieldCount = 29,
 };
 
 enum RrWeightField : int {
@@ -428,6 +431,23 @@ struct RrStore {
     std::map<uint32_t, RrMat4d> jointMatricesFinal;
     std::map<uint32_t, RrPointFrame> jointFramesBase, jointFramesFinal;
     std::map<uint32_t, RrPointFrame> controlFrames;
+    /// Per constraint: an IK/FK match's outputs:ikValues (11) then
+    /// outputs:fkValues (20) this run, and whether they were computed.
+    /// Written only by that constraint's step.
+    std::vector<std::array<double, 31>> matchValues;
+    std::vector<char> matchValid;
+    /// Per space switch: its space match this run (spaceMatchKernel.h), six
+    /// channels per source index, and whether it was computed. Written only
+    /// by that switch's compose.
+    std::vector<std::vector<double>> spaceMatchValues;
+    std::vector<char> spaceMatchValid;
+    /// Per constraint: an IK/FK match's presented frames of its five
+    /// controls this run and which are shown, applied to controlFrames at
+    /// publication; and, settled at Open, every other control under one of
+    /// them with the one it rides.
+    std::vector<std::array<RrPointFrame, 5>> matchShown;
+    std::vector<uint8_t> matchShownMask;
+    std::vector<std::vector<std::pair<int32_t, int32_t>>> matchRiders;
     /// The epilogue's shares of the chains' and derived targets' results,
     /// released once the reader API has copied them.
     std::map<uint32_t, RrRetainedArray<RrVec3f>> movedProperties;

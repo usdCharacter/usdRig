@@ -548,6 +548,12 @@ private:
     /// is: by the time the overlay is turned OFF the snapshot no longer
     /// says the prim ever had one.
     std::set<SdfPath> _announcedWeightOverlays;
+    /// Meshes whose two deform computation children (shader mode) were
+    /// announced, kept like the others so a later publication can remove
+    /// them and re-announce the mesh with its own points again.
+    std::set<SdfPath> _announcedGpuDeforms;
+    bool _DesiredGpuDeform(const SdfPath &path) const;
+    void _RefreshAnnouncedGpuDeform(const SdfPath &path);
 };
 
 }  // namespace rigExec

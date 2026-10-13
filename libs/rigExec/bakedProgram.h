@@ -48,6 +48,12 @@ struct RigExecOpExclusionProof;
 /// Array types use RigExecUpstreamArraySlotType. Admission condition 2.
 bool RigExecUpstreamSlotType(const SdfValueTypeName &typeName);
 
+/// Whether \p notice changes nothing but properties no rig evaluation reads
+/// -- `visibility`, which only imaging consumes -- with the empty info their
+/// ancestors report. A rig owes such a notice nothing: no rebuild, no stamp
+/// bump, no cache retired.
+bool RigExecNoticeIsDisplayOnly(const UsdNotice::ObjectsChanged &notice);
+
 /// Whether \p typeName is an array type an upstream value may hold while
 /// array admission is on (RigExecUpstreamArrayAdmission): an int, float,
 /// double, vec2f or vec3f array, the element types a .rigexec array slot
@@ -299,6 +305,11 @@ public:
     /// later value edits (ApplyValueEdits), and only a rebuild re-records it.
     bool IsInvalidatedBy(const UsdNotice::ObjectsChanged &notice) const;
 
+    /// Whether \p property lies on the walk of an input the program reads
+    /// the long way every frame, rather than through a query pinned to the
+    /// spec it resolved at bake -- which a new stronger spec escapes.
+    bool ReadsLive(const SdfPath &property) const;
+
     /// Absorbs \p notice without a rebuild when it is nothing but new
     /// DEFAULT VALUES on avars the bake captured as constants, and says
     /// whether it did.
@@ -333,6 +344,20 @@ public:
     /// and the mutation can never disagree.
     bool DryRunAvarValueEdits(const UsdNotice::ObjectsChanged &notice,
                               std::vector<SdfPath> *patchedPaths) const;
+
+    /// Absorbs a notice that is patchable avar values (ApplyAvarValueEdits)
+    /// together with value edits the router places (ApplyValueEdits) -- a
+    /// matched IK/FK switch authors the switch and the channels it matched
+    /// in one change -- and says whether it did. Each half is decided as its
+    /// own entry point decides it, with the other half's paths set aside;
+    /// all-or-nothing like both. False, having changed nothing, when the
+    /// notice names no patchable avar.
+    bool ApplyMixedValueEdits(const UsdNotice::ObjectsChanged &notice);
+
+    /// The read-only half of ApplyMixedValueEdits, with \p paths the patched
+    /// avars and the routed paths anything can read.
+    bool DryRunMixedValueEdits(const UsdNotice::ObjectsChanged &notice,
+                               std::vector<SdfPath> *paths) const;
 
     /// Tells the program that a notice it was NOT invalidated by still
     /// reached the stage.

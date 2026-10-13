@@ -2749,7 +2749,7 @@ private:
                         if (frame.computation == 2) read(D::Rest, uint32_t(frame.slot));
                         else if (frame.computation == 1) read(D::Ladder, uint32_t(frame.slot));
                         else if (frame.recompose.empty() && frame.slot != ac.slot)
-                            read(D::PoseFin, finLast[size_t(frame.slot)]);
+                            read(D::PoseFin, uint32_t(frame.slot));
                         for (int child : frame.recompose) {
                             read(D::Avars, uint32_t(child));
                             read(D::Ladder, uint32_t(child));
@@ -2803,6 +2803,11 @@ private:
                     for(const auto &values:commit.sourceAncestors) ancestors(values.v);
                     for(const auto &values:commit.poleAncestors) ancestors(values.v);
                     ancestors(commit.worldUpAncestors); ancestors(commit.effectorAncestors);
+                    if(c.ikFkMatch) {
+                        if(c.sources.size()!=10) return _Bad(_StepName(owner)+": IK/FK match needs ten frame inputs");
+                        for(size_t k=5;k<10;++k) read(D::Avars,uint32_t(c.sources[k]));
+                        read(D::PoseBase,baseLast[size_t(c.sources[6])]);
+                    }
                 }
                 const bool apply=step.kind==K::CommitApply || (!commit.split && (step.kind==K::Constraint || step.kind==K::SolverCommit));
                 if(step.kind==K::CommitDelta || (apply && !commit.split)) readAll(D::PoseFin,commit.slotReads);
@@ -3500,6 +3505,12 @@ private:
                 if (RigExecFormatPathText(_f, constraint.type) == "RigExecMatrixMover")
                     for (const int slot : constraint.sources)
                         if (!require(fb::SlotDomain::Rest, slot)) return false;
+                if (constraint.ikFkMatch) {
+                    for (size_t k = 0; k < constraint.sources.size(); ++k)
+                        if ((k < 3 || k >= 5) &&
+                            !require(fb::SlotDomain::Rest, constraint.sources[k])) return false;
+                    if (!require(fb::SlotDomain::Rest, constraint.spaceSlot)) return false;
+                }
                 if (!require(fb::SlotDomain::Ladder, constraint.spaceSlot)) return false;
             }
         }
@@ -3984,7 +3995,43 @@ private:
                _ReadPtr(c.poleVector, v, _Baked, row, "pole_vector") &&
                _ReadPtr(c.twistDegrees, int(InputTag::Double), _Baked, row,
                         "twist_degrees") &&
-               (!c.stretch || _ReadPtr(c.stretch,int(InputTag::Float),_Baked,row,"stretch"));
+               (!c.stretch || _ReadPtr(c.stretch,int(InputTag::Float),_Baked,row,"stretch")) &&
+               _Match(c, row);
+    }
+
+    // An IK/FK match's fields: absent on every other constraint.
+    bool _Match(const fb::RigExecWireConstraint &c, const std::string &row)
+    {
+        if (!c.ikFkMatch) {
+            if (!c.matchScalars.empty() || !c.matchConstants.empty() ||
+                !c.matchPoleSourceRides.empty() || c.matchPoleSwitch != -1)
+                return _Bad(row + ": IK/FK match fields on another constraint");
+            return true;
+        }
+        if (c.matchScalars.size() != 7 || c.matchConstants.size() != 4 ||
+            !c.targetSlots.empty() || c.sources.size() != 10)
+            return _Bad(row + ": IK/FK match field counts");
+        for (const int32_t slot : c.sources)
+            if (slot < 0) return _Bad(row + ": IK/FK match reads a frame no slot holds");
+        if (!_Index(c.matchPoleSwitch, _f.pose->spaceSwitches.size(), true,
+                    row, "match_pole_switch") ||
+            !_Bools(c.matchPoleSourceRides, row, "match_pole_source_rides"))
+            return false;
+        const size_t sources =
+            c.matchPoleSwitch >= 0
+                ? _f.pose->spaceSwitches[size_t(c.matchPoleSwitch)].sourceSlots.size()
+                : 0;
+        if (c.matchPoleSourceRides.size() != sources)
+            return _Bad(row + ": match_pole_source_rides does not parallel the pole's switch");
+        for (size_t k = 0; k < c.matchScalars.size(); ++k) {
+            const auto &input = c.matchScalars[k];
+            const int tag = input ? int(input->tag) : -1;
+            const int type = tag == int(InputTag::Float) ? tag : int(InputTag::Double);
+            const std::string field = "match_scalars[" + _N(k) + "]";
+            if (!_ReadPtr(input, type, _Baked, row, field.c_str()))
+                return false;
+        }
+        return true;
     }
 
     bool _ConstraintArrays(const fb::RigExecWireConstraintArrays &a,

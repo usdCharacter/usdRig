@@ -153,6 +153,26 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             footprint->ancestors.insert(prim);
         }
     };
+    // An attribute whose value or sample count the digest writes, by path,
+    // whether or not it exists (_NoticeIsDigestValueNeutral).
+    const auto noteValue = [footprint](const SdfPath &path) {
+        if (footprint && path.IsPropertyPath()) {
+            footprint->certain.valueReads.insert(path);
+        }
+    };
+    const auto noteValueNamed = [&noteValue](const UsdPrim &prim,
+                                             const TfToken &name) {
+        if (prim) {
+            noteValue(prim.GetPath().AppendProperty(name));
+        }
+    };
+    // An attribute a connection walk writes the type and sample count of.
+    const auto noteSamples = [footprint](const SdfPath &path,
+                                         const TfToken &type) {
+        if (footprint && path.IsPropertyPath()) {
+            footprint->certain.sampleCountReads.insert_or_assign(path, type);
+        }
+    };
     // THE CERTAIN FOOTPRINT: what this call wrote that an edit can be seen
     // to change without recomputing it (_EditIsCertainlyStructural). A
     // relationship is recorded wherever its targets are written, with the
@@ -238,7 +258,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                                            const char *name) {
         appendPhaseNamed(prim, TfToken(name));
     };
-    auto appendToken = [&digest](const UsdPrim &prim, const char *name) {
+    auto appendToken = [&digest, &noteValueNamed](const UsdPrim &prim,
+                                                  const char *name) {
+        noteValueNamed(prim, TfToken(name));
         TfToken value;
         if (UsdAttribute a = prim.GetAttribute(TfToken(name))) {
             a.Get(&value);
@@ -255,7 +277,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // Any scalar attribute as text. VtValue's stream operator rather than a
     // type switch: what the digest needs is that two different authored
     // values produce two different strings, not that the string is pretty.
-    auto appendScalar = [&digest](const UsdPrim &prim, const char *name) {
+    auto appendScalar = [&digest, &noteValueNamed](const UsdPrim &prim,
+                                                   const char *name) {
+        noteValueNamed(prim, TfToken(name));
         digest += name;
         digest += '=';
         VtValue value;
@@ -266,9 +290,14 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         digest += '|';
     };
     auto appendAttributeBinding =
-        [this, &digest, &noteRead, &pathText, &appendRelTargets,
-         &phaseField](const UsdPrim &prim, const char *name) {
+        [this, &digest, &noteRead, &noteSamples, &pathText,
+         &appendRelTargets, &phaseField](const UsdPrim &prim,
+                                         const char *name) {
         const UsdAttribute attr = prim.GetAttribute(TfToken(name));
+        if (!attr && prim) {
+            noteSamples(prim.GetPath().AppendProperty(TfToken(name)),
+                        TfToken());
+        }
         digest += name;
         digest += "@sources=";
         std::set<SdfPath> visiting;
@@ -285,6 +314,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 return;
             }
             digest += pathText(a.GetPath());
+            // Its type and sample count are written below.
+            noteSamples(a.GetPath(), a.GetTypeName().GetAsToken());
             const auto frameInputs = appendRelTargets(a.GetPrim(), "rigExec:poseInputs", false);
             for (const SdfPath &input : frameInputs) noteRead(input);
             digest += ":" +
@@ -296,6 +327,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 const UsdAttribute sourceAttr =
                     _stage->GetAttributeAtPath(source);
                 if (!sourceAttr) {
+                    noteSamples(source, TfToken());
                     digest += "missing:";
                     digest += pathText(source);
                     digest += ',';
@@ -385,6 +417,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         appendToken(w, "rigExec:rangePolicy");
         appendToken(w, "rigExec:operation");
         VtIntArray indices;
+        noteValueNamed(w, TfToken("rigExec:indices"));
+        noteValueNamed(w, TfToken("rigExec:values"));
         if (UsdAttribute a = w.GetAttribute(TfToken("rigExec:indices"))) {
             a.Get(&indices);
         }
@@ -1008,6 +1042,16 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     }
                 }
             }
+            if (footprint) {
+                for (const SdfPath &path : hop.own) {
+                    const auto read = digestAttributes.find(path);
+                    footprint->certain.closureAttributes.insert_or_assign(
+                        path, read != digestAttributes.end() &&
+                                      read->second.exists
+                                  ? read->second.typeName
+                                  : TfToken());
+                }
+            }
             return digestHops.emplace(key, std::move(hop)).first->second;
         };
         const auto tokenOf = [](const std::string &kind,
@@ -1462,6 +1506,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // joint self-extracts. Parallel to joints, so not sorted.
             digest += '|';
             const UsdAttribute jeAttr = solver.GetAttribute(kJointElements);
+            noteValueNamed(solver, kJointElements);
             VtIntArray jointElements;
             if (jeAttr) {
                 jeAttr.Get(&jointElements);
@@ -1497,6 +1542,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             } else if (stype == "RigExecTwistDistribution") {
                 const UsdAttribute ca = solver.GetAttribute(kCount);
                 const UsdAttribute wa = solver.GetAttribute(kWeights);
+                noteValueNamed(solver, kCount);
+                noteValueNamed(solver, kWeights);
                 int cnt = 1;
                 if (ca) {
                     ca.Get(&cnt);
@@ -1521,6 +1568,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                           ",";
             } else if (stype == "RigExecRibbon") {
                 const UsdAttribute a = solver.GetAttribute(kSampleCount);
+                noteValueNamed(solver, kSampleCount);
                 int sc = 5;
                 if (a) {
                     a.Get(&sc);
@@ -1542,6 +1590,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // the sample presence so an edit that breaks the parallel
                 // shape (or samples the attribute) re-runs that check.
                 const UsdAttribute wa = solver.GetAttribute(kVolumeWeights);
+                noteValueNamed(solver, kVolumeWeights);
                 VtFloatArray w;
                 if (wa) {
                     wa.Get(&w);
@@ -1610,6 +1659,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     // A set avoids recompiling merely because another sample
                     // with the same frozen cardinality was authored.
                     std::set<size_t> cardinalities;
+                    noteValue(canonical);
                     if (const UsdAttribute points =
                             _stage->GetAttributeAtPath(canonical)) {
                         VtVec3fArray value;
@@ -1822,6 +1872,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     // recompile of the whole rig.
                     appendRelTargets(sample, "rigExec:blendShape", true);
                     float activation = 1;
+                    noteValueNamed(sample, TfToken("rigExec:activation"));
                     if (UsdAttribute a = sample.GetAttribute(
                             TfToken("rigExec:activation"))) {
                         a.Get(&activation);

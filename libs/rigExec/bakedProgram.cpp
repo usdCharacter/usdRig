@@ -140,7 +140,8 @@ _IsBakedConstraintType(const TfToken &type)
            type == "RigExecScaleConstraint" ||
            type == "RigExecParentConstraint" ||
            type == "RigExecAimConstraint" ||
-           type == "RigExecSingleChainIkConstraint";
+           type == "RigExecSingleChainIkConstraint" ||
+           type == "RigExecIkFkMatchConstraint";
     // RigExecRigEvaluator::GetConstraintOperatorTypeNames() is the authority
     // on which operators exist; this is the subset the program can express,
     // and it must stay a subset. A name here the evaluator does not register
@@ -550,7 +551,9 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
         // selected Base/Final placement. The common graph orders placement
         // and field producers together with the constraint.
         sayUnbakedWeights(constraint.weightObject);
-        if (constraint.targets.empty()) {
+        // An IK/FK match revises no frame a reader sees, so it has none.
+        if (constraint.targets.empty() &&
+            constraint.schemaType != "RigExecIkFkMatchConstraint") {
             say("constraint names no target", constraint.moverPath);
             continue;
         }
@@ -975,13 +978,25 @@ void _ForEachFixedNumericSource(B &program, Fn &&fn)
         if (constraint.offset.sourceBacked) fn(constraint.offset);
 }
 
+// Whether \p path is a property that composes one of the intervening Xforms
+// bakeability judged (xformPrims): their transform is xformOpOrder and the
+// ops it lists, so no other property of theirs can move it.
+bool _ComposesJudgedXform(const RigExecBakedProgramImpl &B, const SdfPath &path)
+{
+    if (!path.IsPropertyPath() || !B.xformPrims.count(path.GetPrimPath()))
+        return false;
+    static const TfToken kOpOrder("xformOpOrder");
+    const TfToken &name = path.GetNameToken();
+    return name == kOpOrder || TfStringStartsWith(name.GetString(), "xformOp:");
+}
+
 // A schema numeric argument can acquire or lose its first authored spec
 // without changing its direct source binding. All structural variants refuse.
 bool _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
     const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
 {
     if (!B.stage || !path.IsPropertyPath() || !B.sourceBackedPaths.count(path) ||
-        B.rebuild.count(path) || B.xformPrims.count(path.GetPrimPath())) return false;
+        B.rebuild.count(path) || _ComposesJudgedXform(B, path)) return false;
     for (const auto &field : notice.GetChangedFields(path))
         if (field != "default" && field != "typeName") return false;
     const auto attribute=B.stage->GetAttributeAtPath(path);
@@ -998,13 +1013,94 @@ bool _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
     });
     return found && valid;
 }
+// A property resync that only brings, changes or takes away a value spec on
+// an attribute that is still there: the first value a layer authors for a
+// switch or a dial is a spec appearing, which USD reports as a resync.
+// Nothing but the value and the fields a new spec states may have changed --
+// a connection, a target or metadata that changes how it is read still
+// rebuilds, and so does a path some folded input reads too.
+bool _ValueSpecResync(const RigExecBakedProgramImpl &B,
+    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+{
+    if (!B.stage || !path.IsPropertyPath() || B.rebuild.count(path) ||
+        _ComposesJudgedXform(B, path)) return false;
+    static const TfToken kDefault("default"), kTimeSamples("timeSamples"),
+        kSpline("spline"), kTypeName("typeName"), kCustom("custom"),
+        kVariability("variability");
+    for (const TfToken &field : notice.GetChangedFields(path))
+        if (field != kDefault && field != kTimeSamples && field != kSpline &&
+            field != kTypeName && field != kCustom && field != kVariability)
+            return false;
+    const UsdAttribute attribute = B.stage->GetAttributeAtPath(path);
+    return attribute && attribute.GetPrim() && attribute.GetPrim().IsActive();
+}
+
+// The same on the walk of an input read the long way every frame, which is
+// what lets IsInvalidatedBy leave such a resync to the value router.
+bool _LiveInputResync(const RigExecBakedProgramImpl &B,
+    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+{
+    return B.liveInputPaths.count(path) && _ValueSpecResync(B, notice, path);
+}
+
+// A value spec appearing on the walk of an input the router can place: one
+// read the long way, or a per-frame input whose pinned query ApplyValueEdits
+// re-selects (_RequeryResynced) -- a query keeps the spec it resolved, and a
+// new stronger one escapes it.
+bool _RoutableResync(const RigExecBakedProgramImpl &B,
+    const UsdNotice::ObjectsChanged &notice, const SdfPath &path)
+{
+    return (B.liveInputPaths.count(path) || B.overridableInputs.count(path)) &&
+           _ValueSpecResync(B, notice, path);
+}
 } // namespace
 
 bool
-RigExecBakedProgram::IsInvalidatedBy(
-    const UsdNotice::ObjectsChanged &notice) const
+RigExecNoticeIsDisplayOnly(const UsdNotice::ObjectsChanged &notice)
 {
-    const RigExecBakedProgramImpl &B = *_impl;
+    if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) {
+        return false;
+    }
+    static const TfToken kVisibility("visibility");
+    bool saw = false;
+    for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (!path.IsPropertyPath() || path.GetNameToken() != kVisibility) {
+            return false;
+        }
+        saw = true;
+    }
+    for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+        if (path.IsPropertyPath()) {
+            if (path.GetNameToken() != kVisibility) {
+                return false;
+            }
+            saw = true;
+        } else if (path.IsAbsoluteRootPath() ||
+                   !notice.GetChangedFields(path).empty()) {
+            return false;
+        }
+    }
+    return saw;
+}
+
+bool
+RigExecBakedProgram::ReadsLive(const SdfPath &property) const
+{
+    return _impl->liveInputPaths.count(property) > 0;
+}
+
+namespace {
+
+// IsInvalidatedBy, with the paths in \p skip -- avars the patch absorbs --
+// left to their own entry point.
+bool
+_IsInvalidatedBy(const RigExecBakedProgramImpl &B,
+                 const UsdNotice::ObjectsChanged &notice,
+                 const std::set<SdfPath> *skip)
+{
+    const auto skipped = [skip](const SdfPath &path) {
+        return skip && skip->count(path) > 0;
+    };
     for(const auto &chain:B.chains)for(const auto &derived:chain.derived) {
         const auto &revision=derived.revision;
         if((revision.op==RigExecRevisionOp::SurfaceProjector || revision.op==RigExecRevisionOp::ShaderDials) &&
@@ -1021,6 +1117,7 @@ RigExecBakedProgram::IsInvalidatedBy(
     static const TfToken kTimeSamples("timeSamples");
     static const TfToken kSpline("spline");
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+        if (skipped(path)) continue;
         if (path.IsPrimPath() && B.prims.count(path)) {
             for (const TfToken &field : notice.GetChangedFields(path))
                 if (field == "primOrder" || field == "primChildren" || field == "typeName") return true;
@@ -1032,9 +1129,7 @@ RigExecBakedProgram::IsInvalidatedBy(
             for (const TfToken &field : notice.GetChangedFields(path))
                 if (field != kDefault) return true;
         }
-        if (B.rebuild.count(path) ||
-            (path.IsPropertyPath() &&
-             B.xformPrims.count(path.GetPrimPath()))) {
+        if (B.rebuild.count(path) || _ComposesJudgedXform(B, path)) {
             return true;
         }
         // Anything but a value on a property the bake asked about by name:
@@ -1074,12 +1169,14 @@ RigExecBakedProgram::IsInvalidatedBy(
         // or every rig would rebuild for a property it never reads.
         const SdfPath prim = path.GetPrimPath();
         if (path.IsPropertyPath()) {
-            return B.xformPrims.count(prim) > 0;
+            return _ComposesJudgedXform(B, path);
         }
         return B.prims.count(prim) > 0 || B.xformPrims.count(prim) > 0;
     };
     for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (skipped(path)) continue;
         if (_FixedNumericSourceResync(B,notice,path)) continue;
+        if (_LiveInputResync(B,notice,path)) continue;
         if (overlaps(path)) {
             return true;
         }
@@ -1090,6 +1187,15 @@ RigExecBakedProgram::IsInvalidatedBy(
         }
     }
     return false;
+}
+
+}  // namespace
+
+bool
+RigExecBakedProgram::IsInvalidatedBy(
+    const UsdNotice::ObjectsChanged &notice) const
+{
+    return _IsInvalidatedBy(*_impl, notice, nullptr);
 }
 
 // Exact equality, not a tolerance: the program exists to produce the same
@@ -1294,7 +1400,7 @@ _UnrelatedAttributeResync(const RigExecBakedProgramImpl &B,
     if (!B.stage || !path.IsPropertyPath() || B.named.count(path) ||
         B.rebuild.count(path) || B.leafByPath.count(path) ||
         B.overridableInputs.count(path) || B.sourceBackedPaths.count(path) ||
-        B.xformPrims.count(path.GetPrimPath()) ||
+        _ComposesJudgedXform(B, path) ||
         B.resolvedRoutedPrims.count(path.GetPrimPath()) ||
         _ConnectedSources(B).count(path)) return false;
     const UsdAttribute attribute = B.stage->GetAttributeAtPath(path);
@@ -1323,11 +1429,16 @@ bool
 _RouteValueEdits(const RigExecBakedProgramImpl &B,
                  const UsdNotice::ObjectsChanged &notice,
                  std::vector<int> *indices, std::vector<SdfPath> *readPaths,
-                 std::vector<SdfPath> *leafPaths = nullptr)
+                 std::vector<SdfPath> *leafPaths = nullptr,
+                 const std::set<SdfPath> *skip = nullptr)
 {
+    const auto skipped = [skip](const SdfPath &path) {
+        return skip && skip->count(path) > 0;
+    };
     if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) return false;
     for (const auto &path : notice.GetResyncedPaths())
-        if (!_FixedNumericSourceResync(B,notice,path) &&
+        if (!skipped(path) && !_FixedNumericSourceResync(B,notice,path) &&
+            !_RoutableResync(B,notice,path) &&
             !_UnrelatedPrimResync(B,path) &&
             !_UnrelatedAttributeResync(B,notice,path)) return false;
     static const TfToken kDefault("default");
@@ -1351,8 +1462,15 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
     SdfPathVector edits(notice.GetResyncedPaths().begin(),notice.GetResyncedPaths().end());
     edits.insert(edits.end(),notice.GetChangedInfoOnlyPaths().begin(),notice.GetChangedInfoOnlyPaths().end());
     for (const SdfPath &path : edits) {
+        if (skipped(path)) continue;
         const std::vector<TfToken> fields = notice.GetChangedFields(path);
         const bool fixedResync=_FixedNumericSourceResync(B,notice,path);
+        // IsInvalidatedBy has already ruled the notice's structure out, so a
+        // value spec appearing on a live input's walk is placed exactly like
+        // a changed value. Any other input may hold a query pinned to the
+        // spec it resolved at bake, which a new stronger spec escapes, so
+        // its resync is answered by running the whole program.
+        const bool liveResync=_RoutableResync(B,notice,path);
         if (_UnrelatedAttributeResync(B,notice,path)) continue;
         // Layer metadata: the time codes, the frame rate -- read by every
         // time conversion and indexed nowhere.
@@ -1371,7 +1489,9 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
         }
         for (const TfToken &field : fields) {
             if (field != kDefault && field != kTimeSamples &&
-                field != kSpline && !(fixedResync && field == "typeName")) {
+                field != kSpline && !(fixedResync && field == "typeName") &&
+                !(liveResync && (field == "typeName" || field == "custom" ||
+                                 field == "variability"))) {
                 return false;
             }
         }
@@ -1440,13 +1560,16 @@ RigExecBakedProgram::DryRunValueEdits(
     return _RouteValueEdits(*_impl, notice, nullptr, readPaths);
 }
 
+namespace {
+
 bool
-RigExecBakedProgram::ApplyValueEdits(const UsdNotice::ObjectsChanged &notice)
+_ApplyValueEdits(RigExecBakedProgramImpl &B,
+                 const UsdNotice::ObjectsChanged &notice,
+                 const std::set<SdfPath> *skip)
 {
-    RigExecBakedProgramImpl &B = *_impl;
     std::vector<int> indices;
     std::vector<SdfPath> read, leafOnly;
-    if (!_RouteValueEdits(B, notice, &indices, &read, &leafOnly)) {
+    if (!_RouteValueEdits(B, notice, &indices, &read, &leafOnly, skip)) {
         return false;
     }
     // UsdAttributeQuery caches resolve information. Refresh only named direct
@@ -1455,6 +1578,28 @@ RigExecBakedProgram::ApplyValueEdits(const UsdNotice::ObjectsChanged &notice)
         if (std::find(read.begin(),read.end(),input.head.GetPath())!=read.end())
             input.query=UsdAttributeQuery(input.head);
     });
+    // A spec that appeared on a per-frame input's walk: the input's query is
+    // re-selected over the walk as it stands now, as the bake selected it.
+    std::set<int> requery;
+    for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (skip && skip->count(path)) continue;
+        const auto found = B.overridableInputs.find(path);
+        if (found != B.overridableInputs.end())
+            requery.insert(found->second.begin(), found->second.end());
+    }
+    if (!requery.empty()) {
+        frozenDetail::_ForEachPatchableInput(B, [&](auto &input) {
+            using T = std::decay_t<decltype(input.constant)>;
+            if (!input.query.IsValid() || !input.head ||
+                !requery.count(input.overrideIndex)) return;
+            bool viaChain = false, varying = false;
+            UsdAttribute selected;
+            RigExecBakedClassifyInput<T>(input.head, UsdTimeCode::Default(),
+                                         B.chainTargets, &viaChain, &varying,
+                                         &selected);
+            if (selected) input.query = UsdAttributeQuery(selected);
+        });
+    }
     // The leaves the edit reached, re-read by the next sample: every leaf
     // filed under an edited path, and on a routed prim -- whose edits carry
     // no number -- every leaf with a path on that prim.
@@ -1495,6 +1640,14 @@ RigExecBakedProgram::ApplyValueEdits(const UsdNotice::ObjectsChanged &notice)
     }
     B.anyEdited = true;
     return true;
+}
+
+}  // namespace
+
+bool
+RigExecBakedProgram::ApplyValueEdits(const UsdNotice::ObjectsChanged &notice)
+{
+    return _ApplyValueEdits(*_impl, notice, nullptr);
 }
 
 namespace {
@@ -1584,10 +1737,15 @@ struct _AvarPatch {
 
 // Decide EVERYTHING before writing anything: a notice this cannot fully
 // absorb must leave the table exactly as the rebuild path expects it.
+//
+// With \p taken, a property that is not a patchable avar and that the bake
+// did not capture is left for the value router instead of declining the
+// notice, and the patched paths are filed there.
 bool
 _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
                    const UsdNotice::ObjectsChanged &notice,
-                   std::vector<_AvarPatch> *patches)
+                   std::vector<_AvarPatch> *patches,
+                   std::set<SdfPath> *taken = nullptr)
 {
     if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
@@ -1595,6 +1753,7 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
     static const TfToken kDefault("default");
     static const TfToken kTypeName("typeName");
     static const TfToken kSpline("spline");
+    static const TfToken kTimeSamples("timeSamples");
 
     std::vector<_AvarPatch> decided;
     // A property resync is a spec appearing or going away under a value:
@@ -1607,6 +1766,7 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
     std::vector<std::pair<SdfPath, bool>> edited;
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         if (!path.IsPropertyPath()) {
+            if (taken) continue;  // the router's to judge
             return false;
         }
         edited.emplace_back(path, true);
@@ -1615,9 +1775,11 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
         edited.emplace_back(path, false);
     }
     for (const auto &[path, resynced] : edited) {
+        if (taken && path.IsPropertyPath() && !B.patchableAvars.count(path)) {
+            continue;  // the router's to judge
+        }
         const bool captured = B.rebuild.count(path) ||
-                              (path.IsPropertyPath() &&
-                               B.xformPrims.count(path.GetPrimPath()));
+                              _ComposesJudgedXform(B, path);
         if (!captured) {
             // Prim-level info arrives for the ancestors of an edit (an
             // `over` being touched above it). It moves no value the frame
@@ -1637,8 +1799,8 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
         }
         for (const TfToken &field : notice.GetChangedFields(path)) {
             if (field != kDefault && field != kSpline &&
-                !(resynced && field == kTypeName)) {
-                return false;  // time samples, a connection...
+                field != kTimeSamples && !(resynced && field == kTypeName)) {
+                return false;  // a connection...
             }
         }
         const RigExecBakedProgramImpl::AvarBinding &binding =
@@ -1658,34 +1820,86 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
             attribute.GetConnections(&connections) && !connections.empty()) {
             return false;
         }
-        // Animated by a spline: promoted to a per-frame read. Time SAMPLES
-        // still rebuild, because the bake reads their count for more than
-        // this slot (a SingleChainIK's autoDetect mode is decided by whether
-        // its chain's translates are keyed that way, and splines do not
-        // count there).
-        if (attribute.GetNumTimeSamples() > 0) {
+        // Animated by a spline or by time samples: promoted to a per-frame
+        // read. Time samples on a channel folded for its shape still
+        // rebuild: the bake reads their count for more than this slot (a
+        // SingleChainIK's autoDetect mode is decided by whether its chain's
+        // translates are keyed that way, and splines do not count there).
+        const bool sampled = attribute.GetNumTimeSamples() > 0;
+        if (sampled && B.shapeFolded.count(path)) {
             return false;
         }
-        if (attribute.HasSpline()) {
-            decided.push_back({found->second, 0.0, true, path});
-            continue;
-        }
-        if (attribute.ValueMightBeTimeVarying()) {
+        const bool animated = sampled || attribute.HasSpline();
+        if (!animated && attribute.ValueMightBeTimeVarying()) {
             return false;  // varies some way this does not know
         }
         // Cleared back to nothing reads as the channel's default, which is
         // the fallback the bake captures for an attribute with no value.
         double value = RigExecBakedAvarDefaults[binding.slot % 11];
-        attribute.Get(&value, UsdTimeCode::Default());
-        decided.push_back({found->second, value, false, path});
+        if (!animated) {
+            attribute.Get(&value, UsdTimeCode::Default());
+        }
+        decided.push_back({found->second, value, animated, path});
+        // Every other input whose walk reaches this channel through a
+        // connection: a folded avar there holds the same value and is
+        // patched with it; one read per frame re-reads it, unless a spec
+        // just appeared, which its pinned query cannot see; anything else
+        // folded it some other way, and only a rebuild re-folds it.
+        const auto readers = B.overridableInputs.find(path);
+        if (readers == B.overridableInputs.end()) continue;
+        for (const int index : readers->second) {
+            if (index == binding.input.overrideIndex) continue;
+            bool placed = false;
+            for (size_t k = 0; k < B.avarConstantBindings.size() && !placed;
+                 ++k) {
+                if (B.avarConstantBindings[k].input.overrideIndex != index)
+                    continue;
+                if (B.avarConstantBindings[k].input.head.GetTypeName() !=
+                    SdfValueTypeNames->Double)
+                    return false;
+                // Promoting a reader would read its own head, not the
+                // channel its connection reaches.
+                if (animated) return false;
+                decided.push_back({k, value, false, path});
+                placed = true;
+            }
+            for (size_t k = 0; k < B.avarBindings.size() && !placed; ++k) {
+                if (B.avarBindings[k].input.overrideIndex != index) continue;
+                if (resynced) return false;
+                placed = true;
+            }
+            if (!placed) return false;
+        }
     }
     if (decided.empty()) {
         return false;
+    }
+    if (taken) {
+        for (const _AvarPatch &patch : decided) {
+            taken->insert(patch.path);
+        }
     }
     if (patches) {
         *patches = std::move(decided);
     }
     return true;
+}
+
+// The two halves of a mixed notice, decided without writing anything.
+bool
+_DryRunMixedEdits(const RigExecBakedProgramImpl &B,
+                  const UsdNotice::ObjectsChanged &notice,
+                  std::vector<_AvarPatch> *patches,
+                  std::set<SdfPath> *taken, std::vector<SdfPath> *read)
+{
+    bool any = false;
+    for (const SdfPath &path : notice.GetResyncedPaths())
+        any = any || B.patchableAvars.count(path) > 0;
+    for (const SdfPath &path : notice.GetChangedInfoOnlyPaths())
+        any = any || B.patchableAvars.count(path) > 0;
+    return any && _DryRunAvarPatches(B, notice, patches, taken) &&
+           !_IsInvalidatedBy(B, notice, taken) &&
+           _RouteValueEdits(B, notice, nullptr, read, nullptr, taken);
 }
 
 }  // namespace
@@ -1722,6 +1936,48 @@ RigExecBakedProgram::ApplyAvarValueEdits(
                                 patch.animated);
         // Every other leaf whose read reaches the avar (a shader dial, a
         // mover input connected to it) re-reads it too.
+        const auto found = B.leafByPath.find(patch.path);
+        if (found != B.leafByPath.end()) {
+            for (const uint32_t id : found->second) {
+                RigExecBakedMarkLeaf(&B, id);
+            }
+        }
+    }
+    return true;
+}
+
+bool
+RigExecBakedProgram::DryRunMixedValueEdits(
+    const UsdNotice::ObjectsChanged &notice,
+    std::vector<SdfPath> *paths) const
+{
+    std::vector<_AvarPatch> patches;
+    std::set<SdfPath> taken;
+    std::vector<SdfPath> read;
+    if (!_DryRunMixedEdits(*_impl, notice, &patches, &taken, &read)) {
+        return false;
+    }
+    if (paths) {
+        *paths = std::move(read);
+        paths->insert(paths->end(), taken.begin(), taken.end());
+    }
+    return true;
+}
+
+bool
+RigExecBakedProgram::ApplyMixedValueEdits(
+    const UsdNotice::ObjectsChanged &notice)
+{
+    RigExecBakedProgramImpl &B = *_impl;
+    std::vector<_AvarPatch> patches;
+    std::set<SdfPath> taken;
+    if (!_DryRunMixedEdits(B, notice, &patches, &taken, nullptr) ||
+        !_ApplyValueEdits(B, notice, &taken)) {
+        return false;
+    }
+    for (const _AvarPatch &patch : patches) {
+        RigExecProgramAvarPatch(&B, patch.binding, patch.value,
+                                patch.animated);
         const auto found = B.leafByPath.find(patch.path);
         if (found != B.leafByPath.end()) {
             for (const uint32_t id : found->second) {
@@ -1881,6 +2137,7 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
         return tables.back().second;
     };
     table("rebuild").PathSet(B.rebuild);
+    table("liveInputs").PathSet(B.liveInputPaths);
     table("named").PathSet(B.named);
     table("prims").PathSet(B.prims);
     table("xformPrims").PathSet(B.xformPrims);
@@ -2269,7 +2526,7 @@ RigExecBakedBuildContext::Fold(const UsdPrim &prim, const TfToken &name)
 void
 RigExecBakedCommitShard::Seal()
 {
-    for (SdfPathVector *paths : {&prims, &named, &rebuild, &folded}) {
+    for (SdfPathVector *paths : {&prims, &named, &rebuild, &folded, &live}) {
         std::sort(paths->begin(), paths->end());
         paths->erase(std::unique(paths->begin(), paths->end()),
                      paths->end());
@@ -2312,6 +2569,7 @@ RigExecBakedMergeCommitShards(RigExecBakedProgramImpl *program,
         insertSorted(&B.named, shard.named);
         insertSorted(&B.rebuild, shard.rebuild);
         insertSorted(&B.folded, shard.folded);
+        insertSorted(&B.liveInputPaths, shard.live);
     }
     // In chunk order and, inside a shard, by (path, number): every number
     // shard k hands out is below every number shard k+1 does, and every
@@ -2335,6 +2593,7 @@ RigExecBakedBuildContext::FoldShape(const UsdPrim &prim, const char *name)
     if (prim) {
         const SdfPath path = prim.GetPath().AppendProperty(TfToken(name));
         program->rebuild.insert(path);
+        program->shapeFolded.insert(path);
         program->named.insert(path);
         program->prims.insert(prim.GetPath());
     }
@@ -3564,6 +3823,27 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.spaceSwitchBySlot[size_t(out.slot)] = int(B.spaceSwitches.size());
         B.spaceSwitches.push_back(std::move(out));
     }
+    // An IK/FK match re-runs its pole's space with the IK control moved:
+    // which sources ride the IK control is namespace topology, settled here.
+    for (auto &c : B.constraints) {
+        if (!c.ikFkMatch || c.sources.size() != 10 || c.sources[5] < 0 ||
+            c.sources[6] < 0) continue;
+        const SdfPath &ik = B.paths[size_t(c.sources[5])];
+        const int pole = c.sources[6];
+        c.matchPoleSwitch = B.spaceSwitchBySlot[size_t(pole)];
+        c.matchPoleSourceRides.clear();
+        if (c.matchPoleSwitch >= 0) {
+            for (const int source :
+                 B.spaceSwitches[size_t(c.matchPoleSwitch)].sourceSlots) {
+                c.matchPoleSourceRides.push_back(
+                    source >= 0 && B.paths[size_t(source)].HasPrefix(ik) ? 1 : 0);
+            }
+            c.matchPoleInputs.sources.reserve(c.matchPoleSourceRides.size());
+        }
+        const int parent = B.parent[size_t(pole)];
+        c.matchPoleParentRides =
+            parent >= 0 && B.paths[size_t(parent)].HasPrefix(ik);
+    }
     B.autoClavicleBySlot.assign(B.paths.size(),-1);
     for(const auto &[path,node]:B.sceneDescriptors->nodes) {
         if(node.domain!=RigExecSceneDomain::AutoClavicle || !node.fact.active || !path.HasPrefix(E._rigPath))continue;
@@ -4006,6 +4286,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         step.semanticPredecessorKeys.erase(std::unique(step.semanticPredecessorKeys.begin(),
             step.semanticPredecessorKeys.end()), step.semanticPredecessorKeys.end());
     }
+    // Every read is declared: the chains that run as one GPU program.
+    RigExecBakedSelectGpuChains(&B);
     // Canonical graph order is the stored and exported order. Clusters and
     // cones are lowered once from that result at the production grain.
     {
@@ -4404,6 +4686,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     {
         RIGEXEC_PROFILE_SCOPE_CAT(*B.profiler, "BakedPublishGeometry", "baked");
         RigExecBakedPublishVolumePlacements(B, &pose->weightFrames);
+        RigExecBakedResolveGpuChains(&B, time);
         RigExecBakedPublishGeometry(&B, pose);
         RigExecBakedAppendCycleDiagnostics(B,pose);
     }

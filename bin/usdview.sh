@@ -7,7 +7,10 @@
 #     opening the app to build something is the no-argument case; pass
 #     examples/ArmShotAnim.usda for the rig that deforms on the timeline.
 #   a bare second argument is the renderer (e.g. Embree); anything starting
-#   with - is passed to usdview untouched.
+#   with - is passed to usdview untouched, except --deform cpu|gpu|shader,
+#   which picks how deformers run: on the CPU (the default), on the GPU with
+#   the points read back, or in Storm's own compute shaders. Sets
+#   RIGEXEC_GPU_DEFORM.
 #
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]:-$0}")/_env.sh"
@@ -66,4 +69,15 @@ if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
     set -- --renderer "$@"
 fi
 
-exec "$PY" "$USDVIEW" "$@" "$STAGE"
+# --deform <mode> is ours, not usdview's: taken out of the arguments.
+ARGS=()
+while [ $# -gt 0 ]; do
+    if [ "$1" = "--deform" ] && [ $# -gt 1 ]; then
+        if [ "$2" = "cpu" ]; then unset RIGEXEC_GPU_DEFORM; else export RIGEXEC_GPU_DEFORM="$2"; fi
+        shift 2
+    else
+        ARGS+=("$1"); shift
+    fi
+done
+echo "deformers: ${RIGEXEC_GPU_DEFORM:-cpu}"
+exec "$PY" "$USDVIEW" ${ARGS[@]+"${ARGS[@]}"} "$STAGE"

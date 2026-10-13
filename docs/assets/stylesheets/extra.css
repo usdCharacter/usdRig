@@ -1,0 +1,359 @@
+/* RigExec documentation theme on top of Material for MkDocs.
+ *
+ * Calm and precise: one deep teal for the chrome, one cyan accent for
+ * what can be acted on, neutral surfaces, and the work -- diagrams, GIFs,
+ * screenshots -- in focus. Colour carries meaning; nothing is decorative.
+ */
+
+/* -- palette ------------------------------------------------------------ */
+
+:root {
+  --rx-teal-900: #0b2026;
+  --rx-teal-800: #0f2a31;
+  --rx-teal-700: #17333b;
+  --rx-cyan-400: #5fd3e6;
+  --rx-cyan-500: #2fb6cc;
+  --rx-cyan-600: #1d8fa3;
+  --rx-radius: 10px;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--rx-teal-800);
+  --md-primary-fg-color--light: var(--rx-teal-700);
+  --md-primary-fg-color--dark: var(--rx-teal-900);
+  --md-primary-bg-color: #e8f6f8;
+  --md-accent-fg-color: var(--rx-cyan-400);
+  --md-accent-fg-color--transparent: rgba(95, 211, 230, 0.12);
+  --md-typeset-a-color: var(--rx-cyan-400);
+  --md-default-bg-color: #12171a;
+  --md-default-fg-color--light: rgba(226, 236, 240, 0.72);
+  --md-code-bg-color: #1a2125;
+  --rx-surface: #171e22;
+  --rx-surface-raised: #1c252a;
+  --rx-border: rgba(255, 255, 255, 0.08);
+  --rx-border-strong: rgba(95, 211, 230, 0.35);
+  --rx-hero-glow: rgba(47, 182, 204, 0.18);
+  --rx-hero-title: #f2f8fa;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--rx-teal-700);
+  --md-primary-fg-color--light: #23474f;
+  --md-primary-fg-color--dark: var(--rx-teal-800);
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: var(--rx-cyan-600);
+  --md-accent-fg-color--transparent: rgba(29, 143, 163, 0.10);
+  --md-typeset-a-color: var(--rx-cyan-600);
+  --rx-surface: #f6f9fa;
+  --rx-surface-raised: #ffffff;
+  --rx-border: rgba(15, 42, 49, 0.10);
+  --rx-border-strong: rgba(29, 143, 163, 0.45);
+  --rx-hero-glow: rgba(29, 143, 163, 0.10);
+  --rx-hero-title: var(--rx-teal-800);
+}
+
+/* -- type --------------------------------------------------------------- */
+
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 2.2em;
+  padding-top: 0.6em;
+  border-top: 1px solid var(--rx-border);
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+}
+
+.md-header__title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* -- chrome ------------------------------------------------------------- */
+
+.md-header,
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+}
+
+.md-tabs__link {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  opacity: 1;
+}
+
+.md-nav__link--active {
+  font-weight: 600;
+}
+
+/* -- content blocks ----------------------------------------------------- */
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--rx-border);
+  border-radius: var(--rx-radius);
+  overflow: hidden;
+  font-size: 0.74rem;
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--rx-surface);
+  font-weight: 600;
+}
+
+/* The node catalog's first column is a 64 px icon; keep it compact. */
+.md-typeset table:not([class]) td img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.md-typeset h1 img {
+  height: 1.1em;
+  vertical-align: -0.12em;
+  margin-right: 0.3em;
+}
+
+.md-typeset img {
+  border-radius: 6px;
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: var(--rx-radius);
+  border-width: 1px;
+  font-size: 0.74rem;
+}
+
+.md-typeset code {
+  border-radius: 4px;
+}
+
+.md-typeset kbd {
+  font-size: 0.72em;
+}
+
+/* A screenshot or diagram with a caption below it. */
+.md-typeset figure {
+  margin: 1.4em auto;
+}
+
+.md-typeset figure img {
+  border: 1px solid var(--rx-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.md-typeset figcaption {
+  max-width: 44rem;
+  font-size: 0.7rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* -- cards -------------------------------------------------------------- */
+
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  border: 1px solid var(--rx-border);
+  border-radius: var(--rx-radius);
+  background: var(--rx-surface-raised);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid > .card:hover {
+  border-color: var(--rx-border-strong);
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child strong {
+  font-size: 0.86rem;
+}
+
+.md-typeset .grid.cards .lg {
+  color: var(--md-accent-fg-color);
+}
+
+/* -- landing page ------------------------------------------------------- */
+
+.rx-hero {
+  position: relative;
+  margin: 0.4rem 0 2.4rem;
+  padding: 2.6rem 2.2rem 2.2rem;
+  border: 1px solid var(--rx-border);
+  border-radius: 16px;
+  background:
+    radial-gradient(1200px 380px at 85% -10%, var(--rx-hero-glow), transparent 60%),
+    var(--rx-surface);
+  overflow: hidden;
+}
+
+.rx-hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  gap: 2rem;
+  align-items: center;
+}
+
+@media (max-width: 960px) {
+  .rx-hero__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.md-typeset .rx-hero h1 {
+  color: var(--rx-hero-title);
+  font-size: 2.3rem;
+  line-height: 1.1;
+  margin: 0 0 0.6rem;
+}
+
+.rx-hero__eyebrow {
+  display: inline-block;
+  margin-bottom: 0.9rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--rx-border-strong);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--md-accent-fg-color);
+}
+
+.rx-hero__lede {
+  font-size: 0.92rem;
+  color: var(--md-default-fg-color--light);
+  max-width: 34rem;
+}
+
+.rx-hero__media img {
+  width: 100%;
+  border: 1px solid var(--rx-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.md-typeset .rx-hero .md-button {
+  margin: 0.6rem 0.4rem 0 0;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.md-typeset .rx-hero .md-button--primary {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: var(--rx-teal-900);
+}
+
+/* A strip of node GIFs: the evaluator at work. */
+.rx-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0 0.4rem;
+}
+
+@media (max-width: 760px) {
+  .rx-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.rx-strip a {
+  display: block;
+  border: 1px solid var(--rx-border);
+  border-radius: var(--rx-radius);
+  overflow: hidden;
+  background: var(--rx-surface);
+  color: var(--md-default-fg-color--light);
+  font-size: 0.68rem;
+  text-align: center;
+  transition: border-color 120ms ease;
+}
+
+.rx-strip a:hover {
+  border-color: var(--rx-border-strong);
+  color: var(--md-accent-fg-color);
+}
+
+.rx-strip img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 0;
+}
+
+.rx-strip span {
+  display: block;
+  padding: 0.35rem 0.4rem 0.45rem;
+}
+
+/* Keyboard and mouse tables in the tool guides. */
+.md-typeset .rx-keys td:first-child {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.md-typeset .rx-hero .md-button:not(.md-button--primary) {
+  color: var(--md-default-fg-color);
+  border-color: var(--rx-border-strong);
+}
+
+.md-typeset .rx-hero .md-button:not(.md-button--primary):hover {
+  color: var(--md-accent-fg-color);
+  background: var(--md-accent-fg-color--transparent);
+}
+
+.md-typeset .rx-hero h1 {
+  margin-bottom: 0.9rem;
+}
+
+.md-typeset .rx-hero h1 .headerlink {
+  display: none;
+}
+
+.md-typeset .rx-hero .rx-hero__lede {
+  margin-top: 0;
+}
+
+.md-typeset .rx-hero > .rx-hero__grid > div > p:first-child {
+  margin: 0;
+}
+
+.rx-hero__grid > div {
+  min-width: 0;
+}
+
+.rx-hero__media img {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 600px) {
+  .rx-hero {
+    padding: 1.4rem 1.1rem 1.2rem;
+  }
+
+  .md-typeset .rx-hero h1 {
+    font-size: 1.8rem;
+  }
+}

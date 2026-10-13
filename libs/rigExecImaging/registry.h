@@ -1246,6 +1246,14 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGenerationForStage(
     long long stageCacheId);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloatsForStage(
     long long stageCacheId, const char *packedPaths, float *out, int count);
+/// The double array a rig published at \p propertyPath
+/// (RigExecImagingSnapshot::movedArrays), up to \p capacity values into
+/// \p out, from a generation that describes the stage as it stands at
+/// \p frame (or Default with \p isDefault). Returns the array's size, or
+/// -1 when nothing current is published there.
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedDoublesForStage(
+    long long stageCacheId, const char *propertyPath, double frame,
+    int isDefault, double *out, int capacity);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetGuideBoundsAssetSpaceForStage(
     long long stageCacheId, const char *primPath, double outMinMax[6]);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(

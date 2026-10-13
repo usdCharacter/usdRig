@@ -14,7 +14,6 @@
 #include "pxr/usd/usd/relationship.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <set>
@@ -155,6 +154,10 @@ RigExecRigEvaluator::ClassifyNoticeDisposition(
     if (!_bakedProgram) {
         return RigExecNoticeDisposition::None;
     }
+    // Routed to nothing: a value no step reads.
+    if (RigExecNoticeIsDisplayOnly(notice)) {
+        return RigExecNoticeDisposition::Edited;
+    }
     std::vector<SdfPath> paths;
     if (_NoticeIsAvarValuesOnly(notice) &&
         _bakedProgram->DryRunAvarValueEdits(notice, &paths)) {
@@ -162,6 +165,12 @@ RigExecRigEvaluator::ClassifyNoticeDisposition(
             *patchedPaths = std::move(paths);
         }
         return RigExecNoticeDisposition::Patched;
+    }
+    if (_bakedProgram->DryRunMixedValueEdits(notice, &paths)) {
+        if (patchedPaths) {
+            *patchedPaths = std::move(paths);
+        }
+        return RigExecNoticeDisposition::Edited;
     }
     if (_bakedProgram->IsInvalidatedBy(notice)) {
         return RigExecNoticeDisposition::Stale;
@@ -268,6 +277,125 @@ RigExecRigEvaluator::_NoticeIsDigestSuspect(
         }
     }
     return false;
+}
+
+bool
+RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
+    const UsdNotice::ObjectsChanged &notice) const
+{
+    if (!_digestGate.valid || !_stage ||
+        !notice.GetResolvedAssetPathsResyncedPaths().empty()) {
+        return false;
+    }
+    static const TfToken kDefault("default");
+    static const TfToken kTimeSamples("timeSamples");
+    static const TfToken kSpline("spline");
+    static const TfToken kTypeName("typeName");
+    static const TfToken kCustom("custom");
+    static const TfToken kVariability("variability");
+    const auto valueRead = [this](const SdfPath &path) {
+        for (const _CertainFootprint &certain : _digestGate.certain) {
+            if (certain.valueReads.count(path)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Whether a walk wrote this attribute's sample count and type, and
+    // whether either could have moved: a sample authored or removed, or the
+    // attribute not having the type the walk wrote (including appearing
+    // where the walk wrote "missing").
+    const auto samplesMoved = [this](const SdfPath &path,
+                                     const std::vector<TfToken> &fields,
+                                     const UsdAttribute &attribute) {
+        static const TfToken kSamples("timeSamples");
+        for (const _CertainFootprint &certain : _digestGate.certain) {
+            const auto found = certain.sampleCountReads.find(path);
+            if (found == certain.sampleCountReads.end()) {
+                continue;
+            }
+            if (std::find(fields.begin(), fields.end(), kSamples) !=
+                fields.end()) {
+                return true;
+            }
+            const TfToken now = attribute ? attribute.GetTypeName().GetAsToken()
+                                          : TfToken();
+            if (now != found->second) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // What the digest wrote about this attribute's prim: whether it listed
+    // the prim's attributes, and the type it wrote for this one if so.
+    const auto listed = [this](const SdfPath &path, const TfToken **type) {
+        *type = nullptr;
+        bool prim = false;
+        for (const _CertainFootprint &certain : _digestGate.certain) {
+            prim = prim || certain.closurePrims.count(path.GetPrimPath()) > 0;
+            const auto found = certain.closureAttributes.find(path);
+            if (found != certain.closureAttributes.end()) {
+                *type = &found->second;
+            }
+        }
+        return prim;
+    };
+    bool sawValue = false;
+    // A property resync is a spec appearing or going away under a value --
+    // the first value a layer authors for a channel, or the undo removing
+    // it. It may restate the spec's own fields, never a connection. Only on
+    // the walk of an input read the long way every frame, or on an avar the
+    // program patches from the attribute itself: anything else may hold a
+    // query pinned to the spec it resolved, which the settle refreshes.
+    for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (!path.IsPropertyPath() || valueRead(path) || !_bakedProgram ||
+            !(_bakedProgram->ReadsLive(path) ||
+              _bakedProgram->IsPatchableAvarPath(path))) {
+            return false;
+        }
+        for (const TfToken &field : notice.GetChangedFields(path)) {
+            if (field != kDefault && field != kTimeSamples &&
+                field != kSpline && field != kTypeName && field != kCustom &&
+                field != kVariability) {
+                return false;
+            }
+        }
+        const UsdAttribute attribute = _stage->GetAttributeAtPath(path);
+        if (!attribute ||
+            samplesMoved(path, notice.GetChangedFields(path), attribute)) {
+            return false;
+        }
+        const TfToken *type = nullptr;
+        if (listed(path, &type) &&
+            (!type || *type != attribute.GetTypeName().GetAsToken())) {
+            return false;  // appeared on, or retyped on, a listed prim
+        }
+        sawValue = true;
+    }
+    for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+        if (path.IsPrimPath()) {
+            // The empty info every ancestor of an edited spec reports.
+            if (!notice.GetChangedFields(path).empty()) {
+                return false;
+            }
+            continue;
+        }
+        if (valueRead(path)) {
+            return false;
+        }
+        const std::vector<TfToken> fields = notice.GetChangedFields(path);
+        for (const TfToken &field : fields) {
+            if (field != kDefault && field != kTimeSamples &&
+                field != kSpline) {
+                return false;
+            }
+        }
+        if (samplesMoved(path, fields, _stage->GetAttributeAtPath(path))) {
+            return false;
+        }
+        sawValue = true;
+    }
+    return sawValue;
 }
 
 void
@@ -506,6 +634,16 @@ RigExecRigEvaluator::_OnObjectsChanged(
     const UsdNotice::ObjectsChanged &notice, const UsdStageWeakPtr &)
 {
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Notice.Evaluator", "notice");
+    // Showing or hiding prims: no step reads visibility, so nothing the rig
+    // holds is touched -- above all not the controls' parent transform,
+    // which the bake reads whole.
+    if (RigExecNoticeIsDisplayOnly(notice)) {
+        _lastNoticeDisposition = _bakedProgram
+                                     ? RigExecNoticeDisposition::Edited
+                                     : RigExecNoticeDisposition::None;
+        _lastNoticePatchedPaths.clear();
+        return;
+    }
     ++_stageEditSerial;
     // Never evaluate in a notice callback: ExecUsd must finish invalidating
     // its own caches before the next pull. External inputs can live anywhere
@@ -572,8 +710,14 @@ RigExecRigEvaluator::_OnObjectsChanged(
         // still skips the skin layouts, the blend samples and the rest.
         _propertyChainBindings.reset();
     }
+    // A notice that moves only values the digest never writes -- a switch,
+    // a dial, a space index on a control -- cannot move it, so it is not
+    // suspect even inside the rig, where every other notice is: the settle
+    // that recomputes the digest for a suspect notice was ~200 ms of a
+    // 220 ms IK/FK switch on the biped.
     if (!avarValuesOnly) {
-        if (_NoticeIsDigestSuspect(notice)) {
+        if (!_NoticeIsDigestValueNeutral(notice) &&
+            _NoticeIsDigestSuspect(notice)) {
             _structureDirty = true;
             _NoteCertainStructuralCandidates(notice);
         } else if (!_structureDirty && _compiled &&
@@ -626,7 +770,10 @@ RigExecRigEvaluator::_OnObjectsChanged(
             // Whatever else the notice named is compared by value where it
             // is read, or read by nothing. A refusal (impossible after the
             // classification, but fail-closed) falls back to the stamp.
-            if (!_bakedProgram->ApplyValueEdits(notice)) {
+            // A mixed notice (patchable avars beside routed values) is
+            // applied as the classification decided it.
+            if (!_bakedProgram->ApplyMixedValueEdits(notice) &&
+                !_bakedProgram->ApplyValueEdits(notice)) {
                 _bakedProgram->BumpProgramStamp();
             }
         } else if (_lastNoticeDisposition ==
@@ -657,7 +804,75 @@ RigExecRigEvaluator::_OnObjectsChanged(
         _lastNoticeDisposition = RigExecNoticeDisposition::None;
         _lastNoticePatchedPaths.clear();
     }
+    if (_lastNoticeDisposition != RigExecNoticeDisposition::Patched &&
+        _lastNoticeDisposition != RigExecNoticeDisposition::Edited) {
+        ++_stageStructureSerial;
+    }
+    _LogValueEdit(notice);
+}
 
+void
+RigExecRigEvaluator::_LogValueEdit(const UsdNotice::ObjectsChanged &notice)
+{
+    constexpr size_t kMaxValueEdits = 64;
+    const bool absorbed =
+        _lastNoticeDisposition == RigExecNoticeDisposition::Patched ||
+        _lastNoticeDisposition == RigExecNoticeDisposition::Edited;
+    _ValueEdit edit;
+    edit.serial = _stageEditSerial;
+    // A property resync -- a spec appearing or going away under a value, as
+    // a first key or its undo does -- names its path like a value edit. A
+    // read reaching a property that did not exist lists that path among its
+    // hops too (RigExecRevisionLeafHops), so the path is all a consumer needs.
+    bool covered = absorbed;
+    for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (!covered) {
+            break;
+        }
+        covered = path.IsPropertyPath();
+        edit.paths.push_back(path);
+    }
+    // Changed info on a PRIM -- an `over` authored above a first value, or
+    // metadata -- moves no attribute value: every field that could change
+    // what a property composes to is reported as a resync instead.
+    for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+        if (!covered) {
+            break;
+        }
+        if (path.IsPrimPath()) {
+            continue;
+        }
+        covered = path.IsPropertyPath();
+        edit.paths.push_back(path);
+    }
+    if (!covered) {
+        _valueEdits.clear();
+        _valueEditsFloor = _stageEditSerial;
+        return;
+    }
+    if (_valueEdits.size() == kMaxValueEdits) {
+        _valueEditsFloor = _valueEdits.front().serial;
+        _valueEdits.erase(_valueEdits.begin());
+    }
+    _valueEdits.push_back(std::move(edit));
+}
+
+bool
+RigExecRigEvaluator::GetValueEditsSince(uint64_t serial,
+                                        std::vector<SdfPath> *paths) const
+{
+    paths->clear();
+    if (serial < _valueEditsFloor || serial > _stageEditSerial) {
+        return false;
+    }
+    for (const _ValueEdit &edit : _valueEdits) {
+        if (edit.serial > serial) {
+            paths->insert(paths->end(), edit.paths.begin(), edit.paths.end());
+        }
+    }
+    std::sort(paths->begin(), paths->end());
+    paths->erase(std::unique(paths->begin(), paths->end()), paths->end());
+    return true;
 }
 
 } // namespace rigExec

@@ -1300,6 +1300,16 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             for (size_t f = 0; f < std::size(fields); ++f) {
                 place(fields[f], Family::Constraint, i, f);
             }
+            // An IK/FK match's scalars follow, each in its bound precision.
+            if (c.ikFkMatch) {
+                for (size_t k = 0; k < c.matchScalars.size(); ++k) {
+                    const auto &scalar = c.matchScalars[k];
+                    place(scalar.isFloat
+                              ? static_cast<const void *>(&scalar.narrow)
+                              : static_cast<const void *>(&scalar.wide),
+                          Family::Constraint, i, std::size(fields) + k);
+                }
+            }
         }
         for (size_t i = 0; i < B.weightObjects.size(); ++i) {
             const RigExecBakedProgramImpl::WeightObject &w =

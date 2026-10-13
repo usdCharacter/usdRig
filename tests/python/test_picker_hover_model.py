@@ -11,6 +11,9 @@ picker's screen-space layout and the arithmetic its gestures apply.
   4. A tab's drawn opacity is its own times the overall one.
   5. The layout survives a save and a load, and a damaged save loads as
      an empty layout rather than raising.
+  6. A tab follows the viewport corner it was put down nearest as the
+     window is resized, stays on screen when the viewport shrinks, and
+     goes back to its place when it grows again.
 
 Usage: test_picker_hover_model.py [ignored]
 """
@@ -144,6 +147,70 @@ def TestPersistence():
                "a damaged save loads empty: %r" % junk)
 
 
+def TestResize():
+    # Put down near the bottom right of a 1000 x 600 view.
+    tab = hm.TabLayout("k", 100.0, 100.0)
+    tab.x, tab.y = 900.0, 520.0
+    tab.Anchor(1000.0, 600.0)
+    _Check((tab.ax, tab.ay) == ("right", "bottom") and
+           _Close((tab.dx, tab.dy), (100.0, 80.0)),
+           "saved against its nearest corner: %r"
+           % ((tab.ax, tab.ay, tab.dx, tab.dy),))
+    tab.collapsed = True
+    tab.Place(1400.0, 900.0)
+    _Check(_Close((tab.x, tab.y), (1300.0, 820.0)),
+           "a bigger view keeps it as far from the bottom right: %r"
+           % ((tab.x, tab.y),))
+    tab.Place(300.0, 200.0)
+    _Check(_Close((tab.x, tab.y), (200.0, 120.0)),
+           "and so does a smaller one: %r" % ((tab.x, tab.y),))
+    tab.Place(60.0, 40.0)
+    margin = hm.HANDLE_RADIUS + 2.0
+    _Check(margin <= tab.x <= 60.0 - margin and
+           margin <= tab.y <= 40.0 - margin,
+           "a view smaller than its offset still shows the handle: %r"
+           % ((tab.x, tab.y),))
+    tab.Place(1000.0, 600.0)
+    _Check(_Close((tab.x, tab.y), (900.0, 520.0)),
+           "and growing back puts it where it was: %r" % ((tab.x, tab.y),))
+
+    # An open group is kept on screen whole, when it fits.
+    group = hm.TabLayout("g", 50.0, 150.0)
+    size = (300.0, 200.0)
+    group.Place(800.0, 300.0, size)
+    corner = group.ButtonsCorner()
+    _Check(abs(corner[1] + size[1] - 300.0) < 1e-9 and
+           group.y - hm.HANDLE_RADIUS >= -1e-9,
+           "a group with too little room below it is lifted to fit: "
+           "handle %.1f, bottom %.1f" % (group.y, corner[1] + size[1]))
+    group.Place(800.0, 200.0, size)
+    _Check(margin <= group.y <= 200.0 - margin,
+           "a group taller than the whole view keeps its handle on "
+           "screen: %.1f" % group.y)
+    group.Place(800.0, 900.0, size)
+    _Check(_Close((group.x, group.y), (50.0, 150.0)),
+           "and with room again it is back at its own place")
+
+    # A save from before anchors were kept loads as a top-left one.
+    old = hm.TabLayout.FromDict("o", {"x": 400.0, "y": 70.0})
+    old.collapsed = True
+    old.Place(300.0, 600.0)
+    _Check((old.ax, old.ay) == ("left", "top") and old.x <= 300.0 - margin,
+           "an old save is top-left, and still kept on screen: %r"
+           % ((old.ax, old.ay, old.x),))
+    back = hm.TabLayout.FromDict("k", tab.ToDict())
+    _Check((back.ax, back.ay, back.dx, back.dy) ==
+           (tab.ax, tab.ay, tab.dx, tab.dy), "the anchor saves and loads")
+
+    # A whole layout places every tab.
+    layout = hm.Layout()
+    layout.Ensure(["a", "b"])
+    layout.Place(120.0, 80.0)
+    for key in ("a", "b"):
+        t = layout.Tab(key)
+        _Check(margin <= t.x <= 120.0 - margin, "%s on screen" % key)
+
+
 def main():
     groups = [
         ("mapping", TestMapping),
@@ -151,6 +218,7 @@ def main():
         ("gestures", TestGestures),
         ("opacity", TestOpacity),
         ("persistence", TestPersistence),
+        ("resize", TestResize),
     ]
     for name, fn in groups:
         fn()

@@ -24,16 +24,20 @@
 #include "pxr/base/gf/vec4d.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/gf/vec4h.h"
+#include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/vt/array.h"
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <type_traits>
 #include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -703,22 +707,69 @@ struct RigExecFrameDigestOrder {
 };
 
 std::shared_ptr<const RigExecFrameDigestOrder>
-RigExecRecordFrameDigestOrder(const std::vector<RigExecSampledInput> &values)
+RigExecRecordFrameDigestOrder(const std::vector<RigExecSampledInput> &values,
+                              const RigExecFrameDigestOrder *previous)
 {
     auto order = std::make_shared<RigExecFrameDigestOrder>();
     order->paths.reserve(values.size());
     // First sample per path wins, sorted by path: the plain digest's map.
-    std::map<SdfPath, uint32_t> ordered;
+    std::unordered_map<SdfPath, uint32_t, SdfPath::Hash> first;
+    first.reserve(values.size());
     for (size_t i = 0; i < values.size(); ++i) {
         order->paths.push_back(values[i].path);
         order->pathTextBytes += values[i].path.GetString().size();
-        ordered.emplace(values[i].path, uint32_t(i));
+        first.emplace(values[i].path, uint32_t(i));
     }
-    order->order.reserve(ordered.size());
-    order->prefix.reserve(ordered.size());
-    for (const auto &[path, index] : ordered) {
-        order->order.push_back(index);
-        order->prefix.push_back(_SamplePrefix(path));
+    // The first-win paths ascending by SdfPath's operator<, each with its
+    // level-1 state: the previous order's, filtered to the paths still
+    // sampled, merged with the new ones sorted on their own.
+    std::vector<std::pair<SdfPath, uint64_t>> sorted;
+    sorted.reserve(first.size());
+    std::vector<std::pair<SdfPath, uint64_t>> added;
+    if (previous && previous->order.size() == previous->prefix.size()) {
+        std::unordered_map<SdfPath, char, SdfPath::Hash> kept;
+        kept.reserve(previous->order.size());
+        for (size_t j = 0; j < previous->order.size(); ++j) {
+            const SdfPath &path = previous->paths[previous->order[j]];
+            if (first.count(path)) {
+                sorted.emplace_back(path, previous->prefix[j]);
+                kept.emplace(path, 1);
+            }
+        }
+        for (const auto &[path, index] : first) {
+            if (!kept.count(path)) {
+                added.emplace_back(path, _SamplePrefix(path));
+            }
+        }
+    } else {
+        for (const auto &[path, index] : first) {
+            added.emplace_back(path, _SamplePrefix(path));
+        }
+    }
+    const auto less = [](const std::pair<SdfPath, uint64_t> &a,
+                         const std::pair<SdfPath, uint64_t> &b) {
+        return a.first < b.first;
+    };
+    std::sort(added.begin(), added.end(), less);
+    std::vector<std::pair<SdfPath, uint64_t>> merged;
+    merged.reserve(sorted.size() + added.size());
+    std::merge(sorted.begin(), sorted.end(), added.begin(), added.end(),
+               std::back_inserter(merged), less);
+    order->order.reserve(merged.size());
+    order->prefix.reserve(merged.size());
+    for (const auto &[path, prefix] : merged) {
+        order->order.push_back(first[path]);
+        order->prefix.push_back(prefix);
+    }
+    // RIGEXEC_VERIFY_FROZEN_STATIC: a reused order against a fresh one.
+    static const bool verify =
+        TfGetenvBool("RIGEXEC_VERIFY_FROZEN_STATIC", false);
+    if (verify && previous) {
+        const auto fresh = RigExecRecordFrameDigestOrder(values, nullptr);
+        TF_VERIFY(fresh->order == order->order &&
+                      fresh->prefix == order->prefix,
+                  "a digest order reused from the previous one differs "
+                  "from a fresh recording");
     }
     return order;
 }

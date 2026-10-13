@@ -1,6 +1,7 @@
 # Dependencies, builds, and generated documentation
 docs/papers/
 docs/site/
+/site/
 docs/sizzle/
 sizzle/
 sizzle_build/

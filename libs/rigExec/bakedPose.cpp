@@ -30,6 +30,7 @@
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
@@ -879,6 +880,84 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         }
         c.order = RigExecBakedParseEulerOrder(
             readToken(prim, "rigExec:rotationOrder", "XYZ"));
+        if (fc.schemaType == "RigExecIkFkMatchConstraint") {
+            c.ikFkMatch = true;
+            if (!c.targetSlots.empty() || c.sources.size() != 10 ||
+                std::any_of(c.sources.begin(), c.sources.end(),
+                            [](int slot) { return slot < 0; })) {
+                refuse("IK/FK match needs its joints, IK root, effector and "
+                       "five controls as pose providers", fc.moverPath);
+            }
+            // The controls presented with each of the five: every control
+            // under one, riding the nearest of them above it.
+            for (int slot = 0; slot < N; ++slot) {
+                if (B.slotKind[size_t(slot)] !=
+                    RigExecBakedSlotKind::FirstFramePose) continue;
+                int rides = -1;
+                size_t depth = 0;
+                for (size_t k = 5; k < c.sources.size(); ++k) {
+                    const SdfPath &control = B.paths[size_t(c.sources[k])];
+                    if (slot == c.sources[k]) { rides = -1; break; }
+                    if (B.paths[size_t(slot)].HasPrefix(control) &&
+                        control.GetPathElementCount() > depth) {
+                        rides = int(k - 5);
+                        depth = control.GetPathElementCount();
+                    }
+                }
+                if (rides >= 0) c.matchRiders.emplace_back(slot, rides);
+            }
+            // Each scalar is bound AT the attribute its connection walk ends
+            // on, in that attribute's precision: a float read whose head is a
+            // double reads the walk as doubles, which cannot read a float
+            // channel. Unconnected, it reads its own value.
+            static const char *const names[7] = {
+                "inputs:switch", "inputs:stretch", "inputs:softDistance",
+                "inputs:upperScale", "inputs:lowerScale", "inputs:pin",
+                "inputs:twist"};
+            static const double fallbacks[7] = {0, 1, 0, 1, 1, 0, 0};
+            for (size_t k = 0; k < 7; ++k) {
+                auto &scalar = c.matchScalars[k];
+                UsdAttribute end = prim.GetAttribute(TfToken(names[k]));
+                std::set<SdfPath> visited;
+                while (end && visited.insert(end.GetPath()).second) {
+                    SdfPathVector connections;
+                    end.GetConnections(&connections);
+                    if (connections.size() != 1) break;
+                    const UsdAttribute next =
+                        B.stage->GetAttributeAtPath(connections[0]);
+                    if (!next) break;
+                    end = next;
+                }
+                scalar.isFloat =
+                    end && end.GetTypeName() == SdfValueTypeNames->Float;
+                const UsdPrim owner = end ? end.GetPrim() : prim;
+                const std::string name =
+                    end ? end.GetName().GetString() : std::string(names[k]);
+                if (scalar.isFloat) {
+                    scalar.narrow =
+                        bind(owner, name.c_str(), float(fallbacks[k]));
+                } else {
+                    scalar.wide = bind(owner, name.c_str(), fallbacks[k]);
+                }
+            }
+            // Uniform constants: authoring one rebuilds the program.
+            for (const auto &[name, value] :
+                 {std::make_pair("rigExec:ikValue", &c.matchIkValue),
+                  std::make_pair("rigExec:scaleCalibration",
+                                 &c.matchScaleCalibration),
+                  std::make_pair("rigExec:upperLengthOffset",
+                                 &c.matchUpperOffset),
+                  std::make_pair("rigExec:lowerLengthOffset",
+                                 &c.matchLowerOffset)}) {
+                fold(prim, name);
+                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                         UsdTimeCode::Default(), value);
+            }
+            c.matchIkValue = std::isfinite(c.matchIkValue) ? c.matchIkValue : 1.0;
+            fold(prim, "rigExec:stretchPolicy");
+            c.matchStretchLimb = readToken(prim, "rigExec:stretchPolicy",
+                                           "softDistance") == "softDistance";
+        }
 
         if (fc.schemaType == "RigExecPositionConstraint") {
             c.affectX = bind(prim, "inputs:affectTranslationX", true);
@@ -2078,6 +2157,16 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 commitStep.reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::PoseFin, constraint.effector));
             }
+            // An IK/FK match reads its controls' channels and the inputs its
+            // pole's compose left (written by the same step that writes the
+            // pole's base frame); its rests are declared with every step's
+            // (RigExecBakedRequiredRestReads).
+            if (constraint.ikFkMatch) {
+                for (size_t k = 5; k < constraint.sources.size(); ++k) {
+                    commitStep.reads.push_back(RigExecBakedOne(
+                        RigExecBakedSlotDomain::Avars, constraint.sources[k]));
+                }
+            }
             declareNative(constraint.effectorNative);
             for (size_t k = 0; k < constraint.poleObjects.size(); ++k) {
                 if (constraint.poleObjects[k] >= 0) {
@@ -2227,10 +2316,13 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
         const auto &group=B.composeGroups[size_t(step.object)];
         for (const auto &ac : B.autoClavicles) {
             if (ac.slot<group.begin || ac.slot>=group.end) continue;
+            // A frame the clavicle reads outside its own subtree is that
+            // provider's compose version: the frame its channels give, which
+            // the solvers read too, and not a constraint's later revision.
             for (const auto &read : ac.frames)
                 if (read.computation.empty() && read.recompose.empty() && read.slot!=ac.slot)
                     step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PoseFin,
-                        B.finLast[size_t(read.slot)]));
+                        uint32_t(read.slot)));
         }
     }
 
@@ -2470,6 +2562,10 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                 for (const auto &values : commit.sourceAncestors) ancestors(values);
                 for (const auto &values : commit.poleAncestors) ancestors(values);
                 ancestors(commit.worldUpAncestors); ancestors(commit.effectorAncestors);
+                // The inputs an IK/FK match re-runs its pole's space from
+                // are left by the compose that writes the pole's base.
+                if (c.ikFkMatch && c.sources.size() == 10)
+                    read(Domain::PoseBase, B.baseLast[size_t(c.sources[6])]);
             }
             const bool apply = step.kind == Kind::CommitApply ||
                 (!commit.split && (step.kind == Kind::Constraint || step.kind == Kind::SolverCommit));
@@ -2593,6 +2689,13 @@ NoteConstraintInputs(const RigExecBakedProgramImpl::Constraint &constraint,
     NoteInput(constraint.poleVector, sink);
     NoteInput(constraint.twistDegrees, sink);
     NoteInput(constraint.stretch,sink);
+    // An IK/FK match's scalars, each in the one precision it is bound in.
+    if (constraint.ikFkMatch) {
+        for (const auto &scalar : constraint.matchScalars) {
+            if (scalar.isFloat) NoteInput(scalar.narrow, sink);
+            else NoteInput(scalar.wide, sink);
+        }
+    }
     // The authored source-weight, offset and pole-weight tables are NOT
     // noted here: they are not inputs the step reads at all. The prologue
     // reads them off the stage as epoch state (again whenever the stage edit
@@ -3811,6 +3914,12 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
                     rest(slot);
                 }
             }
+            if (c.ikFkMatch) {
+                for (size_t k = 0; k < c.sources.size(); ++k) {
+                    if (k < 3 || k >= 5) rest(c.sources[k]);
+                }
+                rest(c.spaceSlot);
+            }
             ladder(c.spaceSlot);
             break;
         }
@@ -4496,7 +4605,10 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                 }
                 if(!RigExecRunSpaceSwitch(sw.kernelRecord,input,&B.base[size_t(i)])) {
                     B.base[size_t(i)].flags=0;
+                    sw.matchValid=false;
                     step->diagnostics.push_back("space switch has no source for "+(*B.pathTexts)[size_t(i)]);
+                } else {
+                    RigExecBakedRunSpaceMatch(B,sw,i,input,B.base[size_t(i)]);
                 }
             }
             const int autoIndex=(size_t(i)<B.autoClavicleBySlot.size()?B.autoClavicleBySlot[size_t(i)]:-1);
@@ -4510,7 +4622,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                     else if(B.paths[size_t(read.slot)].HasPrefix(B.paths[size_t(i)])) {
                         frame=B.base[size_t(i)];
                         for(int child:read.recompose)frame=_ComposeUnswitched(B,child,_SpaceOfFrame(frame));
-                    } else frame=B.fin[B.finLast[size_t(read.slot)]];
+                    } else frame=B.fin[size_t(read.slot)];
                     ac.values.Publish(read.value,frame);
                 }
                 for(const auto &read:ac.scalars) {
@@ -4669,6 +4781,7 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         // other step names.
         RigExecBakedProgramImpl::Constraint &c =
             B.constraints[size_t(B.walkSteps[size_t(step->object)].index)];
+        c.matchValuesValid = false;
         const auto runSourceConstraint=[&](const RigExecPointFrame &incoming,
             const std::vector<RigExecConstraintSource> &sources,const auto &params) {
             auto &record=c.kernelRecord;auto &inputs=c.kernelInputs;
@@ -4714,6 +4827,24 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         commit.recordEveryTarget = true;
         if (deltaBase >= 0) {
             B.deltaPresent[size_t(deltaBase)] = 0;
+        }
+        c.matchShownMask = 0;
+        if (c.ikFkMatch) {
+            // Presentation and values only: the commit stays abandoned.
+            if (rd(c.enabled)) {
+                const double weight = rd(c.defaultWeight);
+                double scalars[7];
+                for (size_t k = 0; k < 7; ++k) {
+                    const auto &scalar = c.matchScalars[k];
+                    scalars[k] = scalar.isFloat ? double(rd(scalar.narrow))
+                                                : rd(scalar.wide);
+                }
+                RigExecBakedRunIkFkMatch(B, step, c, commit,
+                                         std::isfinite(weight) ? weight : 0.0,
+                                         scalars);
+            }
+            finish();
+            return;
         }
         if (c.target < 0) {
             // No slot to revise: nothing the walk can commit, and nothing to
@@ -5596,6 +5727,9 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
                 B.controlPaths[k],
                 B.fin[size_t(B.finLast[size_t(B.controlSlots[k])])]);
         }
+        // IK/FK matches: their values, and the half they present.
+        RigExecBakedPresentIkFkMatches(B, pose);
+        RigExecBakedPresentSpaceMatches(B, pose);
     }
 
     // Observational solver guides. The dynamic path re-evaluates them through

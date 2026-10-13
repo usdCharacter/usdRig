@@ -3,7 +3,9 @@
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/singleChainIk.h"
 namespace rigExec {
-enum class RigExecConstraintKind { Position,Rotation,Scale,Parent,Aim,SingleChainIk };
+/// IkFkMatch revises several controls from frames and channels the pose walk
+/// reads itself (ikFkMatchKernel.h); it has no single-frame kernel here.
+enum class RigExecConstraintKind { Position,Rotation,Scale,Parent,Aim,SingleChainIk,IkFkMatch };
 /// Detached constraint parameters. Carry pointers in parameter structs must
 /// remain null; the current graph input owns the explicitly named carry.
 struct RigExecConstraintRecord {

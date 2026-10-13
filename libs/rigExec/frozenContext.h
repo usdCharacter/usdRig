@@ -175,6 +175,12 @@ struct RigExecHeadLeafConstants {
     /// digest folds `digest` in place of the leaves.
     uint64_t digest = 0;
     bool digestible = true;
+    /// Per entry, what `digest` and `digestible` fold: its sample's
+    /// RigExecSampleDigest and whether its value is hashable (unused where
+    /// it varies). Kept so a re-read of a few entries refolds the rest
+    /// without hashing them again.
+    std::vector<uint64_t> entryDigests;
+    std::vector<char> entryHashable;
 };
 
 /// One frame's sampled input vector, built on the UI thread at enqueue time.

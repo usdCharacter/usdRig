@@ -21,6 +21,7 @@
 #include "frameExtraction.h"
 #include "moverGraph.h"
 #include "crossDomainInputs.h"
+#include "gpuDeformLowering.h"
 #include "scalarReferenceAdapter.h"
 #include "parallel.h"
 #include "profiler.h"
@@ -423,7 +424,19 @@ struct RigExecBakedLeafPool {
     /// pass has consumed yet. Kept by RigExecBakedMarkPoolLeaf; every pass
     /// keeps only the entries still marked whose input it samples.
     std::vector<uint32_t> markedList;
+    /// Advanced by every mark, consumed or not: what the frozen samplers'
+    /// memo compares to re-read only the leaves an edit reached. Grown on
+    /// the first mark; an index past its end has never been marked.
+    std::vector<uint64_t> editSerial;
 };
+
+/// \p pool's leaf \p k's `editSerial`.
+template <class Pool>
+inline uint64_t
+RigExecBakedPoolLeafEditSerial(const Pool &pool, size_t k)
+{
+    return k < pool.editSerial.size() ? pool.editSerial[k] : 0;
+}
 
 /// Where leaf id k lives: its pool and its index in that pool.
 struct RigExecBakedLeafRef {
@@ -955,6 +968,10 @@ struct RigExecBakedHeadLeaf {
     /// The next sample re-reads it whatever else holds (a value edit
     /// reached `path`), and re-derives `varying`.
     char mustSample = 0;
+    /// Advanced with every mark, which the live sample consumes: what the
+    /// frozen samplers' constants table compares to re-read only the
+    /// leaves an edit reached (_HeadLeafConstants).
+    uint64_t editSerial = 0;
     /// The key a frozen job samples it under, set at Build for a leaf whose
     /// type matches (`<prim>.frozenChainOwn:<name>` for a chain target's own
     /// value, `<prim>.frozenChainHop:<name>` otherwise); empty for a leaf
@@ -2557,6 +2574,51 @@ struct RigExecBakedProgramImpl {
         RigExecBakedInput<GfVec3d> poleVector;
         RigExecBakedInput<double> twistDegrees;
         RigExecBakedInput<float> stretch;
+
+        // RigExecIkFkMatchConstraint (ikFkMatchKernel.h). It has no targets:
+        // `sources` are the three joints, the IK root, the effector, then
+        // the IK control, the pole and the three FK controls. Its revision
+        // of those controls is presentation, applied to the published
+        // control frames after the walk, so no reader in the rig sees it.
+        bool ikFkMatch = false;
+        /// One scalar input bound in its source's own precision: a float
+        /// read as a double, or the reverse, answers its fallback.
+        struct MatchScalar {
+            RigExecBakedInput<float> narrow;
+            RigExecBakedInput<double> wide;
+            bool isFloat = false;
+        };
+        /// inputs:switch, stretch, softDistance, upperScale, lowerScale, pin,
+        /// twist, in that order.
+        std::array<MatchScalar, 7> matchScalars;
+        double matchIkValue = 1.0;
+        double matchScaleCalibration = 0.0;
+        double matchUpperOffset = 0.0;
+        double matchLowerOffset = 0.0;
+        bool matchStretchLimb = true;
+        /// The pole's space switch (index into spaceSwitches) or -1, and per
+        /// source of it whether the source rides the IK control; with no
+        /// switch, whether its namespace parent does. Settled after the
+        /// switches are built.
+        int matchPoleSwitch = -1;
+        std::vector<char> matchPoleSourceRides;
+        bool matchPoleParentRides = false;
+        /// The pole switch's inputs as its compose left them, re-run with
+        /// the IK control moved; scratch, so the body does not allocate.
+        RigExecSpaceSwitchInputs matchPoleInputs;
+        /// This run's outputs:ikValues and outputs:fkValues, published after
+        /// the walk when `matchValuesValid`.
+        std::array<double, 11> matchIkValues{};
+        std::array<double, 20> matchFkValues{};
+        bool matchValuesValid = false;
+        /// This run's presented frames of the five controls, in source order
+        /// from index 5, and which of them are shown (bit k for control k).
+        std::array<RigExecPointFrame, 5> matchShown;
+        unsigned matchShownMask = 0;
+        /// Every other control under a presented one, and which of the five
+        /// it rides (the nearest above it): it is presented carried by that
+        /// control's revision. Namespace topology, settled at Build.
+        std::vector<std::pair<int, int>> matchRiders;
     };
     std::vector<Constraint> constraints;
 
@@ -2640,6 +2702,12 @@ struct RigExecBakedProgramImpl {
         bool affectScale[3] = {true, true, true};
         RigExecSpaceSwitchRecord kernelRecord;
         RigExecSpaceSwitchInputs kernelInputs;
+        /// This run's space match (spaceMatchKernel.h): per source index,
+        /// the control's tx ty tz rx ry rz that keep it where it is with
+        /// that space selected; published as `<control>.spaces:matchValues`.
+        /// Written only by this switch's compose.
+        std::vector<double> matchValues;
+        bool matchValid = false;
     };
     struct SpaceCheckpoint {
         std::string key;
@@ -2762,6 +2830,14 @@ struct RigExecBakedProgramImpl {
     size_t rangeVerifyMismatches = 0;
     /// RIGEXEC_ENABLE_SIMD, as RigExecSimdEnabled() answers it.
     bool useSimd = true;
+    /// Where eligible point chains deform (RigExecGpuDeformMode), chosen at
+    /// Build by RigExecBakedSelectGpuChains.
+    RigExecGpuDeformMode gpuDeformMode = RigExecGpuDeformMode::Off;
+    /// True while RigExecBakedResolveGpuChains runs the derived steps of
+    /// GPU chains at the publication boundary.
+    bool gpuBoundary = false;
+    /// GeomChain::gpuDerivedSteps hold the compiled step order.
+    bool gpuDerivedIndexed = false;
     /// RIGEXEC_PURITY_AUDIT: whether RunStepBody hands its bodies
     /// purityViolations to count reads under RIGEXEC_PURITY_CHECK.
     bool purityAudit = false;
@@ -3132,6 +3208,13 @@ struct RigExecBakedProgramImpl {
         VtVec3fArray lastAuxPoints;
         RigExecMoverStatus lastStatus;
         bool ran = false;
+        /// The chain runs as one GPU program (GeomChain::gpu): this
+        /// revision's chunks and fuse move no points, and a blend keeps its
+        /// channels unsummed in `gpuChannels` for the lowering. `gpuApplies`
+        /// is the fuse's apply decision.
+        bool gpuOwned = false;
+        std::vector<RigExecBlendChannel> gpuChannels;
+        bool gpuApplies = false;
         /// This revision's own wire-basis memo: only its step runs its
         /// kernel (a range-pipelined revision's RevisionStatic, which its
         /// range steps follow), so nothing else touches it. A clone shares
@@ -3542,6 +3625,30 @@ struct RigExecBakedProgramImpl {
             bool haveMatrix = false;
         };
         std::vector<Derived> derived;
+        /// A GPU chain (RigExecBakedSelectGpuChains): ChainStatus lowers its
+        /// packets into `gpuFrame` and RigExecBakedResolveGpuChains deforms
+        /// it at the publication boundary, then runs its derived steps.
+        bool gpu = false;
+        /// ChainStatus ran this generation; `gpuLowered`: and lowered.
+        bool gpuPending = false;
+        bool gpuLowered = false;
+        RigExecGpuDeformLowering gpuLowering;
+        RigExecGpuDeformFrame gpuFrame;
+        /// What `result` was deformed from, so an unchanged frame keeps it.
+        std::vector<float> gpuLastFrame;
+        uint64_t gpuLastSerial = 0;
+        uint64_t gpuLastBaseVersion = ~uint64_t(0);
+        std::vector<GfVec3f> gpuScratch;
+        /// The Derived steps that read this chain, in program order.
+        std::vector<int> gpuDerivedSteps;
+        /// Shader mode: what ChainStatus publishes in place of the points,
+        /// the version its frame carries, and the extent sample with the
+        /// layout and base it was chosen for.
+        std::shared_ptr<const RigExecGpuDeformPublication> gpuPublication;
+        uint64_t gpuFrameVersion = 0;
+        std::vector<int32_t> gpuExtentSample;
+        uint64_t gpuExtentSerial = 0;
+        uint64_t gpuExtentBaseVersion = ~uint64_t(0);
     };
     std::vector<GeomChain> chains;
 
@@ -3799,6 +3906,16 @@ struct RigExecBakedProgramImpl {
     // A changed-info notice that misses all of them is a value edit on an
     // input the frame path re-reads, and needs nothing.
     std::set<SdfPath> rebuild;
+    // The part of `rebuild` folded for its SHAPE (FoldShape): whether it is
+    // keyed decides a solver mode, so its first time sample rebuilds even
+    // where it is also a patchable avar.
+    std::set<SdfPath> shapeFolded;
+    // Every attribute on the walk of an input read the long way each frame
+    // (RigExecBakedInput::resolvedAttr). A property resync there that only
+    // brings a value -- the first value a layer authors for a switch or a
+    // dial, and the undo that takes it away -- is a value edit, routed like
+    // one (_LiveInputResync), not a change of structure.
+    std::set<SdfPath> liveInputPaths;
     std::set<SdfPath> sourceBackedPaths;
     std::set<SdfPath> named;
     std::set<SdfPath> prims;
@@ -3991,6 +4108,9 @@ struct RigExecBakedProgramImpl {
     mutable uint64_t headLeafConstantsStamp = 0;
     mutable uint64_t headLeafConstantsSerial = 0;
     mutable bool headLeafConstantsDefault = false;
+    /// Each keyed head leaf's `editSerial` when headLeafConstants last
+    /// answered for it, in RigExecForEachHeadLeaf order.
+    mutable std::vector<uint64_t> headLeafConstantsLeafSerials;
     /// The frozen samplers' memo of the leaf reads that cannot move with
     /// the time and of recorded digest orders (RigExecFrozenSamplerMemo),
     /// one per Default-ness of the time ([1] Default), so samples that
@@ -4166,7 +4286,12 @@ template <class Pool>
 inline void
 RigExecBakedMarkPoolLeaf(Pool *pool, size_t k)
 {
-    if (k >= pool->mustSample.size() || pool->mustSample[k]) return;
+    if (k >= pool->mustSample.size()) return;
+    if (pool->editSerial.size() <= k) {
+        pool->editSerial.resize(pool->mustSample.size(), 0);
+    }
+    ++pool->editSerial[k];
+    if (pool->mustSample[k]) return;
     pool->mustSample[k] = 1;
     pool->markedList.push_back(uint32_t(k));
 }
@@ -4182,6 +4307,7 @@ RigExecBakedMarkLeaf(RigExecBakedProgramImpl *program, uint32_t id)
             const size_t h = i - program->pathLeafRefs.size();
             if (h < program->headLeaves.size()) {
                 program->headLeaves[h].mustSample = 1;
+                ++program->headLeaves[h].editSerial;
             }
             return;
         }
@@ -4672,12 +4798,13 @@ struct RigExecBakedProgramSink {
     void Named(const SdfPath &path) { program->named.insert(path); }
     void Rebuild(const SdfPath &path) { program->rebuild.insert(path); }
     void Folded(const SdfPath &path) { program->folded.insert(path); }
+    void Live(const SdfPath &path) { program->liveInputPaths.insert(path); }
 };
 
 /// The parallel sink: one chunk's facts, gathered on whichever thread runs
 /// the chunk and touching nothing shared.
 struct RigExecBakedCommitShard {
-    SdfPathVector prims, named, rebuild, folded;
+    SdfPathVector prims, named, rebuild, folded, live;
     /// (path, number RELATIVE to the chunk's first) per overridable walk
     /// step, in the order the program sink would have appended them.
     std::vector<std::pair<SdfPath, int>> overridable;
@@ -4699,6 +4826,7 @@ struct RigExecBakedCommitShard {
     void Named(const SdfPath &path) { named.push_back(path); }
     void Rebuild(const SdfPath &path) { rebuild.push_back(path); }
     void Folded(const SdfPath &path) { folded.push_back(path); }
+    void Live(const SdfPath &path) { live.push_back(path); }
 
     /// Sorts and dedups the four path vectors, and sorts `overridable` by
     /// (path, number), so the merge inserts ascending runs. Run at the end
@@ -4770,6 +4898,14 @@ RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
     const bool live = input->sourceBacked || input->resolvedAttr || (input->varying &&
                                               walk.size() == 1);
     if (live) {
+        if (input->resolvedAttr) {
+            for (const SdfPath &path : walk) {
+                sink->Live(path);
+            }
+            if (walk.empty()) {
+                sink->Live(input->head.GetPath());
+            }
+        }
         return;
     }
     for (const SdfPath &path : walk) {
@@ -5032,6 +5168,29 @@ RigExecBakedBuildContext::Bind(const UsdPrim &prim, const char *name,
     return input;
 }
 
+/// Whether \p name is an animation channel a bake reads per frame rather
+/// than folding: an `avars:` property (the schema's namespace for what an
+/// animator authors) other than the transform channels, which a value edit
+/// patches in place (RigExecProgramAvarPatch), and the channels that choose
+/// how a frame composes, which are structure.
+inline bool
+RigExecBakedIsLiveChannel(const TfToken &name)
+{
+    static const std::string kAvars("avars:");
+    const std::string &text = name.GetString();
+    if (text.compare(0, kAvars.size(), kAvars) != 0) {
+        return false;
+    }
+    static const std::set<TfToken> kNotLive = {
+        TfToken("avars:tx"), TfToken("avars:ty"), TfToken("avars:tz"),
+        TfToken("avars:sx"), TfToken("avars:sy"), TfToken("avars:sz"),
+        TfToken("avars:rx"), TfToken("avars:ry"), TfToken("avars:rz"),
+        TfToken("avars:rspin"), TfToken("avars:unitScaleFactor"),
+        TfToken("avars:rotationOrder"), TfToken("avars:rotationSign"),
+        TfToken("avars:defaultSpace")};
+    return kNotLive.count(name) == 0;
+}
+
 template <class T>
 RigExecBakedInput<T>
 RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
@@ -5041,6 +5200,28 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
     RigExecBakedInput<T> input =
         RigExecBakedBindInput(prim, name, fallback, capture, chainTargets,
                               walk);
+    // An input that reads an animation channel -- on its head or on any hop
+    // of its connection walk -- is read per frame from the start, the way a
+    // keyed one is, instead of being folded. Switches, spaces and dials are
+    // edited interactively, a folded value moves only by rebaking the
+    // program, and every consumer already handles an input that is varying
+    // at bind (a keyed channel is one). Decided here, before anything reads
+    // `varying` or copies the constant, so no consumer precomputes from a
+    // value that can move.
+    if (!input.varying && input.head) {
+        bool live = RigExecBakedIsLiveChannel(input.head.GetName());
+        for (size_t i = 0; walk && !live && i < walk->size(); ++i) {
+            const SdfPath &hop = (*walk)[i];
+            live = hop.IsPropertyPath() &&
+                   RigExecBakedIsLiveChannel(hop.GetNameToken());
+        }
+        if (live) {
+            input.varying = true;
+            input.query = UsdAttributeQuery();
+            input.resolvedAttr = input.head;
+            return input;
+        }
+    }
     // Only opted-in direct numeric arguments sample ordinary source edits.
     if constexpr (std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>) {
         if (sourceValue && !input.varying && input.head &&
@@ -5392,6 +5573,26 @@ bool RigExecBakedPublishPose(RigExecBakedProgramImpl *program,
 /// Publishes each geometry chain and derived target in chain order.
 void RigExecBakedPublishGeometry(RigExecBakedProgramImpl *program,
                                  RigExecRigPose *pose);
+
+/// What ChainStatus publishes for \p chain: its points, or in shader mode
+/// its program (RigExecGpuDeformPublication).
+VtValue RigExecBakedChainPublication(
+    const RigExecBakedProgramImpl::GeomChain &chain);
+
+/// Chooses the point chains that run as one GPU program, from the mode
+/// RIGEXEC_GPU_DEFORM names. A chain qualifies when every revision has a
+/// program op and no step outside the chain reads its points, versions or
+/// statuses; its derived steps run at the publication boundary. Build
+/// calls it once every read is declared.
+void RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program);
+
+/// The publication boundary of GPU chains: deforms every chain ChainStatus
+/// lowered this generation on the registered runner (or its CPU kernels
+/// where none is registered or the device refused), publishes the points
+/// as ChainStatus would, and runs the chain's derived steps. Owner thread,
+/// after the graph has joined.
+void RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
+                                  UsdTimeCode time);
 
 /// Builds RigExecBakedProgramImpl::epilogue from the steps as they stand,
 /// keeping `verify` and `mismatches`. Owner thread.
@@ -6078,6 +6279,34 @@ bool RigExecBakedHasExternalInputRoute(const RigExecBakedProgramImpl &,const Sdf
 const std::vector<VtValue> &RigExecBakedResolvePathLeaves(const RigExecBakedProgramImpl &, const RigExecBakedPathLeaves &);
 void RigExecBakedResetWeightField(RigExecBakedProgramImpl *, int);
 void RigExecBakedResetSetAsideGeometryValue(RigExecBakedProgramImpl *, RigExecBakedSlotDomain, uint32_t);
+
+/// RigExecIkFkMatchConstraint (bakedIkFkMatch.cpp): one run of its step
+/// -- \p scalars are inputs:switch, stretch, softDistance, upperScale,
+/// lowerScale, pin and twist -- and the publication of every match's values
+/// and presented frames into \p pose.
+void RigExecBakedRunIkFkMatch(RigExecBakedProgramImpl &B,
+                              RigExecBakedStep *step,
+                              RigExecBakedProgramImpl::Constraint &c,
+                              const RigExecBakedCommit &commit, double weight,
+                              const double scalars[7]);
+void RigExecBakedPresentIkFkMatches(const RigExecBakedProgramImpl &B,
+                                    RigExecRigPose *pose);
+
+struct RigExecIkFkMatchChannels;
+
+/// A control's channels as the compose reads them, for the match kernels.
+void RigExecBakedMatchChannelsOf(const RigExecBakedProgramImpl &B, int slot,
+                                 RigExecIkFkMatchChannels *out);
+
+/// Space matching (bakedSpaces.cpp): \p sw's matchValues for the control in
+/// \p slot, which the switch just composed onto \p posed from \p input,
+/// and the publication of every switch's values into \p pose.
+void RigExecBakedRunSpaceMatch(const RigExecBakedProgramImpl &B,
+                               RigExecBakedProgramImpl::SpaceSwitch &sw,
+                               int slot, const RigExecSpaceSwitchInputs &input,
+                               const RigExecPointFrame &posed);
+void RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
+                                     RigExecRigPose *pose);
 
 }  // namespace rigExec
 

@@ -129,6 +129,13 @@ _VisitConstraintInputs(
     fn(constraint.poleVector);
     fn(constraint.twistDegrees);
     fn(constraint.stretch);
+    // An IK/FK match's scalars, each in the one precision it is bound in.
+    if (constraint.ikFkMatch) {
+        for (auto &scalar : constraint.matchScalars) {
+            if (scalar.isFloat) fn(scalar.narrow);
+            else fn(scalar.wide);
+        }
+    }
 }
 
 template <class Obj, class Fn>

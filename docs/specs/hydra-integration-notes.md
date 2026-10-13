@@ -531,6 +531,8 @@ appController.py:1268-1273 opens the stage directly). What such a plugin *can*
 rely on: the Hydra prim data sources (points, xforms, primvars, etc. as
 already resolved by UsdImaging) and its own out-of-band channels.
 
+<a id="62-b-usdimagingsceneindexappendcallback--createsceneindicesinfo"></a>
+
 ### 6.2 (b) UsdImagingSceneIndexAppendCallback / CreateSceneIndicesInfo
 
 `UsdImagingCreateSceneIndicesInfo::overridesSceneIndexCallback`

@@ -733,6 +733,21 @@ table Constraint {
   twist_degrees: Input (required);
   weight_field: int = -1;
   stretch: Input;
+  // IK/FK match (RigExecIkFkMatchConstraint): target_slots are the IK
+  // control, pole and three FK controls; sources the three joints, the IK
+  // root and the effector.
+  ik_fk_match: bool;
+  /// inputs:switch, stretch, softDistance, upperScale, lowerScale, pin and
+  /// twist, each a Float or a Double read.
+  match_scalars: [Input];
+  /// rigExec:ikValue, scaleCalibration, upperLengthOffset, lowerLengthOffset.
+  match_constants: [double];
+  match_stretch_limb: bool;
+  /// pose.space_switches[] index of the pole's switch, or -1.
+  match_pole_switch: int = -1;
+  /// 0/1 per source of that switch: the source rides the IK control.
+  match_pole_source_rides: [ubyte];
+  match_pole_parent_rides: bool;
 
 }
 table WalkStep {

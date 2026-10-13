@@ -3491,12 +3491,18 @@ TestConstraintArraysAreEpochState()
     // a PositionConstraint consumes no offsets, but the prologue reads them.
     const SdfPath unread = position.AppendProperty(
         TfToken("inputs:translationOffsets"));
+    const uint64_t beforeAuthoring = evaluator->GetStageEditSerial();
     CHECK(stage->GetPrimAtPath(position)
               .CreateAttribute(unread.GetNameToken(),
                                SdfValueTypeNames->Double3Array)
               .Set(VtVec3dArray{GfVec3d(1, 2, 3)}));
     uint64_t read = step(UsdTimeCode(4), "unfolded channel authored");
     CHECK(reread(read));
+    // A new property is a property resync: logged by its path when the
+    // program absorbed it, otherwise not covered at all.
+    std::vector<SdfPath> edited;
+    CHECK(!evaluator->GetValueEditsSince(beforeAuthoring, &edited) ||
+          std::find(edited.begin(), edited.end(), unread) != edited.end());
     std::printf("constraint arrays: an unfolded channel authored %s the "
                 "program (disposition %d)\n",
                 read == kRebuilt ? "rebuilt" : "kept",
@@ -3548,6 +3554,9 @@ TestConstraintArraysAreEpochState()
     CHECK(stampOf() == stamp);
     checkFrozen(UsdTimeCode(4), "frozen, unfolded channel edited");
     CHECK(memoCurrent(memo));
+    // The value-edit log names the edited channel alone.
+    CHECK(evaluator->GetValueEditsSince(memo, &edited) &&
+          edited == std::vector<SdfPath>{unread});
     memo = memoSerial();
     // Only the animated weights move with the time; the edited channel is
     // read again once, and then holds.

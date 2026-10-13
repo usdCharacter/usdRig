@@ -1,26 +1,27 @@
 """
-IK/FK matching: pose one half of a limb onto what the other half is doing.
+IK/FK switching: hand a limb's joints to its other half without moving them.
 
-Qt-free. A limb is found from the rig itself: a RigExecBlendPointFrames
-whose `inputs:weight` is connected to a control's avar (the switch), with a
-RigExecFkChain on one input and a RigExecTwoBoneIk on the other. Nothing
-here knows the biped's names.
+Qt-free. The rig does the matching. A RigExecIkFkMatchConstraint on each
+limb keeps the half the switch is not on presented on the joints, and
+publishes every frame, as outputs:ikValues and outputs:fkValues, the
+channel values that half needs to drive the joints unchanged. A switch
+reads those values and authors them with the switch value, as one edit;
+nothing is solved here and no rig is evaluated for it.
 
-Two actions, kept separate so either can be used alone:
+A limb is found from its match constraint, so nothing here knows the
+biped's names. The values are read from a published pose
+(PoseValueReader), or in a host from the generation it last drew
+(SetPublishedValuesReader; rigExecUsdview installs one per session).
 
-    Match(...)   values for the INACTIVE half's controls that reproduce the
-                 limb's current joints;
-    Switch(...)  the value that hands the joints to that half.
+Layouts, as the schema states them:
 
-A menu's "Switch to IK / FK" applies both as one edit (see Plan).
+    outputs:ikValues = [ikControl tx ty tz rx ry rz, poleControl tx ty tz,
+                        upperScale, lowerScale]
+    outputs:fkValues = [fkControls[0..2] tx ty tz rx ry rz,
+                        upperScale, lowerScale]
 
-Every offset is measured on the rig, never chosen: an FK control's offset
-from its joint, the IK effector's from the end joint, and the pole's
-distance from the middle joint are all read at the limb's rest pose (every
-limb channel at identity, the switch on the half being measured). A
-control's channels are solved against the parent frame the evaluator
-reports for it (posed = avars * P), so spaces, rotation orders and
-`avars:rotationSign` need no special cases.
+A switch to FK also sets the pin and the twist to zero: both are the IK
+solve's own, and an FK pose has neither.
 
 Conventions: USD row vectors (a point maps as p * M, a child's world frame
 is local * parent); frames are asset space, as rigexec.Pose reports them.
@@ -31,42 +32,30 @@ import math
 from pxr import Gf, Sdf, Usd
 
 import gizmoMath
+import sessionRegistry
 
-FK_CHAIN = "RigExecFkChain"
-TWO_BONE_IK = "RigExecTwoBoneIk"
-BLEND = "RigExecBlendPointFrames"
+MATCH = "RigExecIkFkMatchConstraint"
 CONTROL = "RigExecControl"
 RIG_ROOT = "RigExecRoot"
 
 # The channels a match may write: translate and rotate. Scale is never
 # written -- an FK scale shears everything below it, so a stretched limb is
-# matched with translation along the bone, the way the rig lengthens FK.
+# matched with its stretch channels, the way the rig lengthens FK.
 _TRANSLATE = ("tx", "ty", "tz")
 _ROTATE = ("rx", "ry", "rz")
 _IDENTITY = {"tx": 0.0, "ty": 0.0, "tz": 0.0, "rx": 0.0, "ry": 0.0,
              "rz": 0.0, "rspin": 0.0, "sx": 1.0, "sy": 1.0, "sz": 1.0}
-# A limb straighter than this (the middle joint's distance from the line
-# through the ends, as a fraction of the limb's length) has no bend plane
-# to put the pole on.
-_STRAIGHT = 1e-4
-# A limb whose switch control carries these stretches and pins (the
-# solver's stretchPolicy softDistance): a switch carries the bone lengths
-# across in stretchTop / stretchBottom, as the FK chain lengthens by them.
-_STRETCH_TOP = "avars:stretchTop"
-_STRETCH_BOTTOM = "avars:stretchBottom"
-_PIN = "avars:pvPin"
-_TWIST = "avars:twist"
-_STRETCH = "avars:stretch"
-_SOFT = "avars:softStretch"
+IK_VALUES = "outputs:ikValues"
+FK_VALUES = "outputs:fkValues"
 
 
 class Limb(object):
-    """One switchable limb, found from its blend."""
+    """One switchable limb, found from its match constraint."""
 
-    def __init__(self, blend, switchControl, switchAttr, ikValue, joints,
+    def __init__(self, match, switchControl, switchAttr, ikValue, joints,
                  fkControls, ikControl, effector, pole, rigRoot,
-                 ikSolver=None):
-        self.blend = blend                  # Sdf.Path
+                 upperScale=None, lowerScale=None, pin=None, twist=None):
+        self.match = match                  # Sdf.Path of the constraint
         self.switchControl = switchControl  # Sdf.Path
         self.switchAttr = switchAttr        # "avars:ikfk"
         self.ikValue = ikValue              # switch value that selects IK
@@ -74,9 +63,17 @@ class Limb(object):
         self.fkControls = fkControls        # [Sdf.Path] x 3
         self.ikControl = ikControl          # Sdf.Path, the animator's IK
         self.effector = effector            # Sdf.Path, the solver target
-        self.pole = pole                    # Sdf.Path or None
+        self.pole = pole                    # Sdf.Path
         self.rigRoot = rigRoot              # Sdf.Path
-        self.ikSolver = ikSolver            # Sdf.Path of the two-bone IK
+        # The channels the match's stretch, pin and twist inputs read
+        # (attribute paths), or None where it reads none.
+        self.upperScale = upperScale
+        self.lowerScale = lowerScale
+        self.pin = pin
+        self.twist = twist
+        # The channel paths a switch may write, settled at discovery: the rig
+        # writes or drives none of them (Writable).
+        self.writable = None
 
     @property
     def fkValue(self):
@@ -88,21 +85,8 @@ class Limb(object):
 
     def Controls(self):
         """Every control this limb's switch concerns."""
-        paths = [self.switchControl] + list(self.fkControls) + \
-            [self.ikControl]
-        if self.pole is not None:
-            paths.append(self.pole)
-        return paths
-
-    def Stretches(self, stage):
-        """Whether this limb stretches and pins: its switch control has
-        the stretch channels the solver reads."""
-        prim = stage.GetPrimAtPath(self.switchControl)
-        return bool(prim and prim.GetAttribute(_STRETCH_TOP) and
-                    prim.GetAttribute(_STRETCH_BOTTOM))
-
-    def Channel(self, name):
-        return self.switchControl.AppendProperty(name)
+        return [self.switchControl] + list(self.fkControls) + \
+            [self.ikControl, self.pole]
 
     def IsIk(self, stage, time, current=None):
         """Whether the IK half drives the joints now (the switch is nearer
@@ -124,6 +108,18 @@ def _Targets(prim, name):
     return list(rel.GetTargets()) if rel else []
 
 
+def _One(prim, name):
+    targets = _Targets(prim, name)
+    return targets[0] if len(targets) == 1 else None
+
+
+def _Source(prim, name):
+    """The attribute `name` reads through its one connection, or None."""
+    attr = prim.GetAttribute(name)
+    sources = attr.GetConnections() if attr else []
+    return sources[0] if len(sources) == 1 else None
+
+
 def _RigRoot(prim):
     walk = prim
     while walk and walk.GetPath() != Sdf.Path.absoluteRootPath:
@@ -133,60 +129,53 @@ def _RigRoot(prim):
     return None
 
 
-def _IkControl(effector, root):
-    """The control the animator moves to place the IK effector: the
-    outermost control at or above it that is not also above the solver's
-    root. The effector hangs under it, sometimes through pivots that are
-    not controls (a foot's roll stack); the controls above the root -- the
-    rig's masters -- carry the whole limb and are not its IK control."""
-    found = None
-    walk = effector
-    while walk and walk.GetPath() != Sdf.Path.absoluteRootPath:
-        if root is not None and root.HasPrefix(walk.GetPath()):
-            break
-        if walk.GetTypeName() == CONTROL:
-            found = walk
-        walk = walk.GetParent()
-    return found
-
-
 def FindLimbs(stage):
-    """Every switchable limb on the stage."""
+    """Every switchable limb on the stage: one per match constraint, with
+    the channels a switch may write settled once."""
     limbs = []
+    written = None
     for prim in stage.Traverse():
-        if prim.GetTypeName() != BLEND:
+        if prim.GetTypeName() != MATCH:
             continue
-        weight = prim.GetAttribute("inputs:weight")
-        sources = weight.GetConnections() if weight else []
-        inputs = [_Targets(prim, "rigExec:inputA"),
-                  _Targets(prim, "rigExec:inputB")]
-        if len(sources) != 1 or not all(len(t) == 1 for t in inputs):
+        switch = _Source(prim, "inputs:switch")
+        ik, pole = _One(prim, "rigExec:ikControl"), _One(prim,
+                                                       "rigExec:poleControl")
+        effector = _One(prim, "rigExec:effector")
+        fk = _Targets(prim, "rigExec:fkControls")
+        joints = _Targets(prim, "rigExec:limbJoints")
+        if switch is None or ik is None or pole is None or effector is None \
+                or len(fk) != 3 or len(joints) != 3:
             continue
-        solvers = [stage.GetPrimAtPath(t[0]) for t in inputs]
-        kinds = [s.GetTypeName() if s else None for s in solvers]
-        if sorted(kinds) != sorted([FK_CHAIN, TWO_BONE_IK]):
-            continue
-        fk = solvers[kinds.index(FK_CHAIN)]
-        ik = solvers[kinds.index(TWO_BONE_IK)]
-        # The blend's weight selects input B at 1.
-        ikValue = 1.0 if kinds[1] == TWO_BONE_IK else 0.0
-        joints = _Targets(prim, "rigExec:joints")
-        fkControls = _Targets(fk, "rigExec:controls")
-        effectors = _Targets(ik, "rigExec:effectorControl")
-        poles = _Targets(ik, "rigExec:poleControl")
-        roots = _Targets(ik, "rigExec:rootControl")
-        if len(joints) != 3 or len(fkControls) != 3 or len(effectors) != 1:
-            continue
-        effector = stage.GetPrimAtPath(effectors[0])
-        ikControl = _IkControl(effector, roots[0] if roots else None)             if effector else None
-        if ikControl is None:
-            continue
-        source = sources[0]
+        ikValue = prim.GetAttribute("rigExec:ikValue")
+        ikValue = float(ikValue.Get()) if ikValue and \
+            ikValue.Get() is not None else 1.0
         limbs.append(Limb(
-            prim.GetPath(), source.GetPrimPath(), source.name, ikValue,
-            joints, fkControls, ikControl.GetPath(), effectors[0],
-            poles[0] if poles else None, _RigRoot(prim), ik.GetPath()))
+            prim.GetPath(), switch.GetPrimPath(), switch.name, ikValue,
+            joints, fk, ik, effector, pole, _RigRoot(prim),
+            _Source(prim, "inputs:upperScale"),
+            _Source(prim, "inputs:lowerScale"),
+            _Source(prim, "inputs:pin"), _Source(prim, "inputs:twist")))
+        if written is None:
+            written = RigWritten(stage)
+        limbs[-1].writable = Writable(stage, limbs[-1], written)
     return limbs
+
+
+def Writable(stage, limb, written):
+    """The set of channel paths a switch of `limb` may write: those that
+    exist, are not connected, and are written by no mover."""
+    out = set()
+    for control, names in ([(limb.ikControl, _TRANSLATE + _ROTATE),
+                            (limb.pole, _TRANSLATE)] +
+                           [(c, _TRANSLATE + _ROTATE)
+                            for c in limb.fkControls]):
+        for name in _Writable(stage, control, names, written):
+            out.add(control.AppendProperty("avars:" + name))
+    for path in (limb.upperScale, limb.lowerScale, limb.pin, limb.twist):
+        attr = stage.GetAttributeAtPath(path) if path is not None else None
+        if attr and path not in written and not attr.HasAuthoredConnections():
+            out.add(path)
+    return out
 
 
 def LimbFor(limbs, path):
@@ -198,6 +187,184 @@ def LimbFor(limbs, path):
         if path in limb.Controls() or path.HasPrefix(limb.ikControl):
             return limb
     return None
+
+
+# -- presentation ---------------------------------------------------------
+
+class MatchHalf(object):
+    """
+    What one RigExecIkFkMatchConstraint presents: while its switch sits on
+    the FK value the IK control, the pole and every control under them are
+    drawn on the joints; on the IK value the FK controls and every control
+    under them are. Their avars still drive nothing until the switch
+    changes, so a manipulator on one is drawn where it is shown
+    (gizmoMath._PreferPublishedFrame), and grabbing it switches the limb first.
+    """
+
+    def __init__(self, switch, ikValue, ikSide, fkSide):
+        self.switch = switch        # Sdf.Path of the switch channel
+        self.ikValue = ikValue
+        self.ikSide = ikSide        # set of control paths
+        self.fkSide = fkSide
+
+    @staticmethod
+    def From(prim):
+        attr = prim.GetAttribute("inputs:switch")
+        sources = attr.GetConnections() if attr else []
+        if len(sources) != 1:
+            return None
+        ikValue = prim.GetAttribute("rigExec:ikValue")
+        ikValue = float(ikValue.Get()) if ikValue and \
+            ikValue.Get() is not None else 1.0
+
+        def side(names):
+            roots = []
+            for name in names:
+                rel = prim.GetRelationship(name)
+                roots += list(rel.GetTargets()) if rel else []
+            controls = set()
+            stage = prim.GetStage()
+            for root in roots:
+                start = stage.GetPrimAtPath(root)
+                if not start:
+                    continue
+                for under in Usd.PrimRange(start):
+                    if under.GetTypeName() == "RigExecControl":
+                        controls.add(under.GetPath())
+            return controls
+        return MatchHalf(sources[0], ikValue,
+                         side(("rigExec:ikControl", "rigExec:poleControl")),
+                         side(("rigExec:fkControls",)))
+
+    def Presented(self, stage, time):
+        """The controls presented now: one side, or none between values."""
+        attr = stage.GetAttributeAtPath(self.switch)
+        value = attr.Get(time) if attr else None
+        if value is None:
+            return set()
+        value = float(value)
+        if abs(value - (1.0 - self.ikValue)) <= 1e-9:
+            return self.ikSide
+        if abs(value - self.ikValue) <= 1e-9:
+            return self.fkSide
+        return set()
+
+
+def PresentedBy(stage, path, time, halves):
+    """The MatchHalf of `halves` presenting `path` at `time`, or None."""
+    for half in halves:
+        if path in half.Presented(stage, time):
+            return half
+    return None
+
+
+# -- published values -----------------------------------------------------
+
+def PoseValueReader(pose):
+    """read(path) -> [float] or None over one rigexec.Pose."""
+    def read(path):
+        try:
+            return list(pose.moved_property(str(path)))
+        except (KeyError, TypeError):
+            return None
+    return read
+
+
+# The hosts' readers, one per usdview session: (stage, property path, time)
+# -> [float]/None from a generation of the stage as it stands at that time.
+# Each answers for its own session's stage only, so a read asks them all and
+# takes the answer. Filed under the session, and dropped with it.
+_publishedValuesReaders = sessionRegistry.SessionRegistry(
+    "ikfkMatch published values readers")
+
+
+def SetPublishedValuesReader(reader, session):
+    """Install `session`'s reader; None removes it."""
+    if reader is None:
+        _publishedValuesReaders.Pop(session)
+    else:
+        _publishedValuesReaders.Set(session, reader)
+
+
+def PublishedValueReader(stage, time):
+    """read(path) -> [float] or None from whichever host session draws
+    `stage`, at `time`; None when no session does."""
+    readers = list(_publishedValuesReaders.Values())
+    if not readers:
+        return None
+
+    def read(path):
+        for reader in readers:
+            values = reader(stage, path, time)
+            if values is not None:
+                return values
+        return None
+    return read
+
+
+def Values(limb, read, toIk):
+    """The published values of the half named by `toIk`, or raise."""
+    name = IK_VALUES if toIk else FK_VALUES
+    values = read(limb.match.AppendProperty(name))
+    count = 11 if toIk else 20
+    if values is None or len(values) != count or \
+            not all(math.isfinite(v) for v in values):
+        raise RuntimeError("%s published no %s" % (limb.match, name))
+    return values
+
+
+def Switch(limb, toIk):
+    """{attribute path: value} handing the limb's joints to the named
+    half."""
+    return {limb.switchPath: limb.ikValue if toIk else limb.fkValue}
+
+
+def Match(limb, stage, read, toIk, written=None):
+    """{attribute path: value} posing the half named by `toIk` onto the
+    limb's current joints, from the values the rig published. Channels the
+    rig writes or drives, or that do not exist, are left alone."""
+    writable = limb.writable
+    if writable is None or written is not None:
+        writable = Writable(stage, limb,
+                            written if written is not None
+                            else RigWritten(stage))
+    values = Values(limb, read, toIk)
+    out = {}
+
+    def put(control, names, numbers):
+        for name, number in zip(names, numbers):
+            path = control.AppendProperty("avars:" + name)
+            if path in writable:
+                out[path] = float(number)
+
+    def channel(path, value):
+        if path is not None and path in writable:
+            out[path] = float(value)
+
+    if toIk:
+        put(limb.ikControl, _TRANSLATE + _ROTATE, values[0:6])
+        put(limb.pole, _TRANSLATE, values[6:9])
+        channel(limb.upperScale, values[9])
+        channel(limb.lowerScale, values[10])
+    else:
+        for i, control in enumerate(limb.fkControls):
+            put(control, _TRANSLATE + _ROTATE, values[i * 6:i * 6 + 6])
+        channel(limb.upperScale, values[18])
+        channel(limb.lowerScale, values[19])
+        channel(limb.pin, 0.0)
+        channel(limb.twist, 0.0)
+    return out
+
+
+def Plan(limb, stage, time, read, toIk=None, written=None, current=None):
+    """Match then Switch, as one set of values: what a "Switch to IK / FK"
+    command authors. `toIk` defaults to the half that is not driving now.
+    """
+    if toIk is None:
+        toIk = not limb.IsIk(stage, time, current)
+    values = Match(limb, stage, read, toIk, written)
+    values.update(Switch(limb, toIk))
+    return values, toIk
 
 
 # -- frames and channels --------------------------------------------------
@@ -316,295 +483,10 @@ def RigWritten(stage):
     return written
 
 
-# -- rest offsets ---------------------------------------------------------
-
-class RestOffsets(object):
-    """The limb's fixed relationships, measured at its rest pose."""
-
-    def __init__(self, fk, effector, poleDistance, lengths=None):
-        self.fk = fk                    # [control * joint^-1] x 3
-        self.effector = effector        # end joint * effector^-1
-        self.poleDistance = poleDistance
-        self.lengths = lengths          # (upper, lower) rest bone lengths
-
-
-def MeasureRest(limb, stage, evaluate, time):
-    """Every limb channel at identity, the switch on IK (the effector and
-    pole relationships are IK's) -- FK controls ride their joints in either
-    half, which phase 0 measured, so one rest pose serves both."""
-    overrides = {}
-    for path in [limb.ikControl] + list(limb.fkControls) + \
-            ([limb.pole] if limb.pole is not None else []):
-        prim = stage.GetPrimAtPath(path)
-        for name, value in _IDENTITY.items():
-            attr = prim.GetAttribute("avars:" + name)
-            if attr and not attr.HasAuthoredConnections():
-                overrides[attr.GetPath()] = value
-    overrides[limb.switchPath] = limb.ikValue
-    if limb.Stretches(stage):
-        # The rest is the unstretched, unpinned limb.
-        overrides[limb.Channel(_STRETCH_TOP)] = 1.0
-        overrides[limb.Channel(_STRETCH_BOTTOM)] = 1.0
-        overrides[limb.Channel(_PIN)] = 0.0
-        if stage.GetAttributeAtPath(limb.Channel(_TWIST)):
-            overrides[limb.Channel(_TWIST)] = 0.0
-    pose = evaluate(overrides, time)
-    fkOverrides = dict(overrides)
-    fkOverrides[limb.switchPath] = limb.fkValue
-    fkPose = evaluate(fkOverrides, time)
-    fk = [ControlFrame(fkPose, c) * JointFrame(fkPose, j).GetInverse()
-          for c, j in zip(limb.fkControls, limb.joints)]
-    effector = JointFrame(pose, limb.joints[2]) * \
-        _Frame(pose, limb.effector).GetInverse()
-    poleDistance = None
-    if limb.pole is not None:
-        middle = JointFrame(pose, limb.joints[1]).ExtractTranslation()
-        poleDistance = (ControlFrame(pose, limb.pole).ExtractTranslation() -
-                        middle).GetLength()
-    points = [JointFrame(fkPose, j).ExtractTranslation() for j in limb.joints]
-    lengths = ((points[1] - points[0]).GetLength(),
-               (points[2] - points[1]).GetLength())
-    return RestOffsets(fk, effector, poleDistance, lengths)
-
-
-# -- limb lengths ---------------------------------------------------------
-
-def LimbLengths(rest, dist, poleUpper, poleLower, stretch, soft, top,
-                bottom, pin, calibration=0.0):
-    """The two bone lengths the IK solves with: RigExecLimbSegmentLengths
-    (rigExecMath/limbStretchKernel.h), the arithmetic it shares with the
-    evaluator, restated so a switch can solve for the stretch that gives
-    lengths it wants without evaluating the rig."""
-    stretch = min(max(stretch, 0.0), 1.0)
-    pin = min(max(pin, 0.0), 1.0)
-    a = rest[0] * (top - calibration)
-    b = rest[1] * (bottom - calibration)
-    chain = a + b
-    k = 1.0
-    soft = max(soft, 0.0)
-    if chain > 1e-12:
-        if soft > 1e-12 and dist > chain - soft:
-            eased = chain - soft * math.exp(-(dist - (chain - soft)) / soft)
-            if eased > 1e-12:
-                k = dist / eased
-        elif soft <= 1e-12 and dist > chain:
-            k = dist / chain
-    sa = stretch * k * a + (1.0 - stretch) * a
-    sb = stretch * k * b + (1.0 - stretch) * b
-    ua = stretch * sa + (1.0 - stretch) * rest[0] * top
-    ub = stretch * sb + (1.0 - stretch) * rest[1] * bottom
-    return (pin * poleUpper + (1.0 - pin) * ua,
-            pin * poleLower + (1.0 - pin) * ub)
-
-
-def SolveStretch(rest, dist, poleUpper, poleLower, stretch, soft, pin,
-                 calibration, want, start=(1.0, 1.0)):
-    """stretchTop / stretchBottom whose LimbLengths are `want`: Newton's
-    method on the two scales, with a finite-difference Jacobian. The map is
-    smooth and nearly diagonal, so it converges in a few steps; a pinned
-    limb, whose lengths ignore the scales, keeps `start`."""
-    top, bottom = start
-    for _ in range(30):
-        u, l = LimbLengths(rest, dist, poleUpper, poleLower, stretch, soft,
-                           top, bottom, pin, calibration)
-        eu, el = u - want[0], l - want[1]
-        if abs(eu) < 1e-10 and abs(el) < 1e-10:
-            break
-        h = 1e-6
-        u1, l1 = LimbLengths(rest, dist, poleUpper, poleLower, stretch,
-                             soft, top + h, bottom, pin, calibration)
-        u2, l2 = LimbLengths(rest, dist, poleUpper, poleLower, stretch,
-                             soft, top, bottom + h, pin, calibration)
-        j = ((u1 - u) / h, (u2 - u) / h, (l1 - l) / h, (l2 - l) / h)
-        det = j[0] * j[3] - j[1] * j[2]
-        if abs(det) < 1e-14:
-            break
-        top -= (j[3] * eu - j[1] * el) / det
-        bottom -= (-j[2] * eu + j[0] * el) / det
-    return top, bottom
-
-
-# -- the two actions ------------------------------------------------------
-
-def PolePosition(joints, distance, fallback):
-    """Where a pole goes for three joint positions: on their bend plane, on
-    the side the middle joint bends toward, `distance` from it. A limb too
-    straight to have a bend plane keeps `fallback`'s direction from the
-    middle joint, projected off the limb's line."""
-    root, middle, end = joints
-    line = end - root
-    length = line.GetLength()
-    if length < 1e-9:
-        return fallback
-    axis = line / length
-    offset = middle - root
-    bend = offset - axis * Gf.Dot(offset, axis)
-    if bend.GetLength() <= _STRAIGHT * length:
-        bend = fallback - middle
-        bend = bend - axis * Gf.Dot(bend, axis)
-        if bend.GetLength() < 1e-9:
-            return fallback
-    return middle + bend.GetNormalized() * distance
-
-
-def Match(limb, stage, evaluate, time, toIk, rest=None, written=None,
-          current=None):
-    """{attribute path: value} posing the half named by `toIk` onto the
-    limb's current joints. `evaluate(overrides, time)` returns a
-    rigexec.Pose for the stage with `overrides` ({attribute path: value})
-    applied on top; `rest` is MeasureRest's answer, measured when omitted.
-    `current` ({attribute path: value}) holds channel values that stand
-    over the stage's -- the ones `evaluate` is applying already, such as an
-    uncommitted preview -- so the solve starts from the pose that was
-    evaluated.
-    """
-    if rest is None:
-        rest = MeasureRest(limb, stage, evaluate, time)
-    if written is None:
-        written = RigWritten(stage)
-    pose = evaluate({}, time)
-    joints = [JointFrame(pose, j) for j in limb.joints]
-    values = {}
-    stretches = limb.Stretches(stage) and rest.lengths is not None
-    if toIk:
-        control = _Channels(stage, limb.ikControl, time, current)
-        controlFrame = ControlFrame(pose, limb.ikControl)
-        parent = control.Matrix().GetInverse() * controlFrame
-        # The effector rides the IK control (through a foot's roll stack,
-        # whose current values are kept): carry that relationship as it
-        # stands now.
-        carry = _Frame(pose, limb.effector) * controlFrame.GetInverse()
-        effectorTarget = rest.effector.GetInverse() * joints[2]
-        target = carry.GetInverse() * effectorTarget
-        solved = control.Solve(target, parent)
-        for name in _Writable(stage, limb.ikControl,
-                              _TRANSLATE + _ROTATE, written):
-            values[limb.ikControl.AppendProperty("avars:" + name)] = \
-                solved[name]
-        if limb.pole is not None and rest.poleDistance:
-            # The pole may live in a space that follows the IK control (a
-            # leg's pole follows the foot), so its parent frame is read
-            # with the IK control already where the match puts it.
-            moved = evaluate(values, time)
-            pole = _Channels(stage, limb.pole, time, current)
-            poleFrame = ControlFrame(moved, limb.pole)
-            poleParent = pole.Matrix().GetInverse() * poleFrame
-            points = [m.ExtractTranslation() for m in joints]
-            where = PolePosition(points, rest.poleDistance,
-                                 ControlFrame(pose, limb.pole)
-                                 .ExtractTranslation())
-            solvedPole = pole.SolveTranslate(where, poleParent)
-            for name in _Writable(stage, limb.pole, _TRANSLATE, written):
-                values[limb.pole.AppendProperty("avars:" + name)] = \
-                    solvedPole[name]
-        if stretches:
-            # The FK bones' lengths, kept: solve the stretch scales that make
-            # the IK solve with exactly these lengths, so the middle joint
-            # lands where FK had it.
-            points = [m.ExtractTranslation() for m in joints]
-            want = ((points[1] - points[0]).GetLength(),
-                    (points[2] - points[1]).GetLength())
-            if limb.pole is not None and rest.poleDistance:
-                polePoint = where
-            else:
-                polePoint = points[1]
-
-            def channel(name, fallback):
-                path = limb.Channel(name)
-                if current and path in current:
-                    return float(current[path])
-                return _Get(stage, path, time, fallback)
-            solver = stage.GetPrimAtPath(limb.ikSolver) \
-                if limb.ikSolver is not None else None
-            calibration = 0.0
-            if solver:
-                attr = solver.GetAttribute("rigExec:scaleCalibration")
-                if attr and attr.Get() is not None:
-                    calibration = float(attr.Get())
-            top, bottom = SolveStretch(
-                rest.lengths, (points[2] - points[0]).GetLength(),
-                (polePoint - points[0]).GetLength(),
-                (points[2] - polePoint).GetLength(),
-                channel(_STRETCH, 1.0), channel(_SOFT, 0.0),
-                channel(_PIN, 0.0), calibration, want,
-                (channel(_STRETCH_TOP, 1.0), channel(_STRETCH_BOTTOM, 1.0)))
-            values[limb.Channel(_STRETCH_TOP)] = top
-            values[limb.Channel(_STRETCH_BOTTOM)] = bottom
-    else:
-        if stretches:
-            # The IK bones' lengths carried into FK, whose chain lengthens
-            # by stretchTop / stretchBottom; the pin and twist are IK's own
-            # and go back to zero, as the FK pose has neither.
-            points = [m.ExtractTranslation() for m in joints]
-            values[limb.Channel(_STRETCH_TOP)] = \
-                (points[1] - points[0]).GetLength() / rest.lengths[0]
-            values[limb.Channel(_STRETCH_BOTTOM)] = \
-                (points[2] - points[1]).GetLength() / rest.lengths[1]
-            values[limb.Channel(_PIN)] = 0.0
-            if stage.GetAttributeAtPath(limb.Channel(_TWIST)):
-                values[limb.Channel(_TWIST)] = 0.0
-            # The FK controls' parent frames move with the new lengths.
-            pose = evaluate(values, time)
-
-        def place(pose, base):
-            # Root to end: each control's parent frame moves with the
-            # control above it, so carry the change down rather than
-            # re-evaluating. `base` holds the values `pose` was evaluated
-            # with, so a control already moved there is solved from them.
-            previousOld = previousNew = None
-            for control, joint, offset in zip(limb.fkControls, joints,
-                                              rest.fk):
-                channels = _Channels(stage, control, time, base)
-                old = ControlFrame(pose, control)
-                parent = channels.Matrix().GetInverse() * old
-                if previousOld is not None:
-                    parent = parent * previousOld.GetInverse() * previousNew
-                target = offset * joint
-                solved = channels.Solve(target, parent)
-                for name in _Writable(stage, control, _TRANSLATE + _ROTATE,
-                                      written):
-                    values[control.AppendProperty("avars:" + name)] = \
-                        solved[name]
-                new = channels.Matrix(solved) * parent
-                previousOld, previousNew = old, new
-
-        place(pose, current)
-        if stretches:
-            # The new lengths change the IK limb the pose above was taken
-            # from, and with it anything that estimates that limb (an auto
-            # clavicle turning the limb's root). Settle against the FK
-            # limb itself: there the placed controls, not the IK, decide.
-            for _ in range(2):
-                trial = dict(current or {})
-                trial.update(values)
-                trial[limb.switchPath] = limb.fkValue
-                place(evaluate(trial, time), trial)
-    return values
-
-
-def Switch(limb, toIk):
-    """{attribute path: value} handing the limb's joints to the named
-    half."""
-    return {limb.switchPath: limb.ikValue if toIk else limb.fkValue}
-
-
-def Plan(limb, stage, evaluate, time, toIk=None, rest=None, written=None,
-         current=None):
-    """Match then Switch, as one set of values: what a "Switch to IK / FK"
-    command authors. `toIk` defaults to the half that is not driving now.
-    """
-    if toIk is None:
-        toIk = not limb.IsIk(stage, time, current)
-    values = Match(limb, stage, evaluate, time, toIk, rest, written,
-                   current)
-    values.update(Switch(limb, toIk))
-    return values, toIk
-
-
-def Residual(limb, stage, evaluate, time, values):
+def Residual(limb, evaluate, time, values):
     """How far the limb's joints move when `values` are applied: (worst
     position error, worst rotation error in degrees) over its three
-    joints. A match that worked moves nothing."""
+    joints. A switch that matched moves nothing."""
     before = evaluate({}, time)
     after = evaluate(values, time)
     worstPosition = worstRotation = 0.0
@@ -620,7 +502,7 @@ def Residual(limb, stage, evaluate, time, values):
     return worstPosition, worstRotation
 
 
-# -- a private evaluator for a host --------------------------------------
+# -- a private evaluator, for space matching ------------------------------
 
 # Second stages over a host's layers, keyed by their root and session
 # layers, and the rigs compiled on them.
@@ -675,27 +557,20 @@ def Evaluator(stage, rigPath):
     evaluate.rig = rig
     return evaluate
 
-
 # -- applying a switch -----------------------------------------------------
 
-def PlanSwitch(stage, limbs, time, restCache=None):
-    """({attribute path: value}, [(limb, toIk, channels)]) that match and
-    switch every limb in `limbs` to its other half, without authoring.
-    `restCache` ({key: RestOffsets}) keeps the rest measurements between
-    calls; they change only with the rig's structure."""
+def PlanSwitch(stage, limbs, time, read=None):
+    """({attribute path: value}, [(limb, toIk, channels)]) that switch every
+    limb in `limbs` to its other half, matched, without authoring. `read`
+    defaults to the host session drawing `stage`."""
+    if read is None:
+        read = PublishedValueReader(stage, time)
+    if read is None:
+        raise RuntimeError("no rig publishes IK/FK values for this stage")
     values = {}
     done = []
     for limb in limbs:
-        evaluate = Evaluator(stage, limb.rigRoot)
-        rest = None
-        key = (limb.blend, evaluate.rig.binding_epoch_digest())
-        if restCache is not None:
-            rest = restCache.get(key)
-        if rest is None:
-            rest = MeasureRest(limb, stage, evaluate, time)
-            if restCache is not None:
-                restCache[key] = rest
-        planned, toIk = Plan(limb, stage, evaluate, time, rest=rest)
+        planned, toIk = Plan(limb, stage, time, read)
         values.update(planned)
         done.append((limb, toIk, len(planned) - 1))
     return values, done
@@ -708,12 +583,12 @@ def SwitchLabel(done):
         for limb, toIk, _ in done)
 
 
-def SwitchLimbs(stage, limbs, time, mode, undoStack=None, restCache=None):
-    """Match and switch every limb in `limbs` to its other half, authored
-    as ONE edit and one undo entry. `mode` is a gizmoMath write mode, so a
+def SwitchLimbs(stage, limbs, time, mode, undoStack=None, read=None):
+    """Switch every limb in `limbs` to its other half, matched, authored as
+    ONE edit and one undo entry. `mode` is a gizmoMath write mode, so a
     switch lands the way a drag does (keyed in animation mode). Returns
     [(limb, toIk, channels)] for the limbs switched."""
-    values, done = PlanSwitch(stage, limbs, time, restCache)
+    values, done = PlanSwitch(stage, limbs, time, read)
     if not values:
         return []
     label = SwitchLabel(done)

@@ -467,6 +467,12 @@ private:
         UsdTimeCode time, const RigExecRigPose &pose,
         PublishResult *result);
 
+    /// Fills \p published with a chain's program publication (shader
+    /// mode): the shared tables, this frame and the adjacent one.
+    void _PublishGpuDeform(UsdTimeCode time, const SdfPath &primPath,
+                           const RigExecGpuDeformPublication &publication,
+                           RigExecPublishedPrim *published);
+
     /// Serves \p time from the frame cache when a proven entry exists, or
     /// false to fall through to live evaluation. A hit never runs the
     /// evaluator (result.cacheHit); under RIGEXEC_FRAME_CACHE_VERIFY=1 the
@@ -535,6 +541,11 @@ public:
     {
         return _evaluator->GetProfiler();
     }
+    /// Whether a publication diffs against the previous generation into
+    /// PublishResult::dirtied (the default). A caller that combines the
+    /// generations and diffs the combination turns it off.
+    void SetPublishesDirtied(bool on) { _publishesDirtied = on; }
+
     RigExecProfiler *MutableProfiler() const
     {
         return const_cast<RigExecProfiler *>(&_evaluator->GetProfiler());
@@ -581,6 +592,15 @@ private:
         bool opacityLive = false;
         bool hasOpacity = false;
         float opacity = 1.0f;
+        /// A connected opacity's static half (_ReadGuideStyle's rule), read
+        /// once: the source it reads and the invert and floor applied to
+        /// it. `opacityRuleHeld` is false where any of those can move
+        /// without a notice, and the whole rule is then read every time.
+        bool opacityRuleReady = false;
+        bool opacityRuleHeld = false;
+        UsdAttribute opacitySource;
+        bool opacityInvert = false;
+        double opacityFloor = 0.0;
         bool controlReady = false;
         bool controlLive = false;
         TfToken shape;
@@ -604,6 +624,9 @@ private:
                                const RigExecRigPose &pose,
                                RigExecPublishedPrim *published) const;
     double _GuideRadius(_GuideInputs &inputs, UsdTimeCode time) const;
+    void _ReadOpacityRule(_GuideInputs &inputs, UsdTimeCode time) const;
+    float _HeldOpacity(const _GuideInputs &inputs, const RigExecRigPose &pose,
+                       float fallback) const;
     const std::map<SdfPath, std::vector<SdfPath>> &
     _JointChildren(const RigExecRigPose &pose) const;
 
@@ -613,12 +636,28 @@ private:
     RigExecResultsSceneIndexRefPtr _results;
     static constexpr size_t _kFreshDigestCap = 1024;
     uint64_t _generation = 0;
+    /// Program publications (RigExecGpuDeformMode::Shader): each layout's
+    /// tables as Hydra arrays, built once, and per mesh the last frame
+    /// published with its time, for velocities.
+    std::map<uint64_t,
+             std::shared_ptr<const RigExecPublishedPrim::GpuDeformStatic>>
+        _gpuDeformStatics;
+    struct _GpuDeformLast {
+        double time = 0.0;
+        bool numeric = false;
+        uint64_t serial = 0;
+        uint64_t frameVersion = 0;
+        VtFloatArray frame;
+        VtFloatArray previous;
+    };
+    std::map<SdfPath, _GpuDeformLast> _gpuDeformLast;
     size_t _publishedEpochDigest = 0;
     /// This rig's frame cache, held shared so background completions can
     /// publish into it after the session that sampled them is gone.
     std::shared_ptr<RigExecFrameCache> _frameCache;
     /// The shared warm-frame index, or null for a bare bridge.
     std::shared_ptr<RigExecWarmFrameIndex> _warmIndex;
+    bool _publishesDirtied = true;
     /// The memoized affected-set table for sparse planning (Stream D): the
     /// capture index retires its epochs here, beside the frames.
     RigExecTaskListCache _taskListMemo;
@@ -638,6 +677,11 @@ private:
     /// attribute on a control high in the hierarchy is not moved by an edit
     /// to a control below it.
     mutable std::vector<SdfPath> _liveChainPrims;
+    /// The chain movers alone, whose every property a binding reads, and
+    /// the chain targets: on a target's prim only the target itself is
+    /// bound, so an avar beside it moves nothing.
+    mutable std::vector<SdfPath> _liveChainMovers;
+    mutable std::vector<SdfPath> _liveChainTargets;
     /// The weight objects the chains read, matched with their subtrees: a
     /// weight's answer can come from geometry parented under it.
     mutable std::vector<SdfPath> _liveChainWeights;
@@ -682,6 +726,11 @@ private:
     uint64_t _freshEpoch = 0;
     bool _freshEpochValid = false;
     uint64_t _cacheEditSerial = 0;
+    /// The time and stage edit serial of the last publication: the same
+    /// time under a newer serial is the frame an edit was just made at.
+    UsdTimeCode _publishedTime = UsdTimeCode::Default();
+    uint64_t _publishedSerial = 0;
+    bool _publishedTimeValid = false;
     const RigExecBakedProgram *_sampleSupportProgram = nullptr;
     uint64_t _sampleSupportEpoch = 0;
     uint64_t _sampleSupportSerial = 0;

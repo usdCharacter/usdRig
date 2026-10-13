@@ -20,16 +20,11 @@
 # only things that move are the ones that go to the overflow column,
 # which is read, not flicked.
 #
-# STUBS. Three items are declared here that have no action behind them
-# yet; each is marked `stub=True` and called out in a comment where it is
-# declared. Stage 2 wires the rest and must decide, for each of these,
-# whether to implement it or drop it:
+# The Selection menu is the viewport's right-click menu for rig controls
+# (markingMenuUI); the Modes menu is not bound to anything yet.
 #
-#   selection.counterpart   -- "Select counterpart" (the mirrored control)
-#                              needs a naming convention or an authored
-#                              pairing on the rig; neither exists yet.
-#   selection.addToPicker   -- "Add to picker" needs a picker edit path;
-#                              pickerScene reads, it does not write.
+# STUBS. An item declared before its action exists is marked `stub=True`
+# and listed in STUBS; there are none at present.
 #
 # A stub item still resolves and still draws; `ResolvedItem.stub` is how
 # the widget can grey it out or badge it rather than silently doing
@@ -94,17 +89,11 @@ SELECTION = Menu(
              dir="NW", when="limb", read="limbIsIk", write="ToggleFkIk"),
         dict(id="selection.space", label="Space", kind=SUBMENU, dir="NE",
              when="hasSpaces", children="spaces"),
-        # STUB: no action yet. "Select counterpart" means the mirrored
-        # control, and nothing on the rig says which control mirrors
-        # which -- the biped's names imply it, the schema does not.
+        # The mirrored control, found by its name's side marker (L_/R_,
+        # _l_/_r_ and the like).
         dict(id="selection.counterpart", label="Select counterpart",
              kind=ACTION, dir="SW", when="control",
-             write="SelectCounterpart", stub=True),
-        # STUB: no action yet. pickerScene reads pickers off the stage;
-        # writing a button back into one is unbuilt.
-        dict(id="selection.addToPicker", label="Add to picker",
-             kind=ACTION, dir="SE", when="control", write="AddToPicker",
-             stub=True),
+             write="SelectCounterpart"),
         # The stacked column beside the ring, and declared so rather
         # than merely left over: usdview's own prim context menu is long,
         # rarely wanted and impossible to flick at, and it must not be
@@ -165,4 +154,4 @@ MENUS = {SELECTION.id: SELECTION, MODES.id: MODES}
 # The items declared with no action behind them. Kept as a list, not
 # just a flag on each record, so stage 2 has one thing to read and one
 # thing to empty.
-STUBS = ("selection.counterpart", "selection.addToPicker")
+STUBS = ()

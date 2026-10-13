@@ -189,7 +189,9 @@ int main() {
         CHECK(RigExecBindAutoClavicle(scene,owner,context,0,8,&operation,&error));
         CHECK(reads.size()==7);
         for(const auto &request:reads) {
-            CHECK(request.phase==TfToken(request.source.HasPrefix(target)?"preceding":"final"));
+            // Independent providers are read as their channels put them,
+            // never as a later constraint revises them.
+            CHECK(request.phase==TfToken(request.source.HasPrefix(target)?"preceding":"base"));
             CHECK(request.reader==owner);
         }
         RigExecTypedValueStore values(9);

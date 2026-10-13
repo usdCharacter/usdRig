@@ -1156,6 +1156,80 @@ RigExecImagingBridge::_GuideRadius(_GuideInputs &inputs,
     return inputs.radius;
 }
 
+// The static half of _ReadGuideStyle's connected-opacity rule, into
+// \p inputs: held only for a single property connection whose invert and
+// floor cannot move without a notice on this prim, which drops the entry
+// (NoteGuideEdits, _SyncGuideCaches).
+void
+RigExecImagingBridge::_ReadOpacityRule(_GuideInputs &inputs,
+                                       UsdTimeCode time) const
+{
+    inputs.opacityRuleReady = true;
+    inputs.opacityRuleHeld = false;
+    const UsdPrim &prim = inputs.prim;
+    SdfPathVector connections;
+    if (!inputs.opacityAttr.GetConnections(&connections) ||
+        connections.empty() || !connections.front().IsPropertyPath()) {
+        return;
+    }
+    const UsdAttribute invert = prim.GetAttribute(_tGuideDisplayOpacityInvert);
+    const UsdAttribute floor = prim.GetAttribute(_tGuideDisplayOpacityMin);
+    if (_GuideAttrIsLive(invert) || _GuideAttrIsLive(floor)) {
+        return;
+    }
+    inputs.opacityInvert = false;
+    if (invert) {
+        invert.Get(&inputs.opacityInvert, time);
+    }
+    double value = _kDefaultGuideOpacityMin;
+    if (floor) {
+        VtValue held;
+        double authored = 0.0;
+        if (floor.Get(&held, time) && _HeldScalar(held, &authored)) {
+            value = authored;
+        }
+    }
+    inputs.opacityFloor = std::min(1.0, std::max(0.0, value));
+    inputs.opacitySource =
+        prim.GetStage()->GetAttributeAtPath(connections.front());
+    inputs.opacityRuleHeld = true;
+}
+
+// _ReadGuideStyle's connected-opacity rule over the held static half: the
+// dial read as _ReadConnectedValue reads it, else the attribute's own value
+// (\p fallback where it holds none).
+float
+RigExecImagingBridge::_HeldOpacity(const _GuideInputs &inputs,
+                                   const RigExecRigPose &pose,
+                                   float fallback) const
+{
+    VtValue held;
+    bool read = false;
+    const auto phased = pose.movedProperties.find(inputs.opacityAttr.GetPath());
+    if (phased != pose.movedProperties.end() && !phased->second.IsEmpty()) {
+        held = phased->second;
+        read = true;
+    } else if (inputs.opacitySource) {
+        const auto moved =
+            pose.movedProperties.find(inputs.opacitySource.GetPath());
+        if (moved != pose.movedProperties.end() && !moved->second.IsEmpty()) {
+            held = moved->second;
+            read = true;
+        } else {
+            read = inputs.opacitySource.Get(&held, pose.time);
+        }
+    }
+    double driven = 0.0;
+    if (read && _HeldScalar(held, &driven)) {
+        const double opacity = inputs.opacityInvert ? 1.0 - driven : driven;
+        return static_cast<float>(
+            std::min(1.0, std::max(inputs.opacityFloor, opacity)));
+    }
+    float opacity = fallback;
+    inputs.opacityAttr.Get(&opacity, pose.time);
+    return opacity;
+}
+
 void
 RigExecImagingBridge::_ReadGuideStyleCached(
     _GuideInputs &inputs, const RigExecRigPose &pose,
@@ -1198,11 +1272,20 @@ RigExecImagingBridge::_ReadGuideStyleCached(
     }
     if (inputs.opacityAttr) {
         if (inputs.opacityLive) {
-            // The live half is _ReadGuideStyle's opacity rule verbatim
-            // (connected dial, invert, floor): only the static half is new.
-            RigExecPublishedPrim scratch;
-            _ReadGuideStyle(prim, pose, &scratch);
-            published->guideOpacity = scratch.guideOpacity;
+            if (!inputs.opacityRuleReady) {
+                _ReadOpacityRule(inputs, time);
+            }
+            if (inputs.opacityRuleHeld) {
+                // A fresh prim's opacity, as _ReadGuideStyle's scratch.
+                static const float unread = RigExecPublishedPrim().guideOpacity;
+                published->guideOpacity = _HeldOpacity(inputs, pose, unread);
+            } else {
+                // _ReadGuideStyle's opacity rule verbatim (connected dial,
+                // invert, floor), every part of it read again.
+                RigExecPublishedPrim scratch;
+                _ReadGuideStyle(prim, pose, &scratch);
+                published->guideOpacity = scratch.guideOpacity;
+            }
         } else if (inputs.hasOpacity) {
             published->guideOpacity = inputs.opacity;
         }
@@ -2195,12 +2278,21 @@ RigExecImagingBridge::_NoteChainBindings(
         return;
     }
     // Whether an edit to `path` -- a value, a connection, or a property spec
-    // created or removed -- can move a bound chain: ON a chain mover or a
-    // target's prim, or anywhere under a weight object.
+    // created or removed -- can move a bound chain: any property of a chain
+    // mover, a chain target itself, or anything under a weight object. A
+    // mover's connected input reads its source live, so a value beside a
+    // target on the same prim (a switch on the control a chain writes to)
+    // moves no binding; prim-level info on a mover or a target's prim
+    // still does.
     const auto touchesChain = [this](const SdfPath &path) {
         const SdfPath prim = path.GetPrimPath();
-        if (std::binary_search(_liveChainPrims.begin(),
-                               _liveChainPrims.end(), prim)) {
+        const auto has = [](const std::vector<SdfPath> &list,
+                            const SdfPath &key) {
+            return std::binary_search(list.begin(), list.end(), key);
+        };
+        if (path.IsPropertyPath()
+                ? has(_liveChainMovers, prim) || has(_liveChainTargets, path)
+                : has(_liveChainPrims, prim)) {
             return true;
         }
         for (const SdfPath &weight : _liveChainWeights) {
@@ -2242,6 +2334,8 @@ RigExecImagingBridge::_EnsureChainBindings() const
     }
     _liveChainValid = false;
     _liveChainPrims.clear();
+    _liveChainMovers.clear();
+    _liveChainTargets.clear();
     _liveChainWeights.clear();
     RigExecChainSampleBindings bound;
     if (!RigExecBindChainSampleInputs(*_evaluator, &bound)) {
@@ -2249,14 +2343,17 @@ RigExecImagingBridge::_EnsureChainBindings() const
     }
     for (const RigExecChainSampleChain &chain : bound.chains) {
         _liveChainPrims.push_back(chain.targetPath.GetPrimPath());
+        _liveChainTargets.push_back(chain.targetPath);
         for (const RigExecChainSampleRevision &revision : chain.revisions) {
             _liveChainPrims.push_back(revision.moverPath);
+            _liveChainMovers.push_back(revision.moverPath);
             _liveChainWeights.insert(_liveChainWeights.end(),
                                      revision.weightObjects.begin(),
                                      revision.weightObjects.end());
         }
     }
-    for (std::vector<SdfPath> *list : {&_liveChainPrims, &_liveChainWeights}) {
+    for (std::vector<SdfPath> *list : {&_liveChainPrims, &_liveChainMovers,
+                                       &_liveChainTargets, &_liveChainWeights}) {
         std::sort(list->begin(), list->end());
         list->erase(std::unique(list->begin(), list->end()), list->end());
     }
@@ -2322,7 +2419,9 @@ RigExecImagingBridge::_CanSampleCacheInputs()
         return false;
     }
     const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
-    const uint64_t serial = _evaluator->GetStageEditSerial();
+    // Whether the program freezes is a question about connections and
+    // prims, which no value edit moves.
+    const uint64_t serial = _evaluator->GetStageStructureSerial();
     if (!_sampleSupportValid || _sampleSupportProgram != program ||
         _sampleSupportEpoch != epoch || _sampleSupportSerial != serial) {
         _sampleSupport = RigExecCanFreezeProgram(*_evaluator);
@@ -2803,6 +2902,61 @@ RigExecImagingBridge::_MemoizeLiveResult(
 }
 
 void
+RigExecImagingBridge::_PublishGpuDeform(
+    UsdTimeCode time, const SdfPath &primPath,
+    const RigExecGpuDeformPublication &publication,
+    RigExecPublishedPrim *published)
+{
+    if (!publication.layout || !publication.frame) {
+        return;
+    }
+    const RigExecGpuDeformLayout &layout = *publication.layout;
+    // The tables once per layout; a layout no publication names any more is
+    // dropped when the cache would otherwise grow past a handful.
+    auto &statics = _gpuDeformStatics[layout.serial];
+    if (!statics) {
+        if (_gpuDeformStatics.size() > 32) {
+            _gpuDeformStatics.clear();
+        }
+        auto built = std::make_shared<RigExecPublishedPrim::GpuDeformStatic>();
+        built->serial = layout.serial;
+        built->ops.assign(layout.ops.begin(), layout.ops.end());
+        built->staticF.assign(layout.staticF.begin(), layout.staticF.end());
+        built->staticI.assign(layout.staticI.begin(), layout.staticI.end());
+        built->opCount = int(layout.OpCount());
+        built->pointCount = layout.pointCount;
+        statics = built;
+        _gpuDeformStatics[layout.serial] = statics;
+    }
+    published->gpuDeform =
+        std::make_shared<const RigExecGpuDeformPublication>(publication);
+    published->gpuDeformStatic = statics;
+    // Velocities difference this frame against the one a frame earlier,
+    // in units per second; anything else (a drag at one time, a jump, a
+    // new layout) has no adjacent frame and publishes zero.
+    _GpuDeformLast &last = _gpuDeformLast[primPath];
+    if (last.serial != layout.serial ||
+        last.frameVersion != publication.frameVersion ||
+        last.numeric != time.IsNumeric() ||
+        (time.IsNumeric() && last.time != time.GetValue())) {
+        VtFloatArray frame(publication.frame->begin(), publication.frame->end());
+        const bool adjacent = time.IsNumeric() && last.numeric &&
+                              last.serial == layout.serial &&
+                              std::abs(time.GetValue() - last.time - 1.0) < 1e-6;
+        last.previous = adjacent ? last.frame : frame;
+        last.frame = frame;
+        last.serial = layout.serial;
+        last.frameVersion = publication.frameVersion;
+        last.numeric = time.IsNumeric();
+        last.time = time.IsNumeric() ? time.GetValue() : 0.0;
+    }
+    published->gpuDeformFrame = last.frame;
+    published->gpuDeformPreviousFrame = last.previous;
+    published->gpuDeformVelocityScale =
+        _stage ? float(_stage->GetTimeCodesPerSecond()) : 24.0f;
+}
+
+void
 RigExecImagingBridge::_PublishPoseSnapshot(
     UsdTimeCode time, const RigExecRigPose &pose, PublishResult *result)
 {
@@ -2847,6 +3001,13 @@ RigExecImagingBridge::_PublishPoseSnapshot(
         // below and makes the scene index resolve a prim RigExec publishes
         // nothing for. Look the entry up only once there is something to
         // put in it.
+        if (property == "points" &&
+            value.IsHolding<RigExecGpuDeformPublication>()) {
+            _PublishGpuDeform(time, primPath,
+                              value.UncheckedGet<RigExecGpuDeformPublication>(),
+                              &snapshot->prims[primPath]);
+            continue;
+        }
         const bool isGeometry =
             value.IsHolding<VtVec3fArray>() &&
             (property == "points" || property == "normals" ||
@@ -2864,6 +3025,9 @@ RigExecImagingBridge::_PublishPoseSnapshot(
             } else if (value.IsHolding<double>()) {
                 snapshot->movedFloats[propertyPath] =
                     static_cast<float>(value.UncheckedGet<double>());
+            } else if (value.IsHolding<VtDoubleArray>()) {
+                snapshot->movedArrays[propertyPath] =
+                    value.UncheckedGet<VtDoubleArray>();
             }
             continue;
         }
@@ -2914,7 +3078,11 @@ RigExecImagingBridge::_PublishPoseSnapshot(
     {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.StorePublish",
                                   "imaging");
-        result->dirtied = _store->Publish(std::move(snapshot));
+        if (_publishesDirtied) {
+            result->dirtied = _store->Publish(std::move(snapshot));
+        } else {
+            _store->Replace(std::move(snapshot));
+        }
     }
     result->ok = true;
 }
@@ -2984,9 +3152,18 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
         _freshDigests.clear();
     }
     _cacheEditSerial = serial;
+    // The frame an edit was just made at is not looked up: the evaluator
+    // re-runs only the edit's cone from the generation it just published,
+    // which no lookup beats -- one that misses first re-samples every input
+    // the edit's serial retired. The live result still memoizes.
+    const bool editedHere = _publishedTimeValid && _publishedTime == time &&
+                            _publishedSerial != serial;
+    _publishedTime = time;
+    _publishedSerial = serial;
+    _publishedTimeValid = true;
     const bool useCache = cacheMode != RigExecFrameCacheMode::Off &&
                           _interactiveOverrides.empty();
-    if (useCache && _TryPublishCachedResult(time, &result)) {
+    if (useCache && !editedHere && _TryPublishCachedResult(time, &result)) {
         return result;
     }
     // 1. Evaluation always completes before publication (spec §8.2).
@@ -3134,6 +3311,9 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
                 } else if (value.IsHolding<double>()) {
                     snapshot->movedFloats[propertyPath] =
                         static_cast<float>(value.UncheckedGet<double>());
+                } else if (value.IsHolding<VtDoubleArray>()) {
+                    snapshot->movedArrays[propertyPath] =
+                        value.UncheckedGet<VtDoubleArray>();
                 }
                 continue;
             }

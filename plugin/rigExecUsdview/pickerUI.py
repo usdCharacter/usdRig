@@ -1244,6 +1244,11 @@ class PickerPanel(QtWidgets.QDialog):
         # reads back whatever state the rig happened to be exported in
         # until the animator clicks it once. Same source of truth as the
         # half that is drawn, or the panel contradicts itself.
+        # A switch shown but not yet authored keeps the label it was
+        # given: the stage still holds the old value until the commit.
+        pending = set()
+        if self._pendingCommit is not None:
+            pending = set(str(p) for p in self._pendingCommit[1].Pending())
         relabelled = False
         buttons = [b for picker in self._pickers for b in picker.buttons]
         for button in buttons:
@@ -1254,17 +1259,24 @@ class PickerPanel(QtWidgets.QDialog):
             attr = prim.GetAttribute(target["attr"]) if prim else None
             if not attr or not attr.IsValid():
                 continue
+            if str(attr.GetPath()) in pending:
+                continue
             label = button.label_for(attr.Get(frame))
             if label and label != button.value:
                 button.value = label
                 relabelled = True
 
+        # Listeners hear of it only when something they draw moved: this
+        # runs on every frame change, and the hover picker repaints on
+        # each "update".
+        changed = relabelled or modes != self._modes
         self._modes = dict(modes)
         for view in self._views:
             view.set_modes(modes)
             if relabelled:
                 view.update()
-        self._Notify("update")
+        if changed:
+            self._Notify("update")
         return modes
 
     def _ShowPanel(self, index):
@@ -1334,7 +1346,6 @@ class PickerPanel(QtWidgets.QDialog):
         if getattr(self, "_limbStage", None) is not stage:
             self._limbStage = stage
             self._limbs = ikfkMatch.FindLimbs(stage)
-            self._limbRest = {}
         for limb in self._limbs:
             if limb.switchPath == path:
                 return limb
@@ -1342,14 +1353,14 @@ class PickerPanel(QtWidgets.QDialog):
 
     def _MatchedSwitch(self, button, target, limb):
         """Switch a limb to its other half without moving it: the half
-        taking over is matched to the joints first (ikfkMatch.Plan), and
-        both land as one edit and one undo entry. False when the match
-        could not be made, so the caller falls back to a plain toggle."""
+        taking over gets the values its rig published for the joints
+        (ikfkMatch.Plan), and both land as one edit and one undo entry.
+        False when there were none to read, so the caller falls back to a
+        plain toggle."""
         stage = self._stage()
         try:
             time = self._Frame()
-            values, done = ikfkMatch.PlanSwitch(stage, [limb], time,
-                                                self._limbRest)
+            values, done = ikfkMatch.PlanSwitch(stage, [limb], time)
             if values:
                 self._PreviewThenCommit(values, ikfkMatch.SwitchLabel(done),
                                         time, self._WriteMode())
@@ -1456,10 +1467,9 @@ class PickerPanel(QtWidgets.QDialog):
         if control is None:
             return None
         try:
-            rig = ikfkMatch._RigRoot(stage.GetPrimAtPath(control))
-            evaluate = ikfkMatch.Evaluator(stage, rig)
+            # The values the rig published for this space: no solve here.
             plan = spaceMatch.Plan(stage, control, attr.GetPath(), value,
-                                   time, evaluate)
+                                   time)
             self._PreviewThenCommit(plan, "Switch %s to %s"
                                     % (control.name, label), time, mode)
         except Exception as error:
@@ -1542,6 +1552,9 @@ class PickerPanel(QtWidgets.QDialog):
             # Expected to publish through its notice and authored nothing:
             # put the authored rig back on screen.
             gizmoPreview.Republish(session=self._api)
+        # A space switch is not a dial, so its notice does not resync the
+        # labels; read them back from what was just authored.
+        self._RefreshModes()
 
     def _OnSelectionChanged(self, *args):
         model = getattr(self._api, "dataModel", None)

@@ -34,6 +34,7 @@ target_link_libraries(_rigexec PRIVATE
     rigExec
     rigExecScene
     rigExecOracle
+    rigExecGpu
     usd sdf tf gf vt)
 
 # The installed extension lands in lib/python while rigExec/rigExecRigging land

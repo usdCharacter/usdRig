@@ -10,6 +10,14 @@ Coordinates are the viewport's logical pixels, origin top-left. A tab's
 (x, y) is the centre of its handle; its buttons hang below it with their
 top-left corner under the handle's left edge, at the tab's scale.
 
+A tab is saved against the viewport corner nearest to where it was put
+down -- so many pixels from the right edge and the top, say -- and placed
+from that for whatever size the viewport is now (`Place`). It follows its
+corner as the window is resized, and is pushed back inside a viewport too
+small for where it was saved: the whole group when it fits, the handle at
+least. The saved anchor itself only changes when the tab is moved, so it
+goes back to its own place when the viewport grows again.
+
 The layout is a viewer preference, never scene data: it is saved per user
 (`ToJson` / `FromJson`), keyed by the picker and the tab it shows.
 """
@@ -66,21 +74,78 @@ class TabLayout(object):
     def __init__(self, key, x=0.0, y=0.0, scale=1.0, opacity=1.0,
                  collapsed=False):
         self.key = key
+        # Where the handle is drawn now, for the viewport's current size.
         self.x = float(x)
         self.y = float(y)
+        # Where it is saved: the corner it is anchored to ("left"/"right",
+        # "top"/"bottom") and the handle's distance from those edges.
+        self.ax, self.ay = "left", "top"
+        self.dx, self.dy = float(x), float(y)
         self.scale = _Clamp(float(scale), MIN_SCALE, MAX_SCALE)
         self.opacity = _Clamp(float(opacity), MIN_OPACITY, MAX_OPACITY)
         self.collapsed = bool(collapsed)
 
     def ToDict(self):
-        return {"x": self.x, "y": self.y, "scale": self.scale,
-                "opacity": self.opacity, "collapsed": self.collapsed}
+        # The anchor, not where the handle happens to be drawn: that is
+        # derived from the anchor for whatever size the viewport is.
+        return {"scale": self.scale, "opacity": self.opacity,
+                "collapsed": self.collapsed,
+                "anchor": [self.ax, self.ay],
+                "offset": [self.dx, self.dy]}
 
     @classmethod
     def FromDict(cls, key, data):
-        return cls(key, data.get("x", 0.0), data.get("y", 0.0),
-                   data.get("scale", 1.0), data.get("opacity", 1.0),
-                   data.get("collapsed", False))
+        tab = cls(key, data.get("x", 0.0), data.get("y", 0.0),
+                  data.get("scale", 1.0), data.get("opacity", 1.0),
+                  data.get("collapsed", False))
+        # A layout saved before anchors were kept is a top-left one.
+        anchor = data.get("anchor")
+        offset = data.get("offset")
+        if isinstance(anchor, (list, tuple)) and len(anchor) == 2 and \
+                anchor[0] in ("left", "right") and \
+                anchor[1] in ("top", "bottom") and \
+                isinstance(offset, (list, tuple)) and len(offset) == 2:
+            tab.ax, tab.ay = anchor[0], anchor[1]
+            tab.dx, tab.dy = float(offset[0]), float(offset[1])
+        return tab
+
+    # -- the viewport -----------------------------------------------------
+
+    def Anchor(self, viewWidth, viewHeight):
+        """Save where the handle is now against the nearest corner."""
+        self.ax = "left" if self.x <= viewWidth * 0.5 else "right"
+        self.ay = "top" if self.y <= viewHeight * 0.5 else "bottom"
+        self.dx = self.x if self.ax == "left" else viewWidth - self.x
+        self.dy = self.y if self.ay == "top" else viewHeight - self.y
+
+    def Place(self, viewWidth, viewHeight, size=None):
+        """Put the handle where its anchor says for a viewport this size,
+        then keep it on screen. `size` is the buttons' (width, height) on
+        screen, or None when only the handle is drawn."""
+        x = self.dx if self.ax == "left" else viewWidth - self.dx
+        y = self.dy if self.ay == "top" else viewHeight - self.dy
+        r = HANDLE_RADIUS
+        left, top = x - r, y - r
+        right, bottom = x + r, y + r
+        if size is not None and not self.collapsed:
+            cx, cy = x - r, y + r + HANDLE_GAP
+            right = max(right, cx + size[0])
+            bottom = max(bottom, cy + size[1])
+        # The whole group, where it fits.
+        if right - left <= viewWidth:
+            if left < 0.0:
+                x -= left
+            elif right > viewWidth:
+                x -= right - viewWidth
+        if bottom - top <= viewHeight:
+            if top < 0.0:
+                y -= top
+            elif bottom > viewHeight:
+                y -= bottom - viewHeight
+        # And the handle always: it is how the tab is got back.
+        margin = r + 2.0
+        self.x = _Clamp(x, margin, max(margin, viewWidth - margin))
+        self.y = _Clamp(y, margin, max(margin, viewHeight - margin))
 
     # -- geometry ---------------------------------------------------------
 
@@ -154,10 +219,11 @@ class Layout(object):
         `fitScales` maps a key to the scale it should start at."""
         fitScales = fitScales or {}
         placed = [t for t in self.tabs.values()
-                  if abs(t.y - FIRST_HANDLE[1]) < 1e-6]
+                  if t.ax == "left" and t.ay == "top" and
+                  abs(t.dy - FIRST_HANDLE[1]) < 1e-6]
         nextX = FIRST_HANDLE[0]
         if placed:
-            nextX = max(t.x for t in placed) + HANDLE_SPACING
+            nextX = max(t.dx for t in placed) + HANDLE_SPACING
         # Adjacent handles would open their groups on top of each other,
         # so a fresh layout opens only its first tab; the rest wait as
         # handles in the row.
@@ -170,6 +236,13 @@ class Layout(object):
                                        collapsed=opened)
             opened = True
             nextX += HANDLE_SPACING
+
+    def Place(self, viewWidth, viewHeight, sizes=None):
+        """Place every tab for a viewport this size. `sizes` maps a key
+        to its buttons' on-screen (width, height)."""
+        sizes = sizes or {}
+        for key, tab in self.tabs.items():
+            tab.Place(viewWidth, viewHeight, sizes.get(key))
 
     def Faded(self, startOpacity, dx):
         """The overall opacity, from a drag on the knob."""

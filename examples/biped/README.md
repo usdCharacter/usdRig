@@ -20,6 +20,7 @@ every kind of data for its part, so the picker panel, touch regions and
 shapes of the face live with the face, and the body's with the body:
 
     Biped_stack.usda
+        Biped_ikfk_match.usda               each limb's IK/FK match
         Biped_face_rig.usda                 the face branch
             Biped_face_picker.usda          the Face panel of the picker
             Biped_face_touch_regions.usda   TouchPose regions on face controls
@@ -169,6 +170,30 @@ that graph; there is no second evaluator to select and no fallback path.
 `Biped.usda` and `Biped_body_center.usda` author
 `uniform bool rigExec:baked = true` on their `RigExecRoot`; evaluation
 ignores that attribute.
+
+### Comparing deformer modes
+
+The launchers take `--deform cpu|gpu|shader` after the stage, for any
+asset and any layer:
+
+```
+bin\launch_usdview.bat examples\biped\Biped_stack.usda --deform shader
+bin/usdview.sh examples/biped/Biped_stack.usda --deform gpu
+```
+
+- `cpu` (the default): every deformer runs on the CPU kernels.
+- `gpu`: a mesh's whole deformer chain runs as one GPU compute program and
+  the points are read back, so everything downstream sees them as before.
+- `shader`: the same program runs inside Storm's own compute pass. Points
+  never return to the CPU; Storm computes normals and velocities on the
+  GPU, and the extent comes from a sampled estimate.
+
+A chain falls back to the CPU kernels when it contains a deformer the
+program does not cover, or when another step reads its points (in
+`shader` mode, a surface projector or normals step reading the chain).
+The mode is the `RIGEXEC_GPU_DEFORM` environment variable (`readback` is
+`gpu`'s other name), and `RIGEXEC_GPU_DEFORM_STATS=1` prints per-frame
+device timings.
 
 ## Touching it
 

@@ -6,18 +6,22 @@
 #ifndef RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 #define RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 
+#include "rigExec/gpuDeformLowering.h"
+
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
+#include "pxr/base/work/loops.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
 
 #include <atomic>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -120,6 +124,27 @@ struct RigExecPublishedPrim {
 
     bool hasPoints = false;
     VtVec3fArray points;
+
+    /// A chain published as its program (RigExecGpuDeformMode::Shader) in
+    /// place of `points`: the renderer deforms the base itself, through the
+    /// two ExtComputation children the results scene index adds. `static`
+    /// is the program's tables as Hydra arrays, shared by every generation
+    /// of one layout; `frame` this generation's values and `previousFrame`
+    /// the last frame's (velocities are their points' difference times
+    /// `velocityScale`, zero when there is no adjacent frame).
+    struct GpuDeformStatic {
+        uint64_t serial = 0;
+        VtIntArray ops;
+        VtFloatArray staticF;
+        VtIntArray staticI;
+        int opCount = 0;
+        size_t pointCount = 0;
+    };
+    std::shared_ptr<const RigExecGpuDeformPublication> gpuDeform;
+    std::shared_ptr<const GpuDeformStatic> gpuDeformStatic;
+    VtFloatArray gpuDeformFrame;
+    VtFloatArray gpuDeformPreviousFrame;
+    float gpuDeformVelocityScale = 0.0f;
 
     bool hasNormals = false;
     VtVec3fArray normals;
@@ -265,6 +290,11 @@ struct RigExecImagingSnapshot {
     /// the scene index.
     std::map<SdfPath, float> movedFloats;
 
+    /// Double arrays this generation published, keyed by PROPERTY path: an
+    /// IK/FK match's outputs:ikValues and outputs:fkValues, which a switch
+    /// authors. Kept at full precision; same reasoning as movedFloats.
+    std::map<SdfPath, VtDoubleArray> movedArrays;
+
     /// True when any prim in this generation carries a driven transform.
     ///
     /// Resolving a driven transform means walking a prim's ancestors, and
@@ -368,6 +398,25 @@ enum RigExecPublishedChange : uint16_t {
     /// Its guide needs only a transform refresh, not the full guide
     /// payload invalidation represented by RigExecChangeGuides.
     RigExecChangeControlGuideXform = 1 << 8,
+
+    /// A joint or solver guide's frames changed and nothing else in its
+    /// payload did: same radii, spheres, purpose and styling, and lengths
+    /// unchanged unless RigExecChangeGuideLengths says so. The sphere and
+    /// cone children need only a transform refresh -- each child's xform
+    /// carries its frame and the cone's half-length offset.
+    RigExecChangeGuideXform = 1 << 9,
+
+    /// A program publication's frame moved (same layout and base): the
+    /// kernel computation's per-frame inputs and the computed points.
+    RigExecChangeGpuDeform = 1 << 10,
+    /// Its layout or base moved: the static inputs as well.
+    RigExecChangeGpuDeformStatic = 1 << 11,
+
+    /// A joint or solver guide's lengths changed with every cone kept
+    /// (no length crossed zero) and its radii, spheres, purpose and styling
+    /// unchanged. Always reported with RigExecChangeGuideXform: a cone
+    /// needs its height and transform refreshed, a sphere its transform.
+    RigExecChangeGuideLengths = 1 << 12,
 };
 
 struct RigExecPublishedDirty {
@@ -407,28 +456,50 @@ public:
                 }
             }
         }
-        if (snapshot) {
-            for (const auto &[path, prim] : snapshot->prims) {
-                const RigExecPublishedPrim *before = nullptr;
-                if (previous) {
-                    const auto it = previous->prims.find(path);
-                    if (it != previous->prims.end()) {
-                        before = &it->second;
-                    }
+        // Both generations are ordered by path: one walk pairs every prim
+        // with its predecessor, at one path comparison a step instead of a
+        // search per prim; the pairs are then compared side by side. New
+        // and changed prims come in this generation's order, then the
+        // removed ones in the previous generation's.
+        RigExecPublishedDirtyVector removed;
+        {
+            using Prims = std::map<SdfPath, RigExecPublishedPrim>;
+            static const Prims none;
+            const Prims &after = snapshot ? snapshot->prims : none;
+            const Prims &before = previous ? previous->prims : none;
+            std::vector<std::pair<Prims::const_iterator,
+                                  const RigExecPublishedPrim *>> pairs;
+            pairs.reserve(after.size());
+            auto a = after.begin();
+            auto b = before.begin();
+            while (a != after.end() || b != before.end()) {
+                if (b == before.end() ||
+                    (a != after.end() && a->first < b->first)) {
+                    pairs.emplace_back(a++, nullptr);
+                } else if (a == after.end() || b->first < a->first) {
+                    removed.push_back({b->first, RigExecChangeStructural});
+                    ++b;
+                } else {
+                    pairs.emplace_back(a++, &(b++)->second);
                 }
-                const uint16_t changes = _Diff(before, prim);
-                if (changes != RigExecChangeNone) {
-                    dirtied.push_back({path, changes});
+            }
+            std::vector<uint16_t> changes(pairs.size());
+            const auto diff = [&pairs, &changes](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i)
+                    changes[i] = _Diff(pairs[i].second, pairs[i].first->second);
+            };
+            if (pairs.size() > 256) {
+                WorkParallelForN(pairs.size(), diff, 64);
+            } else {
+                diff(0, pairs.size());
+            }
+            for (size_t i = 0; i < pairs.size(); ++i) {
+                if (changes[i] != RigExecChangeNone) {
+                    dirtied.push_back({pairs[i].first->first, changes[i]});
                 }
             }
         }
-        if (previous) {
-            for (const auto &[path, prim] : previous->prims) {
-                if (!snapshot || !snapshot->prims.count(path)) {
-                    dirtied.push_back({path, RigExecChangeStructural});
-                }
-            }
-        }
+        dirtied.insert(dirtied.end(), removed.begin(), removed.end());
         std::set<SdfPath> resetChanges;
         if (previous) {
             for (const auto &path : previous->xformResetPaths)
@@ -447,6 +518,23 @@ public:
         std::atomic_store(
             &_current, RigExecImagingSnapshotConstPtr(std::move(snapshot)));
         return dirtied;
+    }
+
+    /// Publish without the diff, for a publisher whose caller never reads
+    /// the changed-leaf sets: the swap and the fast-path flag only.
+    void Replace(std::shared_ptr<RigExecImagingSnapshot> snapshot) {
+        std::lock_guard<std::mutex> lock(_writeMutex);
+        if (snapshot) {
+            snapshot->hasDrivenXforms = false;
+            for (const auto &[path, prim] : snapshot->prims) {
+                if (prim.hasXform) {
+                    snapshot->hasDrivenXforms = true;
+                    break;
+                }
+            }
+        }
+        std::atomic_store(
+            &_current, RigExecImagingSnapshotConstPtr(std::move(snapshot)));
     }
 
     /// Lock-free read of the current complete generation (may be null
@@ -468,6 +556,7 @@ private:
         }
         if (before->hasXform != after.hasXform ||
             before->hasPoints != after.hasPoints ||
+            bool(before->gpuDeform) != bool(after.gpuDeform) ||
             before->hasNormals != after.hasNormals ||
             before->hasExtent != after.hasExtent ||
             before->hasGuides != after.hasGuides ||
@@ -547,6 +636,16 @@ private:
              before->pointsSamples != after.pointsSamples)) {
             changes |= RigExecChangePoints;
         }
+        if (after.gpuDeform) {
+            if (before->gpuDeformStatic != after.gpuDeformStatic ||
+                before->gpuDeform->baseVersion != after.gpuDeform->baseVersion) {
+                changes |= RigExecChangeGpuDeformStatic | RigExecChangeGpuDeform;
+            } else if (*before->gpuDeform != *after.gpuDeform ||
+                       before->gpuDeformVelocityScale !=
+                           after.gpuDeformVelocityScale) {
+                changes |= RigExecChangeGpuDeform;
+            }
+        }
         if (after.hasNormals && (before->normals != after.normals ||
             before->sampleOffsets != after.sampleOffsets ||
             before->normalsSamples != after.normalsSamples)) {
@@ -559,13 +658,32 @@ private:
                                 before->extentMaxSamples != after.extentMaxSamples)) {
             changes |= RigExecChangeExtent;
         }
-        if (after.hasGuides &&
-            (before->guideFrames != after.guideFrames ||
-             before->guideLengths != after.guideLengths ||
-             before->guideRadii != after.guideRadii ||
-             before->guideDrawSpheres != after.guideDrawSpheres ||
-             before->guidePurpose != after.guidePurpose || styleChanged)) {
-            changes |= RigExecChangeGuides;
+        if (after.hasGuides) {
+            // Which elements own a cone: a length crossing zero adds or
+            // drops one, which the full guide reconcile handles.
+            const auto conesKept = [&before, &after]() {
+                if (before->guideLengths.size() != after.guideLengths.size())
+                    return false;
+                for (size_t i = 0; i < after.guideLengths.size(); ++i) {
+                    const double a = before->guideLengths[i];
+                    const double b = after.guideLengths[i];
+                    if ((std::isfinite(a) && a > 0.0) !=
+                        (std::isfinite(b) && b > 0.0))
+                        return false;
+                }
+                return true;
+            };
+            const bool lengths = before->guideLengths != after.guideLengths;
+            if (before->guideRadii != after.guideRadii ||
+                before->guideDrawSpheres != after.guideDrawSpheres ||
+                before->guidePurpose != after.guidePurpose || styleChanged ||
+                (lengths && !conesKept())) {
+                changes |= RigExecChangeGuides;
+            } else if (lengths) {
+                changes |= RigExecChangeGuideXform | RigExecChangeGuideLengths;
+            } else if (before->guideFrames != after.guideFrames) {
+                changes |= RigExecChangeGuideXform;
+            }
         }
         // A control's unit shape points and LOCAL extent do not change
         // when its pose or effective draw scale changes: both are carried

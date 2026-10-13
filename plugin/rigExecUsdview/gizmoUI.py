@@ -2547,6 +2547,10 @@ class GizmoController(QtCore.QObject):
         # you just picked. The hover is stale by definition.
         self._AbortDrag()
         self._hover = None
+        # Selecting a control of the half a limb is not driving with
+        # switches the limb to it, matched; _SwitchPresentedLimbs
+        # refreshes nothing itself, so the one refresh below covers both.
+        self._SwitchPresentedLimbs()
         self.RefreshTarget()
 
     def _onFrameChanged(self, frame):
@@ -3980,6 +3984,13 @@ class GizmoController(QtCore.QObject):
         target = self._target
         if target is None or not handle.grabbable:
             return False
+        if self._SwitchPresentedLimbs():
+            # The grabbed controls now drive from where they were drawn;
+            # the drag runs on a target rebuilt from them.
+            self.RefreshTarget()
+            target = self._target
+            if target is None:
+                return False
         camera, viewport, _ = self._Camera()
         if camera is None:
             return False
@@ -4026,6 +4037,50 @@ class GizmoController(QtCore.QObject):
         self.toolbar.Sync()
         self._Repaint()
         return True
+
+    def _SwitchPresentedLimbs(self):
+        """
+        Selecting (or grabbing) a control of the half a limb is not
+        driving with: switch that limb to it, matched (ikfkMatch), as its
+        own undo entry, so the control drives from where it is drawn.
+        False when no selected control is presented, or no values could
+        be read.
+        """
+        stage = self.usdviewApi.stage
+        prims = self._SelectedPrims() if stage else []
+        if not prims:
+            return False
+        time = self._frame
+        halves = []
+        for prim in prims:
+            posed = self._solverPosed.For(gizmoMath.FindRigRoot(prim))
+            half = gizmoMath.PresentedBy(stage, prim.GetPath(), time, posed)
+            if half is not None and half not in halves:
+                halves.append(half)
+        if not halves:
+            return False
+        try:
+            import ikfkMatch
+            switches = set(h.switch for h in halves)
+            limbs = [l for l in self._MatchLimbs(stage)
+                     if l.switchPath in switches]
+            if not limbs:
+                return False
+            ikfkMatch.SwitchLimbs(stage, limbs, time, self._writeMode,
+                                  self.undoStack)
+        except Exception as error:
+            Tf.Warn("rigExecUsdview: could not switch the limb before the "
+                    "drag: %s" % error)
+            return False
+        return True
+
+    def _MatchLimbs(self, stage):
+        """The stage's IK/FK limbs, found once per stage."""
+        import ikfkMatch
+        if getattr(self, "_matchLimbStage", None) is not stage:
+            self._matchLimbStage = stage
+            self._matchLimbs = ikfkMatch.FindLimbs(stage)
+        return self._matchLimbs
 
     def _UpdateDrag(self, point):
         drag = self._drag

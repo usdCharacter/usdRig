@@ -1470,6 +1470,13 @@ _RrConstraintField(const RigExecWireConstraint &c, int field)
     case RrConstraintPoleVector:
         return c.poleVector.get();
     case RrConstraintStretch:return c.stretch.get();
+    case RrConstraintMatchFirst: case RrConstraintMatchFirst + 1:
+    case RrConstraintMatchFirst + 2: case RrConstraintMatchFirst + 3:
+    case RrConstraintMatchFirst + 4: case RrConstraintMatchFirst + 5:
+    case RrConstraintMatchFirst + 6: {
+        const size_t k = size_t(field - RrConstraintMatchFirst);
+        return k < c.matchScalars.size() ? c.matchScalars[k].get() : nullptr;
+    }
     default:
         return c.twistDegrees.get();
     }
@@ -1662,6 +1669,7 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     for (size_t i = 0; i < poses.constraints.size(); ++i) {
         for (int field = 0; field < RrConstraintFieldCount; ++field) {
             if(field==RrConstraintStretch && !poses.constraints[i].stretch)continue;
+            if(field>=RrConstraintMatchFirst && !poses.constraints[i].ikFkMatch)continue;
             if (!bind(_RrConstraintField(poses.constraints[i], field),
                       _RrFamily::Constraint, i, size_t(field),
                       &program->constraintRead[i][size_t(field)])) {

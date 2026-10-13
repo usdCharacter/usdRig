@@ -32,6 +32,7 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
     else if(type=="RigExecParentConstraint")result.record.kind=RigExecConstraintKind::Parent;
     else if(type=="RigExecAimConstraint")result.record.kind=RigExecConstraintKind::Aim;
     else if(type=="RigExecSingleChainIkConstraint")result.record.kind=RigExecConstraintKind::SingleChainIk;
+    else if(type=="RigExecIkFkMatchConstraint")result.record.kind=RigExecConstraintKind::IkFkMatch;
     else return Fail(error,"unsupported constraint: "+type.GetString());
     auto relation=[&](const char *name) { return source.Targets(path.AppendProperty(TfToken(name))); };
     auto first=[&](const char *name) { const auto rows=relation(name);return rows.empty()?SdfPath{}:rows.front(); };
@@ -49,9 +50,10 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
         RigExecSceneBoundInput input;if(!source.Bind(property,route,&input,error))return false;
         if(route!=RigExecSceneReadRoute::Raw) {
             const std::string field(name);
+            const bool match=result.record.kind==RigExecConstraintKind::IkFkMatch;
             const auto requested=field=="inputs:enabled" || field.rfind("inputs:affect",0)==0?SdfValueTypeNames->Bool:
-                (field=="inputs:defaultWeight" || field=="inputs:stretch")?SdfValueTypeNames->Float:
-                field=="inputs:twistDegrees"?SdfValueTypeNames->Double:SdfValueTypeNames->Double3;
+                field=="inputs:defaultWeight" || (field=="inputs:stretch" && !match)?SdfValueTypeNames->Float:
+                field=="inputs:twistDegrees" || match?SdfValueTypeNames->Double:SdfValueTypeNames->Double3;
             RigExecSceneTypedRead typed;
             if(!RigExecBindSceneTypedRead(scene,property,requested,&typed,error))return false;
             result.typedReads.emplace(name,std::move(typed));
@@ -65,7 +67,12 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
     result.order=Order(token);
     if(!raw("rigExec:blendShear",false,&result.blendShear) ||
        !raw("rigExec:worldUpRotationOnly",false,&result.worldUpRotationOnly))return false;
-    if(result.record.kind==RigExecConstraintKind::SingleChainIk) {
+    if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
+        result.effector=first("rigExec:effector");result.space=first("rigExec:space");
+        for(const char *name:{"inputs:switch","inputs:stretch","inputs:softDistance","inputs:upperScale",
+                              "inputs:lowerScale","inputs:pin","inputs:twist"})
+            if(!bind(name))return false;
+    } else if(result.record.kind==RigExecConstraintKind::SingleChainIk) {
         result.effector=first("rigExec:effector");result.poleObjects=relation("rigExec:poleVectorObjects");
         if(!raw("rigExec:solverMode",TfToken("rotatePlane"),&token))return false;
         result.record.singleChain.mode=token=="singleChain"?RigExecSingleChainIkMode::SingleChain:RigExecSingleChainIkMode::RotatePlane;
@@ -204,6 +211,7 @@ bool RigExecRefreshConstraintParameters(RigExecSceneConstraintDescriptor *descri
         record.singleChain.weight=double(*defaultWeight);
         return true;
     }
+    if(record.kind==RigExecConstraintKind::IkFkMatch)return true;
     VtFloatArray weights;
     if(!read("inputs:sourceWeights",VtFloatArray{},&weights))return false;
     if(!weights.empty() && weights.size()!=input->sources.size())
@@ -284,6 +292,7 @@ bool RigExecRefreshConstraintParameters(RigExecSceneConstraintDescriptor *descri
         return true;
     }
     case RigExecConstraintKind::SingleChainIk:return true;
+    case RigExecConstraintKind::IkFkMatch:return true;
     }
     return Fail(error,"unknown constraint input kind");
 }

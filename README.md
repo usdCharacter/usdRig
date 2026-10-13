@@ -99,7 +99,10 @@ Start with [the smallest rig](examples/rigexec_flat.usda), the animated
 [reference arm](examples/ArmShotAnim.usda), or the [example catalog](examples/README.md).
 The [biped](examples/biped/README.md) is the full character example.
 
+The documentation is published at **[usdcharacter.github.io/usdRig](https://usdcharacter.github.io/usdRig/)**.
+
 - [Node reference and tutorials](docs/index.md)
+- [Animator tools](docs/tools/index.md): picker, hover picker, marking menu, TouchPose and limbs
 - [Architecture and repository boundaries](docs/specs/spec.md)
 - [Viewport tools](docs/specs/viewport-gizmos.md) and [graph editor](docs/specs/graph-editor.md)
 - [Bake and inverse APIs](docs/specs/python-bake-inverse.md)
@@ -137,6 +140,10 @@ Node pages are generated from `libs/rigExecSchema/schema.usda` and
 `docs/operator_notes.py` by `python docs/build_pages.py`. Generate the optional
 HTML reference with `python docs/build_html.py` (requires `markdown`). Generated
 HTML and local sizzle material are ignored by Git.
+
+The documentation site is built with MkDocs from `docs/` and `mkdocs.yml`:
+`python -m pip install -r docs/requirements.txt`, then `python -m mkdocs serve`
+to preview it. `.github/workflows/docs.yml` publishes it to GitHub Pages.
 
 The standalone backends support a subset of the authoring/runtime surface.
 Check their guides before integration. Changes to OpenUSD versions or binary

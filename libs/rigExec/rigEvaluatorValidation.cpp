@@ -626,6 +626,20 @@ RigExecRigEvaluator::_DiscoverMovers(
                         " must move every joint in a chain of at least two "
                         "prim targets", {prim.GetPath()});
                 }
+            } else if (record.schemaType == "RigExecIkFkMatchConstraint") {
+                // The controls it revises; which is which is read from its
+                // role relationships during constraint compilation.
+                if (record.targets.size() != 5 ||
+                    std::any_of(record.targets.begin(), record.targets.end(),
+                                [](const SdfPath &p) {
+                                    return !p.IsPrimPath();
+                                })) {
+                    return fail(
+                        "RigExecIkFkMatchConstraint " +
+                        prim.GetPath().GetString() +
+                        " must move its IK control, pole and three FK "
+                        "controls", {prim.GetPath()});
+                }
             } else if (const _ConstraintHandler *unevaluated =
                            _FindConstraintHandler(record.schemaType);
                        unevaluated && !unevaluated->solve &&

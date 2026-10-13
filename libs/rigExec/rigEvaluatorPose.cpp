@@ -65,6 +65,8 @@ _ConstraintHandlers()
          _SolveParentConstraint},
         {TfToken("RigExecSingleChainIkConstraint"), false, true, false, true,
          _ChannelGroup::None, _ChannelGroup::None, nullptr},
+        {TfToken("RigExecIkFkMatchConstraint"), false, true, false, true,
+         _ChannelGroup::None, _ChannelGroup::None, nullptr},
     };
     return handlers;
 }

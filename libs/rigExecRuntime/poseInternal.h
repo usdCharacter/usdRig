@@ -5,6 +5,8 @@
 
 #include "store.h"
 #include "rigExecMath/autoClavicleKernel.h"
+#include "rigExecMath/ikFkMatchKernel.h"
+#include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecGraph/poseArithmetic.h"
 #include <array>
 #include <cmath>
@@ -200,6 +202,16 @@ _RrTransformFrame(const RrPointFrame &frame, const RrMat4d &space);
 bool
 _RrRunConstraintStep(RrProgram *program, size_t step,
                      std::string *error);
+
+bool
+_RrMatchPoleParent(RrProgram *program, int switchIndex,
+                   const std::vector<uint8_t> &rides, const RrMat4d &moved,
+                   RrMat4d *out);
+
+// A control's channels as the compose reads them, for the match kernels.
+RigExecIkFkMatchChannels
+_RrMatchChannelsOf(const RrProgram &program, const RrPoseScratch &scratch,
+                   size_t slot);
 
 } // namespace runtimePoseDetail
 

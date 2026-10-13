@@ -66,7 +66,7 @@ class Controller(gizmoUI.GizmoController):
         self.window = QtWidgets.QMainWindow()
         self.usdviewApi = types.SimpleNamespace(stage=stage, frame=Usd.TimeCode(1),
             qMainWindow=self.window, dataModel=types.SimpleNamespace(stage=stage),
-            UpdateViewport=lambda: None)
+            selectedPrims=[], prim=None, UpdateViewport=lambda: None)
         self.undoStack = rigExecUndo.UndoStack()
         self._drag = self._releasedEdit = self._committing = self._target = None
         self._frame = Usd.TimeCode(1)

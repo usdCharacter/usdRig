@@ -3,6 +3,7 @@
 
 #include "sceneIndices.h"
 
+#include "pxr/base/trace/trace.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -701,6 +702,7 @@ RigExecTouchPoseSceneIndex::RigExecTouchPoseSceneIndex(
 HdSceneIndexPrim
 RigExecTouchPoseSceneIndex::GetPrim(const SdfPath &primPath) const
 {
+    TRACE_FUNCTION();
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
     if (!prim.dataSource ||
         !RigExecTouchPoseHighlights::GetInstance().HasMeshes()) {

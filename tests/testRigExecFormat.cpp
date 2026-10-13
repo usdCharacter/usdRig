@@ -1477,10 +1477,10 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 21 &&
+    static_assert(RigExecFormatVersion == 22 &&
                       RigExecFormatOldestReadable == 20,
-                  "format 21 adds the extended deformer settings; per-group "
-                  "range chains pin the oldest readable format at 20");
+                  "format 22 adds the IK/FK match; per-group range chains "
+                  "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
     // Range skins, private constants) mean something else to an older
@@ -1493,7 +1493,7 @@ TestOpenRefusals()
         _context = "open refusals: version " + std::to_string(version);
         versioned.formatVersion = version;
         const std::string expected = "unsupported .rigexec format version " +
-            std::to_string(version) + " (this reader reads 20 through 21); " +
+            std::to_string(version) + " (this reader reads 20 through 22); " +
             (version < 20 ? "re-export: per-group range chains" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
         ++(version < 20 ? reexports : rebakes);
@@ -1505,7 +1505,11 @@ TestOpenRefusals()
     CHECK(previous && previous->formatVersion == 20);
     std::vector<uint8_t> unwritten = {1, 2, 3};
     CHECK(!_Write(versioned, &unwritten, &why) && unwritten.empty() &&
-          _Contains(why, "format_version is 20; a writer writes 21"));
+          _Contains(why, "format_version is 20; a writer writes 22"));
+    _context = "open refusals: version 21";
+    versioned.formatVersion = 21;
+    const auto older = _Open(_PackUnchecked(versioned), &why);
+    CHECK(older && older->formatVersion == 21);
     _context = "open refusals";
     versioned.formatVersion = RigExecFormatVersion;
     std::vector<uint8_t> current;

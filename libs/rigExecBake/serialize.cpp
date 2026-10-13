@@ -855,6 +855,22 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
     out->effectorPath = _Path(constraint.effectorPath);
     out->poleObjects = _ToI32s(constraint.poleObjects);
     out->poleObjectNatives = _ToI32s(constraint.poleObjectNatives);
+    out->ikFkMatch = constraint.ikFkMatch;
+    if (constraint.ikFkMatch) {
+        for (size_t k = 0; k < constraint.matchScalars.size(); ++k) {
+            out->matchScalars.push_back(read(22 + k));
+        }
+        out->matchConstants = {constraint.matchIkValue,
+                               constraint.matchScaleCalibration,
+                               constraint.matchUpperOffset,
+                               constraint.matchLowerOffset};
+        out->matchStretchLimb = constraint.matchStretchLimb;
+        out->matchPoleSwitch = int32_t(constraint.matchPoleSwitch);
+        for (char rides : constraint.matchPoleSourceRides) {
+            out->matchPoleSourceRides.push_back(rides ? uint8_t(1) : uint8_t(0));
+        }
+        out->matchPoleParentRides = constraint.matchPoleParentRides;
+    }
 }
 
 void
