@@ -1,4 +1,4 @@
-"""Package the editable rolling-ball USD with every referenced icon."""
+"""Package the editable rolling-ball USD with its texture and every referenced icon."""
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 import hashlib
@@ -27,16 +27,16 @@ with ZipFile(archive_path, "w", ZIP_DEFLATED, compresslevel=9) as archive:
         archive.write(path, name)
         manifest[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     archive.writestr("manifest.json", json.dumps(manifest, indent=2)+"\n")
-    archive.writestr("README.txt", """USD rolling ball: yellow sphere with a black equatorial stripe
+    archive.writestr("README.txt", """USD rolling ball: orange basketball with black seams
 
 Extract the entire archive. Keep docs/ and icons/ beside one another.
 Open docs/examples/tutorial_rolling_ball.usda in a usdRig-enabled usdview.
 Scrub 1001-1049 for travel-driven rolling.
 Open docs/examples/tutorial_rolling_ball_free.usda for the Godot bake source.
 
-The ball carries no texture; its stripe is per-point displayColor shared by
-both variants and the Godot bake.
-The stage's rig, controllers and colors remain editable.
+The basketball image texture in docs/examples/textures is shared by both
+USD variants through face-varying UVs and a UsdPreviewSurface material.
+The stage's rig, controllers and material remain editable.
 
 Live rig evaluation requires the usdRig schema and imaging plugins.
 """)

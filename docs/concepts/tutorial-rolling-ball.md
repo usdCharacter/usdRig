@@ -13,8 +13,8 @@ there is only one channel to animate.
 
 This page explains how to build it in `usdview`, through the **usdNoodles**
 node graph editor. The GIFs are captioned inspection checkpoints of the
-completed asset in the real application, with the corrected top-centred star
-and continuous equatorial stripe. They pause for 4.5 seconds and retain the
+asset in the real application. The recordings show the earlier star-and-band
+material; the downloadable stage now uses a basketball image texture. They pause for 4.5 seconds and retain the
 native UI resolution; open them directly to read the attributes. The finished stage is
 [`docs/examples/tutorial_rolling_ball.usda`](../examples/tutorial_rolling_ball.usda)
 and the snippets below describe its composed `travelX` mode. The asset also
@@ -22,7 +22,7 @@ has a `free` mode for the interactive Godot game described below.
 
 [Download the USD source, texture and icons together](../examples/usdview_rolling_ball.zip).
 Extract the entire archive, then open `docs/examples/tutorial_rolling_ball.usda`.
-The `tutorial_rolling_ball_free.usda` wrapper uses the same textured mesh for Godot.
+The `tutorial_rolling_ball_free.usda` wrapper uses the same basketball mesh for Godot.
 
 ## What you start with
 
@@ -33,8 +33,10 @@ steps at a stage of your own — the pieces are:
 
 * `/BallAsset/Geom/Ball` — a 32 × 16 lat/long sphere of radius 1, centred
   at `(0, 1, 0)` so it sits ON the ground and the contact point is the
-  origin. It carries `primvars:st` and a `UsdPreviewSurface` reading
-  `textures/pixar_ball.png`: yellow, one broad blue band, one red star.
+  origin. Face-varying `primvars:st` maps `textures/basketball.png` through
+  a `UsdPreviewSurface` material: orange pebbled leather with black seams.
+  Two hemispherical UV islands avoid polar pinching. Their border coordinates
+  align the curved channels between the front and back atlas tiles.
   The graphic is not decoration — an untextured sphere spinning about its
   own centre looks perfectly still, and you cannot see whether a rolling
   rig is rolling or sliding.
