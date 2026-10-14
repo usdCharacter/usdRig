@@ -34,7 +34,6 @@ exclude_docs: |
   copy-move-review.md
   # Their GIFs and images are not in the repository; left out until they
   # are, so the strict build keeps passing.
-  concepts/tutorial-rolling-ball.md
   concepts/tutorial-godot-baked-rig.md
 
 hooks:
@@ -115,6 +114,7 @@ nav:
   - Get started:
       - guide/getting-started.md
       - guide/examples.md
+      - Rolling ball tutorial: concepts/tutorial-rolling-ball.md
   - Animator tools:
       - tools/index.md
       - tools/picker.md

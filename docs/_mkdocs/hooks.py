@@ -21,6 +21,7 @@ import re
 import sys
 
 from mkdocs.structure.files import File
+from mkdocs.utils import get_relative_url
 
 _DOCS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO = os.path.dirname(_DOCS)
@@ -128,3 +129,27 @@ def on_page_markdown(markdown, page, config, files, **kwargs):
                 + m.group(3), line)
         out.append(line)
     return "\n".join(out)
+
+
+def on_page_content(html, page, config, files, **kwargs):
+    """Resolve raw HTML media URLs from the source page, like Markdown links."""
+    page_dir = posixpath.dirname(page.file.src_uri)
+
+    def rewrite_tag(tag):
+        def rewrite_attribute(match):
+            target = match.group(2)
+            if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith(
+                    ("#", "/")):
+                return match.group(0)
+            path, separator, fragment = target.partition("#")
+            media = files.get_file_from_path(
+                posixpath.normpath(posixpath.join(page_dir, path)))
+            if media is None:
+                return match.group(0)
+            url = get_relative_url(media.url, page.url)
+            return match.group(1) + url + separator + fragment + match.group(3)
+
+        return re.sub(r'(\b(?:src|poster)=")([^"]+)(")',
+                      rewrite_attribute, tag.group(0))
+
+    return re.sub(r"<(?:video|audio|source|track)\b[^>]*>", rewrite_tag, html)

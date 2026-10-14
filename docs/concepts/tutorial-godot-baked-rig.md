@@ -41,12 +41,11 @@ From the `usdRig` checkout, open the source stage:
 bin\launch_usdview.bat docs\examples\tutorial_rolling_ball.usda
 ```
 
-The supplied stage is already complete. To author it yourself, follow the
-[full source-authoring lesson](../concepts/tutorial-rolling-ball.md); do
-that work in a copy of the stage so you retain the finished reference. Its
-first stage already contains the sphere, UVs, material, texture and ground.
-This walkthrough builds a rig around that geometry; it is not a sphere
-modeling or texture-painting lesson.
+The supplied stage is already complete. Inspect it in a copy so you retain
+the finished reference. For an introduction to authoring with Noodles, follow
+the [rolling-ball video lesson](tutorial-rolling-ball.md). That lesson builds
+a simpler control-and-movers rig for straight-line travel. The Godot example
+here uses the joint hierarchy below and independent rotation controls.
 
 1. Open **Window → Noodles Editor** and **Window → Layer Editor**.
    Choose the **Root Layer** as the edit target. Edits in usdview's session
@@ -84,7 +83,7 @@ Finally, bind the mesh:
 ![Inspecting the mesh weight and final Spin joint binding](../gifs/concepts/ball_step08_skin.gif)
 
 **Checkpoint:** moving `Move` translates the textured mesh; rotating `Roll`
-turns it about its centre. The source lesson's later `RollFromTravelX` mover
+turns it about its centre. The supplied stage's `RollFromTravelX` mover
 adds automatic straight-line rolling. The next step disables that mapping
 for gameplay, where direction can change at any time.
 

@@ -54,6 +54,10 @@ The layers and how they compose are listed in the biped's
 
 ## Smaller rigs
 
+[Build a rolling ball in usdview](../concepts/tutorial-rolling-ball.md):
+follow a 3-minute video with a screenshot for every step, starting from an
+unrigged ball and creating the control and movers by hand in Noodles.
+
 | Stage | Shows |
 |---|---|
 | [`rigexec_flat.usda`](../../examples/rigexec_flat.usda) | The smallest complete rig. Start here to read one end to end. |

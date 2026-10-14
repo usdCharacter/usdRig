@@ -1,552 +1,290 @@
 ---
 title: "Tutorial: a rolling ball rig"
-summary: Build the classic bouncing-ball rig in usdview, node by node, and make the roll a consequence of the travel instead of a channel to key.
+summary: Hand-build a rolling ball in usdview and Noodles, with a complete video and a screenshot for every step.
 order: 30
 ---
 
-The oldest rigging exercise there is: a ball that rolls along the ground
-without sliding. It is small enough to build in one sitting and it uses
-most of what UsdRig is — a control hierarchy, an FK solver, joints, a
-weight object and a mover — plus one thing that is easy to get wrong and
-worth getting right, which is making the **spin follow the travel** so
-there is only one channel to animate.
-
-This page explains how to build it in `usdview`, through the **usdNoodles**
-node graph editor. The GIFs are captioned inspection checkpoints of the
-asset in the real application. The recordings show the earlier star-and-band
-material; the downloadable stage now uses a basketball image texture. They pause for 4.5 seconds and retain the
-native UI resolution; open them directly to read the attributes. The finished stage is
-[`docs/examples/tutorial_rolling_ball.usda`](../examples/tutorial_rolling_ball.usda)
-and the snippets below describe its composed `travelX` mode. The asset also
-has a `free` mode for the interactive Godot game described below.
-
-[Download the USD source, texture and icons together](../examples/usdview_rolling_ball.zip).
-Extract the entire archive, then open `docs/examples/tutorial_rolling_ball.usda`.
-The `tutorial_rolling_ball_free.usda` wrapper uses the same basketball mesh for Godot.
-
-## What you start with
-
-The geometry, and a rig root with nothing in it. Open
-`docs/examples/tutorial_rolling_ball.usda` and delete everything under
-`/BallAsset/Rig`'s five scopes to get back to this, or point the same
-steps at a stage of your own — the pieces are:
-
-* `/BallAsset/Geom/Ball` — a 32 × 16 lat/long sphere of radius 1, centred
-  at `(0, 1, 0)` so it sits ON the ground and the contact point is the
-  origin. Face-varying `primvars:st` maps `textures/basketball.png` through
-  a `UsdPreviewSurface` material: orange pebbled leather with black seams.
-  Two hemispherical UV islands avoid polar pinching. Their border coordinates
-  align the curved channels between the front and back atlas tiles.
-  The graphic is not decoration — an untextured sphere spinning about its
-  own centre looks perfectly still, and you cannot see whether a rolling
-  rig is rolling or sliding.
-* `/BallAsset/Geom/Ground` — a checkered plane.
-* `/BallAsset/Rig` — a [Rig Root](../nodes/rig_root.md) with empty
-  `Controls`, `Joints`, `Solvers`, `Weights` and `Movers` scopes.
-* `/BallAsset/MainCam` — an authored camera for inspecting the scene.
-
-Open it with `bin/launch_usdview.bat docs/examples/tutorial_rolling_ball.usda`
-(or `bin/usdview.sh`), then **Window ▸ Noodles Editor**. The editor opens
-docked; it is scoped to the rig, so the graph starts on
-`/BallAsset/Rig` rather than on the asset container.
-
-## Step 1 — point your edits at the file
-
-![Source stage and the layer editor's edit-target choices](../gifs/concepts/ball_step01_edit_target.gif)
-
-Do this first, every time. usdview opens with the **session layer** as the
-edit target, and the session layer is thrown away when the application
-closes. Everything you are about to build would go with it.
-
-**In the UI:** **Window ▸ Layer Editor** opens the Noodles layer editor
-beside the graph. It lists the stage's layers with a ● on the current edit
-target, and a warning strip under them: *"Authoring to the session layer,
-changes will not be preserved on save"*. Click the **Root Layer** row. The
-● moves, the warning clears, and the graph's own banner goes with it.
-
-From here on every prim, relationship and value lands in
-`tutorial_rolling_ball.usda`, and **Ctrl+S** in the graph saves it.
-
-## Step 2 — put the stage in the graph
-
-![Inspecting the geometry, rig scopes and textured material](../gifs/concepts/ball_step02_stage.gif)
-
-The editor draws the prims you ask it to. Select `/BallAsset/Rig` in
-usdview's prim browser and press **A** over the graph canvas ("add from
-prim tree"); do the same for `Geom/Ball` and `Geom/Ground`.
-
-A mesh node arrives with a row per property — over a hundred of them for a
-sphere — so click the **caret in its title bar** to collapse it, then drag
-each node by its title into a tidy left-to-right layout. This is not
-housekeeping: relationships are authored by dragging from a pin onto a
-node, and a node under another node is a relationship pointed at the wrong
-prim.
-
-## Step 3 — the Move control
-
-![Inspecting the completed Move control](../gifs/concepts/ball_step03_move_control.gif)
-
-A [Control](../nodes/control.md) is the animator-facing prim: an
-animatable coordinate space whose animation is authored on its `avars`.
-`Move` is the one that travels along the ground.
-
-**In the UI:** select the `Controls` scope in the prim browser (that is
-where the new prim goes), hover the graph, press **Tab** to open the node
-creation hotbox, type `RigExecControl`, press **Return**. The prim is
-created as `RigExecControl1`; **double-click its title**, clear it, type
-`Move`, **Return**. Then, with the node still selected, press **Tab**
-again and type `RigExecControlAPI` — the same hotbox lists every applied
-API schema in the build beside the concrete prim types, and choosing one
-applies it to the selection.
-
-```usda
-def RigExecControl "Move" (
-    prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
-)
-{
-    double avars:tx = 0
-    double avars:tz = 0
-    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-}
-```
-
-Nothing else is authored. `guide:shape`, `guide:drawMode`,
-`guide:scaleX/Y/Z` and `guide:wireWidth` all have schema fallbacks that
-draw exactly the wire circle you want, and a rig should not carry an
-opinion that says what the schema already says.
-
-## Step 4 — the Squash control
-
-![Inspecting Squash under Move](../gifs/concepts/ball_step04_squash_control.gif)
-
-Same three actions, with `Move` selected so the new control lands
-underneath it. `Squash` carries the scale avars.
-
-```usda
-def RigExecControl "Squash" (
-    prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
-)
-{
-    double avars:sx = 1
-    double avars:sy = 1
-    double avars:sz = 1
-    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-}
-```
-
-Its rest space is the **ground**, not the ball's centre, and it sits
-**above** the roll in the hierarchy. Both of those are the whole trick of
-a squashing ball: scaling about the ground keeps the contact point on the
-ground, and squashing above the spin keeps the squash vertical while the
-ball turns inside it. Swap the two and the ball squashes sideways as it
-rolls.
-
-## Step 5 — the Roll and Spin controls
-
-![Inspecting the Roll and Spin controls](../gifs/concepts/ball_step05_roll_control.gif)
-
-`Roll` is the control the rig drives for you; `Spin` is the one you can
-still key by hand when a shot needs the ball to scuff or spin on the spot.
-
-```usda
-def RigExecControl "Roll" (
-    prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
-)
-{
-    double avars:rz = -57.29578
-    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
-
-    def RigExecControl "Spin" (
-        prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
-    )
-    {
-        double avars:rz = 0
-        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-    }
-}
-```
-
-Two values here are not cosmetic.
-
-`rest:space` puts `Roll` at `(0, 1, 0)` — the ball's centre. A rotation
-turns about its own frame's origin, and a roll about the ground would swing
-the ball through the floor.
-
-`avars:rz = -57.29578` is not a pose; it is the **gain**, the degrees of
-roll per unit of travel, and Step 9 multiplies it by the travel. It is an
-avar, so the Avar Editor types it — and
-[Step 9](#step-9--make-the-roll-a-consequence-of-the-travel) is where
-this page sets it, next to the mover that reads it.
-
-## Step 6 — the joints
-
-![Inspecting the four-joint hierarchy](../gifs/concepts/ball_step06_joints.gif)
-
-Controls are what an animator touches; [Joints](../nodes/joint.md) are
-what a solver writes and a mover reads. This rig needs one per control, in
-the same shape: `Root ▸ Squash ▸ Roll ▸ Spin`. Create them the same way —
-**Tab**, `RigExecJoint`, **Return**, rename — with the parent joint
-selected each time. No API schema: a joint needs none.
-
-```usda
-def RigExecJoint "Root"
-{
-    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-
-    def RigExecJoint "Squash"
-    {
-        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-
-        def RigExecJoint "Roll"
-        {
-            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1, 0, 1) )
-
-            def RigExecJoint "Spin"
-            {
-                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-            }
-        }
-    }
-}
-```
-
-`Roll`'s bind frame is the ball's centre, for the same reason the
-control's is: the mover divides the posed frame by the rest frame, and the
-two have to agree about where the ball turns.
-
-## Step 7 — the FK chain
-
-![Inspecting the FK chain and its control and joint relationships](../gifs/concepts/ball_step07_fk_chain.gif)
-
-An [FK Chain](../nodes/fk_chain.md) is the solver that maps controls onto
-joints, one to one, in order.
-
-**In the UI:** select the `Solvers` scope, **Tab**, `RigExecFkChain`,
-**Return**, rename to `BallChain`. The new node opens with its rows
-showing: **drag from its `rigExec:controls` pin onto each control node**
-in turn — `Move`,
-`Squash`, `Roll`, `Spin` — and from `rigExec:joints` onto `Root`,
-`Squash`, `Roll`, `Spin`. The order you drop them in is the order the
-chain pairs them in.
-
-```usda
-def RigExecFkChain "BallChain"
-{
-    rel rigExec:controls = [
-        </BallAsset/Rig/Controls/Move>,
-        </BallAsset/Rig/Controls/Move/Squash>,
-        </BallAsset/Rig/Controls/Move/Squash/Roll>,
-        </BallAsset/Rig/Controls/Move/Squash/Roll/Spin>,
-    ]
-    uniform token rigExec:controlSpace = "parentRelative"
-    rel rigExec:joints = [
-        </BallAsset/Rig/Joints/Root>,
-        </BallAsset/Rig/Joints/Root/Squash>,
-        </BallAsset/Rig/Joints/Root/Squash/Roll>,
-        </BallAsset/Rig/Joints/Root/Squash/Roll/Spin>,
-    ]
-}
-```
-
-`rigExec:controlSpace = "parentRelative"` is required and is **not** the
-fallback. The fallback is `world`, which reads each control's whole
-world transform and applies it to the joint; with a nested control
-hierarchy that composes every ancestor's motion twice and the ball leaves
-the ground within a few frames. See
-[What no editor can author](#what-no-editor-can-author) — this is one of
-the five values you have to type.
-
-## Step 8 — the skin
-
-![Inspecting the weight and matrix mover binding the ball to the last joint](../gifs/concepts/ball_step08_skin.gif)
-
-One [Matrix Mover](../nodes/matrix_mover.md) carries the whole ball from
-the last joint, under a [Static Weight](../nodes/static_weight.md) of 1.
-
-**In the UI:** create `RigExecStaticWeight` under `Weights` and drag its
-`rigExec:weightTarget` pin onto the **`points` row** of the `Ball` node —
-a weight object is a field over a property's elements, not over a prim.
-Create `RigExecMatrixMover` under `Movers`, apply `RigExecMoverAPI` from
-the hotbox, then drag `rigExec:moves` onto `Ball.points`,
-`rigExec:transform` onto the `Spin` joint and `rigExec:weightObject` onto
-the weight.
-
-```usda
-def RigExecStaticWeight "BallWeight"
-{
-    uniform float rigExec:defaultWeight = 1
-    rel rigExec:weightTarget = </BallAsset/Geom/Ball.points>
-}
-
-def RigExecMatrixMover "BallSkin" (
-    prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
-)
-{
-    rel rigExec:moves = </BallAsset/Geom/Ball.points>
-    rel rigExec:transform = </BallAsset/Rig/Joints/Root/Squash/Roll/Spin>
-    rel rigExec:weightObject = </BallAsset/Rig/Weights/BallWeight>
-}
-```
-
-The weight's representation stays at its `constant` fallback and its
-envelope is `defaultWeight = 1`: every point of the ball is carried
-whole. A `dense` array of per-point weights is what you reach for when
-part of a mesh follows a joint and part of it does not — here nothing
-does.
-
-Select `Move`, pick **Move** on the viewport toolbar (or press **W**) and
-drag the red X handle. The ball follows the control. It also **slides**,
-which is the problem the next step solves.
-
-## Step 9 — make the roll a consequence of the travel
-
-![Inspecting the roll gain and float math mover](../gifs/concepts/ball_step09_auto_roll.gif)
-
-This is the step the whole tutorial is for.
-
-A ball of radius *r* that rolls without slipping turns by the arc it
-covers: rolling forward a distance *d* turns it *d / r* radians. Travelling
-along **+X** turns it about **−Z**, so
-
-```text
-rz(radians) = -tx / r
-rz(degrees) = -tx * 180 / (pi * r)
-            = -57.29578 * tx          for r = 1
-```
-
-One full turn is 360° and carries the ball `2 * pi * r` = 6.2832 units.
-Over the 8 units this shot travels the ball turns −458.37°, one and a
-quarter revolutions.
-
-You could key that by hand on `Roll.avars:rz`, and it would be wrong the
-first time anyone changes the timing. Instead, derive it. A
-[Float Math Mover](../nodes/float_math_mover.md) revises one exact float
-property; its `inputs:value` accepts a **connection**, so it can read a
-number from somewhere else on the stage. Point it at the travel, multiply,
-and write the answer into the roll:
-
-```usda
-def RigExecFloatMathMover "RollFromTravelX" (
-    prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
-)
-{
-    float inputs:value = 0
-    float inputs:value.connect = </BallAsset/Rig/Controls/Move.avars:tx>
-    rel rigExec:moves = </BallAsset/Rig/Controls/Move/Squash/Roll.avars:rz>
-    uniform token rigExec:operation = "multiply"
-}
-```
-
-`multiply` computes `r = incoming * inputs:value`, where *incoming* is the
-target's own authored value — the −57.29578 gain from Step 5 — and
-`inputs:value` is the travel arriving down the connection. So
-
-```text
-Roll.avars:rz  =  -57.29578  *  Move.avars:tx
-```
-
-and the roll is recomputed every frame from wherever the ball happens to
-be. There is nothing to key on it and nothing to keep in sync.
-
-**In the UI:** select `Roll`, open the Avar Editor
-(**RigExec ▸ General Editors ▸ Avar Editor**), set its **Write** mode to
-**Default (the rest value)** — a gain is not a pose and has no business
-being a key — and type the number into the `rz` box. The box carries
-three decimals, so what you type is `-57.296`; over the whole eight-unit
-shot that is two thousandths of a degree away from the exact figure.
-Commit it with **Tab**.
-
-Then create `RigExecFloatMathMover` under `Movers`, apply
-`RigExecMoverAPI`, drag `rigExec:moves` onto the **`avars:rz` row** of the
-`Roll` node, and drag from the **right-hand edge of the `avars:tx` row on
-the `Move` node** onto the mover's **`value`** row (the row `inputs:value`
-is drawn as, under the node's `inputs` header). A property row draws no
-output dot until something is connected to it; the drag starts from the
-row's edge all the same. That second drag is an attribute
-connection rather than a relationship — a value travelling, not a
-reference.
-
-The compiled graph orders the property chain before the control that reads
-`avars:rz`, so the revised `rz` is what the FK chain sees in the same
-evaluation; nothing is a frame late.
-
-Drag `Move`'s X handle again and the ball rolls, star and band sweeping
-over the top, with no keys on any rotation.
-
-For a straight shot along Z, the analogous mover reads `Move.avars:tz`,
-targets `Roll.avars:rx`, and uses a gain of **+57.29578**. Do not combine
-independent position-to-Euler mappings for free movement: rotations about
-different axes do not commute. A ball that turns corners needs accumulated
-orientation, as in the free-rolling mode below.
-
-## Step 10 — key the travel, and only the travel
-
-![The Move control and automatic roll relationship used by the two-key animation](../gifs/concepts/ball_step10_keys.gif)
-
-Select `Move`. Put the gizmo on **Animation** on the viewport toolbar and
-the Avar Editor's own **Write** box on **Animation (key at current
-frame)** — that is what makes an edit author a key at the current frame
-instead of a default. Go to frame 1001, type `0` into the Avar Editor's
-`tx` box and press **Tab**; go to 1049, type `8`, **Tab** again. (Tab is
-the commit key here: Return leaves the box showing the old number.)
-
-```usda
-double avars:tx.spline = {
-    1001: 0; pre (0, 0); post linear,
-    1049: 8; post linear,
-}
-```
-
-Two keys on one channel, and the ball rolls eight units without slipping.
-Move them, retime them, add an ease — the roll follows, because it is not
-a channel.
-
-## Playback
-
-![The finished rig evaluated live by usdview's Hydra Storm renderer](../gifs/concepts/ball_final.gif)
-
-This preview uses usdview's Storm renderer and the live rigExec imaging plugin
-at **1280 × 800, 30 fps**, with 8× antialiasing. It plays the authored travel
-forward and backward at inspection speed, with a following camera and hidden
-rig guides. The material and mesh come directly from the downloadable USD.
-
-Drag usdview's frame slider from 1001 to 1049, or press **Play**. The rig
-evaluates live: no bake, no export. The star and the band are what tell
-you it is rolling — watch the contact point stay put under the ball as it
-crosses the ground.
-
-## What no editor can author
-
-Everything above happens with the pointer except five values, and the
-reason is worth knowing: **usdNoodles has no attribute-value editor**. It
-creates prims, renames them, applies API schemas, draws relationships and
-connections, and moves nodes — but nothing in it sets a value. usdview's
-own property panel is read-only, and the Layer Opinions panel
-(**RigExec ▸ General Editors ▸ Layer Opinions**) edits and deletes
-opinions that already exist rather than creating them.
-
-The Avar Editor covers the `avars` and the viewport manipulators cover
-poses and rest offsets, which is most of a rig. What is left here is
-three `uniform` properties — and `uniform` is exactly the kind no
-animation UI touches — plus the two `rest:space` matrices from Steps 5
-and 6, because a `matrix4d` is not a number a spin box takes:
-
-```usda
-# /BallAsset/Rig/Solvers/BallChain
-uniform token rigExec:controlSpace = "parentRelative"
-
-# /BallAsset/Rig/Weights/BallWeight
-uniform float rigExec:defaultWeight = 1
-
-# /BallAsset/Rig/Movers/RollFromTravelX
-uniform token rigExec:operation = "multiply"
-
-# /BallAsset/Rig/Controls/Move/Squash/Roll and
-# /BallAsset/Rig/Joints/Root/Squash/Roll
-matrix4d rest:space = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0,1,0,1) )
-```
-
-usdview does have somewhere to type them, and it is not a text editor:
-**Window ▸ Interpreter**. The recordings for Steps 7, 8 and 9 each open
-it, type three lines and close it again, so you can see exactly where the
-value goes:
-
-```python
-from pxr import Sdf
-p = usdviewApi.stage.GetPrimAtPath('/BallAsset/Rig/Solvers/BallChain')
-p.CreateAttribute('rigExec:controlSpace', Sdf.ValueTypeNames.Token, False, Sdf.VariabilityUniform).Set('parentRelative')
-```
-
-The others are the same three lines with a different path, name, type and
-value — `Sdf.ValueTypeNames.Float` and `1.0` for the weight's envelope,
-`Sdf.ValueTypeNames.Token` and `'multiply'` for the mover's operation,
-and `Sdf.ValueTypeNames.Matrix4d` with
-`Gf.Matrix4d().SetTranslate(Gf.Vec3d(0, 1, 0))` (and
-`Sdf.VariabilityVarying` rather than uniform) for the two `rest:space`
-frames. Editing the `.usda` and reloading (**File ▸ Reload All Layers**)
-does the same job, and `docs/examples/tutorial_rolling_ball.usda` already
-has every one of them.
-
-## Free rolling in the Godot game
-
-The tutorial asset now exposes **`rollMode`** on `/BallAsset`:
-
-* **`travelX`** (default) preserves the recorded lesson: the variant supplies
-  the `-57.29578` gain and the float math mover drives roll from X travel.
-* **`free`** disables `RollFromTravelX` and supplies a neutral `rz = 0`.
-  Both Roll and Spin expose independent `rx`, `ry`, and `rz` controls.
-  The centre pivot and `Move → Squash → Roll → Spin` hierarchy stay intact.
-
-Open [`tutorial_rolling_ball_free.usda`](../examples/tutorial_rolling_ball_free.usda)
-for the game-ready variant. It references the same tutorial rig, uses one
-unit as one metre (radius one), and is baked at time 1001, whose values
-become the asset's input defaults. Changing the variant in usdview also lets
-you pose all three rotation channels manually.
-Selecting `free` does not automatically integrate travel inside USD; its
-rotation channels are driven by the application or authored animation.
-
-The sibling `godot_rigExec/demo/project.godot` now opens **Roll / Collect**,
-a small course with six rings, obstacles, a ramp, hopping, a finish pad and
-fall recovery. Use WASD / arrows to move, Space to hop, Shift to brake and
-R to restart. Run `python demo/setup_rolling.py --build` from that plugin
-checkout to rebuild the native plugin and bake this asset, then run
-`godot --path demo`.
-
-The game stores orientation as a normalized quaternion. On contact with a
-surface, project the **actual collision-constrained displacement** into its
-tangent plane, then accumulate a world-space increment:
-
-```text
-tangent = displacement - normal * dot(normal, displacement)
-axis = normalize(cross(normal, tangent))
-angle = length(tangent) / radius
-orientation = normalize(quaternion(axis, angle) * orientation)
-```
-
-Skip the increment for zero displacement. This handles diagonal travel,
-reversals and changing surface normals. It retains path history: a square
-lap can return the ball to its starting position with a different orientation.
-In the air the game preserves angular velocity, and resumes contact rolling
-on landing. The no-slip calculation assumes a spherical ball of fixed radius;
-squash is left at one in the game.
-
-Only at the rig boundary is the quaternion decomposed to degree avars.
-USD's row-vector XYZ composition corresponds to Godot's `EULER_ORDER_ZYX`.
-`RigExecPlayer.set_control()` sets the public Move and Roll controls, then
-`evaluate()` executes the compiled FK program and updates the geometry
-embedded in the asset. `rolling_ball.tscn` is a reusable Godot object
-containing the collision body, a `RigExecPlayer` that loads
-`rolling_ball.rigexec`, and the `rolling_ball.gd` controller.
-The level instantiates it and manages the course. Other controllers can feed
-`drive(direction, delta, braking)` instead of keyboard input.
-
-Its mesh is exported from `/BallAsset/Geom/Ball` with the original face-varying
-UVs and OpenSubdiv stencils, which the plugin applies to the points `BallSkin`
-deforms; no bone carries it. The embedded material preserves the bound USD
-material's texture, diffuse and emission scales, roughness, metallic and
-specular values. The export corrects the source's inward winding
-for Godot culling while preserving corner UVs. No generic Godot sphere or
-substitute UV mapping is used. The visible mesh has no separately animated
-rotation. Godot lighting and tone mapping can differ from usdview.
-
-For program-only assets that drive a Godot skeleton, the plugin
-distinguishes skinning deltas from bone poses: the existing
-`get_joint_transforms()` returns rest-to-posed deltas, while
-`get_joint_pose_transforms()` returns posed frames and
-`get_joint_rest_transforms()` supplies skeleton rests. Applying a delta as
-a bone pose would make this ball orbit instead of turning about its centre.
-
-Run `godot --headless --path demo --script verify_rolling.gd` in the plugin
-checkout to verify multi-axis FK, no-slip signs, blocked movement, resets
-and the game loop against the native extension.
-
-## Where to go next
-
-* [Godot and baked rigs](../concepts/tutorial-godot-baked-rig.md) — package this
-  ball as a reusable game object and drive its controls in Godot, with gameplay GIFs.
-* [Evaluation and independent checks](baked-vs-dynamic.md) — one production graph and optional reference checks.
-* [Two-Bone IK](../nodes/two_bone_ik.md) — the next solver up, and the one
-  that makes a limb out of the chain you just built.
-* [Lattice Mover](../nodes/lattice_mover.md) — squash and stretch as a
-  deformation rather than a scale, for when scaling the whole ball is too
-  blunt.
+# Tutorial: a rolling ball rig
+
+Move a control across the floor and let the rig turn the ball for you. In this
+3-minute lesson, you'll build that behavior by hand in **usdview and Noodles**:
+one control, a Matrix Mover, and a Float Math Mover. Every authoring step uses
+the UI, with no Python or script entry.
+
+## Watch the lesson
+
+<video controls preload="metadata" width="100%" poster="../gifs/concepts/rolling-ball/step-20.jpg" src="../gifs/concepts/rolling-ball/tutorial.mp4" aria-label="Build a rolling ball rig in usdview">
+Your browser does not support embedded video. Use the MP4 link below.
+</video>
+
+[Watch or download the full movie (3:13, MP4)](../gifs/concepts/rolling-ball/tutorial.mp4).
+The viewport Move-tool demonstration starts at **2:52**; the continuous gizmo
+drag starts at **2:58** and is shown at half speed so you can see the seams turn.
+
+The 21 steps below match the movie's chapters. Each screenshot is a frame from
+that movie; its caption gives the capture time. Open an image for full-size
+node labels and connections.
+
+## Get the starting files
+
+Use a working usdRig installation with its usdview authoring tools; see
+[Getting started](../guide/getting-started.md). The lesson files are in
+`docs/examples/` in the checkout:
+
+| File | What it contains |
+|---|---|
+| [RollingBallLesson.usda](../examples/RollingBallLesson.usda) | An empty root layer for your work. Copy it before starting. |
+| [BallAsset-unrigged.usda](../examples/BallAsset-unrigged.usda) | The ball, floor, materials and camera, with no rig or rig variants. |
+| [textures/basketball.png](../examples/textures/basketball.png) | The ball texture. Keep it in a `textures` folder beside the asset. |
+
+Open your copy of **RollingBallLesson.usda** in usdview. Keep it beside the
+unrigged asset so the relative sublayer path resolves. The movie's working
+copy is named `RollingBallLesson-v3.usda`; the name does not affect the rig.
+The empty viewport is expected: you'll bring the ball in through the
+composition tools next.
+
+## 1. Choose the root layer — 0:00
+
+Open **Window → Layer Editor**. Under **Edit Target**, choose **Root Layer**.
+Do this first, so the composition arc and every rig edit go into the file
+you'll save.
+
+![Root Layer selected in the Layer Editor](../gifs/concepts/rolling-ball/step-01.jpg)
+
+*Movie frame: 0:06.*
+
+## 2. Add the ball as a sublayer — 0:07
+
+Right-click the **stage root** in usdview's prim tree. Choose
+**Add Composition Arc → Sublayer**.
+
+![The stage-root context menu showing Add Composition Arc and Sublayer](../gifs/concepts/rolling-ball/step-02.jpg)
+
+*Movie frame: 0:13.*
+
+## 3. Author the composition arc — 0:15
+
+Choose **BallAsset-unrigged.usda**. Leave **Offset** at `0` and **Scale** at
+`1`, then click **Author**. This brings the geometry into your lesson layer.
+
+![The composition-arc dialog with the unrigged ball file selected](../gifs/concepts/rolling-ball/step-03.jpg)
+
+*Movie frame: 0:20.*
+
+## 4. Check the unrigged asset — 0:22
+
+Expand **BallAsset**. You should see **Looks**, **Geom**, and **MainCam**;
+there is no rig yet. Choose **Camera → Select Camera → MainCam** to frame
+the ball and floor as they appear in the movie.
+
+![The ball and floor in MainCam, with only Looks, Geom and MainCam under BallAsset](../gifs/concepts/rolling-ball/step-04.jpg)
+
+*Movie frame: 0:31.*
+
+## 5. Open Noodles and create a rig root — 0:32
+
+Select **BallAsset**, then **hit N to open Noodles**. Close the Layer Editor
+if it is covering the graph. Click inside the Noodles canvas to give it
+focus, then press **Tab** to open the node creation screen. Search for
+**RigExecRoot** and press **Enter**.
+
+You'll get **RigExecRoot1** under BallAsset. Keep usdview and Noodles visible
+side by side. For every Tab action below, click Noodles first so it receives
+the shortcut.
+
+![The newly created RigExecRoot1 in Noodles](../gifs/concepts/rolling-ball/step-05.jpg)
+
+*Movie frame: 0:43.*
+
+## 6. Create the ball control — 0:43
+
+Select **RigExecRoot1 in the prim tree**, then focus Noodles and use
+**Tab → RigExecControl**. The new **RigExecControl1** belongs under the rig
+root. This is the control you'll move to roll the ball.
+
+![RigExecControl1 created beneath the rig root](../gifs/concepts/rolling-ball/step-06.jpg)
+
+*Movie frame: 0:50.*
+
+## 7. Put the rest pivot at the ball's center — 0:52
+
+Expand the control's **rest** group. Set **rest:ty** to `1` and press
+**Enter**. The ball has radius one and rests on a Y-up floor, so its center
+is one unit above the ground. This makes it turn around its center.
+
+![The control's rest group with ty set to one](../gifs/concepts/rolling-ball/step-07.jpg)
+
+*Movie frame: 1:00.*
+
+## 8. Create a Matrix Mover — 1:02
+
+Select **RigExecRoot1** in the prim tree again. Focus Noodles and choose
+**Tab → RigExecMatrixMover**.
+
+This is the operation that moves the ball geometry and is driven by our
+control.
+
+![Creating RigExecMatrixMover through the Noodles Tab menu](../gifs/concepts/rolling-ball/step-08.jpg)
+
+*Movie frame: 1:09.*
+
+## 9. Apply the mover API — 1:11
+
+Select the **Matrix Mover node**, then choose **Tab → RigExecMoverAPI**.
+This is required for all movers. It exposes the common mover properties,
+including **rigExec:moves**.
+
+![Applying RigExecMoverAPI to the selected Matrix Mover](../gifs/concepts/rolling-ball/step-09.jpg)
+
+*Movie frame: 1:16.*
+
+## 10. Connect the transform — 1:18
+
+Arrange the Matrix Mover on the left and the control on the right so you
+can see both ends of the connection. You can collapse the control for this
+step. Drag the Matrix Mover's **rigExec:transform** socket onto the
+**control's title bar**. The red wire confirms the relationship.
+
+![A visible red transform relationship from the Matrix Mover to the control title](../gifs/concepts/rolling-ball/step-10.jpg)
+
+*Movie frame: 1:25.*
+
+## 11. Bring the ball mesh into Noodles — 1:27
+
+Select **BallAsset → Geom → Ball** in the prim tree. Click empty space in
+Noodles and press **A** to add that existing prim to the graph.
+
+![The Ball mesh added to Noodles from the prim-tree selection](../gifs/concepts/rolling-ball/step-11.jpg)
+
+*Movie frame: 1:34.*
+
+## 12. Target the ball's points — 1:36
+
+Drag the Matrix Mover's **rigExec:moves** socket onto the Ball node's
+**points property row**. Dropping on the property tells the mover exactly
+which geometry to revise. Keep the floor out of this connection.
+
+![Connecting the Matrix Mover's moves relationship to the Ball points property](../gifs/concepts/rolling-ball/step-12.jpg)
+
+*Movie frame: 1:43.*
+
+## 13. Create the rolling calculation — 1:45
+
+Select **RigExecRoot1** in the prim tree, focus Noodles, and choose
+**Tab → RigExecFloatMathMover**. This will turn travel distance into a
+rotation angle.
+
+![Creating RigExecFloatMathMover in Noodles](../gifs/concepts/rolling-ball/step-13.jpg)
+
+*Movie frame: 1:52.*
+
+## 14. Apply the mover API — 1:54
+
+Select the **Float Math Mover node**, then choose **Tab → RigExecMoverAPI**,
+just as you did for the Matrix Mover.
+
+![Applying RigExecMoverAPI to the Float Math Mover](../gifs/concepts/rolling-ball/step-14.jpg)
+
+*Movie frame: 1:58.*
+
+## 15. Use multiplication — 2:00
+
+On the Float Math Mover, set **rigExec:operation** to **multiply**.
+
+![The Float Math Mover's operation set to multiply](../gifs/concepts/rolling-ball/step-15.jpg)
+
+*Movie frame: 2:05.*
+
+## 16. Target Z rotation — 2:07
+
+Expand the control's **avars** group. Drag the Float Math Mover's
+**rigExec:moves** socket onto the control's **avars:rz property row**.
+This is the channel the calculation will drive.
+
+![The Float Math Mover targeting the control's avars:rz property](../gifs/concepts/rolling-ball/step-16.jpg)
+
+*Movie frame: 2:14.*
+
+## 17. Set the rolling factor — 2:16
+
+On the **control**, set **avars:rz** to `-57.2958` and press **Enter**.
+The Float Math Mover multiplies this authored base value by its input.
+For a radius-one ball, that converts each unit of X travel into the right
+number of degrees of Z rotation:
+
+`angle in degrees = -distance / radius × 180 / pi`
+
+The minus sign makes positive X travel roll in the correct direction.
+The next connection supplies the distance; you won't need to key the roll.
+
+![The control's avars:rz value set to -57.2958 beside the multiply operation](../gifs/concepts/rolling-ball/step-17.jpg)
+
+*Movie frame: 2:28.*
+
+## 18. Feed travel into the calculation — 2:31
+
+Drag from the Float Math Mover's **inputs:value** to the control's
+**avars:tx property row**. The blue wire is an attribute connection:
+X travel now feeds the multiplication.
+
+![The blue attribute connection between inputs:value and the control's avars:tx](../gifs/concepts/rolling-ball/step-18.jpg)
+
+*Movie frame: 2:39.*
+
+## 19. Test the rig interactively — 2:41
+
+Change or drag the control's **avars:tx** value. The ball should move and
+roll together; reversing the travel reverses the rotation. Watch the seams
+to make the turn easy to see.
+
+![Changing avars:tx while the ball moves and rolls in the viewport](../gifs/concepts/rolling-ball/step-19.jpg)
+
+*Movie frame: 2:49.*
+
+## 20. Roll the ball with the viewport Move tool — 2:52
+
+Select **RigExecControl1** in the prim tree, then click the viewport's
+**Move** tool. Drag the **red X arrow** slowly across the floor. The gizmo
+moves the control, and the ball rolls as you drag.
+
+At **2:58**, the movie cuts closer and shows a continuous drag at half speed.
+Watch the seams rotate while the control changes position. This rig maps
+straight-line X travel to Z rotation; it is ready for you to animate that
+travel channel.
+
+![The red X gizmo moving the control while the ball's seams rotate](../gifs/concepts/rolling-ball/step-20.jpg)
+
+*Movie frame: 3:03, during the continuous viewport drag.*
+
+## 21. Save the root layer — 3:06
+
+Restore the control's **avars:tx** to `0`. Focus Noodles and press
+**Ctrl+S** to save. Your lesson root layer now holds the sublayer arc and
+the rig you built around the ball.
+
+![The completed rig with avars:tx restored to zero before saving](../gifs/concepts/rolling-ball/step-21.jpg)
+
+*Movie frame: 3:11.*
+
+## Check your connections
+
+| Node | Property | Target or value |
+|---|---|---|
+| Control | `rest:ty` | `1` |
+| Control | `avars:rz` | Authored base value `-57.2958` |
+| Matrix Mover | `rigExec:transform` | Control prim (drop on its title) |
+| Matrix Mover | `rigExec:moves` | `Ball.points` |
+| Float Math Mover | `rigExec:operation` | `multiply` |
+| Float Math Mover | `rigExec:moves` | Control's `avars:rz` |
+| Float Math Mover | `inputs:value` | Connected to control's `avars:tx` |
+
+Both movers need **RigExecMoverAPI**. If a wire lands on a node title when
+you meant to target a channel, reconnect it to the named property row.
+If Tab does nothing, click inside Noodles and try again.
+
+For more detail, see [Control](../nodes/control.md),
+[Matrix Mover](../nodes/matrix_mover.md), and
+[Float Math Mover](../nodes/float_math_mover.md). The separate
+[Godot and baked rigs tutorial](tutorial-godot-baked-rig.md) uses a more
+complex ball rig with joints and independent rotation controls for changing
+travel direction; its finished source is a different example from this lesson.
