@@ -63,9 +63,22 @@ namespace runtimePoseDetail {
 double
 _RrRbfEvalKernel(_RrRbfKernel kernel, double distance, double radius)
 {
-    return kernel == _RrRbfKernel::Linear
-               ? _RrRbfLinear(distance, radius)
-               : _RrRbfGaussian(distance, radius);
+    switch (kernel) {
+    case _RrRbfKernel::Linear:
+        return _RrRbfLinear(distance, radius);
+    case _RrRbfKernel::Exponential:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Exponential,
+                                       distance, radius);
+    case _RrRbfKernel::Cubic:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Cubic,
+                                       distance, radius);
+    case _RrRbfKernel::Quintic:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Quintic,
+                                       distance, radius);
+    case _RrRbfKernel::Gaussian:
+    default:
+        return _RrRbfGaussian(distance, radius);
+    }
 }
 
 double

@@ -1,0 +1,731 @@
+#usda 1.0
+(
+    """
+    Docs example: RigExecPoseInterpolator with RigLogic's RBF solvers.
+
+    A shoulder swings a skinned arm strip up, forward and down while the
+    elbow folds, and three pose interpolators measure the same motion three
+    ways. Each pose's outputs:weight lifts one bar of a meter through a blend
+    channel, so the weights can be read straight off the bars (a full bar is 1):
+
+      top row     ShoulderSwing: solver additive, distance swingAngle about X,
+                  kernel cubic, radius 1.1 radians, normalize onlyAboveOne.
+                  One driver, the Upper joint; poses neutral, up, forward, down.
+      middle row  ArmFold: solver interpolative, distance quaternion, kernel
+                  gaussian (RigLogic's exp(-d / r^2)), radius 1.2, normalize
+                  always, threshold 0.05. TWO drivers, Upper and Fore, so each
+                  pose authors rigExec:rotations with one rotation per driver;
+                  upFold carries rigExec:scale 0.5, so its bar peaks at half.
+      bottom row  ControlKeys: solver additive, distance euclidean, kernel
+                  exponential, automatic radius (the mean distance between
+                  poses), over the controls' own numbers (Shoulder.avars:rz and
+                  Elbow.avars:rz, in degrees) instead of joint rotations.
+
+    The default solver ("pose") is untouched by all of this; see
+    pose_interpolator.usda for it.
+
+    Provenance: authored for this project. The additive and interpolative
+    solves, distances and weight functions follow Epic Games OpenRigLogic's
+    radial-basis solvers (MIT, RigLogic 13.5.0); the poses and rig are
+    hand-made, and no RigLogic, DNA or MetaHuman data is used. See
+    docs/concepts/riglogic.md and docs/references.md.
+    """
+    defaultPrim = "RbfAsset"
+    endTimeCode = 1048
+    metersPerUnit = 0.01
+    startTimeCode = 1001
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "RbfAsset"
+{
+    def RigExecRoot "Rig"
+    {
+        uniform token rigExec:partition = "RbfAsset"
+
+        def Scope "Controls"
+        {
+            def RigExecControl "Shoulder" (
+                prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
+            )
+            {
+                double avars:ry = 0
+                double avars:ry.spline = {
+                    1001: 0; pre (0, 0); post linear,
+                    1018: 0; post linear,
+                    1023: -60; post linear,
+                    1028: -60; post linear,
+                    1033: 0; post linear,
+                }
+                double avars:rz = 0
+                double avars:rz.spline = {
+                    1001: 0; pre (0, 0); post linear,
+                    1006: 60; post linear,
+                    1016: 60; post linear,
+                    1020: 0; post linear,
+                    1033: 0; post linear,
+                    1038: -60; post linear,
+                    1042: -60; post linear,
+                    1046: 0; post linear,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform asset ui:nodegraph:node:icon = @../../icons/control.png@
+            }
+
+            def RigExecControl "Elbow" (
+                prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
+            )
+            {
+                double avars:rz = 0
+                double avars:rz.spline = {
+                    1001: 0; pre (0, 0); post linear,
+                    1008: 0; post linear,
+                    1012: -90; post linear,
+                    1015: -90; post linear,
+                    1019: 0; post linear,
+                    1040: 0; post linear,
+                    1043: -90; post linear,
+                    1046: -90; post linear,
+                    1048: 0; post linear,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2.5, 0, 0, 1) )
+                uniform asset ui:nodegraph:node:icon = @../../icons/control.png@
+            }
+        }
+
+        def Scope "Solvers"
+        {
+            def RigExecFkChain "Chain" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                rel rigExec:controls = [
+                    </RbfAsset/Rig/Controls/Shoulder>,
+                    </RbfAsset/Rig/Controls/Elbow>,
+                ]
+                rel rigExec:joints = [
+                    </RbfAsset/Rig/Joints/Upper>,
+                    </RbfAsset/Rig/Joints/Upper/Fore>,
+                ]
+                uniform asset ui:nodegraph:node:icon = @../../icons/fk_chain.png@
+            }
+        }
+
+        def Scope "Joints"
+        {
+            def RigExecJoint "Upper" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform asset ui:nodegraph:node:icon = @../../icons/joint.png@
+
+                def RigExecJoint "Fore" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2.5, 0, 0, 1) )
+                    uniform asset ui:nodegraph:node:icon = @../../icons/joint.png@
+                }
+            }
+        }
+
+        def Scope "Weights"
+        {
+            def RigExecStaticWeight "UpperW" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                uniform float rigExec:defaultWeight = 0
+                uniform token rigExec:rangePolicy = "strict"
+                uniform token rigExec:representation = "dense"
+                uniform float[] rigExec:values = [1, 1, 1, 1, 0.85, 0.5, 0.15, 0, 0, 0, 0, 1, 1, 1, 1, 0.85, 0.5, 0.15, 0, 0, 0, 0, 1, 1, 1, 1, 0.85, 0.5, 0.15, 0, 0, 0, 0, 1, 1, 1, 1, 0.85, 0.5, 0.15, 0, 0, 0, 0]
+                rel rigExec:weightTarget = </RbfAsset/Geom/Limb.points>
+                uniform asset ui:nodegraph:node:icon = @../../icons/static_weight.png@
+            }
+
+            def RigExecStaticWeight "ForeW" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                uniform float rigExec:defaultWeight = 0
+                uniform token rigExec:rangePolicy = "strict"
+                uniform token rigExec:representation = "dense"
+                uniform float[] rigExec:values = [0, 0, 0, 0, 0.15, 0.5, 0.85, 1, 1, 1, 1, 0, 0, 0, 0, 0.15, 0.5, 0.85, 1, 1, 1, 1, 0, 0, 0, 0, 0.15, 0.5, 0.85, 1, 1, 1, 1, 0, 0, 0, 0, 0.15, 0.5, 0.85, 1, 1, 1, 1]
+                rel rigExec:weightTarget = </RbfAsset/Geom/Limb.points>
+                uniform asset ui:nodegraph:node:icon = @../../icons/static_weight.png@
+            }
+        }
+
+        def Scope "PoseInterpolators"
+        {
+            def RigExecPoseInterpolator "ShoulderSwing" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                bool inputs:enabled = 1
+                uniform token rigExec:distanceMethod = "swingAngle"
+                uniform token rigExec:kernel = "cubic"
+                uniform token rigExec:normalizeMethod = "onlyAboveOne"
+                uniform float rigExec:radius = 1.1
+                uniform token rigExec:solver = "additive"
+                uniform token rigExec:twistAxis = "X"
+                rel rigExec:driver = </RbfAsset/Rig/Joints/Upper>
+                uniform asset ui:nodegraph:node:icon = @../../icons/pose_interpolator.png@
+
+                def RigExecPose "neutral" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf rigExec:rotation = (1, 0, 0, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "up" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf rigExec:rotation = (0.8660254, 0, 0, 0.5)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "forward" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf rigExec:rotation = (0.8660254, 0, -0.5, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "down" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf rigExec:rotation = (0.8660254, 0, 0, -0.5)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+            }
+
+            def RigExecPoseInterpolator "ArmFold" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                bool inputs:enabled = 1
+                uniform token rigExec:distanceMethod = "quaternion"
+                uniform token rigExec:kernel = "gaussian"
+                uniform token rigExec:normalizeMethod = "always"
+                uniform float rigExec:radius = 1.2
+                uniform token rigExec:solver = "interpolative"
+                uniform float rigExec:weightThreshold = 0.05
+                rel rigExec:driver = [
+                    </RbfAsset/Rig/Joints/Upper>,
+                    </RbfAsset/Rig/Joints/Upper/Fore>,
+                ]
+                uniform asset ui:nodegraph:node:icon = @../../icons/pose_interpolator.png@
+
+                def RigExecPose "rest" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf[] rigExec:rotations = [(1, 0, 0, 0), (1, 0, 0, 0)]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "up" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf[] rigExec:rotations = [(0.8660254, 0, 0, 0.5), (1, 0, 0, 0)]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "fold" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf[] rigExec:rotations = [(1, 0, 0, 0), (0.70710678, 0, 0, -0.70710678)]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "upFold" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    quatf[] rigExec:rotations = [(0.8660254, 0, 0, 0.5), (0.70710678, 0, 0, -0.70710678)]
+                    uniform float rigExec:scale = 0.5
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+            }
+
+            def RigExecPoseInterpolator "ControlKeys" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                bool inputs:enabled = 1
+                uniform bool rigExec:automaticRadius = 1
+                uniform token rigExec:distanceMethod = "euclidean"
+                uniform token rigExec:kernel = "exponential"
+                uniform token rigExec:normalizeMethod = "onlyAboveOne"
+                uniform token rigExec:solver = "additive"
+                rel rigExec:driverAttributes = [
+                    </RbfAsset/Rig/Controls/Shoulder.avars:rz>,
+                    </RbfAsset/Rig/Controls/Elbow.avars:rz>,
+                ]
+                uniform asset ui:nodegraph:node:icon = @../../icons/pose_interpolator.png@
+
+                def RigExecPose "neutral" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    float3 rigExec:translation = (0, 0, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "up" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    float3 rigExec:translation = (60, 0, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "down" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    float3 rigExec:translation = (-60, 0, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecPose "fold" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    bool inputs:enabled = 1
+                    float outputs:weight = 0
+                    float3 rigExec:translation = (0, -90, 0)
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+            }
+        }
+
+        def Scope "Movers"
+        {
+            def Scope "Geometry"
+            {
+                def RigExecBlendShapeMover "Meters" (
+                    prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
+                )
+                {
+                    float inputs:defaultWeight = 1
+                    rel rigExec:blendInputs = [
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_neutral>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_up>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_forward>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_down>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_rest>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_up>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_fold>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_upFold>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_neutral>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_up>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_down>,
+                        </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_fold>,
+                    ]
+                    rel rigExec:moves = </RbfAsset/Geom/Meters.points>
+                    uniform asset ui:nodegraph:node:icon = @../../icons/blendshape_mover.png@
+
+                    def RigExecBlendInput "ShoulderSwing_neutral" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ShoulderSwing/neutral.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_neutral/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ShoulderSwing_neutral>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ShoulderSwing_up" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ShoulderSwing/up.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_up/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ShoulderSwing_up>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ShoulderSwing_forward" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ShoulderSwing/forward.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_forward/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ShoulderSwing_forward>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ShoulderSwing_down" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ShoulderSwing/down.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ShoulderSwing_down/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ShoulderSwing_down>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ArmFold_rest" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ArmFold/rest.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_rest/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ArmFold_rest>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ArmFold_up" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ArmFold/up.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_up/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ArmFold_up>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ArmFold_fold" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ArmFold/fold.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_fold/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ArmFold_fold>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ArmFold_upFold" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ArmFold/upFold.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ArmFold_upFold/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ArmFold_upFold>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ControlKeys_neutral" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ControlKeys/neutral.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_neutral/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ControlKeys_neutral>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ControlKeys_up" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ControlKeys/up.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_up/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ControlKeys_up>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ControlKeys_down" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ControlKeys/down.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_down/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ControlKeys_down>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "ControlKeys_fold" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </RbfAsset/Rig/PoseInterpolators/ControlKeys/fold.outputs:weight>
+                        rel rigExec:samples = </RbfAsset/Rig/Movers/Geometry/Meters/ControlKeys_fold/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </RbfAsset/Targets/ControlKeys_fold>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+                }
+
+                def Scope "ArmSkin"
+                {
+                    def RigExecMatrixMover "UpperSkin" (
+                        prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
+                    )
+                    {
+                        rel rigExec:moves = </RbfAsset/Geom/Limb.points>
+                        rel rigExec:transform = </RbfAsset/Rig/Joints/Upper> (
+                            rigExecReadPhase = "final"
+                        )
+                        rel rigExec:weightObject = </RbfAsset/Rig/Weights/UpperW>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/matrix_mover.png@
+
+                        def RigExecMatrixMover "ForeSkin" (
+                            prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
+                        )
+                        {
+                            rel rigExec:moves = </RbfAsset/Geom/Limb.points>
+                            rel rigExec:transform = </RbfAsset/Rig/Joints/Upper/Fore> (
+                                rigExecReadPhase = "final"
+                            )
+                            rel rigExec:weightObject = </RbfAsset/Rig/Weights/ForeW>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/matrix_mover.png@
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Scope "Geom"
+    {
+        def Mesh "Limb"
+        {
+            color3f[] primvars:displayColor = [(0.35, 0.5, 0.75)]
+            float3[] extent = [(0, -0.6, 0), (5, 0.6, 0)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 12, 11, 1, 2, 13, 12, 2, 3, 14, 13, 3, 4, 15, 14, 4, 5, 16, 15, 5, 6, 17, 16, 6, 7, 18, 17, 7, 8, 19, 18, 8, 9, 20, 19, 9, 10, 21, 20, 11, 12, 23, 22, 12, 13, 24, 23, 13, 14, 25, 24, 14, 15, 26, 25, 15, 16, 27, 26, 16, 17, 28, 27, 17, 18, 29, 28, 18, 19, 30, 29, 19, 20, 31, 30, 20, 21, 32, 31, 22, 23, 34, 33, 23, 24, 35, 34, 24, 25, 36, 35, 25, 26, 37, 36, 26, 27, 38, 37, 27, 28, 39, 38, 28, 29, 40, 39, 29, 30, 41, 40, 30, 31, 42, 41, 31, 32, 43, 42]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(0, -0.6, 0), (0.5, -0.6, 0), (1, -0.6, 0), (1.5, -0.6, 0), (2, -0.6, 0), (2.5, -0.6, 0), (3, -0.6, 0), (3.5, -0.6, 0), (4, -0.6, 0), (4.5, -0.6, 0), (5, -0.6, 0), (0, -0.2, 0), (0.5, -0.2, 0), (1, -0.2, 0), (1.5, -0.2, 0), (2, -0.2, 0), (2.5, -0.2, 0), (3, -0.2, 0), (3.5, -0.2, 0), (4, -0.2, 0), (4.5, -0.2, 0), (5, -0.2, 0), (0, 0.2, 0), (0.5, 0.2, 0), (1, 0.2, 0), (1.5, 0.2, 0), (2, 0.2, 0), (2.5, 0.2, 0), (3, 0.2, 0), (3.5, 0.2, 0), (4, 0.2, 0), (4.5, 0.2, 0), (5, 0.2, 0), (0, 0.6, 0), (0.5, 0.6, 0), (1, 0.6, 0), (1.5, 0.6, 0), (2, 0.6, 0), (2.5, 0.6, 0), (3, 0.6, 0), (3.5, 0.6, 0), (4, 0.6, 0), (4.5, 0.6, 0), (5, 0.6, 0)]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "Meters"
+        {
+            color3f[] primvars:displayColor = [(0.8, 0.55, 0.3)]
+            float3[] extent = [(7, -1.5, 0), (9.75, 3.05, 0)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+            point3f[] points = [(7, 3, 0), (7.5, 3, 0), (7.5, 3.05, 0), (7, 3.05, 0), (7.75, 3, 0), (8.25, 3, 0), (8.25, 3.05, 0), (7.75, 3.05, 0), (8.5, 3, 0), (9, 3, 0), (9, 3.05, 0), (8.5, 3.05, 0), (9.25, 3, 0), (9.75, 3, 0), (9.75, 3.05, 0), (9.25, 3.05, 0), (7, 0.75, 0), (7.5, 0.75, 0), (7.5, 0.8, 0), (7, 0.8, 0), (7.75, 0.75, 0), (8.25, 0.75, 0), (8.25, 0.8, 0), (7.75, 0.8, 0), (8.5, 0.75, 0), (9, 0.75, 0), (9, 0.8, 0), (8.5, 0.8, 0), (9.25, 0.75, 0), (9.75, 0.75, 0), (9.75, 0.8, 0), (9.25, 0.8, 0), (7, -1.5, 0), (7.5, -1.5, 0), (7.5, -1.45, 0), (7, -1.45, 0), (7.75, -1.5, 0), (8.25, -1.5, 0), (8.25, -1.45, 0), (7.75, -1.45, 0), (8.5, -1.5, 0), (9, -1.5, 0), (9, -1.45, 0), (8.5, -1.45, 0), (9.25, -1.5, 0), (9.75, -1.5, 0), (9.75, -1.45, 0), (9.25, -1.45, 0)]
+            uniform token subdivisionScheme = "none"
+        }
+    }
+
+    def Scope "Targets"
+    {
+        def BlendShape "ShoulderSwing_neutral"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [2, 3]
+        }
+
+        def BlendShape "ShoulderSwing_up"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [6, 7]
+        }
+
+        def BlendShape "ShoulderSwing_forward"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [10, 11]
+        }
+
+        def BlendShape "ShoulderSwing_down"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [14, 15]
+        }
+
+        def BlendShape "ArmFold_rest"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [18, 19]
+        }
+
+        def BlendShape "ArmFold_up"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [22, 23]
+        }
+
+        def BlendShape "ArmFold_fold"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [26, 27]
+        }
+
+        def BlendShape "ArmFold_upFold"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [30, 31]
+        }
+
+        def BlendShape "ControlKeys_neutral"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [34, 35]
+        }
+
+        def BlendShape "ControlKeys_up"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [38, 39]
+        }
+
+        def BlendShape "ControlKeys_down"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [42, 43]
+        }
+
+        def BlendShape "ControlKeys_fold"
+        {
+            uniform vector3f[] offsets = [(0, 1.5, 0), (0, 1.5, 0)]
+            uniform int[] pointIndices = [46, 47]
+        }
+    }
+
+    def Camera "MainCam"
+    {
+        float2 clippingRange = (0.3185, 270.5)
+        float focalLength = 35
+        float horizontalAperture = 20.95
+        float verticalAperture = 11.79
+        double3 xformOp:rotateXYZ = (-20, 32, 0)
+        double3 xformOp:translate = (20.29, 11.38, 25.42)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}

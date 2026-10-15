@@ -54,8 +54,9 @@ bool StructuralValue(const RigExecSceneDb &database,const SdfPath &path,const Ri
     if(type=="RigExecTwistDistribution" && (path.GetName()=="rigExec:weights" || path.GetName()=="rigExec:count"))return true;
     const auto typeName=type.GetString();
     if(typeName.size()>=10 && typeName.compare(typeName.size()-10,10,"Constraint")==0 && path.GetName()=="rigExec:rotationOrder")return true;
-    if(type=="RigExecPose")return true;
-    if(type=="RigExecPoseInterpolator" && path.GetName().rfind("rigExec:",0)==0)return true;
+    if(type=="RigExecPose" || type=="RigExecAnimatedMap")return true;
+    if((type=="RigExecPoseInterpolator" || type=="RigExecAnimatedMaps" || type=="RigExecMlMover") &&
+       path.GetName().rfind("rigExec:",0)==0)return true;
     if(type=="RigExecSpaceSwitch" && (path.GetName().rfind("inputs:affect",0)==0 || path.GetName()=="inputs:sourceWeights"))return true;
     for(const auto &handler:RigExecMoverHandlers())if(handler.resolveOp(TfToken())==RigExecRevisionOp::External)
         for(const auto &schema:handler.sceneDataSchemas)if(type==schema)return true;

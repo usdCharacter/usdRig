@@ -136,6 +136,25 @@ performance or `2d/bust_dd_b/bust_dd_b_rig.usda` for the neutral rig.
   properties in any combination — a joint is one of them, not a
   precondition.
 
+## RigLogic behaviours
+
+The behaviours ported from Epic Games' OpenRigLogic each have a stage with
+their node reference page (see [algorithm references](../docs/references.md)):
+
+- [**ml_mover.usda**](../docs/examples/ml_mover.usda) —
+  `RigExecMlMover`: a small network reads an elbow joint's rotation and a
+  Flex slider and drives a bicep bulge and an elbow crease as sparse morphs
+  on a skinned arm.
+- [**animated_maps.usda**](../docs/examples/animated_maps.usda) —
+  `RigExecAnimatedMaps`: two brow controls feed three conditional tables;
+  each map drives a brow morph and is published as a mesh primvar that
+  wrinkle-line materials read into opacity.
+- [**pose_interpolator_riglogic.usda**](../docs/examples/pose_interpolator_riglogic.usda)
+  — `RigExecPoseInterpolator` with `rigExec:solver` additive and
+  interpolative: swing, quaternion and euclidean distances, two frame
+  drivers, a pose scale, a weight threshold and an automatic radius, each
+  pose weight shown as a bar.
+
 ## Authoring conventions the engine expects
 
 - One `RigExecRoot` per stage (the usdview plugin and imaging bridge

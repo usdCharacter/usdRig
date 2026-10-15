@@ -52,6 +52,40 @@ licensed under the
 [Squarebit Eye End User License Agreement](https://www.squarebitstudios.com/squarebit-eye/eula),
 as its header states. It is not relicensed under MIT.
 
+`libs/rigExecMath/rbfMethodKernel.h`, `libs/rigExecMath/mlpKernel.h` and
+`libs/rigExecMath/conditionalTableKernel.h` port algorithms from Epic Games
+[OpenRigLogic](https://github.com/EpicGames/OpenRigLogic): its radial-basis
+solvers, its machine-learned behavior's dense layers and activations, and its
+animated maps' conditional table, following RigLogic 13.5.0 at commit
+`9ca65ac08b64a1ea5f0d79466e64706b3ac524ba`. `tests/fixtures/rigLogicReference.inc`
+holds values OpenRigLogic's own solver and table produced at that commit. No
+OpenRigLogic source file, DNA file or MetaHuman asset is included. The
+RigLogic example stages in `docs/examples` are original project work; see
+[RigLogic behaviours](docs/concepts/riglogic.md#provenance). OpenRigLogic is
+distributed under the MIT License:
+
+> MIT License
+>
+> Copyright (c) 2026 Epic Games, Inc.
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in
+> all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ## Published methods
 
 Dual-quaternion skinning and Delta Mush have public research references listed in

@@ -121,16 +121,32 @@ def KernelCoreFraction(kernel):
     """The kernel distance at which a pose's raw weight is one half.
 
     Linear is max(0, 1 - d): one half at d = 0.5. Gaussian is exp(-d^2):
-    one half at d = sqrt(ln 2) ~ 0.833. The evaluator treats any kernel
-    name but "linear" as gaussian, and so does this.
+    one half at d = sqrt(ln 2) ~ 0.833. RigLogic's exponential exp(-2 d),
+    cubic 1 - d^3 and quintic 1 - d^5 are one half at ln(2) / 2, 0.5^(1/3)
+    and 0.5^(1/5). The evaluator treats any other kernel name as gaussian,
+    and so does this.
     """
-    return 0.5 if kernel == "linear" else math.sqrt(math.log(2.0))
+    if kernel == "linear":
+        return 0.5
+    if kernel == "exponential":
+        return math.log(2.0) / 2.0
+    if kernel == "cubic":
+        return 0.5 ** (1.0 / 3.0)
+    if kernel == "quintic":
+        return 0.5 ** (1.0 / 5.0)
+    return math.sqrt(math.log(2.0))
 
 
 def KernelWeight(kernel, distance):
     """The raw falloff at a kernel distance (1 = the pose's own radius)."""
     if kernel == "linear":
         return max(0.0, 1.0 - distance)
+    if kernel == "exponential":
+        return math.exp(-2.0 * distance)
+    if kernel == "cubic":
+        return max(0.0, 1.0 - distance ** 3)
+    if kernel == "quintic":
+        return max(0.0, 1.0 - distance ** 5)
     return math.exp(-(distance * distance))
 
 

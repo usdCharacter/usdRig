@@ -1,6 +1,7 @@
 // RBF solver; provenance and conventions are documented in rbf.h.
 // Preserve left-to-right sums and first-maximum pivot selection for fixture parity.
 #include "rigExecMath/rbf.h"
+#include "rigExecMath/rbfMethodKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -77,9 +78,22 @@ RigExecRbfLinear(double distance, double radius)
 double
 RigExecRbfEvalKernel(RigExecRbfKernel kernel, double distance, double radius)
 {
-    return kernel == RigExecRbfKernel::Linear
-               ? RigExecRbfLinear(distance, radius)
-               : RigExecRbfGaussian(distance, radius);
+    switch (kernel) {
+    case RigExecRbfKernel::Linear:
+        return RigExecRbfLinear(distance, radius);
+    case RigExecRbfKernel::Exponential:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Exponential,
+                                       distance, radius);
+    case RigExecRbfKernel::Cubic:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Cubic,
+                                       distance, radius);
+    case RigExecRbfKernel::Quintic:
+        return rbfMethodDetail::Weight(RigExecRbfWeightFunction::Quintic,
+                                       distance, radius);
+    case RigExecRbfKernel::Gaussian:
+    default:
+        return RigExecRbfGaussian(distance, radius);
+    }
 }
 
 double

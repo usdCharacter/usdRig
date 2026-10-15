@@ -595,7 +595,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         for (const SdfPath &interpolatorPath :
              _DiscoverPoseInterpolators(_stage, _rigPath)) {
             const UsdPrim interpolator = _stage->GetPrimAtPath(interpolatorPath);
-            notePrim(interpolatorPath, kInterpolatorType);
+            notePrim(interpolatorPath, interpolator
+                                           ? interpolator.GetTypeName()
+                                           : kInterpolatorType);
             digest += pathText(interpolatorPath);
             digest += '|';
             appendRelTargets(interpolator, "rigExec:driver", false);
@@ -605,16 +607,42 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                                      "rigExec:normalize",
                                      "rigExec:enableRotation",
                                      "rigExec:enableTranslation",
-                                     "rigExec:allowNegativeWeights"}) {
+                                     "rigExec:allowNegativeWeights",
+                                     "rigExec:solver",
+                                     "rigExec:distanceMethod",
+                                     "rigExec:normalizeMethod",
+                                     "rigExec:automaticRadius",
+                                     "rigExec:radius",
+                                     "rigExec:weightThreshold",
+                                     "rigExec:layerSizes",
+                                     "rigExec:layerActivations",
+                                     "rigExec:layerAlphas",
+                                     "rigExec:weights",
+                                     "rigExec:biases",
+                                     "rigExec:inputMean",
+                                     "rigExec:inputScale",
+                                     "rigExec:outputDefaults"}) {
                 appendScalar(interpolator, name);
             }
+            appendRelTargets(interpolator, "rigExec:meshes", false);
             for (const UsdPrim &pose : interpolator.GetChildren()) {
                 digest += pose.GetName().GetString();
                 digest += '=';
+                // An ML mover's outputs are its children of that type.
+                digest += pose.GetTypeName().GetString();
+                digest += '/';
                 for (const char *name : {"rigExec:poseType", "rigExec:rotation",
                                          "rigExec:translation",
                                          "rigExec:rotationRadius",
                                          "rigExec:translationRadius",
+                                         "rigExec:rotations",
+                                         "rigExec:scale",
+                                         "rigExec:rowInputs",
+                                         "rigExec:rowFrom",
+                                         "rigExec:rowTo",
+                                         "rigExec:rowSlope",
+                                         "rigExec:rowCut",
+                                         "rigExec:primvarName",
                                          "inputs:enabled"}) {
                     appendScalar(pose, name);
                 }

@@ -98,6 +98,11 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
     return sawAvar;
 }
 
+// Built while the library loads, so a notice on any thread compares without
+// a guarded static.
+const TfToken _mlMoverType("RigExecMlMover");
+const TfToken _animatedMapsType("RigExecAnimatedMaps");
+
 // The types whose prims the digest writes the path of for the type alone,
 // wherever under the rig they sit: the discovered joints, controls, volume
 // weights and pose interpolators, and every aggregate solver.
@@ -108,6 +113,7 @@ _IsDigestDiscoveredType(const TfToken &type)
     static const TfToken kControl("RigExecControl");
     static const TfToken kInterpolator("RigExecPoseInterpolator");
     return type == kJoint || type == kControl || type == kInterpolator ||
+           type == _mlMoverType || type == _animatedMapsType ||
            _IsVolumeWeightType(type) || _IsAggregateSolverType(type);
 }
 

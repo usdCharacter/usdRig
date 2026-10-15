@@ -15,7 +15,8 @@ Covers the logic added/modified for NVIDIA Windows stage-reopen safety:
   2. _onStageReplaced: reload exceptions are logged, not swallowed
   3. _finishStageReload: sets initialized=True to preserve FontAtlas
   4. _isStageViewMidTeardown: detects stageView mid-teardown
-  5. _installCloseStageGuard: wraps _closeStage to pre-clean VBOs
+  5. _installCloseStageGuard: wraps _closeStage to pre-clean VBOs and
+     rebind the stage view's context for Storm's teardown
   6. event() paint guard: blocks Paint during teardown
 
 GraphView cannot be imported in headless CI (module-level GL imports),
@@ -91,6 +92,18 @@ def _is_stage_view_mid_teardown(view):
         return False
 
 
+def _make_stage_view_current(controller):
+    """Mirror of _qt_editor._makeStageViewCurrent."""
+    stageView = getattr(controller, "_stageView", None)
+    if stageView is None:
+        return
+    try:
+        if stageView.context() is not None:
+            stageView.makeCurrent()
+    except RuntimeError:
+        pass
+
+
 def _install_close_stage_guard(manager, usdviewApi):
     """Mirror of NoodlesEditorManager._installCloseStageGuard."""
     try:
@@ -100,13 +113,16 @@ def _install_close_stage_guard(manager, usdviewApi):
         original = controller._closeStage
 
         def _guarded_close():
-            for window in manager.getAllWindows():
-                gv = window.graphView
-                gv.setUpdatesEnabled(False)
-                gv.makeCurrent()
-                gv._nodeRenderManager.clearCache()
-                gv.doneCurrent()
-            original()
+            try:
+                for window in manager.getAllWindows():
+                    gv = window.graphView
+                    gv.setUpdatesEnabled(False)
+                    gv.makeCurrent()
+                    gv._nodeRenderManager.clearCache()
+                    gv.doneCurrent()
+            finally:
+                _make_stage_view_current(controller)
+                original()
 
         controller._closeStage = _guarded_close
         controller._noodles_close_guard = True
@@ -347,6 +363,49 @@ class TestInstallCloseStageGuard(unittest.TestCase):
         gv.makeCurrent.assert_called_once()
         gv._nodeRenderManager.clearCache.assert_called_once()
         gv.doneCurrent.assert_called_once()
+        original.assert_called_once()
+
+    def test_guard_rebinds_stage_view_before_original(self):
+        """usdview's closeRenderer() frees Storm's GL objects in whatever
+        context is current; the guard must hand it the stage view's, not
+        the none left by the Noodles doneCurrent()."""
+        order = []
+        gv = MagicMock()
+        gv.doneCurrent.side_effect = lambda: order.append("noodles.doneCurrent")
+        window = MagicMock()
+        window.graphView = gv
+        manager = MagicMock()
+        manager.getAllWindows.return_value = [window]
+
+        api = MagicMock()
+        controller = api._UsdviewApi__appController
+        controller._noodles_close_guard = False
+        controller._stageView.makeCurrent.side_effect = (
+            lambda: order.append("stageView.makeCurrent"))
+        controller._closeStage = MagicMock(
+            side_effect=lambda: order.append("original"))
+
+        _install_close_stage_guard(manager, api)
+        controller._closeStage()
+
+        self.assertEqual(
+            order,
+            ["noodles.doneCurrent", "stageView.makeCurrent", "original"])
+
+    def test_guard_skips_stage_view_without_context(self):
+        manager = MagicMock()
+        manager.getAllWindows.return_value = []
+        api = MagicMock()
+        controller = api._UsdviewApi__appController
+        controller._noodles_close_guard = False
+        controller._stageView.context.return_value = None
+        original = MagicMock()
+        controller._closeStage = original
+
+        _install_close_stage_guard(manager, api)
+        controller._closeStage()
+
+        controller._stageView.makeCurrent.assert_not_called()
         original.assert_called_once()
 
     def test_guard_not_installed_twice(self):

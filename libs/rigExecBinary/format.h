@@ -531,7 +531,14 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// Format 23 adds the property movers' quantize and path operations: a path
 /// revision names its curve's points slot and carries its uniform settings
 /// (PropertyRevision.path_*). Older files hold neither operation.
-inline constexpr uint32_t RigExecFormatVersion = 23;
+///
+/// Format 24 adds RigLogic's radial-basis solves to PoseInterpolator (method
+/// and its extra driver slots) and three pose-solver kernels to RbfKernel,
+/// and two more solves to the same table: an ML mover's network (network,
+/// mask, float value inputs, any number of them) and animated maps (maps,
+/// primvar_slots, primvar_sources). Older files hold none of them, so every
+/// interpolator plays the pose solve.
+inline constexpr uint32_t RigExecFormatVersion = 24;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

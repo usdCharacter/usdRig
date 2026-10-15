@@ -1554,15 +1554,104 @@ RigExecPoseInterpolatorHandle::SetDriver(const SdfPath &path)
 }
 
 void
+RigExecPoseInterpolatorHandle::SetDrivers(const std::vector<SdfPath> &paths)
+{
+    if (paths.empty()) {
+        throw std::invalid_argument("pose interpolator needs a driver");
+    }
+    SetRel("rigExec:driver", paths);
+}
+
+void
+RigExecPoseInterpolatorHandle::SetDriverAttributes(
+    const std::vector<SdfPath> &properties)
+{
+    if (properties.empty() || properties.size() > 3) {
+        throw std::invalid_argument(
+            "a numeric pose driver reads one to three properties");
+    }
+    for (const SdfPath &property : properties) {
+        if (!property.IsPropertyPath()) {
+            throw std::invalid_argument(
+                "numeric pose driver is not a property: " +
+                property.GetString());
+        }
+    }
+    SetRel("rigExec:driverAttributes", properties);
+}
+
+void
 RigExecPoseInterpolatorHandle::SetKernel(const TfToken &kernel)
 {
-    if (kernel != TfToken("gaussian") && kernel != TfToken("linear")) {
+    if (kernel != TfToken("gaussian") && kernel != TfToken("linear") &&
+        kernel != TfToken("exponential") && kernel != TfToken("cubic") &&
+        kernel != TfToken("quintic")) {
         throw std::invalid_argument(
-            "pose interpolator kernel must be gaussian or linear, got: " +
-            kernel.GetString());
+            "pose interpolator kernel must be gaussian, linear, exponential, "
+            "cubic or quintic, got: " + kernel.GetString());
     }
     _AuthorAttr(GetPrim(), "rigExec:kernel", SdfValueTypeNames->Token,
                 VtValue(kernel));
+}
+
+void
+RigExecPoseInterpolatorHandle::SetSolver(const TfToken &solver)
+{
+    if (solver != TfToken("pose") && solver != TfToken("additive") &&
+        solver != TfToken("interpolative")) {
+        throw std::invalid_argument(
+            "pose interpolator solver must be pose, additive or "
+            "interpolative, got: " + solver.GetString());
+    }
+    _AuthorAttr(GetPrim(), "rigExec:solver", SdfValueTypeNames->Token,
+                VtValue(solver));
+}
+
+void
+RigExecPoseInterpolatorHandle::SetDistanceMethod(const TfToken &method)
+{
+    if (method != TfToken("euclidean") && method != TfToken("quaternion") &&
+        method != TfToken("swingAngle") && method != TfToken("twistAngle")) {
+        throw std::invalid_argument(
+            "distance method must be euclidean, quaternion, swingAngle or "
+            "twistAngle, got: " + method.GetString());
+    }
+    _AuthorAttr(GetPrim(), "rigExec:distanceMethod", SdfValueTypeNames->Token,
+                VtValue(method));
+}
+
+void
+RigExecPoseInterpolatorHandle::SetNormalizeMethod(const TfToken &method)
+{
+    if (method != TfToken("onlyAboveOne") && method != TfToken("always")) {
+        throw std::invalid_argument(
+            "normalize method must be onlyAboveOne or always, got: " +
+            method.GetString());
+    }
+    _AuthorAttr(GetPrim(), "rigExec:normalizeMethod",
+                SdfValueTypeNames->Token, VtValue(method));
+}
+
+void
+RigExecPoseInterpolatorHandle::SetRadius(float radius, bool automatic)
+{
+    if (!(radius >= 0.f)) {
+        throw std::invalid_argument("a radius must not be negative");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:radius", SdfValueTypeNames->Float,
+                VtValue(radius));
+    _AuthorAttr(GetPrim(), "rigExec:automaticRadius", SdfValueTypeNames->Bool,
+                VtValue(automatic));
+}
+
+void
+RigExecPoseInterpolatorHandle::SetWeightThreshold(float threshold)
+{
+    if (!std::isfinite(threshold)) {
+        throw std::invalid_argument("a weight threshold must be finite");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:weightThreshold",
+                SdfValueTypeNames->Float, VtValue(threshold));
 }
 
 void
@@ -1685,6 +1774,24 @@ RigExecPoseHandle::SetRadii(float rotationRadius, float translationRadius)
                 VtValue(rotationRadius));
     _AuthorAttr(GetPrim(), "rigExec:translationRadius",
                 SdfValueTypeNames->Float, VtValue(translationRadius));
+}
+
+void
+RigExecPoseHandle::SetRotations(const std::vector<GfQuatf> &rotations)
+{
+    _AuthorAttr(GetPrim(), "rigExec:rotations",
+                SdfValueTypeNames->QuatfArray,
+                VtValue(VtQuatfArray(rotations.begin(), rotations.end())));
+}
+
+void
+RigExecPoseHandle::SetScale(float scale)
+{
+    if (!std::isfinite(scale)) {
+        throw std::invalid_argument("a pose scale must be finite");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:scale", SdfValueTypeNames->Float,
+                VtValue(scale));
 }
 
 void
@@ -1885,6 +1992,132 @@ RigExecBlendShapeMoverHandle::SetBlendInputs(
             _stage, path, TfToken("RigExecBlendInput"), "blend input");
     }
     SetRel("rigExec:blendInputs", paths);
+}
+
+void
+RigExecMlMoverHandle::SetDrivers(const std::vector<SdfPath> &paths)
+{
+    SetRel("rigExec:driver", paths);
+}
+
+void
+RigExecMlMoverHandle::SetDriverAttributes(
+    const std::vector<SdfPath> &properties)
+{
+    for (const SdfPath &property : properties) {
+        if (!property.IsPropertyPath()) {
+            throw std::invalid_argument(
+                "ML driver attribute is not a property: " +
+                property.GetString());
+        }
+    }
+    SetRel("rigExec:driverAttributes", properties);
+}
+
+void
+RigExecMlMoverHandle::SetNetwork(const std::vector<int> &layerSizes,
+                                 const std::vector<TfToken> &activations,
+                                 const std::vector<float> &alphas,
+                                 const std::vector<float> &weights,
+                                 const std::vector<float> &biases)
+{
+    if (layerSizes.empty() || activations.size() != layerSizes.size() ||
+        (!alphas.empty() && alphas.size() != layerSizes.size())) {
+        throw std::invalid_argument(
+            "ML layer sizes, activations and alphas must be parallel");
+    }
+    // RigLogic's ActivationFunction codes.
+    VtIntArray codes;
+    for (const TfToken &activation : activations) {
+        const std::string &name = activation.GetString();
+        const int code = name == "linear" ? 0 : name == "relu" ? 1 :
+                         name == "leakyRelu" ? 2 : name == "tanh" ? 3 :
+                         name == "sigmoid" ? 4 : -1;
+        if (code < 0) {
+            throw std::invalid_argument(
+                "ML activation must be linear, relu, leakyRelu, tanh or "
+                "sigmoid, got: " + name);
+        }
+        codes.push_back(code);
+    }
+    for (int size : layerSizes) {
+        if (size <= 0) {
+            throw std::invalid_argument("ML layer sizes must be positive");
+        }
+    }
+    _AuthorAttr(GetPrim(), "rigExec:layerSizes", SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(layerSizes.begin(), layerSizes.end())));
+    _AuthorAttr(GetPrim(), "rigExec:layerActivations",
+                SdfValueTypeNames->IntArray, VtValue(codes));
+    _AuthorAttr(GetPrim(), "rigExec:layerAlphas",
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(alphas.begin(), alphas.end())));
+    _AuthorAttr(GetPrim(), "rigExec:weights", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
+    _AuthorAttr(GetPrim(), "rigExec:biases", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(biases.begin(), biases.end())));
+}
+
+void
+RigExecMlMoverHandle::SetInputNormalization(const std::vector<float> &mean,
+                                            const std::vector<float> &scale)
+{
+    _AuthorAttr(GetPrim(), "rigExec:inputMean", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(mean.begin(), mean.end())));
+    _AuthorAttr(GetPrim(), "rigExec:inputScale",
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(scale.begin(), scale.end())));
+}
+
+void
+RigExecMlMoverHandle::SetOutputDefaults(const std::vector<float> &defaults)
+{
+    _AuthorAttr(GetPrim(), "rigExec:outputDefaults",
+                SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(defaults.begin(), defaults.end())));
+}
+
+void
+RigExecMlMoverHandle::SetMask(float mask)
+{
+    _AuthorAttr(GetPrim(), "inputs:mask", SdfValueTypeNames->Float,
+                VtValue(mask));
+}
+
+SdfPath
+RigExecMlMoverHandle::AddOutput(const std::string &name)
+{
+    if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
+        throw std::invalid_argument(
+            "ML output name must be a valid USD identifier");
+    }
+    const SdfPath outputPath = _path.AppendChild(TfToken(name));
+    if (_stage->GetPrimAtPath(outputPath)) {
+        throw std::invalid_argument(
+            "ML output already exists: " + outputPath.GetString());
+    }
+    UsdPrim prim = RigExecSchemaPrim::Define(
+        _stage, outputPath, TfToken("RigExecMlOutput")).GetPrim();
+    _ApplyApiRequired(prim, _kNodeGraphApi);
+    // Authored up front so a blend input's connection resolves on a stage
+    // that has never been compiled.
+    _AuthorAttr(prim, "outputs:weight", SdfValueTypeNames->Float,
+                VtValue(0.f));
+    return outputPath.AppendProperty(TfToken("outputs:weight"));
+}
+
+SdfPath
+RigExecMlMoverHandle::AddMorph(const std::string &name,
+                               const SdfPath &blendShape)
+{
+    if (blendShape.IsEmpty()) {
+        throw std::invalid_argument("ML morph needs a blend shape prim");
+    }
+    const SdfPath output = AddOutput(name);
+    RigExecBlendInputHandle input = AddBlendInput(name + "Morph");
+    input.ConnectWeight(output);
+    input.AddSample("shape").SetBlendShape(blendShape);
+    return output;
 }
 
 void
@@ -2156,6 +2389,13 @@ RigExecMoverChain::AddBlendShapeMover(
         handle.SetWeightObject(weightObject);
     }
     return handle;
+}
+
+RigExecMlMoverHandle
+RigExecMoverChain::AddMlMover(const std::string &name, const SdfPath &target)
+{
+    return RigExecMlMoverHandle(
+        _stage, _AddMoverPrim("RigExecMlMover", name, target));
 }
 
 RigExecCurveMoverHandle
@@ -3077,6 +3317,86 @@ RigExecRigBuilder::AddBlendInput(const std::string &name, float weight)
     RigExecBlendInputHandle handle(_stage, prim.GetPath());
     handle.SetWeight(weight);
     return handle;
+}
+
+RigExecAnimatedMapsHandle
+RigExecRigBuilder::AddAnimatedMaps(const std::string &name)
+{
+    _RequireName(name, "animated maps name");
+    const SdfPath scope = _EnsureScope("AnimatedMaps");
+    UsdPrim prim = _DefineTyped(scope, "RigExecAnimatedMaps", name);
+    _ApplyApiRequired(prim, _kNodeGraphApi);
+    return RigExecAnimatedMapsHandle(_stage, prim.GetPath());
+}
+
+void
+RigExecAnimatedMapsHandle::SetInputs(const std::vector<SdfPath> &properties)
+{
+    for (const SdfPath &property : properties) {
+        if (!property.IsPropertyPath()) {
+            throw std::invalid_argument(
+                "animated map input is not a property: " +
+                property.GetString());
+        }
+    }
+    SetRel("rigExec:driverAttributes", properties);
+}
+
+void
+RigExecAnimatedMapsHandle::SetMeshes(const std::vector<SdfPath> &meshes)
+{
+    SetRel("rigExec:meshes", meshes);
+}
+
+void
+RigExecAnimatedMapsHandle::SetEnabled(bool enabled)
+{
+    _AuthorAttr(GetPrim(), "inputs:enabled", SdfValueTypeNames->Bool,
+                VtValue(enabled));
+}
+
+SdfPath
+RigExecAnimatedMapsHandle::AddMap(const std::string &name,
+                                  const std::vector<int> &inputs,
+                                  const std::vector<float> &from,
+                                  const std::vector<float> &to,
+                                  const std::vector<float> &slope,
+                                  const std::vector<float> &cut,
+                                  const std::string &primvarName)
+{
+    if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
+        throw std::invalid_argument(
+            "animated map name must be a valid USD identifier");
+    }
+    if (from.size() != inputs.size() || to.size() != inputs.size() ||
+        slope.size() != inputs.size() || cut.size() != inputs.size()) {
+        throw std::invalid_argument(
+            "animated map rows must be parallel arrays");
+    }
+    const SdfPath mapPath = _path.AppendChild(TfToken(name));
+    if (_stage->GetPrimAtPath(mapPath)) {
+        throw std::invalid_argument(
+            "animated map already exists: " + mapPath.GetString());
+    }
+    UsdPrim prim = RigExecSchemaPrim::Define(
+        _stage, mapPath, TfToken("RigExecAnimatedMap")).GetPrim();
+    _ApplyApiRequired(prim, _kNodeGraphApi);
+    _AuthorAttr(prim, "rigExec:rowInputs", SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(inputs.begin(), inputs.end())));
+    _AuthorAttr(prim, "rigExec:rowFrom", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(from.begin(), from.end())));
+    _AuthorAttr(prim, "rigExec:rowTo", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(to.begin(), to.end())));
+    _AuthorAttr(prim, "rigExec:rowSlope", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(slope.begin(), slope.end())));
+    _AuthorAttr(prim, "rigExec:rowCut", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(cut.begin(), cut.end())));
+    if (!primvarName.empty()) {
+        _AuthorAttr(prim, "rigExec:primvarName", SdfValueTypeNames->Token,
+                    VtValue(TfToken(primvarName)));
+    }
+    _AuthorAttr(prim, "outputs:value", SdfValueTypeNames->Float, VtValue(0.f));
+    return mapPath.AppendProperty(TfToken("outputs:value"));
 }
 
 RigExecPoseInterpolatorHandle

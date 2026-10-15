@@ -162,6 +162,18 @@ struct Rbf;
 struct RbfBuilder;
 struct RigExecWireRbf;
 
+struct RbfMethod;
+struct RbfMethodBuilder;
+struct RigExecWireRbfMethod;
+
+struct MlNetwork;
+struct MlNetworkBuilder;
+struct RigExecWireMlNetwork;
+
+struct AnimatedMaps;
+struct AnimatedMapsBuilder;
+struct RigExecWireAnimatedMaps;
+
 struct PoseInterpolator;
 struct PoseInterpolatorBuilder;
 struct RigExecWirePoseInterpolator;
@@ -485,6 +497,12 @@ inline const ::flatbuffers::TypeTable *ConesTypeTable();
 inline const ::flatbuffers::TypeTable *LadderTypeTable();
 
 inline const ::flatbuffers::TypeTable *RbfTypeTable();
+
+inline const ::flatbuffers::TypeTable *RbfMethodTypeTable();
+
+inline const ::flatbuffers::TypeTable *MlNetworkTypeTable();
+
+inline const ::flatbuffers::TypeTable *AnimatedMapsTypeTable();
 
 inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable();
 
@@ -1711,31 +1729,179 @@ inline const char *EnumNameSplineIkRestLength(SplineIkRestLength e) {
 enum class RbfKernel : uint8_t {
   Gaussian = 0,
   Linear = 1,
+  Exponential = 2,
+  Cubic = 3,
+  Quintic = 4,
   MIN = Gaussian,
-  MAX = Linear
+  MAX = Quintic
 };
 
-inline const RbfKernel (&EnumValuesRbfKernel())[2] {
+inline const RbfKernel (&EnumValuesRbfKernel())[5] {
   static const RbfKernel values[] = {
     RbfKernel::Gaussian,
-    RbfKernel::Linear
+    RbfKernel::Linear,
+    RbfKernel::Exponential,
+    RbfKernel::Cubic,
+    RbfKernel::Quintic
   };
   return values;
 }
 
 inline const char * const *EnumNamesRbfKernel() {
-  static const char * const names[3] = {
+  static const char * const names[6] = {
     "Gaussian",
     "Linear",
+    "Exponential",
+    "Cubic",
+    "Quintic",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameRbfKernel(RbfKernel e) {
-  if (::flatbuffers::IsOutRange(e, RbfKernel::Gaussian, RbfKernel::Linear)) return "";
+  if (::flatbuffers::IsOutRange(e, RbfKernel::Gaussian, RbfKernel::Quintic)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesRbfKernel()[index];
+}
+
+/// RigExecRbfSolverType.
+enum class RbfSolverType : uint8_t {
+  Additive = 0,
+  Interpolative = 1,
+  MIN = Additive,
+  MAX = Interpolative
+};
+
+inline const RbfSolverType (&EnumValuesRbfSolverType())[2] {
+  static const RbfSolverType values[] = {
+    RbfSolverType::Additive,
+    RbfSolverType::Interpolative
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesRbfSolverType() {
+  static const char * const names[3] = {
+    "Additive",
+    "Interpolative",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameRbfSolverType(RbfSolverType e) {
+  if (::flatbuffers::IsOutRange(e, RbfSolverType::Additive, RbfSolverType::Interpolative)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesRbfSolverType()[index];
+}
+
+/// RigExecRbfDistanceMethod.
+enum class RbfDistanceMethod : uint8_t {
+  Euclidean = 0,
+  Quaternion = 1,
+  SwingAngle = 2,
+  TwistAngle = 3,
+  MIN = Euclidean,
+  MAX = TwistAngle
+};
+
+inline const RbfDistanceMethod (&EnumValuesRbfDistanceMethod())[4] {
+  static const RbfDistanceMethod values[] = {
+    RbfDistanceMethod::Euclidean,
+    RbfDistanceMethod::Quaternion,
+    RbfDistanceMethod::SwingAngle,
+    RbfDistanceMethod::TwistAngle
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesRbfDistanceMethod() {
+  static const char * const names[5] = {
+    "Euclidean",
+    "Quaternion",
+    "SwingAngle",
+    "TwistAngle",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameRbfDistanceMethod(RbfDistanceMethod e) {
+  if (::flatbuffers::IsOutRange(e, RbfDistanceMethod::Euclidean, RbfDistanceMethod::TwistAngle)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesRbfDistanceMethod()[index];
+}
+
+/// RigExecRbfWeightFunction.
+enum class RbfWeightFunction : uint8_t {
+  Gaussian = 0,
+  Exponential = 1,
+  Linear = 2,
+  Cubic = 3,
+  Quintic = 4,
+  MIN = Gaussian,
+  MAX = Quintic
+};
+
+inline const RbfWeightFunction (&EnumValuesRbfWeightFunction())[5] {
+  static const RbfWeightFunction values[] = {
+    RbfWeightFunction::Gaussian,
+    RbfWeightFunction::Exponential,
+    RbfWeightFunction::Linear,
+    RbfWeightFunction::Cubic,
+    RbfWeightFunction::Quintic
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesRbfWeightFunction() {
+  static const char * const names[6] = {
+    "Gaussian",
+    "Exponential",
+    "Linear",
+    "Cubic",
+    "Quintic",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameRbfWeightFunction(RbfWeightFunction e) {
+  if (::flatbuffers::IsOutRange(e, RbfWeightFunction::Gaussian, RbfWeightFunction::Quintic)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesRbfWeightFunction()[index];
+}
+
+/// RigExecRbfNormalizeMethod.
+enum class RbfNormalizeMethod : uint8_t {
+  OnlyAboveOne = 0,
+  Always = 1,
+  MIN = OnlyAboveOne,
+  MAX = Always
+};
+
+inline const RbfNormalizeMethod (&EnumValuesRbfNormalizeMethod())[2] {
+  static const RbfNormalizeMethod values[] = {
+    RbfNormalizeMethod::OnlyAboveOne,
+    RbfNormalizeMethod::Always
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesRbfNormalizeMethod() {
+  static const char * const names[3] = {
+    "OnlyAboveOne",
+    "Always",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameRbfNormalizeMethod(RbfNormalizeMethod e) {
+  if (::flatbuffers::IsOutRange(e, RbfNormalizeMethod::OnlyAboveOne, RbfNormalizeMethod::Always)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesRbfNormalizeMethod()[index];
 }
 
 /// RigExecRbfPoseType.
@@ -6800,6 +6966,609 @@ inline ::flatbuffers::Offset<Rbf> CreateRbfDirect(
 
 ::flatbuffers::Offset<Rbf> CreateRbf(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRbf *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireRbfMethod : public ::flatbuffers::NativeTable {
+  typedef RbfMethod TableType;
+  uint8_t solverType = 0;
+  uint8_t distanceMethod = 0;
+  uint8_t weightFunction = 0;
+  uint8_t normalizeMethod = 0;
+  uint8_t twistAxis = 0;
+  uint32_t rawCount = 0;
+  uint32_t targetCount = 0;
+  double radius{};
+  double weightThreshold{};
+  std::vector<double> targets{};
+  std::vector<double> distanceTargets{};
+  std::vector<double> targetScales{};
+  std::vector<double> coefficients{};
+};
+
+/// RigLogic's solve (rigExec:solver additive or interpolative): the solved
+/// constants of RigExecRbfMethodTable, carried so no reader re-derives them.
+struct RbfMethod FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireRbfMethod NativeTableType;
+  typedef RbfMethodBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return RbfMethodTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SOLVERTYPE = 4,
+    VT_DISTANCEMETHOD = 6,
+    VT_WEIGHTFUNCTION = 8,
+    VT_NORMALIZEMETHOD = 10,
+    VT_TWISTAXIS = 12,
+    VT_RAWCOUNT = 14,
+    VT_TARGETCOUNT = 16,
+    VT_RADIUS = 18,
+    VT_WEIGHTTHRESHOLD = 20,
+    VT_TARGETS = 22,
+    VT_DISTANCETARGETS = 24,
+    VT_TARGETSCALES = 26,
+    VT_COEFFICIENTS = 28
+  };
+  /// RbfSolverType.
+  uint8_t solverType() const {
+    return GetField<uint8_t>(VT_SOLVERTYPE, 0);
+  }
+  /// RbfDistanceMethod.
+  uint8_t distanceMethod() const {
+    return GetField<uint8_t>(VT_DISTANCEMETHOD, 0);
+  }
+  /// RbfWeightFunction.
+  uint8_t weightFunction() const {
+    return GetField<uint8_t>(VT_WEIGHTFUNCTION, 0);
+  }
+  /// RbfNormalizeMethod.
+  uint8_t normalizeMethod() const {
+    return GetField<uint8_t>(VT_NORMALIZEMETHOD, 0);
+  }
+  /// 0 X, 1 Y, 2 Z.
+  uint8_t twistAxis() const {
+    return GetField<uint8_t>(VT_TWISTAXIS, 0);
+  }
+  uint32_t rawCount() const {
+    return GetField<uint32_t>(VT_RAWCOUNT, 0);
+  }
+  uint32_t targetCount() const {
+    return GetField<uint32_t>(VT_TARGETCOUNT, 0);
+  }
+  /// The radius the kernels use, automatic radius already applied.
+  const rigExec::fb::F64 *radius() const {
+    return GetStruct<const rigExec::fb::F64 *>(VT_RADIUS);
+  }
+  const rigExec::fb::F64 *weightThreshold() const {
+    return GetStruct<const rigExec::fb::F64 *>(VT_WEIGHTTHRESHOLD);
+  }
+  /// target_count * raw_count, in the distance method's stored form.
+  const ::flatbuffers::Vector<double> *targets() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_TARGETS);
+  }
+  /// TwistAngle only: the targets in angle form; empty otherwise.
+  const ::flatbuffers::Vector<double> *distanceTargets() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_DISTANCETARGETS);
+  }
+  /// One per target.
+  const ::flatbuffers::Vector<double> *targetScales() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_TARGETSCALES);
+  }
+  /// Interpolative only: target_count^2, row-major; empty for additive.
+  const ::flatbuffers::Vector<double> *coefficients() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_COEFFICIENTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_SOLVERTYPE, 1) &&
+           VerifyField<uint8_t>(verifier, VT_DISTANCEMETHOD, 1) &&
+           VerifyField<uint8_t>(verifier, VT_WEIGHTFUNCTION, 1) &&
+           VerifyField<uint8_t>(verifier, VT_NORMALIZEMETHOD, 1) &&
+           VerifyField<uint8_t>(verifier, VT_TWISTAXIS, 1) &&
+           VerifyField<uint32_t>(verifier, VT_RAWCOUNT, 4) &&
+           VerifyField<uint32_t>(verifier, VT_TARGETCOUNT, 4) &&
+           VerifyField<rigExec::fb::F64>(verifier, VT_RADIUS, 8) &&
+           VerifyField<rigExec::fb::F64>(verifier, VT_WEIGHTTHRESHOLD, 8) &&
+           VerifyOffset(verifier, VT_TARGETS) &&
+           verifier.VerifyVector(targets()) &&
+           VerifyOffset(verifier, VT_DISTANCETARGETS) &&
+           verifier.VerifyVector(distanceTargets()) &&
+           VerifyOffset(verifier, VT_TARGETSCALES) &&
+           verifier.VerifyVector(targetScales()) &&
+           VerifyOffset(verifier, VT_COEFFICIENTS) &&
+           verifier.VerifyVector(coefficients()) &&
+           verifier.EndTable();
+  }
+  RigExecWireRbfMethod *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireRbfMethod *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<RbfMethod> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRbfMethod* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct RbfMethodBuilder {
+  typedef RbfMethod Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_solverType(uint8_t solverType) {
+    fbb_.AddElement<uint8_t>(RbfMethod::VT_SOLVERTYPE, solverType, 0);
+  }
+  void add_distanceMethod(uint8_t distanceMethod) {
+    fbb_.AddElement<uint8_t>(RbfMethod::VT_DISTANCEMETHOD, distanceMethod, 0);
+  }
+  void add_weightFunction(uint8_t weightFunction) {
+    fbb_.AddElement<uint8_t>(RbfMethod::VT_WEIGHTFUNCTION, weightFunction, 0);
+  }
+  void add_normalizeMethod(uint8_t normalizeMethod) {
+    fbb_.AddElement<uint8_t>(RbfMethod::VT_NORMALIZEMETHOD, normalizeMethod, 0);
+  }
+  void add_twistAxis(uint8_t twistAxis) {
+    fbb_.AddElement<uint8_t>(RbfMethod::VT_TWISTAXIS, twistAxis, 0);
+  }
+  void add_rawCount(uint32_t rawCount) {
+    fbb_.AddElement<uint32_t>(RbfMethod::VT_RAWCOUNT, rawCount, 0);
+  }
+  void add_targetCount(uint32_t targetCount) {
+    fbb_.AddElement<uint32_t>(RbfMethod::VT_TARGETCOUNT, targetCount, 0);
+  }
+  void add_radius(const rigExec::fb::F64 *radius) {
+    fbb_.AddStruct(RbfMethod::VT_RADIUS, radius);
+  }
+  void add_weightThreshold(const rigExec::fb::F64 *weightThreshold) {
+    fbb_.AddStruct(RbfMethod::VT_WEIGHTTHRESHOLD, weightThreshold);
+  }
+  void add_targets(::flatbuffers::Offset<::flatbuffers::Vector<double>> targets) {
+    fbb_.AddOffset(RbfMethod::VT_TARGETS, targets);
+  }
+  void add_distanceTargets(::flatbuffers::Offset<::flatbuffers::Vector<double>> distanceTargets) {
+    fbb_.AddOffset(RbfMethod::VT_DISTANCETARGETS, distanceTargets);
+  }
+  void add_targetScales(::flatbuffers::Offset<::flatbuffers::Vector<double>> targetScales) {
+    fbb_.AddOffset(RbfMethod::VT_TARGETSCALES, targetScales);
+  }
+  void add_coefficients(::flatbuffers::Offset<::flatbuffers::Vector<double>> coefficients) {
+    fbb_.AddOffset(RbfMethod::VT_COEFFICIENTS, coefficients);
+  }
+  explicit RbfMethodBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<RbfMethod> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<RbfMethod>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<RbfMethod> CreateRbfMethod(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint8_t solverType = 0,
+    uint8_t distanceMethod = 0,
+    uint8_t weightFunction = 0,
+    uint8_t normalizeMethod = 0,
+    uint8_t twistAxis = 0,
+    uint32_t rawCount = 0,
+    uint32_t targetCount = 0,
+    const rigExec::fb::F64 *radius = nullptr,
+    const rigExec::fb::F64 *weightThreshold = nullptr,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> targets = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> distanceTargets = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> targetScales = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> coefficients = 0) {
+  RbfMethodBuilder builder_(_fbb);
+  builder_.add_coefficients(coefficients);
+  builder_.add_targetScales(targetScales);
+  builder_.add_distanceTargets(distanceTargets);
+  builder_.add_targets(targets);
+  builder_.add_weightThreshold(weightThreshold);
+  builder_.add_radius(radius);
+  builder_.add_targetCount(targetCount);
+  builder_.add_rawCount(rawCount);
+  builder_.add_twistAxis(twistAxis);
+  builder_.add_normalizeMethod(normalizeMethod);
+  builder_.add_weightFunction(weightFunction);
+  builder_.add_distanceMethod(distanceMethod);
+  builder_.add_solverType(solverType);
+  return builder_.Finish();
+}
+
+struct RbfMethod::Traits {
+  using type = RbfMethod;
+  static auto constexpr Create = CreateRbfMethod;
+};
+
+inline ::flatbuffers::Offset<RbfMethod> CreateRbfMethodDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint8_t solverType = 0,
+    uint8_t distanceMethod = 0,
+    uint8_t weightFunction = 0,
+    uint8_t normalizeMethod = 0,
+    uint8_t twistAxis = 0,
+    uint32_t rawCount = 0,
+    uint32_t targetCount = 0,
+    const rigExec::fb::F64 *radius = nullptr,
+    const rigExec::fb::F64 *weightThreshold = nullptr,
+    const std::vector<double> *targets = nullptr,
+    const std::vector<double> *distanceTargets = nullptr,
+    const std::vector<double> *targetScales = nullptr,
+    const std::vector<double> *coefficients = nullptr) {
+  auto targets__ = targets ? _fbb.CreateVector<double>(*targets) : 0;
+  auto distanceTargets__ = distanceTargets ? _fbb.CreateVector<double>(*distanceTargets) : 0;
+  auto targetScales__ = targetScales ? _fbb.CreateVector<double>(*targetScales) : 0;
+  auto coefficients__ = coefficients ? _fbb.CreateVector<double>(*coefficients) : 0;
+  return rigExec::fb::CreateRbfMethod(
+      _fbb,
+      solverType,
+      distanceMethod,
+      weightFunction,
+      normalizeMethod,
+      twistAxis,
+      rawCount,
+      targetCount,
+      radius,
+      weightThreshold,
+      targets__,
+      distanceTargets__,
+      targetScales__,
+      coefficients__);
+}
+
+::flatbuffers::Offset<RbfMethod> CreateRbfMethod(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRbfMethod *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireMlNetwork : public ::flatbuffers::NativeTable {
+  typedef MlNetwork TableType;
+  uint32_t inputCount = 0;
+  std::vector<int32_t> layerSizes{};
+  std::vector<uint8_t> layerActivations{};
+  std::vector<double> layerAlphas{};
+  std::vector<float> weights{};
+  std::vector<float> biases{};
+  std::vector<float> inputMean{};
+  std::vector<float> inputScale{};
+  std::vector<float> outputDefaults{};
+};
+
+/// A RigExecMlMover's network (RigExecMlNetwork) as authored: layer widths,
+/// RigExecMlActivation codes and alphas, then every layer's weights and every
+/// layer's biases in layer order.
+struct MlNetwork FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireMlNetwork NativeTableType;
+  typedef MlNetworkBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return MlNetworkTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_INPUTCOUNT = 4,
+    VT_LAYERSIZES = 6,
+    VT_LAYERACTIVATIONS = 8,
+    VT_LAYERALPHAS = 10,
+    VT_WEIGHTS = 12,
+    VT_BIASES = 14,
+    VT_INPUTMEAN = 16,
+    VT_INPUTSCALE = 18,
+    VT_OUTPUTDEFAULTS = 20
+  };
+  uint32_t inputCount() const {
+    return GetField<uint32_t>(VT_INPUTCOUNT, 0);
+  }
+  const ::flatbuffers::Vector<int32_t> *layerSizes() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_LAYERSIZES);
+  }
+  const ::flatbuffers::Vector<uint8_t> *layerActivations() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_LAYERACTIVATIONS);
+  }
+  const ::flatbuffers::Vector<double> *layerAlphas() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_LAYERALPHAS);
+  }
+  const ::flatbuffers::Vector<float> *weights() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_WEIGHTS);
+  }
+  const ::flatbuffers::Vector<float> *biases() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_BIASES);
+  }
+  const ::flatbuffers::Vector<float> *inputMean() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_INPUTMEAN);
+  }
+  const ::flatbuffers::Vector<float> *inputScale() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_INPUTSCALE);
+  }
+  const ::flatbuffers::Vector<float> *outputDefaults() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_OUTPUTDEFAULTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_INPUTCOUNT, 4) &&
+           VerifyOffset(verifier, VT_LAYERSIZES) &&
+           verifier.VerifyVector(layerSizes()) &&
+           VerifyOffset(verifier, VT_LAYERACTIVATIONS) &&
+           verifier.VerifyVector(layerActivations()) &&
+           VerifyOffset(verifier, VT_LAYERALPHAS) &&
+           verifier.VerifyVector(layerAlphas()) &&
+           VerifyOffset(verifier, VT_WEIGHTS) &&
+           verifier.VerifyVector(weights()) &&
+           VerifyOffset(verifier, VT_BIASES) &&
+           verifier.VerifyVector(biases()) &&
+           VerifyOffset(verifier, VT_INPUTMEAN) &&
+           verifier.VerifyVector(inputMean()) &&
+           VerifyOffset(verifier, VT_INPUTSCALE) &&
+           verifier.VerifyVector(inputScale()) &&
+           VerifyOffset(verifier, VT_OUTPUTDEFAULTS) &&
+           verifier.VerifyVector(outputDefaults()) &&
+           verifier.EndTable();
+  }
+  RigExecWireMlNetwork *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireMlNetwork *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<MlNetwork> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireMlNetwork* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct MlNetworkBuilder {
+  typedef MlNetwork Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_inputCount(uint32_t inputCount) {
+    fbb_.AddElement<uint32_t>(MlNetwork::VT_INPUTCOUNT, inputCount, 0);
+  }
+  void add_layerSizes(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> layerSizes) {
+    fbb_.AddOffset(MlNetwork::VT_LAYERSIZES, layerSizes);
+  }
+  void add_layerActivations(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> layerActivations) {
+    fbb_.AddOffset(MlNetwork::VT_LAYERACTIVATIONS, layerActivations);
+  }
+  void add_layerAlphas(::flatbuffers::Offset<::flatbuffers::Vector<double>> layerAlphas) {
+    fbb_.AddOffset(MlNetwork::VT_LAYERALPHAS, layerAlphas);
+  }
+  void add_weights(::flatbuffers::Offset<::flatbuffers::Vector<float>> weights) {
+    fbb_.AddOffset(MlNetwork::VT_WEIGHTS, weights);
+  }
+  void add_biases(::flatbuffers::Offset<::flatbuffers::Vector<float>> biases) {
+    fbb_.AddOffset(MlNetwork::VT_BIASES, biases);
+  }
+  void add_inputMean(::flatbuffers::Offset<::flatbuffers::Vector<float>> inputMean) {
+    fbb_.AddOffset(MlNetwork::VT_INPUTMEAN, inputMean);
+  }
+  void add_inputScale(::flatbuffers::Offset<::flatbuffers::Vector<float>> inputScale) {
+    fbb_.AddOffset(MlNetwork::VT_INPUTSCALE, inputScale);
+  }
+  void add_outputDefaults(::flatbuffers::Offset<::flatbuffers::Vector<float>> outputDefaults) {
+    fbb_.AddOffset(MlNetwork::VT_OUTPUTDEFAULTS, outputDefaults);
+  }
+  explicit MlNetworkBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<MlNetwork> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<MlNetwork>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<MlNetwork> CreateMlNetwork(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t inputCount = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> layerSizes = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> layerActivations = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> layerAlphas = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> weights = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> biases = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> inputMean = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> inputScale = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> outputDefaults = 0) {
+  MlNetworkBuilder builder_(_fbb);
+  builder_.add_outputDefaults(outputDefaults);
+  builder_.add_inputScale(inputScale);
+  builder_.add_inputMean(inputMean);
+  builder_.add_biases(biases);
+  builder_.add_weights(weights);
+  builder_.add_layerAlphas(layerAlphas);
+  builder_.add_layerActivations(layerActivations);
+  builder_.add_layerSizes(layerSizes);
+  builder_.add_inputCount(inputCount);
+  return builder_.Finish();
+}
+
+struct MlNetwork::Traits {
+  using type = MlNetwork;
+  static auto constexpr Create = CreateMlNetwork;
+};
+
+inline ::flatbuffers::Offset<MlNetwork> CreateMlNetworkDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t inputCount = 0,
+    const std::vector<int32_t> *layerSizes = nullptr,
+    const std::vector<uint8_t> *layerActivations = nullptr,
+    const std::vector<double> *layerAlphas = nullptr,
+    const std::vector<float> *weights = nullptr,
+    const std::vector<float> *biases = nullptr,
+    const std::vector<float> *inputMean = nullptr,
+    const std::vector<float> *inputScale = nullptr,
+    const std::vector<float> *outputDefaults = nullptr) {
+  auto layerSizes__ = layerSizes ? _fbb.CreateVector<int32_t>(*layerSizes) : 0;
+  auto layerActivations__ = layerActivations ? _fbb.CreateVector<uint8_t>(*layerActivations) : 0;
+  auto layerAlphas__ = layerAlphas ? _fbb.CreateVector<double>(*layerAlphas) : 0;
+  auto weights__ = weights ? _fbb.CreateVector<float>(*weights) : 0;
+  auto biases__ = biases ? _fbb.CreateVector<float>(*biases) : 0;
+  auto inputMean__ = inputMean ? _fbb.CreateVector<float>(*inputMean) : 0;
+  auto inputScale__ = inputScale ? _fbb.CreateVector<float>(*inputScale) : 0;
+  auto outputDefaults__ = outputDefaults ? _fbb.CreateVector<float>(*outputDefaults) : 0;
+  return rigExec::fb::CreateMlNetwork(
+      _fbb,
+      inputCount,
+      layerSizes__,
+      layerActivations__,
+      layerAlphas__,
+      weights__,
+      biases__,
+      inputMean__,
+      inputScale__,
+      outputDefaults__);
+}
+
+::flatbuffers::Offset<MlNetwork> CreateMlNetwork(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireMlNetwork *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct RigExecWireAnimatedMaps : public ::flatbuffers::NativeTable {
+  typedef AnimatedMaps TableType;
+  uint32_t inputCount = 0;
+  std::vector<int32_t> rowInputs{};
+  std::vector<double> rowFrom{};
+  std::vector<double> rowTo{};
+  std::vector<double> rowSlope{};
+  std::vector<double> rowCut{};
+  std::vector<uint32_t> mapBegin{};
+};
+
+/// A RigExecAnimatedMaps node's conditional tables
+/// (RigExecAnimatedMapsTable): every map's rows, map after map, reversed
+/// intervals already swapped.
+struct AnimatedMaps FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireAnimatedMaps NativeTableType;
+  typedef AnimatedMapsBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return AnimatedMapsTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_INPUTCOUNT = 4,
+    VT_ROWINPUTS = 6,
+    VT_ROWFROM = 8,
+    VT_ROWTO = 10,
+    VT_ROWSLOPE = 12,
+    VT_ROWCUT = 14,
+    VT_MAPBEGIN = 16
+  };
+  uint32_t inputCount() const {
+    return GetField<uint32_t>(VT_INPUTCOUNT, 0);
+  }
+  const ::flatbuffers::Vector<int32_t> *rowInputs() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_ROWINPUTS);
+  }
+  const ::flatbuffers::Vector<double> *rowFrom() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_ROWFROM);
+  }
+  const ::flatbuffers::Vector<double> *rowTo() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_ROWTO);
+  }
+  const ::flatbuffers::Vector<double> *rowSlope() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_ROWSLOPE);
+  }
+  const ::flatbuffers::Vector<double> *rowCut() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_ROWCUT);
+  }
+  /// The map count plus one offsets into the rows.
+  const ::flatbuffers::Vector<uint32_t> *mapBegin() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_MAPBEGIN);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_INPUTCOUNT, 4) &&
+           VerifyOffset(verifier, VT_ROWINPUTS) &&
+           verifier.VerifyVector(rowInputs()) &&
+           VerifyOffset(verifier, VT_ROWFROM) &&
+           verifier.VerifyVector(rowFrom()) &&
+           VerifyOffset(verifier, VT_ROWTO) &&
+           verifier.VerifyVector(rowTo()) &&
+           VerifyOffset(verifier, VT_ROWSLOPE) &&
+           verifier.VerifyVector(rowSlope()) &&
+           VerifyOffset(verifier, VT_ROWCUT) &&
+           verifier.VerifyVector(rowCut()) &&
+           VerifyOffset(verifier, VT_MAPBEGIN) &&
+           verifier.VerifyVector(mapBegin()) &&
+           verifier.EndTable();
+  }
+  RigExecWireAnimatedMaps *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireAnimatedMaps *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<AnimatedMaps> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct AnimatedMapsBuilder {
+  typedef AnimatedMaps Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_inputCount(uint32_t inputCount) {
+    fbb_.AddElement<uint32_t>(AnimatedMaps::VT_INPUTCOUNT, inputCount, 0);
+  }
+  void add_rowInputs(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> rowInputs) {
+    fbb_.AddOffset(AnimatedMaps::VT_ROWINPUTS, rowInputs);
+  }
+  void add_rowFrom(::flatbuffers::Offset<::flatbuffers::Vector<double>> rowFrom) {
+    fbb_.AddOffset(AnimatedMaps::VT_ROWFROM, rowFrom);
+  }
+  void add_rowTo(::flatbuffers::Offset<::flatbuffers::Vector<double>> rowTo) {
+    fbb_.AddOffset(AnimatedMaps::VT_ROWTO, rowTo);
+  }
+  void add_rowSlope(::flatbuffers::Offset<::flatbuffers::Vector<double>> rowSlope) {
+    fbb_.AddOffset(AnimatedMaps::VT_ROWSLOPE, rowSlope);
+  }
+  void add_rowCut(::flatbuffers::Offset<::flatbuffers::Vector<double>> rowCut) {
+    fbb_.AddOffset(AnimatedMaps::VT_ROWCUT, rowCut);
+  }
+  void add_mapBegin(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> mapBegin) {
+    fbb_.AddOffset(AnimatedMaps::VT_MAPBEGIN, mapBegin);
+  }
+  explicit AnimatedMapsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<AnimatedMaps> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<AnimatedMaps>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t inputCount = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> rowInputs = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowFrom = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowTo = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowSlope = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowCut = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> mapBegin = 0) {
+  AnimatedMapsBuilder builder_(_fbb);
+  builder_.add_mapBegin(mapBegin);
+  builder_.add_rowCut(rowCut);
+  builder_.add_rowSlope(rowSlope);
+  builder_.add_rowTo(rowTo);
+  builder_.add_rowFrom(rowFrom);
+  builder_.add_rowInputs(rowInputs);
+  builder_.add_inputCount(inputCount);
+  return builder_.Finish();
+}
+
+struct AnimatedMaps::Traits {
+  using type = AnimatedMaps;
+  static auto constexpr Create = CreateAnimatedMaps;
+};
+
+inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMapsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t inputCount = 0,
+    const std::vector<int32_t> *rowInputs = nullptr,
+    const std::vector<double> *rowFrom = nullptr,
+    const std::vector<double> *rowTo = nullptr,
+    const std::vector<double> *rowSlope = nullptr,
+    const std::vector<double> *rowCut = nullptr,
+    const std::vector<uint32_t> *mapBegin = nullptr) {
+  auto rowInputs__ = rowInputs ? _fbb.CreateVector<int32_t>(*rowInputs) : 0;
+  auto rowFrom__ = rowFrom ? _fbb.CreateVector<double>(*rowFrom) : 0;
+  auto rowTo__ = rowTo ? _fbb.CreateVector<double>(*rowTo) : 0;
+  auto rowSlope__ = rowSlope ? _fbb.CreateVector<double>(*rowSlope) : 0;
+  auto rowCut__ = rowCut ? _fbb.CreateVector<double>(*rowCut) : 0;
+  auto mapBegin__ = mapBegin ? _fbb.CreateVector<uint32_t>(*mapBegin) : 0;
+  return rigExec::fb::CreateAnimatedMaps(
+      _fbb,
+      inputCount,
+      rowInputs__,
+      rowFrom__,
+      rowTo__,
+      rowSlope__,
+      rowCut__,
+      mapBegin__);
+}
+
+::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWirePoseInterpolator : public ::flatbuffers::NativeTable {
   typedef PoseInterpolator TableType;
   uint32_t path = 0;
@@ -6814,6 +7583,14 @@ struct RigExecWirePoseInterpolator : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireRbf> solver{};
   bool enableTranslation = false;
   std::vector<rigExec::fb::RigExecWireInput> valueInputs{};
+  std::unique_ptr<rigExec::fb::RigExecWireRbfMethod> method{};
+  std::vector<int32_t> extraDriverSlots{};
+  std::vector<int32_t> extraParentSlots{};
+  std::unique_ptr<rigExec::fb::RigExecWireMlNetwork> network{};
+  std::unique_ptr<rigExec::fb::RigExecWireInput> mask{};
+  std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps> maps{};
+  std::vector<int32_t> primvarSlots{};
+  std::vector<int32_t> primvarSources{};
   RigExecWirePoseInterpolator() = default;
   RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o);
   RigExecWirePoseInterpolator(RigExecWirePoseInterpolator&&) FLATBUFFERS_NOEXCEPT = default;
@@ -6839,7 +7616,15 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_DISABLEDSLOTS = 20,
     VT_SOLVER = 22,
     VT_ENABLETRANSLATION = 24,
-    VT_VALUEINPUTS = 26
+    VT_VALUEINPUTS = 26,
+    VT_METHOD = 28,
+    VT_EXTRADRIVERSLOTS = 30,
+    VT_EXTRAPARENTSLOTS = 32,
+    VT_NETWORK = 34,
+    VT_MASK = 36,
+    VT_MAPS = 38,
+    VT_PRIMVARSLOTS = 40,
+    VT_PRIMVARSOURCES = 42
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -6880,6 +7665,40 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_VALUEINPUTS);
   }
+  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
+  const rigExec::fb::RbfMethod *method() const {
+    return GetPointer<const rigExec::fb::RbfMethod *>(VT_METHOD);
+  }
+  /// A RigLogic solve's frame drivers after the first, and each one's
+  /// measuring ancestor (-1 for none), parallel. Provider slots.
+  const ::flatbuffers::Vector<int32_t> *extraDriverSlots() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_EXTRADRIVERSLOTS);
+  }
+  const ::flatbuffers::Vector<int32_t> *extraParentSlots() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_EXTRAPARENTSLOTS);
+  }
+  /// Present for a RigExecMlMover, whose network replaces every solve: its
+  /// row is the frame drivers' rotations, then every value input.
+  const rigExec::fb::MlNetwork *network() const {
+    return GetPointer<const rigExec::fb::MlNetwork *>(VT_NETWORK);
+  }
+  /// The ML mover's inputs:mask; registered after the value inputs.
+  const rigExec::fb::Input *mask() const {
+    return GetPointer<const rigExec::fb::Input *>(VT_MASK);
+  }
+  /// Present for a RigExecAnimatedMaps node: its value inputs are its
+  /// rows' inputs and pose_slots its maps' outputs:value.
+  const rigExec::fb::AnimatedMaps *maps() const {
+    return GetPointer<const rigExec::fb::AnimatedMaps *>(VT_MAPS);
+  }
+  /// Animated maps: pose weight slots republishing a map as a mesh
+  /// primvar, and the map (an index into pose_slots) each one copies.
+  const ::flatbuffers::Vector<int32_t> *primvarSlots() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_PRIMVARSLOTS);
+  }
+  const ::flatbuffers::Vector<int32_t> *primvarSources() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_PRIMVARSOURCES);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -6901,6 +7720,22 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_VALUEINPUTS) &&
            verifier.VerifyVector(valueInputs()) &&
            verifier.VerifyVectorOfTables(valueInputs()) &&
+           VerifyOffset(verifier, VT_METHOD) &&
+           verifier.VerifyTable(method()) &&
+           VerifyOffset(verifier, VT_EXTRADRIVERSLOTS) &&
+           verifier.VerifyVector(extraDriverSlots()) &&
+           VerifyOffset(verifier, VT_EXTRAPARENTSLOTS) &&
+           verifier.VerifyVector(extraParentSlots()) &&
+           VerifyOffset(verifier, VT_NETWORK) &&
+           verifier.VerifyTable(network()) &&
+           VerifyOffset(verifier, VT_MASK) &&
+           verifier.VerifyTable(mask()) &&
+           VerifyOffset(verifier, VT_MAPS) &&
+           verifier.VerifyTable(maps()) &&
+           VerifyOffset(verifier, VT_PRIMVARSLOTS) &&
+           verifier.VerifyVector(primvarSlots()) &&
+           VerifyOffset(verifier, VT_PRIMVARSOURCES) &&
+           verifier.VerifyVector(primvarSources()) &&
            verifier.EndTable();
   }
   RigExecWirePoseInterpolator *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -6948,6 +7783,30 @@ struct PoseInterpolatorBuilder {
   void add_valueInputs(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs) {
     fbb_.AddOffset(PoseInterpolator::VT_VALUEINPUTS, valueInputs);
   }
+  void add_method(::flatbuffers::Offset<rigExec::fb::RbfMethod> method) {
+    fbb_.AddOffset(PoseInterpolator::VT_METHOD, method);
+  }
+  void add_extraDriverSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots) {
+    fbb_.AddOffset(PoseInterpolator::VT_EXTRADRIVERSLOTS, extraDriverSlots);
+  }
+  void add_extraParentSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots) {
+    fbb_.AddOffset(PoseInterpolator::VT_EXTRAPARENTSLOTS, extraParentSlots);
+  }
+  void add_network(::flatbuffers::Offset<rigExec::fb::MlNetwork> network) {
+    fbb_.AddOffset(PoseInterpolator::VT_NETWORK, network);
+  }
+  void add_mask(::flatbuffers::Offset<rigExec::fb::Input> mask) {
+    fbb_.AddOffset(PoseInterpolator::VT_MASK, mask);
+  }
+  void add_maps(::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps) {
+    fbb_.AddOffset(PoseInterpolator::VT_MAPS, maps);
+  }
+  void add_primvarSlots(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots) {
+    fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSLOTS, primvarSlots);
+  }
+  void add_primvarSources(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources) {
+    fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSOURCES, primvarSources);
+  }
   explicit PoseInterpolatorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -6974,8 +7833,24 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> disabledSlots = 0,
     ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> valueInputs = 0,
+    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraDriverSlots = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> extraParentSlots = 0,
+    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
+    ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
+    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0) {
   PoseInterpolatorBuilder builder_(_fbb);
+  builder_.add_primvarSources(primvarSources);
+  builder_.add_primvarSlots(primvarSlots);
+  builder_.add_maps(maps);
+  builder_.add_mask(mask);
+  builder_.add_network(network);
+  builder_.add_extraParentSlots(extraParentSlots);
+  builder_.add_extraDriverSlots(extraDriverSlots);
+  builder_.add_method(method);
   builder_.add_valueInputs(valueInputs);
   builder_.add_solver(solver);
   builder_.add_disabledSlots(disabledSlots);
@@ -7009,10 +7884,22 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
     const std::vector<int32_t> *disabledSlots = nullptr,
     ::flatbuffers::Offset<rigExec::fb::Rbf> solver = 0,
     bool enableTranslation = false,
-    const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs = nullptr) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *valueInputs = nullptr,
+    ::flatbuffers::Offset<rigExec::fb::RbfMethod> method = 0,
+    const std::vector<int32_t> *extraDriverSlots = nullptr,
+    const std::vector<int32_t> *extraParentSlots = nullptr,
+    ::flatbuffers::Offset<rigExec::fb::MlNetwork> network = 0,
+    ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
+    ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
+    const std::vector<int32_t> *primvarSlots = nullptr,
+    const std::vector<int32_t> *primvarSources = nullptr) {
   auto poseSlots__ = poseSlots ? _fbb.CreateVector<int32_t>(*poseSlots) : 0;
   auto disabledSlots__ = disabledSlots ? _fbb.CreateVector<int32_t>(*disabledSlots) : 0;
   auto valueInputs__ = valueInputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*valueInputs) : 0;
+  auto extraDriverSlots__ = extraDriverSlots ? _fbb.CreateVector<int32_t>(*extraDriverSlots) : 0;
+  auto extraParentSlots__ = extraParentSlots ? _fbb.CreateVector<int32_t>(*extraParentSlots) : 0;
+  auto primvarSlots__ = primvarSlots ? _fbb.CreateVector<int32_t>(*primvarSlots) : 0;
+  auto primvarSources__ = primvarSources ? _fbb.CreateVector<int32_t>(*primvarSources) : 0;
   return rigExec::fb::CreatePoseInterpolator(
       _fbb,
       path,
@@ -7026,7 +7913,15 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
       disabledSlots__,
       solver,
       enableTranslation,
-      valueInputs__);
+      valueInputs__,
+      method,
+      extraDriverSlots__,
+      extraParentSlots__,
+      network,
+      mask,
+      maps,
+      primvarSlots__,
+      primvarSources__);
 }
 
 ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -21551,6 +22446,162 @@ inline ::flatbuffers::Offset<Rbf> Rbf::Pack(::flatbuffers::FlatBufferBuilder &_f
       _weights);
 }
 
+inline RigExecWireRbfMethod *RbfMethod::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireRbfMethod>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void RbfMethod::UnPackTo(RigExecWireRbfMethod *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = solverType(); _o->solverType = _e; }
+  { auto _e = distanceMethod(); _o->distanceMethod = _e; }
+  { auto _e = weightFunction(); _o->weightFunction = _e; }
+  { auto _e = normalizeMethod(); _o->normalizeMethod = _e; }
+  { auto _e = twistAxis(); _o->twistAxis = _e; }
+  { auto _e = rawCount(); _o->rawCount = _e; }
+  { auto _e = targetCount(); _o->targetCount = _e; }
+  { auto _e = radius(); if (_e) _o->radius = ::flatbuffers::UnPackF64(*_e); }
+  { auto _e = weightThreshold(); if (_e) _o->weightThreshold = ::flatbuffers::UnPackF64(*_e); }
+  { auto _e = targets(); if (_e) { _o->targets.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->targets[_i] = _e->Get(_i); } } else { _o->targets.resize(0); } }
+  { auto _e = distanceTargets(); if (_e) { _o->distanceTargets.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->distanceTargets[_i] = _e->Get(_i); } } else { _o->distanceTargets.resize(0); } }
+  { auto _e = targetScales(); if (_e) { _o->targetScales.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->targetScales[_i] = _e->Get(_i); } } else { _o->targetScales.resize(0); } }
+  { auto _e = coefficients(); if (_e) { _o->coefficients.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->coefficients[_i] = _e->Get(_i); } } else { _o->coefficients.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<RbfMethod> CreateRbfMethod(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRbfMethod *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return RbfMethod::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<RbfMethod> RbfMethod::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireRbfMethod* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireRbfMethod* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _solverType = _o->solverType;
+  auto _distanceMethod = _o->distanceMethod;
+  auto _weightFunction = _o->weightFunction;
+  auto _normalizeMethod = _o->normalizeMethod;
+  auto _twistAxis = _o->twistAxis;
+  auto _rawCount = _o->rawCount;
+  auto _targetCount = _o->targetCount;
+  auto _radius = ::flatbuffers::PackF64(_o->radius);
+  auto _weightThreshold = ::flatbuffers::PackF64(_o->weightThreshold);
+  auto _targets = _o->targets.size() ? _fbb.CreateVector(_o->targets) : 0;
+  auto _distanceTargets = _o->distanceTargets.size() ? _fbb.CreateVector(_o->distanceTargets) : 0;
+  auto _targetScales = _o->targetScales.size() ? _fbb.CreateVector(_o->targetScales) : 0;
+  auto _coefficients = _o->coefficients.size() ? _fbb.CreateVector(_o->coefficients) : 0;
+  return rigExec::fb::CreateRbfMethod(
+      _fbb,
+      _solverType,
+      _distanceMethod,
+      _weightFunction,
+      _normalizeMethod,
+      _twistAxis,
+      _rawCount,
+      _targetCount,
+      &_radius,
+      &_weightThreshold,
+      _targets,
+      _distanceTargets,
+      _targetScales,
+      _coefficients);
+}
+
+inline RigExecWireMlNetwork *MlNetwork::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireMlNetwork>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void MlNetwork::UnPackTo(RigExecWireMlNetwork *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = inputCount(); _o->inputCount = _e; }
+  { auto _e = layerSizes(); if (_e) { _o->layerSizes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->layerSizes[_i] = _e->Get(_i); } } else { _o->layerSizes.resize(0); } }
+  { auto _e = layerActivations(); if (_e) { _o->layerActivations.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->layerActivations.begin()); } }
+  { auto _e = layerAlphas(); if (_e) { _o->layerAlphas.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->layerAlphas[_i] = _e->Get(_i); } } else { _o->layerAlphas.resize(0); } }
+  { auto _e = weights(); if (_e) { _o->weights.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->weights[_i] = _e->Get(_i); } } else { _o->weights.resize(0); } }
+  { auto _e = biases(); if (_e) { _o->biases.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->biases[_i] = _e->Get(_i); } } else { _o->biases.resize(0); } }
+  { auto _e = inputMean(); if (_e) { _o->inputMean.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->inputMean[_i] = _e->Get(_i); } } else { _o->inputMean.resize(0); } }
+  { auto _e = inputScale(); if (_e) { _o->inputScale.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->inputScale[_i] = _e->Get(_i); } } else { _o->inputScale.resize(0); } }
+  { auto _e = outputDefaults(); if (_e) { _o->outputDefaults.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->outputDefaults[_i] = _e->Get(_i); } } else { _o->outputDefaults.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<MlNetwork> CreateMlNetwork(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireMlNetwork *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return MlNetwork::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<MlNetwork> MlNetwork::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireMlNetwork* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireMlNetwork* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _inputCount = _o->inputCount;
+  auto _layerSizes = _o->layerSizes.size() ? _fbb.CreateVector(_o->layerSizes) : 0;
+  auto _layerActivations = _o->layerActivations.size() ? _fbb.CreateVector(_o->layerActivations) : 0;
+  auto _layerAlphas = _o->layerAlphas.size() ? _fbb.CreateVector(_o->layerAlphas) : 0;
+  auto _weights = _o->weights.size() ? _fbb.CreateVector(_o->weights) : 0;
+  auto _biases = _o->biases.size() ? _fbb.CreateVector(_o->biases) : 0;
+  auto _inputMean = _o->inputMean.size() ? _fbb.CreateVector(_o->inputMean) : 0;
+  auto _inputScale = _o->inputScale.size() ? _fbb.CreateVector(_o->inputScale) : 0;
+  auto _outputDefaults = _o->outputDefaults.size() ? _fbb.CreateVector(_o->outputDefaults) : 0;
+  return rigExec::fb::CreateMlNetwork(
+      _fbb,
+      _inputCount,
+      _layerSizes,
+      _layerActivations,
+      _layerAlphas,
+      _weights,
+      _biases,
+      _inputMean,
+      _inputScale,
+      _outputDefaults);
+}
+
+inline RigExecWireAnimatedMaps *AnimatedMaps::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireAnimatedMaps>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void AnimatedMaps::UnPackTo(RigExecWireAnimatedMaps *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = inputCount(); _o->inputCount = _e; }
+  { auto _e = rowInputs(); if (_e) { _o->rowInputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowInputs[_i] = _e->Get(_i); } } else { _o->rowInputs.resize(0); } }
+  { auto _e = rowFrom(); if (_e) { _o->rowFrom.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowFrom[_i] = _e->Get(_i); } } else { _o->rowFrom.resize(0); } }
+  { auto _e = rowTo(); if (_e) { _o->rowTo.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowTo[_i] = _e->Get(_i); } } else { _o->rowTo.resize(0); } }
+  { auto _e = rowSlope(); if (_e) { _o->rowSlope.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowSlope[_i] = _e->Get(_i); } } else { _o->rowSlope.resize(0); } }
+  { auto _e = rowCut(); if (_e) { _o->rowCut.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowCut[_i] = _e->Get(_i); } } else { _o->rowCut.resize(0); } }
+  { auto _e = mapBegin(); if (_e) { _o->mapBegin.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->mapBegin[_i] = _e->Get(_i); } } else { _o->mapBegin.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return AnimatedMaps::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<AnimatedMaps> AnimatedMaps::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireAnimatedMaps* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _inputCount = _o->inputCount;
+  auto _rowInputs = _o->rowInputs.size() ? _fbb.CreateVector(_o->rowInputs) : 0;
+  auto _rowFrom = _o->rowFrom.size() ? _fbb.CreateVector(_o->rowFrom) : 0;
+  auto _rowTo = _o->rowTo.size() ? _fbb.CreateVector(_o->rowTo) : 0;
+  auto _rowSlope = _o->rowSlope.size() ? _fbb.CreateVector(_o->rowSlope) : 0;
+  auto _rowCut = _o->rowCut.size() ? _fbb.CreateVector(_o->rowCut) : 0;
+  auto _mapBegin = _o->mapBegin.size() ? _fbb.CreateVector(_o->mapBegin) : 0;
+  return rigExec::fb::CreateAnimatedMaps(
+      _fbb,
+      _inputCount,
+      _rowInputs,
+      _rowFrom,
+      _rowTo,
+      _rowSlope,
+      _rowCut,
+      _mapBegin);
+}
+
 inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o)
       : path(o.path),
         driverSlot(o.driverSlot),
@@ -21563,7 +22614,15 @@ inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWir
         disabledSlots(o.disabledSlots),
         solver((o.solver) ? new rigExec::fb::RigExecWireRbf(*o.solver) : nullptr),
         enableTranslation(o.enableTranslation),
-        valueInputs(o.valueInputs) {
+        valueInputs(o.valueInputs),
+        method((o.method) ? new rigExec::fb::RigExecWireRbfMethod(*o.method) : nullptr),
+        extraDriverSlots(o.extraDriverSlots),
+        extraParentSlots(o.extraParentSlots),
+        network((o.network) ? new rigExec::fb::RigExecWireMlNetwork(*o.network) : nullptr),
+        mask((o.mask) ? new rigExec::fb::RigExecWireInput(*o.mask) : nullptr),
+        maps((o.maps) ? new rigExec::fb::RigExecWireAnimatedMaps(*o.maps) : nullptr),
+        primvarSlots(o.primvarSlots),
+        primvarSources(o.primvarSources) {
 }
 
 inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigExecWirePoseInterpolator o) FLATBUFFERS_NOEXCEPT {
@@ -21579,6 +22638,14 @@ inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigEx
   std::swap(solver, o.solver);
   std::swap(enableTranslation, o.enableTranslation);
   std::swap(valueInputs, o.valueInputs);
+  std::swap(method, o.method);
+  std::swap(extraDriverSlots, o.extraDriverSlots);
+  std::swap(extraParentSlots, o.extraParentSlots);
+  std::swap(network, o.network);
+  std::swap(mask, o.mask);
+  std::swap(maps, o.maps);
+  std::swap(primvarSlots, o.primvarSlots);
+  std::swap(primvarSources, o.primvarSources);
   return *this;
 }
 
@@ -21603,6 +22670,14 @@ inline void PoseInterpolator::UnPackTo(RigExecWirePoseInterpolator *_o, const ::
   { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<rigExec::fb::RigExecWireRbf>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
   { auto _e = enableTranslation(); _o->enableTranslation = _e; }
   { auto _e = valueInputs(); if (_e) { _o->valueInputs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->valueInputs[_i] = *std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->valueInputs.resize(0); } }
+  { auto _e = method(); if (_e) { if(_o->method) { _e->UnPackTo(_o->method.get(), _resolver); } else { _o->method = std::unique_ptr<rigExec::fb::RigExecWireRbfMethod>(_e->UnPack(_resolver)); } } else if (_o->method) { _o->method.reset(); } }
+  { auto _e = extraDriverSlots(); if (_e) { _o->extraDriverSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraDriverSlots[_i] = _e->Get(_i); } } else { _o->extraDriverSlots.resize(0); } }
+  { auto _e = extraParentSlots(); if (_e) { _o->extraParentSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->extraParentSlots[_i] = _e->Get(_i); } } else { _o->extraParentSlots.resize(0); } }
+  { auto _e = network(); if (_e) { if(_o->network) { _e->UnPackTo(_o->network.get(), _resolver); } else { _o->network = std::unique_ptr<rigExec::fb::RigExecWireMlNetwork>(_e->UnPack(_resolver)); } } else if (_o->network) { _o->network.reset(); } }
+  { auto _e = mask(); if (_e) { if(_o->mask) { _e->UnPackTo(_o->mask.get(), _resolver); } else { _o->mask = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->mask) { _o->mask.reset(); } }
+  { auto _e = maps(); if (_e) { if(_o->maps) { _e->UnPackTo(_o->maps.get(), _resolver); } else { _o->maps = std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps>(_e->UnPack(_resolver)); } } else if (_o->maps) { _o->maps.reset(); } }
+  { auto _e = primvarSlots(); if (_e) { _o->primvarSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSlots[_i] = _e->Get(_i); } } else { _o->primvarSlots.resize(0); } }
+  { auto _e = primvarSources(); if (_e) { _o->primvarSources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSources[_i] = _e->Get(_i); } } else { _o->primvarSources.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -21625,6 +22700,14 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
   auto _solver = _o->solver ? CreateRbf(_fbb, _o->solver.get(), _rehasher) : 0;
   auto _enableTranslation = _o->enableTranslation;
   auto _valueInputs = _o->valueInputs.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->valueInputs.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, &(__va->__o->valueInputs[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _method = _o->method ? CreateRbfMethod(_fbb, _o->method.get(), _rehasher) : 0;
+  auto _extraDriverSlots = _o->extraDriverSlots.size() ? _fbb.CreateVector(_o->extraDriverSlots) : 0;
+  auto _extraParentSlots = _o->extraParentSlots.size() ? _fbb.CreateVector(_o->extraParentSlots) : 0;
+  auto _network = _o->network ? CreateMlNetwork(_fbb, _o->network.get(), _rehasher) : 0;
+  auto _mask = _o->mask ? CreateInput(_fbb, _o->mask.get(), _rehasher) : 0;
+  auto _maps = _o->maps ? CreateAnimatedMaps(_fbb, _o->maps.get(), _rehasher) : 0;
+  auto _primvarSlots = _o->primvarSlots.size() ? _fbb.CreateVector(_o->primvarSlots) : 0;
+  auto _primvarSources = _o->primvarSources.size() ? _fbb.CreateVector(_o->primvarSources) : 0;
   return rigExec::fb::CreatePoseInterpolator(
       _fbb,
       _path,
@@ -21638,7 +22721,15 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
       _disabledSlots,
       _solver,
       _enableTranslation,
-      _valueInputs);
+      _valueInputs,
+      _method,
+      _extraDriverSlots,
+      _extraParentSlots,
+      _network,
+      _mask,
+      _maps,
+      _primvarSlots,
+      _primvarSources);
 }
 
 inline RigExecWireSplineIkRest *SplineIkRest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -26471,10 +27562,74 @@ inline const ::flatbuffers::TypeTable *SplineIkRestLengthTypeTable() {
 inline const ::flatbuffers::TypeTable *RbfKernelTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::RbfKernelTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 5, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RbfSolverTypeTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::RbfSolverTypeTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 2, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RbfDistanceMethodTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::RbfDistanceMethodTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RbfWeightFunctionTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::RbfWeightFunctionTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 5, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *RbfNormalizeMethodTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::RbfNormalizeMethodTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_ENUM, 2, type_codes, type_refs, nullptr, nullptr, nullptr
@@ -27422,6 +28577,65 @@ inline const ::flatbuffers::TypeTable *RbfTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *RbfMethodTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::F64TypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 13, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *MlNetworkTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 9, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *AnimatedMapsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_UINT, 1, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 7, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
@@ -27435,14 +28649,25 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_SEQUENCE, 0, 1 },
     { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 4 },
+    { ::flatbuffers::ET_INT, 1, -1 },
+    { ::flatbuffers::ET_INT, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
-    rigExec::fb::RbfTypeTable
+    rigExec::fb::RbfTypeTable,
+    rigExec::fb::RbfMethodTypeTable,
+    rigExec::fb::MlNetworkTypeTable,
+    rigExec::fb::AnimatedMapsTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 12, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 20, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

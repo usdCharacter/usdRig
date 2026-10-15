@@ -144,6 +144,7 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecLatticeMover",
     "RigExecMatrixMathMover",
     "RigExecMatrixMover",
+    "RigExecMlMover",
     "RigExecParentConstraint",
     "RigExecPlaneWeight",
     "RigExecPositionConstraint",
@@ -197,7 +198,7 @@ class SchemaFacadeTests(_ContractTestCase):
         self.stage = Usd.Stage.CreateInMemory()
 
     def test_all_concrete_types_define_and_get(self):
-        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 36)
+        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 37)
         self.assertEqual(
             set(rigexec.schema.names()), set(CONCRETE_SCHEMA_TYPES))
         self.assertFalse(hasattr(rigexec.schema, "CustomConstraint"))
@@ -833,6 +834,61 @@ class BuilderDependencyTests(_ContractTestCase):
         self.assertTrue(result.valid)
         for actual, expected in zip(result.moved_property("/Body.points"), posed):
             self.assertLess((Gf.Vec3f(*actual) - Gf.Vec3f(*expected)).GetLength(), 1e-6)
+
+    def test_riglogic_authoring_and_evaluation(self):
+        # The three RigLogic behaviours through the Python authoring API:
+        # an ML mover's network and morph, animated maps with a mesh
+        # primvar, and a pose interpolator's RigLogic solve.
+        self.builder.add_control("Dial")
+        dial = "/Rig/Controls/Dial"
+        self.stage.GetPrimAtPath(dial).GetAttribute("avars:tx").Set(0.5)
+        mesh = UsdGeom.Mesh.Define(self.stage, "/Face")
+        mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+        shape = self.stage.DefinePrim("/FaceShape", "BlendShape")
+        shape.CreateAttribute("offsets", Sdf.ValueTypeNames.Vector3fArray).Set(
+            [(0, 0, 1)])
+        shape.CreateAttribute("pointIndices", Sdf.ValueTypeNames.IntArray).Set([2])
+
+        ml = self.builder.new_mover_chain("Face", "/Face.points").add_ml_mover("Ml")
+        self.assertIsInstance(ml, rigexec.MlMover)
+        ml.set_driver_attributes([dial + ".avars:tx"])
+        ml.set_network([1], ["sigmoid"], [], [2.0], [0.0])
+        with self.assertRaises(ValueError):
+            ml.set_network([1], ["softplus"], [], [2.0], [0.0])
+        output = ml.add_morph("brow", "/FaceShape")
+
+        maps = self.builder.add_animated_maps("Wrinkles")
+        maps.set_inputs([dial + ".avars:tx"])
+        maps.set_meshes(["/Face"])
+        value = maps.add_map("raise", [0], [0.0], [1.0], [1.0], [0.0],
+                             primvar_name="wrinkleRaise")
+
+        interpolator = self.builder.add_pose_interpolator("Swing", dial)
+        interpolator.set_solver("interpolative")
+        interpolator.set_distance_method("quaternion")
+        interpolator.set_kernel("cubic")
+        interpolator.set_radius(1.5)
+        with self.assertRaises(ValueError):
+            interpolator.set_solver("lattice")
+        for name, degrees in (("neutral", 0.0), ("bent", 60.0)):
+            half = math.radians(degrees) / 2.0
+            interpolator.add_pose(name).set_rotation(
+                (math.cos(half), 0.0, 0.0, math.sin(half)))
+
+        rig = rigexec.Rig(self.stage, self.builder.root_path)
+        rig.compile()
+        result = rig.evaluate(-1)
+        self.assertTrue(result.valid)
+        weight = 1.0 / (1.0 + math.exp(-1.0))
+        self.assertAlmostEqual(result.moved_property(output), weight, places=6)
+        points = result.moved_property("/Face.points")
+        self.assertAlmostEqual(points[2][2], weight, places=6)
+        self.assertAlmostEqual(result.moved_property(value), 0.5, places=6)
+        self.assertAlmostEqual(
+            result.moved_property("/Face.primvars:wrinkleRaise"), 0.5, places=6)
+        self.assertAlmostEqual(
+            result.moved_property("/Rig/PoseInterpolators/Swing/neutral.outputs:weight"),
+            1.0, places=6)
 
     def test_wrinkle_authoring_and_evaluation(self):
         width = 5

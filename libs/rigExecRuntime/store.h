@@ -727,9 +727,11 @@ struct RrProgram {
     std::vector<int32_t> spaceSwitchRead;
     std::vector<std::vector<int32_t>> autoClavicleRead;
     std::vector<int32_t> interpRead;
-    // Per interpolator, one read per numeric dial. Three because the
-    // compile reads at most three, one per axis, and refuses a fourth.
-    std::vector<std::array<int32_t, 3>> interpValueRead;
+    // Per interpolator, one read per numeric dial: at most three for an
+    // interpolator, any number for an ML mover.
+    std::vector<std::vector<int32_t>> interpValueRead;
+    // Per interpolator, an ML mover's inputs:mask read, or -1.
+    std::vector<int32_t> interpMaskRead;
     // Per provider slot: its space switch's index, or -1. Built once at
     // Open so the compose pays one array lookup per slot and a rig with
     // no switch pays nothing at all. Empty when the binary carries none.
@@ -851,6 +853,10 @@ struct RrProgram {
     RrInputValue ReadInterpValue(size_t interp, size_t axis) const
     {
         return ReadRegistered(interpValueRead[interp][axis]);
+    }
+    RrInputValue ReadInterpMask(size_t interp) const
+    {
+        return ReadRegistered(interpMaskRead[interp]);
     }
     RrInputValue ReadSpaceSwitch(size_t index) const
     {

@@ -144,9 +144,17 @@ _VisitInterpolatorInputs(
     Obj &interp, Fn &&fn)
 {
     fn(interp.enabled);
-    // A numeric driver's dials, in rigExec:driverAttributes order.
-    for (auto &value : interp.valueInputs) {
-        fn(value);
+    // A numeric driver's dials, in rigExec:driverAttributes order, each
+    // bound as its own type.
+    for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
+        if (k < interp.valueIsFloat.size() && interp.valueIsFloat[k]) {
+            fn(interp.floatValueInputs[k]);
+        } else {
+            fn(interp.valueInputs[k]);
+        }
+    }
+    if (interp.mlSolve) {
+        fn(interp.mask);
     }
 }
 

@@ -69,11 +69,14 @@ bool RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
 }
 bool RigExecBindScenePoseInterpolator(const RigExecScenePoseInterpolatorDescriptor &source,
     const RigExecSceneGraphBindingContext &context,const std::vector<RigExecValueId> &weights,
-    const std::vector<RigExecValueId> &disabledWeights,RigExecBoundPoseInterpolator *out,std::string *error) {
+    const std::vector<RigExecValueId> &disabledWeights,RigExecBoundPoseInterpolator *out,std::string *error,
+    const std::vector<RigExecValueId> &primvars) {
     if(!out || !context.resolve)return Fail(error,"missing pose interpolator graph linker");
-    if(weights.size()!=source.poseWeights.size() || disabledWeights.size()!=source.disabledPoseWeights.size())
+    if(weights.size()!=source.poseWeights.size() || disabledWeights.size()!=source.disabledPoseWeights.size() ||
+       primvars.size()!=source.primvarPaths.size())
         return Fail(error,"pose interpolator output identity count mismatch");
     RigExecBoundPoseInterpolator packet;packet.record=source.record;packet.weights=weights;packet.disabledWeights=disabledWeights;
+    packet.primvars=primvars;packet.primvarSources=source.primvarSources;
     packet.unusableRotation="pose interpolator "+source.path.GetString()+" has no usable frame for its driver "+
         source.driver.GetString()+" after the pose walk; its weights are zero this generation";
     packet.unusableTranslation="pose interpolator "+source.path.GetString()+
@@ -81,6 +84,11 @@ bool RigExecBindScenePoseInterpolator(const RigExecScenePoseInterpolatorDescript
     packet.countMismatch="pose interpolator "+source.path.GetString()+" solved an unexpected number of weights";
     if(!RigExecBindGraphTypedRead(source.enabled,context,&packet.enabled,error))return false;
     TypedInputs(packet.enabled,&packet.reads);
+    packet.ml=source.ml;
+    if(source.ml) {
+        if(!RigExecBindGraphTypedRead(source.mask,context,&packet.mask,error))return false;
+        TypedInputs(packet.mask,&packet.reads);
+    }
     for(const auto &read:source.numericReads) {
         RigExecGraphTypedRead binding;if(!RigExecBindGraphTypedRead(read,context,&binding,error))return false;
         TypedInputs(binding,&packet.reads);packet.numeric.push_back(std::move(binding));
@@ -93,9 +101,16 @@ bool RigExecBindScenePoseInterpolator(const RigExecScenePoseInterpolatorDescript
         request.phase=TfToken("final");if(rest)request.computation="computeRestFrame";
         if(!context.resolve(request,id,error))return false;packet.reads.push_back(*id);return true;
     };
-    if(packet.numeric.empty() && (!frame(source.driver,false,&packet.driverFinal) ||
+    if((packet.numeric.empty() || source.ml) && (!frame(source.driver,false,&packet.driverFinal) ||
        !frame(source.driver,true,&packet.driverRest) || !frame(source.parent,false,&packet.parentFinal) ||
        !frame(source.parent,true,&packet.parentRest)))return false;
+    for(size_t k=0;k<source.extraDrivers.size();++k) {
+        std::array<RigExecValueId,4> ids{{UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX}};
+        if(!frame(source.extraDrivers[k],false,&ids[0]) || !frame(source.extraDrivers[k],true,&ids[1]) ||
+           !frame(source.extraParents[k],false,&ids[2]) || !frame(source.extraParents[k],true,&ids[3]))return false;
+        packet.extraDrivers.push_back(ids);
+    }
+    packet.inputs.extraDrivers.resize(packet.extraDrivers.size());
     Unique(&packet.reads);*out=std::move(packet);return true;
 }
 bool RigExecRunBoundSpaceSwitch(RigExecBoundSpaceSwitch *packet,RigExecTypedValueStore *values,
@@ -137,18 +152,32 @@ bool RigExecRunBoundPoseInterpolator(RigExecBoundPoseInterpolator *packet,
         for(size_t i=0;i<packet->weights.size();++i)
             values->Publish(packet->weights[i],solved?float(packet->scratch[i]):0.0f);
         for(auto output:packet->disabledWeights)values->Publish(output,0.0f);
+        for(size_t j=0;j<packet->primvars.size();++j)
+            values->Publish(packet->primvars[j],solved?float(packet->scratch[packet->primvarSources[j]]):0.0f);
     };
     auto &input=packet->inputs;VtValue value;input.enabled=true;
     if(RigExecReadGraphTypedRead(packet->enabled,*values,&value,nullptr) && value.IsHolding<bool>())input.enabled=value.UncheckedGet<bool>();
     for(size_t k=0;k<packet->numeric.size();++k) {
         input.numeric[k]=0;
-        if(RigExecReadGraphTypedRead(packet->numeric[k],*values,&value,nullptr) && value.IsHolding<double>())input.numeric[k]=value.UncheckedGet<double>();
+        if(RigExecReadGraphTypedRead(packet->numeric[k],*values,&value,nullptr)) {
+            if(value.IsHolding<double>())input.numeric[k]=value.UncheckedGet<double>();
+            else if(value.IsHolding<float>())input.numeric[k]=double(value.UncheckedGet<float>());
+        }
     }
+    input.mask=1.0;
+    if(packet->ml && RigExecReadGraphTypedRead(packet->mask,*values,&value,nullptr) && value.IsHolding<float>())
+        input.mask=double(value.UncheckedGet<float>());
     input.driverFinal=values->Read<RigExecPointFrame>(packet->driverFinal);
     input.driverRest=values->Read<RigExecPointFrame>(packet->driverRest);
     input.parentFinal=values->Read<RigExecPointFrame>(packet->parentFinal);
     input.parentRest=values->Read<RigExecPointFrame>(packet->parentRest);
-    if(input.enabled && packet->record.poseCount && packet->numeric.empty() &&
+    for(size_t k=0;k<packet->extraDrivers.size();++k) {
+        const auto &ids=packet->extraDrivers[k];auto &extra=input.extraDrivers[k];
+        extra.final=values->Read<RigExecPointFrame>(ids[0]);extra.rest=values->Read<RigExecPointFrame>(ids[1]);
+        extra.parentFinal=ids[2]==UINT64_MAX?nullptr:values->Read<RigExecPointFrame>(ids[2]);
+        extra.parentRest=ids[3]==UINT64_MAX?nullptr:values->Read<RigExecPointFrame>(ids[3]);
+    }
+    if(input.enabled && packet->record.poseCount && (packet->numeric.empty() || packet->ml) &&
        ((packet->parentFinal!=UINT64_MAX && !input.parentFinal) ||
         (packet->parentRest!=UINT64_MAX && !input.parentRest)))
     {publish(false);return Fail(error,packet->unusableRotation);}

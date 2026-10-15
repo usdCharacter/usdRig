@@ -453,11 +453,18 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     scratch->lastParentSpaceAuthored = scratch->parentSpaceAuthored;
     scratch->lastRotationSign = scratch->rotationSign;
     scratch->interpEnabled.assign(poses.poseInterpolators.size(), 0);
-    scratch->interpValues.assign(poses.poseInterpolators.size(),
-                                 {0.0, 0.0, 0.0});
+    scratch->interpValues.assign(poses.poseInterpolators.size(), {});
+    scratch->interpMasks.assign(poses.poseInterpolators.size(), 1.0);
+    scratch->interpNetworks.assign(poses.poseInterpolators.size(), {});
+    scratch->interpMaps.assign(poses.poseInterpolators.size(), {});
+    for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
+        scratch->interpValues[i].assign(
+            poses.poseInterpolators[i].valueInputs.size(), 0.0);
+    }
     scratch->interpSolvers.assign(poses.poseInterpolators.size(),
                                   _RrRbfSolver());
     scratch->interpScratch.assign(poses.poseInterpolators.size(), {});
+    scratch->interpMethods.assign(poses.poseInterpolators.size(), {});
     for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
         const RigExecWireRbf &wire =
             *poses.poseInterpolators[i].solver;
@@ -488,6 +495,53 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         }
         scratch->interpSolvers[i].SetSolvedTable(
             wire.radii, wire.translationRadii, weights);
+        if (const auto &m = poses.poseInterpolators[i].maps) {
+            // Open validated the rows (format.cpp).
+            RigExecAnimatedMapsTable &table = scratch->interpMaps[i];
+            table.inputCount = m->inputCount;
+            for (size_t map = 0; map + 1 < m->mapBegin.size(); ++map) {
+                std::vector<RigExecConditionalRow> rows;
+                for (size_t r = m->mapBegin[map]; r < m->mapBegin[map + 1];
+                     ++r) {
+                    rows.push_back({m->rowInputs[r], m->rowFrom[r],
+                                    m->rowTo[r], m->rowSlope[r],
+                                    m->rowCut[r]});
+                }
+                table.AddMap(std::move(rows));
+            }
+        }
+        if (const auto &n = poses.poseInterpolators[i].network) {
+            // Open validated it (format.cpp), so the build succeeds.
+            std::vector<int> activations(n->layerActivations.begin(),
+                                         n->layerActivations.end());
+            std::vector<float> alphas;
+            for (double alpha : n->layerAlphas) {
+                alphas.push_back(float(alpha));
+            }
+            RigExecMlNetwork &net = scratch->interpNetworks[i];
+            RigExecMlBuildNetwork(n->inputCount, n->layerSizes, activations,
+                                  alphas, n->weights, n->biases, &net,
+                                  nullptr);
+            net.inputMean = n->inputMean;
+            net.inputScale = n->inputScale;
+            net.defaults = n->outputDefaults;
+        }
+        if (const auto &m = poses.poseInterpolators[i].method) {
+            RigExecRbfMethodTable &table = scratch->interpMethods[i];
+            table.solverType = RigExecRbfSolverType(m->solverType);
+            table.distanceMethod = RigExecRbfDistanceMethod(m->distanceMethod);
+            table.weightFunction = RigExecRbfWeightFunction(m->weightFunction);
+            table.normalizeMethod = RigExecRbfNormalizeMethod(m->normalizeMethod);
+            table.twistAxis = int(m->twistAxis);
+            table.rawCount = m->rawCount;
+            table.targetCount = m->targetCount;
+            table.radius = m->radius;
+            table.weightThreshold = m->weightThreshold;
+            table.targets = m->targets;
+            table.distanceTargets = m->distanceTargets;
+            table.targetScales = m->targetScales;
+            table.coefficients = m->coefficients;
+        }
     }
     scratch->solvers.resize(poses.solvers.size());
     for (size_t s = 0; s < poses.solvers.size(); ++s) {

@@ -16,6 +16,7 @@ Storm viewport with the rig guides on.
 | ![What warming does](../icons/concept.png) | [What warming does](concepts/frame-cache-warming.md) | The per-frame cache in one page: what warms, what you see, what it costs, and the switches. |
 | ![Tutorial: a rolling ball rig](../icons/concept.png) | [Tutorial: a rolling ball rig](concepts/tutorial-rolling-ball.md) | Hand-build a rolling ball in usdview and Noodles, with a complete video and a screenshot for every step. |
 | ![Compression-driven wrinkles](../icons/concept.png) | [Compression-driven wrinkles](concepts/wrinkle-deformation.md) | How compression and a stable fold guide produce quasistatic wrinkles, with pins, attachment bounds, and local collision planes. |
+| ![RigLogic behaviours](../icons/concept.png) | [RigLogic behaviours](concepts/riglogic.md) | RigLogic's radial-basis solvers, ML morph deformer and animated maps in RigExec, where each one comes from, and the examples that show them. |
 | ![Tutorial: Godot and baked rigs](../icons/concept.png) | [Tutorial: Godot and baked rigs](concepts/tutorial-godot-baked-rig.md) | Build the ball in usdview, bake one self-contained rig asset, and drive its exposed controllers in Godot, with GIF checkpoints. |
 | ![External mover plugins](../icons/concept.png) | [External mover plugins](concepts/external-movers.md) | Build and register point movers from a separate repository for native, frozen and .rigexec playback. |
 | ![Live evaluator inspection](../icons/concept.png) | [Live evaluator inspection](concepts/live-evaluator-inspection.md) | Attach the optional rigExec_viz tool to usdview and read a session's operation graph and per-operation thread timings. |
@@ -81,6 +82,8 @@ Storm viewport with the rig guides on.
 | ![Delta Mush Mover](../icons/concept.png) | [Delta Mush Mover](nodes/delta_mush_mover.md) | Smooths deformation and restores transported rest detail. |
 | ![Wrinkle Mover](../icons/concept.png) | [Wrinkle Mover](nodes/wrinkle_mover.md) | Solves coherent compression-driven folds on an already deformed mesh. |
 | ![Volume Correct Mover](../icons/volume_correct_mover.png) | [Volume Correct Mover](nodes/volume_correct_mover.md) | Pulls a deformation back toward its rest bound volume. |
+| ![ML Mover](../icons/concept.png) | [ML Mover](nodes/ml_mover.md) | A neural morph deformer: a small network maps the pose to morph weights. |
+| ![ML Output](../icons/concept.png) | [ML Output](nodes/ml_output.md) | One output of an ML mover's network, and the float it publishes. |
 
 ## Blend channels
 
@@ -95,6 +98,8 @@ Storm viewport with the rig guides on.
 |---|---|---|
 | ![Pose Interpolator](../icons/pose_interpolator.png) | [Pose Interpolator](nodes/pose_interpolator.md) | Turns a driver's rotation into one float per authored pose. |
 | ![Pose](../icons/pose.png) | [Pose](nodes/pose.md) | One place the driver can be, and the float it publishes when the driver gets there. |
+| ![Animated Maps](../icons/concept.png) | [Animated Maps](nodes/animated_maps.md) | RigLogic's animated maps: [0, 1] mask values from control values, for shaders. |
+| ![Animated Map](../icons/concept.png) | [Animated Map](nodes/animated_map.md) | One conditional table of an Animated Maps node, and its value. |
 
 ## Weights
 

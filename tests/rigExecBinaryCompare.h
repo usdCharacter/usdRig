@@ -1367,6 +1367,94 @@ _BinaryCompareRbf(const rigExec::RigExecRbfSolver &live,
     }
 }
 
+/// A pose interpolator row's RigLogic solve kinds against the program: the
+/// RBF method's solved constants, the ML network and its mask, the animated
+/// maps' rows and primvar slots, and the frame drivers after the first.
+void
+_BinaryCompareRigLogic(
+    const rigExec::RigExecBakedProgramImpl::PoseInterpolator &live,
+    const rigExec::fb::RigExecWirePoseInterpolator &wire,
+    const _BinaryFile &file)
+{
+    _BinaryCheckEqual(live.extraDriverSlots, wire.extraDriverSlots);
+    _BinaryCheckEqual(live.extraParentSlots, wire.extraParentSlots);
+    _BinaryCheckEqual(live.primvarSlots, wire.primvarSlots);
+    _BinaryCheckEqual(live.primvarSources, wire.primvarSources);
+    CHECK(live.rigLogicSolve == bool(wire.method));
+    if (live.rigLogicSolve && wire.method) {
+        const rigExec::RigExecRbfMethodTable &table = live.method;
+        const rigExec::fb::RigExecWireRbfMethod &method = *wire.method;
+        CHECK(uint8_t(table.solverType) == method.solverType);
+        CHECK(uint8_t(table.distanceMethod) == method.distanceMethod);
+        CHECK(uint8_t(table.weightFunction) == method.weightFunction);
+        CHECK(uint8_t(table.normalizeMethod) == method.normalizeMethod);
+        CHECK(_BinaryEq(table.twistAxis, method.twistAxis));
+        CHECK(_BinaryEq(table.rawCount, method.rawCount));
+        CHECK(_BinaryEq(table.targetCount, method.targetCount));
+        CHECK(_BinaryEq(table.radius, method.radius));
+        CHECK(_BinaryEq(table.weightThreshold, method.weightThreshold));
+        _BinaryCheckEqual(table.targets, method.targets);
+        _BinaryCheckEqual(table.distanceTargets, method.distanceTargets);
+        _BinaryCheckEqual(table.targetScales, method.targetScales);
+        _BinaryCheckEqual(table.coefficients, method.coefficients);
+    }
+    const bool ml = live.mlSolve && live.network;
+    CHECK(ml == bool(wire.network));
+    CHECK(ml == bool(wire.mask));
+    if (ml && wire.network) {
+        const rigExec::RigExecMlNetwork &net = *live.network;
+        const rigExec::fb::RigExecWireMlNetwork &network = *wire.network;
+        CHECK(_BinaryEq(net.inputCount, network.inputCount));
+        CHECK(net.layers.size() == network.layerSizes.size() &&
+              net.layers.size() == network.layerActivations.size() &&
+              net.layers.size() == network.layerAlphas.size());
+        for (size_t l = 0; l < net.layers.size() &&
+                           l < network.layerSizes.size() &&
+                           l < network.layerActivations.size() &&
+                           l < network.layerAlphas.size();
+             ++l) {
+            CHECK(_BinaryEq(net.layers[l].outputCount, network.layerSizes[l]));
+            CHECK(uint8_t(net.layers[l].activation) ==
+                  network.layerActivations[l]);
+            CHECK(_BinaryEq(net.layers[l].alpha, network.layerAlphas[l]));
+        }
+        std::vector<float> parameters = network.weights;
+        parameters.insert(parameters.end(), network.biases.begin(),
+                          network.biases.end());
+        _BinaryCheckEqual(net.parameters, parameters);
+        _BinaryCheckEqual(net.inputMean, network.inputMean);
+        _BinaryCheckEqual(net.inputScale, network.inputScale);
+        _BinaryCheckEqual(net.defaults, network.outputDefaults);
+    }
+    if (ml && wire.mask) {
+        _BinaryCompareInput(live.mask, wire.mask, file);
+    }
+    const bool maps = live.mapsSolve && live.maps;
+    CHECK(maps == bool(wire.maps));
+    if (maps && wire.maps) {
+        const rigExec::RigExecAnimatedMapsTable &table = *live.maps;
+        const rigExec::fb::RigExecWireAnimatedMaps &wireMaps = *wire.maps;
+        CHECK(_BinaryEq(table.inputCount, wireMaps.inputCount));
+        const size_t rows = table.rows.size();
+        CHECK(rows == wireMaps.rowInputs.size() &&
+              rows == wireMaps.rowFrom.size() && rows == wireMaps.rowTo.size() &&
+              rows == wireMaps.rowSlope.size() && rows == wireMaps.rowCut.size());
+        for (size_t r = 0; r < rows && r < wireMaps.rowInputs.size() &&
+                           r < wireMaps.rowFrom.size() &&
+                           r < wireMaps.rowTo.size() &&
+                           r < wireMaps.rowSlope.size() &&
+                           r < wireMaps.rowCut.size();
+             ++r) {
+            CHECK(_BinaryEq(table.rows[r].input, wireMaps.rowInputs[r]));
+            CHECK(_BinaryEq(table.rows[r].from, wireMaps.rowFrom[r]));
+            CHECK(_BinaryEq(table.rows[r].to, wireMaps.rowTo[r]));
+            CHECK(_BinaryEq(table.rows[r].slope, wireMaps.rowSlope[r]));
+            CHECK(_BinaryEq(table.rows[r].cut, wireMaps.rowCut[r]));
+        }
+        _BinaryCheckEqual(table.mapBegin, wireMaps.mapBegin);
+    }
+}
+
 void
 _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
                      const rigExec::fb::RigExecWireSolver &wire,
@@ -1894,9 +1982,16 @@ _BinaryCompareDomainPose(const rigExec::RigExecBakedProgramImpl &program,
         for (size_t k = 0; k < live.valueInputs.size() &&
                            k < wire.valueInputs.size();
              ++k) {
-            _BinaryCompareInput(live.valueInputs[k], wire.valueInputs[k],
-                                file);
+            // A float property is bound, and stored, as a float.
+            if (k < live.valueIsFloat.size() && live.valueIsFloat[k]) {
+                _BinaryCompareInput(live.floatValueInputs[k],
+                                    wire.valueInputs[k], file);
+            } else {
+                _BinaryCompareInput(live.valueInputs[k], wire.valueInputs[k],
+                                    file);
+            }
         }
+        _BinaryCompareRigLogic(live, wire, file);
     }
     CHECK(program.poseWeightPaths.size() == pose.poseWeightPaths.size());
     for (size_t i = 0; i < pose.poseWeightPaths.size() &&
@@ -3499,6 +3594,7 @@ _BinaryForEachRead(const _BinaryFile &file,
             for (const auto &read : interp.valueInputs) {
                 visit(read);
             }
+            one(interp.mask);
         }
         for (const auto &s : pose.solvers) {
             for (const auto *read :

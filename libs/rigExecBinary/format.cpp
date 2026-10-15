@@ -7,6 +7,8 @@
 #include "rigExecBinary/stepGraph.h"
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecMath/affineFrameKernel.h"
+#include "rigExecMath/conditionalTableKernel.h"
+#include "rigExecMath/mlpKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -2782,6 +2784,10 @@ private:
                 const auto &interp=pose.poseInterpolators[size_t(step.object)];
                 if(interp.driverSlot>=0) read(D::PoseFin,finLast[size_t(interp.driverSlot)]);
                 if(interp.parentSlot>=0) read(D::PoseFin,finLast[size_t(interp.parentSlot)]);
+                for(size_t e=0;e<interp.extraDriverSlots.size() && e<interp.extraParentSlots.size();++e) {
+                    read(D::PoseFin,finLast[size_t(interp.extraDriverSlots[e])]);
+                    if(interp.extraParentSlots[e]>=0) read(D::PoseFin,finLast[size_t(interp.extraParentSlots[e])]);
+                }
             } else if(step.kind==K::Constraint || step.kind==K::SolverCommit ||
                       step.kind==K::CommitDelta || step.kind==K::PropagateChunk || step.kind==K::CommitApply) {
                 if(!_Has(pose.commits,step.object)) return _Bad(_StepName(owner)+": commit body object out of range");
@@ -3497,6 +3503,11 @@ private:
                 if (interp.valueInputs.empty() &&
                     (!require(fb::SlotDomain::Rest, interp.driverSlot) ||
                      !require(fb::SlotDomain::Rest, interp.parentSlot))) return false;
+                for (size_t e = 0; e < interp.extraDriverSlots.size() &&
+                                   e < interp.extraParentSlots.size(); ++e) {
+                    if (!require(fb::SlotDomain::Rest, interp.extraDriverSlots[e]) ||
+                        !require(fb::SlotDomain::Rest, interp.extraParentSlots[e])) return false;
+                }
             }
             if (step.kind == fb::StepKind::Constraint && _Has(_f.pose->walkSteps, step.object)) {
                 const auto &walk = _f.pose->walkSteps[size_t(step.object)];
@@ -3839,14 +3850,34 @@ private:
                       "enabled")) {
             return false;
         }
-        if (interp.valueInputs.size() > 3 ||
-            (!interp.valueInputs.empty() && interp.driverSlot >= 0)) {
+        // An ML mover reads frames and any number of dials together.
+        if (!interp.network && !interp.maps &&
+            (interp.valueInputs.size() > 3 ||
+             (!interp.valueInputs.empty() && interp.driverSlot >= 0))) {
             return _Bad(row + ": value_inputs hold at most three dials of "
                               "a numeric driver");
         }
+        if (bool(interp.network) != bool(interp.mask) ||
+            (interp.network && interp.method) ||
+            (interp.maps && (interp.network || interp.method ||
+                             interp.driverSlot >= 0))) {
+            return _Bad(row + ": an ML network needs its mask and no RBF "
+                              "method");
+        }
+        if (interp.mask &&
+            !_ReadPtr(interp.mask, int(InputTag::Float), _Baked, row,
+                      "mask")) {
+            return false;
+        }
+        // ML movers and animated maps read a float property as a float.
+        const bool typedValues = bool(interp.network) || bool(interp.maps);
         for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
-            if (!_Read(&interp.valueInputs[k], int(InputTag::Double), _Baked,
-                       row, "value_inputs", long(k))) {
+            const int tag = typedValues && interp.valueInputs[k].tag ==
+                                               InputTag::Float
+                                ? int(InputTag::Float)
+                                : int(InputTag::Double);
+            if (!_Read(&interp.valueInputs[k], tag, _Baked, row,
+                       "value_inputs", long(k))) {
                 return false;
             }
         }
@@ -3869,6 +3900,114 @@ private:
             if (rbf.weights[k].v.size() != rbf.poses.size()) {
                 return _Bad(_At(row + ".solver", "weights", long(k)) +
                             ": one weight per pose expected");
+            }
+        }
+        if (interp.extraDriverSlots.size() != interp.extraParentSlots.size() ||
+            (!interp.method && !interp.network &&
+             !interp.extraDriverSlots.empty())) {
+            return _Bad(row + ": extra driver and parent slots must be "
+                              "parallel and belong to a RigLogic solve");
+        }
+        for (size_t k = 0; k < interp.extraDriverSlots.size(); ++k) {
+            if (interp.extraDriverSlots[k] < 0 ||
+                !_Index(interp.extraDriverSlots[k], _slots, false, row,
+                        "extra_driver_slots") ||
+                !_Index(interp.extraParentSlots[k], _slots, true, row,
+                        "extra_parent_slots")) {
+                return _Bad(_At(row, "extra_driver_slots", long(k)) +
+                            ": out of range");
+            }
+        }
+        if (interp.method) {
+            const fb::RigExecWireRbfMethod &m = *interp.method;
+            const size_t raw = m.rawCount, count = m.targetCount;
+            const bool twist = m.distanceMethod ==
+                               uint8_t(fb::RbfDistanceMethod::TwistAngle);
+            const bool frames = interp.valueInputs.empty();
+            if (m.solverType > uint8_t(fb::RbfSolverType::MAX) ||
+                m.distanceMethod > uint8_t(fb::RbfDistanceMethod::MAX) ||
+                m.weightFunction > uint8_t(fb::RbfWeightFunction::MAX) ||
+                m.normalizeMethod > uint8_t(fb::RbfNormalizeMethod::MAX) ||
+                m.twistAxis > 2 || raw == 0 ||
+                count != interp.poseSlots.size() ||
+                m.targets.size() != raw * count ||
+                m.distanceTargets.size() != (twist ? raw * count : 0) ||
+                m.targetScales.size() != count ||
+                m.coefficients.size() !=
+                    (m.solverType ==
+                             uint8_t(fb::RbfSolverType::Interpolative)
+                         ? count * count : 0) ||
+                (frames && raw != 4 * (1 + interp.extraDriverSlots.size())) ||
+                (!frames && raw != interp.valueInputs.size()) ||
+                (m.distanceMethod !=
+                     uint8_t(fb::RbfDistanceMethod::Euclidean) &&
+                 raw % 4 != 0)) {
+                return _Bad(row + ".method: malformed RigLogic solve");
+            }
+        }
+        if (interp.primvarSlots.size() != interp.primvarSources.size() ||
+            (!interp.maps && !interp.primvarSlots.empty())) {
+            return _Bad(row + ": primvar slots and sources must be parallel "
+                              "and belong to animated maps");
+        }
+        for (size_t k = 0; k < interp.primvarSlots.size(); ++k) {
+            if (interp.primvarSlots[k] < interp.weightBegin ||
+                interp.primvarSlots[k] >= interp.weightEnd ||
+                interp.primvarSources[k] < 0 ||
+                size_t(interp.primvarSources[k]) >= interp.poseSlots.size()) {
+                return _Bad(_At(row, "primvar_slots", long(k)) +
+                            ": out of range");
+            }
+        }
+        if (interp.maps) {
+            const fb::RigExecWireAnimatedMaps &m = *interp.maps;
+            const size_t rows = m.rowInputs.size();
+            bool ok = m.inputCount == interp.valueInputs.size() &&
+                      m.rowFrom.size() == rows && m.rowTo.size() == rows &&
+                      m.rowSlope.size() == rows && m.rowCut.size() == rows &&
+                      m.mapBegin.size() == interp.poseSlots.size() + 1 &&
+                      !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
+                      m.mapBegin.back() == rows;
+            RigExecAnimatedMapsTable table;
+            table.inputCount = m.inputCount;
+            for (size_t map = 0; ok && map + 1 < m.mapBegin.size(); ++map) {
+                const size_t begin = m.mapBegin[map], end = m.mapBegin[map + 1];
+                ok = begin <= end && end <= rows;
+                std::vector<RigExecConditionalRow> mapRows;
+                for (size_t r = begin; ok && r < end; ++r) {
+                    mapRows.push_back({m.rowInputs[r], m.rowFrom[r], m.rowTo[r],
+                                       m.rowSlope[r], m.rowCut[r]});
+                }
+                ok = ok && table.AddMap(std::move(mapRows));
+            }
+            if (!ok) {
+                return _Bad(row + ".maps: malformed animated maps");
+            }
+        }
+        if (interp.network) {
+            const fb::RigExecWireMlNetwork &n = *interp.network;
+            std::vector<int> activations(n.layerActivations.begin(),
+                                         n.layerActivations.end());
+            std::vector<float> alphas;
+            for (double alpha : n.layerAlphas) alphas.push_back(float(alpha));
+            RigExecMlNetwork network;
+            std::string why;
+            const size_t frames =
+                interp.driverSlot >= 0 ? 1 + interp.extraDriverSlots.size()
+                                       : 0;
+            if ((interp.driverSlot < 0 && !interp.extraDriverSlots.empty()) ||
+                n.inputCount != 4 * frames + interp.valueInputs.size() ||
+                !RigExecMlBuildNetwork(n.inputCount, n.layerSizes,
+                                       activations, alphas, n.weights,
+                                       n.biases, &network, &why) ||
+                (!n.inputMean.empty() && n.inputMean.size() != n.inputCount) ||
+                (!n.inputScale.empty() &&
+                 n.inputScale.size() != n.inputCount) ||
+                (!n.outputDefaults.empty() &&
+                 n.outputDefaults.size() != network.OutputCount()) ||
+                network.OutputCount() != interp.poseSlots.size()) {
+                return _Bad(row + ".network: malformed ML network" +
+                            (why.empty() ? std::string() : ": " + why));
             }
         }
         return true;

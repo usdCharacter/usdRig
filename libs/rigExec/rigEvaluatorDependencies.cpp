@@ -182,7 +182,9 @@ _DiscoverJointOutputs(const UsdStageRefPtr &stage, const SdfPath &rigPath,
 }
 
 // Discovers the rig's pose interpolators the same implicit way: being a
-// RigExecPoseInterpolator under the rig is what makes a prim one.
+// RigExecPoseInterpolator under the rig is what makes a prim one; a
+// RigExecMlMover's network is discovered with them, because it publishes
+// its outputs the same way (it is also a mover, for its blend shapes).
 // The interpolators conventionally live at <rig>/PoseInterpolators/<name>,
 // but like every other rig element they are found by type wherever they sit.
 // An interpolator writes no transform and no points, so it carries no
@@ -191,7 +193,9 @@ std::vector<SdfPath>
 _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 {
     return _DiscoverPaths(stage, rigPath, [](const UsdPrim &prim) {
-        return prim.GetTypeName() == "RigExecPoseInterpolator";
+        const TfToken &type = prim.GetTypeName();
+        return type == "RigExecPoseInterpolator" || type == "RigExecMlMover" ||
+               type == "RigExecAnimatedMaps";
     });
 }
 

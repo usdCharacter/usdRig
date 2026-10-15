@@ -26,7 +26,8 @@ RigExecSceneDomain Domain(const TfToken &type) {
     if (name == "RigExecFloatMathMover" || name == "RigExecVec3fMathMover" || name == "RigExecMatrixMathMover") return RigExecSceneDomain::PropertyMover;
     if (name == "RigExecAutoClavicle") return RigExecSceneDomain::AutoClavicle;
     if (name == "RigExecSpaceSwitch") return RigExecSceneDomain::SpaceSwitch;
-    if (name == "RigExecPoseInterpolator") return RigExecSceneDomain::PoseInterpolator;
+    if (name == "RigExecPoseInterpolator" || name == "RigExecAnimatedMaps")
+        return RigExecSceneDomain::PoseInterpolator;
     if (name == "RigExecSurfaceProjector") return RigExecSceneDomain::GeometryMover;
     if(name.rfind("RigExec",0)==0 && UsdSchemaRegistry::GetTypeFromSchemaTypeName(type).IsUnknown()) {
         for(const auto &handler:RigExecMoverHandlers())for(const auto &schema:handler.sceneDataSchemas)
@@ -37,7 +38,9 @@ RigExecSceneDomain Domain(const TfToken &type) {
     if (name.size() >= 6 && name.compare(name.size()-6, 6, "Weight") == 0) return RigExecSceneDomain::Weight;
     if (name.size() >= 5 && name.compare(name.size()-5, 5, "Mover") == 0) return RigExecSceneDomain::GeometryMover;
     if (name.rfind("RigExec", 0) != 0 || name == "RigExecRoot" || name == "RigExecBlendInput" ||
-        name == "RigExecBlendSample" || name == "RigExecPose" || name.rfind("RigExecPicker",0) == 0 ||
+        name == "RigExecBlendSample" || name == "RigExecPose" || name == "RigExecMlOutput" ||
+        name == "RigExecAnimatedMap" ||
+        name.rfind("RigExecPicker",0) == 0 ||
         name.rfind("RigExecTouch",0) == 0) return RigExecSceneDomain::Data;
     for(const auto &handler:RigExecMoverHandlers())for(const auto &schema:handler.sceneDataSchemas)
         if(name==schema)return RigExecSceneDomain::Data;

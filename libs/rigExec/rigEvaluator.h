@@ -539,6 +539,10 @@ public:
     const SdfPath &GetRigPath() const { return _rigPath; }
     /// Target-local spatial matrix primvars in this compiled epoch.
     std::vector<SdfPath> GetSurfaceProjectorTargets() const;
+    /// The float `primvars:` properties animated maps publish on meshes in
+    /// this compiled epoch, sorted: the only moved floats imaging hands to
+    /// Hydra as primvars.
+    std::vector<SdfPath> GetAnimatedMapPrimvars() const;
 
     /// Composed mover-stack applications: descendants before their mover
     /// parent, sibling branches in reverse composed child order (the bottom
@@ -1171,6 +1175,10 @@ private:
         /// when there is none and the driver's local rotation is its world
         /// one. Resolved at compile: namespace topology does not move.
         SdfPath driverParent;
+        /// A RigLogic solve's frame drivers after the first and their
+        /// measuring ancestors (empty where none), parallel.
+        std::vector<SdfPath> extraDrivers;
+        std::vector<SdfPath> extraDriverParents;
         /// rigExec:driverAttributes: a NUMERIC driver. One to three float or
         /// double properties read in order as the driver's position, in
         /// place of a transform's translation; empty on a transform-driven

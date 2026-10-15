@@ -3439,11 +3439,23 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
             string userDocBrief = "allowNegativeWeights."
         }
     )
+    uniform bool rigExec:automaticRadius = 0 (
+        customData = {
+            string userDocBrief = """A RigLogic solve's radius is the mean distance between every
+        pair of poses, in place of rigExec:radius."""
+        }
+    )
+    uniform token rigExec:distanceMethod = "quaternion" (
+        allowedTokens = ["euclidean", "quaternion", "swingAngle", "twistAngle"]
+        customData = {
+            string userDocBrief = "A RigLogic solve's metric."
+        }
+    )
     rel rigExec:driver (
         customData = {
-            string userDocBrief = """The driver, at most one target: a RigExecJoint (or any
-        RigExecXformable) whose LOCAL rotation -- its pose relative to its own
-        rest, in its parent's frame -- is what every pose is measured against."""
+            string userDocBrief = """The driver: a RigExecJoint (or any RigExecXformable) whose
+        LOCAL rotation -- its pose relative to its own rest, in its parent's
+        frame -- is what every pose is measured against."""
         }
     )
     rel rigExec:driverAttributes (
@@ -3465,7 +3477,7 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
         }
     )
     uniform token rigExec:kernel = "gaussian" (
-        allowedTokens = ["gaussian", "linear"]
+        allowedTokens = ["gaussian", "linear", "exponential", "cubic", "quintic"]
         customData = {
             string userDocBrief = "How a pose's weight falls away with distance."
         }
@@ -3476,16 +3488,42 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
         unity."""
         }
     )
+    uniform token rigExec:normalizeMethod = "onlyAboveOne" (
+        allowedTokens = ["onlyAboveOne", "always"]
+        customData = {
+            string userDocBrief = """A RigLogic solve's normalization: divide the weights by
+        their sum only when it exceeds one, or always."""
+        }
+    )
+    uniform float rigExec:radius = 0 (
+        customData = {
+            string userDocBrief = """A RigLogic solve's kernel width, in the metric's units:
+        radians for quaternion, swing and twist, the drivers' own units for
+        euclidean."""
+        }
+    )
     float rigExec:regularization = 0 (
         customData = {
             string userDocBrief = """regularization, added to the matrix diagonal before
         inverting."""
         }
     )
+    uniform token rigExec:solver = "pose" (
+        allowedTokens = ["pose", "additive", "interpolative"]
+        customData = {
+            string userDocBrief = "Which solve turns distances into weights."
+        }
+    )
     uniform token rigExec:twistAxis = "X" (
         allowedTokens = ["X", "Y", "Z"]
         customData = {
             string userDocBrief = "The axis a twist pose spins about, in the DRIVER's own frame."
+        }
+    )
+    uniform float rigExec:weightThreshold = 0 (
+        customData = {
+            string userDocBrief = """A RigLogic solve publishes zero for any pose whose
+        normalized, scaled weight is at or below this."""
         }
     )
 }
@@ -3548,6 +3586,19 @@ class RigExecPose "RigExecPose" (
         kernel has fallen away -- one falloff width, this pose's own."""
         }
     )
+    quatf[] rigExec:rotations = [] (
+        customData = {
+            string userDocBrief = """A RigLogic solve with several frame drivers: where each
+        driver stands in this pose, one rotation per rigExec:driver target in
+        order, measured as rigExec:rotation is."""
+        }
+    )
+    uniform float rigExec:scale = 1 (
+        customData = {
+            string userDocBrief = """A RigLogic solve multiplies this pose's normalized weight by
+        this before the threshold: RigLogic's pose scale."""
+        }
+    )
     float3 rigExec:translation = (0, 0, 0) (
         customData = {
             string userDocBrief = """The driver's translation in this pose, in CENTIMETRES, in the
@@ -3557,6 +3608,177 @@ class RigExecPose "RigExecPose" (
     float rigExec:translationRadius = 0 (
         customData = {
             string userDocBrief = "The same width for the translation channel, in CENTIMETRES."
+        }
+    )
+}
+
+class RigExecMlMover "RigExecMlMover" (
+    customData = {
+        string userDocBrief = """A neural morph deformer: a multilayer perceptron maps the rig's
+    pose to one weight per RigExecMlOutput child, and those weights drive
+    sparse morph targets added to the moved points."""
+    }
+)
+{
+    float inputs:mask = 1 (
+        customData = {
+            string userDocBrief = "RigLogic's region mask."
+        }
+    )
+    uniform float[] rigExec:biases = [] (
+        customData = {
+            string userDocBrief = "Every layer's biases, layer after layer."
+        }
+    )
+    rel rigExec:blendInputs (
+        customData = {
+            string userDocBrief = """The blend channels this mover applies, normally one per
+        output, connected to it."""
+        }
+    )
+    uniform token rigExec:deltaSpace = "target" (
+        allowedTokens = ["target", "surfaceFrame"]
+        customData = {
+            string userDocBrief = "As on RigExecBlendShapeMover."
+        }
+    )
+    rel rigExec:driver (
+        customData = {
+            string userDocBrief = """Frame drivers, in input order: joints or controls, each
+        contributing four values, its local rotation relative to its rest
+        against its nearest joint or control ancestor."""
+        }
+    )
+    rel rigExec:driverAttributes (
+        customData = {
+            string userDocBrief = """Numeric drivers, in input order after the frame drivers:
+        float or double properties, any number, each one value."""
+        }
+    )
+    uniform float[] rigExec:inputMean = [] (
+        customData = {
+            string userDocBrief = """Optional per-input normalization: each input becomes
+        (x - inputMean) * inputScale before the first layer."""
+        }
+    )
+    uniform float[] rigExec:inputScale = [] (
+        customData = {
+            string userDocBrief = "See rigExec:inputMean."
+        }
+    )
+    uniform int[] rigExec:layerActivations = [] (
+        customData = {
+            string userDocBrief = """Each layer's activation, RigLogic's ActivationFunction
+        codes: 0 linear, 1 relu, 2 leakyRelu, 3 tanh, 4 sigmoid."""
+        }
+    )
+    uniform float[] rigExec:layerAlphas = [] (
+        customData = {
+            string userDocBrief = "Each layer's leakyRelu slope below zero, or empty."
+        }
+    )
+    uniform int[] rigExec:layerSizes = [] (
+        customData = {
+            string userDocBrief = "The width of each layer's output, first layer first."
+        }
+    )
+    uniform float[] rigExec:outputDefaults = [] (
+        customData = {
+            string userDocBrief = """What each output publishes while inputs:mask is exactly
+        zero, RigLogic's default values."""
+        }
+    )
+    uniform float[] rigExec:weights = [] (
+        customData = {
+            string userDocBrief = """Every layer's weights, layer after layer, each row-major
+        with one row per output unit: output r reads inputs
+        weights[r * inputs ."""
+        }
+    )
+}
+
+class RigExecMlOutput "RigExecMlOutput" (
+    customData = {
+        string userDocBrief = """One output of its parent RigExecMlMover's network, in namespace
+    order among its RigExecMlOutput siblings, and the float it publishes."""
+    }
+)
+{
+    float outputs:weight = 0 (
+        customData = {
+            string userDocBrief = "The network's output for the current pose, after the mask."
+        }
+    )
+}
+
+class RigExecAnimatedMaps "RigExecAnimatedMaps" (
+    customData = {
+        string userDocBrief = """RigLogic's animated maps (Epic Games OpenRigLogic, see
+    docs/references.md): one value in [0, 1] per RigExecAnimatedMap child,
+    each a sum of piecewise-linear segments of the input properties, made
+    for driving texture masks such as wrinkle maps."""
+    }
+)
+{
+    bool inputs:enabled = 1 (
+        customData = {
+            string userDocBrief = "Shape-preserving enable."
+        }
+    )
+    rel rigExec:driverAttributes (
+        customData = {
+            string userDocBrief = """The input properties, float or double, in order: a row's
+        rigExec:rowInputs entry is an index into this list."""
+        }
+    )
+    rel rigExec:meshes (
+        customData = {
+            string userDocBrief = """Meshes that receive every map as a constant float primvar,
+        primvars:<rigExec:primvarName>."""
+        }
+    )
+}
+
+class RigExecAnimatedMap "RigExecAnimatedMap" (
+    customData = {
+        string userDocBrief = "One map of its parent RigExecAnimatedMaps, a conditional table."
+    }
+)
+{
+    float outputs:value = 0 (
+        customData = {
+            string userDocBrief = "The map's value for the current pose."
+        }
+    )
+    uniform token rigExec:primvarName = "" (
+        customData = {
+            string userDocBrief = """The primvar this map publishes on the parent's meshes,
+        without the primvars: namespace."""
+        }
+    )
+    uniform float[] rigExec:rowCut = [] (
+        customData = {
+            string userDocBrief = "Each row's intercept."
+        }
+    )
+    uniform float[] rigExec:rowFrom = [] (
+        customData = {
+            string userDocBrief = "Each row's interval start."
+        }
+    )
+    uniform int[] rigExec:rowInputs = [] (
+        customData = {
+            string userDocBrief = "Each row's input, an index into the parent's inputs."
+        }
+    )
+    uniform float[] rigExec:rowSlope = [] (
+        customData = {
+            string userDocBrief = "Each row's slope."
+        }
+    )
+    uniform float[] rigExec:rowTo = [] (
+        customData = {
+            string userDocBrief = "Each row's interval end."
         }
     )
 }

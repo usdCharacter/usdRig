@@ -52,6 +52,9 @@ _RrLiveSolver(const RrProgram *program, size_t solver, int field);
 enum class _RrRbfKernel : uint8_t {
     Gaussian = 0,
     Linear = 1,
+    Exponential = 2,
+    Cubic = 3,
+    Quintic = 4,
 };
 
 enum class _RrRbfPoseType : uint8_t {
@@ -303,9 +306,17 @@ struct RrPoseScratch {
     // A numeric driver's dials, read there for the same reason. Three per
     // interpolator, one per axis; a transform-driven one leaves them at
     // zero and never looks.
-    std::vector<std::array<double, 3>> interpValues;
+    std::vector<std::vector<double>> interpValues;
+    std::vector<double> interpMasks;
     // The reconstituted RBF solvers plus one step's own scratch.
     std::vector<_RrRbfSolver> interpSolvers;
+    /// RigLogic solves, reconstituted from the wire; empty tables for the
+    /// pose solver.
+    std::vector<RigExecRbfMethodTable> interpMethods;
+    /// ML movers' networks, reconstituted from the wire; empty otherwise.
+    std::vector<RigExecMlNetwork> interpNetworks;
+    /// Animated maps' tables, reconstituted from the wire; empty otherwise.
+    std::vector<RigExecAnimatedMapsTable> interpMaps;
     std::vector<std::vector<double>> interpScratch;
     // Solver live rests and per-run elements.
     std::vector<RrPoseSolverState> solvers;

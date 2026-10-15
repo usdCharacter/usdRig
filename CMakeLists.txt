@@ -550,6 +550,20 @@ target_compile_definitions(testRigExecRbf PRIVATE
     RIGEXEC_RBF_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/psd_parity.json")
 add_test(NAME testRigExecRbf COMMAND testRigExecRbf)
 
+# The RigLogic kernels are header-only and USD-free; rigExecGraph supplies
+# only the include root.
+add_executable(testRigExecRigLogicKernels tests/testRigExecRigLogicKernels.cpp)
+target_link_libraries(testRigExecRigLogicKernels PRIVATE rigExecGraph)
+add_test(NAME testRigExecRigLogicKernels COMMAND testRigExecRigLogicKernels)
+
+# RigLogic's behaviours in a rig: live, frame cache and .rigexec parity.
+add_executable(testRigExecRigLogic tests/testRigExecRigLogic.cpp)
+target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecRigging
+    rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecRigLogic PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecRigLogic COMMAND testRigExecRigLogic)
+
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)
 target_link_libraries(testRigExecConstraints PRIVATE rigExec rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecConstraints PRIVATE
@@ -705,6 +719,23 @@ rigexec_add_example_graph_test(NAME solver_checkpoint
 rigexec_add_example_graph_test(NAME preceding_own_chain
     STAGE "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/preceding_own_chain.usda"
     FRAMES 1,5,9 GUIDES)
+
+# The RigLogic docs examples: an ML mover over a skinned arm, animated maps
+# driving morphs and mesh primvars, and the pose interpolator's additive,
+# interpolative and numeric solves. Frames sit between the authored keys;
+# verify_binary_docs_* below holds the .rigexec runtime to the same stages.
+set(RIGEXEC_RIGLOGIC_DOCS_EXAMPLES
+    "ml_mover|1001,1008,1020,1031,1041"
+    "animated_maps|1001,1011,1023,1035,1040"
+    "pose_interpolator_riglogic|1001,1010,1013,1024,1037,1044")
+foreach(_entry IN LISTS RIGEXEC_RIGLOGIC_DOCS_EXAMPLES)
+    string(REPLACE "|" ";" _fields "${_entry}")
+    list(GET _fields 0 _stage)
+    list(GET _fields 1 _frames)
+    rigexec_add_example_graph_test(NAME docs_${_stage}
+        STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/${_stage}.usda"
+        FRAMES ${_frames} GUIDES)
+endforeach()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/tests/exampleFixtures.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/tests/rigExecExampleFixtures.h"
@@ -1249,6 +1280,25 @@ rigexec_add_verify_binary_test(NAME oneloop_two_limbs_chunked
 foreach(_chunked IN ITEMS raw_skin_layouts_chunked oneloop_two_limbs_chunked)
     set_property(TEST verify_binary_${_chunked} APPEND PROPERTY ENVIRONMENT
         "RIGEXEC_BAKED_CHUNK_VERTS=2" "RIGEXEC_BAKED_CHUNK_ALWAYS=1")
+endforeach()
+
+# The RigLogic docs examples, baked at their first frame. The ML mover's
+# drags move its frame driver and its mask; the maps' a map input and the
+# morph envelope; the interpolators' both drivers, which every solve reads.
+set(_riglogic_drags_ml_mover
+    "/MlAsset/Rig/Controls/Elbow.avars:rz,/MlAsset/Rig/Movers/Geometry/Muscles.inputs:mask")
+set(_riglogic_drags_animated_maps
+    "/MapsAsset/Rig/Controls/BrowL.avars:ty,/MapsAsset/Rig/Movers/Geometry/Brows.inputs:defaultWeight")
+set(_riglogic_drags_pose_interpolator_riglogic
+    "/RbfAsset/Rig/Controls/Shoulder.avars:rz,/RbfAsset/Rig/Controls/Elbow.avars:rz")
+foreach(_entry IN LISTS RIGEXEC_RIGLOGIC_DOCS_EXAMPLES)
+    string(REPLACE "|" ";" _fields "${_entry}")
+    list(GET _fields 0 _stage)
+    list(GET _fields 1 _frames)
+    rigexec_add_verify_binary_test(NAME docs_${_stage}
+        STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/${_stage}.usda"
+        FRAMES ${_frames} CLASS inputs
+        DRAGS "${_riglogic_drags_${_stage}}")
 endforeach()
 
 add_executable(testRigExecPack tests/testRigExecPack.cpp)
@@ -2409,7 +2459,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle
-    testRigExecStandalone)
+    testRigExecStandalone testRigExecRigLogic)
     target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
 endforeach()
 

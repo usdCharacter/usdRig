@@ -2537,6 +2537,86 @@ TestShaderMatrixPrimvars()
     results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
 }
 
+// Animated maps reach Hydra as constant float primvars on a mesh that
+// authors none, a moved value dirties only the primvars container, and the
+// stage is never written.
+static void
+TestAnimatedMapPrimvars()
+{
+    const SdfPath browPath("/Brow");
+    const TfToken raise("wrinkleBrowRaise");
+    const TfToken squint("squint");
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(browPath, TfToken("Mesh"));
+    std::string sourceBefore;
+    CHECK(stage->GetRootLayer()->ExportToString(&sourceBefore));
+
+    auto upstream = UsdImagingStageSceneIndex::New();
+    upstream->SetStage(stage);
+    upstream->ApplyPendingUpdates();
+    auto store = std::make_shared<RigExecSnapshotStore>();
+    auto results = RigExecResultsSceneIndex::New(upstream, store);
+    _RecordingObserver observer;
+    results->AddObserver(HdSceneIndexObserverPtr(&observer));
+
+    RigExecPublishedPrim published;
+    published.shaderFloats[raise] = 0.25f;
+    published.shaderFloats[squint] = 1.0f;
+    auto generation = [&]() {
+        auto snapshot = std::make_shared<RigExecImagingSnapshot>();
+        snapshot->stage = stage;
+        snapshot->prims[browPath] = published;
+        return snapshot;
+    };
+    auto checkFloats = [&]() {
+        const HdPrimvarsSchema drawn = HdPrimvarsSchema::GetFromParent(
+            results->GetPrim(browPath).dataSource);
+        for (const auto &[name, expected] : published.shaderFloats) {
+            const HdPrimvarSchema pv = drawn.GetPrimvar(name);
+            CHECK(pv.GetInterpolation() &&
+                  pv.GetInterpolation()->GetTypedValue(0.0f) ==
+                      HdPrimvarSchemaTokens->constant);
+            const HdSampledDataSourceHandle value = pv.GetPrimvarValue();
+            CHECK(value);
+            if (!value) continue;
+            const VtValue v = value->GetValue(0.0f);
+            CHECK(v.IsHolding<float>() && v.UncheckedGet<float>() == expected);
+        }
+    };
+    results->NotifyGenerationPublished(store->Publish(generation()));
+    checkFloats();
+
+    observer.added.clear();
+    observer.removed.clear();
+    observer.dirtied.clear();
+    observer.dirtiedLocators.clear();
+    published.shaderFloats[raise] = 0.75f;
+    const RigExecPublishedDirtyVector dirty = store->Publish(generation());
+    CHECK(dirty.size() == 1);
+    if (dirty.size() == 1) {
+        CHECK(dirty[0].path == browPath);
+        CHECK(dirty[0].changes == RigExecChangeShaderMatrix);
+    }
+    results->NotifyGenerationPublished(dirty);
+    checkFloats();
+    CHECK(observer.added.empty() && observer.removed.empty());
+    CHECK(observer.dirtied.size() == 1);
+    if (observer.dirtied.size() == 1) {
+        CHECK(observer.dirtiedLocators[0] ==
+              HdContainerDataSourceEditor::ComputeDirtyLocators(
+                  HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
+    }
+    CHECK(store->Publish(generation()).empty());
+    // A map appearing or going away is structural, as a matrix's is.
+    published.shaderFloats.erase(squint);
+    const RigExecPublishedDirtyVector removed = store->Publish(generation());
+    CHECK(removed.size() == 1 && removed[0].changes == RigExecChangeStructural);
+    std::string sourceAfter;
+    CHECK(stage->GetRootLayer()->ExportToString(&sourceAfter));
+    CHECK(sourceAfter == sourceBefore);
+    results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
 // A control drag changes the final transform of a cached unit shape, not
 // its geometry. Rebuilding that geometry on every sample is unnecessary
 // and can force a renderer through curve topology/material preparation.
@@ -7609,6 +7689,7 @@ main(int argc, char **argv)
     TestSimpleRigControlAndDeformation(examplesDir);
     TestControlGuides(examplesDir);
     TestShaderMatrixPrimvars();
+    TestAnimatedMapPrimvars();
     TestShaderMatrixWorldSpace();
     TestControlGuidePoseDirtiness();
     TestGuidesFollowDrivenAssetRoot();

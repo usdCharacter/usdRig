@@ -1773,6 +1773,16 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->constant))
                 .Build());
     }
+    // Animated maps for this prim's shader, as constant float primvars; the
+    // same glslfx "attributes" rule applies as for the matrices above.
+    for (const auto &[name, value] : published.shaderFloats) {
+        primvarNames.push_back(name);
+        primvarValues.push_back(
+            HdPrimvarSchema::Builder()
+                .SetPrimvarValue(HdRetainedTypedSampledDataSource<float>::New(value))
+                .SetInterpolation(_Token(HdPrimvarSchemaTokens->constant))
+                .Build());
+    }
     if (_HasGpuDeform(published)) {
         // The deform child computes the points and velocities; the
         // authored ones are blocked so only the computed ones reach a

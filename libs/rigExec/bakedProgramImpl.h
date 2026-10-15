@@ -2192,16 +2192,33 @@ struct RigExecBakedProgramImpl {
         /// is measured against, or -1 when its local rotation is its world
         /// one. Compiled by the evaluator, restated here as a slot.
         int parentSlot = -1;
+        /// A RigLogic solve's frame drivers after the first, and each one's
+        /// measuring ancestor (-1 for none), parallel.
+        std::vector<int> extraDriverSlots;
+        std::vector<int> extraParentSlots;
         /// A NUMERIC driver (rigExec:driverAttributes): the dials read in
         /// place of a transform's translation, one per axis, bound like any
         /// other per-frame input so a dragged or animated one is honoured.
         /// Empty on a transform-driven interpolator.
         std::vector<RigExecBakedInput<double>> valueInputs;
+        /// ML movers and animated maps bind a float property as a float:
+        /// where valueIsFloat is set, floatValueInputs holds the binding and
+        /// valueInputs the unbound default, and the other way round.
+        std::vector<RigExecBakedInput<float>> floatValueInputs;
+        std::vector<char> valueIsFloat;
         std::vector<double> values;
+        /// Animated maps: weight slots republishing a map's value as a mesh
+        /// primvar, and the map (an index into poseSlots) each one copies.
+        std::vector<int> primvarSlots;
+        std::vector<int> primvarSources;
         /// `inputs:enabled`, a per-frame input the prologue reads into
         /// `enabledValue` so the body touches no USD.
         RigExecBakedInput<bool> enabled;
         bool enabledValue = true;
+        /// A RigExecMlMover's `inputs:mask` (a float), bound only when
+        /// mlSolve.
+        RigExecBakedInput<float> mask;
+        double maskValue = 1.0;
         /// This interpolator's slots in poseWeights: the whole range it
         /// writes, the subset the solver fills in ITS pose order, and the
         /// disabled poses' slots, which publish a hard zero.

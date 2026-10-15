@@ -147,6 +147,7 @@ MatrixMover = _native.MatrixMover
 SkinMover = _native.SkinMover
 LatticeMover = _native.LatticeMover
 BlendShapeMover = _native.BlendShapeMover
+MlMover = _native.MlMover
 CurveMover = _native.CurveMover
 SurfaceMover = _native.SurfaceMover
 SmoothMover = _native.SmoothMover
@@ -170,7 +171,8 @@ __all__ = [
     "Weight", "StaticWeight", "DynamicWeight", "VolumeWeight", "SphereWeight",
     "PlaneWeight", "CurveWeight", "CombineWeight",
     "BlendInput", "BlendSample",
-    "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "CurveMover",
+    "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "MlMover",
+    "CurveMover",
     "SurfaceMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "VolumeCorrectMover",
     "FloatMathMover", "Vec3fMathMover", "MatrixMathMover",
     "MoverChain",
@@ -290,6 +292,7 @@ _CONCRETE_SCHEMA_NAMES = (
     "LatticeMover",
     "MatrixMathMover",
     "MatrixMover",
+    "MlMover",
     "SkinMover",
     "ParentConstraint",
     "PlaneWeight",

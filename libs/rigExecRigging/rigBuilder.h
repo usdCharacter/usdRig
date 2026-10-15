@@ -610,6 +610,11 @@ public:
     /// vectors must be the same length; authoring data only.
     void SetPoseControls(const std::vector<SdfPath> &properties,
                          const std::vector<double> &values);
+    /// A RigLogic solve with several drivers: one rotation per driver, in
+    /// rigExec:driver order, measured as SetRotation's is.
+    void SetRotations(const std::vector<GfQuatf> &rotations);
+    /// A RigLogic solve's pose scale, applied after normalization.
+    void SetScale(float scale);
     void SetEnabled(bool enabled);
     /// The `outputs:weight` property path, which is what a blend input's
     /// inputs:weight connects to. Valid whether or not anything reads it yet.
@@ -623,8 +628,23 @@ public:
 
     /// The joint whose LOCAL rotation every pose is measured against.
     void SetDriver(const SdfPath &path);
-    /// gaussian | linear. `interpolation`: 0 linear, 1 gaussian.
+    /// Several frame drivers, for a RigLogic solve.
+    void SetDrivers(const std::vector<SdfPath> &paths);
+    /// Numeric drivers: one to three float or double properties.
+    void SetDriverAttributes(const std::vector<SdfPath> &properties);
+    /// gaussian | linear | exponential | cubic | quintic.
     void SetKernel(const TfToken &kernel);
+    /// pose | additive | interpolative.
+    void SetSolver(const TfToken &solver);
+    /// euclidean | quaternion | swingAngle | twistAngle (RigLogic solves).
+    void SetDistanceMethod(const TfToken &method);
+    /// onlyAboveOne | always (RigLogic solves).
+    void SetNormalizeMethod(const TfToken &method);
+    /// A RigLogic solve's kernel width, or the mean pose spacing when
+    /// `automatic` is on.
+    void SetRadius(float radius, bool automatic = false);
+    /// A RigLogic solve's cutoff after normalization and scale.
+    void SetWeightThreshold(float threshold);
     /// enableRotation / enableTranslation. Honoured rather than
     /// assumed: read as a rotation, a translation interpolator's poses are
     /// all identity and it solves degenerate.
@@ -638,6 +658,27 @@ public:
     /// Add a pose as a child of this interpolator. Poses are prims rather
     /// than array entries so each composes independently.
     RigExecPoseHandle AddPose(const std::string &name);
+};
+
+/// A RigExecAnimatedMaps node: RigLogic's conditional tables over input
+/// properties, one [0, 1] value per map, also published as mesh primvars.
+class RigExecAnimatedMapsHandle : public RigExecHandleBase {
+public:
+    using RigExecHandleBase::RigExecHandleBase;
+
+    /// The input properties a row's input index names, in order.
+    void SetInputs(const std::vector<SdfPath> &properties);
+    /// Meshes that receive each map as a constant float primvar.
+    void SetMeshes(const std::vector<SdfPath> &meshes);
+    void SetEnabled(bool enabled);
+    /// A map, as a RigExecAnimatedMap child: its rows (parallel arrays) and
+    /// its primvar name (empty: the map's name). Its outputs:value path.
+    SdfPath AddMap(const std::string &name, const std::vector<int> &inputs,
+                   const std::vector<float> &from,
+                   const std::vector<float> &to,
+                   const std::vector<float> &slope,
+                   const std::vector<float> &cut,
+                   const std::string &primvarName = std::string());
 };
 
 // Mover handles (point-domain and property-domain operations)
@@ -708,6 +749,39 @@ public:
     RigExecBlendInputHandle AddBlendInput(const std::string &name, float weight = 0.f);
     /// Replace the complete relationship to independently authored inputs.
     void SetBlendInputs(const std::vector<SdfPath> &paths);
+};
+
+/// RigExecMlMover: a network over the rig's pose, one weight per output,
+/// applied as sparse morph targets through its own blend inputs.
+class RigExecMlMoverHandle : public RigExecBlendShapeMoverHandle {
+public:
+    using RigExecBlendShapeMoverHandle::RigExecBlendShapeMoverHandle;
+
+    /// Frame drivers, four inputs each, in input order.
+    void SetDrivers(const std::vector<SdfPath> &paths);
+    /// Numeric drivers, one input each, after the frame drivers.
+    void SetDriverAttributes(const std::vector<SdfPath> &properties);
+    /// The layers: output widths, activations (linear | relu | leakyRelu
+    /// | tanh | sigmoid), leakyRelu alphas (empty or one per layer), and
+    /// every layer's row-major weights then every layer's biases.
+    void SetNetwork(const std::vector<int> &layerSizes,
+                    const std::vector<TfToken> &activations,
+                    const std::vector<float> &alphas,
+                    const std::vector<float> &weights,
+                    const std::vector<float> &biases);
+    /// (x - mean) * scale per input before the first layer; both empty or
+    /// one per input.
+    void SetInputNormalization(const std::vector<float> &mean,
+                               const std::vector<float> &scale);
+    /// The outputs while the mask is exactly zero.
+    void SetOutputDefaults(const std::vector<float> &defaults);
+    void SetMask(float mask);
+    /// The next output, as a RigExecMlOutput child; its outputs:weight path.
+    SdfPath AddOutput(const std::string &name);
+    /// An output and the morph it drives: a blend input named
+    /// `<name>Morph` whose weight connects to the output and whose one
+    /// sample names \p blendShape (a UsdSkelBlendShape). The output path.
+    SdfPath AddMorph(const std::string &name, const SdfPath &blendShape);
 };
 
 /// RigExecCurveMover: curve-driven movement (wire / spline-IK / ribbon).
@@ -883,6 +957,11 @@ public:
     RigExecBlendShapeMoverHandle AddBlendShapeMover(
         const std::string &name,
         const SdfPath &weightObject = {},
+        const SdfPath &target = {});
+
+    /// A neural morph deformer (RigExecMlMover).
+    RigExecMlMoverHandle AddMlMover(
+        const std::string &name,
         const SdfPath &target = {});
 
     /// Curve-driven movement (wire / spline-IK / ribbon modes).
@@ -1137,6 +1216,9 @@ public:
     /// no points, so it has no place in an order that exists to say which
     /// write lands on top of which. It publishes a float per pose and the
     /// blend inputs connect to those.
+    /// <rig>/AnimatedMaps/<name>: RigLogic's animated maps.
+    RigExecAnimatedMapsHandle AddAnimatedMaps(const std::string &name);
+
     RigExecPoseInterpolatorHandle AddPoseInterpolator(
         const std::string &name, const SdfPath &driver);
 

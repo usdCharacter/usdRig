@@ -2976,6 +2976,21 @@ RigExecImagingBridge::_PublishPoseSnapshot(
     static const std::string primvarsPrefix("primvars:");
     const std::vector<SdfPath> projectorTargets =
         _evaluator->GetSurfaceProjectorTargets();
+    // Animated maps' float primvars: only those the evaluator names, so a
+    // property mover's float result never mints a published prim.
+    const std::vector<SdfPath> mapPrimvars =
+        _evaluator->GetAnimatedMapPrimvars();
+    for (const SdfPath &propertyPath : mapPrimvars) {
+        const auto found = pose.movedProperties.find(propertyPath);
+        if (found == pose.movedProperties.end() ||
+            !found->second.IsHolding<float>()) {
+            continue;
+        }
+        const std::string &name = propertyPath.GetName();
+        auto &published = snapshot->prims[propertyPath.GetPrimPath()];
+        published.shaderFloats[TfToken(name.substr(primvarsPrefix.size()))] =
+            found->second.UncheckedGet<float>();
+    }
     for (const auto &[propertyPath, value] : pose.movedProperties) {
         if (!value.IsHolding<GfMatrix4d>()) {
             continue;

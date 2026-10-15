@@ -27,6 +27,19 @@ from .widgets.keyBindingDialog import KeyBindingDialog
 _IS_MACOS = sys.platform == "darwin"
 
 
+def _makeStageViewCurrent(controller):
+    """Bind usdview's viewport GL context, if it still has one."""
+    stageView = getattr(controller, "_stageView", None)
+    if stageView is None:
+        return
+    try:
+        if stageView.context() is not None:
+            stageView.makeCurrent()
+    except RuntimeError:
+        # The C++ widget is already gone; nothing of Storm's is left to free.
+        pass
+
+
 def _keepFloatingWindowOnScreen(window, mainWindow, initialPlacement=False):
     """Recover floating editors without disturbing a visible user placement."""
     if not window.isFloating():
@@ -590,6 +603,10 @@ class NoodlesEditorManager:
                         gv._nodeRenderManager.clearCache()
                         gv.doneCurrent()
                 finally:
+                    # closeRenderer() frees Storm's GL objects without binding
+                    # a context; it relies on the stage view's context still
+                    # being current. The loop above released that binding.
+                    _makeStageViewCurrent(controller)
                     original()
 
             controller._closeStage = _guarded_close

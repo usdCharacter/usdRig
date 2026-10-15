@@ -158,8 +158,20 @@ static_assert(uint8_t(RigExecSplineIkRestLength::Curve) == 0 &&
                   uint8_t(RigExecSplineIkRestLength::Chain) == 1,
               "wire spline rest-length order drifted");
 static_assert(uint8_t(RigExecRbfKernel::Gaussian) == 0 &&
-                  uint8_t(RigExecRbfKernel::Linear) == 1,
+                  uint8_t(RigExecRbfKernel::Linear) == 1 &&
+                  uint8_t(RigExecRbfKernel::Exponential) == 2 &&
+                  uint8_t(RigExecRbfKernel::Cubic) == 3 &&
+                  uint8_t(RigExecRbfKernel::Quintic) == 4,
               "wire RBF kernel order drifted");
+static_assert(uint8_t(RigExecRbfSolverType::Interpolative) ==
+                      uint8_t(fb::RbfSolverType::Interpolative) &&
+                  uint8_t(RigExecRbfDistanceMethod::TwistAngle) ==
+                      uint8_t(fb::RbfDistanceMethod::TwistAngle) &&
+                  uint8_t(RigExecRbfWeightFunction::Quintic) ==
+                      uint8_t(fb::RbfWeightFunction::Quintic) &&
+                  uint8_t(RigExecRbfNormalizeMethod::Always) ==
+                      uint8_t(fb::RbfNormalizeMethod::Always),
+              "wire RBF method order drifted");
 static_assert(uint8_t(RigExecRbfPoseType::Whole) == 0 &&
                   uint8_t(RigExecRbfPoseType::Swing) == 1 &&
                   uint8_t(RigExecRbfPoseType::Twist) == 2,
@@ -965,6 +977,68 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
         for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
             out.valueInputs.push_back(
                 _RegisteredValue(_Family::Interpolator, i, 1 + k));
+        }
+        if (interp.rigLogicSolve) {
+            const RigExecRbfMethodTable &table = interp.method;
+            auto method = std::make_unique<fb::RigExecWireRbfMethod>();
+            method->solverType = uint8_t(table.solverType);
+            method->distanceMethod = uint8_t(table.distanceMethod);
+            method->weightFunction = uint8_t(table.weightFunction);
+            method->normalizeMethod = uint8_t(table.normalizeMethod);
+            method->twistAxis = uint8_t(table.twistAxis);
+            method->rawCount = uint32_t(table.rawCount);
+            method->targetCount = uint32_t(table.targetCount);
+            method->radius = table.radius;
+            method->weightThreshold = table.weightThreshold;
+            method->targets = table.targets;
+            method->distanceTargets = table.distanceTargets;
+            method->targetScales = table.targetScales;
+            method->coefficients = table.coefficients;
+            out.method = std::move(method);
+            out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
+            out.extraParentSlots = _ToI32s(interp.extraParentSlots);
+        }
+        if (interp.mlSolve && interp.network) {
+            const RigExecMlNetwork &net = *interp.network;
+            auto network = std::make_unique<fb::RigExecWireMlNetwork>();
+            network->inputCount = uint32_t(net.inputCount);
+            for (const RigExecMlLayer &layer : net.layers) {
+                network->layerSizes.push_back(int32_t(layer.outputCount));
+                network->layerActivations.push_back(uint8_t(layer.activation));
+                network->layerAlphas.push_back(layer.alpha);
+            }
+            const size_t biasBegin =
+                net.layers.empty() ? 0 : net.layers.front().biasOffset;
+            network->weights.assign(net.parameters.begin(),
+                                    net.parameters.begin() + biasBegin);
+            network->biases.assign(net.parameters.begin() + biasBegin,
+                                   net.parameters.end());
+            network->inputMean = net.inputMean;
+            network->inputScale = net.inputScale;
+            network->outputDefaults = net.defaults;
+            out.network = std::move(network);
+            out.extraDriverSlots = _ToI32s(interp.extraDriverSlots);
+            out.extraParentSlots = _ToI32s(interp.extraParentSlots);
+            out.mask = _Registered(_Family::Interpolator, i,
+                                   1 + interp.valueInputs.size());
+        }
+        if (interp.mapsSolve && interp.maps) {
+            const RigExecAnimatedMapsTable &table = *interp.maps;
+            auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
+            maps->inputCount = uint32_t(table.inputCount);
+            for (const RigExecConditionalRow &row : table.rows) {
+                maps->rowInputs.push_back(int32_t(row.input));
+                maps->rowFrom.push_back(row.from);
+                maps->rowTo.push_back(row.to);
+                maps->rowSlope.push_back(row.slope);
+                maps->rowCut.push_back(row.cut);
+            }
+            for (size_t begin : table.mapBegin) {
+                maps->mapBegin.push_back(uint32_t(begin));
+            }
+            out.maps = std::move(maps);
+            out.primvarSlots = _ToI32s(interp.primvarSlots);
+            out.primvarSources = _ToI32s(interp.primvarSources);
         }
     }
     pose->poseWeightPaths.reserve(program.poseWeightPaths.size());

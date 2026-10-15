@@ -293,8 +293,16 @@ RigExecRigEvaluator::_CompilePoseInterpolators(
             *error="pose interpolator "+path.GetString()+" driver parent is not a provider of this rig";
             return false;
         }
+        for(size_t k=0;k<descriptor->extraDrivers.size();++k) {
+            if(!providers.count(descriptor->extraDrivers[k]) || (!descriptor->extraParents[k].IsEmpty() &&
+               !providers.count(descriptor->extraParents[k]))) {
+                *error="pose interpolator "+path.GetString()+" driver or driver parent is not a provider of this rig";
+                return false;
+            }
+        }
         _PoseInterpolator record;record.prim=path;record.descriptor=descriptor;
         record.driver=descriptor->driver;record.driverParent=descriptor->parent;
+        record.extraDrivers=descriptor->extraDrivers;record.extraDriverParents=descriptor->extraParents;
         record.driverAttributes=descriptor->driverAttributes;
         record.poseWeights=descriptor->poseWeights;record.disabledPoseWeights=descriptor->disabledPoseWeights;
         if(notes)notes->insert(notes->end(),descriptor->notes.begin(),descriptor->notes.end());

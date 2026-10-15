@@ -23,9 +23,10 @@ CATEGORIES = [
                      "ikfk_match_constraint", "constraint_frame"]),
     ("Geometry movers", ["matrix_mover", "skin_mover", "layered_skin_mover", "blendshape_mover",
                          "curve_mover", "lattice_mover", "surface_mover", "surface_binding_mover",
-                         "smooth_mover", "delta_mush_mover", "wrinkle_mover", "volume_correct_mover"]),
+                         "smooth_mover", "delta_mush_mover", "wrinkle_mover", "volume_correct_mover",
+                         "ml_mover", "ml_output"]),
     ("Blend channels", ["blend_input", "blend_sample"]),
-    ("Pose space", ["pose_interpolator", "pose"]),
+    ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map"]),
     ("Weights", ["static_weight", "dynamic_weight", "sphere_weight",
                  "plane_weight", "curve_weight", "combine_weight"]),
     ("Property math", ["float_math_mover", "vec3f_math_mover",
@@ -2145,7 +2146,18 @@ split 0.529 / 0.601 / 0.000; on the first hold `half` reads 1.000 alone; on
 the second `bent` reads 1.000 and the others 0.000. Only `bent.outputs:weight`
 is connected to the blend channel, so the corrective swells on the outside of
 the elbow exactly when that one float does — nothing at the `half` hold, full
-at the `bent` hold.""",
+at the `bent` hold.
+
+RigLogic's solvers have a stage of their own,
+[pose_interpolator_riglogic.usda](../examples/pose_interpolator_riglogic.usda).
+A shoulder swings a skinned arm up, forward and down while the elbow folds,
+and three interpolators read the same motion: `ShoulderSwing` (additive, swing
+distance, cubic kernel), `ArmFold` (interpolative, quaternion distance over
+two drivers, with a half-scale pose and a weight threshold) and `ControlKeys`
+(additive and euclidean over the controls' own avars, with an automatic
+radius). Each pose weight lifts one bar of a meter, so the three solves can be
+compared at a glance; open it with
+`bin\launch_usdview.bat docs\examples\pose_interpolator_riglogic.usda`.""",
         "tips": [
             "Author a non-zero `rigExec:rotationRadius` on every pose, roughly the "
             "angle between neighbouring poses. A per-pose zero is used literally "
@@ -2166,6 +2178,21 @@ at the `bent` hold.""",
             "enough that the inverse pushes a far pose negative between two near "
             "ones. `rigExec:allowNegativeWeights = 0` clamps that lobe; leave it on "
             "only when a consumer wants the extrapolation.",
+            "`rigExec:solver` `additive` or `interpolative` switches to Epic Games "
+            "RigLogic's radial-basis solvers: several frame drivers (one "
+            "quaternion each, with `rigExec:rotations` on each pose), the "
+            "euclidean, quaternion, swing and twist distances, RigLogic's five "
+            "weight functions, its normalize methods, an automatic radius, a "
+            "weight threshold and a per-pose `rigExec:scale`. The default "
+            "`pose` solver is unchanged. In a RigLogic solve `gaussian` is "
+            "RigLogic's exp(-d/r^2), whose shape depends on the radius's units. "
+            "[RigLogic behaviours](../concepts/riglogic.md) covers the solvers, "
+            "their example and their provenance (OpenRigLogic, MIT; see "
+            "[algorithm references](../references.md)).",
+            "An interpolative RigLogic solve inverts the pose-to-pose kernel "
+            "matrix, so two poses at the same place under the distance method "
+            "(a pure twist about the twist axis has the neutral's swing) make it "
+            "singular; compile warns.",
         ],
         "see_also": [
             ("blend_input", "Blend Input"),
@@ -2255,6 +2282,12 @@ at frame 1008 when the elbow reaches the pose exactly.""",
             "identical to neutral, and an interpolator whose poses are all "
             "coincident under its enabled channels is reported degenerate and "
             "pegs every weight at 1/n.",
+            "Under a RigLogic solve (`rigExec:solver` additive or interpolative) "
+            "the pose's radii, type and translation radius are not read. With "
+            "several frame drivers it authors one rotation per driver in "
+            "`rigExec:rotations`; with numeric drivers its `rigExec:translation` "
+            "holds their values; `rigExec:scale` multiplies its weight. See "
+            "[RigLogic behaviours](../concepts/riglogic.md).",
         ],
         "see_also": [
             ("pose_interpolator", "Pose Interpolator"),
@@ -3490,6 +3523,166 @@ provider's declared inputs, so editing an input re-runs the providers that
 read it and their dependents."""
 
 OPERATORS.update({
+    "ml_mover": {
+        "title": "ML Mover",
+        "schema": "RigExecMlMover",
+        "summary": "A neural morph deformer: a small network maps the pose to morph weights.",
+        "description": """The ML mover is a learned corrective. A multilayer perceptron
+reads the rig's pose -- each driver joint's local rotation from rest as a
+quaternion, then any number of float properties -- and produces one weight per
+`RigExecMlOutput` child. Those weights drive sparse morph targets added to the
+moved points, so a trained network can supply the folds and bulges a linear
+skin cannot. The network is Epic Games RigLogic's machine-learned behavior
+(dense layers with linear, relu, leaky relu, tanh or sigmoid activations, and
+its region mask), ported from OpenRigLogic (MIT, RigLogic 13.5.0); see
+[algorithm references](../references.md) and
+[RigLogic behaviours](../concepts/riglogic.md) for what was ported and what
+was added.""",
+        "how_it_works": """One prim, two halves, both in the shared operation graph. The
+network runs in the pose domain beside pose interpolators: it reads each
+driver's final and rest frames (and its nearest joint or control ancestor's),
+forms `(restLocal^-1 * local)` per driver exactly as an interpolator does,
+puts each rotation on the w >= 0 hemisphere as (x, y, z, w), appends the
+numeric inputs, normalizes them by `rigExec:inputMean`/`rigExec:inputScale`,
+and evaluates the layers (`libs/rigExecMath/mlpKernel.h`). `inputs:mask` at
+exactly zero publishes `rigExec:outputDefaults` without running the network;
+any other mask multiplies every output. Each output is published as its
+child's `outputs:weight`. The mover half is a blend-shape revision of
+`rigExec:moves`: its `rigExec:blendInputs` connect to those outputs and name
+UsdSkelBlendShape samples, so the morphs are sparse offsets and the common
+mover envelope scales their sum. The frame cache and the `.rigexec` runtime
+run the same kernel and the same blend revision.""",
+        "wiring": [
+            ("`rigExec:moves`", "One native mesh points property.", "yes"),
+            ("`rigExec:driver`", "Joints or controls, four inputs each, in order.", "no"),
+            ("`rigExec:driverAttributes`", "Float or double properties, one input "
+             "each, after the joints.", "no"),
+            ("`RigExecMlOutput` children", "One per network output, in namespace order.", "yes"),
+            ("`rigExec:blendInputs`", "Blend channels whose `inputs:weight` connects "
+             "to an output, each with a `RigExecBlendSample` naming a "
+             "UsdSkelBlendShape.", "yes"),
+        ],
+        "param_groups": [("Common mover envelope", "RigExecMoverAPI")],
+        "example": """A two-joint arm is skinned to a 30-quad strip, and a Flex slider's
+tx stands for muscle tension from 0 to 1. The ML mover `Muscles` is the arm's
+corrective: its network reads the Fore joint's local rotation from rest (four
+inputs) and `Flex.avars:tx` (a fifth) through a tanh layer of three units
+into two sigmoid outputs, `bicep` and `crease`. Each output's
+`outputs:weight` is connected to a blend channel whose sample is a sparse
+UsdSkelBlendShape. The weights are set by hand so the behaviour reads clearly
+(a trained network writes the same arrays): flexing the straight arm lifts
+`bicep` to 0.44; closing the elbow to 80 degrees lifts it to 0.73 and fires
+`crease` late, at 0.98; flexing while bent takes `bicep` to 0.94. The two
+skin movers are nested under the ML mover, so the morphs are added to the
+skinned points. `AddMorph` in the builder authors an output, its blend input
+and its sample in one call.""",
+        "tips": [
+            "Layer weights are row-major with one row per output unit, every "
+            "layer's weights first and then every layer's biases, as RigLogic "
+            "stores them.",
+            "The rotation inputs are expressed in each driver's own rest frame. "
+            "A network trained on another convention can be folded into its "
+            "first layer: a fixed per-driver rotation of the quaternion is linear.",
+            "The network, its normalization and its output count are epoch "
+            "identity: an edit recompiles. The mask and the numeric inputs are "
+            "per-frame inputs.",
+            "A network whose output count differs from its `RigExecMlOutput` "
+            "children is set aside at compile.",
+        ],
+        "see_also": [("blendshape_mover", "Blend Shape Mover"),
+                     ("pose_interpolator", "Pose Interpolator"),
+                     ("ml_output", "ML Output")],
+    },
+    "ml_output": {
+        "title": "ML Output",
+        "schema": "RigExecMlOutput",
+        "no_gif": True,
+        "example_key": "ml_mover",
+        "summary": "One output of an ML mover's network, and the float it publishes.",
+        "description": """Each `RigExecMlOutput` child of a `RigExecMlMover` is one of its
+network's outputs, in namespace order. Its `outputs:weight` is the network's
+value for the current pose after the mask; a blend input's `inputs:weight`
+connects to it, as it would to a pose's weight.""",
+        "how_it_works": """Published by the ML mover's network step with every other pose
+weight, so any consumer that reads a pose weight reads it the same way.""",
+        "wiring": [("`outputs:weight`", "Read by a blend input's `inputs:weight`; "
+                    "carries no authored connection itself.", "-")],
+        "example": """The ML mover's example has two outputs, `bicep` and `crease`, in
+that order; the blend inputs `bicepMorph` and `creaseMorph` connect to them.""",
+        "tips": ["Add outputs in the network's output order; the builder's "
+                 "`AddMorph` does it with the blend input and sample.",
+                 "[RigLogic behaviours](../concepts/riglogic.md) covers the "
+                 "network and its provenance."],
+        "see_also": [("ml_mover", "ML Mover")],
+    },
+    "animated_maps": {
+        "title": "Animated Maps",
+        "schema": "RigExecAnimatedMaps",
+        "summary": "RigLogic's animated maps: [0, 1] mask values from control values, for shaders.",
+        "description": """Animated maps turn control values into texture-mask intensities --
+the wrinkle maps a face shader blends in as a brow raises. Each
+`RigExecAnimatedMap` child is a conditional table over the input properties;
+its value is published on `outputs:value`, connectable like a pose weight, and
+as a constant float primvar on every `rigExec:meshes` target so a shader can
+read it. The tables are Epic Games RigLogic's, ported from OpenRigLogic (MIT,
+RigLogic 13.5.0); see [algorithm references](../references.md) and
+[RigLogic behaviours](../concepts/riglogic.md).""",
+        "how_it_works": """The node runs in the pose domain like a pose interpolator. Each
+row of a map reads one input x and adds `slope * x + cut` when x lies in its
+`[from, to]` interval (a reversed interval is swapped); among consecutive rows
+on the same input only the first matching interval contributes, so
+neighbouring segments that share an endpoint count it once. The sum is clamped
+to [0, 1] (`libs/rigExecMath/conditionalTableKernel.h`). Each map's value is
+published on its `outputs:value` and copied to
+`<mesh>.primvars:<rigExec:primvarName>`, which imaging hands to Hydra as a
+constant float primvar and never writes to the stage. A glslfx shader sees it
+only if its attributes block names it.""",
+        "wiring": [
+            ("`rigExec:driverAttributes`", "The float or double input properties rows index.", "yes"),
+            ("`rigExec:meshes`", "Meshes that receive every map as a primvar.", "no"),
+            ("`RigExecAnimatedMap` children", "One per map.", "yes"),
+        ],
+        "example": """Two brow controls slide in ty from -1 (lowered) to 1 (raised). The
+`Wrinkles` node reads both and publishes three maps. `foreheadL` and
+`foreheadR` are one row each, slope 1 over [0, 1] on their own brow. `frown`
+has a row per brow over the reversed interval [0, -1] with slope -0.6, so one
+lowered brow reads 0.6 and both clamp at 1. Each map's `outputs:value` is
+connected to a blend channel on the face card, so the brows lift and knit
+with the maps. Every map is also published as a constant float primvar on each
+`rigExec:meshes` target; the wrinkle-line cards read theirs through a
+`UsdPrimvarReader_float` into `UsdPreviewSurface` opacity, so the lines fade
+in wherever scene materials are drawn, and nothing is written to the
+stage.""",
+        "tips": [
+            "Rows on the same input should be consecutive and ordered: only the "
+            "first interval that holds the input counts within such a run.",
+            "Rows, inputs and meshes are epoch identity; the inputs' values are "
+            "per-frame inputs.",
+            "Disabling the node publishes zero on every map and primvar.",
+        ],
+        "see_also": [("animated_map", "Animated Map"),
+                     ("pose_interpolator", "Pose Interpolator"),
+                     ("surface_projector", "Surface Projector")],
+    },
+    "animated_map": {
+        "title": "Animated Map",
+        "schema": "RigExecAnimatedMap",
+        "no_gif": True,
+        "example_key": "animated_maps",
+        "summary": "One conditional table of an Animated Maps node, and its value.",
+        "description": """One map of its parent `RigExecAnimatedMaps`: parallel arrays of
+rows (`rigExec:rowInputs`, `rowFrom`, `rowTo`, `rowSlope`, `rowCut`) and the
+primvar name its value is published under.""",
+        "how_it_works": "Evaluated by its parent; see Animated Maps.",
+        "wiring": [("`outputs:value`", "The map's value; connectable like a pose weight.", "-")],
+        "example": """In the Animated Maps example `frown` has two rows on different
+inputs, so both count and their sum is clamped; `foreheadL` and `foreheadR`
+have one row each.""",
+        "tips": ["An empty `rigExec:primvarName` publishes under the map's prim name.",
+                 "[RigLogic behaviours](../concepts/riglogic.md) covers the "
+                 "tables and their provenance."],
+        "see_also": [("animated_maps", "Animated Maps")],
+    },
     "bone_frame": {
         "title": "Bone Frame", "schema": "RigExecBoneFrame", "no_gif": True,
         "summary": "Evaluates joint channels with explicit scale and location inheritance.",

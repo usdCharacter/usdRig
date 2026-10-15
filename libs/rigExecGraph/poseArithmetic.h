@@ -1,6 +1,10 @@
 #ifndef RIGEXEC_GRAPH_POSE_ARITHMETIC_H
 #define RIGEXEC_GRAPH_POSE_ARITHMETIC_H
+#include "rigExecMath/conditionalTableKernel.h"
+#include "rigExecMath/mlpKernel.h"
+#include "rigExecMath/rbfMethodKernel.h"
 #include <algorithm>
+#include <memory>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -192,16 +196,38 @@ RigExecPosePropagateOutcome RigExecPropagatePoseArithmetic(const Frame &current,
     if(!Math::Usable(result))return O::InvalidResult;
     *output=result;return O::Staged;
 }
-template<class Solver> struct RigExecPoseInterpolatorRecordT {
+template<class Solver,class Method=RigExecRbfMethodTable,
+         class Network=std::shared_ptr<const RigExecMlNetwork>,
+         class Maps=std::shared_ptr<const RigExecAnimatedMapsTable>>
+struct RigExecPoseInterpolatorRecordT {
     Solver solver;
     bool enableTranslation=false,allowNegativeWeights=true;
     size_t poseCount=0;
+    /// rigExec:solver additive or interpolative: RigLogic's solve over
+    /// `method`, and `solver` is unused.
+    bool rigLogicSolve=false;
+    Method method;
+    /// A RigExecMlMover: its network maps the row to one weight per output,
+    /// and neither `solver` nor `method` is used.
+    bool mlSolve=false;
+    Network network{};
+    /// A RigExecAnimatedMaps node: its conditional tables map the numeric
+    /// inputs to one value per map.
+    bool mapsSolve=false;
+    Maps maps{};
+};
+/// One frame driver after the first, read only by a RigLogic solve.
+template<class Frame> struct RigExecPoseDriverFramesT {
+    const Frame *final=nullptr,*rest=nullptr,*parentFinal=nullptr,*parentRest=nullptr;
 };
 template<class Frame> struct RigExecPoseInterpolatorInputsT {
     bool enabled=true;
     std::vector<double> numeric;
     const Frame *driverFinal=nullptr,*driverRest=nullptr;
     const Frame *parentFinal=nullptr,*parentRest=nullptr;
+    std::vector<RigExecPoseDriverFramesT<Frame>> extraDrivers;
+    /// An ML solve's region mask (inputs:mask).
+    double mask=1.0;
 };
 enum class RigExecPoseInterpolatorStatus {
     Success,Disabled,UnusableRotation,UnusableTranslation,CountMismatch
@@ -215,6 +241,58 @@ RigExecPoseInterpolatorStatus RigExecRunPoseInterpolatorArithmetic(
     if(!input.enabled || !record.poseCount) {
         weights->clear();return RigExecPoseInterpolatorStatus::Disabled;
     }
+    // A driver's local rotation from rest: (restLocal^-1 * local), each
+    // local measured against the parent frame when there is one.
+    const auto measure=[](const auto *final,const auto *rest,const auto *parentFinal,
+        const auto *parentRest,Q *out) {
+        Q f(1.0),r(1.0),pf(1.0),pr(1.0);
+        if(!final || !rest || !Math::FrameRotation(*final,&f) || !Math::FrameRotation(*rest,&r) ||
+           (parentFinal && (!parentRest || !Math::FrameRotation(*parentFinal,&pf) ||
+            !Math::FrameRotation(*parentRest,&pr))))return false;
+        *out=((pr.GetInverse()*r).GetInverse()*(pf.GetInverse()*f)).GetNormalized();
+        return true;
+    };
+    // A row's quaternion as (x, y, z, w) on the w >= 0 hemisphere, so a
+    // euclidean distance or a network does not see the extraction's sign.
+    const auto push=[](std::vector<double> *row,const Q &q) {
+        const auto &v=q.GetImaginary();const double s=q.GetReal()<0.0?-1.0:1.0;
+        row->push_back(s*v[0]);row->push_back(s*v[1]);row->push_back(s*v[2]);row->push_back(s*q.GetReal());
+    };
+    if(record.mapsSolve) {
+        if(!record.maps || input.numeric.size()!=record.maps->inputCount) {
+            weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;
+        }
+        weights->assign(record.maps->MapCount(),0.0);
+        RigExecAnimatedMapsEvaluate(*record.maps,input.numeric.data(),weights->data());
+        return weights->size()==record.poseCount?RigExecPoseInterpolatorStatus::Success:
+            RigExecPoseInterpolatorStatus::CountMismatch;
+    }
+    if(record.mlSolve) {
+        // Frame drivers first, in order, then every numeric driver.
+        if(!record.network) {weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;}
+        const RigExecMlNetwork &net=*record.network;
+        std::vector<double> row;row.reserve(net.inputCount);
+        if(input.driverFinal) {
+            Q q(1.0);
+            if(!measure(input.driverFinal,input.driverRest,input.parentFinal,input.parentRest,&q)) {
+                weights->clear();return RigExecPoseInterpolatorStatus::UnusableRotation;
+            }
+            push(&row,q);
+            for(const auto &extra:input.extraDrivers) {
+                if(!measure(extra.final,extra.rest,extra.parentFinal,extra.parentRest,&q)) {
+                    weights->clear();return RigExecPoseInterpolatorStatus::UnusableRotation;
+                }
+                push(&row,q);
+            }
+        }
+        row.insert(row.end(),input.numeric.begin(),input.numeric.end());
+        if(row.size()!=net.inputCount) {weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;}
+        std::vector<double> scratch(RigExecMlScratchSize(net));
+        weights->assign(net.OutputCount(),0.0);
+        RigExecMlEvaluate(net,row.data(),input.mask,scratch.data(),weights->data());
+        return weights->size()==record.poseCount?RigExecPoseInterpolatorStatus::Success:
+            RigExecPoseInterpolatorStatus::CountMismatch;
+    }
     const bool numeric=!input.numeric.empty();
     Q driverFinal(1.0),driverRest(1.0),parentFinal(1.0),parentRest(1.0);
     bool usable=numeric || (input.driverFinal && input.driverRest &&
@@ -227,6 +305,31 @@ RigExecPoseInterpolatorStatus RigExecRunPoseInterpolatorArithmetic(
     const Q local=parentFinal.GetInverse()*driverFinal;
     const Q restLocal=parentRest.GetInverse()*driverRest;
     const Q delta=(restLocal.GetInverse()*local).GetNormalized();
+    if(record.rigLogicSolve) {
+        // The raw row: numeric dials as read, or each frame driver's local
+        // rotation from rest as (x, y, z, w) on the w >= 0 hemisphere, so a
+        // euclidean distance does not depend on the extraction's sign.
+        std::vector<double> row;row.reserve(record.method.rawCount);
+        if(numeric)row.assign(input.numeric.begin(),input.numeric.end());
+        else {
+            push(&row,delta);
+            for(const auto &extra:input.extraDrivers) {
+                Q q(1.0);
+                if(!measure(extra.final,extra.rest,extra.parentFinal,extra.parentRest,&q)) {
+                    weights->clear();return RigExecPoseInterpolatorStatus::UnusableRotation;
+                }
+                push(&row,q);
+            }
+        }
+        if(row.size()!=record.method.rawCount) {
+            weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;
+        }
+        std::vector<double> scratch(RigExecRbfMethodScratchSize(record.method));
+        weights->assign(record.method.targetCount,0.0);
+        RigExecRbfMethodEvaluate(record.method,row.data(),scratch.data(),weights->data());
+        return weights->size()==record.poseCount?RigExecPoseInterpolatorStatus::Success:
+            RigExecPoseInterpolatorStatus::CountMismatch;
+    }
     V translation(0.0);const V *translationPtr=nullptr;
     if(numeric) {
         for(size_t k=0;k<input.numeric.size() && k<3;++k)translation[int(k)]=input.numeric[k];

@@ -2486,6 +2486,16 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             step.reads.push_back(RigExecBakedOne(
                 RigExecBakedSlotDomain::PoseFin, interpolator.parentSlot));
         }
+        for (size_t e = 0; e < interpolator.extraDriverSlots.size(); ++e) {
+            step.reads.push_back(RigExecBakedOne(
+                RigExecBakedSlotDomain::PoseFin,
+                interpolator.extraDriverSlots[e]));
+            if (interpolator.extraParentSlots[e] >= 0) {
+                step.reads.push_back(RigExecBakedOne(
+                    RigExecBakedSlotDomain::PoseFin,
+                    interpolator.extraParentSlots[e]));
+            }
+        }
         step.writes.push_back(RigExecBakedRange(
             RigExecBakedSlotDomain::PoseWeight, interpolator.weightBegin,
             interpolator.weightEnd));
@@ -2540,6 +2550,11 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
             const auto &interp = B.poseInterpolators[size_t(step.object)];
             if (interp.driverSlot >= 0) read(Domain::PoseFin, B.finLast[size_t(interp.driverSlot)]);
             if (interp.parentSlot >= 0) read(Domain::PoseFin, B.finLast[size_t(interp.parentSlot)]);
+            for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e) {
+                read(Domain::PoseFin, B.finLast[size_t(interp.extraDriverSlots[e])]);
+                if (interp.extraParentSlots[e] >= 0)
+                    read(Domain::PoseFin, B.finLast[size_t(interp.extraParentSlots[e])]);
+            }
         } else if (step.kind == Kind::Constraint || step.kind == Kind::SolverCommit ||
                    step.kind == Kind::CommitDelta || step.kind == Kind::PropagateChunk ||
                    step.kind == Kind::CommitApply) {
@@ -2775,9 +2790,16 @@ void NoteStepInputs(const RigExecBakedProgramImpl &B, RigExecBakedDependencySink
         const RigExecBakedProgramImpl::PoseInterpolator &interpolator =
             B.poseInterpolators[size_t(step.object)];
         NoteInput(interpolator.enabled, sink);
-        for (const RigExecBakedInput<double> &value :
-                 interpolator.valueInputs) {
-            NoteInput(value, sink);
+        for (size_t k = 0; k < interpolator.valueInputs.size(); ++k) {
+            if (k < interpolator.valueIsFloat.size() &&
+                interpolator.valueIsFloat[k]) {
+                NoteInput(interpolator.floatValueInputs[k], sink);
+            } else {
+                NoteInput(interpolator.valueInputs[k], sink);
+            }
+        }
+        if (interpolator.mlSolve) {
+            NoteInput(interpolator.mask, sink);
         }
         break;
     }
@@ -3941,9 +3963,13 @@ RigExecBakedRequiredRestReads(const RigExecBakedProgramImpl &B,
             if (step.object < 0 || size_t(step.object) >= B.poseInterpolators.size()) break;
             const RigExecBakedProgramImpl::PoseInterpolator &interpolator =
                 B.poseInterpolators[size_t(step.object)];
-            if (interpolator.valueInputs.empty()) {
+            if (interpolator.driverSlot >= 0) {
                 rest(interpolator.driverSlot);
                 rest(interpolator.parentSlot);
+                for (size_t e = 0; e < interpolator.extraDriverSlots.size(); ++e) {
+                    rest(interpolator.extraDriverSlots[e]);
+                    rest(interpolator.extraParentSlots[e]);
+                }
             }
             break;
         }
@@ -5495,7 +5521,9 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             B.poseInterpolators[size_t(step->object)];
         interpolator.enabledValue=rd(interpolator.enabled);
         for(size_t i=0;i<interpolator.valueInputs.size();++i)
-            interpolator.values[i]=rd(interpolator.valueInputs[i]);
+            interpolator.values[i]=i<interpolator.valueIsFloat.size() && interpolator.valueIsFloat[i]?
+                double(rd(interpolator.floatValueInputs[i])):rd(interpolator.valueInputs[i]);
+        if(interpolator.mlSolve)interpolator.maskValue=double(rd(interpolator.mask));
         // Every slot the step owns starts at zero: a disabled pose was left
         // out of the solve and has no weight to be told, and a disabled
         // interpolator -- a shape-preserving enable -- is off, not frozen at
@@ -5507,18 +5535,31 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         if (!interpolator.enabledValue || interpolator.poseSlots.empty()) {
             return;
         }
-        const bool numeric=!interpolator.valueInputs.empty();
-        const size_t d=size_t(numeric?0:interpolator.driverSlot);
+        const bool frames=interpolator.driverSlot>=0;
+        const size_t d=size_t(frames?interpolator.driverSlot:0);
         auto &inputs=interpolator.kernelInputs;
         inputs.enabled=interpolator.enabledValue;
         inputs.numeric=interpolator.values;
-        inputs.driverFinal=numeric?nullptr:&B.fin[size_t(B.finLast[d])];
-        inputs.driverRest=numeric?nullptr:&B.restFrames[d];
+        inputs.mask=interpolator.maskValue;
+        inputs.driverFinal=frames?&B.fin[size_t(B.finLast[d])]:nullptr;
+        inputs.driverRest=frames?&B.restFrames[d]:nullptr;
         inputs.parentFinal=inputs.parentRest=nullptr;
-        if(!numeric && interpolator.parentSlot>=0) {
+        if(frames && interpolator.parentSlot>=0) {
             const size_t parent=size_t(interpolator.parentSlot);
             inputs.parentFinal=&B.fin[size_t(B.finLast[parent])];
             inputs.parentRest=&B.restFrames[parent];
+        }
+        for(size_t e=0;e<interpolator.extraDriverSlots.size();++e) {
+            auto &extra=inputs.extraDrivers[e];
+            const size_t driver=size_t(interpolator.extraDriverSlots[e]);
+            extra.final=&B.fin[size_t(B.finLast[driver])];
+            extra.rest=&B.restFrames[driver];
+            extra.parentFinal=extra.parentRest=nullptr;
+            if(interpolator.extraParentSlots[e]>=0) {
+                const size_t parent=size_t(interpolator.extraParentSlots[e]);
+                extra.parentFinal=&B.fin[size_t(B.finLast[parent])];
+                extra.parentRest=&B.restFrames[parent];
+            }
         }
         const auto status=RigExecRunPoseInterpolator(interpolator,inputs,&interpolator.scratch);
         using Status=RigExecPoseInterpolatorStatus;
@@ -5546,6 +5587,11 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             // the dynamic phase publishes.
             B.poseWeights[size_t(interpolator.poseSlots[i])] =
                 static_cast<float>(interpolator.scratch[i]);
+        }
+        for (size_t j = 0; j < interpolator.primvarSlots.size(); ++j) {
+            B.poseWeights[size_t(interpolator.primvarSlots[j])] =
+                B.poseWeights[size_t(interpolator.poseSlots[
+                    size_t(interpolator.primvarSources[j])])];
         }
         return;
     }

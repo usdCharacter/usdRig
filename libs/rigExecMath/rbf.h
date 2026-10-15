@@ -27,10 +27,18 @@ namespace rigExec {
 /// support, so past the radius its value is not small, it is nothing, which
 /// is what makes RigExecRbfSolver::Coverage worth measuring.
 ///
-/// Serialized kernel values: Gaussian = 0, Linear = 1.
+/// Exponential, cubic and quintic are RigLogic's weight functions taken at
+/// the ratio: exp(-2 d/r), max(0, 1 - (d/r)^3) and max(0, 1 - (d/r)^5)
+/// (rbfMethodKernel.h). Gaussian here stays exp(-(d/r)^2).
+///
+/// Serialized kernel values: Gaussian = 0, Linear = 1, Exponential = 2,
+/// Cubic = 3, Quintic = 4.
 enum class RigExecRbfKernel {
     Gaussian = 0,
     Linear = 1,
+    Exponential = 2,
+    Cubic = 3,
+    Quintic = 4,
 };
 
 /// `poseType`.
@@ -71,7 +79,7 @@ double RigExecRbfGaussian(double distance, double radius);
 /// A straight line falling to zero at the radius: max(0, 1 - distance/radius).
 double RigExecRbfLinear(double distance, double radius);
 
-/// Either kernel, by enum.
+/// Any kernel, by enum.
 double RigExecRbfEvalKernel(RigExecRbfKernel kernel, double distance,
                             double radius);
 

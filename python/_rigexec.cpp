@@ -1899,6 +1899,20 @@ PYBIND11_MODULE(_rigexec, m) {
            "The exact control PROPERTIES that put the rig into this pose and\n"
            "their values, in OUR units and from OUR zero (degrees,\n"
            "centimetres). Parallel arrays; authoring data only.")
+        .def("set_rotations", [](rigExec::RigExecPoseHandle &h,
+                                 std::vector<std::array<double, 4>> qs) {
+            std::vector<GfQuatf> rotations;
+            for (const auto &q : qs) {
+                rotations.push_back(GfQuatf(
+                    float(q[0]),
+                    GfVec3f(float(q[1]), float(q[2]), float(q[3]))));
+            }
+            h.SetRotations(rotations);
+        }, py::arg("quaternions"),
+           "A RigLogic solve with several drivers: one (real, i, j, k)\n"
+           "rotation per driver, in rigExec:driver order.")
+        .def("set_scale", &rigExec::RigExecPoseHandle::SetScale,
+             py::arg("scale"), "A RigLogic solve's pose scale.")
         .def("set_enabled", &rigExec::RigExecPoseHandle::SetEnabled,
              py::arg("enabled"))
         .def("weight_output", [](const rigExec::RigExecPoseHandle &h) {
@@ -1913,10 +1927,48 @@ PYBIND11_MODULE(_rigexec, m) {
             h.SetDriver(_PythonToDependencyPath(p, h.GetStage(), TfToken(),
                                                 false));
         }, py::arg("driver"))
+        .def("set_drivers", [](rigExec::RigExecPoseInterpolatorHandle &h,
+                               py::object drivers) {
+            std::vector<SdfPath> paths;
+            for (const py::handle &item : py::iterable(drivers)) {
+                paths.push_back(_PythonToDependencyPath(
+                    py::reinterpret_borrow<py::object>(item), h.GetStage(),
+                    TfToken(), false));
+            }
+            h.SetDrivers(paths);
+        }, py::arg("drivers"), "Several frame drivers, for a RigLogic solve.")
+        .def("set_driver_attributes",
+             [](rigExec::RigExecPoseInterpolatorHandle &h,
+                py::object properties) {
+            std::vector<SdfPath> paths;
+            for (const py::handle &item : py::iterable(properties)) {
+                paths.push_back(_PythonToPath(item, false));
+            }
+            h.SetDriverAttributes(paths);
+        }, py::arg("properties"), "One to three numeric driver properties.")
         .def("set_kernel", [](rigExec::RigExecPoseInterpolatorHandle &h,
                               std::string v) {
             h.SetKernel(TfToken(v));
-        }, py::arg("kernel"), "gaussian | linear (interpolation).")
+        }, py::arg("kernel"),
+           "gaussian | linear | exponential | cubic | quintic.")
+        .def("set_solver", [](rigExec::RigExecPoseInterpolatorHandle &h,
+                              std::string v) {
+            h.SetSolver(TfToken(v));
+        }, py::arg("solver"), "pose | additive | interpolative.")
+        .def("set_distance_method",
+             [](rigExec::RigExecPoseInterpolatorHandle &h, std::string v) {
+            h.SetDistanceMethod(TfToken(v));
+        }, py::arg("method"),
+           "euclidean | quaternion | swingAngle | twistAngle.")
+        .def("set_normalize_method",
+             [](rigExec::RigExecPoseInterpolatorHandle &h, std::string v) {
+            h.SetNormalizeMethod(TfToken(v));
+        }, py::arg("method"), "onlyAboveOne | always.")
+        .def("set_radius", &rigExec::RigExecPoseInterpolatorHandle::SetRadius,
+             py::arg("radius"), py::arg("automatic") = false)
+        .def("set_weight_threshold",
+             &rigExec::RigExecPoseInterpolatorHandle::SetWeightThreshold,
+             py::arg("threshold"))
         .def("set_channels", &rigExec::RigExecPoseInterpolatorHandle::SetChannels,
              py::arg("enable_rotation"), py::arg("enable_translation"))
         .def("set_allow_negative_weights",
@@ -1939,6 +1991,34 @@ PYBIND11_MODULE(_rigexec, m) {
                             std::string name) {
             return h.AddPose(name);
         }, py::arg("name"));
+
+    py::class_<rigExec::RigExecAnimatedMapsHandle, RigExecHandleBase>(
+        m, "AnimatedMaps")
+        .def("set_inputs", [](rigExec::RigExecAnimatedMapsHandle &h,
+                              py::object properties) {
+            std::vector<SdfPath> paths;
+            for (const py::handle &item : py::iterable(properties)) {
+                paths.push_back(_PythonToPath(item, false));
+            }
+            h.SetInputs(paths);
+        }, py::arg("properties"), "The input properties rows index.")
+        .def("set_meshes", [](rigExec::RigExecAnimatedMapsHandle &h,
+                              const py::iterable &meshes) {
+            h.SetMeshes(_PythonToDependencyPaths(meshes, h.GetStage()));
+        }, py::arg("meshes"), "Meshes that receive each map as a primvar.")
+        .def("set_enabled", &rigExec::RigExecAnimatedMapsHandle::SetEnabled,
+             py::arg("enabled"))
+        .def("add_map", [](rigExec::RigExecAnimatedMapsHandle &h,
+                           std::string name, std::vector<int> inputs,
+                           std::vector<float> from, std::vector<float> to,
+                           std::vector<float> slope, std::vector<float> cut,
+                           std::string primvar) {
+            return h.AddMap(name, inputs, from, to, slope, cut, primvar)
+                .GetString();
+        }, py::arg("name"), py::arg("inputs"), py::arg("from_values"),
+           py::arg("to_values"), py::arg("slopes"), py::arg("cuts"),
+           py::arg("primvar_name") = std::string(),
+           "A map's rows (parallel arrays); its outputs:value path.");
 
     // Mover handles.
     py::class_<rigExec::RigExecMatrixMoverHandle, rigExec::RigExecMoverHandle>(m, "MatrixMover")
@@ -1996,6 +2076,54 @@ PYBIND11_MODULE(_rigexec, m) {
             h.SetBlendInputs(_PythonToDependencyPaths(
                 inputs, h.GetStage(), TfToken("RigExecBlendInput")));
         }, py::arg("inputs"));
+
+    py::class_<rigExec::RigExecMlMoverHandle,
+               rigExec::RigExecBlendShapeMoverHandle>(m, "MlMover")
+        .def("set_drivers", [](rigExec::RigExecMlMoverHandle &h,
+                               const py::iterable &paths) {
+            h.SetDrivers(_PythonToDependencyPaths(paths, h.GetStage()));
+        }, py::arg("drivers"), "Frame drivers, four inputs each, in order.")
+        .def("set_driver_attributes", [](rigExec::RigExecMlMoverHandle &h,
+                                         py::object properties) {
+            std::vector<SdfPath> paths;
+            for (const py::handle &item : py::iterable(properties)) {
+                paths.push_back(_PythonToPath(item, false));
+            }
+            h.SetDriverAttributes(paths);
+        }, py::arg("properties"), "Numeric drivers, after the frame drivers.")
+        .def("set_network", [](rigExec::RigExecMlMoverHandle &h,
+                               std::vector<int> sizes,
+                               std::vector<std::string> activations,
+                               std::vector<float> alphas,
+                               std::vector<float> weights,
+                               std::vector<float> biases) {
+            std::vector<TfToken> tokens;
+            for (const std::string &a : activations) tokens.push_back(TfToken(a));
+            h.SetNetwork(sizes, tokens, alphas, weights, biases);
+        }, py::arg("layer_sizes"), py::arg("activations"), py::arg("alphas"),
+           py::arg("weights"), py::arg("biases"),
+           "Layer widths, activations (linear | relu | leakyRelu | tanh |\n"
+           "sigmoid), leakyRelu alphas, then every layer's row-major weights\n"
+           "and every layer's biases.")
+        .def("set_input_normalization",
+             &rigExec::RigExecMlMoverHandle::SetInputNormalization,
+             py::arg("mean"), py::arg("scale"))
+        .def("set_output_defaults",
+             &rigExec::RigExecMlMoverHandle::SetOutputDefaults,
+             py::arg("defaults"))
+        .def("set_mask", &rigExec::RigExecMlMoverHandle::SetMask,
+             py::arg("mask"))
+        .def("add_output", [](rigExec::RigExecMlMoverHandle &h,
+                              std::string name) {
+            return h.AddOutput(name).GetString();
+        }, py::arg("name"), "The new output's outputs:weight path.")
+        .def("add_morph", [](rigExec::RigExecMlMoverHandle &h,
+                             std::string name, py::object blendShape) {
+            return h.AddMorph(name, _PythonToDependencyPath(
+                blendShape, h.GetStage(), TfToken(), false)).GetString();
+        }, py::arg("name"), py::arg("blend_shape"),
+           "An output and the blend input that applies a UsdSkelBlendShape\n"
+           "by it; the output's outputs:weight path.");
 
     py::class_<rigExec::RigExecCurveMoverHandle, rigExec::RigExecMoverHandle>(m, "CurveMover")
         .def("set_driver_curve", [](rigExec::RigExecCurveMoverHandle &h, py::object p) { h.SetDriverCurve(_PythonToDependencyPath(p, h.GetStage(), TfToken(), false)); }, py::arg("path"))
@@ -2143,6 +2271,11 @@ PYBIND11_MODULE(_rigexec, m) {
                 _PythonToDependencyPath(target, c.GetStage()));
         }, py::arg("name"), py::arg("weight_object") = py::none(),
            py::arg("target") = py::none())
+        .def("add_ml_mover", [](rigExec::RigExecMoverChain &c,
+                                 std::string name, py::object target) {
+            return c.AddMlMover(
+                name, _PythonToDependencyPath(target, c.GetStage()));
+        }, py::arg("name"), py::arg("target") = py::none())
         .def("add_curve_mover", [](rigExec::RigExecMoverChain &c, std::string name,
                                     py::object driverCurve,
                                     const py::object &driverFrames,
@@ -2585,6 +2718,10 @@ PYBIND11_MODULE(_rigexec, m) {
         // scope and not /Movers: an interpolator writes no transform and no
         // points, so it has no place in an order that exists to say which
         // write lands on top of which.
+        .def("add_animated_maps", [](rigExec::RigExecRigBuilder &b,
+                                     std::string name) {
+            return b.AddAnimatedMaps(name);
+        }, py::arg("name"))
         .def("add_pose_interpolator", [](rigExec::RigExecRigBuilder &b,
                 std::string name, py::object driver) {
             return b.AddPoseInterpolator(name, _PythonToDependencyPath(

@@ -1181,9 +1181,15 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         const size_t object = size_t(wire.object);
         scratch->interpEnabled[object] =
             program->ReadInterp(object).boolean ? 1 : 0;
-        for (size_t v = 0; v < interp.valueInputs.size() && v < 3; ++v) {
+        for (size_t v = 0; v < interp.valueInputs.size(); ++v) {
+            const RrInputValue value = program->ReadInterpValue(object, v);
             scratch->interpValues[object][v] =
-                program->ReadInterpValue(object, v).f64;
+                value.tag == RrInputTag::Float ? double(value.f32)
+                                               : value.f64;
+        }
+        if (interp.network) {
+            scratch->interpMasks[object] =
+                double(program->ReadInterpMask(object).f32);
         }
         for (int slot = interp.weightBegin; slot < interp.weightEnd;
              ++slot) {
@@ -1203,8 +1209,10 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         }
         // A NUMERIC driver reads dials, not a frame: it names no driver
         // prim and takes no slot, and its rotation channel is the
-        // identity, so every frame lookup below is skipped.
-        const bool numeric = !interp.valueInputs.empty();
+        // identity, so every frame lookup below is skipped. An ML mover
+        // may read both.
+        const bool numeric =
+            !interp.valueInputs.empty() && interp.driverSlot < 0;
         if (!numeric &&
             (interp.driverSlot < 0 ||
              size_t(interp.driverSlot) >= store.finLast.size() ||
@@ -1231,10 +1239,9 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         }
         RigExecPoseInterpolatorInputsT<RrPointFrame> input;
         input.enabled=true;
-        if (numeric) {
-            for(size_t k=0;k<interp.valueInputs.size() && k<3;++k)
-                input.numeric.push_back(scratch->interpValues[object][k]);
-        } else {
+        input.numeric=scratch->interpValues[object];
+        input.mask=scratch->interpMasks[object];
+        if (!numeric) {
             input.driverFinal=&store.fin[size_t(store.finLast[d])];
             input.driverRest=&scratch->restFrames[d];
             if(interp.parentSlot>=0) {
@@ -1246,10 +1253,36 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
                 input.parentFinal=&store.fin[size_t(store.finLast[p])];
                 input.parentRest=&scratch->restFrames[p];
             }
+            const size_t extras=interp.extraDriverSlots.size();
+            if(extras!=interp.extraParentSlots.size() || (extras && !interp.method)) {
+                if(error) *error=_RrStepHead(program,step)+" names no driver slot";
+                return false;
+            }
+            input.extraDrivers.resize(extras);
+            for(size_t e=0;e<extras;++e) {
+                const int slots[2]={interp.extraDriverSlots[e],interp.extraParentSlots[e]};
+                const RrPointFrame *finals[2]={nullptr,nullptr},*rests[2]={nullptr,nullptr};
+                for(int k=0;k<2;++k) {
+                    if(slots[k]<0 && k==1)continue;
+                    if(slots[k]<0 || size_t(slots[k])>=store.finLast.size() ||
+                       size_t(slots[k])>=scratch->restFrames.size() ||
+                       size_t(store.finLast[size_t(slots[k])])>=store.fin.size()) {
+                        if(error) *error=_RrStepHead(program,step)+" names no driver slot";
+                        return false;
+                    }
+                    finals[k]=&store.fin[size_t(store.finLast[size_t(slots[k])])];
+                    rests[k]=&scratch->restFrames[size_t(slots[k])];
+                }
+                input.extraDrivers[e]={finals[0],rests[0],finals[1],rests[1]};
+            }
         }
         auto &solver=scratch->interpSolvers[object];
-        RigExecPoseInterpolatorRecordT<decltype(solver)> record{
-            solver,interp.enableTranslation,interp.allowNegativeWeights,interp.poseSlots.size()};
+        RigExecPoseInterpolatorRecordT<decltype(solver),const RigExecRbfMethodTable &,
+            const RigExecMlNetwork *,const RigExecAnimatedMapsTable *> record{
+            solver,interp.enableTranslation,interp.allowNegativeWeights,interp.poseSlots.size(),
+            bool(interp.method),scratch->interpMethods[object],
+            bool(interp.network),&scratch->interpNetworks[object],
+            bool(interp.maps),&scratch->interpMaps[object]};
         std::vector<double> &interpScratch=scratch->interpScratch[object];
         const auto status=RigExecRunPoseInterpolatorArithmetic<RrPoseInterpolatorMath>(
             record,input,&interpScratch);
@@ -1283,6 +1316,12 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
             }
             store.poseWeights[size_t(interp.poseSlots[i])] =
                 static_cast<float>(interpScratch[i]);
+        }
+        // Open validated these against the weight range and the poses.
+        for (size_t j = 0; j < interp.primvarSlots.size(); ++j) {
+            store.poseWeights[size_t(interp.primvarSlots[j])] =
+                store.poseWeights[size_t(interp.poseSlots[
+                    size_t(interp.primvarSources[j])])];
         }
         return true;
     }

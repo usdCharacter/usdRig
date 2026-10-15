@@ -84,7 +84,7 @@ _GROUPS = {
     "All": None,
     "Deformers": ("SkinMover", "MatrixMover", "CurveMover", "LatticeMover",
                   "SurfaceMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "BlendShapeMover",
-                  "VolumeCorrectMover"),
+                  "MlMover", "VolumeCorrectMover"),
     "Constraints": ("Constraint",),
     "Solvers": ("FkChain", "TwoBoneIk", "BlendPointFrames",
                 "TwistDistribution", "Ribbon", "SplineIk"),
@@ -100,7 +100,7 @@ _SOLVER_TYPES = ("RigExecFkChain", "RigExecTwoBoneIk",
 
 _DEFORMER_TOKENS = ("SkinMover", "MatrixMover", "CurveMover",
                     "LatticeMover", "SurfaceMover", "SmoothMover", "DeltaMushMover", "WrinkleMover",
-                    "BlendShapeMover", "VolumeCorrectMover")
+                    "BlendShapeMover", "MlMover", "VolumeCorrectMover")
 
 
 def _tail(path, keep=1):

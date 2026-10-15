@@ -271,7 +271,13 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         if(!program.Append("solverCommit:"+solver.GetString(),std::move(commit),error))return false;
     }
     std::map<SdfPath,std::pair<std::vector<RigExecValueId>,std::vector<RigExecValueId>>> interpolatorOutputs;
-    for(const auto &[path,node]:scene.nodes)if(node.domain==RigExecSceneDomain::PoseInterpolator) {
+    std::map<SdfPath,std::vector<RigExecValueId>> interpolatorPrimvars;
+    // An ML mover is a geometry mover whose network publishes like an
+    // interpolator as well.
+    const auto publishesWeights=[](const RigExecSceneNodeDescriptor &node) {
+        return node.domain==RigExecSceneDomain::PoseInterpolator || node.fact.type=="RigExecMlMover";
+    };
+    for(const auto &[path,node]:scene.nodes)if(publishesWeights(node)) {
         RigExecScenePoseInterpolatorDescriptor descriptor;
         if(!RigExecLowerScenePoseInterpolator(scene,path,&descriptor,error))return false;
         auto &outputs=interpolatorOutputs[path];
@@ -284,7 +290,8 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 } else if(!program.layout.routes.Append(key,{id,path,node.stackOrdinal},error))return false;
             }return true;
         };
-        if(!reserve(descriptor.poseWeights,&outputs.first) || !reserve(descriptor.disabledPoseWeights,&outputs.second))return false;
+        if(!reserve(descriptor.poseWeights,&outputs.first) || !reserve(descriptor.disabledPoseWeights,&outputs.second) ||
+           !reserve(descriptor.primvarPaths,&interpolatorPrimvars[path]))return false;
     }
     auto context=program.layout.BindingContext(scene);
     const auto directResolve=context.resolve;std::map<std::string,RigExecValueId> contexts;
@@ -492,12 +499,13 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
                !RigExecBindWeightGraph(source,context,path,TfToken("base"),&bound,error))return false;
             RigExecSceneWeightOp op;op.object=bound.root;op.output=program.layout.weightPackets.at(path);op.binding=std::move(bound);
             if(!program.Append("weightPacket:"+path.GetString(),std::move(op),error))return false;
-        } else if(node.domain==RigExecSceneDomain::PoseInterpolator) {
+        } else if(publishesWeights(node)) {
             RigExecScenePoseInterpolatorDescriptor source;RigExecBoundPoseInterpolator bound;
             if(!RigExecLowerScenePoseInterpolator(scene,path,&source,error))return false;
             const auto &weights=interpolatorOutputs.at(path).first;
             const auto &disabled=interpolatorOutputs.at(path).second;
-            if(!RigExecBindScenePoseInterpolator(source,context,weights,disabled,&bound,error) ||
+            if(!RigExecBindScenePoseInterpolator(source,context,weights,disabled,&bound,error,
+                   interpolatorPrimvars.at(path)) ||
                !program.Append("poseInterpolator:"+path.GetString(),std::move(bound),error))return false;
         } else if(node.domain==RigExecSceneDomain::UnknownRigExec)return Fail(error,"unsupported RigExec scene domain "+node.fact.type.GetString()+": "+path.GetString());
     }

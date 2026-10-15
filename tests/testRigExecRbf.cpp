@@ -444,6 +444,18 @@ TestKernelsAndMetric()
     CHECK(Agrees(RigExecRbfGaussian(0.0, 0.0), 1.0, 0.0));
     CHECK(Agrees(RigExecRbfGaussian(0.1, 0.0), 0.0, 0.0));
     CHECK(Agrees(RigExecRbfLinear(0.1, 0.0), 0.0, 0.0));
+    // RigLogic's three other weight functions at the ratio; the two the
+    // fixture pins keep their own enum values and arithmetic.
+    CHECK(Agrees(RigExecRbfEvalKernel(RigExecRbfKernel::Exponential, 1.0, 2.0),
+                 std::exp(-1.0), 0.0));
+    CHECK(Agrees(RigExecRbfEvalKernel(RigExecRbfKernel::Cubic, 1.0, 2.0),
+                 0.875, 0.0));
+    CHECK(Agrees(RigExecRbfEvalKernel(RigExecRbfKernel::Quintic, 1.0, 2.0),
+                 1.0 - 1.0 / 32.0, 0.0));
+    CHECK(Agrees(RigExecRbfEvalKernel(RigExecRbfKernel::Cubic, 3.0, 2.0), 0.0,
+                 0.0));
+    CHECK(int(RigExecRbfKernel::Gaussian) == 0 &&
+          int(RigExecRbfKernel::Linear) == 1);
 
     // The rotation-only branch is the BARE ratio, bit for bit -- not
     // sqrt(x*x), which would be right to within an ulp and wrong as a

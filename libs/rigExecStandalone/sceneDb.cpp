@@ -35,6 +35,7 @@ bool RigExecStandaloneSupportsPrimType(const TfToken &type)
         TfToken("RigExecStaticWeight"),TfToken("RigExecDynamicWeight"),TfToken("RigExecCombineWeight"),
         TfToken("RigExecSphereWeight"),TfToken("RigExecPlaneWeight"),TfToken("RigExecCurveWeight"),
         TfToken("RigExecSpaceSwitch"),TfToken("RigExecPoseInterpolator"),TfToken("RigExecPose"),
+        TfToken("RigExecAnimatedMaps"),TfToken("RigExecAnimatedMap"),TfToken("RigExecMlOutput"),
         TfToken("RigExecBlendInput"),TfToken("RigExecBlendSample"),
         TfToken("RigExecParentConstraint"),TfToken("RigExecAimConstraint"),TfToken("RigExecPositionConstraint"),
         TfToken("RigExecRotationConstraint"),TfToken("RigExecScaleConstraint"),TfToken("RigExecSingleChainIkConstraint")};

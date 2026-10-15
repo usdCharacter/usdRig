@@ -1192,6 +1192,11 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 check(kFin, B.finLast[size_t(interp.driverSlot)], reader, -1);
             if (interp.parentSlot >= 0 && size_t(interp.parentSlot) < n)
                 check(kFin, B.finLast[size_t(interp.parentSlot)], reader, -1);
+            for (size_t e = 0; e < interp.extraDriverSlots.size(); ++e) {
+                for (const int slot : {interp.extraDriverSlots[e], interp.extraParentSlots[e]})
+                    if (slot >= 0 && size_t(slot) < n)
+                        check(kFin, B.finLast[size_t(slot)], reader, -1);
+            }
         }
     }
     // A frame record reads the version its writer left the provider in,

@@ -1,0 +1,379 @@
+#usda 1.0
+(
+    """
+    Docs example: RigExecAnimatedMaps.
+
+    Two brow controls slide in ty from -1 (lowered) to 1 (raised). One
+    RigExecAnimatedMaps node reads both and publishes three maps, each a
+    RigLogic conditional table clamped to [0, 1]:
+
+      foreheadL  BrowL raised: one row, slope 1 over [0, 1]
+      foreheadR  BrowR raised, the same over the other input
+      frown      either brow lowered: a row per input over the reversed
+                 interval [0, -1], slope -0.6, so one brow down reads 0.6 and
+                 both down clamp at 1
+
+    Each map drives two things at once. Its outputs:value is connected to a
+    blend channel on the face card, so the brows lift and the inner brows pull
+    down together. Every map is also published as a constant float primvar
+    (primvars:wrinkleForeheadL, wrinkleForeheadR, wrinkleFrown) on each mesh in
+    rigExec:meshes; the wrinkle-line cards read their own primvar through a
+    UsdPrimvarReader_float into UsdPreviewSurface opacity, so the lines fade in
+    in a viewport with scene materials on. The primvars reach Hydra only:
+    nothing is written to the stage.
+
+    Provenance: authored for this project. The conditional tables follow
+    Epic Games OpenRigLogic's animated maps (MIT, RigLogic 13.5.0); the rows,
+    face, wrinkle cards and materials are hand-made, and no RigLogic, DNA or
+    MetaHuman data is used. See docs/concepts/riglogic.md and
+    docs/references.md.
+    """
+    defaultPrim = "MapsAsset"
+    endTimeCode = 1048
+    metersPerUnit = 0.01
+    startTimeCode = 1001
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "MapsAsset"
+{
+    def RigExecRoot "Rig"
+    {
+        uniform token rigExec:partition = "MapsAsset"
+
+        def Scope "Controls"
+        {
+            def RigExecControl "BrowL" (
+                prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
+            )
+            {
+                double avars:ty = 0
+                double avars:ty.spline = {
+                    1001: 0; pre (0, 0); post linear,
+                    1008: 1; post linear,
+                    1014: 1; post linear,
+                    1020: 0; post linear,
+                    1032: 0; post linear,
+                    1038: -1; post linear,
+                    1042: -1; post linear,
+                    1048: 0; post linear,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-0.75, 2.4, 0.3, 1) )
+                uniform asset ui:nodegraph:node:icon = @../../icons/control.png@
+            }
+
+            def RigExecControl "BrowR" (
+                prepend apiSchemas = ["RigExecControlAPI", "NodeGraphNodeAPI"]
+            )
+            {
+                double avars:ty = 0
+                double avars:ty.spline = {
+                    1001: 0; pre (0, 0); post linear,
+                    1014: 0; post linear,
+                    1020: 1; post linear,
+                    1026: 1; post linear,
+                    1032: 0; post linear,
+                    1036: -1; post linear,
+                    1042: -1; post linear,
+                    1048: 0; post linear,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.75, 2.4, 0.3, 1) )
+                uniform asset ui:nodegraph:node:icon = @../../icons/control.png@
+            }
+        }
+
+        def Scope "AnimatedMaps"
+        {
+            def RigExecAnimatedMaps "Wrinkles" (
+                prepend apiSchemas = ["NodeGraphNodeAPI"]
+            )
+            {
+                bool inputs:enabled = 1
+                rel rigExec:driverAttributes = [
+                    </MapsAsset/Rig/Controls/BrowL.avars:ty>,
+                    </MapsAsset/Rig/Controls/BrowR.avars:ty>,
+                ]
+                rel rigExec:meshes = [
+                    </MapsAsset/Geom/Face>,
+                    </MapsAsset/Geom/ForeheadLinesL>,
+                    </MapsAsset/Geom/ForeheadLinesR>,
+                    </MapsAsset/Geom/FrownLines>,
+                ]
+                uniform asset ui:nodegraph:node:icon = @../../icons/pose_interpolator.png@
+
+                def RigExecAnimatedMap "foreheadL" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    float outputs:value = 0
+                    uniform token rigExec:primvarName = "wrinkleForeheadL"
+                    uniform float[] rigExec:rowCut = [0]
+                    uniform float[] rigExec:rowFrom = [0]
+                    uniform int[] rigExec:rowInputs = [0]
+                    uniform float[] rigExec:rowSlope = [1]
+                    uniform float[] rigExec:rowTo = [1]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecAnimatedMap "foreheadR" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    float outputs:value = 0
+                    uniform token rigExec:primvarName = "wrinkleForeheadR"
+                    uniform float[] rigExec:rowCut = [0]
+                    uniform float[] rigExec:rowFrom = [0]
+                    uniform int[] rigExec:rowInputs = [1]
+                    uniform float[] rigExec:rowSlope = [1]
+                    uniform float[] rigExec:rowTo = [1]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+
+                def RigExecAnimatedMap "frown" (
+                    prepend apiSchemas = ["NodeGraphNodeAPI"]
+                )
+                {
+                    float outputs:value = 0
+                    uniform token rigExec:primvarName = "wrinkleFrown"
+                    uniform float[] rigExec:rowCut = [0, 0]
+                    uniform float[] rigExec:rowFrom = [0, 0]
+                    uniform int[] rigExec:rowInputs = [0, 1]
+                    uniform float[] rigExec:rowSlope = [-0.6, -0.6]
+                    uniform float[] rigExec:rowTo = [-1, -1]
+                    uniform asset ui:nodegraph:node:icon = @../../icons/pose.png@
+                }
+            }
+        }
+
+        def Scope "Movers"
+        {
+            def Scope "Geometry"
+            {
+                def RigExecBlendShapeMover "Brows" (
+                    prepend apiSchemas = ["RigExecMoverAPI", "NodeGraphNodeAPI"]
+                )
+                {
+                    float inputs:defaultWeight = 1
+                    rel rigExec:blendInputs = [
+                        </MapsAsset/Rig/Movers/Geometry/Brows/RaiseL>,
+                        </MapsAsset/Rig/Movers/Geometry/Brows/RaiseR>,
+                        </MapsAsset/Rig/Movers/Geometry/Brows/Frown>,
+                    ]
+                    rel rigExec:moves = </MapsAsset/Geom/Face.points>
+                    uniform asset ui:nodegraph:node:icon = @../../icons/blendshape_mover.png@
+
+                    def RigExecBlendInput "RaiseL" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </MapsAsset/Rig/AnimatedMaps/Wrinkles/foreheadL.outputs:value>
+                        rel rigExec:samples = </MapsAsset/Rig/Movers/Geometry/Brows/RaiseL/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </MapsAsset/Targets/RaiseL>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "RaiseR" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </MapsAsset/Rig/AnimatedMaps/Wrinkles/foreheadR.outputs:value>
+                        rel rigExec:samples = </MapsAsset/Rig/Movers/Geometry/Brows/RaiseR/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </MapsAsset/Targets/RaiseR>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+
+                    def RigExecBlendInput "Frown" (
+                        prepend apiSchemas = ["NodeGraphNodeAPI"]
+                    )
+                    {
+                        float inputs:weight = 0
+                        float inputs:weight.connect = </MapsAsset/Rig/AnimatedMaps/Wrinkles/frown.outputs:value>
+                        rel rigExec:samples = </MapsAsset/Rig/Movers/Geometry/Brows/Frown/Shape>
+                        uniform asset ui:nodegraph:node:icon = @../../icons/blend_input.png@
+
+                        def RigExecBlendSample "Shape" (
+                            prepend apiSchemas = ["NodeGraphNodeAPI"]
+                        )
+                        {
+                            float rigExec:activation = 1
+                            rel rigExec:blendShape = </MapsAsset/Targets/Frown>
+                            uniform asset ui:nodegraph:node:icon = @../../icons/blend_sample.png@
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Scope "Geom"
+    {
+        def Mesh "Face"
+        {
+            color3f[] primvars:displayColor = [(0.85, 0.7, 0.6)]
+            float3[] extent = [(-1.5, 0, 0), (1.5, 2.5, 0)]
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 8, 7, 1, 2, 9, 8, 2, 3, 10, 9, 3, 4, 11, 10, 4, 5, 12, 11, 5, 6, 13, 12, 7, 8, 15, 14, 8, 9, 16, 15, 9, 10, 17, 16, 10, 11, 18, 17, 11, 12, 19, 18, 12, 13, 20, 19, 14, 15, 22, 21, 15, 16, 23, 22, 16, 17, 24, 23, 17, 18, 25, 24, 18, 19, 26, 25, 19, 20, 27, 26, 21, 22, 29, 28, 22, 23, 30, 29, 23, 24, 31, 30, 24, 25, 32, 31, 25, 26, 33, 32, 26, 27, 34, 33, 28, 29, 36, 35, 29, 30, 37, 36, 30, 31, 38, 37, 31, 32, 39, 38, 32, 33, 40, 39, 33, 34, 41, 40]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "vertex"
+            )
+            point3f[] points = [(-1.5, 0, 0), (-1, 0, 0), (-0.5, 0, 0), (0, 0, 0), (0.5, 0, 0), (1, 0, 0), (1.5, 0, 0), (-1.5, 0.5, 0), (-1, 0.5, 0), (-0.5, 0.5, 0), (0, 0.5, 0), (0.5, 0.5, 0), (1, 0.5, 0), (1.5, 0.5, 0), (-1.5, 1, 0), (-1, 1, 0), (-0.5, 1, 0), (0, 1, 0), (0.5, 1, 0), (1, 1, 0), (1.5, 1, 0), (-1.5, 1.5, 0), (-1, 1.5, 0), (-0.5, 1.5, 0), (0, 1.5, 0), (0.5, 1.5, 0), (1, 1.5, 0), (1.5, 1.5, 0), (-1.5, 2, 0), (-1, 2, 0), (-0.5, 2, 0), (0, 2, 0), (0.5, 2, 0), (1, 2, 0), (1.5, 2, 0), (-1.5, 2.5, 0), (-1, 2.5, 0), (-0.5, 2.5, 0), (0, 2.5, 0), (0.5, 2.5, 0), (1, 2.5, 0), (1.5, 2.5, 0)]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "ForeheadLinesL" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1.3, 2.05, 0.02), (-0.2, 2.35, 0.02)]
+            int[] faceVertexCounts = [4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+            rel material:binding = </MapsAsset/Looks/ForeheadL>
+            point3f[] points = [(-1.3, 2.05, 0.02), (-0.2, 2.05, 0.02), (-0.2, 2.1, 0.02), (-1.3, 2.1, 0.02), (-1.2, 2.3, 0.02), (-0.25, 2.3, 0.02), (-0.25, 2.35, 0.02), (-1.2, 2.35, 0.02)]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "ForeheadLinesR" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(0.2, 2.05, 0.02), (1.3, 2.35, 0.02)]
+            int[] faceVertexCounts = [4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+            rel material:binding = </MapsAsset/Looks/ForeheadR>
+            point3f[] points = [(0.2, 2.05, 0.02), (1.3, 2.05, 0.02), (1.3, 2.1, 0.02), (0.2, 2.1, 0.02), (0.25, 2.3, 0.02), (1.2, 2.3, 0.02), (1.2, 2.35, 0.02), (0.25, 2.35, 0.02)]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "FrownLines" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-0.18, 1.45, 0.02), (0.18, 1.85, 0.02)]
+            int[] faceVertexCounts = [4, 4]
+            int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+            rel material:binding = </MapsAsset/Looks/Frown>
+            point3f[] points = [(-0.18, 1.45, 0.02), (-0.14, 1.45, 0.02), (-0.14, 1.85, 0.02), (-0.18, 1.85, 0.02), (0.14, 1.45, 0.02), (0.18, 1.45, 0.02), (0.18, 1.85, 0.02), (0.14, 1.85, 0.02)]
+            uniform token subdivisionScheme = "none"
+        }
+    }
+
+    def Scope "Looks"
+    {
+        def Material "ForeheadL"
+        {
+            token outputs:surface.connect = </MapsAsset/Looks/ForeheadL/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.3, 0.15, 0.1)
+                float inputs:opacity.connect = </MapsAsset/Looks/ForeheadL/Mask.outputs:result>
+                float inputs:roughness = 0.8
+                token outputs:surface
+            }
+
+            def Shader "Mask"
+            {
+                uniform token info:id = "UsdPrimvarReader_float"
+                float inputs:fallback = 0
+                string inputs:varname = "wrinkleForeheadL"
+                float outputs:result
+            }
+        }
+
+        def Material "ForeheadR"
+        {
+            token outputs:surface.connect = </MapsAsset/Looks/ForeheadR/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.3, 0.15, 0.1)
+                float inputs:opacity.connect = </MapsAsset/Looks/ForeheadR/Mask.outputs:result>
+                float inputs:roughness = 0.8
+                token outputs:surface
+            }
+
+            def Shader "Mask"
+            {
+                uniform token info:id = "UsdPrimvarReader_float"
+                float inputs:fallback = 0
+                string inputs:varname = "wrinkleForeheadR"
+                float outputs:result
+            }
+        }
+
+        def Material "Frown"
+        {
+            token outputs:surface.connect = </MapsAsset/Looks/Frown/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.3, 0.15, 0.1)
+                float inputs:opacity.connect = </MapsAsset/Looks/Frown/Mask.outputs:result>
+                float inputs:roughness = 0.8
+                token outputs:surface
+            }
+
+            def Shader "Mask"
+            {
+                uniform token info:id = "UsdPrimvarReader_float"
+                float inputs:fallback = 0
+                string inputs:varname = "wrinkleFrown"
+                float outputs:result
+            }
+        }
+    }
+
+    def Scope "Targets"
+    {
+        def BlendShape "RaiseL"
+        {
+            uniform vector3f[] offsets = [(0, 0.2, 0), (0, 0.3, 0), (0, 0.25, 0), (0, 0.1, 0), (0, 0.15, 0), (0, 0.125, 0)]
+            uniform int[] pointIndices = [21, 22, 23, 28, 29, 30]
+        }
+
+        def BlendShape "RaiseR"
+        {
+            uniform vector3f[] offsets = [(0, 0.25, 0), (0, 0.3, 0), (0, 0.2, 0), (0, 0.125, 0), (0, 0.15, 0), (0, 0.1, 0)]
+            uniform int[] pointIndices = [25, 26, 27, 32, 33, 34]
+        }
+
+        def BlendShape "Frown"
+        {
+            uniform vector3f[] offsets = [(0.08, -0.2, 0), (0, -0.25, 0), (-0.08, -0.2, 0), (0, -0.1, 0)]
+            uniform int[] pointIndices = [23, 24, 25, 31]
+        }
+    }
+
+    def Camera "MainCam"
+    {
+        float2 clippingRange = (0.134, 112.7)
+        float focalLength = 35
+        float horizontalAperture = 20.95
+        float verticalAperture = 11.79
+        double3 xformOp:rotateXYZ = (-20, 32, 0)
+        double3 xformOp:translate = (6.689, 6.303, 10.7)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}

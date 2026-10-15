@@ -387,8 +387,11 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
     for (const RigExecRigEvaluator::_PoseInterpolator &record :
              E._poseInterpolators) {
         // A NUMERIC driver reads dials rather than a frame: it names no
-        // driver prim, so there is no slot for one to be.
-        if (!record.driverAttributes.empty()) {
+        // driver prim, so there is no slot for one to be. An ML mover reads
+        // both.
+        if (!record.driverAttributes.empty() &&
+            !(record.descriptor && record.descriptor->ml &&
+              !record.driver.IsEmpty())) {
             continue;
         }
         if (!E._nativeProviderPaths.count(record.driver)) {
@@ -399,6 +402,17 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             !E._nativeProviderPaths.count(record.driverParent)) {
             say("pose interpolator driver parent is not a pose provider",
                 record.driverParent);
+        }
+        for (size_t k = 0; k < record.extraDrivers.size(); ++k) {
+            if (!E._nativeProviderPaths.count(record.extraDrivers[k])) {
+                say("pose interpolator driver is not a pose provider",
+                    record.extraDrivers[k]);
+            }
+            if (!record.extraDriverParents[k].IsEmpty() &&
+                !E._nativeProviderPaths.count(record.extraDriverParents[k])) {
+                say("pose interpolator driver parent is not a pose provider",
+                    record.extraDriverParents[k]);
+            }
         }
     }
 
@@ -3735,8 +3749,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         // A numeric driver reads dials, not a frame: it names no driver prim
         // and needs no slot.
         const bool numeric = !captured.driverAttributes.empty();
-        out.driverSlot = numeric ? -1 : ctx.SlotOf(captured.driver);
-        if (!numeric && out.driverSlot < 0) {
+        const bool frames = captured.ml ? !captured.driver.IsEmpty() : !numeric;
+        out.driverSlot = frames ? ctx.SlotOf(captured.driver) : -1;
+        if (frames && out.driverSlot < 0) {
             ctx.Refuse("pose interpolator driver has no provider slot",
                        captured.driver);
             continue;
@@ -3749,6 +3764,24 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                 continue;
             }
         }
+        bool extraSlots = true;
+        for (size_t k = 0; k < captured.extraDrivers.size(); ++k) {
+            const int driver = ctx.SlotOf(captured.extraDrivers[k]);
+            const int parent = captured.extraParents[k].IsEmpty()
+                                   ? -1 : ctx.SlotOf(captured.extraParents[k]);
+            if (driver < 0 ||
+                (parent < 0 && !captured.extraParents[k].IsEmpty())) {
+                ctx.Refuse("pose interpolator driver has no provider slot",
+                           captured.extraDrivers[k]);
+                extraSlots = false;
+                break;
+            }
+            out.extraDriverSlots.push_back(driver);
+            out.extraParentSlots.push_back(parent);
+        }
+        if (!extraSlots) {
+            continue;
+        }
         const UsdPrim prim = B.stage->GetPrimAtPath(record.prim);
         // The interpolator's structure -- its driver, its poses, their
         // rotations and radii -- is epoch identity and recompiles; what a
@@ -3758,7 +3791,11 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.prims.insert(record.prim);
         B.resolvedRoutedPrims.insert(record.prim);
         out.enabled = ctx.Bind<bool>(prim, "inputs:enabled", true);
-        for (const SdfPath &value : captured.driverAttributes) {
+        if (captured.ml) {
+            out.mask = ctx.Bind<float>(prim, "inputs:mask", 1.0f);
+        }
+        for (size_t k = 0; k < captured.driverAttributes.size(); ++k) {
+            const SdfPath &value = captured.driverAttributes[k];
             const UsdPrim owner =
                 B.stage->GetPrimAtPath(value.GetPrimPath());
             // NAMED, for invalidation, but NOT routed: a routed prim tells
@@ -3768,8 +3805,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             // reached through its own override index.
             B.prims.insert(value.GetPrimPath());
             const std::string valueName = value.GetName();
+            const bool isFloat = k < captured.numericIsFloat.size() &&
+                                 captured.numericIsFloat[k];
+            out.valueIsFloat.push_back(isFloat ? 1 : 0);
             out.valueInputs.push_back(
-                ctx.Bind<double>(owner, valueName.c_str(), 0.0));
+                isFloat ? RigExecBakedInput<double>()
+                        : ctx.Bind<double>(owner, valueName.c_str(), 0.0));
+            out.floatValueInputs.push_back(
+                isFloat ? ctx.Bind<float>(owner, valueName.c_str(), 0.0f)
+                        : RigExecBakedInput<float>());
         }
         out.values.assign(out.valueInputs.size(), 0.0);
         const auto addWeight = [&B](const SdfPath &weight) {
@@ -3785,9 +3829,14 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         for (const SdfPath &weight : captured.poseWeights) {
             out.poseSlots.push_back(addWeight(weight));
         }
+        for (size_t k = 0; k < captured.primvarPaths.size(); ++k) {
+            out.primvarSlots.push_back(addWeight(captured.primvarPaths[k]));
+            out.primvarSources.push_back(int(captured.primvarSources[k]));
+        }
         out.weightEnd = int(B.poseWeightPaths.size());
         out.poseCount=out.poseSlots.size();
         out.kernelInputs.numeric.resize(out.valueInputs.size());
+        out.kernelInputs.extraDrivers.resize(out.extraDriverSlots.size());
         B.poseInterpolators.push_back(std::move(out));
     }
     B.poseWeights.assign(B.poseWeightPaths.size(), 0.0f);

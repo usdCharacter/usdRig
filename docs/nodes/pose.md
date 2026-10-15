@@ -81,9 +81,12 @@ while a `whole` pose is judged on the entire rotation.
 
 *Relationship.*
 
-The driver, at most one target: a RigExecJoint (or any
-RigExecXformable) whose LOCAL rotation -- its pose relative to its own
-rest, in its parent's frame -- is what every pose is measured against.
+The driver: a RigExecJoint (or any RigExecXformable) whose
+LOCAL rotation -- its pose relative to its own rest, in its parent's
+frame -- is what every pose is measured against. At most one target
+for the pose solver; a RigLogic solver (rigExec:solver additive or
+interpolative) takes several, each one quaternion of the input row
+in target order.
 
 LOCAL, not world, and relative to rest rather than absolute: the rest
 orientation is the joint orient the authored data removes from
@@ -111,14 +114,92 @@ rotation: there is no frame to take one from. Up to three because
 that is what one position is; a corrective wanting more channels is
 two interpolators whose weights multiply.
 
+#### `rigExec:solver`
+
+*Type:* `uniform token`. *Default:* `"pose"`.
+
+Valid values: `pose`, `additive`, `interpolative`.
+
+Which solve turns distances into weights.
+
+pose is this interpolator's own solve: per-pose widths, swing, twist
+and whole pose types, an optional translation channel, and the
+inverse of the pose matrix.
+
+additive and interpolative are RigLogic's solvers (Epic Games
+OpenRigLogic, see docs/references.md). additive sums each pose's
+kernel value; interpolative weights them through the inverse of the
+pose-to-pose kernel matrix and clamps each to [0, 1]. Both then apply
+rigExec:normalizeMethod, each pose's rigExec:scale and
+rigExec:weightThreshold. They read rigExec:distanceMethod,
+rigExec:radius, rigExec:automaticRadius and rigExec:twistAxis, and
+ignore the pose solver's radii, pose types, translation channel,
+regularization, normalize and allowNegativeWeights.
+
+A RigLogic solve's input row is each frame driver's local rotation
+from rest as (x, y, z, w) on the w >= 0 hemisphere, in
+rigExec:driver order, or the numeric drivers' values as read. A
+pose's row is its rigExec:rotations (or rigExec:rotation for one
+driver), or the first values of its rigExec:translation.
+
+#### `rigExec:distanceMethod`
+
+*Type:* `uniform token`. *Default:* `"quaternion"`.
+
+Valid values: `euclidean`, `quaternion`, `swingAngle`, `twistAngle`.
+
+A RigLogic solve's metric. euclidean is the n-dimensional
+distance over the raw row and is the only one numeric drivers may
+use. quaternion sums, over the drivers, the squared arc length
+between rotations, and takes the square root. swingAngle does the
+same on the swing about rigExec:twistAxis, and twistAngle on the
+difference of unwound twist angles, which keeps +120 and -120
+degrees 240 apart.
+
+#### `rigExec:normalizeMethod`
+
+*Type:* `uniform token`. *Default:* `"onlyAboveOne"`.
+
+Valid values: `onlyAboveOne`, `always`.
+
+A RigLogic solve's normalization: divide the weights by
+their sum only when it exceeds one, or always.
+
+#### `rigExec:automaticRadius`
+
+*Type:* `uniform bool`. *Default:* `false`.
+
+A RigLogic solve's radius is the mean distance between every
+pair of poses, in place of rigExec:radius.
+
+#### `rigExec:radius`
+
+*Type:* `uniform float`. *Default:* `0`.
+
+A RigLogic solve's kernel width, in the metric's units:
+radians for quaternion, swing and twist, the drivers' own units for
+euclidean. Zero leaves only an exact match with any weight.
+
+#### `rigExec:weightThreshold`
+
+*Type:* `uniform float`. *Default:* `0`.
+
+A RigLogic solve publishes zero for any pose whose
+normalized, scaled weight is at or below this.
+
 #### `rigExec:kernel`
 
 *Type:* `uniform token`. *Default:* `"gaussian"`.
 
-Valid values: `gaussian`, `linear`.
+Valid values: `gaussian`, `linear`, `exponential`, `cubic`, `quintic`.
 
 How a pose's weight falls away with distance. On the shipped biped 16 interpolators
 are gaussian and 53 linear.
+
+exponential, cubic and quintic are RigLogic's weight functions:
+exp(-2 d/r), max(0, 1 - (d/r)^3) and max(0, 1 - (d/r)^5). In the
+pose solver gaussian is exp(-(d/r)^2); in a RigLogic solve it is
+RigLogic's exp(-d / r^2), which depends on the radius's units.
 
 Gaussian never quite reaches zero, so a little of every pose survives
 everywhere -- a soft blend. Linear reaches zero AT the radius and has
@@ -289,6 +370,22 @@ already divides each channel by its own width -- the shape of the pose
 space is fixed by the RATIO of the two and only its overall size is
 free.
 
+#### `rigExec:rotations`
+
+*Type:* `quatf[]`. *Default:* `[]`.
+
+A RigLogic solve with several frame drivers: where each
+driver stands in this pose, one rotation per rigExec:driver target in
+order, measured as rigExec:rotation is. Empty with one driver reads
+rigExec:rotation.
+
+#### `rigExec:scale`
+
+*Type:* `uniform float`. *Default:* `1`.
+
+A RigLogic solve multiplies this pose's normalized weight by
+this before the threshold: RigLogic's pose scale.
+
 #### `rigExec:falloff`
 
 *Type:* `float`. *Default:* `0.3`.
@@ -383,6 +480,7 @@ python docs/render_media.py --page pose
 - Author a non-zero `rigExec:rotationRadius` by hand. The evaluator hands the per-pose radii straight to the solver, and a width of zero makes every non-zero distance infinite, so the pose's kernel is dead: on a two-pose test rig the zero-radius pose published 0.000 at every frame, including the one where the driver reached it.
 - `inputs:enabled = false` drops the pose out of the solve entirely rather than solving it and silencing the result — the remaining poses re-solve as if it had never been authored — and the disabled pose publishes a hard zero whatever else the interpolator does.
 - `rigExec:poseType` defaults to `swing`, which measures the driver's rotation with its twist about `rigExec:twistAxis` removed. Use `whole` when one pose should account for the entire rotation. A swing pose captured from a driver that only twists measures as identical to neutral, and an interpolator whose poses are all coincident under its enabled channels is reported degenerate and pegs every weight at 1/n.
+- Under a RigLogic solve (`rigExec:solver` additive or interpolative) the pose's radii, type and translation radius are not read. With several frame drivers it authors one rotation per driver in `rigExec:rotations`; with numeric drivers its `rigExec:translation` holds their values; `rigExec:scale` multiplies its weight. See [RigLogic behaviours](../concepts/riglogic.md).
 
 ## See also
 

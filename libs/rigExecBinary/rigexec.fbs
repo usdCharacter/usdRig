@@ -161,7 +161,15 @@ enum SingleChainIkMode : ubyte { RotatePlane = 0, SingleChain }
 /// RigExecSplineIkRestLength.
 enum SplineIkRestLength : ubyte { Curve = 0, Chain }
 /// RigExecRbfKernel.
-enum RbfKernel : ubyte { Gaussian = 0, Linear }
+enum RbfKernel : ubyte { Gaussian = 0, Linear, Exponential, Cubic, Quintic }
+/// RigExecRbfSolverType.
+enum RbfSolverType : ubyte { Additive = 0, Interpolative }
+/// RigExecRbfDistanceMethod.
+enum RbfDistanceMethod : ubyte { Euclidean = 0, Quaternion, SwingAngle, TwistAngle }
+/// RigExecRbfWeightFunction.
+enum RbfWeightFunction : ubyte { Gaussian = 0, Exponential, Linear, Cubic, Quintic }
+/// RigExecRbfNormalizeMethod.
+enum RbfNormalizeMethod : ubyte { OnlyAboveOne = 0, Always }
 /// RigExecRbfPoseType.
 enum RbfPoseType : ubyte { Whole = 0, Swing, Twist }
 /// RigExecRotationFilter.
@@ -534,6 +542,60 @@ table Rbf {
   regularized_singular: bool;
   weights: [DoubleList] (native_inline);
 }
+/// RigLogic's solve (rigExec:solver additive or interpolative): the solved
+/// constants of RigExecRbfMethodTable, carried so no reader re-derives them.
+table RbfMethod {
+  /// RbfSolverType.
+  solver_type: ubyte;
+  /// RbfDistanceMethod.
+  distance_method: ubyte;
+  /// RbfWeightFunction.
+  weight_function: ubyte;
+  /// RbfNormalizeMethod.
+  normalize_method: ubyte;
+  /// 0 X, 1 Y, 2 Z.
+  twist_axis: ubyte;
+  raw_count: uint;
+  target_count: uint;
+  /// The radius the kernels use, automatic radius already applied.
+  radius: F64 (native_inline);
+  weight_threshold: F64 (native_inline);
+  /// target_count * raw_count, in the distance method's stored form.
+  targets: [double];
+  /// TwistAngle only: the targets in angle form; empty otherwise.
+  distance_targets: [double];
+  /// One per target.
+  target_scales: [double];
+  /// Interpolative only: target_count^2, row-major; empty for additive.
+  coefficients: [double];
+}
+/// A RigExecMlMover's network (RigExecMlNetwork) as authored: layer widths,
+/// RigExecMlActivation codes and alphas, then every layer's weights and every
+/// layer's biases in layer order.
+table MlNetwork {
+  input_count: uint;
+  layer_sizes: [int];
+  layer_activations: [ubyte];
+  layer_alphas: [double];
+  weights: [float];
+  biases: [float];
+  input_mean: [float];
+  input_scale: [float];
+  output_defaults: [float];
+}
+/// A RigExecAnimatedMaps node's conditional tables
+/// (RigExecAnimatedMapsTable): every map's rows, map after map, reversed
+/// intervals already swapped.
+table AnimatedMaps {
+  input_count: uint;
+  row_inputs: [int];
+  row_from: [double];
+  row_to: [double];
+  row_slope: [double];
+  row_cut: [double];
+  /// The map count plus one offsets into the rows.
+  map_begin: [uint];
+}
 table PoseInterpolator {
   path: uint;
   /// -1 on a numeric driver, which reads dials and no frame.
@@ -550,6 +612,24 @@ table PoseInterpolator {
   enable_translation: bool;
   /// A numeric driver's dials, one per axis, at most three.
   value_inputs: [Input] (native_inline);
+  /// Present for a RigLogic solve, which replaces `solver`'s pose solve.
+  method: RbfMethod;
+  /// A RigLogic solve's frame drivers after the first, and each one's
+  /// measuring ancestor (-1 for none), parallel. Provider slots.
+  extra_driver_slots: [int];
+  extra_parent_slots: [int];
+  /// Present for a RigExecMlMover, whose network replaces every solve: its
+  /// row is the frame drivers' rotations, then every value input.
+  network: MlNetwork;
+  /// The ML mover's inputs:mask; registered after the value inputs.
+  mask: Input;
+  /// Present for a RigExecAnimatedMaps node: its value inputs are its
+  /// rows' inputs and pose_slots its maps' outputs:value.
+  maps: AnimatedMaps;
+  /// Animated maps: pose weight slots republishing a map as a mesh
+  /// primvar, and the map (an index into pose_slots) each one copies.
+  primvar_slots: [int];
+  primvar_sources: [int];
 }
 table SplineIkRest {
   cvs: Landmarks (native_inline);

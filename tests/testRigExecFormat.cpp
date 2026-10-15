@@ -1477,11 +1477,12 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 23 &&
+    static_assert(RigExecFormatVersion == 24 &&
                       RigExecFormatOldestReadable == 20,
-                  "format 22 adds the IK/FK match and format 23 the property "
-                  "movers' quantize and path operations; per-group range "
-                  "chains pin the oldest readable format at 20");
+                  "format 22 adds the IK/FK match, format 23 the property "
+                  "movers' quantize and path operations and format 24 "
+                  "RigLogic's solves; per-group range chains pin the oldest "
+                  "readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
     // Range skins, private constants) mean something else to an older
@@ -1494,7 +1495,7 @@ TestOpenRefusals()
         _context = "open refusals: version " + std::to_string(version);
         versioned.formatVersion = version;
         const std::string expected = "unsupported .rigexec format version " +
-            std::to_string(version) + " (this reader reads 20 through 23); " +
+            std::to_string(version) + " (this reader reads 20 through 24); " +
             (version < 20 ? "re-export: per-group range chains" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
         ++(version < 20 ? reexports : rebakes);
@@ -1506,7 +1507,7 @@ TestOpenRefusals()
     CHECK(previous && previous->formatVersion == 20);
     std::vector<uint8_t> unwritten = {1, 2, 3};
     CHECK(!_Write(versioned, &unwritten, &why) && unwritten.empty() &&
-          _Contains(why, "format_version is 20; a writer writes 23"));
+          _Contains(why, "format_version is 20; a writer writes 24"));
     for (uint32_t older = 21; older < RigExecFormatVersion; ++older) {
         _context = "open refusals: version " + std::to_string(older);
         versioned.formatVersion = older;

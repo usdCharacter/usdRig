@@ -2,6 +2,7 @@
 
 #include "rigEvaluatorInternal.h"
 #include "rigEvaluatorDependencies.h"
+#include "rigExecScene/poseSceneLowering.h"
 #include "movers/moverRegistry.h"
 
 #include <algorithm>
@@ -23,6 +24,19 @@ RigExecRigEvaluator::GetSurfaceProjectorTargets() const
         }
     }
     return std::vector<SdfPath>(targets.begin(),targets.end());
+}
+
+std::vector<SdfPath>
+RigExecRigEvaluator::GetAnimatedMapPrimvars() const
+{
+    std::set<SdfPath> primvars;
+    for (const _PoseInterpolator &record : _poseInterpolators) {
+        if (record.descriptor) {
+            primvars.insert(record.descriptor->primvarPaths.begin(),
+                            record.descriptor->primvarPaths.end());
+        }
+    }
+    return std::vector<SdfPath>(primvars.begin(), primvars.end());
 }
 
 bool

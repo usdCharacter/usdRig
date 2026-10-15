@@ -121,6 +121,9 @@ struct RigExecPublishedPrim {
     /// Only these matrices compose with the target's imaging transform;
     /// packed ShaderDials and ordinary matrix properties remain unchanged.
     std::set<TfToken> targetLocalShaderMatrices;
+    /// Constant float primvars the rig computed for this prim's shader:
+    /// animated maps' values (RigExecAnimatedMaps), by primvar name.
+    std::map<TfToken, float> shaderFloats;
 
     bool hasPoints = false;
     VtVec3fArray points;
@@ -571,6 +574,7 @@ private:
             // the new primvar is simply there.
             before->shaderMatrices.size() != after.shaderMatrices.size() ||
             before->targetLocalShaderMatrices != after.targetLocalShaderMatrices ||
+            before->shaderFloats.size() != after.shaderFloats.size() ||
             before->hasWeightOverlay != after.hasWeightOverlay ||
             before->hasVolumeGuides != after.hasVolumeGuides ||
             before->volumeGuides.size() != after.volumeGuides.size()) {
@@ -610,7 +614,10 @@ private:
             return RigExecChangeStructural;
         }
         uint16_t changes = RigExecChangeNone;
-        if (before->shaderMatrices != after.shaderMatrices) {
+        // Animated maps move under a still mesh exactly as a projector's
+        // matrix does, and dirty the same primvars container.
+        if (before->shaderMatrices != after.shaderMatrices ||
+            before->shaderFloats != after.shaderFloats) {
             changes |= RigExecChangeShaderMatrix;
         }
         if (after.hasControlFrame && before->controlFrame != after.controlFrame) {

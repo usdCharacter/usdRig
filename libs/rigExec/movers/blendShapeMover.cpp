@@ -587,6 +587,18 @@ _MakeHandler()
     return handler;
 }
 
+// RigExecMlMover applies its morph targets as this mover does: its blend
+// inputs' weights connect to its own RigExecMlOutput children, which its
+// network publishes in the pose domain (poseSceneLowering.cpp), so the
+// revision is a blend-shape revision in every respect.
+rigExec::RigExecMoverHandler
+_MakeMlHandler()
+{
+    rigExec::RigExecMoverHandler handler = _MakeHandler();
+    handler.schemaType = "RigExecMlMover";
+    return handler;
+}
+
 }  // namespace
 
 // EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA opens/closes the pxr namespace
@@ -624,4 +636,38 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendShapeMover)
                 .InputName(RigExecMoverExecTokens->moverPath));
 }
 
+EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecMlMover)
+{
+    self.PrimComputation(RigExecMoverExecTokens->computeMoverParameters)
+        .Callback<RigExecMoverParameters>(&_BuildBlendMoverParameters)
+        .Inputs(
+            RIGEXEC_MOVER_COMMON_INPUTS,
+            AttributeValue<TfToken>(RigExecMoverExecTokens->deltaSpace),
+            Relationship(RigExecMoverExecTokens->resolvedTopologyCounts)
+                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
+                .InputName(RigExecMoverExecTokens->topologyCounts),
+            Relationship(RigExecMoverExecTokens->resolvedTopologyIndices)
+                .TargetedObjects<int>(ExecBuiltinComputations->computeValue)
+                .InputName(RigExecMoverExecTokens->topologyIndices),
+            Relationship(RigExecMoverExecTokens->resolvedBlendInputs)
+                .TargetedObjects<RigExecBlendChannel>(
+                    RigExecMoverExecTokens->computeBlendChannel)
+                .InputName(RigExecMoverExecTokens->blendChannels),
+            Relationship(RigExecMoverExecTokens->resolvedBase)
+                .TargetedObjects<GfVec3f>(
+                    ExecBuiltinComputations->computeValue)
+                .InputName(RigExecMoverExecTokens->basePoints));
+
+    self.PrimComputation(RigExecMoverExecTokens->computeMoverStatus)
+        .Callback<rigExec::RigExecMoverStatus>(
+            &rigExec::RigExecMoverBuildStatus)
+        .Inputs(
+            Computation<RigExecMoverParameters>(
+                RigExecMoverExecTokens->computeMoverParameters)
+                .Required(),
+            Computation<SdfPath>(ExecBuiltinComputations->computePath)
+                .InputName(RigExecMoverExecTokens->moverPath));
+}
+
 RIGEXEC_REGISTER_MOVER(_MakeHandler());
+RIGEXEC_REGISTER_MOVER(_MakeMlHandler());

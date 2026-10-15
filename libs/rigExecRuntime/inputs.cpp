@@ -1512,8 +1512,8 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     program->ladderRead.assign(poses.ladders.size(), ladderNone);
     program->spaceSwitchRead.assign(poses.spaceSwitches.size(), -1);
     program->interpRead.assign(poses.poseInterpolators.size(), -1);
-    program->interpValueRead.assign(poses.poseInterpolators.size(),
-                                    {-1, -1, -1});
+    program->interpValueRead.assign(poses.poseInterpolators.size(), {});
+    program->interpMaskRead.assign(poses.poseInterpolators.size(), -1);
     std::array<int32_t, RrSolverFieldCount> solverNone;
     solverNone.fill(-1);
     program->solverRead.assign(poses.solvers.size(), solverNone);
@@ -1655,12 +1655,19 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                   &program->interpRead[i])) {
             return unbound("pose.pose_interpolators", i);
         }
-        if (interp.valueInputs.size() > 3) {
+        if (interp.valueInputs.size() > 3 && !interp.network && !interp.maps) {
             return unbound("pose.pose_interpolators", i);
         }
+        program->interpValueRead[i].assign(interp.valueInputs.size(), -1);
         for (size_t v = 0; v < interp.valueInputs.size(); ++v) {
             bind(&interp.valueInputs[v], _RrFamily::Interpolator, i, 1 + v,
                  &program->interpValueRead[i][v]);
+        }
+        if (interp.network &&
+            !bind(interp.mask.get(), _RrFamily::Interpolator, i,
+                  1 + interp.valueInputs.size(),
+                  &program->interpMaskRead[i])) {
+            return unbound("pose.pose_interpolators", i);
         }
     }
     for (size_t i = 0; i < poses.solvers.size(); ++i) {

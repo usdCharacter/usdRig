@@ -1305,7 +1305,16 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             const auto &interp = B.poseInterpolators[i];
             place(&interp.enabled, Family::Interpolator, i, 0);
             for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
-                place(&interp.valueInputs[k], Family::Interpolator, i, 1 + k);
+                const bool isFloat = k < interp.valueIsFloat.size() &&
+                                     interp.valueIsFloat[k];
+                place(isFloat ? static_cast<const void *>(&interp.floatValueInputs[k])
+                              : static_cast<const void *>(&interp.valueInputs[k]),
+                      Family::Interpolator, i, 1 + k);
+            }
+            // The mask follows the dials: field 1 + the dial count.
+            if (interp.mlSolve) {
+                place(&interp.mask, Family::Interpolator, i,
+                      1 + interp.valueInputs.size());
             }
         }
         for (size_t i = 0; i < B.solvers.size(); ++i) {

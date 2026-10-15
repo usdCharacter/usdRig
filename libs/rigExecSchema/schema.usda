@@ -2705,9 +2705,12 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
 )
 {
     rel rigExec:driver (
-        doc = """The driver, at most one target: a RigExecJoint (or any
-        RigExecXformable) whose LOCAL rotation -- its pose relative to its own
-        rest, in its parent's frame -- is what every pose is measured against.
+        doc = """The driver: a RigExecJoint (or any RigExecXformable) whose
+        LOCAL rotation -- its pose relative to its own rest, in its parent's
+        frame -- is what every pose is measured against. At most one target
+        for the pose solver; a RigLogic solver (rigExec:solver additive or
+        interpolative) takes several, each one quaternion of the input row
+        in target order.
 
         LOCAL, not world, and relative to rest rather than absolute: the rest
         orientation is the joint orient the authored data removes from
@@ -2732,10 +2735,67 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
         that is what one position is; a corrective wanting more channels is
         two interpolators whose weights multiply."""
     )
+    uniform token rigExec:solver = "pose" (
+        allowedTokens = ["pose", "additive", "interpolative"]
+        doc = """Which solve turns distances into weights.
+
+        pose is this interpolator's own solve: per-pose widths, swing, twist
+        and whole pose types, an optional translation channel, and the
+        inverse of the pose matrix.
+
+        additive and interpolative are RigLogic's solvers (Epic Games
+        OpenRigLogic, see docs/references.md). additive sums each pose's
+        kernel value; interpolative weights them through the inverse of the
+        pose-to-pose kernel matrix and clamps each to [0, 1]. Both then apply
+        rigExec:normalizeMethod, each pose's rigExec:scale and
+        rigExec:weightThreshold. They read rigExec:distanceMethod,
+        rigExec:radius, rigExec:automaticRadius and rigExec:twistAxis, and
+        ignore the pose solver's radii, pose types, translation channel,
+        regularization, normalize and allowNegativeWeights.
+
+        A RigLogic solve's input row is each frame driver's local rotation
+        from rest as (x, y, z, w) on the w >= 0 hemisphere, in
+        rigExec:driver order, or the numeric drivers' values as read. A
+        pose's row is its rigExec:rotations (or rigExec:rotation for one
+        driver), or the first values of its rigExec:translation."""
+    )
+    uniform token rigExec:distanceMethod = "quaternion" (
+        allowedTokens = ["euclidean", "quaternion", "swingAngle", "twistAngle"]
+        doc = """A RigLogic solve's metric. euclidean is the n-dimensional
+        distance over the raw row and is the only one numeric drivers may
+        use. quaternion sums, over the drivers, the squared arc length
+        between rotations, and takes the square root. swingAngle does the
+        same on the swing about rigExec:twistAxis, and twistAngle on the
+        difference of unwound twist angles, which keeps +120 and -120
+        degrees 240 apart."""
+    )
+    uniform token rigExec:normalizeMethod = "onlyAboveOne" (
+        allowedTokens = ["onlyAboveOne", "always"]
+        doc = """A RigLogic solve's normalization: divide the weights by
+        their sum only when it exceeds one, or always."""
+    )
+    uniform bool rigExec:automaticRadius = false (
+        doc = """A RigLogic solve's radius is the mean distance between every
+        pair of poses, in place of rigExec:radius."""
+    )
+    uniform float rigExec:radius = 0 (
+        doc = """A RigLogic solve's kernel width, in the metric's units:
+        radians for quaternion, swing and twist, the drivers' own units for
+        euclidean. Zero leaves only an exact match with any weight."""
+    )
+    uniform float rigExec:weightThreshold = 0 (
+        doc = """A RigLogic solve publishes zero for any pose whose
+        normalized, scaled weight is at or below this."""
+    )
     uniform token rigExec:kernel = "gaussian" (
-        allowedTokens = ["gaussian", "linear"]
+        allowedTokens = ["gaussian", "linear", "exponential", "cubic", "quintic"]
         doc = """How a pose's weight falls away with distance. On the shipped biped 16 interpolators
         are gaussian and 53 linear.
+
+        exponential, cubic and quintic are RigLogic's weight functions:
+        exp(-2 d/r), max(0, 1 - (d/r)^3) and max(0, 1 - (d/r)^5). In the
+        pose solver gaussian is exp(-(d/r)^2); in a RigLogic solve it is
+        RigLogic's exp(-d / r^2), which depends on the radius's units.
 
         Gaussian never quite reaches zero, so a little of every pose survives
         everywhere -- a soft blend. Linear reaches zero AT the radius and has
@@ -2890,6 +2950,16 @@ class RigExecPose "RigExecPose" (
         space is fixed by the RATIO of the two and only its overall size is
         free."""
     )
+    quatf[] rigExec:rotations = [] (
+        doc = """A RigLogic solve with several frame drivers: where each
+        driver stands in this pose, one rotation per rigExec:driver target in
+        order, measured as rigExec:rotation is. Empty with one driver reads
+        rigExec:rotation."""
+    )
+    uniform float rigExec:scale = 1 (
+        doc = """A RigLogic solve multiplies this pose's normalized weight by
+        this before the threshold: RigLogic's pose scale."""
+    )
     float rigExec:falloff = 0.3 (
         doc = """poseFalloff, kept as provenance and as the editable
         dial: the share the artist painted on top of the fitted width, where
@@ -2942,6 +3012,181 @@ class RigExecPose "RigExecPose" (
         rigExec:allowNegativeWeights is on, and should be: that is the
         instruction to lean away from a pose, and clamping it is what makes a
         blend muddy."""
+    )
+}
+
+class RigExecMlMover "RigExecMlMover" (
+    inherits = </Typed>
+    customData = {
+        dictionary extraPlugInfo = {
+            string nodeGraphIcon = "icons/blendshape_mover.png"
+        }
+        string className = "MlMover"
+    }
+    doc = """A neural morph deformer: a multilayer perceptron maps the rig's
+    pose to one weight per RigExecMlOutput child, and those weights drive
+    sparse morph targets added to the moved points.
+
+    The network is RigLogic's (Epic Games OpenRigLogic, see
+    docs/references.md): dense layers, each a row-major weight matrix with
+    one row per output unit, a bias, and a linear, relu, leakyRelu, tanh or
+    sigmoid activation. Its input row is each rigExec:driver's local rotation
+    from rest as (x, y, z, w) on the w >= 0 hemisphere -- measured exactly as
+    a pose interpolator measures its driver -- followed by each
+    rigExec:driverAttributes value as read.
+
+    Two halves, one prim. The network publishes each output's weight as
+    that child's outputs:weight, which anything can read the way it reads a
+    RigExecPose weight. The mover half is a blend-shape revision of the
+    points it moves: its rigExec:blendInputs are ordinary RigExecBlendInput
+    channels, normally one per output with inputs:weight connected to it and
+    one RigExecBlendSample naming a UsdSkelBlendShape, so the morphs are
+    sparse offsets and the common MoverAPI envelope applies to their sum."""
+)
+{
+    rel rigExec:driver (
+        doc = """Frame drivers, in input order: joints or controls, each
+        contributing four values, its local rotation relative to its rest
+        against its nearest joint or control ancestor."""
+    )
+    rel rigExec:driverAttributes (
+        doc = """Numeric drivers, in input order after the frame drivers:
+        float or double properties, any number, each one value."""
+    )
+    uniform int[] rigExec:layerSizes = [] (
+        doc = "The width of each layer's output, first layer first."
+    )
+    uniform int[] rigExec:layerActivations = [] (
+        doc = """Each layer's activation, RigLogic's ActivationFunction
+        codes: 0 linear, 1 relu, 2 leakyRelu, 3 tanh, 4 sigmoid."""
+    )
+    uniform float[] rigExec:layerAlphas = [] (
+        doc = """Each layer's leakyRelu slope below zero, or empty. Read
+        only by leakyRelu layers."""
+    )
+    uniform float[] rigExec:weights = [] (
+        doc = """Every layer's weights, layer after layer, each row-major
+        with one row per output unit: output r reads inputs
+        weights[r * inputs .. (r + 1) * inputs)."""
+    )
+    uniform float[] rigExec:biases = [] (
+        doc = "Every layer's biases, layer after layer."
+    )
+    uniform float[] rigExec:inputMean = [] (
+        doc = """Optional per-input normalization: each input becomes
+        (x - inputMean) * inputScale before the first layer. Empty skips it."""
+    )
+    uniform float[] rigExec:inputScale = [] (
+        doc = "See rigExec:inputMean."
+    )
+    uniform float[] rigExec:outputDefaults = [] (
+        doc = """What each output publishes while inputs:mask is exactly
+        zero, RigLogic's default values. Empty is zero."""
+    )
+    float inputs:mask = 1 (
+        doc = """RigLogic's region mask. Exactly zero publishes the
+        defaults without running the network; anything else runs it and
+        multiplies every output by the mask."""
+    )
+    rel rigExec:blendInputs (
+        doc = """The blend channels this mover applies, normally one per
+        output, connected to it."""
+    )
+    uniform token rigExec:deltaSpace = "target" (
+        allowedTokens = ["target", "surfaceFrame"]
+        doc = "As on RigExecBlendShapeMover."
+    )
+}
+
+class RigExecMlOutput "RigExecMlOutput" (
+    inherits = </Typed>
+    customData = {
+        dictionary extraPlugInfo = {
+            string nodeGraphIcon = "icons/pose.png"
+        }
+        string className = "MlOutput"
+    }
+    doc = """One output of its parent RigExecMlMover's network, in namespace
+    order among its RigExecMlOutput siblings, and the float it publishes."""
+)
+{
+    float outputs:weight = 0 (
+        doc = """The network's output for the current pose, after the mask.
+        A RigExecBlendInput's inputs:weight connects to it."""
+    )
+}
+
+class RigExecAnimatedMaps "RigExecAnimatedMaps" (
+    inherits = </Typed>
+    customData = {
+        dictionary extraPlugInfo = {
+            string nodeGraphIcon = "icons/pose_interpolator.png"
+        }
+        string className = "AnimatedMaps"
+    }
+    doc = """RigLogic's animated maps (Epic Games OpenRigLogic, see
+    docs/references.md): one value in [0, 1] per RigExecAnimatedMap child,
+    each a sum of piecewise-linear segments of the input properties, made
+    for driving texture masks such as wrinkle maps.
+
+    Like a pose interpolator it is not a mover: it publishes a float per
+    child on outputs:value, which a RigExecBlendInput's inputs:weight or any
+    reader of a pose weight can connect to. For shaders, each map is also
+    published as a constant float primvar on every rigExec:meshes target,
+    named by its rigExec:primvarName. The primvar is display output: it
+    reaches Hydra and is never written to the stage."""
+)
+{
+    rel rigExec:driverAttributes (
+        doc = """The input properties, float or double, in order: a row's
+        rigExec:rowInputs entry is an index into this list."""
+    )
+    rel rigExec:meshes (
+        doc = """Meshes that receive every map as a constant float primvar,
+        primvars:<rigExec:primvarName>."""
+    )
+    bool inputs:enabled = true (
+        doc = """Shape-preserving enable. Disabled maps publish zero."""
+    )
+}
+
+class RigExecAnimatedMap "RigExecAnimatedMap" (
+    inherits = </Typed>
+    customData = {
+        dictionary extraPlugInfo = {
+            string nodeGraphIcon = "icons/pose.png"
+        }
+        string className = "AnimatedMap"
+    }
+    doc = """One map of its parent RigExecAnimatedMaps, a conditional table.
+    Each row reads input x = rigExec:driverAttributes[rowInputs[r]] and adds
+    rowSlope[r] * x + rowCut[r] when rowFrom[r] <= x <= rowTo[r] (a reversed
+    interval is swapped). Among consecutive rows on the same input only the
+    first whose interval holds x contributes, so intervals sharing an
+    endpoint count it once. The sum is clamped to [0, 1]."""
+)
+{
+    uniform int[] rigExec:rowInputs = [] (
+        doc = "Each row's input, an index into the parent's inputs."
+    )
+    uniform float[] rigExec:rowFrom = [] (
+        doc = "Each row's interval start."
+    )
+    uniform float[] rigExec:rowTo = [] (
+        doc = "Each row's interval end."
+    )
+    uniform float[] rigExec:rowSlope = [] (
+        doc = "Each row's slope."
+    )
+    uniform float[] rigExec:rowCut = [] (
+        doc = "Each row's intercept."
+    )
+    uniform token rigExec:primvarName = "" (
+        doc = """The primvar this map publishes on the parent's meshes,
+        without the primvars: namespace. Empty uses the prim's name."""
+    )
+    float outputs:value = 0 (
+        doc = "The map's value for the current pose."
     )
 }
 
