@@ -74,6 +74,7 @@
 #include <string>
 #include <thread>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1061,8 +1062,27 @@ struct RigExecBakedReaderWalk {
     std::vector<std::pair<uint32_t, uint32_t>> shadowed;
 };
 
+/// What RigExecBakedBuildOracleRead indexes over the whole program, kept
+/// across the reads of one build. Head leaves and override slots only grow
+/// between those reads and chains and records do not change, so each read
+/// indexes only what came after the previous one. Without an index a read
+/// indexes the whole program, which is quadratic over a build's weight reads.
+struct RigExecBakedOracleReadIndex {
+    std::map<std::pair<SdfPath, int>, uint32_t> leafOf;
+    size_t leavesIndexed = 0;
+    size_t leavesFrozen = 0;
+    size_t slotsNamed = 0;
+    /// Per hop path: (chain, PropertyVersion id) for each chain that targets
+    /// it and each record that consumes it.
+    std::unordered_map<SdfPath, std::vector<std::pair<int, uint32_t>>,
+                       SdfPath::Hash> versions;
+    size_t versionChains = 0, versionRecords = 0;
+    bool versionsBuilt = false;
+};
+
 RigExecBakedReaderWalk RigExecBakedBuildOracleRead(
-    RigExecBakedProgramImpl *, const UsdAttribute &, const std::vector<int> &);
+    RigExecBakedProgramImpl *, const UsdAttribute &, const std::vector<int> &,
+    RigExecBakedOracleReadIndex *index = nullptr);
 float RigExecBakedReadOracleScalar(const RigExecBakedProgramImpl &,
     const RigExecBakedReaderWalk &, const std::vector<int> &, float);
 bool RigExecBakedResolveWalkValue(const RigExecBakedProgramImpl &,
@@ -1105,6 +1125,11 @@ struct RigExecBakedPropertyChain {
             keys, tangents;
         /// inputs:tangents exists, which is what decides it is read.
         bool hasTangents = false;
+        /// The path operation: its curve's points (a Vec3fArray walk) and
+        /// the settings Build read off the mover and the curve. Structural:
+        /// an edit to what the settings came from rebuilds.
+        RigExecBakedWalk pathPoints;
+        RigExecPathSettings path;
         /// "diag <mover>", the head of every line the revision emits.
         std::string linePrefix;
     };
@@ -5868,6 +5893,10 @@ struct RigExecBakedPropertyChainDesc {
         std::vector<GfVec2f> keys;
         bool hasTangentsAttr = false;
         std::vector<GfVec2f> tangents;
+        /// The path operation's curve points and settings, for a float or
+        /// double chain whose operation is path.
+        UsdAttribute pathPoints;
+        RigExecPathSettings path;
     };
     /// A RigExecPhasedConnection on this chain.
     struct Phased {

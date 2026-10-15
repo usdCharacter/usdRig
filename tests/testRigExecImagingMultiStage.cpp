@@ -28,7 +28,10 @@
 //   (j) a stage its host deactivated is never revived by the automatic
 //       path (a stray rig-root pull), only by an explicit activation;
 //   (k) warming counters survive Deactivate and re-activation, and a
-//       context owns a scheduler (threads) only while a rig is active.
+//       context owns a scheduler (threads) only while a rig is active;
+//   (l) array slots: a float2[] keys table and a path curve's point3f[]
+//       points preview through the rig lane and land where the same
+//       values authored land.
 // No GL: every assertion reads the terminal scene index or the C surface.
 #include "rigExecImaging/registry.h"
 #include "rigExecImaging/sceneIndices.h"
@@ -36,8 +39,13 @@
 #include "rigExec/backgroundScheduler.h"
 
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/vec2d.h"
+#include "pxr/base/gf/vec2f.h"
+#include "pxr/base/gf/vec3d.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/pathUtils.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/imaging/hd/filteringSceneIndex.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/retainedDataSource.h"
@@ -48,6 +56,7 @@
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/stage.h"
+#include "pxr/usd/usdGeom/basisCurves.h"
 #include "pxr/usd/usdGeom/mesh.h"
 #include "pxr/usd/usdGeom/xform.h"
 #include "pxr/usd/usdUtils/stageCache.h"
@@ -60,6 +69,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace rigExec;
@@ -359,6 +369,352 @@ _WarmableRig()
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
                          SdfValueTypeNames->FloatArray).Set(weights);
     return stage;
+}
+
+const char *kDial = "/CurveAsset/Rig/Controls/Dial";
+const char *kCurveKeys = "/CurveAsset/Rig/Movers/Curve.inputs:keys";
+
+// A curve mover maps the dial's constant tx (5) through inputs:keys
+// (0,0)-(10,20), so the keys table alone places the dial's frame at x=10.
+// The Channels arrays are rig attributes the preview lane must refuse.
+UsdStageRefPtr
+_CurveRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/CurveAsset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/CurveAsset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/CurveAsset/Rig/Joints"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/CurveAsset/Rig/Joints/Root"),
+                      TfToken("RigExecJoint"))
+        .GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    stage->DefinePrim(SdfPath("/CurveAsset/Rig/Controls"), TfToken("Scope"));
+    const UsdPrim dial =
+        stage->DefinePrim(SdfPath(kDial), TfToken("RigExecControl"));
+    dial.GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    const UsdAttribute tx = dial.GetAttribute(TfToken("avars:tx"));
+    tx.Set(5.0);
+    stage->DefinePrim(SdfPath("/CurveAsset/Rig/Movers"), TfToken("Scope"));
+    const UsdPrim curve = stage->DefinePrim(
+        SdfPath("/CurveAsset/Rig/Movers/Curve"),
+        TfToken("RigExecFloatMathMover"));
+    curve.ApplyAPI(TfToken("RigExecMoverAPI"));
+    curve.GetRelationship(TfToken("rigExec:moves"))
+        .SetTargets({tx.GetPath()});
+    curve.GetAttribute(TfToken("rigExec:operation")).Set(TfToken("curve"));
+    curve.GetAttribute(TfToken("inputs:keys"))
+        .Set(VtVec2fArray{GfVec2f(0, 0), GfVec2f(10, 20)});
+    const UsdPrim channels = stage->DefinePrim(
+        SdfPath("/CurveAsset/Rig/Channels"), TfToken("Scope"));
+    channels.CreateAttribute(TfToken("weights"), SdfValueTypeNames->FloatArray)
+        .Set(VtFloatArray{1.0f, 2.0f});
+    channels.CreateAttribute(TfToken("pairs"), SdfValueTypeNames->Double2Array)
+        .Set(VtVec2dArray{GfVec2d(0, 1)});
+    return stage;
+}
+
+// A control's published frame at frame 1 (the activation frame).
+bool
+_ControlFrame(long long id, const char *control, GfMatrix4d *out)
+{
+    double m[16];
+    if (RigExecImaging_GetControlFrameAssetSpace(id, control, 1.0, 0, m) !=
+        1) {
+        return false;
+    }
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            (*out)[r][c] = m[r * 4 + c];
+        }
+    }
+    return true;
+}
+
+bool
+_DialFrame(long long id, GfMatrix4d *out)
+{
+    return _ControlFrame(id, kDial, out);
+}
+
+VtVec2fArray
+_Table(const std::vector<double> &flat)
+{
+    VtVec2fArray table(flat.size() / 2);
+    for (size_t i = 0; i < table.size(); ++i) {
+        table[i] = GfVec2f(float(flat[2 * i]), float(flat[2 * i + 1]));
+    }
+    return table;
+}
+
+// float2[] slots: `<path>\t<elementCount>` previews a whole keys table
+// through the rig lane, and lands where the same table authored lands.
+void
+TestFloat2ArrayPreview()
+{
+    std::unique_ptr<_Viewport> v = _Open(_CurveRig());
+    CHECK(v->stage && v->results);
+    if (!v->stage || !v->results) {
+        return;
+    }
+    CHECK(RigExecImaging_ActivateForStage(v->id, "", 1.0) == 0);
+    GfMatrix4d authored(0.0);
+    CHECK(_DialFrame(v->id, &authored));
+    CHECK(std::abs(authored.ExtractTranslation()[0] - 10.0) < 1e-6);
+
+    const std::string keys(kCurveKeys);
+    const std::string dialTx = std::string(kDial) + ".avars:tx";
+    const auto begin = [&](const std::string &packed) {
+        return RigExecImaging_BeginPreviewForStage(v->id, packed.c_str());
+    };
+
+    // Keys alone, three of them where two are authored: tx 5 -> 30.
+    const std::vector<double> table{0, 0, 5, 30, 10, 40};
+    GfMatrix4d keysOnly(0.0);
+    CHECK(begin(keys + "\t3") == 6);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, table.data(), 6) == 0);
+    CHECK(_DialFrame(v->id, &keysOnly));
+    CHECK(std::abs(keysOnly.ExtractTranslation()[0] - 30.0) < 1e-6);
+    CHECK(!_Close(keysOnly, authored));
+    // The declared total is the contract: another length fails.
+    const std::vector<double> longer{0, 0, 5, 30, 10, 40, 20, 50};
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, table.data(), 4) != 0);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, longer.data(), 8) != 0);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    GfMatrix4d restored(0.0);
+    CHECK(_DialFrame(v->id, &restored) && _Close(restored, authored));
+
+    // A scalar slot and a float2[] slot, flattened in declaration order:
+    // tx 2.5 through (0,0)-(10,-40) -> -10.
+    const std::vector<double> mixed{2.5, 0, 0, 10, -40};
+    GfMatrix4d both(0.0);
+    CHECK(begin(dialTx + "\n" + keys + "\t2") == 5);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, mixed.data(), 5) == 0);
+    CHECK(_DialFrame(v->id, &both));
+    CHECK(std::abs(both.ExtractTranslation()[0] + 10.0) < 1e-6);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, mixed.data(), 4) != 0);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    CHECK(_DialFrame(v->id, &restored) && _Close(restored, authored));
+
+    // A count is required on float2[], refused everywhere else, and must be
+    // a plain decimal of at most 1,048,576 elements.
+    const std::string weights = "/CurveAsset/Rig/Channels.weights";
+    const std::string pairs = "/CurveAsset/Rig/Channels.pairs";
+    for (const std::string &bad : {
+             keys, keys + "\t", keys + "\t-1", keys + "\t+2", keys + "\t 2",
+             keys + "\t2 ", keys + "\t2.0", keys + "\t0x2", keys + "\tabc",
+             keys + "\t2\t2", keys + "\t1048577",
+             keys + "\t99999999999999999999", dialTx + "\t1",
+             dialTx + "\t0", weights, weights + "\t2", pairs,
+             pairs + "\t1"}) {
+        const int answer = begin(bad);
+        if (answer != -1) {
+            std::printf("  accepted (%d): %s\n", answer, bad.c_str());
+        }
+        CHECK(answer == -1);
+    }
+    CHECK(begin(keys + "\t1048576") == 2 * 1048576);
+    CHECK(begin(keys + "\t0") == 0);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    CHECK(_DialFrame(v->id, &restored) && _Close(restored, authored));
+
+    // Authored, the same values land on the same frames.
+    const UsdAttribute keysAttr = v->stage->GetAttributeAtPath(SdfPath(keys));
+    const UsdAttribute txAttr = v->stage->GetAttributeAtPath(SdfPath(dialTx));
+    GfMatrix4d committed(0.0);
+    CHECK(keysAttr.Set(_Table(table)));
+    CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
+    CHECK(_DialFrame(v->id, &committed) && _Close(committed, keysOnly));
+    CHECK(txAttr.Set(2.5));
+    CHECK(keysAttr.Set(_Table({0, 0, 10, -40})));
+    CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
+    CHECK(_DialFrame(v->id, &committed) && _Close(committed, both));
+
+    RigExecImaging_DeactivateForStage(v->id);
+    _Close(v);
+
+    // There is no xform-lane array, even one named like an xformOp.
+    std::unique_ptr<_Viewport> plain = _Open(_PlainStage());
+    plain->stage->GetPrimAtPath(SdfPath("/Plain"))
+        .CreateAttribute(TfToken("xformOp:translate:route"),
+                         SdfValueTypeNames->Float2Array)
+        .Set(VtVec2fArray{GfVec2f(0, 0)});
+    CHECK(RigExecImaging_BeginPreviewForStage(
+              plain->id, "/Plain.xformOp:translate:route\t1") == -1);
+    _Close(plain);
+}
+
+const char *kWalker = "/PathAsset/Rig/Controls/Walker";
+const char *kPathPoints = "/PathAsset/Rig/Path.points";
+const VtVec3fArray kPathAuthored{GfVec3f(0, 0, 0), GfVec3f(0.5f, 0, 1),
+                                 GfVec3f(0, 0, 2), GfVec3f(-0.5f, 0, 3),
+                                 GfVec3f(0.5f, 0, 4)};
+
+// Two path movers place the walker's tx and tz on a pinned catmullRom
+// curve under the rig root, each at arc length (avar - 0.25): inputs:value
+// is the distance the curve's first point stands at. The Channels arrays
+// are rig attributes of other array types: float3[] shares point3f[]'s
+// value type, double3[] and float[] do not.
+UsdStageRefPtr
+_PathRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/PathAsset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/PathAsset/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/PathAsset/Rig/Joints"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/PathAsset/Rig/Joints/Root"),
+                      TfToken("RigExecJoint"))
+        .GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    stage->DefinePrim(SdfPath("/PathAsset/Rig/Controls"), TfToken("Scope"));
+    const UsdPrim walker =
+        stage->DefinePrim(SdfPath(kWalker), TfToken("RigExecControl"));
+    walker.GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    const SdfPath curvePath = SdfPath(kPathPoints).GetPrimPath();
+    UsdGeomBasisCurves curves = UsdGeomBasisCurves::Define(stage, curvePath);
+    curves.CreateTypeAttr().Set(UsdGeomTokens->cubic);
+    curves.CreateBasisAttr().Set(UsdGeomTokens->catmullRom);
+    curves.CreateWrapAttr().Set(UsdGeomTokens->pinned);
+    curves.CreateCurveVertexCountsAttr().Set(
+        VtIntArray{int(kPathAuthored.size())});
+    curves.CreatePointsAttr().Set(kPathAuthored);
+    stage->DefinePrim(SdfPath("/PathAsset/Rig/Movers"), TfToken("Scope"));
+    for (const auto &[name, component] :
+         {std::make_pair("X", "x"), std::make_pair("Z", "z")}) {
+        const UsdAttribute avar = walker.GetAttribute(
+            TfToken(std::string("avars:t") + component));
+        avar.Set(1.5);
+        const UsdPrim mover = stage->DefinePrim(
+            SdfPath("/PathAsset/Rig/Movers").AppendChild(TfToken(name)),
+            TfToken("RigExecFloatMathMover"));
+        mover.ApplyAPI(TfToken("RigExecMoverAPI"));
+        mover.GetRelationship(TfToken("rigExec:moves"))
+            .SetTargets({avar.GetPath()});
+        mover.GetAttribute(TfToken("rigExec:operation")).Set(TfToken("path"));
+        mover.GetRelationship(TfToken("rigExec:path"))
+            .SetTargets({curvePath});
+        mover.GetAttribute(TfToken("rigExec:pathComponent"))
+            .Set(TfToken(component));
+        mover.GetAttribute(TfToken("inputs:value")).Set(0.25f);
+    }
+    const UsdPrim channels = stage->DefinePrim(
+        SdfPath("/PathAsset/Rig/Channels"), TfToken("Scope"));
+    channels.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Float3Array)
+        .Set(VtVec3fArray{GfVec3f(1, 2, 3), GfVec3f(4, 5, 6)});
+    channels.CreateAttribute(TfToken("doubles"),
+                             SdfValueTypeNames->Double3Array)
+        .Set(VtVec3dArray{GfVec3d(0, 1, 2)});
+    channels.CreateAttribute(TfToken("weights"), SdfValueTypeNames->FloatArray)
+        .Set(VtFloatArray{1.0f, 2.0f});
+    return stage;
+}
+
+std::vector<double>
+_Flat(const VtVec3fArray &points)
+{
+    std::vector<double> flat;
+    for (const GfVec3f &p : points) {
+        flat.insert(flat.end(), {double(p[0]), double(p[1]), double(p[2])});
+    }
+    return flat;
+}
+
+// point3f[] slots: `<path>\t<elementCount>` previews a path curve's whole
+// points array through the rig lane, x, y, z per point, and the walker lands
+// exactly where the same points authored put it.
+void
+TestPointArrayPreview()
+{
+    std::unique_ptr<_Viewport> v = _Open(_PathRig());
+    CHECK(v->stage && v->results);
+    if (!v->stage || !v->results) {
+        return;
+    }
+    CHECK(RigExecImaging_ActivateForStage(v->id, "", 1.0) == 0);
+    GfMatrix4d authored(0.0);
+    CHECK(_ControlFrame(v->id, kWalker, &authored));
+
+    const std::string points(kPathPoints);
+    const std::string walkerTx = std::string(kWalker) + ".avars:tx";
+    const auto begin = [&](const std::string &packed) {
+        return RigExecImaging_BeginPreviewForStage(v->id, packed.c_str());
+    };
+
+    // Two control points moved sideways, in the span both movers sample.
+    VtVec3fArray moved = kPathAuthored;
+    moved[1] += GfVec3f(0.75f, 0.0f, -0.25f);
+    moved[2] += GfVec3f(-0.3f, 0.0f, 0.2f);
+    const std::vector<double> flat = _Flat(moved);
+    GfMatrix4d pointsOnly(0.0);
+    CHECK(begin(points + "\t5") == 15);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, flat.data(), 15) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &pointsOnly));
+    CHECK(!_Close(pointsOnly, authored));
+    // The declared total is the contract: another length fails.
+    std::vector<double> longer = flat;
+    longer.insert(longer.end(), {1.0, 0.0, 5.0});
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, flat.data(), 14) != 0);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, longer.data(), 18) !=
+          0);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    GfMatrix4d restored(0.0);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
+          restored == authored);
+
+    // A scalar slot and the points, flattened in declaration order: tx
+    // walks further along the moved curve, tz stays at 1.5.
+    std::vector<double> mixed{2.0};
+    mixed.insert(mixed.end(), flat.begin(), flat.end());
+    GfMatrix4d both(0.0);
+    CHECK(begin(walkerTx + "\n" + points + "\t5") == 16);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, mixed.data(), 16) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &both));
+    CHECK(both.ExtractTranslation()[0] != pointsOnly.ExtractTranslation()[0]);
+    CHECK(both.ExtractTranslation()[2] == pointsOnly.ExtractTranslation()[2]);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
+          restored == authored);
+
+    // A count is required on every VtVec3fArray type and refused on other
+    // arrays; float3[] is accepted like point3f[].
+    const std::string offsets = "/PathAsset/Rig/Channels.offsets";
+    const std::string doubles = "/PathAsset/Rig/Channels.doubles";
+    const std::string weights = "/PathAsset/Rig/Channels.weights";
+    for (const std::string &bad : {
+             points, points + "\t", points + "\t-5", points + "\t5.0",
+             points + "\t 5", points + "\t1048577", offsets, doubles,
+             doubles + "\t1", weights + "\t2", walkerTx + "\t1"}) {
+        const int answer = begin(bad);
+        if (answer != -1) {
+            std::printf("  accepted (%d): %s\n", answer, bad.c_str());
+        }
+        CHECK(answer == -1);
+    }
+    CHECK(begin(offsets + "\t2") == 6);
+    CHECK(begin(points + "\t1048576") == 3 * 1048576);
+    CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
+          restored == authored);
+
+    // Authored, the same values land on the same frames, exactly.
+    const UsdAttribute pointsAttr =
+        v->stage->GetAttributeAtPath(SdfPath(points));
+    const UsdAttribute txAttr =
+        v->stage->GetAttributeAtPath(SdfPath(walkerTx));
+    GfMatrix4d committed(0.0);
+    CHECK(pointsAttr.Set(moved));
+    CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &committed) &&
+          committed == pointsOnly);
+    CHECK(txAttr.Set(2.0));
+    CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
+    CHECK(_ControlFrame(v->id, kWalker, &committed) && committed == both);
+
+    RigExecImaging_DeactivateForStage(v->id);
+    _Close(v);
+
+    // A mesh's points with no rig: there is no xform-lane array.
+    std::unique_ptr<_Viewport> plain = _Open(_PlainStage());
+    CHECK(RigExecImaging_BeginPreviewForStage(
+              plain->id, "/Plain/Child.points\t3") == -1);
+    _Close(plain);
 }
 
 void
@@ -1163,6 +1519,8 @@ main(int argc, char **argv)
     }
 
     TestMultiStage(examplesDir);
+    TestFloat2ArrayPreview();
+    TestPointArrayPreview();
 
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

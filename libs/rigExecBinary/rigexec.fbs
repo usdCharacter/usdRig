@@ -135,8 +135,13 @@ enum PropertyValueType : ubyte { Float = 0, Double = 1, Matrix4d = 2,
 
 /// RigExecParsePropertyOp of the mover's rigExec:operation, read at Default.
 /// Invalid: the token did not parse, so the revision's inputs are unusable.
+/// Quantize and Path follow Invalid so a format 20/21 file keeps its values.
 enum PropertyOp : ubyte { Add = 0, Multiply, Clamp, Remap, Blend, Curve,
-                          Invalid }
+                          Invalid, Quantize, Path }
+/// RigExecPathBasis: a path curve's type and basis, folded.
+enum PathBasis : ubyte { Linear = 0, Bezier, Bspline, CatmullRom }
+/// RigExecPathComponent: what a path operation returns.
+enum PathComponent : ubyte { X = 0, Y, Z, Heading, End }
 
 // Byte enums documented here and held in ubyte fields.
 
@@ -1448,6 +1453,21 @@ table PropertyRevision {
   has_tangents_attr: bool;
   tangents: [Vec2f];
   weight_field: int = -1;
+  /// Path operation (format 23): the Vec3fArray slot of its curve's points,
+  /// -1 for any other operation, and the uniform settings compile read.
+  /// path_valid is false where the mover names no supported curve, which
+  /// passes the value through.
+  path_points: int = -1;
+  path_valid: bool;
+  path_basis: PathBasis;
+  path_pinned: bool;
+  /// Arc length on the XZ plane (rigExec:pathMeasure "planar").
+  path_planar: bool;
+  path_component: PathComponent;
+  /// (x, z) offset carried by the heading frame.
+  path_offset: Vec2f;
+  /// Degrees added to the tangent's heading.
+  path_heading_offset: F32;
 }
 /// One property chain: a target attribute and the revisions every property
 /// mover moving it applies, in order. property_chains is in dependency

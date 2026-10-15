@@ -7,7 +7,7 @@
 import ctypes
 import os
 
-from pxr import Usd, Sdf
+from pxr import Usd, UsdGeom, Sdf
 
 
 MESH = "/Shot/HeroArm/Geom/ArmBody"
@@ -90,6 +90,9 @@ def _AssertLiveRootAutoActivation():
 
     stage = Usd.Stage.CreateInMemory()
     stage.DefinePrim("/World", "Xform")
+    stage.SetTimeCodesPerSecond(60)
+    # Match usdview's initially unmapped, 24 fps session edit target.
+    stage.SetEditTarget(stage.GetSessionLayer())
 
     class _SuccessLibrary:
         def __init__(self):
@@ -123,6 +126,25 @@ def _AssertLiveRootAutoActivation():
 
     try:
         container._OnStageReplaced()
+        import gizmoMath
+        keyed = stage.GetPrimAtPath("/World").CreateAttribute(
+            "test:position", Sdf.ValueTypeNames.Double)
+        sampled = stage.GetPrimAtPath("/World").CreateAttribute(
+            "test:mode", Sdf.ValueTypeNames.Int)
+        for frame, value in [(1, 0), (61, 2), (121, -1), (61, 3)]:
+            gizmoMath.SetAnimated(keyed, float(value), Usd.TimeCode(frame))
+            gizmoMath.SetAnimated(sampled, value, Usd.TimeCode(frame))
+        knotTimes = list(keyed.GetSpline().GetKnots())
+        if (len(knotTimes) != 3 or
+                any(abs(a - b) > 1e-9 for a, b in
+                    zip(knotTimes, [1, 61, 121]))):
+            raise AssertionError("session keys shifted frames: %s" % knotTimes)
+        for frame, expected in [(1, 0), (61, 3), (121, -1)]:
+            if (abs(keyed.Get(frame) - expected) > 1e-9 or
+                    sampled.Get(frame) != expected):
+                raise AssertionError("session keys missed frame %s" % frame)
+        if stage.GetSessionLayer().HasTimeCodesPerSecond():
+            raise AssertionError("time mapping rewrote the session frame rate")
         stage.DefinePrim("/Rig", "RigExecRoot")
         stage.DefinePrim("/Rig/Joints", "Scope")
         if container._lib.activations:
@@ -468,6 +490,154 @@ def _AssertFrameTickYieldsToTickingDriver():
         timer.stop()
 
 
+def _AssertPathCurvePointDrag(appController, dll):
+    """
+    The Move tool on a curve a path mover samples drags its control points:
+    a press on a point's handle and a drag preview the whole points array
+    through the rig (the driven control's published frame follows) with
+    nothing authored, the release authors the points' default in the edit
+    target layer as one undo entry, and undo restores the curve and the rig.
+    """
+    from pxr import Gf, UsdUtils, Vt
+    from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
+    import gizmoMath
+    import gizmoUI
+    import pathCurveModel
+
+    api = appController._usdviewApi
+    stage = api.stage
+    session = stage.GetSessionLayer()
+    controller = gizmoUI.GetController(api) or gizmoUI.GetController()
+    if controller is None:
+        raise AssertionError("the container installed no viewport tools")
+    view = gizmoUI.StageView(api)
+
+    # The rig is built aside and copied into the edit target layer in one
+    # edit, so the container activates it once, complete.
+    rig = "/PathTest/Rig"
+    walker = rig + "/Controls/Walker"
+    curvePath = Sdf.Path(rig + "/Path")
+    pointsPath = curvePath.AppendProperty("points")
+    authored = Vt.Vec3fArray([Gf.Vec3f(*p) for p in (
+        (0, 0, 0), (2, 0, 4), (0, 0, 8), (-2, 0, 12), (2, 0, 16))])
+    scratch = Usd.Stage.CreateInMemory()
+    scratch.DefinePrim(rig, "RigExecRoot")
+    scratch.DefinePrim(rig + "/Joints/J", "RigExecJoint").GetAttribute(
+        "rest:space").Set(Gf.Matrix4d(1.0))
+    control = scratch.DefinePrim(walker, "RigExecControl")
+    control.GetAttribute("rest:space").Set(Gf.Matrix4d(1.0))
+    curve = UsdGeom.BasisCurves.Define(scratch, curvePath)
+    curve.CreateTypeAttr().Set(UsdGeom.Tokens.cubic)
+    curve.CreateBasisAttr().Set(UsdGeom.Tokens.catmullRom)
+    curve.CreateWrapAttr().Set(UsdGeom.Tokens.pinned)
+    curve.CreateCurveVertexCountsAttr().Set(Vt.IntArray([len(authored)]))
+    curve.CreatePointsAttr().Set(authored)
+    for component in ("x", "z"):
+        avar = control.GetAttribute("avars:t" + component)
+        avar.Set(6.0)
+        mover = scratch.DefinePrim(rig + "/Movers/" + component.upper(),
+                                   "RigExecFloatMathMover")
+        mover.AddAppliedSchema("RigExecMoverAPI")
+        mover.GetRelationship("rigExec:moves").SetTargets([avar.GetPath()])
+        mover.GetAttribute("rigExec:operation").Set("path")
+        mover.GetRelationship("rigExec:path").SetTargets([curvePath])
+        mover.GetAttribute("rigExec:pathComponent").Set(component)
+    Sdf.CopySpec(scratch.GetRootLayer(), "/PathTest", session, "/PathTest")
+    appController._processEvents()
+
+    read = dll.RigExecImaging_GetControlFrameAssetSpace
+    read.argtypes = [ctypes.c_longlong, ctypes.c_char_p, ctypes.c_double,
+                     ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+    read.restype = ctypes.c_int
+    cacheId = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
+
+    def Walker():
+        values = (ctypes.c_double * 16)()
+        if read(cacheId, walker.encode("utf-8"),
+                api.frame.GetValue(), 0, values) != 1:
+            raise AssertionError("the path rig published no walker frame")
+        return Gf.Matrix4d(*[tuple(values[r * 4:(r + 1) * 4])
+                             for r in range(4)])
+
+    def Mouse(kind, point, button, buttons):
+        QtWidgets.QApplication.sendEvent(view, QtGui.QMouseEvent(
+            kind, QtCore.QPointF(*point),
+            QtCore.QPointF(view.mapToGlobal(QtCore.QPoint(*map(int, point)))),
+            button, buttons, QtCore.Qt.NoModifier))
+        appController._processEvents()
+
+    try:
+        before = Walker()
+        api.ClearPrimSelection()
+        api.AddPrimToSelection(stage.GetPrimAtPath(curvePath))
+        controller.SetTool(gizmoUI.TOOL_TRANSLATE)
+        # Off the default view down -Z, which sees the curve's plane edge-on.
+        appController._frameSelection()
+        camera = api.dataModel.viewSettings.freeCamera
+        if camera is not None:
+            camera.rotTheta = 35.0
+            camera.rotPhi = -40.0
+        appController._processEvents()
+        if not isinstance(controller.Target(),
+                          pathCurveModel.PathCurveTarget):
+            raise AssertionError("the selected path curve is no control "
+                                 "point target: %s" % controller.Reason())
+        positions = controller.HandleScreenPositions()
+        if sorted(positions) != ["point%d" % i for i in range(5)]:
+            raise AssertionError("one handle per control point: %s"
+                                 % sorted(positions))
+
+        start = positions["point2"][0]
+        Mouse(QtCore.QEvent.Type.MouseButtonPress, start,
+              QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+        if not controller.IsDragging():
+            raise AssertionError("a press on point2 started no drag")
+        for step in (1, 2, 3):
+            Mouse(QtCore.QEvent.Type.MouseMove,
+                  (start[0] + 12.0 * step, start[1] + 6.0 * step),
+                  QtCore.Qt.NoButton, QtCore.Qt.LeftButton)
+        previewed = gizmoMath.PreviewValues(stage).get(pointsPath)
+        if previewed is None or previewed[2] == authored[2] or \
+                previewed[2][1] != authored[2][1]:
+            raise AssertionError("the drag previews point2 moved in its "
+                                 "plane: %s" % (previewed,))
+        if session.GetAttributeAtPath(pointsPath).default != authored:
+            raise AssertionError("the drag authored the points")
+        dragged = Walker()
+        if Gf.IsClose(dragged, before, 1e-6):
+            raise AssertionError("the rig did not follow the previewed "
+                                 "points: %s" % dragged)
+
+        end = (start[0] + 36.0, start[1] + 18.0)
+        Mouse(QtCore.QEvent.Type.MouseButtonRelease, end,
+              QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+        appController._processEvents()
+        attr = stage.GetAttributeAtPath(pointsPath)
+        if attr.Get() != previewed or attr.GetNumTimeSamples():
+            raise AssertionError("the release authored the previewed "
+                                 "points as the default: %s" % attr.Get())
+        if gizmoMath.PreviewValues(stage):
+            raise AssertionError("the preview outlived the release")
+        if not Gf.IsClose(Walker(), dragged, 1e-9):
+            raise AssertionError("the committed rig is not the previewed "
+                                 "one: %s vs %s" % (Walker(), dragged))
+        if controller.undoStack.UndoText() != "Move Path point 2":
+            raise AssertionError("one undo entry for the drag: %r"
+                                 % controller.undoStack.UndoText())
+
+        controller.Undo()
+        appController._processEvents()
+        if attr.Get() != authored:
+            raise AssertionError("undo did not restore the points")
+        if not Gf.IsClose(Walker(), before, 1e-9):
+            raise AssertionError("undo did not restore the rig")
+    finally:
+        api.ClearPrimSelection()
+        controller.SetTool(gizmoUI.TOOL_SELECT)
+        stage.RemovePrim("/PathTest")
+        appController._processEvents()
+
+
 def testUsdviewInputFunction(appController):
     # The plugin owns the platform naming (.dll/.dylib/.so) and the
     # installed-vs-build search order; asking it keeps this script working on
@@ -535,6 +705,7 @@ def testUsdviewInputFunction(appController):
     _AssertWarmRangeRepushOnRangeChange()
     _AssertTimelineOverlay(appController)
     _AssertFrameTickYieldsToTickingDriver()
+    _AssertPathCurvePointDrag(appController, dll)
 
     print("RIGEXEC_USDVIEW_OK generations %d -> %d, frame 1024 published "
           "the frame 1024 pose" % (generation0, generation1))

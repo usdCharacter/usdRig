@@ -89,6 +89,7 @@ try:
     import gizmoSettings
     import gizmoSnap
     import gizmoPreview
+    import pathCurveModel
     import rigExecUndo
     import sessionRegistry
 except ImportError:                    # loader that did not add our dir
@@ -101,6 +102,7 @@ except ImportError:                    # loader that did not add our dir
     import gizmoSettings
     import gizmoSnap
     import gizmoPreview
+    import pathCurveModel
     import rigExecUndo
     import sessionRegistry
 
@@ -256,6 +258,9 @@ class GizmoOverlay(QtWidgets.QWidget):
             for handle in handles:
                 if handle.kind == "center":
                     self._DrawCenter(painter, handle, ratio)
+            for handle in handles:
+                if handle.kind == "point":
+                    self._DrawPoint(painter, handle, ratio)
             self._DrawSnap(painter, ratio)
         finally:
             painter.end()
@@ -334,6 +339,17 @@ class GizmoOverlay(QtWidgets.QWidget):
         side = gizmoScreen.CENTER_SIDE * handle.sizePixels / ratio
         painter.setBrush(QtGui.QBrush(self._HandleColor(handle)))
         painter.setPen(QtCore.Qt.NoPen)
+        painter.drawRect(QtCore.QRectF(point.x() - side * 0.5,
+                                       point.y() - side * 0.5, side, side))
+
+    def _DrawPoint(self, painter, handle, ratio):
+        """A curve's control point: a filled square with a dark rim."""
+        point = self._Point(handle.points[0], ratio)
+        side = handle.sizePixels / ratio
+        pen = QtGui.QPen(_Color((0.0, 0.0, 0.0), LOCKED_OPACITY))
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        painter.setBrush(QtGui.QBrush(self._HandleColor(handle)))
         painter.drawRect(QtCore.QRectF(point.x() - side * 0.5,
                                        point.y() - side * 0.5, side, side))
 
@@ -1918,9 +1934,14 @@ class GizmoController(QtCore.QObject):
                 stage, prims, self._channels, self._Writer(),
                 self._solverPosed)
         else:
-            self._target, self._reason = gizmoMath.MakeTarget(
-                stage, prim, self._channels, self._Writer(),
-                self._solverPosed)
+            # A curve a rig's path mover samples edits its control points.
+            self._target = pathCurveModel.MakeTarget(
+                stage, prim, self._frame, self._writeMode)
+            self._reason = ""
+            if self._target is None:
+                self._target, self._reason = gizmoMath.MakeTarget(
+                    stage, prim, self._channels, self._Writer(),
+                    self._solverPosed)
         self._targetPaths = tuple(p.GetPath() for p in prims)
         self._PrimePreserveChildren()
         self._PrimeGroupPivot()
@@ -2042,6 +2063,11 @@ class GizmoController(QtCore.QObject):
         camera, viewport, ratio = self._Camera()
         if camera is None:
             return []
+        # A path curve puts a handle on each control point instead.
+        build = getattr(target, "BuildHandles", None)
+        if build is not None:
+            self._gimbalAxes = None
+            return build(camera, viewport, ratio)
         try:
             matrix = target.GizmoMatrix()
             orientation, gimbal = self._Orientation(target)
@@ -2348,11 +2374,15 @@ class GizmoController(QtCore.QObject):
             return "%s %s  %.1f deg%s" % (verb, target.label,
                                           self._drag.angle,
                                           self._SnapClause())
+        # The target's writer decides: a path curve's unkeyed points take
+        # their default whatever the toolbar says.
+        writeMode = getattr(getattr(target, "writer", None), "mode",
+                            self._writeMode)
         text = "%s %s%s  [%s / %s]%s" % (
             verb, target.label, self._GroupPivotClause(target),
             "Pivot" if self._channels == gizmoMath.CHANNELS_PIVOT
             else "Pose",
-            "Default" if self._writeMode == gizmoMath.WRITE_DEFAULT
+            "Default" if writeMode == gizmoMath.WRITE_DEFAULT
             else "Animation",
             self._SnapClause())
         skipped = self.SkippedChildren()
@@ -4007,6 +4037,10 @@ class GizmoController(QtCore.QObject):
             recorder = rigExecUndo.EditRecorder(self.usdviewApi.stage,
                                                 target.AttributePaths())
             recorder.Begin()
+            # A path curve moves the one control point pressed on.
+            grab = getattr(target, "Grab", None)
+            if grab is not None:
+                grab(handle)
             target.BeginDrag()
         except Exception as error:
             Tf.Warn("rigExecUsdview: could not start the gizmo drag: %s"

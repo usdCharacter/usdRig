@@ -7,6 +7,7 @@
 #include "bodyPurity.h"
 #include "frozenContextInternal.h"
 #include "movers/moverRegistry.h"
+#include "movers/pathOperation.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorPropertyBindings.h"
 
@@ -228,12 +229,17 @@ struct BindState {
     std::map<std::pair<SdfPath, int>, uint32_t> leafOf;
     std::unordered_map<SdfPath, int, SdfPath::Hash> chainOfTarget;
     std::unordered_map<SdfPath, int, SdfPath::Hash> recordOfConsumer;
+    /// When set, receives each override slot this state creates.
+    std::vector<SdfPath> *newSlots = nullptr;
 
     int Slot(const SdfPath &path)
     {
         RigExecBakedProgramImpl &B = *program;
         const auto [it, inserted] = B.headOverrideSlots.emplace(
             path, uint32_t(B.headOverrideSlots.size()));
+        if (inserted && newSlots) {
+            newSlots->push_back(path);
+        }
         return int(it->second);
     }
 
@@ -465,10 +471,15 @@ struct BindState {
         // head leaves (and frozen samples).
         const size_t leafCount = B.headLeaves.size();
         const size_t slotCount = B.headOverrideSlots.size();
+        // The slots this walk creates, so taking them back touches only them.
+        std::vector<SdfPath> walkSlots;
+        std::vector<SdfPath> *const outerSlots = newSlots;
+        newSlots = &walkSlots;
         RigExecBakedReaderWalk reader;
         reader.walk = Walk(attribute, type,
                            std::numeric_limits<int>::max(),
                            /*pinned=*/false);
+        newSlots = outerSlots;
         bool meets = false;
         std::set<uint32_t> leaves, slots;
         for (const std::vector<RigExecBakedWalkHop> *hops :
@@ -484,16 +495,27 @@ struct BindState {
             }
         }
         if (!meets) {
-            B.headLeaves.resize(leafCount);
-            for (auto it = leafOf.begin(); it != leafOf.end();) {
-                it = it->second >= leafCount ? leafOf.erase(it) : ++it;
+            // Leaf() appended this walk's leaves, each under a new key.
+            for (size_t i = leafCount; i < B.headLeaves.size(); ++i) {
+                const auto found = leafOf.find(std::make_pair(
+                    B.headLeaves[i].path, int(B.headLeaves[i].type)));
+                if (found != leafOf.end() && found->second >= leafCount) {
+                    leafOf.erase(found);
+                }
             }
-            for (auto it = B.headOverrideSlots.begin();
-                 it != B.headOverrideSlots.end();) {
-                it = it->second >= slotCount ? B.headOverrideSlots.erase(it)
-                                             : ++it;
+            B.headLeaves.resize(leafCount);
+            for (const SdfPath &path : walkSlots) {
+                const auto found = B.headOverrideSlots.find(path);
+                if (found != B.headOverrideSlots.end() &&
+                    found->second >= slotCount) {
+                    B.headOverrideSlots.erase(found);
+                }
             }
             return -1;
+        }
+        if (outerSlots) {
+            outerSlots->insert(outerSlots->end(), walkSlots.begin(),
+                               walkSlots.end());
         }
         reader.head = attribute.GetPath();
         if (rawFallback) {
@@ -1016,45 +1038,91 @@ RigExecBakedSampleWalkedPathLeaf(const RigExecBakedProgramImpl &B,
 RigExecBakedReaderWalk
 RigExecBakedBuildOracleRead(RigExecBakedProgramImpl *program,
                            const UsdAttribute &attribute,
-                           const std::vector<int> &available)
+                           const std::vector<int> &available,
+                           RigExecBakedOracleReadIndex *index)
 {
+    RigExecBakedOracleReadIndex fresh;
+    RigExecBakedOracleReadIndex &I = index ? *index : fresh;
+    RigExecBakedProgramImpl &B = *program;
+    // The index is only valid while the program grows under it.
+    if (I.leavesIndexed > B.headLeaves.size() ||
+        I.leavesFrozen > B.headLeaves.size() ||
+        I.slotsNamed > B.headOverrideSlots.size() ||
+        (I.versionsBuilt && (I.versionChains != B.propertyChains.size() ||
+                             I.versionRecords != B.propertyRecords.size()))) {
+        I = RigExecBakedOracleReadIndex();
+    }
+    // First leaf wins per (path, type), in leaf order.
+    for (size_t i = I.leavesIndexed; i < B.headLeaves.size(); ++i) {
+        const auto &leaf = B.headLeaves[i];
+        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)), uint32_t(i));
+    }
+    if (!I.versionsBuilt) {
+        for (size_t c = 0; c < B.propertyChains.size(); ++c) {
+            const auto &chain = B.propertyChains[c];
+            I.versions[chain.target].emplace_back(
+                int(c), chain.versionBase + uint32_t(chain.revisions.size()));
+            for (uint32_t r : chain.records)
+                I.versions[B.propertyRecords[r].consumer].emplace_back(
+                    int(c), B.propertyRecords[r].id);
+        }
+        I.versionChains = B.propertyChains.size();
+        I.versionRecords = B.propertyRecords.size();
+        I.versionsBuilt = true;
+    }
+    // Slots that existed before this read and are not yet named.
+    std::vector<SdfPath> newSlots;
+    if (I.slotsNamed != B.headOverrideSlots.size()) {
+        for (const auto &[path, slot] : B.headOverrideSlots)
+            newSlots.push_back(path);
+    }
+
     BindState state;
     state.program = program;
-    for (size_t i = 0; i < program->headLeaves.size(); ++i) {
-        const auto &leaf = program->headLeaves[i];
-        state.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)), uint32_t(i));
-    }
+    state.leafOf = std::move(I.leafOf);
+    state.newSlots = &newSlots;
     RigExecBakedReaderWalk read;
     read.head = attribute ? attribute.GetPath() : SdfPath();
     read.walk = state.Walk(attribute, HeadType::Float,
                           std::numeric_limits<int>::max(), false);
+    // The walk's own leaves entered leafOf as it made them.
+    I.leafOf = std::move(state.leafOf);
+    for (size_t i = I.leavesIndexed; i < B.headLeaves.size(); ++i) {
+        const auto &leaf = B.headLeaves[i];
+        I.leafOf.emplace(std::make_pair(leaf.path, int(leaf.type)), uint32_t(i));
+    }
+    I.leavesIndexed = B.headLeaves.size();
+
+    std::vector<char> isAvailable(B.propertyChains.size(), 0);
+    for (int c : available) isAvailable[size_t(c)] = 1;
     std::set<uint32_t> leaves, slots, versions;
     for (const auto *hops : {&read.walk.hops, &read.walk.doubleHops}) {
         for (const auto &hop : *hops) {
             if (hop.leaf >= 0) leaves.insert(uint32_t(hop.leaf));
             if (hop.overrideSlot >= 0) slots.insert(uint32_t(hop.overrideSlot));
-            for (int c : available) {
-                const auto &chain = program->propertyChains[size_t(c)];
-                if (chain.target == hop.path)
-                    versions.insert(chain.versionBase + uint32_t(chain.revisions.size()));
-                for (uint32_t r : chain.records)
-                    if (program->propertyRecords[r].consumer == hop.path)
-                        versions.insert(program->propertyRecords[r].id);
-            }
+            const auto found = I.versions.find(hop.path);
+            if (found == I.versions.end()) continue;
+            for (const auto &[chain, version] : found->second)
+                if (isAvailable[size_t(chain)]) versions.insert(version);
         }
     }
     read.leaves.assign(leaves.begin(), leaves.end());
     read.slots.assign(slots.begin(), slots.end());
     read.versions.assign(versions.begin(), versions.end());
-    for (auto &leaf : program->headLeaves) {
+    for (size_t i = I.leavesFrozen; i < B.headLeaves.size(); ++i) {
+        auto &leaf = B.headLeaves[i];
         if (leaf.typeMatches && leaf.frozenKey.IsEmpty() && leaf.path.IsPropertyPath())
             leaf.frozenKey = leaf.path.GetPrimPath().AppendProperty(
                 TfToken("frozenOracleHop:" + leaf.path.GetName()));
     }
-    for (const auto &[path, slot] : program->headOverrideSlots)
+    I.leavesFrozen = B.headLeaves.size();
+    for (const SdfPath &path : newSlots) {
         if (path.IsPrimPropertyPath())
-            program->headOverrideSlotsByName.emplace(
-                std::make_pair(path.GetParentPath(), path.GetNameToken()), slot);
+            B.headOverrideSlotsByName.emplace(
+                std::make_pair(path.GetParentPath(), path.GetNameToken()),
+                B.headOverrideSlots.at(path));
+    }
+    I.slotsNamed = B.headOverrideSlots.size();
     return read;
 }
 
@@ -1267,6 +1335,20 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
                     state.Walk(tangents, HeadType::Vec2fArray, reader);
                 r.hasTangents = bool(tangents);
             }
+            // A path reads its curve's points; what the settings came from
+            // is structural. An invalid binding passes the value through.
+            if (floatArm && r.opValid && r.op == RigExecPropertyOp::Path) {
+                RigExecPathBinding binding;
+                RigExecBindPathOperation(mover, &binding);
+                r.path = binding.settings;
+                for (const SdfPath &path : binding.structural) {
+                    B.rebuild.insert(path);
+                }
+                if (binding.points) {
+                    r.pathPoints = state.Walk(binding.points,
+                                              HeadType::Vec3fArray, reader);
+                }
+            }
             chain.revisions.push_back(std::move(r));
         }
     }
@@ -1366,7 +1448,7 @@ ForEachWalk(const Chain::Revision &r, Fn &&fn)
 {
     for (const RigExecBakedWalk *walk :
          {&r.enabled, &r.defaultWeight, &r.value, &r.minimum, &r.maximum,
-          &r.keys, &r.tangents}) {
+          &r.keys, &r.tangents, &r.pathPoints}) {
         fn(*walk);
     }
 }
@@ -1830,6 +1912,11 @@ ApplyFloat(const RigExecBakedProgramImpl &B, const Chain::Revision &r,
         if(r.hasTangents) {
             tangents=Read(B,r.tangents,tangents);record.tangentData=tangents.cdata();record.tangentCount=tangents.size();
         }
+    }
+    VtVec3fArray points;
+    if(record.op==RigExecPropertyOp::Path) {
+        points=Read(B,r.pathPoints,points);record.pathPointData=points.cdata();record.pathPointCount=points.size();
+        record.path=r.path;
     }
     return RigExecRunProperty(record,in,envelope,out);
 }

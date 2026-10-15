@@ -417,8 +417,13 @@ public:
 
     /// Declares what one manipulation is going to change, and returns how
     /// many doubles UpdatePreview will expect (-1 when the declaration is
-    /// rejected). \p packedAttributePaths is newline-separated absolute
-    /// attribute paths.
+    /// rejected). \p packedAttributePaths is newline-separated lines, each
+    /// an absolute attribute path, optionally followed by a TAB and a
+    /// decimal element count. The count is required for, and only accepted
+    /// on, an array slot (at most 1,048,576 elements): a float2[] attribute
+    /// takes 2 doubles per element, and an attribute whose value type is
+    /// VtVec3fArray (point3f[], float3[], vector3f[], normal3f[], ...) takes
+    /// 3. Other array types are refused.
     ///
     /// Declared once per drag so the per-sample call can be nothing but
     /// numbers. Resolving a path to a rig session, reading its value type, and
@@ -433,11 +438,13 @@ public:
     ///     (RigExecRigEvaluator::SetInteractiveOverrides);
     ///   * an xformOp on a prim no rig drives previews through
     ///     RigExecXformOverrideSceneIndex, which is the same prim's transform
-    ///     and nothing else.
+    ///     and nothing else. An array slot never takes this lane.
     int BeginPreview(const std::string &packedAttributePaths);
 
     /// One mouse sample: the declared slots' values, flattened in declaration
-    /// order -- 1 double for a scalar, 3 for a vector, 16 for a matrix.
+    /// order -- 1 double for a scalar, 3 for a vector, 16 for a matrix,
+    /// (x, y) per element for a float2[] slot and (x, y, z) per element for
+    /// a VtVec3fArray slot. A count other than the declared total fails.
     /// Evaluates and republishes. Authors nothing.
     bool UpdatePreview(const double *values, size_t count);
 
@@ -922,8 +929,9 @@ private:
         /// lane. Resolved once, at declaration: a drag does not change which
         /// rig a prim belongs to.
         SdfPath rigPath;
-        /// double | float | vec3d | vec3f | matrix4d -- how to turn this
-        /// slot's doubles back into the attribute's own type.
+        /// double | float | vec3d | vec3f | matrix4d | float2[] | vec3f[] --
+        /// how to turn this slot's doubles back into the attribute's own
+        /// type.
         TfToken valueKind;
         size_t arity = 1;
     };
@@ -1195,8 +1203,11 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetWarmingCompletedCount();
 RIGEXEC_IMAGING_C_API long long RigExecImaging_GetWarmingProgressCount();
 
 /// Manipulation preview (see RigExecImagingRegistry::BeginPreview /
-/// UpdatePreview / EndPreview). BeginPreview returns the double count
-/// UpdatePreview expects, or -1; the other two return 0 on success.
+/// UpdatePreview / EndPreview). A declaration line is `<attribute path>`,
+/// or `<attribute path>\t<elementCount>` for an array slot (float2[], or a
+/// VtVec3fArray type such as point3f[]). BeginPreview
+/// returns the double count UpdatePreview expects, or -1; the other two
+/// return 0 on success.
 RIGEXEC_IMAGING_C_API int RigExecImaging_BeginPreview(
     const char *packedAttributePaths);
 RIGEXEC_IMAGING_C_API int RigExecImaging_UpdatePreview(

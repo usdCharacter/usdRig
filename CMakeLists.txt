@@ -171,6 +171,7 @@ add_library(rigExec SHARED
     libs/rigExec/movers/surfaceMover.cpp
     libs/rigExec/movers/curveMover.cpp
     libs/rigExec/movers/mathMovers.cpp
+    libs/rigExec/movers/pathOperation.cpp
     libs/rigExec/moverGraph.cpp
     libs/rigExec/gpuDeformLowering.cpp
     libs/rigExec/tapSet.cpp
@@ -987,6 +988,17 @@ target_compile_definitions(testRigExecRuntimeInputs PRIVATE
 add_test(NAME testRigExecRuntimeInputs COMMAND testRigExecRuntimeInputs
     "${CMAKE_CURRENT_SOURCE_DIR}/examples"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+
+# The float math mover's path and quantize operations: the curve kernel,
+# the evaluator, a baked binary along the timeline and with its points set,
+# interactive overrides and stage edits of the points, compile refusals.
+add_executable(testRigExecPathOps tests/testRigExecPathOps.cpp)
+target_link_libraries(testRigExecPathOps PRIVATE
+    rigExec rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecPathOps PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecPathOps COMMAND testRigExecPathOps)
+rigexec_add_graph_test(testRigExecPathOps CONE_VERIFY)
 
 # The single-FlatBuffer format on hand-built files: bit exactness, the
 # refusals before and in verification, determinism, validation rules.
@@ -2016,6 +2028,12 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME testRigExecSkinLayoutOverrides COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_skin_layout_overrides.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testRigExecCurveKeyOverrides COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_curve_key_overrides.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testRigExecPathPointOverrides COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_path_point_overrides.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecBakedCone COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_baked_cone.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
@@ -2133,6 +2151,9 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_graph_model.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testPathCurveModel
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_path_curve_model.py")
     add_test(NAME testGraphScreen
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_graph_screen.py")
@@ -2199,7 +2220,8 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testGizmoPreview testGizmoDeferredRelease testGizmoOwnCommit
                          testGizmoSettings testGizmoDrag testGizmoSnap
                          testViewCubeMath testRigExecStageEdits
-                         testGraphModel testGraphScreen testCacheStripModel
+                         testGraphModel testPathCurveModel testGraphScreen
+                         testCacheStripModel
                          testCacheStripPanel testUsdviewFrameCacheDriver
                          testImagingHandle
                          testSessionState testRigExecProfilerModel)

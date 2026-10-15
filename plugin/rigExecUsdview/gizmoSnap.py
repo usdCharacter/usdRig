@@ -79,9 +79,9 @@ class SnapCandidate(object):
 def ConstrainToHandle(handle, pivot0, worldPoint, ctrl=False):
     """Constrain a world target to what the handle may move along.
 
-    Axis (no Ctrl) slides along its line, a plane -- or an axis with
-    Ctrl, which TranslateDelta also treats as a plane
-    (gizmoDrag.py:186-188) -- drops the normal component, and the
+    Axis (no Ctrl) slides along its line, a plane or a control point
+    -- or an axis with Ctrl, which TranslateDelta also treats as a
+    plane (gizmoDrag.py:186-188) -- drops the normal component, and the
     centre (or anything else) lands unchanged (spec 4.2).
     """
     kind = getattr(handle, "kind", None)
@@ -97,8 +97,8 @@ def ConstrainToHandle(handle, pivot0, worldPoint, ctrl=False):
         direction = direction.GetNormalized()
         return origin + direction * Gf.Dot(target - origin,
                                            direction)
-    if kind == "plane" or (kind == "axis" and ctrl):
-        if kind == "plane":
+    if kind in ("plane", "point") or (kind == "axis" and ctrl):
+        if kind != "axis":
             raw = getattr(handle, "worldNormal", None)
         else:
             raw = getattr(handle, "worldAxis", None)
@@ -158,9 +158,9 @@ def GridPoint(handle, pivot0, unsnapped, gridSize, ctrl=False):
     """Snap the unsnapped pivot to the world grid (spec 4.3).
 
     Only the components the handle may change move: an axis rounds
-    along itself, a plane (or Ctrl+axis) rounds the two in-plane
-    world components, the centre rounds all three, halves away from
-    zero through gizmoScreen.SnapAbsolute (gizmoScreen.py:673-685).
+    along itself, a plane, a control point or a Ctrl+axis rounds the
+    two in-plane world components, the centre rounds all three, halves
+    away from zero through gizmoScreen.SnapAbsolute (gizmoScreen.py:673-685).
     A handle pointing nowhere near a world axis has no grid
     coordinate in its frame, so it quantises the travel from the
     pivot on the same directions instead.
@@ -182,8 +182,8 @@ def GridPoint(handle, pivot0, unsnapped, gridSize, ctrl=False):
         travel = Gf.Dot(position - origin, axis)
         return origin + axis * gizmoScreen.SnapAbsolute(travel,
                                                        gridSize)
-    if kind == "plane" or (kind == "axis" and ctrl):
-        if kind == "plane":
+    if kind in ("plane", "point") or (kind == "axis" and ctrl):
+        if kind != "axis":
             raw = getattr(handle, "worldNormal", None)
         else:
             raw = getattr(handle, "worldAxis", None)

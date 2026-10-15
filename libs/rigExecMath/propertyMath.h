@@ -31,6 +31,16 @@ using RigExecPropertyMathParams = RigExecPropertyMathKernelParams<T, GfVec2f>;
 /// kernel, and silently computing the wrong one is worse than refusing.
 bool RigExecParsePropertyOp(const TfToken &token, RigExecPropertyOp *op);
 
+/// Parses a `rigExec:pathComponent` token (x, y, z, heading, end).
+bool RigExecParsePathComponent(const TfToken &token,
+                               RigExecPathComponent *component);
+
+/// Folds a UsdGeomBasisCurves `type`, `basis` and `wrap` into the path
+/// kernel's basis. False for a periodic curve or an unknown token.
+bool RigExecParsePathBasis(const TfToken &type, const TfToken &basis,
+                           const TfToken &wrap, RigExecPathBasis *out,
+                           bool *pinned);
+
 /// Piecewise-linear evaluation of sorted (input, output) keys with linear
 /// extrapolation past both ends along the first and last segments, the way
 /// a driven key with linear tangents and linear pre/post infinity behaves.
@@ -58,6 +68,10 @@ bool RigExecValidateLinearKeys(const GfVec2f *keys, size_t keyCount);
 ///             out-of-range signal.
 /// - blend:    r = value (so the weighted result is lerp(base, value, w))
 /// - curve:    r = keys(base), piecewise linear with linear extrapolation
+/// - quantize: r = the largest lo + k*value not above base
+///             (RigExecQuantizeDown); base when value is not positive
+/// - path:     r = the path curve sampled at arc length base - value
+///             (RigExecEvaluatePathComponent)
 float RigExecApplyFloatMath(
     float base, const RigExecPropertyMathParams<float> &params);
 

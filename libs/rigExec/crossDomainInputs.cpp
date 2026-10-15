@@ -27,7 +27,8 @@ void RevisionCrossReads(const RigExecBakedPropertyChain::Revision &revision,
                         const std::function<void(int)> &visit)
 {
     for (const auto *walk : {&revision.enabled,&revision.defaultWeight,&revision.value,
-         &revision.minimum,&revision.maximum,&revision.keys,&revision.tangents})
+         &revision.minimum,&revision.maximum,&revision.keys,&revision.tangents,
+         &revision.pathPoints})
         WalkCrossReads(*walk,visit);
 }
 }

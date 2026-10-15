@@ -135,7 +135,7 @@ _Int(const std::string &name, int value)
 }
 
 static _Set
-_Bool(const std::string &name, bool value)
+_Boolean(const std::string &name, bool value)
 {
     RrInputValue typed;
     typed.tag = RrInputTag::Bool;
@@ -2668,7 +2668,7 @@ main(int argc, char **argv)
         _CheckSets("computed_path_reads Mush.inputs:iterations = 6", stage,
                    10.0, {_Int(mush + "inputs:iterations", 6)}, 1);
         _CheckSets("computed_path_reads Mush.inputs:enabled = false", stage,
-                   10.0, {_Bool(mush + "inputs:enabled", false)}, 1);
+                   10.0, {_Boolean(mush + "inputs:enabled", false)}, 1);
         _CheckSets("computed_path_reads Projector.rigExec:rayOrigin", stage,
                    1.0,
                    {_Vec3d(projector + "rigExec:rayOrigin",
@@ -2698,7 +2698,7 @@ main(int argc, char **argv)
         CHECK(authored);
         ++cases;
         _CheckSets("delta_mush_mover Detail.inputs:enabled = true", stage,
-                   24.0, {_Bool(enabled, true)}, 2);
+                   24.0, {_Boolean(enabled, true)}, 2);
     }
 
     std::printf("inputs: %d of %d case(s) == session edit and moved, %d "

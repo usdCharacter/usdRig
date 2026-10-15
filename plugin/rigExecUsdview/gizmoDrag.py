@@ -281,7 +281,8 @@ def TranslateDelta(state):
     Axis: screen travel projected onto the handle. Ctrl+axis: the plane
     PERPENDICULAR to it. Planar handle: its own plane, through the
     square the artist grabbed, so that point stays under the cursor.
-    Centre: the camera plane.
+    Control point: likewise its plane, through the point. Centre: the
+    camera plane.
     """
     handle = state.handle
     origin = Gf.Vec3d(handle.worldCenter)
@@ -291,7 +292,7 @@ def TranslateDelta(state):
         parameter = gizmoScreen.AxisDragParameter(
             handle, state.press, state.current)
         return Gf.Vec3d(handle.worldAxis) * (parameter * handle.worldLength)
-    if handle.kind == "plane":
+    if handle.kind in ("plane", "point"):
         return PlaneDelta(state, origin, handle.worldNormal)
     return gizmoScreen.PlaneDragDelta(
         state.camera, state.viewport, origin, state.press, state.current)
@@ -387,7 +388,7 @@ def _GridReason(handle, ctrl):
     """
     _ = ctrl  # same axis with or without Ctrl, kept for the shape
     kind = getattr(handle, "kind", None)
-    if kind == "plane":
+    if kind in ("plane", "point"):
         direction = getattr(handle, "worldNormal", None)
     elif kind == "axis":                      # ctrl or not: same axis
         direction = getattr(handle, "worldAxis", None)

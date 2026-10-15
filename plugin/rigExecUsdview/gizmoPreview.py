@@ -37,6 +37,8 @@
 # (or the one owning the active window), and before any session has installed
 # a sink -- headless, the tests -- a keyless channel of its own.
 #
+from pxr import Vt
+
 try:
     import gizmoMath
     import sessionRegistry
@@ -108,7 +110,8 @@ class PreviewChannel(object):
         _Notify(pending)
         if self._sink is None:
             return False
-        keys = tuple(str(path) for path in pending.keys())
+        keys = tuple(_Declaration(path, value)
+                     for path, value in pending.items())
         values = []
         for value in pending.values():
             flat = Flatten(value)
@@ -234,6 +237,18 @@ def HasSink(session=None):
     return channel is not None and channel.HasSink()
 
 
+# The array values a slot carries: float2[] (2 floats per element) and
+# every type held as a VtVec3fArray, such as point3f[] (3 per element).
+_ARRAY_TYPES = (Vt.Vec2fArray, Vt.Vec3fArray)
+
+
+def _Declaration(path, value):
+    """One slot's declaration line: an array states its length."""
+    if isinstance(value, _ARRAY_TYPES):
+        return "%s\t%d" % (path, len(value))
+    return str(path)
+
+
 def Flatten(value):
     """
     `value` as a flat list of doubles, or None when it is not a kind the
@@ -241,10 +256,19 @@ def Flatten(value):
 
     The arity has to agree with what the C++ side derived from the
     ATTRIBUTE's type, so the shapes here are exactly the ones it accepts:
-    a scalar, a 3-vector, and a 4x4 matrix.
+    a scalar, a 3-vector, a 4x4 matrix, a float2[] array (two per element)
+    and a point3f[]-like array (three per element), an array's length
+    declared with the slot.
     """
     if isinstance(value, bool):
         return None
+    # Before the length tests: an array of 3 or 4 elements is not a vector
+    # or a matrix. Read through the buffer protocol: per-element access
+    # costs ~1000x more on arrays of thousands of elements.
+    if isinstance(value, _ARRAY_TYPES):
+        if not len(value):
+            return []
+        return memoryview(value).cast("B").cast("f").tolist()
     if isinstance(value, (int, float)):
         return [float(value)]
     # Gf.Vec3d / Gf.Vec3f / Gf.Matrix4d are all indexable; a matrix by row.

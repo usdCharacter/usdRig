@@ -275,6 +275,13 @@ def AuthorKnot(spline, time, value):
                          % (time, value))
     knot = spline.GetKnot(frame)
     if knot is None:
+        # Composed layer time scales can round an integer frame by a few
+        # ulps. Re-key that knot without losing its shaped tangents.
+        nearby = [t for t in spline.GetKnots()
+                  if abs(t - frame) < MIN_TIME_GAP]
+        if nearby:
+            knot = spline.GetKnot(min(nearby, key=lambda t: abs(t - frame)))
+    if knot is None:
         knot = Ts.Knot(typeName=spline.GetValueTypeName(), time=frame,
                        value=value, nextInterp=DEFAULT_INTERP)
         knot.SetPreTanAlgorithm(DEFAULT_TAN_ALGORITHM)

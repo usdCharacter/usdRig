@@ -11,9 +11,12 @@
 #include "pxr/base/gf/bbox3d.h"
 #include "pxr/base/gf/range3d.h"
 #include "pxr/base/gf/rotation.h"
+#include "pxr/base/gf/vec2f.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/registryManager.h"
 #include "pxr/base/tf/type.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
@@ -3470,18 +3473,66 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
 
 namespace {
 
+// The largest element count an array slot may declare.
+constexpr size_t kMaxPreviewElements = size_t(1) << 20;
+
+// A declaration line's element count: plain decimal digits only, at most
+// kMaxPreviewElements.
+bool
+_ParsePreviewElementCount(const std::string &text, size_t *count)
+{
+    if (text.empty()) {
+        return false;
+    }
+    size_t value = 0;
+    for (const char c : text) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+        value = value * 10 + size_t(c - '0');
+        if (value > kMaxPreviewElements) {
+            return false;
+        }
+    }
+    *count = value;
+    return true;
+}
+
 // How many doubles a value of this type takes, and the token naming how to
 // rebuild it. An unsupported type returns an empty token: a manipulation
 // cannot preview a value it cannot reconstruct, and saying so at declaration
-// time is better than guessing per sample.
+// time is better than guessing per sample. An element count is required for,
+// and only accepted on, an array slot: float2[], or any type held as a
+// VtVec3fArray (point3f[], float3[], vector3f[], normal3f[], ...).
 TfToken
-_PreviewValueKind(const SdfValueTypeName &type, size_t *arity)
+_PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
+                  size_t elementCount, size_t *arity)
 {
     static const TfToken kDouble("double");
     static const TfToken kFloat("float");
     static const TfToken kVec3d("vec3d");
     static const TfToken kVec3f("vec3f");
     static const TfToken kMatrix4d("matrix4d");
+    static const TfToken kFloat2Array("float2[]");
+    static const TfToken kVec3fArray("vec3f[]");
+    *arity = 0;
+    if (type == SdfValueTypeNames->Float2Array) {
+        if (!hasElementCount) {
+            return TfToken();
+        }
+        *arity = 2 * elementCount;
+        return kFloat2Array;
+    }
+    if (type.GetType() == TfType::Find<VtVec3fArray>()) {
+        if (!hasElementCount) {
+            return TfToken();
+        }
+        *arity = 3 * elementCount;
+        return kVec3fArray;
+    }
+    if (hasElementCount) {
+        return TfToken();
+    }
     if (type == SdfValueTypeNames->Double) {
         *arity = 1;
         return kDouble;
@@ -3508,13 +3559,31 @@ _PreviewValueKind(const SdfValueTypeName &type, size_t *arity)
         *arity = 16;
         return kMatrix4d;
     }
-    *arity = 0;
     return TfToken();
 }
 
+// \p arity is the slot's double count; a float2[] slot reads it as
+// consecutive (x, y) pairs and a vec3f[] slot as (x, y, z) triples.
 VtValue
-_PreviewValue(const TfToken &kind, const double *v)
+_PreviewValue(const TfToken &kind, const double *v, size_t arity)
 {
+    if (kind == "float2[]") {
+        VtVec2fArray array(arity / 2);
+        GfVec2f *out = array.data();
+        for (size_t i = 0; i < array.size(); ++i) {
+            out[i] = GfVec2f(float(v[2 * i]), float(v[2 * i + 1]));
+        }
+        return VtValue(std::move(array));
+    }
+    if (kind == "vec3f[]") {
+        VtVec3fArray array(arity / 3);
+        GfVec3f *out = array.data();
+        for (size_t i = 0; i < array.size(); ++i) {
+            out[i] = GfVec3f(float(v[3 * i]), float(v[3 * i + 1]),
+                             float(v[3 * i + 2]));
+        }
+        return VtValue(std::move(array));
+    }
     if (kind == "double") {
         return VtValue(v[0]);
     }
@@ -3573,7 +3642,16 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
     }
     std::vector<PreviewSlot> slots;
     size_t total = 0;
-    for (const std::string &text : _SplitLines(packedAttributePaths)) {
+    for (const std::string &line : _SplitLines(packedAttributePaths)) {
+        // `<path>` or `<path>\t<elementCount>`.
+        const size_t tab = line.find('\t');
+        const bool hasElementCount = tab != std::string::npos;
+        size_t elementCount = 0;
+        if (hasElementCount &&
+            !_ParsePreviewElementCount(line.substr(tab + 1), &elementCount)) {
+            return -1;
+        }
+        const std::string text = line.substr(0, tab);
         // Caller-supplied strings: ask before constructing, the same guard
         // SetWeightOverlay uses.
         if (!SdfPath::IsValidPathString(text)) {
@@ -3591,7 +3669,8 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
         slot.primPath = path.GetPrimPath();
         slot.attributeName = path.GetNameToken();
         slot.valueKind = _PreviewValueKind(
-            attribute.GetTypeName(), &slot.arity);
+            attribute.GetTypeName(), hasElementCount, elementCount,
+            &slot.arity);
         if (slot.valueKind.IsEmpty()) {
             return -1;
         }
@@ -3608,14 +3687,19 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
             }
         }
         if (slot.rigPath.IsEmpty() &&
-            !UsdGeomXformOp::IsXformOp(slot.attributeName)) {
+            (hasElementCount ||
+             !UsdGeomXformOp::IsXformOp(slot.attributeName))) {
             // Nothing to preview: the prim has no rig to re-run and this is
-            // not part of its transform. Refused rather than silently
-            // ignored, because the caller would then be sending values that
-            // change nothing and wondering why.
+            // not part of its transform (an array never is). Refused rather
+            // than silently ignored, because the caller would then be
+            // sending values that change nothing and wondering why.
             return -1;
         }
         total += slot.arity;
+        // The count is returned as an int.
+        if (total > size_t(std::numeric_limits<int>::max())) {
+            return -1;
+        }
         slots.push_back(std::move(slot));
     }
     _previewSlots = std::move(slots);
@@ -3704,7 +3788,7 @@ RigExecImagingRegistry::_ResolvePreviewSample(
             return false;
         }
         const VtValue value =
-            _PreviewValue(slot.valueKind, values + offset);
+            _PreviewValue(slot.valueKind, values + offset, slot.arity);
         offset += slot.arity;
         if (value.IsEmpty()) {
             return false;

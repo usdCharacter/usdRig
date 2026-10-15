@@ -30,6 +30,7 @@
 #include "frozenContextInternal.h"
 #include "moverGraph.h"
 #include "movers/moverRegistry.h"
+#include "movers/pathOperation.h"
 #include "parallel.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorInternal.h"
@@ -2332,9 +2333,20 @@ _PrintProgramDigest(const RigExecBakedProgramImpl &B)
                 t.Int(r.opValid ? int64_t(r.op) : -1);
                 t.Path(r.weightObject);
                 t.Int(r.hasTangents ? 1 : 0);
+                t.Int(r.path.valid ? 1 : 0);
+                t.Int(int64_t(r.path.basis));
+                t.Int(r.path.pinned ? 1 : 0);
+                t.Int(r.path.planar ? 1 : 0);
+                t.Int(int64_t(r.path.component));
+                for (const float f : {r.path.offsetX, r.path.offsetZ,
+                                      r.path.headingOffset}) {
+                    uint32_t bits = 0;
+                    std::memcpy(&bits, &f, sizeof(bits));
+                    t.Int(int64_t(bits));
+                }
                 for (const RigExecBakedWalk *w :
                      {&r.enabled, &r.defaultWeight, &r.value, &r.minimum,
-                      &r.maximum, &r.keys, &r.tangents}) {
+                      &r.maximum, &r.keys, &r.tangents, &r.pathPoints}) {
                     walk(*w);
                 }
             }
@@ -3956,6 +3968,24 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                  revisions) {
             B.prims.insert(revision.moverPath);
             B.resolvedRoutedPrims.insert(revision.moverPath);
+            // A path's curve points are read the same way, through the
+            // revision's walk, so its curve is routed like the mover.
+            const UsdPrim mover = E._stage->GetPrimAtPath(revision.moverPath);
+            TfToken operation;
+            if (const UsdAttribute a =
+                    mover ? mover.GetAttribute(TfToken("rigExec:operation"))
+                          : UsdAttribute()) {
+                a.Get(&operation, UsdTimeCode::Default());
+            }
+            RigExecPropertyOp op;
+            RigExecPathBinding binding;
+            if (RigExecParsePropertyOp(operation, &op) &&
+                op == RigExecPropertyOp::Path &&
+                (RigExecBindPathOperation(mover, &binding),
+                 !binding.curve.IsEmpty())) {
+                B.prims.insert(binding.curve);
+                B.resolvedRoutedPrims.insert(binding.curve);
+            }
         }
     }
     // The property revisions as head-tier ops, ordered by what they read and
@@ -5189,6 +5219,12 @@ RigExecBakedProgram::DescribePropertyChains(
                 if (tangents && tangents.Get(&values)) {
                     r.tangents.assign(values.begin(), values.end());
                 }
+            }
+            if (floatArm && r.opValid && r.op == RigExecPropertyOp::Path) {
+                RigExecPathBinding binding;
+                RigExecBindPathOperation(mover, &binding);
+                r.path = binding.settings;
+                r.pathPoints = binding.points;
             }
             chain.revisions.push_back(std::move(r));
         }

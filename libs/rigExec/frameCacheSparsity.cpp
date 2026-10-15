@@ -118,10 +118,15 @@ RigExecRetainedSourcesBytes(const RigExecRetainedFrameState &state)
     if (ordered) {
         total += RigExecFrameDigestOrderPathTextBytes(order);
     }
+    const RigExecFrozenStaticSamples *table = state.inputs.staticSamples.get();
     for (const RigExecSampledInput &sampled : state.inputs.values) {
         total += ordered ? sizeof(bool)
                          : sampled.path.GetString().size() + sizeof(bool);
-        if (sampled.hasValue) {
+        // A verbatim copy of a static table entry shares the table's payload.
+        const bool fromTable = table && sampled.staticSample >= 0 &&
+            size_t(sampled.staticSample) < table->samples.size() &&
+            table->samples[size_t(sampled.staticSample)].path == sampled.path;
+        if (sampled.hasValue && !fromTable) {
             total += _ArrayBytes(sampled.value);
         }
     }

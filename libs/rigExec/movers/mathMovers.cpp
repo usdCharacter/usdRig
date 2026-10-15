@@ -8,6 +8,7 @@
 // branch; compile validation is the generic property-target rules plus
 // the shared operation check below.
 #include "moverRegistry.h"
+#include "pathOperation.h"
 
 #include "rigExecMath/propertyMath.h"
 
@@ -63,6 +64,19 @@ _ValidateMathMoverOp(
                            "inputs:keys with finite keys strictly "
                            "increasing in input, and inputs:tangents "
                            "empty or one per key";
+            return false;
+        }
+    }
+    if (op == rigExec::RigExecPropertyOp::Quantize ||
+        op == rigExec::RigExecPropertyOp::Path) {
+        if (domain != rigExec::RigExecMoverDomain::PropertyFloat) {
+            *error = who + ": rigExec:operation '" + operation.GetString() +
+                     "' is defined only for RigExecFloatMathMover";
+            return false;
+        }
+        rigExec::RigExecPathBinding binding;
+        if (op == rigExec::RigExecPropertyOp::Path &&
+            !rigExec::RigExecBindPathOperation(prim, &binding, error)) {
             return false;
         }
     }

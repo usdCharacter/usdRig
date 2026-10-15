@@ -2227,8 +2227,9 @@ class RigExecAutoClavicle "RigExecAutoClavicle" (
 
 class RigExecFloatMathMover "RigExecFloatMathMover" (
     customData = {
-        string userDocBrief = """Statically typed add, multiply, clamp, remap, blend, or curve
-    over an exact float property target (spec section 4.1)."""
+        string userDocBrief = """Statically typed add, multiply, clamp, remap, blend, curve,
+    quantize, or path over an exact float property target (spec section
+    4.1)."""
     }
 )
 {
@@ -2248,7 +2249,42 @@ class RigExecFloatMathMover "RigExecFloatMathMover" (
     )
     float inputs:value = 0
     uniform token rigExec:operation = "clamp" (
-        allowedTokens = ["add", "multiply", "clamp", "remap", "blend", "curve"]
+        allowedTokens = ["add", "multiply", "clamp", "remap", "blend", "curve", "quantize", "path"]
+    )
+    rel rigExec:path (
+        customData = {
+            string userDocBrief = """The path operation's curve: exactly one UsdGeomBasisCurves
+        prim holding one curve, linear or cubic (bezier, bspline or
+        catmullRom), nonperiodic or pinned."""
+        }
+    )
+    uniform token rigExec:pathComponent = "x" (
+        allowedTokens = ["x", "y", "z", "heading", "end"]
+        customData = {
+            string userDocBrief = "What the path operation returns."
+        }
+    )
+    uniform float rigExec:pathHeadingOffset = 0 (
+        customData = {
+            string userDocBrief = """Degrees added to the tangent's heading, for heading and for
+        the rotation of rigExec:pathOffset."""
+        }
+    )
+    uniform token rigExec:pathMeasure = "length" (
+        allowedTokens = ["length", "planar"]
+        customData = {
+            string userDocBrief = """How the path operation measures distance along the curve:
+        its arc length, or (planar) the arc length of its projection on the
+        XZ plane -- ground distance, with the points' y carried as a height,
+        so a walk's stride does not change over terrain."""
+        }
+    )
+    uniform float2 rigExec:pathOffset = (0, 0) (
+        customData = {
+            string userDocBrief = """A local (x, z) offset from the sampled point, rotated by the
+        heading, for x and z: where a frame that travels along the path
+        carries a point (a foot's landing spot, say)."""
+        }
     )
 }
 

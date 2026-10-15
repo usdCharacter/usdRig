@@ -17,6 +17,14 @@ bool RigExecRunProperty(const RigExecFloatPropertyRecord &record,float base,floa
             params.tangents=tangents;params.tangentCount=count;
         }
     }
+    if(record.op==RigExecPropertyOp::Path) {
+        static_assert(sizeof(GfVec3f)==3*sizeof(float),"path points are packed floats");
+        params.path.points=record.pathPointData?record.pathPointData->data():nullptr;
+        params.path.pointCount=record.pathPointCount;
+        params.path.basis=record.path.basis;params.path.pinned=record.path.pinned;params.path.planar=record.path.planar;
+        params.pathSettings=record.path;
+        if(!record.path.valid || !RigExecPathCurveValid(params.path))return false;
+    }
     params.weight=envelope;*result=RigExecApplyFloatMath(base,params);return true;
 }
 bool RigExecRunProperty(const RigExecFloatPropertyRecord &record,double base,float envelope,double *result) {

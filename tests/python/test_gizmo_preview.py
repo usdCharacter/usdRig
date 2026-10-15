@@ -17,7 +17,7 @@ import rigexec_test_env
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Gf, Sdf, Usd, UsdGeom  # noqa: E402
+from pxr import Gf, Sdf, Usd, UsdGeom, Vt  # noqa: E402
 
 import gizmoMath  # noqa: E402
 import gizmoPreview  # noqa: E402
@@ -335,8 +335,118 @@ def TestGroupPushesOneSamplePerMove():
         _Check(abs(value[1] - 5.0) < 1e-9,
                "%s authored once, on release: %s" % (prim.GetName(), value))
 
+
+class _ArraySink(_FakeSink):
+    """
+    Expects 1 double per scalar slot and, per declared array element, 3 for
+    a `points` attribute and 2 for any other (a float2[] table).
+    """
+
+    def Begin(self, packedPaths):
+        self.declarations.append(packedPaths)
+        total = 0
+        for line in packedPaths.split("\n"):
+            if "\t" not in line:
+                total += 1
+                continue
+            path, count = line.split("\t")
+            total += (3 if path.endswith(".points") else 2) * int(count)
+        return total
+
+
+def TestFlattenArrays():
+    pairs = [(1, 2), (3, 4), (5, 6), (7, 8)]
+    _Check(gizmoPreview.Flatten(Vt.Vec2fArray(pairs[:3])) ==
+           [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+           "three float2 elements are six doubles, not a vector")
+    _Check(gizmoPreview.Flatten(Vt.Vec2fArray(pairs)) ==
+           [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+           "four float2 elements are eight doubles, not a matrix")
+    _Check(gizmoPreview.Flatten(Vt.Vec2fArray()) == [],
+           "an empty table is no doubles")
+    points = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+    _Check(gizmoPreview.Flatten(Vt.Vec3fArray(points[:1])) ==
+           [1.0, 2.0, 3.0], "one point is three doubles")
+    _Check(gizmoPreview.Flatten(Vt.Vec3fArray(points[:3])) ==
+           [float(v) for v in range(1, 10)],
+           "three points are nine doubles, not a vector")
+    _Check(gizmoPreview.Flatten(Vt.Vec3fArray(points)) ==
+           [float(v) for v in range(1, 13)],
+           "four points are twelve doubles, not a matrix")
+    _Check(gizmoPreview.Flatten(Vt.Vec3fArray()) == [],
+           "an empty point array is no doubles")
+    # Floats exactly as stored: the preview must not round a point.
+    tiny = Vt.Vec3fArray([(0.1, -1e-7, 3.4e38)])
+    _Check(gizmoPreview.Flatten(tiny) == [float(c) for c in tiny[0]],
+           "point components pass through as their float values")
+
+
+def TestPushDeclaresArrayLength():
+    sink = _ArraySink()
+    gizmoPreview.SetSink(sink)
+    try:
+        avar = Sdf.Path("/Asset/Rig/Ctl.avars:tz")
+        keys = Sdf.Path("/Asset/Rig/Curve.inputs:keys")
+        _Check(gizmoPreview.Push({avar: 1.0,
+                                  keys: Vt.Vec2fArray([(0, 1), (2, 3)])}),
+               "the sink took a scalar and a table")
+        _Check(sink.declarations == ["/Asset/Rig/Ctl.avars:tz\n"
+                                     "/Asset/Rig/Curve.inputs:keys\t2"],
+               "a table declares its element count: %s" % sink.declarations)
+        _Check(sink.samples == [[1.0, 0.0, 1.0, 2.0, 3.0]],
+               "the table's pairs follow the scalar: %s" % sink.samples)
+        gizmoPreview.Push({avar: 2.0, keys: Vt.Vec2fArray([(0, 5), (2, 6)])})
+        _Check(len(sink.declarations) == 1, "the same length declares once")
+        gizmoPreview.Push({avar: 2.0,
+                           keys: Vt.Vec2fArray([(0, 5), (1, 6), (2, 7)])})
+        _Check(len(sink.declarations) == 2 and
+               sink.declarations[-1].endswith("inputs:keys\t3"),
+               "a new length re-declares: %s" % sink.declarations)
+        _Check(len(sink.samples[-1]) == 7, "and sends the longer table")
+    finally:
+        gizmoPreview.SetSink(None)
+
+
+def TestPushDeclaresPointArrayLength():
+    sink = _ArraySink()
+    gizmoPreview.SetSink(sink)
+    try:
+        points = Sdf.Path("/Asset/Rig/Path.points")
+        keys = Sdf.Path("/Asset/Rig/Curve.inputs:keys")
+        first = Vt.Vec3fArray([(0, 0, 0), (1, 0, 2), (2, 0, 4)])
+        _Check(gizmoPreview.Push({points: first,
+                                  keys: Vt.Vec2fArray([(0, 1)])}),
+               "the sink took a point array and a table")
+        _Check(sink.declarations == ["/Asset/Rig/Path.points\t3\n"
+                                     "/Asset/Rig/Curve.inputs:keys\t1"],
+               "a point array declares its element count: %s"
+               % sink.declarations)
+        _Check(sink.samples == [[0.0, 0.0, 0.0, 1.0, 0.0, 2.0,
+                                 2.0, 0.0, 4.0, 0.0, 1.0]],
+               "x, y, z per point, then the pair: %s" % sink.samples)
+        moved = Vt.Vec3fArray(first)
+        moved[1] = Gf.Vec3f(1.5, 0, 2.5)
+        gizmoPreview.Push({points: moved, keys: Vt.Vec2fArray([(0, 1)])})
+        _Check(len(sink.declarations) == 1,
+               "moving a point keeps the declaration")
+        _Check(sink.samples[-1][3:6] == [1.5, 0.0, 2.5],
+               "and sends the moved point: %s" % sink.samples[-1])
+        gizmoPreview.Push({points: Vt.Vec3fArray([(0, 0, 0), (1, 0, 1)]),
+                           keys: Vt.Vec2fArray([(0, 1)])})
+        _Check(len(sink.declarations) == 2 and
+               sink.declarations[-1].startswith("/Asset/Rig/Path.points\t2"),
+               "a new point count re-declares: %s" % sink.declarations)
+        _Check(len(sink.samples[-1]) == 8, "and sends the shorter array")
+    finally:
+        gizmoPreview.SetSink(None)
+
+
 def main():
     for name, fn in (("flatten", TestFlatten),
+                     ("flatten arrays", TestFlattenArrays),
+                     ("array declarations", TestPushDeclaresArrayLength),
+                     ("point array declarations",
+                      TestPushDeclaresPointArrayLength),
                      ("declare once", TestPushDeclaresOnceAndSendsNumbers),
                      ("end", TestEndStopsPreviewing),
                      ("arity", TestArityDisagreementIsDropped),
@@ -354,7 +464,7 @@ def main():
             gizmoPreview.SetSink(None)
             gizmoMath.SetPreviewValues({})
         print("  ok: %s" % name)
-    print("GIZMO_PREVIEW_OK (%d groups)" % 8)
+    print("GIZMO_PREVIEW_OK (%d groups)" % 11)
     return 0
 
 

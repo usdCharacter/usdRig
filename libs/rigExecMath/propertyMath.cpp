@@ -22,6 +22,64 @@ RigExecParsePropertyOp(const TfToken &token, RigExecPropertyOp *op)
         *op = RigExecPropertyOp::Blend;
     } else if (token == "curve") {
         *op = RigExecPropertyOp::Curve;
+    } else if (token == "quantize") {
+        *op = RigExecPropertyOp::Quantize;
+    } else if (token == "path") {
+        *op = RigExecPropertyOp::Path;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool
+RigExecParsePathComponent(const TfToken &token,
+                          RigExecPathComponent *component)
+{
+    if (!component) {
+        return false;
+    }
+    if (token == "x") {
+        *component = RigExecPathComponent::X;
+    } else if (token == "y") {
+        *component = RigExecPathComponent::Y;
+    } else if (token == "z") {
+        *component = RigExecPathComponent::Z;
+    } else if (token == "heading") {
+        *component = RigExecPathComponent::Heading;
+    } else if (token == "end") {
+        *component = RigExecPathComponent::End;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool
+RigExecParsePathBasis(const TfToken &type, const TfToken &basis,
+                      const TfToken &wrap, RigExecPathBasis *out,
+                      bool *pinned)
+{
+    if (!out || !pinned) {
+        return false;
+    }
+    if (wrap == "pinned") {
+        *pinned = true;
+    } else if (wrap == "nonperiodic") {
+        *pinned = false;
+    } else {
+        return false;
+    }
+    if (type == "linear") {
+        *out = RigExecPathBasis::Linear;
+    } else if (type != "cubic") {
+        return false;
+    } else if (basis == "bezier") {
+        *out = RigExecPathBasis::Bezier;
+    } else if (basis == "bspline") {
+        *out = RigExecPathBasis::Bspline;
+    } else if (basis == "catmullRom") {
+        *out = RigExecPathBasis::CatmullRom;
     } else {
         return false;
     }

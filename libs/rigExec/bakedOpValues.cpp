@@ -987,7 +987,7 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
             exact=Box(out,VtValue(value))&&exact;return value;
         };
         // Diagnostics read all cross-domain declarations before numerical admission.
-        for(const auto *walk:{&revision.enabled,&revision.defaultWeight,&revision.value,&revision.minimum,&revision.maximum,&revision.keys,&revision.tangents}) {
+        for(const auto *walk:{&revision.enabled,&revision.defaultWeight,&revision.value,&revision.minimum,&revision.maximum,&revision.keys,&revision.tangents,&revision.pathPoints}) {
             coverWalk(*walk);
             for(const auto *hops:{&walk->hops,&walk->doubleHops})for(const auto &hop:*hops)if(hop.crossDomain>=0){VtValue value;std::string diagnostic;const bool available=RigExecBakedReadCrossDomain(B,hop.crossDomain,&value,&diagnostic);Put(out,available);Put(out,diagnostic);}
         }
@@ -997,7 +997,8 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
         if(revision.weightObject.IsEmpty())selected(revision.defaultWeight,1.0f);
         if(chain.arm==RigExecBakedPropertyChain::Arm::Matrix4d)selected(revision.value,GfMatrix4d(1));
         else if(chain.arm==RigExecBakedPropertyChain::Arm::Vec3f){selected(revision.value,GfVec3f(0));selected(revision.minimum,GfVec3f(0));selected(revision.maximum,GfVec3f(0));}
-        else {selected(revision.value,0.0f);selected(revision.minimum,0.0f);selected(revision.maximum,0.0f);if(revision.op==RigExecPropertyOp::Curve){selected(revision.keys,VtArray<GfVec2f>());if(revision.hasTangents)selected(revision.tangents,VtArray<GfVec2f>());}}
+        else {selected(revision.value,0.0f);selected(revision.minimum,0.0f);selected(revision.maximum,0.0f);if(revision.op==RigExecPropertyOp::Curve){selected(revision.keys,VtArray<GfVec2f>());if(revision.hasTangents)selected(revision.tangents,VtArray<GfVec2f>());}
+            if(revision.op==RigExecPropertyOp::Path)selected(revision.pathPoints,VtVec3fArray());}
         return exact;
     }
     if(effective)for(int index:step.readerWalks)if(index>=0 && size_t(index)<B.readerWalks.size())coverWalk(B.readerWalks[size_t(index)].walk);

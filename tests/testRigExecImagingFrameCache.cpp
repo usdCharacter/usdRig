@@ -3108,7 +3108,17 @@ TestStackFullRangeCursorWarmsEveryFrame(const std::string &examplesDir)
     playheadRequest.fenceToken = registry.CurrentFenceToken(rig, UsdTimeCode(start));
     if (playheadWork.work)
         CHECK(playheadWork.work(playheadRequest) == RigExecWarmOutcome::Published);
-    // The 1 GiB logical cap deliberately cannot retain all 200 stack frames.
+    // A cap sized from the playhead entry cannot retain half the stack frames.
+    size_t byteCap = kRigExecFrameCacheDefaultByteCap;
+    {
+        const RigExecFrameCacheStats seeded = registry.GetFrameCacheStats(rig);
+        RigExecImagingBridge *bridge = registry.GetBridge(rig);
+        CHECK(bridge && seeded.entryCount == 1);
+        if (bridge && seeded.entryCount == 1) {
+            byteCap = seeded.bytes * (frames.size() / 2);
+            bridge->GetFrameCache()->SetByteCap(byteCap);
+        }
+    }
     if (!registry.SetWarmRange(rig, frames)) {
         CHECK(false);
         registry.SetWarmPublishObserverForTesting({});
@@ -3163,7 +3173,7 @@ TestStackFullRangeCursorWarmsEveryFrame(const std::string &examplesDir)
           stats.published - before.published);
     CHECK(stats.queuedDepth == 0 && stats.running == 0);
     const RigExecFrameCacheStats cacheStats = registry.GetFrameCacheStats(rig);
-    CHECK(cacheStats.bytes <= kRigExecFrameCacheDefaultByteCap);
+    CHECK(cacheStats.bytes <= byteCap);
     CHECK(cacheStats.evictions > 0);
     CHECK(cacheStats.entryCount < frames.size());
     // Still-resident publications must serve without an evaluator pull.

@@ -1323,6 +1323,7 @@ inline const char *EnumNamePropertyValueType(PropertyValueType e) {
 
 /// RigExecParsePropertyOp of the mover's rigExec:operation, read at Default.
 /// Invalid: the token did not parse, so the revision's inputs are unusable.
+/// Quantize and Path follow Invalid so a format 20/21 file keeps its values.
 enum class PropertyOp : uint8_t {
   Add = 0,
   Multiply = 1,
@@ -1331,11 +1332,13 @@ enum class PropertyOp : uint8_t {
   Blend = 4,
   Curve = 5,
   Invalid = 6,
+  Quantize = 7,
+  Path = 8,
   MIN = Add,
-  MAX = Invalid
+  MAX = Path
 };
 
-inline const PropertyOp (&EnumValuesPropertyOp())[7] {
+inline const PropertyOp (&EnumValuesPropertyOp())[9] {
   static const PropertyOp values[] = {
     PropertyOp::Add,
     PropertyOp::Multiply,
@@ -1343,13 +1346,15 @@ inline const PropertyOp (&EnumValuesPropertyOp())[7] {
     PropertyOp::Remap,
     PropertyOp::Blend,
     PropertyOp::Curve,
-    PropertyOp::Invalid
+    PropertyOp::Invalid,
+    PropertyOp::Quantize,
+    PropertyOp::Path
   };
   return values;
 }
 
 inline const char * const *EnumNamesPropertyOp() {
-  static const char * const names[8] = {
+  static const char * const names[10] = {
     "Add",
     "Multiply",
     "Clamp",
@@ -1357,15 +1362,94 @@ inline const char * const *EnumNamesPropertyOp() {
     "Blend",
     "Curve",
     "Invalid",
+    "Quantize",
+    "Path",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNamePropertyOp(PropertyOp e) {
-  if (::flatbuffers::IsOutRange(e, PropertyOp::Add, PropertyOp::Invalid)) return "";
+  if (::flatbuffers::IsOutRange(e, PropertyOp::Add, PropertyOp::Path)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesPropertyOp()[index];
+}
+
+/// RigExecPathBasis: a path curve's type and basis, folded.
+enum class PathBasis : uint8_t {
+  Linear = 0,
+  Bezier = 1,
+  Bspline = 2,
+  CatmullRom = 3,
+  MIN = Linear,
+  MAX = CatmullRom
+};
+
+inline const PathBasis (&EnumValuesPathBasis())[4] {
+  static const PathBasis values[] = {
+    PathBasis::Linear,
+    PathBasis::Bezier,
+    PathBasis::Bspline,
+    PathBasis::CatmullRom
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesPathBasis() {
+  static const char * const names[5] = {
+    "Linear",
+    "Bezier",
+    "Bspline",
+    "CatmullRom",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNamePathBasis(PathBasis e) {
+  if (::flatbuffers::IsOutRange(e, PathBasis::Linear, PathBasis::CatmullRom)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesPathBasis()[index];
+}
+
+/// RigExecPathComponent: what a path operation returns.
+enum class PathComponent : uint8_t {
+  X = 0,
+  Y = 1,
+  Z = 2,
+  Heading = 3,
+  End = 4,
+  MIN = X,
+  MAX = End
+};
+
+inline const PathComponent (&EnumValuesPathComponent())[5] {
+  static const PathComponent values[] = {
+    PathComponent::X,
+    PathComponent::Y,
+    PathComponent::Z,
+    PathComponent::Heading,
+    PathComponent::End
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesPathComponent() {
+  static const char * const names[6] = {
+    "X",
+    "Y",
+    "Z",
+    "Heading",
+    "End",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNamePathComponent(PathComponent e) {
+  if (::flatbuffers::IsOutRange(e, PathComponent::X, PathComponent::End)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesPathComponent()[index];
 }
 
 /// RigExecRevisionOp. 10 and 11 are reserved and refused.
@@ -16746,6 +16830,14 @@ struct RigExecWirePropertyRevision : public ::flatbuffers::NativeTable {
   bool hasTangentsAttr = false;
   std::vector<::rigExec::RigExecWireVec2f> tangents{};
   int32_t weightField = -1;
+  int32_t pathPoints = -1;
+  bool pathValid = false;
+  rigExec::fb::PathBasis pathBasis = rigExec::fb::PathBasis::Linear;
+  bool pathPinned = false;
+  bool pathPlanar = false;
+  rigExec::fb::PathComponent pathComponent = rigExec::fb::PathComponent::X;
+  std::unique_ptr<::rigExec::RigExecWireVec2f> pathOffset{};
+  std::unique_ptr<float> pathHeadingOffset{};
   RigExecWirePropertyRevision() = default;
   RigExecWirePropertyRevision(const RigExecWirePropertyRevision &o);
   RigExecWirePropertyRevision(RigExecWirePropertyRevision&&) FLATBUFFERS_NOEXCEPT = default;
@@ -16776,7 +16868,15 @@ struct PropertyRevision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_KEYS = 20,
     VT_HASTANGENTSATTR = 22,
     VT_TANGENTS = 24,
-    VT_WEIGHTFIELD = 26
+    VT_WEIGHTFIELD = 26,
+    VT_PATHPOINTS = 28,
+    VT_PATHVALID = 30,
+    VT_PATHBASIS = 32,
+    VT_PATHPINNED = 34,
+    VT_PATHPLANAR = 36,
+    VT_PATHCOMPONENT = 38,
+    VT_PATHOFFSET = 40,
+    VT_PATHHEADINGOFFSET = 42
   };
   /// Path id (Prim) of the mover, for diagnostics.
   uint32_t mover() const {
@@ -16824,6 +16924,37 @@ struct PropertyRevision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t weightField() const {
     return GetField<int32_t>(VT_WEIGHTFIELD, -1);
   }
+  /// Path operation (format 23): the Vec3fArray slot of its curve's points,
+  /// -1 for any other operation, and the uniform settings compile read.
+  /// path_valid is false where the mover names no supported curve, which
+  /// passes the value through.
+  int32_t pathPoints() const {
+    return GetField<int32_t>(VT_PATHPOINTS, -1);
+  }
+  bool pathValid() const {
+    return GetField<uint8_t>(VT_PATHVALID, 0) != 0;
+  }
+  rigExec::fb::PathBasis pathBasis() const {
+    return static_cast<rigExec::fb::PathBasis>(GetField<uint8_t>(VT_PATHBASIS, 0));
+  }
+  bool pathPinned() const {
+    return GetField<uint8_t>(VT_PATHPINNED, 0) != 0;
+  }
+  /// Arc length on the XZ plane (rigExec:pathMeasure "planar").
+  bool pathPlanar() const {
+    return GetField<uint8_t>(VT_PATHPLANAR, 0) != 0;
+  }
+  rigExec::fb::PathComponent pathComponent() const {
+    return static_cast<rigExec::fb::PathComponent>(GetField<uint8_t>(VT_PATHCOMPONENT, 0));
+  }
+  /// (x, z) offset carried by the heading frame.
+  const rigExec::fb::Vec2f *pathOffset() const {
+    return GetStruct<const rigExec::fb::Vec2f *>(VT_PATHOFFSET);
+  }
+  /// Degrees added to the tangent's heading.
+  const rigExec::fb::F32 *pathHeadingOffset() const {
+    return GetStruct<const rigExec::fb::F32 *>(VT_PATHHEADINGOFFSET);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -16846,6 +16977,14 @@ struct PropertyRevision FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_TANGENTS) &&
            verifier.VerifyVector(tangents()) &&
            VerifyField<int32_t>(verifier, VT_WEIGHTFIELD, 4) &&
+           VerifyField<int32_t>(verifier, VT_PATHPOINTS, 4) &&
+           VerifyField<uint8_t>(verifier, VT_PATHVALID, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PATHBASIS, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PATHPINNED, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PATHPLANAR, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PATHCOMPONENT, 1) &&
+           VerifyField<rigExec::fb::Vec2f>(verifier, VT_PATHOFFSET, 4) &&
+           VerifyField<rigExec::fb::F32>(verifier, VT_PATHHEADINGOFFSET, 4) &&
            verifier.EndTable();
   }
   RigExecWirePropertyRevision *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -16893,6 +17032,30 @@ struct PropertyRevisionBuilder {
   void add_weightField(int32_t weightField) {
     fbb_.AddElement<int32_t>(PropertyRevision::VT_WEIGHTFIELD, weightField, -1);
   }
+  void add_pathPoints(int32_t pathPoints) {
+    fbb_.AddElement<int32_t>(PropertyRevision::VT_PATHPOINTS, pathPoints, -1);
+  }
+  void add_pathValid(bool pathValid) {
+    fbb_.AddElement<uint8_t>(PropertyRevision::VT_PATHVALID, static_cast<uint8_t>(pathValid), 0);
+  }
+  void add_pathBasis(rigExec::fb::PathBasis pathBasis) {
+    fbb_.AddElement<uint8_t>(PropertyRevision::VT_PATHBASIS, static_cast<uint8_t>(pathBasis), 0);
+  }
+  void add_pathPinned(bool pathPinned) {
+    fbb_.AddElement<uint8_t>(PropertyRevision::VT_PATHPINNED, static_cast<uint8_t>(pathPinned), 0);
+  }
+  void add_pathPlanar(bool pathPlanar) {
+    fbb_.AddElement<uint8_t>(PropertyRevision::VT_PATHPLANAR, static_cast<uint8_t>(pathPlanar), 0);
+  }
+  void add_pathComponent(rigExec::fb::PathComponent pathComponent) {
+    fbb_.AddElement<uint8_t>(PropertyRevision::VT_PATHCOMPONENT, static_cast<uint8_t>(pathComponent), 0);
+  }
+  void add_pathOffset(const rigExec::fb::Vec2f *pathOffset) {
+    fbb_.AddStruct(PropertyRevision::VT_PATHOFFSET, pathOffset);
+  }
+  void add_pathHeadingOffset(const rigExec::fb::F32 *pathHeadingOffset) {
+    fbb_.AddStruct(PropertyRevision::VT_PATHHEADINGOFFSET, pathHeadingOffset);
+  }
   explicit PropertyRevisionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -16922,8 +17085,19 @@ inline ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevision(
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec2f *>> keys = 0,
     bool hasTangentsAttr = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<const rigExec::fb::Vec2f *>> tangents = 0,
-    int32_t weightField = -1) {
+    int32_t weightField = -1,
+    int32_t pathPoints = -1,
+    bool pathValid = false,
+    rigExec::fb::PathBasis pathBasis = rigExec::fb::PathBasis::Linear,
+    bool pathPinned = false,
+    bool pathPlanar = false,
+    rigExec::fb::PathComponent pathComponent = rigExec::fb::PathComponent::X,
+    const rigExec::fb::Vec2f *pathOffset = nullptr,
+    const rigExec::fb::F32 *pathHeadingOffset = nullptr) {
   PropertyRevisionBuilder builder_(_fbb);
+  builder_.add_pathHeadingOffset(pathHeadingOffset);
+  builder_.add_pathOffset(pathOffset);
+  builder_.add_pathPoints(pathPoints);
   builder_.add_weightField(weightField);
   builder_.add_tangents(tangents);
   builder_.add_keys(keys);
@@ -16934,6 +17108,11 @@ inline ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevision(
   builder_.add_envelope(envelope);
   builder_.add_enabled(enabled);
   builder_.add_mover(mover);
+  builder_.add_pathComponent(pathComponent);
+  builder_.add_pathPlanar(pathPlanar);
+  builder_.add_pathPinned(pathPinned);
+  builder_.add_pathBasis(pathBasis);
+  builder_.add_pathValid(pathValid);
   builder_.add_hasTangentsAttr(hasTangentsAttr);
   builder_.add_op(op);
   return builder_.Finish();
@@ -16957,7 +17136,15 @@ inline ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevisionDirect(
     const std::vector<rigExec::fb::Vec2f> *keys = nullptr,
     bool hasTangentsAttr = false,
     const std::vector<rigExec::fb::Vec2f> *tangents = nullptr,
-    int32_t weightField = -1) {
+    int32_t weightField = -1,
+    int32_t pathPoints = -1,
+    bool pathValid = false,
+    rigExec::fb::PathBasis pathBasis = rigExec::fb::PathBasis::Linear,
+    bool pathPinned = false,
+    bool pathPlanar = false,
+    rigExec::fb::PathComponent pathComponent = rigExec::fb::PathComponent::X,
+    const rigExec::fb::Vec2f *pathOffset = nullptr,
+    const rigExec::fb::F32 *pathHeadingOffset = nullptr) {
   auto keys__ = keys ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec2f>(*keys) : 0;
   auto tangents__ = tangents ? _fbb.CreateVectorOfStructs<rigExec::fb::Vec2f>(*tangents) : 0;
   return rigExec::fb::CreatePropertyRevision(
@@ -16973,7 +17160,15 @@ inline ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevisionDirect(
       keys__,
       hasTangentsAttr,
       tangents__,
-      weightField);
+      weightField,
+      pathPoints,
+      pathValid,
+      pathBasis,
+      pathPinned,
+      pathPlanar,
+      pathComponent,
+      pathOffset,
+      pathHeadingOffset);
 }
 
 ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePropertyRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -24671,7 +24866,15 @@ inline RigExecWirePropertyRevision::RigExecWirePropertyRevision(const RigExecWir
         keys(o.keys),
         hasTangentsAttr(o.hasTangentsAttr),
         tangents(o.tangents),
-        weightField(o.weightField) {
+        weightField(o.weightField),
+        pathPoints(o.pathPoints),
+        pathValid(o.pathValid),
+        pathBasis(o.pathBasis),
+        pathPinned(o.pathPinned),
+        pathPlanar(o.pathPlanar),
+        pathComponent(o.pathComponent),
+        pathOffset((o.pathOffset) ? new ::rigExec::RigExecWireVec2f(*o.pathOffset) : nullptr),
+        pathHeadingOffset((o.pathHeadingOffset) ? new float(*o.pathHeadingOffset) : nullptr) {
 }
 
 inline RigExecWirePropertyRevision &RigExecWirePropertyRevision::operator=(RigExecWirePropertyRevision o) FLATBUFFERS_NOEXCEPT {
@@ -24687,6 +24890,14 @@ inline RigExecWirePropertyRevision &RigExecWirePropertyRevision::operator=(RigEx
   std::swap(hasTangentsAttr, o.hasTangentsAttr);
   std::swap(tangents, o.tangents);
   std::swap(weightField, o.weightField);
+  std::swap(pathPoints, o.pathPoints);
+  std::swap(pathValid, o.pathValid);
+  std::swap(pathBasis, o.pathBasis);
+  std::swap(pathPinned, o.pathPinned);
+  std::swap(pathPlanar, o.pathPlanar);
+  std::swap(pathComponent, o.pathComponent);
+  std::swap(pathOffset, o.pathOffset);
+  std::swap(pathHeadingOffset, o.pathHeadingOffset);
   return *this;
 }
 
@@ -24711,6 +24922,14 @@ inline void PropertyRevision::UnPackTo(RigExecWirePropertyRevision *_o, const ::
   { auto _e = hasTangentsAttr(); _o->hasTangentsAttr = _e; }
   { auto _e = tangents(); if (_e) { _o->tangents.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->tangents[_i] = ::flatbuffers::UnPackVec2f(*_e->Get(_i)); } } else { _o->tangents.resize(0); } }
   { auto _e = weightField(); _o->weightField = _e; }
+  { auto _e = pathPoints(); _o->pathPoints = _e; }
+  { auto _e = pathValid(); _o->pathValid = _e; }
+  { auto _e = pathBasis(); _o->pathBasis = _e; }
+  { auto _e = pathPinned(); _o->pathPinned = _e; }
+  { auto _e = pathPlanar(); _o->pathPlanar = _e; }
+  { auto _e = pathComponent(); _o->pathComponent = _e; }
+  { auto _e = pathOffset(); if (_e) _o->pathOffset = std::unique_ptr<::rigExec::RigExecWireVec2f>(new ::rigExec::RigExecWireVec2f(::flatbuffers::UnPackVec2f(*_e))); }
+  { auto _e = pathHeadingOffset(); if (_e) _o->pathHeadingOffset = std::unique_ptr<float>(new float(::flatbuffers::UnPackF32(*_e))); }
 }
 
 inline ::flatbuffers::Offset<PropertyRevision> CreatePropertyRevision(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePropertyRevision *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -24733,6 +24952,14 @@ inline ::flatbuffers::Offset<PropertyRevision> PropertyRevision::Pack(::flatbuff
   auto _hasTangentsAttr = _o->hasTangentsAttr;
   auto _tangents = _o->tangents.size() ? _fbb.CreateVectorOfNativeStructs<rigExec::fb::Vec2f, ::rigExec::RigExecWireVec2f>(_o->tangents, ::flatbuffers::PackVec2f) : 0;
   auto _weightField = _o->weightField;
+  auto _pathPoints = _o->pathPoints;
+  auto _pathValid = _o->pathValid;
+  auto _pathBasis = _o->pathBasis;
+  auto _pathPinned = _o->pathPinned;
+  auto _pathPlanar = _o->pathPlanar;
+  auto _pathComponent = _o->pathComponent;
+  auto _pathOffset = rigExec::fb::Vec2f{}; if (_o->pathOffset) _pathOffset = ::flatbuffers::Pack(*_o->pathOffset);
+  auto _pathHeadingOffset = rigExec::fb::F32{}; if (_o->pathHeadingOffset) _pathHeadingOffset = ::flatbuffers::Pack(*_o->pathHeadingOffset);
   return rigExec::fb::CreatePropertyRevision(
       _fbb,
       _mover,
@@ -24746,7 +24973,15 @@ inline ::flatbuffers::Offset<PropertyRevision> PropertyRevision::Pack(::flatbuff
       _keys,
       _hasTangentsAttr,
       _tangents,
-      _weightField);
+      _weightField,
+      _pathPoints,
+      _pathValid,
+      _pathBasis,
+      _pathPinned,
+      _pathPlanar,
+      _pathComponent,
+      _o->pathOffset ? &_pathOffset : nullptr,
+      _o->pathHeadingOffset ? &_pathHeadingOffset : nullptr);
 }
 
 inline RigExecWirePropertyChain *PropertyChain::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -26080,13 +26315,48 @@ inline const ::flatbuffers::TypeTable *PropertyOpTypeTable() {
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
     { ::flatbuffers::ET_UCHAR, 0, 0 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::PropertyOpTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_ENUM, 7, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_ENUM, 9, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PathBasisTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::PathBasisTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 4, type_codes, type_refs, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *PathComponentTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 },
+    { ::flatbuffers::ET_UCHAR, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    rigExec::fb::PathComponentTypeTable
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_ENUM, 5, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -28233,15 +28503,26 @@ inline const ::flatbuffers::TypeTable *PropertyRevisionTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 2 },
     { ::flatbuffers::ET_BOOL, 0, -1 },
     { ::flatbuffers::ET_SEQUENCE, 1, 2 },
-    { ::flatbuffers::ET_INT, 0, -1 }
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, 3 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UCHAR, 0, 4 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 2 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 5 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::PropertyOpTypeTable,
     rigExec::fb::InputTypeTable,
-    rigExec::fb::Vec2fTypeTable
+    rigExec::fb::Vec2fTypeTable,
+    rigExec::fb::PathBasisTypeTable,
+    rigExec::fb::PathComponentTypeTable,
+    rigExec::fb::F32TypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 12, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 20, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

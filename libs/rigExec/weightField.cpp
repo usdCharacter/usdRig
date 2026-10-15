@@ -99,6 +99,7 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
         B.weightProgram.push_back(std::move(record));
     }
     std::string placementError;
+    RigExecBakedOracleReadIndex oracleIndex;
     const auto add = [&](const SdfPath &path, Field::Form form, int consumer, int part) {
         const auto found = B.weightIndex.find(path);
         if (found == B.weightIndex.end() || found->second < 0) return -1;
@@ -149,7 +150,8 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
                 field.scalarReadIndex[size_t(object) * 19 + size_t(member)] = int(field.scalarReads.size());
                 field.scalarObjects.push_back(object); field.scalarMembers.push_back(member);
                 field.scalarReads.push_back(RigExecBakedBuildOracleRead(&B,
-                    prim.GetAttribute(TfToken(ScalarNames[member])),field.availableChains));
+                    prim.GetAttribute(TfToken(ScalarNames[member])),field.availableChains,
+                    &oracleIndex));
             }
         };
         visit(visit,field.object);

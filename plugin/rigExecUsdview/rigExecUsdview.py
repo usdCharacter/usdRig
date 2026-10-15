@@ -7,6 +7,7 @@
 # rigExecImaging.dll (ctypes) with the stage handed over in-process via
 # UsdUtils.StageCache — no custom Python bindings are required.
 #
+import array
 import atexit
 import ctypes
 import os
@@ -971,8 +972,11 @@ class RigExecUsdviewContainer(PluginContainer):
                 entry = self._Entry("RigExecImaging_UpdatePreview")
                 if entry is None:
                     return False
-                buffer = (ctypes.c_double * len(values))(*values)
-                return entry(buffer, len(values)) == 0
+                # Packed through a buffer, not element by element: an
+                # array slot can carry thousands of doubles.
+                packed = array.array("d", values)
+                buffer = (ctypes.c_double * len(packed)).from_buffer(packed)
+                return entry(buffer, len(packed)) == 0
 
             def End(self, publish=True):
                 # Without the republish when a commit authors next (see
@@ -1415,7 +1419,17 @@ class RigExecUsdviewContainer(PluginContainer):
         self._cachedStage = None
 
     def _OnStageReplaced(self):
-        self._ObserveStage(self._api.dataModel.stage)
+        stage = self._api.dataModel.stage
+        if stage:
+            target = stage.GetEditTarget()
+            # usdview selects the session layer with an identity map. Its
+            # frame rate can differ from the stage's; retain the composed
+            # time mapping so keys are authored at the displayed frame.
+            if (target.GetLayer() == stage.GetSessionLayer() and
+                    target.GetMapFunction().isIdentity):
+                stage.SetEditTarget(stage.GetEditTargetForLocalLayer(
+                    stage.GetSessionLayer()))
+        self._ObserveStage(stage)
         self._ActivateCurrentStage()
         # After activation, so the first gizmo target is resolved
         # against a stage the evaluator has already published.

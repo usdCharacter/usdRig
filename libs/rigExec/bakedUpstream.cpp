@@ -7,6 +7,7 @@
 #include "bakedProgramImpl.h"
 #include "frozenContextInternal.h"
 #include "moverGraph.h"
+#include "movers/pathOperation.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorInternal.h"
 
@@ -241,6 +242,28 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
             revisionRows(revision, "derived");
         }
     }
+    // A path operation's curve points: the input a moving window rewrites.
+    const TfToken operationName("rigExec:operation");
+    for (const auto &[target, revisions] : E._propertyChains) {
+        for (const auto &revision : revisions) {
+            const UsdPrim mover = stage->GetPrimAtPath(revision.moverPath);
+            TfToken token;
+            if (const UsdAttribute a =
+                    mover ? mover.GetAttribute(operationName)
+                          : UsdAttribute()) {
+                a.Get(&token, UsdTimeCode::Default());
+            }
+            RigExecPropertyOp op;
+            if (!RigExecParsePropertyOp(token, &op) ||
+                op != RigExecPropertyOp::Path) {
+                continue;
+            }
+            RigExecPathBinding binding;
+            if (RigExecBindPathOperation(mover, &binding) && binding.points) {
+                add(binding.points.GetPath(), Time::AtTime, "path");
+            }
+        }
+    }
 
     // Every weight object a mover or a constraint binds, and what each
     // composes.
@@ -423,6 +446,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                     _AddWalk(B, r.minimum, &paths);
                     _AddWalk(B, r.maximum, &paths);
                 }
+                _AddWalk(B, r.pathPoints, &paths);
             }
             for (const auto &phased : chain.phased) {
                 paths.insert(phased.consumer);

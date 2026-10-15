@@ -19,6 +19,7 @@ rigexec_test_env.SetupPluginTest()
 from pxr import Plug, Sdf, Ts, Usd, UsdGeom  # noqa: E402
 
 import graphModel as gm  # noqa: E402
+import gizmoMath  # noqa: E402
 import rigExecUndo  # noqa: E402
 
 
@@ -192,6 +193,25 @@ def TestAuthorKnot():
     _Check(gm.SplineFor(attr).GetValueTypeName() == "double",
            "an existing spline is returned as it is")
 
+    # A session at 24 fps under a 60 fps stage resolves frame 61 with
+    # floating-point roundoff. Re-keying must keep a single knot.
+    stage.SetTimeCodesPerSecond(60)
+    stage.SetEditTarget(stage.GetEditTargetForLocalLayer(
+        stage.GetSessionLayer()))
+    retimed = control.GetAttribute("avars:tz")
+    gizmoMath.SetAnimated(retimed, 2.0, Usd.TimeCode(61))
+    composed = retimed.GetSpline()
+    keyTime = next(iter(composed.GetKnots()))
+    gm.SetTangent(composed, keyTime, gm.SIDE_BOTH, 4.0, width=2.0)
+    retimed.SetSpline(composed)
+    gizmoMath.SetAnimated(retimed, 3.0, Usd.TimeCode(61))
+    knots = list(retimed.GetSpline().GetKnots().values())
+    _Check(len(knots) == 1 and _Close(knots[0].GetValue(), 3.0),
+           "re-keying a time-mapped frame updates the existing knot")
+    _Check(knots[0].GetPostTanAlgorithm() == Ts.TangentAlgorithmCustom
+           and _Close(knots[0].GetPostTanSlope(), 4.0),
+           "re-keying a time-mapped frame preserves its tangents")
+
     # An existing knot keeps the tangents the artist gave it.
     spline = _Spline()
     gm.SetTangent(spline, 10.0, gm.SIDE_BOTH, 4.0, width=2.0)
@@ -204,6 +224,49 @@ def TestAuthorKnot():
 
 
 # Edit operations
+
+def TestKeyOverWeakerSamples():
+    """Keying through a stronger edit target keeps a weaker layer's samples.
+
+    A layer's time samples replace a weaker layer's outright, so authoring
+    one sample over a shot's keys would leave a single key.
+    """
+    stage = Usd.Stage.CreateInMemory()
+    stage.SetTimeCodesPerSecond(60)
+    prim = stage.DefinePrim("/Ctl")
+    for name, typeName, keys in (
+            ("avars:tz", Sdf.ValueTypeNames.Double,
+             [(1, 0.0), (61, 0.6), (121, 1.0)]),
+            ("mode", Sdf.ValueTypeNames.Int, [(1, 0), (61, 6), (121, 10)])):
+        attr = prim.CreateAttribute(name, typeName)
+        for frame, value in keys:
+            attr.Set(value, frame)
+    rootLayer = stage.GetRootLayer().ExportToString()
+    # usdview's session target: 24 fps under a 60 fps stage, time-mapped.
+    stage.SetEditTarget(stage.GetEditTargetForLocalLayer(
+        stage.GetSessionLayer()))
+    tz = prim.GetAttribute("avars:tz")
+    mode = prim.GetAttribute("mode")
+    gizmoMath.SetAnimated(tz, 0.8, Usd.TimeCode(61))
+    gizmoMath.SetAnimated(mode, 8, Usd.TimeCode(61))
+    for attr in (tz, mode):
+        times = attr.GetTimeSamples()
+        _Check(len(times) == 3 and
+               all(abs(a - b) < 1e-9 for a, b in zip(times, [1, 61, 121])),
+               "re-keying keeps the weaker layer's keys: %s" % times)
+    _Check(_Close(tz.Get(Usd.TimeCode(61)), 0.8) and
+           _Close(tz.Get(Usd.TimeCode(121)), 1.0) and
+           _Close(tz.Get(Usd.TimeCode(31)), 0.4),
+           "the key lands and its neighbours interpolate to it")
+    _Check(mode.Get(Usd.TimeCode(61)) == 8 and mode.Get(Usd.TimeCode(1)) == 0,
+           "an unsplineable channel keeps its keys too")
+    gizmoMath.SetAnimated(tz, 0.5, Usd.TimeCode(91))
+    _Check(len(tz.GetTimeSamples()) == 4 and
+           _Close(tz.Get(Usd.TimeCode(91)), 0.5),
+           "a new key time joins them")
+    _Check(stage.GetRootLayer().ExportToString() == rootLayer,
+           "the weaker layer is untouched")
+
 
 def TestMoveKeys():
     spline = _Spline()
@@ -894,6 +957,7 @@ def main():
         ("discovery from properties", TestDiscoverFromProperties),
         ("discovery from prims", TestDiscoverFromPrims),
         ("author knot", TestAuthorKnot),
+        ("key over weaker samples", TestKeyOverWeakerSamples),
         ("move keys", TestMoveKeys),
         ("insert key", TestInsertKey),
         ("delete keys", TestDeleteKeys),

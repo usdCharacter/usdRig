@@ -3214,7 +3214,7 @@ RigExecBakedValidateHeadTier(const RigExecBakedProgramImpl &B,
             chain.revisions[size_t(step.part) - 1];
         for (const RigExecBakedWalk *walk :
              {&r.enabled, &r.defaultWeight, &r.value, &r.minimum,
-              &r.maximum, &r.keys, &r.tangents}) {
+              &r.maximum, &r.keys, &r.tangents, &r.pathPoints}) {
             for (const std::vector<RigExecBakedWalkHop> *hops :
                  {&walk->hops, &walk->doubleHops}) {
                 for (const RigExecBakedWalkHop &hop : *hops) {

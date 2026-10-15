@@ -1011,6 +1011,13 @@ bool RrEffectiveInputMemo(const RrProgram *program,uint32_t stepIndex,std::strin
             const auto &revision=chain.revisions[size_t(step.part)-1];
             for(const auto *input:{revision.enabled.get(),revision.defaultWeight.get(),revision.value.get(),revision.min.get(),revision.max.get()})
                 if(input) read(*input);
+            // A path also reads its curve's points (the slot it memoizes).
+            if(revision.op==RigExecWirePropertyOp::Path && revision.pathPoints>=0) {
+                const uint32_t slot=uint32_t(revision.pathPoints);
+                _RrEffectiveArrayMemo(program,
+                    RrInputArrayValue(program,slot,RigExecWireInputTag::Vec3fArray),
+                    RigExecWireInputTag::Vec3fArray,key);
+            }
         }
         return true;
     }

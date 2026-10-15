@@ -31,6 +31,10 @@ struct RrPropertyScratch {
         std::vector<RrVec2f> tangents;
         /// RigExecValidateLinearKeys over the keys (static data).
         bool keysValid = false;
+        /// A path revision's settings and its curve points' array slot
+        /// (-1: none, which passes the value through).
+        RigExecPathSettings path;
+        int32_t pathPoints = -1;
     };
     struct Chain {
         std::string target;  ///< target path text, for diagnostics
@@ -204,6 +208,27 @@ _RrApplyFloat(const RrProgram *program, const RigExecWirePropertyRevision &revis
             }
             params.tangents = bound.tangents.data();
             params.tangentCount = bound.tangents.size();
+        }
+    }
+    if (params.op == RigExecPropertyOp::Path) {
+        // The curve's points this run: the input a host sets, else the
+        // bake-time default.
+        const std::vector<RrVec3f> *points =
+            bound.pathPoints >= 0
+                ? RrInputArray<RrVec3f>(program, uint32_t(bound.pathPoints))
+                : nullptr;
+        if (!bound.path.valid || !points) {
+            return false;
+        }
+        params.path.points =
+            points->empty() ? nullptr : (*points)[0]._data;
+        params.path.pointCount = points->size();
+        params.path.basis = bound.path.basis;
+        params.path.pinned = bound.path.pinned;
+        params.path.planar = bound.path.planar;
+        params.pathSettings = bound.path;
+        if (!RigExecPathCurveValid(params.path)) {
+            return false;
         }
     }
     params.weight = envelope;
@@ -405,12 +430,43 @@ RrPropertySizeScratch(RrProgram *program, std::string *error)
                                           " binds a weight object the "
                                           "file does not carry");
             }
-            // RigExecPropertyOp's enumerators in the file's order.
-            bound.opValid =
-                revision.op != RigExecWirePropertyOp::Invalid &&
-                uint8_t(revision.op) < uint8_t(RigExecWirePropertyOp::MAX);
-            if (bound.opValid) {
+            // The file's operations: Add..Curve in RigExecPropertyOp's
+            // order, then Invalid, then Quantize and Path (format 23).
+            bound.opValid = true;
+            switch (revision.op) {
+            case RigExecWirePropertyOp::Add:
+            case RigExecWirePropertyOp::Multiply:
+            case RigExecWirePropertyOp::Clamp:
+            case RigExecWirePropertyOp::Remap:
+            case RigExecWirePropertyOp::Blend:
+            case RigExecWirePropertyOp::Curve:
                 bound.op = RigExecPropertyOp(int(revision.op));
+                break;
+            case RigExecWirePropertyOp::Quantize:
+                bound.op = RigExecPropertyOp::Quantize;
+                break;
+            case RigExecWirePropertyOp::Path:
+                bound.op = RigExecPropertyOp::Path;
+                break;
+            default:
+                bound.opValid = false;
+                break;
+            }
+            if (bound.opValid && bound.op == RigExecPropertyOp::Path) {
+                bound.pathPoints = revision.pathPoints;
+                bound.path.valid = revision.pathValid;
+                bound.path.basis = RigExecPathBasis(uint8_t(revision.pathBasis));
+                bound.path.pinned = revision.pathPinned;
+                bound.path.planar = revision.pathPlanar;
+                bound.path.component =
+                    RigExecPathComponent(uint8_t(revision.pathComponent));
+                if (revision.pathOffset) {
+                    bound.path.offsetX = (*revision.pathOffset)[0];
+                    bound.path.offsetZ = (*revision.pathOffset)[1];
+                }
+                if (revision.pathHeadingOffset) {
+                    bound.path.headingOffset = *revision.pathHeadingOffset;
+                }
             }
             bound.keys.reserve(revision.keys.size());
             for (const RigExecWireVec2f &key : revision.keys) {

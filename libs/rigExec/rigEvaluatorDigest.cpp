@@ -1829,6 +1829,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             }
             appendRelTargets(prim, "rigExec:driverFrames", false);
             appendRelTargets(prim, "rigExec:driverCurve", false);
+            // A path operation's curve is validated at compile.
+            appendRelTargets(prim, "rigExec:path", false);
+            appendToken(prim, "rigExec:pathComponent");
+            appendToken(prim, "rigExec:pathMeasure");
             if (const RigExecMoverHandler *handler =
                     RigExecFindMoverHandler(prim.GetTypeName());
                 handler && handler->assembleExternal) {

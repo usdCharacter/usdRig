@@ -19,6 +19,7 @@ Storm viewport with the rig guides on.
 | ![Tutorial: Godot and baked rigs](../icons/concept.png) | [Tutorial: Godot and baked rigs](concepts/tutorial-godot-baked-rig.md) | Build the ball in usdview, bake one self-contained rig asset, and drive its exposed controllers in Godot, with GIF checkpoints. |
 | ![External mover plugins](../icons/concept.png) | [External mover plugins](concepts/external-movers.md) | Build and register point movers from a separate repository for native, frozen and .rigexec playback. |
 | ![Live evaluator inspection](../icons/concept.png) | [Live evaluator inspection](concepts/live-evaluator-inspection.md) | Attach the optional rigExec_viz tool to usdview and read a session's operation graph and per-operation thread timings. |
+| ![Paths and walking](../icons/concept.png) | [Paths and walking](concepts/paths.md) | Drive a rig along a BasisCurves path by arc length, author and edit the path, and steer a baked program with a moving window. |
 
 ## Rig
 
@@ -110,7 +111,7 @@ Storm viewport with the rig guides on.
 
 | | Node | Does |
 |---|---|---|
-| ![Float Math Mover](../icons/float_math_mover.png) | [Float Math Mover](nodes/float_math_mover.md) | Arithmetic on one scalar channel: add, clamp, remap, blend. |
+| ![Float Math Mover](../icons/float_math_mover.png) | [Float Math Mover](nodes/float_math_mover.md) | Arithmetic on one scalar channel: add, clamp, remap, blend, curve, quantize, path. |
 | ![Vec3f Math Mover](../icons/vec3f_math_mover.png) | [Vec3f Math Mover](nodes/vec3f_math_mover.md) | Component-wise arithmetic on one vector-valued property. |
 | ![Matrix Math Mover](../icons/matrix_math_mover.png) | [Matrix Math Mover](nodes/matrix_math_mover.md) | Multiplies or blends one matrix channel. |
 

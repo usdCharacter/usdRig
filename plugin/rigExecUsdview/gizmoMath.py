@@ -1547,6 +1547,8 @@ def SetAnimated(attr, value, time):
     valueType = attr.GetTypeName().type
     if (time.IsDefault() or attr.GetNumTimeSamples() > 0 or
             not Ts.Spline.IsSupportedValueType(valueType)):
+        if not time.IsDefault():
+            _AdoptTimeSamples(attr)
         attr.Set(value, time)
         return
     # Imported inside the function: graphModel imports THIS module at
@@ -1558,6 +1560,23 @@ def SetAnimated(attr, value, time):
     # and then sets the spline, and the rig would update for each.
     with Sdf.ChangeBlock():
         attr.SetSpline(spline)
+
+
+def _AdoptTimeSamples(attr):
+    """
+    Copy `attr`'s composed time samples into the edit target when they come
+    from another layer, as the spline branch copies the composed spline: a
+    layer's samples replace a weaker layer's outright, so keying one frame
+    there would leave a single key.
+    """
+    target = attr.GetStage().GetEditTarget()
+    if not attr.GetNumTimeSamples() or target.GetLayer().GetNumTimeSamplesForPath(
+            target.MapToSpecPath(attr.GetPath())):
+        return
+    samples = [(t, attr.Get(t)) for t in attr.GetTimeSamples()]
+    with Sdf.ChangeBlock():
+        for t, sample in samples:
+            attr.Set(sample, t)
 
 
 class Writer(object):

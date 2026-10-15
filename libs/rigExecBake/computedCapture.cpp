@@ -196,6 +196,10 @@ _PropertyOp(bool valid, RigExecPropertyOp op)
         return fb::PropertyOp::Blend;
     case RigExecPropertyOp::Curve:
         return fb::PropertyOp::Curve;
+    case RigExecPropertyOp::Quantize:
+        return fb::PropertyOp::Quantize;
+    case RigExecPropertyOp::Path:
+        return fb::PropertyOp::Path;
     }
     return fb::PropertyOp::Invalid;
 }
@@ -1048,6 +1052,10 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                     revision.tangents.assign(values.begin(), values.end());
                 revision.hasTangentsAttr = r.hasTangents;
             }
+            if (r.opValid && r.op == RigExecPropertyOp::Path) {
+                revision.pathPoints = headOf(r.pathPoints);
+                revision.path = r.path;
+            }
             desc.revisions.push_back(std::move(revision));
         }
         for (const auto index : bound.records) {
@@ -1088,6 +1096,9 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         C.weightFields.push_back(std::move(out));
     }
     C.propertyChains.reserve(chainDescs.size());
+    // The path revisions' curve points slots, public array inputs once the
+    // array slots below exist.
+    std::vector<uint32_t> pathPointSlots;
     for (const RigExecBakedPropertyChainDesc &desc : chainDescs) {
         using ValueType = RigExecBakedPropertyChainDesc::ValueType;
         fb::RigExecWirePropertyChain chain;
@@ -1153,6 +1164,28 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             revision.keys = _ToVec2fs(r.keys);
             revision.hasTangentsAttr = r.hasTangentsAttr;
             revision.tangents = _ToVec2fs(r.tangents);
+            if (r.opValid && r.op == RigExecPropertyOp::Path) {
+                revision.pathValid = r.path.valid;
+                revision.pathBasis = fb::PathBasis(uint8_t(r.path.basis));
+                revision.pathPinned = r.path.pinned;
+                revision.pathPlanar = r.path.planar;
+                revision.pathComponent =
+                    fb::PathComponent(uint8_t(r.path.component));
+                revision.pathOffset = std::make_unique<RigExecWireVec2f>(
+                    RigExecWireVec2f{r.path.offsetX, r.path.offsetZ});
+                revision.pathHeadingOffset =
+                    std::make_unique<float>(r.path.headingOffset);
+                if (r.pathPoints) {
+                    uint32_t slot = 0;
+                    if (!S.ArraySlot(r.pathPoints.GetPath(),
+                                     InputTag::Vec3fArray, &slot, &why)) {
+                        Fail(why);
+                        return;
+                    }
+                    revision.pathPoints = int32_t(slot);
+                    pathPointSlots.push_back(slot);
+                }
+            }
             chain.revisions.push_back(std::move(revision));
         }
         C.propertyChains.push_back(std::move(chain));
@@ -1680,6 +1713,10 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
     // whether any read takes it at the time.
     std::map<uint32_t, RigExecBakeArraySlot> arraySlots;
     std::set<uint32_t> arrayLive;
+    for (const uint32_t slot : pathPointSlots) {
+        arraySlots[slot].tag = InputTag::Vec3fArray;
+        arrayLive.insert(slot);
+    }
     std::map<std::pair<uint32_t, bool>, size_t> rowAt;
     std::map<std::pair<uint32_t, uint32_t>, size_t> layoutAt;
     C.chainBaseSlots.assign(B.chains.size(), -1);
@@ -2353,6 +2390,10 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         chain.target = remap[chain.target];
         for (fb::RigExecWirePropertyRevision &revision : chain.revisions) {
             _ForEachRevisionRead(revision, remapWalk);
+            if (revision.pathPoints >= 0) {
+                revision.pathPoints =
+                    int32_t(remap[size_t(revision.pathPoints)]);
+            }
         }
     }
     for (fb::RigExecWirePhasedConsumer &phased : C.phasedConsumers) {

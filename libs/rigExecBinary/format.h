@@ -527,7 +527,11 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 ///
 /// Format 22 adds the IK/FK match constraint's fields to Constraint
 /// (ik_fk_match and the match_* fields). A format-21 file holds no match.
-inline constexpr uint32_t RigExecFormatVersion = 22;
+///
+/// Format 23 adds the property movers' quantize and path operations: a path
+/// revision names its curve's points slot and carries its uniform settings
+/// (PropertyRevision.path_*). Older files hold neither operation.
+inline constexpr uint32_t RigExecFormatVersion = 23;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

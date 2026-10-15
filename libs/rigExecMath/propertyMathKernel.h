@@ -10,6 +10,7 @@
 #define RIGEXEC_MATH_PROPERTY_MATH_KERNEL_H
 
 #include "rigExecMath/envelope.h"
+#include "rigExecMath/pathCurveKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,14 +19,17 @@
 namespace rigExec {
 
 /// The operation a property mover performs (schema `rigExec:operation`).
-enum class RigExecPropertyOp { Add, Multiply, Clamp, Remap, Blend, Curve };
+enum class RigExecPropertyOp {
+    Add, Multiply, Clamp, Remap, Blend, Curve, Quantize, Path
+};
 
 /// The authored inputs a float or vec3f property mover carries, with the
 /// curve keys as \p Key pairs (input, output).
 ///
-/// `min`/`max` are only read by clamp and remap, `value` only by add,
-/// multiply, and blend; a mover authors all of them and the operation
-/// chooses. Per-component for the vec3f variant, which is why the schema
+/// `min`/`max` are read by clamp and remap, `value` by add, multiply and
+/// blend; quantize reads `value` as its step and `min` as its origin, and
+/// path reads `value` as the distance its curve starts at. A mover authors
+/// all of them and the operation chooses. Per-component for the vec3f variant, which is why the schema
 /// declares float3 rather than float bounds.
 template <class T, class Key>
 struct RigExecPropertyMathKernelParams {
@@ -50,6 +54,10 @@ struct RigExecPropertyMathKernelParams {
     /// driven key with fixed tangents and linear infinity evaluates.
     const Key *tangents = nullptr;
     size_t tangentCount = 0;
+    /// The path operation's curve, borrowed for one apply, and its uniform
+    /// settings (pathCurveKernel.h). Only the float mover defines path.
+    RigExecPathCurve path;
+    RigExecPathSettings pathSettings;
 };
 
 /// Piecewise-linear keys with linear extrapolation along the end segments.
@@ -188,12 +196,22 @@ RigExecApplyFloatMathKernel(
             params.tangentCount == params.keyCount ? params.tangents : nullptr,
             params.keyCount, base);
         break;
+    case RigExecPropertyOp::Quantize:
+        result = RigExecQuantizeDown(base, params.min, params.value);
+        break;
+    case RigExecPropertyOp::Path:
+        // An invalid curve leaves the incoming value; the appliers refuse
+        // one before this is reached.
+        RigExecEvaluatePathComponent(params.path, params.pathSettings, base,
+                                     params.value, &result);
+        break;
     }
     return RigExecBlendEnvelope(base, result, params.weight);
 }
 
 /// The vec3f peer, component-wise in every operation including the bounds;
-/// curve leaves the base (compile refuses curve on a vec3f mover).
+/// curve, quantize and path leave the base (compile refuses them on a vec3f
+/// mover).
 ///
 /// noinline: the Gf entry point and a plain-type instantiation must return
 /// the same bits, including NaN signs. Inlining lets a caller fold this
@@ -231,6 +249,8 @@ RigExecApplyVec3fMathKernel(
             result[i] = params.value[i];
             break;
         case RigExecPropertyOp::Curve:
+        case RigExecPropertyOp::Quantize:
+        case RigExecPropertyOp::Path:
             break;
         }
     }

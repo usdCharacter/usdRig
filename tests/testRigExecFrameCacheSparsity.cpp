@@ -616,6 +616,49 @@ TestUpstreamMissesSparseReuse()
     CHECK(arrays.RetainedBytes() > authored.RetainedBytes());
 }
 
+// A sample copied from the vector's static table shares its payload with
+// every frame sampled under that table, which the frame keeps alive, so
+// only its path and flag are the frame's own. A marked sample the table
+// does not hold is counted in full.
+void
+TestRetainedBytesShareTheStaticTable()
+{
+    const SdfPath points("/Rig/Geo.points");
+    const SdfPath fresh("/Rig/Other.points");
+    const VtVec3fArray mesh(1000, GfVec3f(1.0f));
+    auto table = std::make_shared<RigExecFrozenStaticSamples>();
+    RigExecSampledInput entry;
+    entry.path = points;
+    entry.value = VtValue(mesh);
+    entry.hasValue = true;
+    entry.staticSample = 0;
+    table->samples.push_back(entry);
+    table->level1.push_back(RigExecSampleDigest(entry));
+    table->digestible.push_back(1);
+
+    RigExecFrameInputs inputs;
+    inputs.time = UsdTimeCode(3.0);
+    inputs.staticSamples = table;
+    inputs.values.push_back(entry);
+    inputs.Add(fresh, VtValue(mesh));
+    const size_t bytes =
+        RigExecCaptureRetainedState(inputs, {}, 7, 3, 0).RetainedBytes();
+    const size_t expected = sizeof(RigExecRetainedFrameState) +
+                            points.GetString().size() +
+                            fresh.GetString().size() + 2 * sizeof(bool) +
+                            1000 * sizeof(GfVec3f);
+    CHECK(bytes == expected);
+
+    RigExecFrameInputs stray = inputs;
+    stray.values[0].staticSample = 1;
+    CHECK(RigExecCaptureRetainedState(stray, {}, 7, 3, 0).RetainedBytes() ==
+          expected + 1000 * sizeof(GfVec3f));
+    RigExecFrameInputs untabled = inputs;
+    untabled.staticSamples.reset();
+    CHECK(RigExecCaptureRetainedState(untabled, {}, 7, 3, 0)
+              .RetainedBytes() == expected + 1000 * sizeof(GfVec3f));
+}
+
 // Retained bytes are the same number whether the path text comes from the
 // vector's recorded digest order or from each sample: every sample's path
 // text (a repeated path twice), a flag, and its payload. An order recorded
@@ -1424,6 +1467,7 @@ main()
     TestOverrideSeeds();
     TestRecomposedVersionSeedsSparseReuse();
     TestRetainedBytesUnchangedByTheOrder();
+    TestRetainedBytesShareTheStaticTable();
     // The shared cone table.
     TestTheAffectedIndexSharesTheCones();
     if (failures == 0) {

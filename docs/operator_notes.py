@@ -2759,14 +2759,23 @@ intersection.""",
     "float_math_mover": {
         "title": "Float Math Mover",
         "schema": "RigExecFloatMathMover",
-        "summary": "Arithmetic on one scalar channel: add, clamp, remap, blend.",
+        "summary": "Arithmetic on one scalar channel: add, clamp, remap, blend, curve, quantize, path.",
         "description": """The property domain's calculator: it revises an exact float attribute
 — a blendshape weight, a blend factor, an envelope — instead of geometry.
 The everyday job is unit plumbing. A channel arrives in whatever range the
 department upstream authored it in, and `remap` divides it down into the
 0 → 1 a weight expects; `clamp`, `add`, `multiply` and `blend` cover the
 rest. `remap` deliberately does not bound its result, so a clamp mover
-after it is what keeps an overshoot from driving a shape past its target.""",
+after it is what keeps an overshoot from driving a shape past its target.
+
+Two operations serve walking rigs. `quantize` rounds a distance down to a
+stair of step `inputs:value` through `inputs:min`: a gait cycle's start, at
+any distance. `path` samples a `UsdGeomBasisCurves` (named by
+`rigExec:path`) by arc length at the incoming distance less
+`inputs:value`, returning a coordinate, the tangent's heading, or the
+curve's end; a local `rigExec:pathOffset` turned by the heading places a
+foot's landing beside the path. See
+[Paths and walking](../concepts/paths.md).""",
         "how_it_works": """A math mover's inputs live on the mover itself, and the chain's
 base is the target attribute's own authored value. The compiled graph
 orders the property chain before every operation that reads the revised
@@ -2786,6 +2795,7 @@ parent after its children, so the last sibling listed runs first.""",
             # inert for that generation and says so (rigEvaluator.cpp:3577) -- so
             # "yes" here means "required for the mover to revise anything".
             ("`rigExec:moves`", "Exact float property to revise; exactly one.", "yes"),
+            ("`rigExec:path`", "The path operation's curve: one UsdGeomBasisCurves prim holding one linear, bezier, bspline or catmullRom curve, nonperiodic or pinned.", "for path"),
         ],
         "param_groups": [
             ("Common mover envelope", "RigExecMoverAPI"),
@@ -2839,6 +2849,15 @@ and it drives nothing, the blendshape does all the work.""",
             "revise the dragged value as they would the authored one, so a "
             "channel clamped to [0, 1] and dragged to 1.4 shows 1.0, during "
             "the drag and after it is released.",
+            # pathCurveKernel.h: s = incoming - inputs:value, clamped to the
+            # curve; heading = atan2(tx, tz) + rigExec:pathHeadingOffset.
+            "`path` reads its curve's `points` as an input: a baked program "
+            "lists them as a `point3f[]` input of fixed count, so a host can "
+            "move the path every frame. `inputs:value` is the distance the "
+            "first point stands at; a window of points that slides along a "
+            "walk advances it to keep one distance clock. "
+            "`rigExec:pathMeasure = \"planar\"` measures ground distance, "
+            "so heights in the points' y do not stretch a walk's strides.",
         ],
         "see_also": [
             ("blend_input", "Blend Input"),

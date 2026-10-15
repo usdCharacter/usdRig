@@ -1861,8 +1861,9 @@ class RigExecFloatMathMover "RigExecFloatMathMover" (
         }
         string className = "FloatMathMover"
     }
-    doc = """Statically typed add, multiply, clamp, remap, blend, or curve
-    over an exact float property target (spec section 4.1).
+    doc = """Statically typed add, multiply, clamp, remap, blend, curve,
+    quantize, or path over an exact float property target (spec section
+    4.1).
 
     The revision is r = op(incoming), then the common MoverAPI envelope mixes
     it back over the incoming value. Zero is a pass-through and one applies
@@ -1872,11 +1873,22 @@ class RigExecFloatMathMover "RigExecFloatMathMover" (
     clamp; compose a clamp mover after it to bound the result.
 
     curve maps the incoming value through inputs:keys, piecewise linear
-    between keys and extrapolated linearly past the first and last key."""
+    between keys and extrapolated linearly past the first and last key.
+
+    quantize rounds the incoming value down to inputs:min + k * inputs:value
+    for the largest integer k that does not exceed it: a stair of step
+    inputs:value through inputs:min. A step that is not positive passes the
+    value through.
+
+    path samples the curve rigExec:path names at arc length (incoming -
+    inputs:value), clamped to the curve, and returns rigExec:pathComponent
+    of it. inputs:value is the distance the curve's first point stands at,
+    so a moving window of points keeps one distance clock."""
 )
 {
     uniform token rigExec:operation = "clamp" (
-        allowedTokens = ["add", "multiply", "clamp", "remap", "blend", "curve"]
+        allowedTokens = ["add", "multiply", "clamp", "remap", "blend", "curve",
+                         "quantize", "path"]
     )
     float inputs:value = 0
     float inputs:min = 0
@@ -1890,6 +1902,36 @@ class RigExecFloatMathMover "RigExecFloatMathMover" (
         operation. Empty is piecewise linear, extrapolated along the end
         segments; authored, the curve is a cubic Hermite through the keys,
         extrapolated along the first in slope and the last out slope."""
+    )
+    rel rigExec:path (
+        doc = """The path operation's curve: exactly one UsdGeomBasisCurves
+        prim holding one curve, linear or cubic (bezier, bspline or
+        catmullRom), nonperiodic or pinned. Its points are read as authored,
+        in the rig's space, and are an input a baked program can set."""
+    )
+    uniform token rigExec:pathComponent = "x" (
+        allowedTokens = ["x", "y", "z", "heading", "end"]
+        doc = """What the path operation returns. x, y and z are the sampled
+        point plus rigExec:pathOffset carried by the heading. heading is the
+        planar tangent's yaw about +Y in degrees (the rotation taking local
+        +Z to the tangent) plus rigExec:pathHeadingOffset, wrapped to
+        (-180, 180]. end is inputs:value plus the curve's whole length."""
+    )
+    uniform float2 rigExec:pathOffset = (0, 0) (
+        doc = """A local (x, z) offset from the sampled point, rotated by the
+        heading, for x and z: where a frame that travels along the path
+        carries a point (a foot's landing spot, say)."""
+    )
+    uniform float rigExec:pathHeadingOffset = 0 (
+        doc = """Degrees added to the tangent's heading, for heading and for
+        the rotation of rigExec:pathOffset."""
+    )
+    uniform token rigExec:pathMeasure = "length" (
+        allowedTokens = ["length", "planar"]
+        doc = """How the path operation measures distance along the curve:
+        its arc length, or (planar) the arc length of its projection on the
+        XZ plane -- ground distance, with the points' y carried as a height,
+        so a walk's stride does not change over terrain."""
     )
 }
 

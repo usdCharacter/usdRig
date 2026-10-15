@@ -11,10 +11,14 @@
 #include <pybind11/stl.h>
 
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3d.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec3i.h"
 #include "pxr/base/vt/array.h"
+#include "pxr/base/vt/types.h"
 #include "pxr/base/tf/refPtr.h"
+#include "pxr/base/tf/type.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/stage.h"
@@ -897,32 +901,117 @@ PYBIND11_MODULE(_rigexec, m) {
                  // The shape the manipulation path actually pushes: an
                  // ATTRIBUTE override per dragged avar, with no computation
                  // named (rigExecImaging/registry.cpp _ResolvePreviewSample).
+                 const auto isNumber = [](const py::handle &v) {
+                     return py::isinstance<py::float_>(v) ||
+                            py::isinstance<py::int_>(v);
+                 };
+                 // A str is a Python sequence but never a value sequence.
+                 const auto isSequence = [](const py::handle &v) {
+                     return py::isinstance<py::sequence>(v) &&
+                            !py::isinstance<py::str>(v) &&
+                            !py::isinstance<py::bytes>(v);
+                 };
+                 // Element i of an array override: any n-element numeric
+                 // sequence (a tuple, a Gf.Vec2f, a Gf.Vec3f), into out[].
+                 const auto readElement = [&](const std::string &where,
+                                              const py::object &item,
+                                              size_t i, size_t n,
+                                              const char *shape,
+                                              double *out) {
+                     if (!isSequence(item) || py::len(item) != n) {
+                         throw py::type_error(
+                             where + " override element " +
+                             std::to_string(i) + " is not " + shape);
+                     }
+                     const auto parts =
+                         py::reinterpret_borrow<py::sequence>(item);
+                     for (size_t c = 0; c < n; ++c) {
+                         const py::object part = parts[c];
+                         if (!isNumber(part)) {
+                             throw py::type_error(
+                                 where + " override element " +
+                                 std::to_string(i) +
+                                 " has a non-numeric component");
+                         }
+                         out[c] = part.cast<double>();
+                     }
+                 };
                  std::vector<rigExec::RigExecValueOverride> overrides;
                  overrides.reserve(entries.size());
                  for (const auto &entry : entries) {
                      const py::object &value = std::get<2>(entry);
-                     if (!py::isinstance<py::float_>(value) &&
-                         !py::isinstance<py::int_>(value)) {
-                         throw py::type_error(
-                             "interactive override values must be numeric");
-                     }
+                     const SdfPath primPath(std::get<0>(entry));
+                     const TfToken attrName(std::get<1>(entry));
+                     const std::string where =
+                         primPath.AppendProperty(attrName).GetString();
                      // Typed like the attribute, as the viewport's preview
                      // channel types it: a float dial overridden with a
                      // double VtValue is a different value to every reader
                      // that asks for a float.
-                     const SdfPath primPath(std::get<0>(entry));
-                     const TfToken attrName(std::get<1>(entry));
-                     VtValue typed(value.cast<double>());
+                     SdfValueTypeName typeName;
                      if (const UsdStageRefPtr &s =
                              r.evaluator->GetEvaluationStage()) {
-                         const UsdAttribute a = s->GetAttributeAtPath(
-                             primPath.AppendProperty(attrName));
-                         if (a && a.GetTypeName() == SdfValueTypeNames->Float) {
-                             typed = VtValue(static_cast<float>(value.cast<double>()));
-                         } else if (a && a.GetTypeName() ==
-                                             SdfValueTypeNames->Int) {
-                             typed = VtValue(static_cast<int>(value.cast<double>()));
+                         if (const UsdAttribute a = s->GetAttributeAtPath(
+                                 primPath.AppendProperty(attrName))) {
+                             typeName = a.GetTypeName();
                          }
+                     }
+                     VtValue typed;
+                     if (typeName == SdfValueTypeNames->Float2Array) {
+                         // A curve mover's keys: (x, y) pairs.
+                         if (!isSequence(value)) {
+                             throw py::type_error(
+                                 where + " is float2[]: its override must be "
+                                 "a sequence of (x, y) pairs");
+                         }
+                         const auto pairs =
+                             py::reinterpret_borrow<py::sequence>(value);
+                         VtVec2fArray keys(pairs.size());
+                         for (size_t i = 0; i < keys.size(); ++i) {
+                             double xy[2];
+                             readElement(where, pairs[i], i, 2,
+                                         "an (x, y) pair", xy);
+                             keys[i] = GfVec2f(static_cast<float>(xy[0]),
+                                               static_cast<float>(xy[1]));
+                         }
+                         typed = VtValue(std::move(keys));
+                     } else if (typeName.GetType() ==
+                                TfType::Find<VtVec3fArray>()) {
+                         // point3f[], float3[], vector3f[], normal3f[]...:
+                         // a path curve's points are (x, y, z) triples.
+                         if (!isSequence(value)) {
+                             throw py::type_error(
+                                 where + " is " +
+                                 typeName.GetAsToken().GetString() +
+                                 ": its override must be a sequence of "
+                                 "(x, y, z) triples");
+                         }
+                         const auto triples =
+                             py::reinterpret_borrow<py::sequence>(value);
+                         VtVec3fArray points(triples.size());
+                         for (size_t i = 0; i < points.size(); ++i) {
+                             double xyz[3];
+                             readElement(where, triples[i], i, 3,
+                                         "an (x, y, z) triple", xyz);
+                             points[i] = GfVec3f(static_cast<float>(xyz[0]),
+                                                 static_cast<float>(xyz[1]),
+                                                 static_cast<float>(xyz[2]));
+                         }
+                         typed = VtValue(std::move(points));
+                     } else if (isSequence(value)) {
+                         throw py::type_error(
+                             where + " takes no sequence: only a float2[] "
+                             "or a VtVec3fArray (point3f[], float3[], ...) "
+                             "attribute takes a sequence override");
+                     } else if (!isNumber(value)) {
+                         throw py::type_error(
+                             "interactive override values must be numeric");
+                     } else if (typeName == SdfValueTypeNames->Float) {
+                         typed = VtValue(static_cast<float>(value.cast<double>()));
+                     } else if (typeName == SdfValueTypeNames->Int) {
+                         typed = VtValue(static_cast<int>(value.cast<double>()));
+                     } else {
+                         typed = VtValue(value.cast<double>());
                      }
                      overrides.push_back(rigExec::RigExecValueOverride{
                          primPath, TfToken(), attrName, typed});
@@ -930,7 +1019,7 @@ PYBIND11_MODULE(_rigexec, m) {
                  r.evaluator->SetInteractiveOverrides(std::move(overrides));
              },
              py::arg("overrides"),
-             "Uncommitted manipulation values as (prim_path, attribute, value)\ntriples -- the route a gizmo drag takes, with NOTHING authored.\nSetting them does not evaluate.")
+             "Uncommitted manipulation values as (prim_path, attribute, value)\ntriples -- the route a gizmo drag takes, with NOTHING authored.\nA float2[] attribute takes a sequence of (x, y) pairs (such as a\nVt.Vec2fArray), an attribute held as a VtVec3fArray (point3f[],\nfloat3[], ...) a sequence of (x, y, z) triples (such as a\nVt.Vec3fArray); every other attribute takes a number.\nSetting them does not evaluate.")
         .def("clear_interactive_overrides", [](_Rig &r) {
                  r.evaluator->ClearInteractiveOverrides();
              },

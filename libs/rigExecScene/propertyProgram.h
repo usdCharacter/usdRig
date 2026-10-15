@@ -12,6 +12,11 @@ struct RigExecFloatPropertyRecord {
     /// arrays remain alive through Run and are never retained by the runner.
     const GfVec2f *keyData=nullptr,*tangentData=nullptr;
     size_t keyCount=0,tangentCount=0;
+    /// The path operation's curve points, borrowed like keyData, and its
+    /// uniform settings; an invalid setting or curve passes through.
+    const GfVec3f *pathPointData=nullptr;
+    size_t pathPointCount=0;
+    RigExecPathSettings path;
 };
 struct RigExecVec3PropertyRecord {
     RigExecPropertyOp op=RigExecPropertyOp::Add;

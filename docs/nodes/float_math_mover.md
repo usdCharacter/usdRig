@@ -1,6 +1,6 @@
 # ![Float Math Mover](../../icons/float_math_mover.png) Float Math Mover
 
-*Arithmetic on one scalar channel: add, clamp, remap, blend.*
+*Arithmetic on one scalar channel: add, clamp, remap, blend, curve, quantize, path.*
 
 | | |
 |---|---|
@@ -29,8 +29,18 @@ department upstream authored it in, and `remap` divides it down into the
 rest. `remap` deliberately does not bound its result, so a clamp mover
 after it is what keeps an overshoot from driving a shape past its target.
 
-Statically typed add, multiply, clamp, remap, blend, or curve
-over an exact float property target (spec section 4.1).
+Two operations serve walking rigs. `quantize` rounds a distance down to a
+stair of step `inputs:value` through `inputs:min`: a gait cycle's start, at
+any distance. `path` samples a `UsdGeomBasisCurves` (named by
+`rigExec:path`) by arc length at the incoming distance less
+`inputs:value`, returning a coordinate, the tangent's heading, or the
+curve's end; a local `rigExec:pathOffset` turned by the heading places a
+foot's landing beside the path. See
+[Paths and walking](../concepts/paths.md).
+
+Statically typed add, multiply, clamp, remap, blend, curve,
+quantize, or path over an exact float property target (spec section
+4.1).
 
 The revision is r = op(incoming), then the common MoverAPI envelope mixes
 it back over the incoming value. Zero is a pass-through and one applies
@@ -41,6 +51,16 @@ clamp; compose a clamp mover after it to bound the result.
 
 curve maps the incoming value through inputs:keys, piecewise linear
 between keys and extrapolated linearly past the first and last key.
+
+quantize rounds the incoming value down to inputs:min + k * inputs:value
+for the largest integer k that does not exceed it: a stair of step
+inputs:value through inputs:min. A step that is not positive passes the
+value through.
+
+path samples the curve rigExec:path names at arc length (incoming -
+inputs:value), clamped to the curve, and returns rigExec:pathComponent
+of it. inputs:value is the distance the curve's first point stands at,
+so a moving window of points keeps one distance clock.
 
 ## How it works
 
@@ -61,6 +81,7 @@ parent after its children, so the last sibling listed runs first.
 | Relationship | Points to | Required |
 |---|---|---|
 | `rigExec:moves` | Exact float property to revise; exactly one. | yes |
+| `rigExec:path` | The path operation's curve: one UsdGeomBasisCurves prim holding one linear, bezier, bspline or catmullRom curve, nonperiodic or pinned. | for path |
 
 ## Parameters
 
@@ -107,7 +128,7 @@ every application of the atomic mover.
 
 *Type:* `uniform token`. *Default:* `"clamp"`.
 
-Valid values: `add`, `multiply`, `clamp`, `remap`, `blend`, `curve`.
+Valid values: `add`, `multiply`, `clamp`, `remap`, `blend`, `curve`, `quantize`, `path`.
 
 #### `inputs:value`
 
@@ -136,6 +157,53 @@ Optional (in slope, out slope) per key for the curve
 operation. Empty is piecewise linear, extrapolated along the end
 segments; authored, the curve is a cubic Hermite through the keys,
 extrapolated along the first in slope and the last out slope.
+
+#### `rigExec:path`
+
+*Relationship.*
+
+The path operation's curve: exactly one UsdGeomBasisCurves
+prim holding one curve, linear or cubic (bezier, bspline or
+catmullRom), nonperiodic or pinned. Its points are read as authored,
+in the rig's space, and are an input a baked program can set.
+
+#### `rigExec:pathComponent`
+
+*Type:* `uniform token`. *Default:* `"x"`.
+
+Valid values: `x`, `y`, `z`, `heading`, `end`.
+
+What the path operation returns. x, y and z are the sampled
+point plus rigExec:pathOffset carried by the heading. heading is the
+planar tangent's yaw about +Y in degrees (the rotation taking local
++Z to the tangent) plus rigExec:pathHeadingOffset, wrapped to
+(-180, 180]. end is inputs:value plus the curve's whole length.
+
+#### `rigExec:pathOffset`
+
+*Type:* `uniform float2`. *Default:* `(0, 0)`.
+
+A local (x, z) offset from the sampled point, rotated by the
+heading, for x and z: where a frame that travels along the path
+carries a point (a foot's landing spot, say).
+
+#### `rigExec:pathHeadingOffset`
+
+*Type:* `uniform float`. *Default:* `0`.
+
+Degrees added to the tangent's heading, for heading and for
+the rotation of rigExec:pathOffset.
+
+#### `rigExec:pathMeasure`
+
+*Type:* `uniform token`. *Default:* `"length"`.
+
+Valid values: `length`, `planar`.
+
+How the path operation measures distance along the curve:
+its arc length, or (planar) the arc length of its projection on the
+XZ plane -- ground distance, with the points' y carried as a height,
+so a walk's stride does not change over terrain.
 
 ## Example
 
@@ -175,6 +243,7 @@ python docs/render_media.py --page float_math_mover
 - `remap` only normalizes: `(v − min) / (max − min)`, with a zero-width range returning 0 rather than dividing. Chain a `clamp` after it whenever the incoming channel can overshoot.
 - A connection to a property these movers revise reads its base, the authored value before any of them. Declare `rigExecReadPhase = "final"` on the connected input to read their result, or a prim path to read it as that prim's movers left it. The phase is read on every connected attribute under the rig root, whatever operator it belongs to; see [Connected inputs](../concepts/how-operators-fire.md#connected-inputs) and example 16.
 - Dragging the revised property itself edits its base: the movers revise the dragged value as they would the authored one, so a channel clamped to [0, 1] and dragged to 1.4 shows 1.0, during the drag and after it is released.
+- `path` reads its curve's `points` as an input: a baked program lists them as a `point3f[]` input of fixed count, so a host can move the path every frame. `inputs:value` is the distance the first point stands at; a window of points that slides along a walk advances it to keep one distance clock. `rigExec:pathMeasure = "planar"` measures ground distance, so heights in the points' y do not stretch a walk's strides.
 
 ## See also
 

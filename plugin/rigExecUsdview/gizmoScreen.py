@@ -77,18 +77,22 @@ _PLANE_SPECS = (("yz", 0, 1, 2), ("xz", 1, 0, 2), ("xy", 2, 0, 1))
 # because every axis starts there; planes beat axes because their squares
 # sit on top of the axis lines; the free-rotate disc is last because it
 # covers the whole manipulator and would otherwise swallow every ring.
-_HIT_PRIORITY = ("center", "plane", "axis", "ring", "view", "sphere")
+# Control points (pathCurveModel) never share a target with the others.
+_HIT_PRIORITY = ("point", "center", "plane", "axis", "ring", "view",
+                 "sphere")
 
 
 class Handle(object):
     """
     One drawable, pickable piece of the gizmo.
 
-    `kind` is one of "axis", "plane", "ring", "view", "sphere" or
-    "center".  `points` is that kind's projected geometry: two endpoints
+    `kind` is one of "axis", "plane", "ring", "view", "sphere", "center"
+    or "point".  `points` is that kind's projected geometry: two endpoints
     for an axis, four corners for a plane, RING_SEGMENTS points for a
-    ring or the view ring, and a single point for the centre and for the
-    free-rotate disc (whose size is `radiusPixels`).
+    ring or the view ring, and a single point for the centre, for the
+    free-rotate disc (whose size is `radiusPixels`) and for a curve's
+    control point (pathCurveModel), which moves in the plane its
+    `worldNormal` names.
 
     `worldCenter` is the world point the handle is centred on -- the
     square's centre for a plane, the gizmo origin for everything else --
@@ -442,7 +446,7 @@ def _PolylineDistance(p, points, closed):
 def _HandleDistance(handle, p):
     """Screen distance from p to the handle, or None when unpickable."""
     kind = handle.kind
-    if kind in ("center", "sphere"):
+    if kind in ("center", "sphere", "point"):
         return math.hypot(p[0] - handle.points[0][0],
                           p[1] - handle.points[0][1])
     if kind == "axis":

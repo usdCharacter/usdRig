@@ -3168,6 +3168,9 @@ private:
                                 if (!(_f.inputs[candidate.slot].type() >= InputTag::IntArray))
                                     expectedSlots.insert(candidate.slot);
                     }
+                    // A path also memoizes its curve's points.
+                    if (revision.op == fb::PropertyOp::Path && revision.pathPoints >= 0)
+                        expectedSlots.insert(uint32_t(revision.pathPoints));
                 }
                 if (std::set<uint32_t>(step.headInputSlots.begin(), step.headInputSlots.end()) != expectedSlots ||
                     !step.headInputReads.empty())
@@ -6650,6 +6653,28 @@ private:
                     (!revision.keys.empty() || !revision.tangents.empty())) {
                     return _Bad(at + ": keys or tangents on a revision "
                                      "that is not a scalar curve");
+                }
+                const bool path = revision.op == fb::PropertyOp::Path;
+                if ((revision.op == fb::PropertyOp::Quantize || path) &&
+                    !scalar) {
+                    return _Bad(at + ": quantize or path on a revision "
+                                     "that is not scalar");
+                }
+                if (!path && (revision.pathPoints != -1 || revision.pathValid)) {
+                    return _Bad(at + ": path settings on a revision that is "
+                                     "not a path");
+                }
+                if (path &&
+                    (revision.pathBasis > fb::PathBasis::MAX ||
+                     revision.pathComponent > fb::PathComponent::MAX ||
+                     revision.pathPoints < -1 ||
+                     (revision.pathPoints >= 0 &&
+                      (size_t(revision.pathPoints) >= _f.inputs.size() ||
+                       _f.inputs[size_t(revision.pathPoints)].type() !=
+                           InputTag::Vec3fArray)) ||
+                     (revision.pathValid && revision.pathPoints < 0))) {
+                    return _Bad(at + ": malformed path settings or points "
+                                     "slot");
                 }
             }
         }
