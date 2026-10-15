@@ -27,6 +27,34 @@ from .widgets.keyBindingDialog import KeyBindingDialog
 _IS_MACOS = sys.platform == "darwin"
 
 
+def _keepFloatingWindowOnScreen(window, mainWindow, initialPlacement=False):
+    """Recover floating editors without disturbing a visible user placement."""
+    if not window.isFloating():
+        return
+    frame = window.frameGeometry()
+    screens = QtGui.QGuiApplication.screens()
+    if not initialPlacement and any(
+            screen.availableGeometry().contains(frame) for screen in screens):
+        return
+    screen = mainWindow.screen() or QtGui.QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+    available = screen.availableGeometry()
+    borderWidth = max(0, frame.width() - window.width())
+    borderHeight = max(0, frame.height() - window.height())
+    window.resize(
+        min(window.width(), available.width() - borderWidth),
+        min(window.height(), available.height() - borderHeight),
+    )
+    frame = window.frameGeometry()
+    window.move(
+        max(available.left(), min(frame.left(),
+                                 available.right() - frame.width() + 1)),
+        max(available.top(), min(frame.top(),
+                                available.bottom() - frame.height() + 1)),
+    )
+
+
 class _MacMenuBarSwapper:
     def __init__(self, mainWindow):
         self._mainWindow = mainWindow
@@ -584,6 +612,7 @@ class NoodlesEditorManager:
             _layerEditorManager.showOrCreate()
         else:
             existing.show()
+            _keepFloatingWindowOnScreen(existing, self._usdviewApi.qMainWindow)
             existing.raise_()
             existing.editorWidget.reattach()
 
@@ -629,6 +658,7 @@ class NoodlesEditorManager:
         if _IS_MACOS and self._windows:
             window = next(iter(self._windows.values()))
             window.show()
+            _keepFloatingWindowOnScreen(window, self._usdviewApi.qMainWindow)
             window.raise_()
             window.activateWindow()
             if primPath is not None:
@@ -682,6 +712,7 @@ class NoodlesEditorManager:
             QtCore.QTimer.singleShot(100, relaxMinimum)
 
         window.show()
+        _keepFloatingWindowOnScreen(window, mainWindow, initialPlacement=True)
         window.raise_()
 
         if _IS_MACOS:
@@ -762,6 +793,7 @@ class NoodlesEditorManager:
             return self.createNewEditor(floating=floating, primPath=primPath)
 
         window.show()
+        _keepFloatingWindowOnScreen(window, self._usdviewApi.qMainWindow)
         window.raise_()
         window.activateWindow()
 
@@ -1049,6 +1081,7 @@ class NoodlesLayerEditorManager:
             return None
         if self._window is not None:
             self._window.show()
+            _keepFloatingWindowOnScreen(self._window, self._usdviewApi.qMainWindow)
             self._window.raise_()
             self._window.activateWindow()
             self._window.editorWidget.reattach()
@@ -1066,6 +1099,7 @@ class NoodlesLayerEditorManager:
         else:
             mainWindow.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._window)
         self._window.show()
+        _keepFloatingWindowOnScreen(self._window, mainWindow, initialPlacement=True)
         self._window.raise_()
         return self._window
 

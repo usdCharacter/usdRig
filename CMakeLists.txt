@@ -905,7 +905,7 @@ target_compile_definitions(testRigExecStandalone PRIVATE ${_rigexec_schema_resou
 add_test(NAME testRigExecStandalone COMMAND testRigExecStandalone)
 
 add_executable(testRigExecRuntimeMath tests/testRigExecRuntimeMath.cpp)
-target_link_libraries(testRigExecRuntimeMath PRIVATE rigExecRuntime gf)
+target_link_libraries(testRigExecRuntimeMath PRIVATE rigExecRuntime rigExecMath gf)
 add_test(NAME testRigExecRuntimeMath COMMAND testRigExecRuntimeMath)
 
 add_executable(testRigExecRuntimeLoader tests/testRigExecRuntimeLoader.cpp)

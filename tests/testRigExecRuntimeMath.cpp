@@ -4,6 +4,7 @@
 // payloads): the runtime must perform the SAME operations in the SAME
 // order as Gf. Randomized inputs (fixed seed) plus edge cases.
 #include "rigExecRuntime/runtimeMath.h"
+#include "rigExecMath/geometryKernels.h"
 
 #include "pxr/base/gf/matrix3d.h"
 #include "pxr/base/gf/matrix4d.h"
@@ -743,6 +744,42 @@ _TestRotation()
     }
 }
 
+void
+_TestPartialTransformShortestArc()
+{
+    // Sweep both signs through matrix-to-quaternion extraction branches.
+    // The expected transform rotates about a known off-origin pivot.
+    const GfVec3d pivot(2, -3, 7);
+    for (const GfVec3d rawAxis : {GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                                GfVec3d(0, 0, 1), GfVec3d(1, -2, 3)}) {
+        const GfVec3d axis = rawAxis.GetNormalized();
+        for (int angle = -175; angle <= 175; angle += 5) {
+            _context = "partial shortest arc " + std::to_string(angle);
+            GfMatrix4d transform(1);
+            transform.SetRotate(GfRotation(axis, double(angle)));
+            transform.SetTranslateOnly(
+                pivot - transform.TransformDir(pivot) + axis * 0.7);
+            const auto runtimeTransform = _ToRr(transform);
+            for (double weight : {0.0, 0.125, 0.5, 0.9, 1.0}) {
+                const auto native = rigExec::RigExecPartialTransform(
+                    transform, weight);
+                const auto runtime = rigExec::RrPartialTransform(
+                    runtimeTransform, weight);
+                CHECK(_SameMat4d(native, runtime));
+                GfMatrix4d expected(1);
+                expected.SetRotate(GfRotation(axis, angle * weight));
+                expected.SetTranslateOnly(
+                    pivot - expected.TransformDir(pivot) + axis * (0.7 * weight));
+                for (int row = 0; row < 4; ++row) {
+                    for (int col = 0; col < 4; ++col) {
+                        CHECK(std::abs(native[row][col] - expected[row][col]) < 1e-11);
+                    }
+                }
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int
@@ -757,6 +794,7 @@ main()
     _TestMat4d();
     _TestQuatd();
     _TestRotation();
+    _TestPartialTransformShortestArc();
     if (_failures) {
         std::printf("testRigExecRuntimeMath: %d failures\n", _failures);
         return 1;

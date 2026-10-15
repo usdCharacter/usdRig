@@ -71,8 +71,43 @@ def testUsdviewInputFunction(appController):
            "the installed pxr.UsdNoodles was imported: %s"
            % getattr(installed, "__file__", installed))
 
+    mainWindow = appController._usdviewApi.qMainWindow
+    mainWindow.showMaximized()
+    _pump(app, 20)
     command.run()
     _pump(app, 50)
+
+    from UsdNoodles._qt_editor import GetEditorManager, GetLayerEditorManager
+
+    editor = GetEditorManager().getActiveWindow()
+    layerEditor = GetLayerEditorManager().getWindow()
+
+    def checkOnScreen(window):
+        _Check(any(screen.availableGeometry().contains(window.frameGeometry())
+                   for screen in app.screens()),
+               "%s opened outside the available screens: %s"
+               % (window.windowTitle(), window.frameGeometry()))
+
+    for window in (editor, layerEditor):
+        checkOnScreen(window)
+        _Check(mainWindow.screen().availableGeometry().contains(window.frameGeometry()),
+               "new editor did not open on usdview's screen")
+    placements = [QtCore.QRect(w.frameGeometry()) for w in (editor, layerEditor)]
+    command.run()
+    _pump(app, 20)
+    _Check(placements == [w.frameGeometry() for w in (editor, layerEditor)],
+           "reopening moved an already visible editor")
+
+    # Recover windows stranded by a disconnected display, including an
+    # editor larger than the remaining display's work area.
+    available = mainWindow.screen().availableGeometry()
+    for window in (editor, layerEditor):
+        window.move(available.right() + 10000, available.top())
+    editor.resize(available.width() * 2, available.height() * 2)
+    command.run()
+    _pump(app, 20)
+    for window in (editor, layerEditor):
+        checkOnScreen(window)
 
     from UsdNoodles._usdNoodles import NoodlesUndoManager
     from UsdNoodles.graphView import GraphView
@@ -506,6 +541,14 @@ def testUsdviewInputFunction(appController):
         view.repaint()
         _pump(app, 5)
         view.grabFramebuffer().save(shot.replace(".png", "_edited.png"))
+
+    view.setFocus()
+    view.nodeCreationHotbox.hide()
+    _pump(app, 20)
+    key(QtCore.Qt.Key_Tab)
+    _Check(view.nodeCreationHotbox.is_showing,
+           "Tab traversed focus instead of opening node creation")
+    key(QtCore.Qt.Key_Tab)
 
     for widget in list(app.topLevelWidgets()):
         if type(widget).__module__.startswith("UsdNoodles"):

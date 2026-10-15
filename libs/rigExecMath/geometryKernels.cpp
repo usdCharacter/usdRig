@@ -158,6 +158,9 @@ RigExecDecomposePartialTransform(const GfMatrix4d &transform)
     const GfRotation rotation = basis.ExtractRotation();
     d.axis = rotation.GetAxis().GetNormalized();
     d.angle = rotation.GetAngle();
+    // Matrix extraction may choose either quaternion sign. Fractional
+    // weights must follow the same shortest arc for both representations.
+    if (d.angle > 180.0) d.angle -= 360.0;
     d.translation = transform.ExtractTranslation();
 
     // Below about a tenth of a degree there is no meaningful axis to

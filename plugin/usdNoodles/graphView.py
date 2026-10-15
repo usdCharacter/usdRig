@@ -11100,15 +11100,8 @@ class GraphView(QGLWidget):
         self._closeTokenPopup()
 
     def focusNextPrevChild(self, nextChild):
-        """Keep Tab inside this widget while a value editor is open.
-
-        Qt's default handling of Tab moves focus BEFORE keyPressEvent sees the
-        key, which would take the cursor out of a half-typed value and into
-        usdview's next widget.
-        """
-        if self._valueEditTarget or self.nodeCreationHotbox.is_showing:
-            return False
-        return super().focusNextPrevChild(nextChild)
+        """Let keyPressEvent use Tab for creation and inline value editing."""
+        return False
 
     def _valueAxisWidth(self, label, size):
         """Width of one axis hint (``x``/``y``/``z``/``r``/...) at *size*.

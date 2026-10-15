@@ -2406,7 +2406,9 @@ RrDecomposePartialTransform(const RrMat4d &transform)
 
     const RrRotation rotation = basis.ExtractRotation();
     const RrVec3d axis = rotation.GetAxis().GetNormalized();
-    const double angle = rotation.GetAngle();
+    double angle = rotation.GetAngle();
+    // Match the native partial transform's quaternion-sign-independent arc.
+    if (angle > 180.0) angle -= 360.0;
     const RrVec3d translation = transform.ExtractTranslation();
 
     return {transform,scale,axis,translation,angle};
