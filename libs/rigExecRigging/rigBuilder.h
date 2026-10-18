@@ -815,6 +815,38 @@ public:
     void SetReadPhase(const TfToken &phase);
 };
 
+/// RigExecPatchMover: NURBS patch surface evaluation from phased UV points.
+class RigExecPatchMoverHandle : public RigExecMoverHandle {
+public:
+    using RigExecMoverHandle::RigExecMoverHandle;
+    using RigExecMoverHandle::SetReadPhase;
+
+    /// Native UsdGeomNurbsPatch prim supplying the surface.
+    void SetPatch(const SdfPath &path);
+    /// Native UsdGeomPointBased prim or points property supplying normalized UV coordinates.
+    void SetUvPoints(const SdfPath &path);
+    /// base | preceding | final, as rigExecReadPhase metadata on rigExec:patch.
+    void SetReadPhase(const TfToken &phase);
+    /// base | preceding | final, as rigExecReadPhase metadata on rigExec:patch.
+    void SetPatchReadPhase(const TfToken &phase);
+    /// base | preceding | final, as rigExecReadPhase metadata on rigExec:uvPoints.
+    void SetUvPointsReadPhase(const TfToken &phase);
+    /// The ordered UV shapes (rigExec:uvShapes) mixed into the UV points.
+    void SetUvShapes(const std::vector<SdfPath> &paths);
+    /// base | preceding | final, as rigExecReadPhase metadata on rigExec:uvShapes.
+    void SetUvShapesReadPhase(const TfToken &phase);
+    /// Authored shape weights (inputs:uvWeights), one per UV shape.
+    void SetUvWeights(const std::vector<float> &weights);
+    /// Connect inputs:uvWeights to one float or double source per UV shape,
+    /// in shape order (avars, typically). An empty list removes them.
+    void ConnectUvWeights(const std::vector<SdfPath> &sources);
+    /// Contact pairs (rigExec:uvContactLower/Upper): UV point lower[k] never
+    /// rises above UV point upper[k] in v. Throws when the lists differ in
+    /// length or hold a negative index.
+    void SetUvContacts(const std::vector<int> &lower,
+                       const std::vector<int> &upper);
+};
+
 /// Native delta mush: rest-detail transport after iterative smoothing.
 class RigExecDeltaMushMoverHandle : public RigExecMoverHandle {
 public:
@@ -990,6 +1022,15 @@ public:
         const TfToken &mode = TfToken("attach"),
         const SdfPath &target = {},
         const TfToken &readPhase = TfToken("base"));
+
+    /// NURBS patch surface attachment from phased UV points.
+    RigExecPatchMoverHandle AddPatchMover(
+        const std::string &name,
+        const SdfPath &patchPrim,
+        const SdfPath &uvPoints,
+        const SdfPath &target = {},
+        const TfToken &patchReadPhase = TfToken("base"),
+        const TfToken &uvPointsReadPhase = TfToken("base"));
 
     /// Uniform-weight Laplacian smoothing with the common mover envelope.
     RigExecDeltaMushMoverHandle AddDeltaMushMover(

@@ -233,8 +233,11 @@ class NodeFactory:
         input_set = set(input_pins)
         output_pins = [p for p in output_pins if p not in input_set]
 
-        node.inputPins = input_pins
-        node.outputPins = output_pins
+        # The mirror sets come first: the pin setters below copy them to the
+        # C++ layout, whose port resolver mirrors a dual row's port only when
+        # the row is in that copy. Assigned afterwards, a dual row's opposite
+        # edge had no port until some later relayout, and its links attached
+        # to the node's mid-height edge instead.
         node._dual_pin_names = {
             pin_name
             for pin_name in input_pins
@@ -245,6 +248,8 @@ class NodeFactory:
             for pin_name in output_pins
             if not node.is_relationship_pin(pin_name, True)
         }
+        node.inputPins = input_pins
+        node.outputPins = output_pins
 
     def _apply_metadata_from_prim(self, node: NodeModel, prim: Usd.Prim) -> None:
         self._apply_icon_from_prim(node, prim)

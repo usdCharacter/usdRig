@@ -1514,9 +1514,17 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.curveList.blockSignals(True)
         try:
             self.curveList.clear()
-            for ref in self._curves:
+            for index, ref in enumerate(self._curves):
+                sampled = self.IsSampled(index)
                 item = QtWidgets.QTreeWidgetItem(
-                    [ref.primPath.name, ref.attrName])
+                    [ref.primPath.name,
+                     ref.attrName + (" (samples)" if sampled else "")])
+                if sampled:
+                    item.setToolTip(
+                        1, "Animated by time samples: each key is a sample, "
+                        "joined by the stage's interpolation. Edits stay "
+                        "time samples; tangents, infinity and curve type "
+                        "do not apply.")
                 item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 hidden = ref.Label() in self._hidden
                 item.setCheckState(
@@ -1564,6 +1572,22 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self._RebuildCurveList()
         self.canvas.update()
         self._Sync()
+
+    def IsSampled(self, index):
+        """Whether curve `index` is animated by time samples, not a spline."""
+        return graphModel.IsSampledCurve(self._Attribute(index))
+
+    def _SplineIndices(self, indices, what):
+        """
+        `indices` without the time-sampled curves, which have no tangents,
+        infinities, curve type or arrival values to set: written back as
+        samples, such an edit would change nothing. Says so when nothing
+        is left.
+        """
+        kept = [index for index in indices if not self.IsSampled(index)]
+        if not kept and indices:
+            self._Notify("%s does not apply to time samples." % what)
+        return kept
 
     def IsVisibleCurve(self, index):
         label = self._curves[index].Label()
@@ -1866,10 +1890,11 @@ class GraphEditorPanel(QtWidgets.QWidget):
     def SetTangentType(self, mode):
         """tangent buttons, on the selected keys (spec 2.4)."""
         times = self.SelectedTimes()
-        if not times:
+        indices = self._SplineIndices(sorted(times), "Tangent type")
+        if not indices:
             return False
         return self._Apply(
-            sorted(times), "Tangent %s" % mode.capitalize(),
+            indices, "Tangent %s" % mode.capitalize(),
             lambda index, spline: graphModel.SetTangentType(
                 spline, times[index], mode, self._tangentSide))
 
@@ -1888,19 +1913,21 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def Break(self):
         times = self.SelectedTimes()
-        if not times:
+        indices = self._SplineIndices(sorted(times), "Break tangents")
+        if not indices:
             return False
         return self._Apply(
-            sorted(times), "Break Tangents",
+            indices, "Break Tangents",
             lambda index, spline: graphModel.BreakTangents(
                 spline, times[index]))
 
     def Unify(self):
         times = self.SelectedTimes()
-        if not times:
+        indices = self._SplineIndices(sorted(times), "Unify tangents")
+        if not indices:
             return False
         return self._Apply(
-            sorted(times), "Unify Tangents",
+            indices, "Unify Tangents",
             lambda index, spline: graphModel.UnifyTangents(
                 spline, times[index]))
 
@@ -2042,6 +2069,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
         if not indices:
             self._Notify("Infinity needs a curve with keys.")
             return False
+        indices = self._SplineIndices(indices, "Infinity")
+        if not indices:
+            return False
         return self._Apply(
             indices, "Set Infinity",
             lambda index, spline: graphModel.SetExtrapolation(spline, pre,
@@ -2062,6 +2092,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
         indices = self.AnimatedIndices()
         if not indices:
             self._Notify("Curve type needs a curve with keys.")
+            return False
+        indices = self._SplineIndices(indices, "Curve type")
+        if not indices:
             return False
         return self._Apply(
             indices, "Set Curve Type",
@@ -2192,11 +2225,12 @@ class GraphEditorPanel(QtWidgets.QWidget):
             self._Notify("Pre must be a finite number: %r" % (preValue,))
             return False
         times = self.SelectedTimes()
-        if not times:
+        indices = self._SplineIndices(sorted(times), "An arrival value")
+        if not indices:
             return False
         try:
             return self._Apply(
-                sorted(times), "Set Key Pre Value",
+                indices, "Set Key Pre Value",
                 lambda index, spline: graphModel.SetKeyPreValues(
                     spline, times[index], preValue))
         except ValueError as error:

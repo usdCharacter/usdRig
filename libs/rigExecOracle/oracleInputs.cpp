@@ -43,6 +43,7 @@ RigExecOracleScene RigExecCaptureOracleInputs(const UsdStageRefPtr &stage,
                 else if(v.type.GetType()==TfType::Find<VtVec3fArray>())Capture<VtVec3fArray>(resolved,a,time,&v);
                 else if(v.type==SdfValueTypeNames->FloatArray)Capture<VtFloatArray>(resolved,a,time,&v);
                 else if(v.type==SdfValueTypeNames->IntArray)Capture<VtIntArray>(resolved,a,time,&v);
+                else if(v.type==SdfValueTypeNames->DoubleArray)Capture<VtDoubleArray>(resolved,a,time,&v);
                 else if(v.type==SdfValueTypeNames->Matrix4d)Capture<GfMatrix4d>(resolved,a,time,&v);
                 else if(v.type.GetType()==TfType::Find<GfVec3d>())Capture<GfVec3d>(resolved,a,time,&v);
                 else if(v.type.GetType()==TfType::Find<GfVec3i>())Capture<GfVec3i>(resolved,a,time,&v);

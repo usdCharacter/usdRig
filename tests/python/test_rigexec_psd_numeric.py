@@ -12,6 +12,7 @@ rigExec:translation. This holds the whole contract on a two-pose rig:
     channel's and nothing else;
   * the compiled graph agrees with the dynamic walk exactly;
   * two dials work as one position, and the second one moves the weights;
+  * a float dial is read in its own precision, exactly as a double one;
   * more than three is refused at compile rather than silently truncated.
 
 Usage: test_rigexec_psd_numeric.py [<generated schema resources dir>]
@@ -38,17 +39,16 @@ def _Check(condition, message):
 INTERPOLATOR = "/Rig/PoseInterpolators/dialled"
 
 
-def _Rig(dials, poses, mode="graph"):
-    """A rig whose one interpolator reads `dials` (avar names) and stands at
-    `poses` -- [(name, (v0, v1, v2))]."""
+def _Rig(dials, poses, mode="graph", value_type=Sdf.ValueTypeNames.Double):
+    """A rig whose one interpolator reads `dials` (avar names, of
+    `value_type`) and stands at `poses` -- [(name, (v0, v1, v2))]."""
     stage = Usd.Stage.CreateInMemory("numeric.usda")
     builder = rigexec.Builder.create(stage, RIG, "Test")
     builder.add_control("dial")
     control = stage.GetPrimAtPath(DIAL)
     attributes = []
     for name in dials:
-        attribute = control.CreateAttribute("avars:" + name,
-                                            Sdf.ValueTypeNames.Double)
+        attribute = control.CreateAttribute("avars:" + name, value_type)
         attribute.Set(0.0)
         attributes.append(attribute)
     interpolator = builder.add_pose_interpolator("dialled", DIAL)
@@ -119,6 +119,27 @@ def TestTwoDials():
            "halfway between the two dials shares them evenly: %s" % got)
 
 
+def TestFloatDial():
+    # A float avar is as much a dial as a double one: before it was read in
+    # its own precision, a double read of it answered only the fallback and
+    # the interpolator sat on `neutral` whatever the dial said.
+    stage, rig = _Rig(["breath"],
+                      [("neutral", (0.0, 0.0, 0.0)),
+                       ("out", (10.0, 0.0, 0.0))],
+                      value_type=Sdf.ValueTypeNames.Float)
+    dial = stage.GetPrimAtPath(DIAL).GetAttribute("avars:breath")
+    for value, expect in ((10.0, (0.0, 1.0)), (5.0, (0.5, 0.5)),
+                          (0.0, (1.0, 0.0))):
+        dial.Set(value)
+        pose = rig.evaluate(1.0)
+        _Check(pose.valid, "float dial pose publication valid")
+        got = [pose.moved_property(
+            "/Rig/PoseInterpolators/dialled/%s.outputs:weight" % n)
+            for n in ("neutral", "out")]
+        _Check(all(abs(a - b) < 1e-5 for a, b in zip(got, expect)),
+               "float dial %g read %s, expected %s" % (value, got, expect))
+
+
 def TestTooManyDialsRefused():
     # A fourth dial has no axis to stand for, so the interpolator is refused.
     # The refusal is a SKIPPED OPERATION, not a failed compile: one bad prim
@@ -154,9 +175,11 @@ def main():
     print("  ok: one dial drives its poses, graph and scalar reference, with parity")
     TestTwoDials()
     print("  ok: two dials read as one position")
+    TestFloatDial()
+    print("  ok: a float dial is read in its own precision")
     TestTooManyDialsRefused()
     print("  ok: a fourth dial is refused at compile")
-    print("RIGEXEC_PSD_NUMERIC_OK (3 groups)")
+    print("RIGEXEC_PSD_NUMERIC_OK (4 groups)")
     return 0
 
 

@@ -22,8 +22,8 @@ On this page:
 Every rig is one `RigExecRoot` prim and everything composed
 beneath it. The root declares no membership lists: a `RigExecControl` under it
 is a control, a `RigExecJoint` is a joint output, a placed volume prim is a
-weight field, and a prim carrying `rigExec:moves` under the root's `Movers`
-child is a mover. It is what a host activates — one rig, or every
+weight field, and a prim carrying `rigExec:moves` anywhere beneath
+the root is a mover. It is what a host activates — one rig, or every
 `RigExecRoot` on the stage — and it is the unit that compiles, publishes a
 generation, and carries the pose diagnostics. It is Imageable but deliberately
 not Xformable, so guide bounds propagate up to the enclosing asset for camera
@@ -51,7 +51,7 @@ interpolators, placed volume weights, and aggregate solvers by prim type
 anywhere under it, then walks the WHOLE RIG in reverse-sibling post-order —
 descendants before their parent, and the *bottom* sibling branch in usdview
 first — to number ONE pose stack of joint-writing solvers and frame
-constraints, of which the `<rig>/Movers` mover stack is a restriction; the walk uses the standard
+constraints, of which the mover order is a restriction; the walk uses the standard
 `UsdPrimRange` predicate, so a deactivated or unloaded branch is simply not
 part of the rig and changing that is a structural (epoch-rebuilding) edit
 rather than a value edit. A rig that finds no controls, joints, volume weights,
@@ -67,7 +67,7 @@ optional judges and do not choose an evaluation path.
 | Relationship | Points to | Required |
 |---|---|---|
 | (namespace) | Everything composed beneath the root is the rig; controls, joints, solvers, and weight volumes are discovered by prim type. | - |
-| `Movers` child | The scope the mover stack is walked from: only prims under `<rig>/Movers` are compiled as movers. | no |
+| `Movers` child | The conventional scope for movers: discovery is by `rigExec:moves` anywhere beneath the root; the scope only groups them in the walk order. | no |
 | (parent prim) | The rig root's parent is the asset: movers may only target prims under it, and geometry lives there too. | - |
 
 ## Parameters
@@ -101,8 +101,8 @@ so, rather than rendering a rig it did not evaluate.
 Every shipped example is one of these: `two_bone_ik.usda` puts a
 `RigExecRoot` named `Rig` inside the `IkAsset` Xform, with `Controls`,
 `Solvers`, `Joints`, `Weights`, and `Movers` scopes beneath it and the deformed
-cards in a sibling `Geom` scope. Only `Movers` is a name the compiler knows —
-the rest are ordinary `Scope` prims kept for readability — and the geometry sits
+cards in a sibling `Geom` scope. The scope names are all convention — the
+compiler discovers by prim type — and the geometry sits
 under `IkAsset` because that parent is what bounds the rig's write set.
 
 Open it live with:

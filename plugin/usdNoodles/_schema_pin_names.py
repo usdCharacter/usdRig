@@ -63,10 +63,35 @@ def get_schema_aware_pin_names(prim: Usd.Prim) -> list[str]:
     return ordered
 
 
+def _display_group_key(property_name: str) -> str | None:
+    """The namespace header a property's row is listed under, or None.
+
+    A namespaced property groups under its first namespace; a direction-hinted
+    one (``inputs:x``) under its direction, or under its sub-namespace when it
+    has one (``inputs:shaping:focus``). A bare property has no group.
+    """
+    side, stripped = split_direction_hint(property_name)
+    if side is not None:
+        if ":" in stripped:
+            return stripped.split(":", 1)[0]
+        return "<" + side + ">"
+    if ":" in property_name:
+        return property_name.split(":", 1)[0]
+    return None
+
+
 def get_schema_aware_property_names(prim: Usd.Prim) -> list[str]:
-    """Return deduplicated property names ordered schema-first, authored-second."""
+    """Return deduplicated property names, schema properties first.
+
+    An authored property the schema does not declare follows the last schema
+    property of its display group (``avars:smile`` after the schema's
+    ``avars:*``), so every group's rows stay contiguous: the row layout places
+    rows in this order while the display lists them under their group header,
+    and a group split across the list would draw a child under another
+    group's header. Other authored properties follow in authored order.
+    """
     seen: set[str] = set()
-    ordered: list[str] = []
+    schema_names: list[str] = []
 
     prim_def = prim.GetPrimDefinition()
     if prim_def is not None:
@@ -79,14 +104,32 @@ def get_schema_aware_property_names(prim: Usd.Prim) -> list[str]:
                 continue
             if name not in seen:
                 seen.add(name)
-                ordered.append(name)
+                schema_names.append(name)
 
+    last_schema_index: dict[str, int] = {}
+    for index, name in enumerate(schema_names):
+        key = _display_group_key(name)
+        if key is not None:
+            last_schema_index[key] = index
+
+    joined: dict[int, list[str]] = {}
+    trailing: list[str] = []
     for name in prim.GetAuthoredPropertyNames():
         name = str(name)
-        if name not in seen:
-            seen.add(name)
-            ordered.append(name)
+        if name in seen:
+            continue
+        seen.add(name)
+        key = _display_group_key(name)
+        if key is not None and key in last_schema_index:
+            joined.setdefault(last_schema_index[key], []).append(name)
+        else:
+            trailing.append(name)
 
+    ordered: list[str] = []
+    for index, name in enumerate(schema_names):
+        ordered.append(name)
+        ordered.extend(joined.get(index, ()))
+    ordered.extend(trailing)
     return ordered
 
 

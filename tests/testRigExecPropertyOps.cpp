@@ -2399,7 +2399,7 @@ TestAuthoredPropertyHeadCensus(const std::string &examples)
             std::printf("FAIL property census %s %s: authored identities differ\n",
                         fixture.fixture, fixture.rig);
     }
-    CHECK(checked.size() == 47);
+    CHECK(checked.size() == 49);
 }
 
 }  // namespace

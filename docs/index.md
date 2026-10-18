@@ -78,6 +78,7 @@ Storm viewport with the rig guides on.
 | ![Lattice Mover](../icons/lattice_mover.png) | [Lattice Mover](nodes/lattice_mover.md) | Deforms points through a legacy cage or a regular interpolation grid. |
 | ![Surface Mover](../icons/surface_mover.png) | [Surface Mover](nodes/surface_mover.md) | Drapes points onto an animated driver surface. |
 | ![Surface Binding Mover](../icons/concept.png) | [Surface Binding Mover](nodes/surface_binding_mover.md) | Follows fixed barycentric attachments with vector offsets. |
+| ![Patch Mover](../icons/concept.png) | [Patch Mover](nodes/patch_mover.md) | Sticks points onto a NURBS patch at controller-drivable UV coordinates. |
 | ![Smooth Mover](../icons/smooth_mover.png) | [Smooth Mover](nodes/smooth_mover.md) | Relaxes points with uniform Laplacian smoothing. |
 | ![Delta Mush Mover](../icons/concept.png) | [Delta Mush Mover](nodes/delta_mush_mover.md) | Smooths deformation and restores transported rest detail. |
 | ![Wrinkle Mover](../icons/concept.png) | [Wrinkle Mover](nodes/wrinkle_mover.md) | Solves coherent compression-driven folds on an already deformed mesh. |

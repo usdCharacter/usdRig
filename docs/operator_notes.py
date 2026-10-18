@@ -22,7 +22,7 @@ CATEGORIES = [
                      "parent_constraint", "single_chain_ik_constraint",
                      "ikfk_match_constraint", "constraint_frame"]),
     ("Geometry movers", ["matrix_mover", "skin_mover", "layered_skin_mover", "blendshape_mover",
-                         "curve_mover", "lattice_mover", "surface_mover", "surface_binding_mover",
+                         "curve_mover", "lattice_mover", "surface_mover", "surface_binding_mover", "patch_mover",
                          "smooth_mover", "delta_mush_mover", "wrinkle_mover", "volume_correct_mover",
                          "ml_mover", "ml_output"]),
     ("Blend channels", ["blend_input", "blend_sample"]),
@@ -46,8 +46,8 @@ OPERATORS = {
         "description": """Every rig is one `RigExecRoot` prim and everything composed
 beneath it. The root declares no membership lists: a `RigExecControl` under it
 is a control, a `RigExecJoint` is a joint output, a placed volume prim is a
-weight field, and a prim carrying `rigExec:moves` under the root's `Movers`
-child is a mover. It is what a host activates — one rig, or every
+weight field, and a prim carrying `rigExec:moves` anywhere beneath
+the root is a mover. It is what a host activates — one rig, or every
 `RigExecRoot` on the stage — and it is the unit that compiles, publishes a
 generation, and carries the pose diagnostics. It is Imageable but deliberately
 not Xformable, so guide bounds propagate up to the enclosing asset for camera
@@ -59,7 +59,7 @@ interpolators, placed volume weights, and aggregate solvers by prim type
 anywhere under it, then walks the WHOLE RIG in reverse-sibling post-order —
 descendants before their parent, and the *bottom* sibling branch in usdview
 first — to number ONE pose stack of joint-writing solvers and frame
-constraints, of which the `<rig>/Movers` mover stack is a restriction; the walk uses the standard
+constraints, of which the mover order is a restriction; the walk uses the standard
 `UsdPrimRange` predicate, so a deactivated or unloaded branch is simply not
 part of the rig and changing that is a structural (epoch-rebuilding) edit
 rather than a value edit. A rig that finds no controls, joints, volume weights,
@@ -77,12 +77,15 @@ optional judges and do not choose an evaluation path.""",
             # relationship on the root itself.
             ("(namespace)", "Everything composed beneath the root is the rig; controls, "
              "joints, solvers, and weight volumes are discovered by prim type.", "-"),
-            # The one child NAME the compiler looks up: rigEvaluator.cpp:3540 (and
-            # the matching digest walk at :2559). Absent Movers scope is legal --
-            # a rig of controls and joints alone compiles (:4436 only fails when
-            # nothing at all was found).
-            ("`Movers` child", "The scope the mover stack is walked from: only prims under "
-             "`<rig>/Movers` are compiled as movers.", "no"),
+            # No child NAME is looked up: _DiscoverMovers walks the whole rig
+            # in reverse-sibling post-order and carrying rigExec:moves is what
+            # makes a prim a mover (rigEvaluatorValidation.cpp _DiscoverMovers,
+            # rigEvaluatorInputs.cpp _GetMoverExecutionOrder; covered by
+            # tests/python/test_mover_discovery.py). A Movers scope is
+            # conventional grouping, and an absent one is legal.
+            ("`Movers` child", "The conventional scope for movers: discovery is by "
+             "`rigExec:moves` anywhere beneath the root; the scope only groups "
+             "them in the walk order.", "no"),
             # assetRoot = _rigPath.GetParentPath() (rigEvaluator.cpp:3596) and the
             # HasPrefix check that rejects anything outside it (:3609).
             ("(parent prim)", "The rig root's parent is the asset: movers may only target "
@@ -92,8 +95,8 @@ optional judges and do not choose an evaluation path.""",
         "example": """Every shipped example is one of these: `two_bone_ik.usda` puts a
 `RigExecRoot` named `Rig` inside the `IkAsset` Xform, with `Controls`,
 `Solvers`, `Joints`, `Weights`, and `Movers` scopes beneath it and the deformed
-cards in a sibling `Geom` scope. Only `Movers` is a name the compiler knows —
-the rest are ordinary `Scope` prims kept for readability — and the geometry sits
+cards in a sibling `Geom` scope. The scope names are all convention — the
+compiler discovers by prim type — and the geometry sits
 under `IkAsset` because that parent is what bounds the rig's write set.""",
         "tips": [
             "Keep the deformed geometry inside the same asset prim as the rig: a "
@@ -1758,6 +1761,86 @@ Wire `rigExec:surface` to the driver mesh with a final read phase and
                  "Limit mode requires position and derivative stencils; missing arrays are diagnosed.",
                  "Surface binding does not replace modifiers that deform the driver cage."],
         "see_also": [("surface_mover", "Surface Mover"), ("skin_mover", "Skin Mover")],
+    },
+    "patch_mover": {
+        "title": "Patch Mover",
+        "schema": "RigExecPatchMover",
+        "summary": "Sticks points onto a NURBS patch at controller-drivable UV coordinates.",
+        "description": """Evaluates a `UsdGeomNurbsPatch` surface at normalized `(u, v)` coordinates
+read from the XY components of a `UsdGeomPointBased` UV input prim and writes
+the evaluated surface positions to the target's `points` property. Because
+`rigExec:uvPoints` and `rigExec:patch` both honor `rigExecReadPhase` metadata,
+controllers can drive the UV input points or deform the NURBS patch through
+earlier movers in the stack.
+
+UV shapes mix into the UV points before the patch is evaluated:
+`rigExec:uvShapes` lists them and `inputs:uvWeights` holds one weight per
+shape, by index -- typically connected, in shape order, to a control's avars
+(smile, frown, mouthOpen; upperOpen, upperClosed). Shapes add to the neutral
+UV points, so sliders mix, and the mix happens in UV space, so in-between
+positions follow the surface rather than cutting through it.
+
+Contact pairs keep two curves on one patch apart. `rigExec:uvContactLower`
+and `rigExec:uvContactUpper` pair UV points by index, and after the shapes
+mix no lower point stands above its upper partner in v: a pair that would
+cross meets at the midpoint of the two. A lower lip that mouthClose lifts
+past a closed upper lip, or a lower lid that rises into a closing upper lid,
+presses against it instead of passing through. Additive shapes alone cannot
+promise that: jawOpen plus mouthClose must close the lips, so mouthClose
+alone moves them past each other.""",
+        "how_it_works": """The mover reads the NURBS patch's `points`, optional `pointWeights`,
+`uVertexCount`, `vVertexCount`, `uOrder`, `vOrder`, `uKnots`, `vKnots`, `uForm`
+and `vForm`, together with the `points` array named by `rigExec:uvPoints` at
+each relationship's declared `rigExecReadPhase`. The UV shapes, each read at
+`rigExec:uvShapes`' phase with as many points as the neutral, then add to it:
+`uv = neutral + sum_k w_k (shape_k - neutral)`, accumulated in double, where
+`w_k` is the value of the k-th source `inputs:uvWeights` connects to (a float
+or a double), or with no connection the k-th authored entry (an empty array
+leaves every shape at zero). Weights are not clamped. Each contact pair `k`
+then compares the v of point `rigExec:uvContactLower[k]` with the v of point
+`rigExec:uvContactUpper[k]`; when the lower one is higher, both take the mean
+of the two, and u is left alone. For each target vertex (or
+broadcast from a single UV point when `uvPoints` has length 1), normalized
+parameters `(u, v) = (uvPoint.x, uvPoint.y)` are clamped to `[0, 1]` for `open`
+form or wrapped into `[0, 1)` for `closed`/`periodic` form, mapped into the
+active knot spans `[knots[order - 1], knots[vertexCount]]`, and evaluated by
+tensor-product Cox-de Boor basis functions (rational when `pointWeights` is
+authored). The common `RigExecMoverAPI` envelope blends the candidate surface
+positions over the incoming point revision.""",
+        "wiring": [
+            ("`rigExec:patch`", "Native `UsdGeomNurbsPatch` prim supplying the NURBS surface (`base` or `final` read phase).", "yes"),
+            ("`rigExec:uvPoints`", "Native `UsdGeomPointBased` prim or `.points` property whose XY coordinates supply normalized `(u, v)` parameters (`final` when controller-driven); the neutral the UV shapes are measured from.", "yes"),
+            ("`rigExec:uvShapes`", "Ordered UV shapes: `UsdGeomPointBased` prims or `.points` properties with as many points as `rigExec:uvPoints`.", "no"),
+            ("`inputs:uvWeights`", "One weight per UV shape, by index: connected in shape order to float or double sources (avars), or an authored `float[]`.", "no"),
+            ("`rigExec:uvContactLower` / `rigExec:uvContactUpper`", "Index-aligned `int[]` contact pairs: UV point `lower[k]` never rises above UV point `upper[k]` in v.", "no"),
+            ("`rigExec:moves`", "Exact native `point3f[]` points property to stick onto the patch.", "yes"),
+        ],
+        "no_gif": True,
+        "example": """Author a `UsdGeomNurbsPatch` prim and a `UsdGeomPoints` UV carrier prim whose
+points lie in `[0, 1] x [0, 1]`. Drive the UV carrier's `points` with a
+`RigExecMatrixMover` or `RigExecSkinMover` bound to a `RigExecControl`, then
+wire `rigExec:patch` to the patch and `rigExec:uvPoints` (with
+`rigExecReadPhase = "final"`) to the UV carrier.
+
+`examples/17_PatchCurveShapes.usda` mixes UV shapes instead: the mover's
+`rigExec:uvShapes` names four UV sets, and `inputs:uvWeights` connects to a
+control's four float avars in the same order.
+
+`examples/18_PatchMouth.usda` puts two curves on one patch: upper and lower
+lips in one `BasisCurves`, mixed by the 27 ARKit jaw and mouth blend-shape
+avars, with one contact pair per lip column so the lips touch but never
+cross.""",
+        "tips": [
+            "Set `rigExecReadPhase = \"final\"` on `rigExec:uvPoints` when controllers move the UV points through earlier movers.",
+            "Set `rigExecReadPhase = \"final\"` on `rigExec:patch` when the NURBS patch control vertices are themselves deformed by the rig.",
+            "A single-element `uvPoints` array broadcasts its `(u, v)` coordinate to every target point.",
+            "Connection k of `inputs:uvWeights` weights shape k of `rigExec:uvShapes`: keep the two lists in the same order, and as long as each other.",
+            "Shapes add to the neutral and are not clamped, so a weight past 1 exaggerates a shape and a negative one reverses it.",
+            "Contacts move v only. Give each pair one u in the neutral and in every shape -- the same column of both curves -- and the curves cannot cross between columns either.",
+            "A crossing pair meets at its midpoint, so a closing shape that moves both curves equally toward each other (mouthClose) leaves closed lips where they were.",
+        ],
+        "see_also": [("surface_mover", "Surface Mover"), ("surface_binding_mover", "Surface Binding Mover"), ("curve_mover", "Curve Mover"),
+                     ("blendshape_mover", "Blend Shape Mover")],
     },
     "surface_mover": {
         "title": "Surface Mover",

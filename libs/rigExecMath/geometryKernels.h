@@ -551,6 +551,51 @@ void RigExecApplyRibbonTransport(
     const RigExecCurveFrameSamples &restSamples,
     const RigExecCurveFrameSamples &posedSamples);
 
+
+/// A tensor-product NURBS surface patch as UsdGeomNurbsPatch authors one
+/// (tensor-product basis evaluation per Piegl and Tiller, see
+/// docs/references.md): uVertexCount * vVertexCount control points in
+/// u-fastest order, optional rational pointWeights, orders (degree + 1) and
+/// knot vectors of vertexCount + order entries in u and v, and open or
+/// periodic/closed form per parameter direction.
+struct RigExecNurbsPatch {
+    const GfVec3f *points = nullptr;
+    size_t pointCount = 0;
+    const double *pointWeights = nullptr;
+    size_t pointWeightCount = 0;
+    int uVertexCount = 0;
+    int vVertexCount = 0;
+    int uOrder = 0;
+    int vOrder = 0;
+    const double *uKnots = nullptr;
+    size_t uKnotCount = 0;
+    const double *vKnots = nullptr;
+    size_t vKnotCount = 0;
+    bool uPeriodic = false;
+    bool vPeriodic = false;
+
+    /// True when the arrays and counts describe an evaluable NURBS patch.
+    bool IsValid() const;
+    /// Active parameter domains [knots[order-1], knots[vertexCount]].
+    double UDomainStart() const;
+    double UDomainEnd() const;
+    double VDomainStart() const;
+    double VDomainEnd() const;
+    /// Evaluates the patch at normalized parameters (uNorm, vNorm) in [0, 1],
+    /// clamping for open form and wrapping into [0, 1) for periodic/closed
+    /// form before mapping to the active knot domain.
+    GfVec3f EvaluateNormalized(double uNorm, double vNorm) const;
+};
+
+/// Evaluates \p patch at normalized (u, v) = (uvPoints[i][0], uvPoints[i][1])
+/// for each point in \p points (or broadcasts uvPoints[0] when uvPointCount == 1
+/// and points is non-empty). Returns false, leaving \p points untouched, when
+/// the patch is invalid, uvPoints is missing/mismatched, or any UV is non-finite.
+bool RigExecApplyPatchMover(
+    std::vector<GfVec3f> *points,
+    const RigExecNurbsPatch &patch,
+    const GfVec3f *uvPoints,
+    size_t uvPointCount);
 }  // namespace rigExec
 
 #endif  // RIGEXEC_MATH_GEOMETRY_KERNELS_H

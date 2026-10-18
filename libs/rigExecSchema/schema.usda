@@ -3507,6 +3507,63 @@ class RigExecSurfaceBindingMover "RigExecSurfaceBindingMover" (
     matrix4d rigExec:surfaceToBinding = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
 }
 
+class RigExecPatchMover "RigExecPatchMover" (
+    inherits = </Typed>
+    customData = {
+        dictionary extraPlugInfo = {
+            string nodeGraphIcon = "icons/surface_mover.png"
+        }
+        string className = "PatchMover"
+    }
+    doc = """Evaluates a UsdGeomNurbsPatch at normalized UV parameters read from
+    a point-based UV input prim and writes an exact native UsdGeomPointBased
+    points property. Both rigExec:patch and rigExec:uvPoints honor
+    rigExecReadPhase metadata, so controllers can deform the patch or drive the
+    UV input points through earlier movers. Weighted UV shapes mix into the UV
+    points before the patch is evaluated, so avars such as smile, frown or
+    mouthOpen can slide the attachment across the surface together. Contact
+    pairs then keep paired points from crossing in v, so two curves on one
+    patch -- upper and lower lips, upper and lower lids -- press together
+    rather than pass through each other under any mix of shapes."""
+)
+{
+    rel rigExec:patch (
+        doc = "Native UsdGeomNurbsPatch prim supplying the NURBS surface."
+    )
+    rel rigExec:uvPoints (
+        doc = """Native UsdGeomPointBased prim or points property whose XY
+        coordinates supply normalized (u, v) parameters on the patch: the
+        neutral the UV shapes are measured from."""
+    )
+    rel rigExec:uvShapes (
+        doc = """Ordered UV shapes: native UsdGeomPointBased prims or points
+        properties, each with as many points as rigExec:uvPoints. Shapes add
+        to the neutral, uv = neutral + sum_k w_k (shape_k - neutral), with
+        w_k the k-th entry of inputs:uvWeights."""
+    )
+    float[] inputs:uvWeights = [] (
+        doc = """One weight per rigExec:uvShapes target, by index. Connect it
+        to one float or double source per shape, in shape order -- a
+        control's avars, typically -- and connection k is the weight of
+        shape k. With no connection the authored array is the weights; an
+        empty array leaves every shape at zero."""
+    )
+    uniform int[] rigExec:uvContactLower = [] (
+        doc = """UV point indices that never stand above their partners in
+        rigExec:uvContactUpper, by index, after the UV shapes mix. A pair
+        that would cross meets at the midpoint of its two v values; u is
+        left alone. Pair one column of a lower curve with the same column
+        of an upper curve, sharing u in the neutral and in every shape, and
+        the two curves touch but never cross. Each point belongs to at most
+        one pair."""
+    )
+    uniform int[] rigExec:uvContactUpper = [] (
+        doc = """The partner of each rigExec:uvContactLower index: the UV
+        point that point never rises above. As long as
+        rigExec:uvContactLower."""
+    )
+}
+
 class RigExecSurfaceProjector "RigExecSurfaceProjector" (
     inherits = </Typed>
     customData = {

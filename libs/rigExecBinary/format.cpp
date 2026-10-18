@@ -3869,11 +3869,9 @@ private:
                       "mask")) {
             return false;
         }
-        // ML movers and animated maps read a float property as a float.
-        const bool typedValues = bool(interp.network) || bool(interp.maps);
+        // A dial is read in its own precision: a float property as a float.
         for (size_t k = 0; k < interp.valueInputs.size(); ++k) {
-            const int tag = typedValues && interp.valueInputs[k].tag ==
-                                               InputTag::Float
+            const int tag = interp.valueInputs[k].tag == InputTag::Float
                                 ? int(InputTag::Float)
                                 : int(InputTag::Double);
             if (!_Read(&interp.valueInputs[k], tag, _Baked, row,

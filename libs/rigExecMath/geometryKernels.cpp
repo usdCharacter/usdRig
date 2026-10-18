@@ -1291,4 +1291,192 @@ RigExecApplyWireSparse(std::vector<GfVec3f> *points,
     return true;
 }
 
+bool
+RigExecNurbsPatch::IsValid() const
+{
+    if (!points || !uKnots || !vKnots ||
+        uOrder < 2 || uOrder > 16 || vOrder < 2 || vOrder > 16 ||
+        uVertexCount < uOrder || vVertexCount < vOrder) {
+        return false;
+    }
+    const size_t expectedPoints = size_t(uVertexCount) * size_t(vVertexCount);
+    if (pointCount != expectedPoints ||
+        uKnotCount != size_t(uVertexCount) + size_t(uOrder) ||
+        vKnotCount != size_t(vVertexCount) + size_t(vOrder)) {
+        return false;
+    }
+    for (size_t i = 0; i < uKnotCount; ++i) {
+        if (!std::isfinite(uKnots[i]) || (i > 0 && uKnots[i] < uKnots[i - 1])) {
+            return false;
+        }
+    }
+    for (size_t i = 0; i < vKnotCount; ++i) {
+        if (!std::isfinite(vKnots[i]) || (i > 0 && vKnots[i] < vKnots[i - 1])) {
+            return false;
+        }
+    }
+    if (!(uKnots[size_t(uOrder) - 1] < uKnots[size_t(uVertexCount)]) ||
+        !(vKnots[size_t(vOrder) - 1] < vKnots[size_t(vVertexCount)])) {
+        return false;
+    }
+    for (size_t i = 0; i < pointCount; ++i) {
+        const GfVec3f &p = points[i];
+        if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2])) {
+            return false;
+        }
+    }
+    if (pointWeightCount != 0) {
+        if (!pointWeights || pointWeightCount != pointCount) {
+            return false;
+        }
+        for (size_t i = 0; i < pointWeightCount; ++i) {
+            if (!std::isfinite(pointWeights[i]) || pointWeights[i] <= 0.0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+double
+RigExecNurbsPatch::UDomainStart() const
+{
+    return uKnots[size_t(uOrder) - 1];
+}
+
+double
+RigExecNurbsPatch::UDomainEnd() const
+{
+    return uKnots[size_t(uVertexCount)];
+}
+
+double
+RigExecNurbsPatch::VDomainStart() const
+{
+    return vKnots[size_t(vOrder) - 1];
+}
+
+double
+RigExecNurbsPatch::VDomainEnd() const
+{
+    return vKnots[size_t(vVertexCount)];
+}
+
+GfVec3f
+RigExecNurbsPatch::EvaluateNormalized(double uNorm, double vNorm) const
+{
+    auto mapParam = [](double norm, bool periodic, double d0, double d1) {
+        double t = norm;
+        if (periodic) {
+            t = t - std::floor(t);
+            if (t < 0.0 || t >= 1.0) {
+                t = 0.0;
+            }
+        } else {
+            t = std::min(std::max(t, 0.0), 1.0);
+        }
+        return std::min(std::max(d0 + t * (d1 - d0), d0), d1);
+    };
+    const double u = mapParam(uNorm, uPeriodic, UDomainStart(), UDomainEnd());
+    const double v = mapParam(vNorm, vPeriodic, VDomainStart(), VDomainEnd());
+
+    auto evalBasis = [](double param, int order, size_t vertexCount,
+                        const double *knots, size_t *spanOut, double *N) {
+        const int degree = order - 1;
+        size_t span = size_t(degree);
+        while (span + 1 < vertexCount && knots[span + 1] <= param) {
+            ++span;
+        }
+        *spanOut = span;
+        double left[16], right[16];
+        N[0] = 1.0;
+        for (int j = 1; j <= degree; ++j) {
+            left[j] = param - knots[span + 1 - size_t(j)];
+            right[j] = knots[span + size_t(j)] - param;
+            double saved = 0.0;
+            for (int r = 0; r < j; ++r) {
+                const double denom = right[r + 1] + left[j - r];
+                const double temp = denom != 0.0 ? N[r] / denom : 0.0;
+                N[r] = saved + right[r + 1] * temp;
+                saved = left[j - r] * temp;
+            }
+            N[j] = saved;
+        }
+    };
+
+    size_t su = 0, sv = 0;
+    double Nu[16], Nv[16];
+    evalBasis(u, uOrder, size_t(uVertexCount), uKnots, &su, Nu);
+    evalBasis(v, vOrder, size_t(vVertexCount), vKnots, &sv, Nv);
+
+    const int pu = uOrder - 1;
+    const int pv = vOrder - 1;
+    const size_t nu = size_t(uVertexCount);
+    GfVec3d sum(0.0, 0.0, 0.0);
+    if (pointWeightCount == 0) {
+        for (int b = 0; b <= pv; ++b) {
+            const size_t iv = sv - size_t(pv) + size_t(b);
+            GfVec3d row(0.0, 0.0, 0.0);
+            for (int a = 0; a <= pu; ++a) {
+                const size_t iu = su - size_t(pu) + size_t(a);
+                row += GfVec3d(points[iv * nu + iu]) * Nu[a];
+            }
+            sum += row * Nv[b];
+        }
+        return GfVec3f(sum);
+    }
+    double wSum = 0.0;
+    for (int b = 0; b <= pv; ++b) {
+        const size_t iv = sv - size_t(pv) + size_t(b);
+        GfVec3d row(0.0, 0.0, 0.0);
+        double wRow = 0.0;
+        for (int a = 0; a <= pu; ++a) {
+            const size_t iu = su - size_t(pu) + size_t(a);
+            const size_t idx = iv * nu + iu;
+            const double w = Nu[a] * pointWeights[idx];
+            row += GfVec3d(points[idx]) * w;
+            wRow += w;
+        }
+        sum += row * Nv[b];
+        wSum += wRow * Nv[b];
+    }
+    return wSum > 0.0 ? GfVec3f(sum / wSum) : GfVec3f(0.0f);
+}
+
+bool
+RigExecApplyPatchMover(std::vector<GfVec3f> *points,
+                       const RigExecNurbsPatch &patch,
+                       const GfVec3f *uvPoints,
+                       size_t uvPointCount)
+{
+    if (!points || !patch.IsValid()) {
+        return false;
+    }
+    const size_t n = points->size();
+    if (n == 0) {
+        return uvPointCount == 0 || (uvPoints && uvPointCount == 1 &&
+            std::isfinite(uvPoints[0][0]) && std::isfinite(uvPoints[0][1]));
+    }
+    if (!uvPoints || (uvPointCount != n && uvPointCount != 1)) {
+        return false;
+    }
+    for (size_t i = 0; i < uvPointCount; ++i) {
+        if (!std::isfinite(uvPoints[i][0]) || !std::isfinite(uvPoints[i][1])) {
+            return false;
+        }
+    }
+    const bool broadcast = uvPointCount == 1;
+    for (size_t i = 0; i < n; ++i) {
+        const GfVec3f &uv = uvPoints[broadcast ? 0 : i];
+        const GfVec3f evaluated =
+            patch.EvaluateNormalized(double(uv[0]), double(uv[1]));
+        if (!std::isfinite(evaluated[0]) || !std::isfinite(evaluated[1]) ||
+            !std::isfinite(evaluated[2])) {
+            return false;
+        }
+        (*points)[i] = evaluated;
+    }
+    return true;
+}
+
 }  // namespace rigExec

@@ -146,6 +146,7 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecMatrixMover",
     "RigExecMlMover",
     "RigExecParentConstraint",
+    "RigExecPatchMover",
     "RigExecPlaneWeight",
     "RigExecPositionConstraint",
     "RigExecRibbon",
@@ -198,7 +199,7 @@ class SchemaFacadeTests(_ContractTestCase):
         self.stage = Usd.Stage.CreateInMemory()
 
     def test_all_concrete_types_define_and_get(self):
-        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 37)
+        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 38)
         self.assertEqual(
             set(rigexec.schema.names()), set(CONCRETE_SCHEMA_TYPES))
         self.assertFalse(hasattr(rigexec.schema, "CustomConstraint"))
@@ -1134,6 +1135,113 @@ class BuilderDependencyTests(_ContractTestCase):
             _targets(self.stage.GetPrimAtPath(single.path).GetRelationship(
                 "rigExec:driverFrames")),
             [frame_a.path])
+
+
+    def test_patch_mover_authoring_and_evaluation(self):
+        patch = UsdGeom.NurbsPatch.Define(self.stage, "/Patch")
+        patch.CreateUVertexCountAttr().Set(2)
+        patch.CreateVVertexCountAttr().Set(2)
+        patch.CreateUOrderAttr().Set(2)
+        patch.CreateVOrderAttr().Set(2)
+        patch.CreateUKnotsAttr().Set([0.0, 0.0, 1.0, 1.0])
+        patch.CreateVKnotsAttr().Set([0.0, 0.0, 1.0, 1.0])
+        patch.CreatePointsAttr().Set([
+            Gf.Vec3f(0.0, 0.0, 0.0), Gf.Vec3f(10.0, 0.0, 0.0),
+            Gf.Vec3f(0.0, 20.0, 0.0), Gf.Vec3f(10.0, 20.0, 0.0),
+        ])
+        uvs = UsdGeom.Points.Define(self.stage, "/UVs")
+        uvs.CreatePointsAttr().Set([Gf.Vec3f(0.25, 0.5, 0.0)])
+        driven = UsdGeom.Points.Define(self.stage, "/Driven")
+        driven.CreatePointsAttr().Set([Gf.Vec3f(0.0, 0.0, 0.0)])
+
+        ctl = self.builder.add_control("UvCtl")
+        ctl.set_avar_translation(0.5, 0.25, 0.0)
+
+        target_chain = self.builder.new_mover_chain("TargetChain", "/Driven.points")
+        mover = target_chain.add_patch_mover(
+            "Stick", "/Patch", "/UVs", "/Driven.points",
+            patch_read_phase="base", uv_points_read_phase="final")
+        self.assertIsInstance(mover, rigexec.PatchMover)
+        prim = self.stage.GetPrimAtPath(mover.path)
+        self.assertEqual( _targets(prim.GetRelationship("rigExec:patch")), ["/Patch"])
+        self.assertEqual( _targets(prim.GetRelationship("rigExec:uvPoints")), ["/UVs"])
+        self.assertEqual(
+            prim.GetRelationship("rigExec:uvPoints").GetMetadata("rigExecReadPhase"),
+            "final")
+
+        uv_chain = self.builder.new_mover_chain("UvChain", "/UVs.points")
+        uv_weight = self.builder.add_static_weight("UvW", "/UVs.points", [1.0])
+        uv_chain.add_matrix_mover("DriveUv", ctl.path, uv_weight.path, "/UVs.points")
+
+        rig = rigexec.Rig(self.stage, self.builder.root_path)
+        rig.compile()
+        pose = rig.evaluate(-1)
+        self.assertTrue(pose.valid)
+        pts = pose.moved_property("/Driven.points")
+        self.assertAlmostEqual(pts[0][0], 7.5, places=5)
+        self.assertAlmostEqual(pts[0][1], 15.0, places=5)
+        self.assertAlmostEqual(pts[0][2], 0.0, places=5)
+
+    def test_patch_mover_uv_shapes(self):
+        # The bilinear patch maps (u, v) to (10 u, 20 v).
+        patch = UsdGeom.NurbsPatch.Define(self.stage, "/Patch")
+        patch.CreateUVertexCountAttr().Set(2)
+        patch.CreateVVertexCountAttr().Set(2)
+        patch.CreateUOrderAttr().Set(2)
+        patch.CreateVOrderAttr().Set(2)
+        patch.CreateUKnotsAttr().Set([0.0, 0.0, 1.0, 1.0])
+        patch.CreateVKnotsAttr().Set([0.0, 0.0, 1.0, 1.0])
+        patch.CreatePointsAttr().Set([
+            Gf.Vec3f(0.0, 0.0, 0.0), Gf.Vec3f(10.0, 0.0, 0.0),
+            Gf.Vec3f(0.0, 20.0, 0.0), Gf.Vec3f(10.0, 20.0, 0.0),
+        ])
+        UsdGeom.Points.Define(self.stage, "/UVs").CreatePointsAttr().Set(
+            [Gf.Vec3f(0.25, 0.5, 0.0)])
+        UsdGeom.Points.Define(self.stage, "/SmileUVs").CreatePointsAttr().Set(
+            [Gf.Vec3f(0.75, 0.5, 0.0)])
+        UsdGeom.Points.Define(self.stage, "/OpenUVs").CreatePointsAttr().Set(
+            [Gf.Vec3f(0.25, 0.0, 0.0)])
+        UsdGeom.Points.Define(self.stage, "/Driven").CreatePointsAttr().Set(
+            [Gf.Vec3f(0.0, 0.0, 0.0)])
+        ctl = self.builder.add_control("Mouth")
+        control = self.stage.GetPrimAtPath(ctl.path)
+        control.CreateAttribute("avars:smile", Sdf.ValueTypeNames.Float).Set(0.5)
+        control.CreateAttribute("avars:open", Sdf.ValueTypeNames.Double).Set(1.0)
+
+        chain = self.builder.new_mover_chain("TargetChain", "/Driven.points")
+        mover = chain.add_patch_mover(
+            "Stick", "/Patch", "/UVs", "/Driven.points")
+        mover.set_uv_shapes(["/SmileUVs", "/OpenUVs"])
+        sources = [str(ctl.path) + ".avars:smile", str(ctl.path) + ".avars:open"]
+        mover.connect_uv_weights(sources)
+        prim = self.stage.GetPrimAtPath(mover.path)
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:uvShapes")),
+                         ["/SmileUVs", "/OpenUVs"])
+        self.assertEqual(
+            [str(p) for p in prim.GetAttribute("inputs:uvWeights").GetConnections()],
+            sources)
+
+        def driven():
+            rig = rigexec.Rig(self.stage, self.builder.root_path)
+            rig.compile()
+            pose = rig.evaluate(-1)
+            self.assertTrue(pose.valid)
+            return pose.moved_property("/Driven.points")[0]
+
+        # The shapes add: uv = (0.25, 0.5) + 0.5 (0.5, 0) + 1.0 (0, -0.5)
+        # = (0.5, 0.0).
+        pts = driven()
+        self.assertAlmostEqual(pts[0], 5.0, places=5)
+        self.assertAlmostEqual(pts[1], 0.0, places=5)
+
+        # Unconnected, the authored array is the weights:
+        # uv = (0.25, 0.5) + 1.0 (0.5, 0) + 0.5 (0, -0.5) = (0.75, 0.25).
+        mover.connect_uv_weights([])
+        mover.set_uv_weights([1.0, 0.5])
+        self.assertFalse(prim.GetAttribute("inputs:uvWeights").HasAuthoredConnections())
+        pts = driven()
+        self.assertAlmostEqual(pts[0], 7.5, places=5)
+        self.assertAlmostEqual(pts[1], 5.0, places=5)
 
     def test_failed_add_removes_the_partially_authored_prim(self):
         self._make_points("/Driven")

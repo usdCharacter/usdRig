@@ -168,6 +168,7 @@ add_library(rigExec SHARED
     libs/rigExec/movers/volumeCorrectMover.cpp
     libs/rigExec/movers/latticeMover.cpp
     libs/rigExec/movers/surfaceBindingMover.cpp
+    libs/rigExec/movers/patchMover.cpp
     libs/rigExec/movers/surfaceMover.cpp
     libs/rigExec/movers/curveMover.cpp
     libs/rigExec/movers/mathMovers.cpp
@@ -790,6 +791,13 @@ target_link_libraries(testRigExecSurfaceBinding PRIVATE
 target_compile_definitions(testRigExecSurfaceBinding PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSurfaceBinding COMMAND testRigExecSurfaceBinding)
 rigexec_add_graph_test(testRigExecSurfaceBinding CONE_VERIFY)
+
+add_executable(testRigExecPatchMover tests/testRigExecPatchMover.cpp)
+target_link_libraries(testRigExecPatchMover PRIVATE
+    rigExec rigExecRigging rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecPatchMover PRIVATE ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecPatchMover COMMAND testRigExecPatchMover)
+rigexec_add_graph_test(testRigExecPatchMover CONE_VERIFY)
 
 add_executable(testRigExecLattice tests/testRigExecLattice.cpp)
 target_link_libraries(testRigExecLattice PRIVATE
@@ -2031,6 +2039,12 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_blink_clearance.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources"
             "$<TARGET_FILE:rigExecBakeTool>" "$<TARGET_FILE:rigExecPose>")
+    # Two lips on one patch touch but never cross, at any mix of the 27
+    # ARKit avars of examples/18_PatchMouth.usda.
+    add_test(NAME testRigExecPatchMouthPython
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_patch_mouth.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecFaceDrivesPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_face_drives.py"
@@ -2244,7 +2258,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_profiler_model.py")
 
     foreach(_python_test testRigExecPython testRigExecPythonSchemaAuthoring
-                         testRigExecSplineIkPython
+                         testRigExecSplineIkPython testRigExecPatchMouthPython
                          testRigExecFkControlSpacePython
                          testRigExecBake testRigExecInverse
                          testRigExecPsdNumeric testRigExecSpaceSwitch
@@ -2453,7 +2467,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecGroupForwarding testRigExecInputActions
     testRigExecInteractive testRigExecLattice testRigExecLeaves
     testRigExecOneLoopAcceptance testRigExecOpTrace
-    testRigExecPhaseBindings testRigExecPoseInterpolator
+    testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator
     testRigExecPropertyOps testRigExecRestOps testRigExecRuntimeInputs
     testRigExecScopedClears testRigExecSkinTopology testRigExecSolverBake
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
@@ -2474,7 +2488,7 @@ foreach(_rigexec_oracle_exe IN ITEMS
     testRigExecExternalMovers testRigExecFrozenContext
     testRigExecGeometryOpsBakedParity testRigExecGoldenPose
     testRigExecGoldenSuiteObserver testRigExecInputActions testRigExecInteractive
-    testRigExecOpTrace testRigExecOracleInputs testRigExecPhaseBindings
+    testRigExecOpTrace testRigExecOracleInputs testRigExecPatchMover testRigExecPhaseBindings
     testRigExecPropertyOps testRigExecRestOps testRigExecSkinTopology
     testRigExecSolverStacking testRigExecVolumeWeights testRigExecWrinkle)
     target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)

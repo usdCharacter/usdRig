@@ -150,6 +150,7 @@ BlendShapeMover = _native.BlendShapeMover
 MlMover = _native.MlMover
 CurveMover = _native.CurveMover
 SurfaceMover = _native.SurfaceMover
+PatchMover = _native.PatchMover
 SmoothMover = _native.SmoothMover
 DeltaMushMover = _native.DeltaMushMover
 WrinkleMover = _native.WrinkleMover
@@ -173,7 +174,7 @@ __all__ = [
     "BlendInput", "BlendSample",
     "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "MlMover",
     "CurveMover",
-    "SurfaceMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "VolumeCorrectMover",
+    "SurfaceMover", "PatchMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "VolumeCorrectMover",
     "FloatMathMover", "Vec3fMathMover", "MatrixMathMover",
     "MoverChain",
     "load_schema_plugin", "identity",
@@ -295,6 +296,7 @@ _CONCRETE_SCHEMA_NAMES = (
     "MlMover",
     "SkinMover",
     "ParentConstraint",
+    "PatchMover",
     "PlaneWeight",
     "PositionConstraint",
     "Ribbon",

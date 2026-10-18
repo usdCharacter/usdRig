@@ -951,6 +951,94 @@ def TestDualKnots():
            "undo singled the key again")
 
 
+def TestSampledCurves():
+    """
+    A channel animated by time samples is a curve too: it is discovered
+    with the splined ones, read as one knot per sample joined the way Usd
+    interpolates samples, and edited back as samples -- never turned into
+    a spline -- through the edit target, with undo.
+    """
+    stage, control, _ = _RigStage()
+    dial = control.CreateAttribute("dial", Sdf.ValueTypeNames.Float)
+    for frame, value in ((0, 0.0), (10, 1.0), (20, 0.5)):
+        dial.Set(value, frame)
+    ty = control.GetAttribute("avars:ty")
+    ty.Set(2.0, 0)
+    ty.Set(4.0, 10)
+    rootLayer = stage.GetRootLayer().ExportToString()
+
+    _Check(gm.IsSampledCurve(dial) and gm.IsSampledCurve(ty),
+           "time samples are the channels' value source")
+    _Check(not gm.IsSampledCurve(control.GetAttribute("avars:tx")),
+           "an unanimated channel is not sampled")
+    names = [r.attrName for r in
+             gm.DiscoverCurves(stage, [], [control.GetPath()])]
+    _Check(names[:2] == ["avars:ty", "dial"],
+           "sampled attributes come first, in prim order: %s" % names)
+    _Check(len(names) == len(set(names)), "no duplicates: %s" % names)
+
+    spline = gm.SplineFor(dial)
+    _Check(_Times(spline) == [0.0, 10.0, 20.0],
+           "one knot per sample: %s" % _Times(spline))
+    _Check(spline.GetValueTypeName() == "float", "typed as the attribute")
+    _Check(all(k.GetNextInterpolation() == Ts.InterpLinear
+               for k in spline.GetKnots().values()),
+           "joined linearly, as Usd interpolates samples")
+    _Check(_Close(spline.Eval(5.0), 0.5) and _Close(spline.Eval(30.0), 0.5),
+           "linear between samples, held past the last")
+    stage.SetInterpolationType(Usd.InterpolationTypeHeld)
+    held = gm.SplineFor(dial)
+    _Check(_Close(held.Eval(5.0), 0.0)
+           and all(k.GetNextInterpolation() == Ts.InterpHeld
+                   for k in held.GetKnots().values()),
+           "held on a held stage")
+    stage.SetInterpolationType(Usd.InterpolationTypeLinear)
+
+    # Edits land as samples in the edit target, whose samples replace the
+    # root's outright: the whole curve is written, never one key.
+    stage.SetEditTarget(Usd.EditTarget(stage.GetSessionLayer()))
+    session = stage.GetSessionLayer()
+    stack = rigExecUndo.UndoStack()
+    edited = gm.SplineFor(dial)
+    gm.MoveKeys(edited, [10.0], 0.0, 0.5)
+    _Check(gm.ApplySpline(stage, dial.GetPath(), edited, stack, "Move Key"),
+           "the edit was pushed")
+    _Check(not dial.HasSpline() and gm.IsSampledCurve(dial),
+           "still time samples, no spline authored")
+    _Check(dial.GetTimeSamples() == [0.0, 10.0, 20.0]
+           and _Close(dial.Get(10), 1.5) and _Close(dial.Get(15), 1.0),
+           "the moved key lands and its neighbours interpolate to it")
+    _Check(session.ListTimeSamplesForPath(dial.GetPath()) == [0.0, 10.0, 20.0],
+           "the edit target holds the whole curve")
+    _Check(stage.GetRootLayer().ExportToString() == rootLayer,
+           "the root layer is untouched")
+
+    inserted = gm.SplineFor(dial)
+    _Check(gm.InsertKey(inserted, 15.0) is not None, "a key is inserted")
+    gm.ApplySpline(stage, dial.GetPath(), inserted, stack, "Insert Key")
+    _Check(dial.GetTimeSamples() == [0.0, 10.0, 15.0, 20.0]
+           and _Close(dial.Get(15), 1.0),
+           "an inserted key keeps the curve's shape: %s"
+           % dial.GetTimeSamples())
+
+    _Check(stack.Undo() and stack.Undo(), "both edits undo")
+    _Check(session.GetAttributeAtPath(dial.GetPath()) is None
+           and dial.GetTimeSamples() == [0.0, 10.0, 20.0]
+           and _Close(dial.Get(10), 1.0),
+           "undo removes the session spec and the root keys show again")
+
+    # Deleting every key clears the edit target's samples, not the curve.
+    gm.ApplySpline(stage, dial.GetPath(), gm.SplineFor(dial), stack, "Copy")
+    _Check(session.GetAttributeAtPath(dial.GetPath()) is not None,
+           "an unchanged curve still authors through a stronger target")
+    emptied = gm.SplineFor(dial)
+    gm.DeleteKeys(emptied, _Times(emptied))
+    gm.ApplySpline(stage, dial.GetPath(), emptied, stack, "Delete Keys")
+    _Check(session.GetAttributeAtPath(dial.GetPath()) is None
+           and dial.GetTimeSamples() == [0.0, 10.0, 20.0],
+           "an emptied curve clears the session samples, not the root's")
+
+
 def main():
     _RegisterSchema()
     groups = [
@@ -971,6 +1059,7 @@ def main():
         ("set key values + times", TestSetKeyValuesAndTimes),
         ("curve types", TestCurveTypes),
         ("dual knots", TestDualKnots),
+        ("sampled curves", TestSampledCurves),
     ]
     for name, fn in groups:
         fn()

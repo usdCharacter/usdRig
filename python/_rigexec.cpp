@@ -2158,6 +2158,40 @@ PYBIND11_MODULE(_rigexec, m) {
         }, py::arg("property_name"), py::arg("phase"))
         .def("set_surface_read_phase", [](rigExec::RigExecSurfaceMoverHandle &h, std::string v) { h.SetReadPhase(TfToken(v)); }, py::arg("phase"));
 
+    py::class_<rigExec::RigExecPatchMoverHandle, rigExec::RigExecMoverHandle>(m, "PatchMover")
+        .def("set_patch", [](rigExec::RigExecPatchMoverHandle &h, py::object p) { h.SetPatch(_PythonToDependencyPath(p, h.GetStage(), TfToken(), false)); }, py::arg("path"))
+        .def("set_uv_points", [](rigExec::RigExecPatchMoverHandle &h, py::object p) { h.SetUvPoints(_PythonToDependencyPath(p, h.GetStage(), TfToken(), false)); }, py::arg("path"))
+        .def("set_read_phase", [](rigExec::RigExecPatchMoverHandle &h,
+                                    std::string phase) {
+            h.SetReadPhase(TfToken(phase));
+        }, py::arg("phase"), "Patch read-phase metadata setter.")
+        .def("set_read_phase", [](rigExec::RigExecPatchMoverHandle &h,
+                                    std::string property, std::string phase) {
+            h.RigExecMoverHandle::SetReadPhase(
+                TfToken(property), phase);
+        }, py::arg("property_name"), py::arg("phase"))
+        .def("set_patch_read_phase", [](rigExec::RigExecPatchMoverHandle &h, std::string v) { h.SetPatchReadPhase(TfToken(v)); }, py::arg("phase"))
+        .def("set_uv_points_read_phase", [](rigExec::RigExecPatchMoverHandle &h, std::string v) { h.SetUvPointsReadPhase(TfToken(v)); }, py::arg("phase"))
+        .def("set_uv_shapes", [](rigExec::RigExecPatchMoverHandle &h, const py::iterable &paths) {
+            std::vector<SdfPath> shapes;
+            for (const auto &p : paths) shapes.push_back(_PythonToDependencyPath(py::reinterpret_borrow<py::object>(p), h.GetStage(), TfToken(), false));
+            h.SetUvShapes(shapes);
+        }, py::arg("paths"), "The ordered UV shapes mixed into the UV points.")
+        .def("set_uv_shapes_read_phase", [](rigExec::RigExecPatchMoverHandle &h, std::string v) { h.SetUvShapesReadPhase(TfToken(v)); }, py::arg("phase"))
+        .def("set_uv_weights", [](rigExec::RigExecPatchMoverHandle &h, std::vector<float> weights) {
+            h.SetUvWeights(weights);
+        }, py::arg("weights"), "Authored shape weights, one per UV shape.")
+        .def("connect_uv_weights", [](rigExec::RigExecPatchMoverHandle &h, const py::iterable &sources) {
+            std::vector<SdfPath> paths;
+            for (const auto &p : sources) paths.push_back(_PythonToPath(py::reinterpret_borrow<py::object>(p), true));
+            h.ConnectUvWeights(paths);
+        }, py::arg("sources"),
+           "Connect inputs:uvWeights to one float or double source per UV shape, in order.")
+        .def("set_uv_contacts", [](rigExec::RigExecPatchMoverHandle &h, std::vector<int> lower, std::vector<int> upper) {
+            h.SetUvContacts(lower, upper);
+        }, py::arg("lower"), py::arg("upper"),
+           "Contact pairs: UV point lower[k] never rises above UV point upper[k] in v.");
+
     py::class_<rigExec::RigExecDeltaMushMoverHandle, rigExec::RigExecMoverHandle>(m, "DeltaMushMover")
         .def("set_rest_points", [](rigExec::RigExecDeltaMushMoverHandle &h, py::iterable values) {
             std::vector<GfVec3f> points;for(const auto &p:values)points.push_back(_PythonToVec3f(p,"delta mush rest point"));
@@ -2314,6 +2348,18 @@ PYBIND11_MODULE(_rigexec, m) {
                 TfToken(readPhase));
         }, py::arg("name"), py::arg("surface_prim"), py::arg("mode") = "attach",
            py::arg("target") = py::none(), py::arg("read_phase") = "base")
+        .def("add_patch_mover", [](rigExec::RigExecMoverChain &c, std::string name,
+                                    py::object patchPrim, py::object uvPoints,
+                                    py::object target, std::string patchReadPhase,
+                                    std::string uvPointsReadPhase) {
+            return c.AddPatchMover(
+                name, _PythonToDependencyPath(patchPrim, c.GetStage(), TfToken(), false),
+                _PythonToDependencyPath(uvPoints, c.GetStage(), TfToken(), false),
+                _PythonToDependencyPath(target, c.GetStage()),
+                TfToken(patchReadPhase), TfToken(uvPointsReadPhase));
+        }, py::arg("name"), py::arg("patch_prim"), py::arg("uv_points"),
+           py::arg("target") = py::none(), py::arg("patch_read_phase") = "base",
+           py::arg("uv_points_read_phase") = "base")
         .def("add_delta_mush_mover", [](rigExec::RigExecMoverChain &c, std::string name,
                                          float weight, py::object target) {
             return c.AddDeltaMushMover(name,weight,_PythonToDependencyPath(target,c.GetStage()));

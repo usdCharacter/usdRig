@@ -4082,6 +4082,51 @@ class RigExecSurfaceBindingMover "RigExecSurfaceBindingMover" (
     int[] rigExec:vertices = []
 }
 
+class RigExecPatchMover "RigExecPatchMover" (
+    customData = {
+        string userDocBrief = """Evaluates a UsdGeomNurbsPatch at normalized UV parameters read from
+    a point-based UV input prim and writes an exact native UsdGeomPointBased
+    points property."""
+    }
+)
+{
+    float[] inputs:uvWeights = [] (
+        customData = {
+            string userDocBrief = "One weight per rigExec:uvShapes target, by index."
+        }
+    )
+    rel rigExec:patch (
+        customData = {
+            string userDocBrief = "Native UsdGeomNurbsPatch prim supplying the NURBS surface."
+        }
+    )
+    uniform int[] rigExec:uvContactLower = [] (
+        customData = {
+            string userDocBrief = """UV point indices that never stand above their partners in
+        rigExec:uvContactUpper, by index, after the UV shapes mix."""
+        }
+    )
+    uniform int[] rigExec:uvContactUpper = [] (
+        customData = {
+            string userDocBrief = """The partner of each rigExec:uvContactLower index: the UV
+        point that point never rises above."""
+        }
+    )
+    rel rigExec:uvPoints (
+        customData = {
+            string userDocBrief = """Native UsdGeomPointBased prim or points property whose XY
+        coordinates supply normalized (u, v) parameters on the patch: the
+        neutral the UV shapes are measured from."""
+        }
+    )
+    rel rigExec:uvShapes (
+        customData = {
+            string userDocBrief = """Ordered UV shapes: native UsdGeomPointBased prims or points
+        properties, each with as many points as rigExec:uvPoints."""
+        }
+    )
+}
+
 class RigExecSurfaceProjector "RigExecSurfaceProjector" (
     customData = {
         string userDocBrief = """Publishes a frame that rides a deforming surface to the

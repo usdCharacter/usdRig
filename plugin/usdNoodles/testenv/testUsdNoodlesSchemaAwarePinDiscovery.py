@@ -1312,3 +1312,74 @@ class ConnectionEndpointPinSurfacingTest(_StageTestCase):
         )
         self.assertIn("space", producer_node.outputPins)
         self.assertIn("space", producer_node._output_dual_pin_names)
+
+
+
+@unittest.skipUnless(
+    _can_create_stage, "UsdNoodles not available or real USD stages crash"
+)
+class AuthoredExtrasJoinSchemaGroupsTest(_StageTestCase):
+    """An authored property the schema lacks is listed with its namespace.
+
+    A control's custom ``avars:smile`` beside its schema ``avars:*`` is the
+    case: listed after every schema property, its row was laid out at the
+    bottom of the node under another group's header.
+    """
+
+    def setUp(self) -> None:
+        self.stage = Usd.Stage.CreateInMemory()
+        self.prim = self.stage.DefinePrim("/M", "Mesh")
+        self.prim.CreateAttribute("primvars:st", Sdf.ValueTypeNames.TexCoord2fArray)
+        self.prim.CreateAttribute("rig:extra", Sdf.ValueTypeNames.Float)
+        self.prim.CreateAttribute("zBare", Sdf.ValueTypeNames.Float)
+
+    def test_extra_follows_its_schema_group(self) -> None:
+        names = get_schema_aware_property_names(self.prim)
+        primvars = [i for i, n in enumerate(names) if n.startswith("primvars:")]
+        self.assertGreater(len(primvars), 1)
+        self.assertEqual(primvars, list(range(primvars[0], primvars[-1] + 1)))
+        self.assertEqual(names[primvars[-1]], "primvars:st")
+        # Extras with no schema group keep their authored order at the end.
+        self.assertEqual(names[-2:], ["rig:extra", "zBare"])
+
+    def test_rows_are_laid_out_in_display_order(self) -> None:
+        factory = NodeFactory(node_libraries=[])
+        node = factory.create_node_from_prim(
+            self.prim, self.stage, default_renderer=MagicMock()
+        )
+        self.assertIsNotNone(node)
+        slots = list(node.inputRowSlots)
+        self.assertEqual(slots, sorted(slots))
+
+
+@unittest.skipUnless(
+    _can_create_stage, "UsdNoodles not available or real USD stages crash"
+)
+class NodeFactoryDualMirrorSyncTest(_StageTestCase):
+    """The C++ layout knows every dual row the Python model knows.
+
+    The port resolver mirrors a dual row's port onto the opposite edge only
+    for rows in the C++ copy; a row missing there had no port on that edge,
+    and a link from it started at the node's mid-height edge.
+    """
+
+    def test_dual_pin_names_reach_the_layout(self) -> None:
+        self.stage = Usd.Stage.CreateInMemory()
+        source = self.stage.DefinePrim("/Source")
+        avar = source.CreateAttribute("avars:smile", Sdf.ValueTypeNames.Float)
+        target = self.stage.DefinePrim("/Target")
+        weights = target.CreateAttribute(
+            "inputs:weights", Sdf.ValueTypeNames.FloatArray
+        )
+        weights.AddConnection(avar.GetPath())
+        factory = NodeFactory(node_libraries=[])
+        for prim, pin in ((source, "avars:smile"), (target, "weights")):
+            node = factory.create_node_from_prim(
+                prim, self.stage, default_renderer=MagicMock()
+            )
+            self.assertIsNotNone(node)
+            self.assertIn(pin, node._dual_pin_names)
+            self.assertEqual(set(node.dualPinNames), set(node._dual_pin_names))
+            self.assertEqual(
+                set(node.outputDualPinNames), set(node._output_dual_pin_names)
+            )

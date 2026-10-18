@@ -79,7 +79,9 @@ rigExec::RigExecRigPose EvaluateChecked(rigExec::RigExecRigEvaluator &evaluator,
         else {
             const auto report=rows->Evaluate(time);
             pose.diagnostics.insert(pose.diagnostics.end(),report.diagnostics.begin(),report.diagnostics.end());
-            if(!report.Passed() || (!rows->Descriptors().empty() && !report.checked)) {
+            // A skipOnly row has no public equivalent by construction: only a
+            // checkable row going unchecked fails, never an external-only set.
+            if(!report.Passed() || (std::any_of(rows->Descriptors().begin(),rows->Descriptors().end(),[](const auto &d){return !d.skipOnly;}) && !report.checked)) {
                 pose.valid=false;pose.diagnostics.push_back("exec crosscheck failed or checked no declared rows");
             }
         }

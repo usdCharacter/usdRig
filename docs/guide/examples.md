@@ -82,10 +82,13 @@ One focus area per file, numbered roughly from simplest to most involved.
 | [`09_PropertyMathMovers.usda`](../../examples/09_PropertyMathMovers.usda) | Property math |
 | [`10_AimXformTurret.usda`](../../examples/10_AimXformTurret.usda) | Aiming a plain transform |
 | [`11_VolumeWeights.usda`](../../examples/11_VolumeWeights.usda) | Volume weight fields |
+| [`12_PatchCurve.usda`](../../examples/12_PatchCurve.usda) | Sticking a curve to a NURBS patch |
 | [`13_ReadPhases.usda`](../../examples/13_ReadPhases.usda) | Read phases |
 | [`14_VolumeConstrainedSweep.usda`](../../examples/14_VolumeConstrainedSweep.usda) | A volume-constrained sweep |
 | [`15_TransformMatrixMover.usda`](../../examples/15_TransformMatrixMover.usda) | A transform matrix mover |
 | [`16_ConnectionReadPhases.usda`](../../examples/16_ConnectionReadPhases.usda) | Read phases through connections |
+| [`17_PatchCurveShapes.usda`](../../examples/17_PatchCurveShapes.usda) | Mixing UV shapes on a patch with avars |
+| [`18_PatchMouth.usda`](../../examples/18_PatchMouth.usda) | Two lips on one patch, mixed by ARKit avars, never crossing |
 
 The full list, including the composition-arc and constraint test stages, is
 in the [example catalog](../../examples/README.md).

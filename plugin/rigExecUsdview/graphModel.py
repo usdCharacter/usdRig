@@ -142,11 +142,11 @@ def DiscoverCurves(stage, propPaths, primPaths):
     only (which cannot carry a spline at all) is not a curve choice, so
     it falls through to the prims.
 
-    Per prim, the attributes that already have a spline come first --
-    they are what the artist can see in the viewport -- then the rig
-    avar / rest channels that do not, so an unanimated control can be
-    keyed from the editor. Duplicates are dropped, keeping the first
-    position.
+    Per prim, the attributes that are already animated -- by a spline or
+    by time samples -- come first, since they are what the artist can see
+    in the viewport, then the rig avar / rest channels that are not, so an
+    unanimated control can be keyed from the editor. Duplicates are
+    dropped, keeping the first position.
     """
     refs = []
     seen = set()
@@ -172,7 +172,8 @@ def DiscoverCurves(stage, propPaths, primPaths):
         if not prim:
             continue
         for attr in prim.GetAttributes():
-            if attr.HasSpline() and IsCurveAttr(attr):
+            if ((attr.HasSpline() or IsSampledCurve(attr))
+                    and IsCurveAttr(attr)):
                 Add(attr)
         # IsRigXformable covers controls, joints and volume weights; the
         # volume weight schema simply does not declare avars:sx/sy/sz
@@ -245,9 +246,53 @@ def SplineFor(attr):
     attribute's own type. Callers must still check IsCurveAttr first:
     this does not make a vector attribute splineable.
     """
+    if IsSampledCurve(attr):
+        return SampledSpline(attr)
     spline = attr.GetSpline()
     if not spline.GetValueTypeName():
         spline = Ts.Spline(attr.GetTypeName().type.typeName)
+    return spline
+
+
+def IsSampledCurve(attr):
+    """
+    Whether `attr` is animated by time samples (or value clips) rather
+    than a spline: its strongest value source. The editor draws such a
+    curve from its samples and writes its edits back as samples
+    (WriteSamples), so editing never turns a sampled channel into a
+    spline behind the artist's back -- the rule gizmoMath.SetAnimated
+    keeps for viewport keying.
+    """
+    if not attr:
+        return False
+    try:
+        source = attr.GetResolveInfo().GetSource()
+    except Exception:
+        return False
+    return source in (Usd.ResolveInfoSourceTimeSamples,
+                      Usd.ResolveInfoSourceValueClips)
+
+
+def SampledSpline(attr):
+    """
+    `attr`'s time samples as a spline the editor can draw and edit.
+
+    One knot per sample, joined the way Usd interpolates samples: linearly,
+    or held on a stage whose interpolation type is held. Ts holds past the
+    first and last knot by default, as Usd holds the end samples. Nothing
+    of it is authored: WriteSamples keeps only the knots' times and values.
+    """
+    spline = Ts.Spline(attr.GetTypeName().type.typeName)
+    held = (attr.GetStage().GetInterpolationType()
+            == Usd.InterpolationTypeHeld)
+    interp = Ts.InterpHeld if held else Ts.InterpLinear
+    for time in attr.GetTimeSamples():
+        value = attr.Get(time)
+        if value is None:
+            continue
+        spline.SetKnot(Ts.Knot(typeName=spline.GetValueTypeName(),
+                               time=time, value=float(value),
+                               nextInterp=interp))
     return spline
 
 
@@ -1029,6 +1074,36 @@ def ClearSpline(stage, attrPath):
             spec.owner.RemoveProperty(spec)
 
 
+def WriteSamples(stage, attrPath, spline):
+    """
+    Author `spline`'s knots as `attrPath`'s time samples in the edit
+    target: one sample per knot, at its value, replacing every sample
+    the edit target held. The edit target's samples replace a weaker
+    layer's outright, so the whole curve lands, never one changed key.
+    Interpolation, tangents and extrapolation are not samples' to keep.
+
+    An EMPTY spline clears the edit target's samples instead -- and the
+    spec once it holds nothing else -- so a weaker layer's samples show
+    through again, as ClearSpline does for a spline.
+    """
+    path = Sdf.Path(attrPath)
+    attr = stage.GetAttributeAtPath(path)
+    target = stage.GetEditTarget()
+    layer = target.GetLayer()
+    specPath = target.MapToSpecPath(path)
+    with Sdf.ChangeBlock():
+        for time in layer.ListTimeSamplesForPath(specPath):
+            layer.EraseTimeSample(specPath, time)
+        if spline.IsEmpty():
+            spec = layer.GetAttributeAtPath(specPath)
+            if (spec is not None and not spec.HasDefaultValue()
+                    and not spec.HasSpline()):
+                spec.owner.RemoveProperty(spec)
+            return
+        for knot in spline.GetKnots().values():
+            attr.Set(knot.GetValue(), Usd.TimeCode(knot.GetTime()))
+
+
 def ApplySpline(stage, attrPath, spline, undoStack, label):
     """
     Write `spline` onto `attrPath` as one undo step; True when anything
@@ -1045,15 +1120,21 @@ def ApplySpline(stage, attrPath, spline, undoStack, label):
     opinion instead of authoring an empty curve; see ClearSpline. The
     clear happens inside the same recorder bracket, so undo puts the
     spline back exactly.
+
+    A channel animated by time samples keeps them: its knots are written
+    back as samples (WriteSamples), under the same recorder.
     """
     path = Sdf.Path(attrPath)
     attr = stage.GetAttributeAtPath(path)
     if not attr:
         return False
+    sampled = IsSampledCurve(attr)
     recorder = rigExecUndo.EditRecorder(stage, [path])
     recorder.Begin()
     try:
-        if spline.IsEmpty():
+        if sampled:
+            WriteSamples(stage, path, spline)
+        elif spline.IsEmpty():
             ClearSpline(stage, path)
         else:
             # One notice: a first key creates the spec, then the spline.

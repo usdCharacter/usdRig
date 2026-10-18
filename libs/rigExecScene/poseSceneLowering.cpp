@@ -235,7 +235,9 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
     for(const auto &driver:result.driverAttributes) {
         const auto *attribute=driver.IsPropertyPath()?source.Attribute(driver):nullptr;
         if(!attribute)return Fail(error,"pose numeric driver is not an attribute");
-        const bool isFloat=typedInputs && attribute->fact.type.GetType()==SdfValueTypeNames->Float.GetType();
+        // A dial is read in its own precision: a double read of a float
+        // attribute answers only its fallback.
+        const bool isFloat=attribute->fact.type.GetType()==SdfValueTypeNames->Float.GetType();
         RigExecSceneTypedRead read;
         if(!RigExecBindSceneTypedRead(scene,driver,isFloat?SdfValueTypeNames->Float:SdfValueTypeNames->Double,
             &read,error))return false;

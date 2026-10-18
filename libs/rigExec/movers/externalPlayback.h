@@ -61,6 +61,10 @@ RigExecExternalPlaybackInputs(const RigExecExternalInputValue *inputs,
             const auto *v = static_cast<const float *>(input.data);
             values[k] = VtValue(VtFloatArray(v, v + n)); break;
         }
+        case Type::DoubleArray: {
+            const auto *v = static_cast<const double *>(input.data);
+            values[k] = VtValue(VtDoubleArray(v, v + n)); break;
+        }
         case Type::Vec3fArray: {
             const auto *v = static_cast<const float *>(input.data);
             VtVec3fArray points(n);

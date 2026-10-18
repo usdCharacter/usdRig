@@ -75,10 +75,17 @@ set(RIGEXEC_EXAMPLE_FIXTURES
     "09_PropertyMathMovers.usda|1001,1012,1024,1036,1048|/PropMathAsset/Rig/Controls/RootCtl|avars:ry|/PropMathAsset/Rig/Movers/ClampGain|inputs:max|YES|-|inputs"
     "10_AimXformTurret.usda|1001,1012,1024,1036,1048|/TurretAsset/Rig/Controls/TrackTarget|avars:tx|/TurretAsset/Rig/Movers/AimBarrel|inputs:defaultWeight|YES|-|inputs"
     "11_VolumeWeights.usda|1001,1012,1024,1036,1048|/VolumeAsset/Rig/Controls/Root|avars:rz|/VolumeAsset/Rig/Joints/Shoulder/ShoulderVolume|inputs:falloffMax|YES|-|inputs"
+    # 12 builds and bakes, but the bare .rigexec runtime passes PatchMover
+    # points through: no verify-binary or runtime-suite harness installs
+    # external kernels. Flip to YES when they install runtimeKernel from
+    # registered handlers the way usdview playback does.
+    "12_PatchCurve.usda|1001,1012,1024,1036,1048|-|-|/PatchAsset/Rig/Movers/Geometry/StickCurve|inputs:defaultWeight|NO|external-playback|inputs"
     "13_ReadPhases.usda|1001,1012,1024,1036,1048|/ReadPhaseAsset/Rig/Controls/LiftCtl|avars:ty|/ReadPhaseAsset/Rig/Weights/CageW|rigExec:defaultWeight|YES|-|inputs"
     "15_TransformMatrixMover.usda|1001,1012,1024,1036,1048|/TransformMoverAsset/Rig/Controls/DriverSpace/Driver|avars:ry|/TransformMoverAsset/Rig/Movers/PropFollow|inputs:defaultWeight|YES|-|inputs"
     "14_VolumeConstrainedSweep.usda|1001,1012,1024,1036,1048|/SweepAsset/Rig/Controls/Band|avars:ty|/SweepAsset/Rig/Controls/Band/Volume|inputs:falloffMax|YES|-|static"
     "16_ConnectionReadPhases.usda|1001,1012,1024,1036,1048|/PhaseConnectAsset/Rig/Controls/LiftCtl|avars:ty|/PhaseConnectAsset/Rig/Movers/Dial/Gain|inputs:value|YES|-|inputs"
+    "17_PatchCurveShapes.usda|1001,1005,1010,1014,1019,1023,1028,1032,1037,1042,1048|/PatchAsset/Rig/Controls/Shapes|avars:east|/PatchAsset/Rig/Movers/Geometry/StickCurve|inputs:defaultWeight|NO|external-playback|inputs"
+    "18_PatchMouth.usda|1001,1004,1007,1010,1013,1019,1025,1031,1037,1043,1049,1055,1061,1067,1073,1079,1085,1091,1097,1100,1103,1109,1115,1121,1127,1133,1139,1145,1151,1157,1163,1166,1169,1174,1179,1184,1189,1199,1209,1214,1219,1229,1239,1249,1259,1264,1269|/MouthAsset/Rig/Controls/Mouth|avars:jawOpen|/MouthAsset/Rig/Movers/Geometry/Lips|inputs:defaultWeight|NO|external-playback|inputs"
     # -- the constraint stages: every one aims at a plain UsdGeomXformable --
     "aimtest.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"
     "aimtest_points.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"

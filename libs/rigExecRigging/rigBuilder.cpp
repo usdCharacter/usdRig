@@ -2184,6 +2184,115 @@ RigExecSurfaceMoverHandle::SetReadPhase(const TfToken &phase)
 }
 
 void
+RigExecPatchMoverHandle::SetPatch(const SdfPath &path)
+{
+    if (path.IsEmpty()) {
+        throw std::invalid_argument("patch mover needs a patch prim");
+    }
+    SetRel("rigExec:patch", { path });
+}
+
+void
+RigExecPatchMoverHandle::SetUvPoints(const SdfPath &path)
+{
+    if (path.IsEmpty()) {
+        throw std::invalid_argument("patch mover needs a UV points target");
+    }
+    SetRel("rigExec:uvPoints", { path });
+}
+
+void
+RigExecPatchMoverHandle::SetReadPhase(const TfToken &phase)
+{
+    SetPatchReadPhase(phase);
+}
+
+void
+RigExecPatchMoverHandle::SetUvShapes(const std::vector<SdfPath> &paths)
+{
+    SetRel("rigExec:uvShapes", paths);
+}
+
+void
+RigExecPatchMoverHandle::SetUvShapesReadPhase(const TfToken &phase)
+{
+    if (phase.IsEmpty()) {
+        throw std::invalid_argument("patch mover UV shapes read phase must not be empty");
+    }
+    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:uvShapes"), phase.GetString());
+}
+
+void
+RigExecPatchMoverHandle::SetUvWeights(const std::vector<float> &weights)
+{
+    _AuthorAttr(GetPrim(), "inputs:uvWeights", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
+}
+
+void
+RigExecPatchMoverHandle::SetUvContacts(const std::vector<int> &lower,
+                                       const std::vector<int> &upper)
+{
+    if (lower.size() != upper.size()) {
+        throw std::invalid_argument(
+            "UV contacts need one upper index per lower index");
+    }
+    for (const std::vector<int> *list : {&lower, &upper}) {
+        for (const int index : *list) {
+            if (index < 0) {
+                throw std::invalid_argument(
+                    "UV contact index must not be negative, got: " +
+                    std::to_string(index));
+            }
+        }
+    }
+    _AuthorAttr(GetPrim(), "rigExec:uvContactLower", SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(lower.begin(), lower.end())));
+    _AuthorAttr(GetPrim(), "rigExec:uvContactUpper", SdfValueTypeNames->IntArray,
+                VtValue(VtIntArray(upper.begin(), upper.end())));
+}
+
+void
+RigExecPatchMoverHandle::ConnectUvWeights(const std::vector<SdfPath> &sources)
+{
+    for (const SdfPath &source : sources) {
+        if (!source.IsPropertyPath()) {
+            throw std::invalid_argument(
+                "UV weight must connect to a PROPERTY, got: " +
+                source.GetString());
+        }
+    }
+    // The attribute has to exist before it can carry connections; while they
+    // stand its own array is ignored.
+    _AuthorAttr(GetPrim(), "inputs:uvWeights", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray()));
+    UsdAttribute attr = GetPrim().GetAttribute(TfToken("inputs:uvWeights"));
+    if (sources.empty()) {
+        attr.ClearConnections();
+        return;
+    }
+    attr.SetConnections(sources);
+}
+
+void
+RigExecPatchMoverHandle::SetPatchReadPhase(const TfToken &phase)
+{
+    if (phase.IsEmpty()) {
+        throw std::invalid_argument("patch mover read phase must not be empty");
+    }
+    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:patch"), phase.GetString());
+}
+
+void
+RigExecPatchMoverHandle::SetUvPointsReadPhase(const TfToken &phase)
+{
+    if (phase.IsEmpty()) {
+        throw std::invalid_argument("patch mover UV points read phase must not be empty");
+    }
+    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:uvPoints"), phase.GetString());
+}
+
+void
 RigExecSmoothMoverHandle::SetStrength(float strength)
 {
     SetDefaultWeight(strength);
@@ -2454,6 +2563,28 @@ RigExecMoverChain::AddSurfaceMover(
     if (!readPhase.IsEmpty()) {
         handle.RigExecMoverHandle::SetReadPhase(
             TfToken("rigExec:surface"), readPhase.GetString());
+    }
+    return handle;
+}
+
+RigExecPatchMoverHandle
+RigExecMoverChain::AddPatchMover(
+    const std::string &name, const SdfPath &patchPrim, const SdfPath &uvPoints,
+    const SdfPath &target, const TfToken &patchReadPhase,
+    const TfToken &uvPointsReadPhase)
+{
+    _RequireTargetPath(patchPrim, "patch mover patch");
+    _RequireTargetPath(uvPoints, "patch mover uvPoints");
+    RigExecPatchMoverHandle handle(_stage, _AddMoverPrim("RigExecPatchMover", name, target));
+    handle.SetPatch(patchPrim);
+    handle.SetUvPoints(uvPoints);
+    if (!patchReadPhase.IsEmpty()) {
+        handle.RigExecMoverHandle::SetReadPhase(
+            TfToken("rigExec:patch"), patchReadPhase.GetString());
+    }
+    if (!uvPointsReadPhase.IsEmpty()) {
+        handle.RigExecMoverHandle::SetReadPhase(
+            TfToken("rigExec:uvPoints"), uvPointsReadPhase.GetString());
     }
     return handle;
 }
