@@ -400,6 +400,10 @@ struct ProviderProgram;
 struct ProviderProgramBuilder;
 struct RigExecWireProviderProgram;
 
+struct WindowedOp;
+struct WindowedOpBuilder;
+struct RigExecWireWindowedOp;
+
 struct File;
 struct FileBuilder;
 struct RigExecWireFile;
@@ -617,6 +621,8 @@ inline const ::flatbuffers::TypeTable *CrossDomainReadTypeTable();
 inline const ::flatbuffers::TypeTable *ProviderRoutedInputTypeTable();
 
 inline const ::flatbuffers::TypeTable *ProviderProgramTypeTable();
+
+inline const ::flatbuffers::TypeTable *WindowedOpTypeTable();
 
 inline const ::flatbuffers::TypeTable *FileTypeTable();
 
@@ -9399,6 +9405,12 @@ struct RigExecWireConstraint : public ::flatbuffers::NativeTable {
   int32_t matchPoleSwitch = -1;
   std::vector<uint8_t> matchPoleSourceRides{};
   bool matchPoleParentRides = false;
+  bool harmonics = false;
+  std::vector<std::unique_ptr<rigExec::fb::RigExecWireInput>> harmonicsScalars{};
+  std::vector<double> harmonicsConstants{};
+  bool harmonicsIgnoreFirstFrame = false;
+  bool harmonicsMatchVelocity = false;
+  int32_t window = -1;
   RigExecWireConstraint() = default;
   RigExecWireConstraint(const RigExecWireConstraint &o);
   RigExecWireConstraint(RigExecWireConstraint&&) FLATBUFFERS_NOEXCEPT = default;
@@ -9477,7 +9489,13 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_MATCHSTRETCHLIMB = 126,
     VT_MATCHPOLESWITCH = 128,
     VT_MATCHPOLESOURCERIDES = 130,
-    VT_MATCHPOLEPARENTRIDES = 132
+    VT_MATCHPOLEPARENTRIDES = 132,
+    VT_HARMONICS = 134,
+    VT_HARMONICSSCALARS = 136,
+    VT_HARMONICSCONSTANTS = 138,
+    VT_HARMONICSIGNOREFIRSTFRAME = 140,
+    VT_HARMONICSMATCHVELOCITY = 142,
+    VT_WINDOW = 144
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -9688,6 +9706,27 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool matchPoleParentRides() const {
     return GetField<uint8_t>(VT_MATCHPOLEPARENTRIDES, 0) != 0;
   }
+  bool harmonics() const {
+    return GetField<uint8_t>(VT_HARMONICS, 0) != 0;
+  }
+  /// inputs:amplitude, decay and termination, each a Float or a Double read.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *harmonicsScalars() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_HARMONICSSCALARS);
+  }
+  /// rigExec:waves, waveLength and frequency.
+  const ::flatbuffers::Vector<double> *harmonicsConstants() const {
+    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_HARMONICSCONSTANTS);
+  }
+  bool harmonicsIgnoreFirstFrame() const {
+    return GetField<uint8_t>(VT_HARMONICSIGNOREFIRSTFRAME, 0) != 0;
+  }
+  bool harmonicsMatchVelocity() const {
+    return GetField<uint8_t>(VT_HARMONICSMATCHVELOCITY, 0) != 0;
+  }
+  /// File.windowed_ops[] index, or -1.
+  int32_t window() const {
+    return GetField<int32_t>(VT_WINDOW, -1);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9789,6 +9828,15 @@ struct Constraint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_MATCHPOLESOURCERIDES) &&
            verifier.VerifyVector(matchPoleSourceRides()) &&
            VerifyField<uint8_t>(verifier, VT_MATCHPOLEPARENTRIDES, 1) &&
+           VerifyField<uint8_t>(verifier, VT_HARMONICS, 1) &&
+           VerifyOffset(verifier, VT_HARMONICSSCALARS) &&
+           verifier.VerifyVector(harmonicsScalars()) &&
+           verifier.VerifyVectorOfTables(harmonicsScalars()) &&
+           VerifyOffset(verifier, VT_HARMONICSCONSTANTS) &&
+           verifier.VerifyVector(harmonicsConstants()) &&
+           VerifyField<uint8_t>(verifier, VT_HARMONICSIGNOREFIRSTFRAME, 1) &&
+           VerifyField<uint8_t>(verifier, VT_HARMONICSMATCHVELOCITY, 1) &&
+           VerifyField<int32_t>(verifier, VT_WINDOW, 4) &&
            verifier.EndTable();
   }
   RigExecWireConstraint *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -9995,6 +10043,24 @@ struct ConstraintBuilder {
   void add_matchPoleParentRides(bool matchPoleParentRides) {
     fbb_.AddElement<uint8_t>(Constraint::VT_MATCHPOLEPARENTRIDES, static_cast<uint8_t>(matchPoleParentRides), 0);
   }
+  void add_harmonics(bool harmonics) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_HARMONICS, static_cast<uint8_t>(harmonics), 0);
+  }
+  void add_harmonicsScalars(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> harmonicsScalars) {
+    fbb_.AddOffset(Constraint::VT_HARMONICSSCALARS, harmonicsScalars);
+  }
+  void add_harmonicsConstants(::flatbuffers::Offset<::flatbuffers::Vector<double>> harmonicsConstants) {
+    fbb_.AddOffset(Constraint::VT_HARMONICSCONSTANTS, harmonicsConstants);
+  }
+  void add_harmonicsIgnoreFirstFrame(bool harmonicsIgnoreFirstFrame) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_HARMONICSIGNOREFIRSTFRAME, static_cast<uint8_t>(harmonicsIgnoreFirstFrame), 0);
+  }
+  void add_harmonicsMatchVelocity(bool harmonicsMatchVelocity) {
+    fbb_.AddElement<uint8_t>(Constraint::VT_HARMONICSMATCHVELOCITY, static_cast<uint8_t>(harmonicsMatchVelocity), 0);
+  }
+  void add_window(int32_t window) {
+    fbb_.AddElement<int32_t>(Constraint::VT_WINDOW, window, -1);
+  }
   explicit ConstraintBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -10093,8 +10159,17 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraint(
     bool matchStretchLimb = false,
     int32_t matchPoleSwitch = -1,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> matchPoleSourceRides = 0,
-    bool matchPoleParentRides = false) {
+    bool matchPoleParentRides = false,
+    bool harmonics = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> harmonicsScalars = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> harmonicsConstants = 0,
+    bool harmonicsIgnoreFirstFrame = false,
+    bool harmonicsMatchVelocity = false,
+    int32_t window = -1) {
   ConstraintBuilder builder_(_fbb);
+  builder_.add_window(window);
+  builder_.add_harmonicsConstants(harmonicsConstants);
+  builder_.add_harmonicsScalars(harmonicsScalars);
   builder_.add_matchPoleSourceRides(matchPoleSourceRides);
   builder_.add_matchPoleSwitch(matchPoleSwitch);
   builder_.add_matchConstants(matchConstants);
@@ -10148,6 +10223,9 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraint(
   builder_.add_weightObject(weightObject);
   builder_.add_type(type);
   builder_.add_path(path);
+  builder_.add_harmonicsMatchVelocity(harmonicsMatchVelocity);
+  builder_.add_harmonicsIgnoreFirstFrame(harmonicsIgnoreFirstFrame);
+  builder_.add_harmonics(harmonics);
   builder_.add_matchPoleParentRides(matchPoleParentRides);
   builder_.add_matchStretchLimb(matchStretchLimb);
   builder_.add_ikFkMatch(ikFkMatch);
@@ -10234,7 +10312,13 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
     bool matchStretchLimb = false,
     int32_t matchPoleSwitch = -1,
     const std::vector<uint8_t> *matchPoleSourceRides = nullptr,
-    bool matchPoleParentRides = false) {
+    bool matchPoleParentRides = false,
+    bool harmonics = false,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *harmonicsScalars = nullptr,
+    const std::vector<double> *harmonicsConstants = nullptr,
+    bool harmonicsIgnoreFirstFrame = false,
+    bool harmonicsMatchVelocity = false,
+    int32_t window = -1) {
   auto targetSlots__ = targetSlots ? _fbb.CreateVector<int32_t>(*targetSlots) : 0;
   auto sources__ = sources ? _fbb.CreateVector<int32_t>(*sources) : 0;
   auto sourceNatives__ = sourceNatives ? _fbb.CreateVector<int32_t>(*sourceNatives) : 0;
@@ -10245,6 +10329,8 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
   auto matchScalars__ = matchScalars ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*matchScalars) : 0;
   auto matchConstants__ = matchConstants ? _fbb.CreateVector<double>(*matchConstants) : 0;
   auto matchPoleSourceRides__ = matchPoleSourceRides ? _fbb.CreateVector<uint8_t>(*matchPoleSourceRides) : 0;
+  auto harmonicsScalars__ = harmonicsScalars ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*harmonicsScalars) : 0;
+  auto harmonicsConstants__ = harmonicsConstants ? _fbb.CreateVector<double>(*harmonicsConstants) : 0;
   return rigExec::fb::CreateConstraint(
       _fbb,
       path,
@@ -10311,7 +10397,13 @@ inline ::flatbuffers::Offset<Constraint> CreateConstraintDirect(
       matchStretchLimb,
       matchPoleSwitch,
       matchPoleSourceRides__,
-      matchPoleParentRides);
+      matchPoleParentRides,
+      harmonics,
+      harmonicsScalars__,
+      harmonicsConstants__,
+      harmonicsIgnoreFirstFrame,
+      harmonicsMatchVelocity,
+      window);
 }
 
 ::flatbuffers::Offset<Constraint> CreateConstraint(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireConstraint *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -20760,6 +20852,83 @@ inline ::flatbuffers::Offset<ProviderProgram> CreateProviderProgramDirect(
 
 ::flatbuffers::Offset<ProviderProgram> CreateProviderProgram(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireProviderProgram *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireWindowedOp : public ::flatbuffers::NativeTable {
+  typedef WindowedOp TableType;
+  int32_t step = -1;
+  uint32_t frames = 0;
+};
+
+/// Format 25: a windowed operation (rigExecGraph/windowHistory.h), a step
+/// whose solve reads the inputs it captured over the `frames` earlier ticks.
+/// A reader settles the inner windowed ops and the history-tick mask from
+/// common_graph (RigExecSettleWindowLayout).
+struct WindowedOp FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireWindowedOp NativeTableType;
+  typedef WindowedOpBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return WindowedOpTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_STEP = 4,
+    VT_FRAMES = 6
+  };
+  int32_t step() const {
+    return GetField<int32_t>(VT_STEP, -1);
+  }
+  uint32_t frames() const {
+    return GetField<uint32_t>(VT_FRAMES, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int32_t>(verifier, VT_STEP, 4) &&
+           VerifyField<uint32_t>(verifier, VT_FRAMES, 4) &&
+           verifier.EndTable();
+  }
+  RigExecWireWindowedOp *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireWindowedOp *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<WindowedOp> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct WindowedOpBuilder {
+  typedef WindowedOp Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_step(int32_t step) {
+    fbb_.AddElement<int32_t>(WindowedOp::VT_STEP, step, -1);
+  }
+  void add_frames(uint32_t frames) {
+    fbb_.AddElement<uint32_t>(WindowedOp::VT_FRAMES, frames, 0);
+  }
+  explicit WindowedOpBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<WindowedOp> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<WindowedOp>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<WindowedOp> CreateWindowedOp(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    int32_t step = -1,
+    uint32_t frames = 0) {
+  WindowedOpBuilder builder_(_fbb);
+  builder_.add_frames(frames);
+  builder_.add_step(step);
+  return builder_.Finish();
+}
+
+struct WindowedOp::Traits {
+  using type = WindowedOp;
+  static auto constexpr Create = CreateWindowedOp;
+};
+
+::flatbuffers::Offset<WindowedOp> CreateWindowedOp(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWireFile : public ::flatbuffers::NativeTable {
   typedef File TableType;
   uint32_t formatVersion = 0;
@@ -20794,6 +20963,7 @@ struct RigExecWireFile : public ::flatbuffers::NativeTable {
   std::vector<rigExec::fb::RigExecWireMatrix4dArray> matrix4dArrays{};
   std::vector<rigExec::fb::RigExecWireTokenArray> tokenArrays{};
   std::vector<rigExec::fb::RigExecWireBoolArray> boolArrays{};
+  std::vector<rigExec::fb::RigExecWireWindowedOp> windowedOps{};
   RigExecWireFile() = default;
   RigExecWireFile(const RigExecWireFile &o);
   RigExecWireFile(RigExecWireFile&&) FLATBUFFERS_NOEXCEPT = default;
@@ -20839,7 +21009,8 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_VEC3DARRAYS = 60,
     VT_MATRIX4DARRAYS = 62,
     VT_TOKENARRAYS = 64,
-    VT_BOOLARRAYS = 66
+    VT_BOOLARRAYS = 66,
+    VT_WINDOWEDOPS = 68
   };
   /// RigExecFormatVersion.
   uint32_t formatVersion() const {
@@ -20950,6 +21121,10 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *boolArrays() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *>(VT_BOOLARRAYS);
   }
+  /// Format 25: the windowed operations, in program order.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *>(VT_WINDOWEDOPS);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -21031,6 +21206,9 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_BOOLARRAYS) &&
            verifier.VerifyVector(boolArrays()) &&
            verifier.VerifyVectorOfTables(boolArrays()) &&
+           VerifyOffset(verifier, VT_WINDOWEDOPS) &&
+           verifier.VerifyVector(windowedOps()) &&
+           verifier.VerifyVectorOfTables(windowedOps()) &&
            verifier.EndTable();
   }
   RigExecWireFile *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -21138,6 +21316,9 @@ struct FileBuilder {
   void add_boolArrays(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>>> boolArrays) {
     fbb_.AddOffset(File::VT_BOOLARRAYS, boolArrays);
   }
+  void add_windowedOps(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>>> windowedOps) {
+    fbb_.AddOffset(File::VT_WINDOWEDOPS, windowedOps);
+  }
   explicit FileBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -21190,8 +21371,10 @@ inline ::flatbuffers::Offset<File> CreateFile(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Vec3dArray>>> vec3dArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Matrix4dArray>>> matrix4dArrays = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::TokenArray>>> tokenArrays = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>>> boolArrays = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::BoolArray>>> boolArrays = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>>> windowedOps = 0) {
   FileBuilder builder_(_fbb);
+  builder_.add_windowedOps(windowedOps);
   builder_.add_boolArrays(boolArrays);
   builder_.add_tokenArrays(tokenArrays);
   builder_.add_matrix4dArrays(matrix4dArrays);
@@ -21265,7 +21448,8 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
     const std::vector<::flatbuffers::Offset<rigExec::fb::Vec3dArray>> *vec3dArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::Matrix4dArray>> *matrix4dArrays = nullptr,
     const std::vector<::flatbuffers::Offset<rigExec::fb::TokenArray>> *tokenArrays = nullptr,
-    const std::vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *boolArrays = nullptr) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::BoolArray>> *boolArrays = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps = nullptr) {
   auto names__ = names ? _fbb.CreateVector<::flatbuffers::Offset<::flatbuffers::String>>(*names) : 0;
   auto paths__ = paths ? _fbb.CreateVectorOfStructs<rigExec::fb::PathNode>(*paths) : 0;
   auto values__ = values ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Value>>(*values) : 0;
@@ -21287,6 +21471,7 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
   auto matrix4dArrays__ = matrix4dArrays ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Matrix4dArray>>(*matrix4dArrays) : 0;
   auto tokenArrays__ = tokenArrays ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::TokenArray>>(*tokenArrays) : 0;
   auto boolArrays__ = boolArrays ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BoolArray>>(*boolArrays) : 0;
+  auto windowedOps__ = windowedOps ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WindowedOp>>(*windowedOps) : 0;
   return rigExec::fb::CreateFile(
       _fbb,
       formatVersion,
@@ -21320,7 +21505,8 @@ inline ::flatbuffers::Offset<File> CreateFileDirect(
       vec3dArrays__,
       matrix4dArrays__,
       tokenArrays__,
-      boolArrays__);
+      boolArrays__,
+      windowedOps__);
 }
 
 ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -23287,9 +23473,16 @@ inline RigExecWireConstraint::RigExecWireConstraint(const RigExecWireConstraint 
         matchStretchLimb(o.matchStretchLimb),
         matchPoleSwitch(o.matchPoleSwitch),
         matchPoleSourceRides(o.matchPoleSourceRides),
-        matchPoleParentRides(o.matchPoleParentRides) {
+        matchPoleParentRides(o.matchPoleParentRides),
+        harmonics(o.harmonics),
+        harmonicsConstants(o.harmonicsConstants),
+        harmonicsIgnoreFirstFrame(o.harmonicsIgnoreFirstFrame),
+        harmonicsMatchVelocity(o.harmonicsMatchVelocity),
+        window(o.window) {
   matchScalars.reserve(o.matchScalars.size());
   for (const auto &matchScalars_ : o.matchScalars) { matchScalars.emplace_back((matchScalars_) ? new rigExec::fb::RigExecWireInput(*matchScalars_) : nullptr); }
+  harmonicsScalars.reserve(o.harmonicsScalars.size());
+  for (const auto &harmonicsScalars_ : o.harmonicsScalars) { harmonicsScalars.emplace_back((harmonicsScalars_) ? new rigExec::fb::RigExecWireInput(*harmonicsScalars_) : nullptr); }
 }
 
 inline RigExecWireConstraint &RigExecWireConstraint::operator=(RigExecWireConstraint o) FLATBUFFERS_NOEXCEPT {
@@ -23358,6 +23551,12 @@ inline RigExecWireConstraint &RigExecWireConstraint::operator=(RigExecWireConstr
   std::swap(matchPoleSwitch, o.matchPoleSwitch);
   std::swap(matchPoleSourceRides, o.matchPoleSourceRides);
   std::swap(matchPoleParentRides, o.matchPoleParentRides);
+  std::swap(harmonics, o.harmonics);
+  std::swap(harmonicsScalars, o.harmonicsScalars);
+  std::swap(harmonicsConstants, o.harmonicsConstants);
+  std::swap(harmonicsIgnoreFirstFrame, o.harmonicsIgnoreFirstFrame);
+  std::swap(harmonicsMatchVelocity, o.harmonicsMatchVelocity);
+  std::swap(window, o.window);
   return *this;
 }
 
@@ -23435,6 +23634,12 @@ inline void Constraint::UnPackTo(RigExecWireConstraint *_o, const ::flatbuffers:
   { auto _e = matchPoleSwitch(); _o->matchPoleSwitch = _e; }
   { auto _e = matchPoleSourceRides(); if (_e) { _o->matchPoleSourceRides.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->matchPoleSourceRides.begin()); } }
   { auto _e = matchPoleParentRides(); _o->matchPoleParentRides = _e; }
+  { auto _e = harmonics(); _o->harmonics = _e; }
+  { auto _e = harmonicsScalars(); if (_e) { _o->harmonicsScalars.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->harmonicsScalars[_i]) { _e->Get(_i)->UnPackTo(_o->harmonicsScalars[_i].get(), _resolver); } else { _o->harmonicsScalars[_i] = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->harmonicsScalars.resize(0); } }
+  { auto _e = harmonicsConstants(); if (_e) { _o->harmonicsConstants.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->harmonicsConstants[_i] = _e->Get(_i); } } else { _o->harmonicsConstants.resize(0); } }
+  { auto _e = harmonicsIgnoreFirstFrame(); _o->harmonicsIgnoreFirstFrame = _e; }
+  { auto _e = harmonicsMatchVelocity(); _o->harmonicsMatchVelocity = _e; }
+  { auto _e = window(); _o->window = _e; }
 }
 
 inline ::flatbuffers::Offset<Constraint> CreateConstraint(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireConstraint *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23510,6 +23715,12 @@ inline ::flatbuffers::Offset<Constraint> Constraint::Pack(::flatbuffers::FlatBuf
   auto _matchPoleSwitch = _o->matchPoleSwitch;
   auto _matchPoleSourceRides = _o->matchPoleSourceRides.size() ? _fbb.CreateVector(_o->matchPoleSourceRides) : 0;
   auto _matchPoleParentRides = _o->matchPoleParentRides;
+  auto _harmonics = _o->harmonics;
+  auto _harmonicsScalars = _o->harmonicsScalars.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->harmonicsScalars.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, __va->__o->harmonicsScalars[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _harmonicsConstants = _o->harmonicsConstants.size() ? _fbb.CreateVector(_o->harmonicsConstants) : 0;
+  auto _harmonicsIgnoreFirstFrame = _o->harmonicsIgnoreFirstFrame;
+  auto _harmonicsMatchVelocity = _o->harmonicsMatchVelocity;
+  auto _window = _o->window;
   return rigExec::fb::CreateConstraint(
       _fbb,
       _path,
@@ -23576,7 +23787,13 @@ inline ::flatbuffers::Offset<Constraint> Constraint::Pack(::flatbuffers::FlatBuf
       _matchStretchLimb,
       _matchPoleSwitch,
       _matchPoleSourceRides,
-      _matchPoleParentRides);
+      _matchPoleParentRides,
+      _harmonics,
+      _harmonicsScalars,
+      _harmonicsConstants,
+      _harmonicsIgnoreFirstFrame,
+      _harmonicsMatchVelocity,
+      _window);
 }
 
 inline RigExecWireWalkStep *WalkStep::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -26933,6 +27150,35 @@ inline ::flatbuffers::Offset<ProviderProgram> ProviderProgram::Pack(::flatbuffer
       _leaves);
 }
 
+inline RigExecWireWindowedOp *WindowedOp::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireWindowedOp>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void WindowedOp::UnPackTo(RigExecWireWindowedOp *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = step(); _o->step = _e; }
+  { auto _e = frames(); _o->frames = _e; }
+}
+
+inline ::flatbuffers::Offset<WindowedOp> CreateWindowedOp(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return WindowedOp::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<WindowedOp> WindowedOp::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWindowedOp* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireWindowedOp* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _step = _o->step;
+  auto _frames = _o->frames;
+  return rigExec::fb::CreateWindowedOp(
+      _fbb,
+      _step,
+      _frames);
+}
+
 inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
       : formatVersion(o.formatVersion),
         rig(o.rig),
@@ -26965,7 +27211,8 @@ inline RigExecWireFile::RigExecWireFile(const RigExecWireFile &o)
         vec3dArrays(o.vec3dArrays),
         matrix4dArrays(o.matrix4dArrays),
         tokenArrays(o.tokenArrays),
-        boolArrays(o.boolArrays) {
+        boolArrays(o.boolArrays),
+        windowedOps(o.windowedOps) {
 }
 
 inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFERS_NOEXCEPT {
@@ -27001,6 +27248,7 @@ inline RigExecWireFile &RigExecWireFile::operator=(RigExecWireFile o) FLATBUFFER
   std::swap(matrix4dArrays, o.matrix4dArrays);
   std::swap(tokenArrays, o.tokenArrays);
   std::swap(boolArrays, o.boolArrays);
+  std::swap(windowedOps, o.windowedOps);
   return *this;
 }
 
@@ -27045,6 +27293,7 @@ inline void File::UnPackTo(RigExecWireFile *_o, const ::flatbuffers::resolver_fu
   { auto _e = matrix4dArrays(); if (_e) { _o->matrix4dArrays.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->matrix4dArrays[_i] = *std::unique_ptr<rigExec::fb::RigExecWireMatrix4dArray>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->matrix4dArrays.resize(0); } }
   { auto _e = tokenArrays(); if (_e) { _o->tokenArrays.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->tokenArrays[_i] = *std::unique_ptr<rigExec::fb::RigExecWireTokenArray>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->tokenArrays.resize(0); } }
   { auto _e = boolArrays(); if (_e) { _o->boolArrays.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->boolArrays[_i] = *std::unique_ptr<rigExec::fb::RigExecWireBoolArray>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->boolArrays.resize(0); } }
+  { auto _e = windowedOps(); if (_e) { _o->windowedOps.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->windowedOps[_i] = *std::unique_ptr<rigExec::fb::RigExecWireWindowedOp>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->windowedOps.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<File> CreateFile(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireFile *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -27088,6 +27337,7 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
   auto _matrix4dArrays = _o->matrix4dArrays.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Matrix4dArray>> (_o->matrix4dArrays.size(), [](size_t i, _VectorArgs *__va) { return CreateMatrix4dArray(*__va->__fbb, &(__va->__o->matrix4dArrays[i]), __va->__rehasher); }, &_va ) : 0;
   auto _tokenArrays = _o->tokenArrays.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::TokenArray>> (_o->tokenArrays.size(), [](size_t i, _VectorArgs *__va) { return CreateTokenArray(*__va->__fbb, &(__va->__o->tokenArrays[i]), __va->__rehasher); }, &_va ) : 0;
   auto _boolArrays = _o->boolArrays.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::BoolArray>> (_o->boolArrays.size(), [](size_t i, _VectorArgs *__va) { return CreateBoolArray(*__va->__fbb, &(__va->__o->boolArrays[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _windowedOps = _o->windowedOps.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> (_o->windowedOps.size(), [](size_t i, _VectorArgs *__va) { return CreateWindowedOp(*__va->__fbb, &(__va->__o->windowedOps[i]), __va->__rehasher); }, &_va ) : 0;
   return rigExec::fb::CreateFile(
       _fbb,
       _formatVersion,
@@ -27121,7 +27371,8 @@ inline ::flatbuffers::Offset<File> File::Pack(::flatbuffers::FlatBufferBuilder &
       _vec3dArrays,
       _matrix4dArrays,
       _tokenArrays,
-      _boolArrays);
+      _boolArrays,
+      _windowedOps);
 }
 
 inline const ::flatbuffers::TypeTable *InputTagTypeTable() {
@@ -28868,14 +29119,20 @@ inline const ::flatbuffers::TypeTable *ConstraintTypeTable() {
     { ::flatbuffers::ET_BOOL, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_UCHAR, 1, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 }
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_DOUBLE, 1, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_INT, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
     rigExec::fb::Vec3dTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 65, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 71, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -30069,6 +30326,17 @@ inline const ::flatbuffers::TypeTable *ProviderProgramTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *WindowedOpTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_INT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *FileTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
@@ -30102,7 +30370,8 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 22 },
     { ::flatbuffers::ET_SEQUENCE, 1, 23 },
     { ::flatbuffers::ET_SEQUENCE, 1, 24 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 25 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 25 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 26 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::F64TypeTable,
@@ -30130,10 +30399,11 @@ inline const ::flatbuffers::TypeTable *FileTypeTable() {
     rigExec::fb::Vec3dArrayTypeTable,
     rigExec::fb::Matrix4dArrayTypeTable,
     rigExec::fb::TokenArrayTypeTable,
-    rigExec::fb::BoolArrayTypeTable
+    rigExec::fb::BoolArrayTypeTable,
+    rigExec::fb::WindowedOpTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 32, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 33, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

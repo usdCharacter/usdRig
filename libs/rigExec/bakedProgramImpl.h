@@ -31,6 +31,7 @@
 #include "weightPackets.h"
 #include "rigExecGraph/opGraph.h"
 #include "rigExecGraph/opValues.h"
+#include "rigExecGraph/windowHistory.h"
 #include "rigExecScene/providerProgram.h"
 #include "rigExecScene/solverProgram.h"
 #include "rigExecScene/constraintProgram.h"
@@ -38,6 +39,7 @@
 
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/dualQuat.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/propertyMath.h"
@@ -2661,8 +2663,64 @@ struct RigExecBakedProgramImpl {
         /// it rides (the nearest above it): it is presented carried by that
         /// control's revision. Namespace topology, settled at Build.
         std::vector<std::pair<int, int>> matchRiders;
+
+        // RigExecHarmonicsConstraint (harmonicsKernel.h): one target, the
+        // optional measuring space in `spaceSlot`, and a history window.
+        // inputs:axisAmplitude is bound into `offset`.
+        bool harmonics = false;
+        RigExecHarmonicsSettings harmonicsSettings;
+        bool harmonicsMatchVelocity = true;
+        /// inputs:amplitude, decay and termination, in that order.
+        std::array<MatchScalar, 3> harmonicsScalars;
+        /// This constraint's entry in `windowedOps`, or -1.
+        int window = -1;
+        /// Scratch for the solve's positions, so the body does not
+        /// allocate per run once it has run.
+        std::vector<double> harmonicsPositions;
     };
     std::vector<Constraint> constraints;
+
+    /// A windowed operation (rigExecGraph/windowHistory.h): a step whose
+    /// solve reads the inputs it captured at the earlier ticks of a fixed
+    /// window.
+    struct WindowedOp {
+        /// The step (original index) whose body captures and solves, and
+        /// its canonical op; both settled once the graph is compiled.
+        int step = -1;
+        uint32_t op = UINT32_MAX;
+        /// Earlier ticks its solve reads.
+        uint32_t frames = 0;
+        /// The windowed ops whose results its inputs depend on, ascending.
+        std::vector<uint32_t> inner;
+        /// Some windowed op's inputs depend on this one's result, so it
+        /// solves at history ticks too.
+        bool feedsWindow = false;
+        SdfPath path;
+    };
+    std::vector<WindowedOp> windowedOps;
+    /// Canonical-op mask of a history tick: the windowed ops and every op
+    /// one depends on, closed under predecessors.
+    std::vector<char> historyMask;
+    /// Set for a history tick: the masked graph runs, windowed bodies
+    /// capture, and nothing is published.
+    bool historyTick = false;
+    /// Per windowed op, written only by that op's body: the packet captured
+    /// at this run's tick.
+    std::vector<RigExecWindowPacketPtr> windowCaptures;
+    /// Per windowed op: the earlier ticks' packets, placed at the boundary
+    /// before a run, and whether they differ from the ring its body last
+    /// read (which seeds the op).
+    std::vector<RigExecWindowRing> windowRings;
+    std::vector<char> windowRingChanged;
+    /// Per windowed op, advanced whenever its placed ring changes: the
+    /// values its op publishes key by it, so a solve over a new history
+    /// publishes a change even when this frame's inputs hold still. Per
+    /// canonical op, the windowed op it is, or -1.
+    std::vector<uint64_t> windowRingSerial;
+    std::vector<int32_t> windowOfOp;
+    /// The fewest points a device revision solves on the device for
+    /// (RigExecGpuClothMinPoints), read when the devices are selected.
+    size_t windowDeviceMinPoints = 0;
 
     struct WalkStep {
         bool solverBatch = false;
@@ -3546,6 +3604,21 @@ struct RigExecBakedProgramImpl {
         /// RevisionStatic through the stage assembler.
         RigExecExternalPayload externalPayload;
         bool externalPayloadChanged = false;
+        /// A windowed external revision's entry in `windowedOps`, or -1;
+        /// the run its chunk body hands the kernel; and the epoch-fixed
+        /// build its solve keeps, owned by that body (a clone shares it).
+        int window = -1;
+        RigExecWindowRun windowRun;
+        std::shared_ptr<const void> windowCache;
+        /// The live program solves this windowed revision on a device at
+        /// the publication boundary (RigExecBakedSelectWindowDevices): its
+        /// chunk body captures and leaves the ticks it would solve over in
+        /// `deviceTicks`, and `devicePending` until the boundary solves.
+        bool windowDevice = false;
+        bool devicePending = false;
+        std::vector<RigExecWindowPacketPtr> deviceTicks;
+        /// The chain's resultVersion the boundary last published.
+        uint64_t deviceResultVersion = ~uint64_t(0);
         /// Range-pipelined (Build state): `chunks` are the chain's partition
         /// (chunked false, keys empty); range step k writes range k of
         /// `output`, which always holds this revision's full version, so
@@ -3687,6 +3760,9 @@ struct RigExecBakedProgramImpl {
         std::vector<GfVec3f> gpuScratch;
         /// The Derived steps that read this chain, in program order.
         std::vector<int> gpuDerivedSteps;
+        /// For a chain whose last revision solves on a device: its Derived
+        /// steps, which the boundary runs again on the solved points.
+        std::vector<int> windowDeviceDerivedSteps;
         /// The ops whose values the boundary writes outside the graph (the
         /// chain's ChainStatus and its Derived steps), re-keyed there.
         std::vector<uint32_t> gpuKeyOps;
@@ -6344,6 +6420,29 @@ void RigExecBakedRunIkFkMatch(RigExecBakedProgramImpl &B,
                               const double scalars[7]);
 void RigExecBakedPresentIkFkMatches(const RigExecBakedProgramImpl &B,
                                     RigExecRigPose *pose);
+
+/// RigExecHarmonicsConstraint (bakedHarmonics.cpp): one run of its step.
+/// Captures the windowed op's packet and, when it solves, fills \p commit's
+/// one target; a pass-through leaves the commit abandoned.
+void RigExecBakedRunHarmonics(RigExecBakedProgramImpl &B,
+                              RigExecBakedStep *step,
+                              RigExecBakedProgramImpl::Constraint &c,
+                              RigExecBakedCommit &commit);
+/// Settles every windowed op's step, canonical op and inner windowed ops,
+/// and the history-tick mask, from the compiled graph. Build calls it once
+/// the graph is compiled; it sizes the capture and ring tables.
+bool RigExecBakedSettleWindowedOps(RigExecBakedProgramImpl *program,
+                                   std::string *error);
+/// Places \p rings (one per windowed op, missing ones empty) for the next
+/// run, marking each op whose ring changed. Owner thread, between runs.
+void RigExecBakedPlaceWindowRings(RigExecBakedProgramImpl *program,
+                                  const std::vector<RigExecWindowRing> &rings);
+/// Marks the windowed revisions the live program solves on a device: the
+/// last revision of a chain nothing outside it reads, whose handler has a
+/// device solve, which no windowed op depends on, while a device runner is
+/// registered (rigExec/gpuCloth.h). Build calls it after the windowed ops
+/// settle; a frozen clone clears the marks.
+void RigExecBakedSelectWindowDevices(RigExecBakedProgramImpl *program);
 
 struct RigExecIkFkMatchChannels;
 

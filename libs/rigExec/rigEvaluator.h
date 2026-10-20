@@ -667,6 +667,22 @@ public:
     /// the evaluator's own caches are dropped from.
     uint64_t GetStageEditSerial() const { return _stageEditSerial; }
 
+    /// The history rings (rigExec/windowHistory.h) a generation at \p time
+    /// reads, one per windowed operation of the standing program, oldest
+    /// tick first: the packets its windowed operations captured at the
+    /// earlier ticks of their windows, evaluated from the stage without the
+    /// interactive overrides. Runs the history ticks the evaluator's memo
+    /// does not already hold, through a frozen clone of the program on the
+    /// calling (owning) thread. Empty for a rig without windowed
+    /// operations. False with \p error when the history cannot be produced;
+    /// \p rings then holds what could be, so the answer still names a
+    /// deterministic history. Owning thread only.
+    bool GetWindowRings(UsdTimeCode time,
+                        std::vector<RigExecWindowRing> *rings,
+                        std::string *error = nullptr) const;
+    /// How many history ticks the evaluator has run, for tests of the memo.
+    size_t GetHistoryTickCountForTesting() const;
+
     /// Advances for every stage notice the program could not absorb as
     /// values (any disposition but Patched or Edited). For a consumer that
     /// caches a judgement about the stage's STRUCTURE -- connections, prims,
@@ -1615,6 +1631,15 @@ private:
     std::unique_ptr<RigExecGoldenSuiteObserver> _goldenSuiteObserver;
     std::unique_ptr<RigExecInputReplayObserver> _inputReplayObserver;
     std::unique_ptr<RigExecBakedProgram> _bakedProgram;
+    /// The windowed operations' history lane and its tick memo
+    /// (rigEvaluatorWindows.cpp). Owning-thread state behind a const
+    /// accessor: a cache whose every entry is a pure function of the stage
+    /// at its tick.
+    struct _WindowHistory;
+    mutable std::shared_ptr<_WindowHistory> _windowHistory;
+    /// Records the last generation's captures as the history at \p time,
+    /// when it read the authored stage (no interactive overrides).
+    void _NoteWindowCaptures(UsdTimeCode time);
     /// Whether _bakedProgram has published a generation.
     ///
     /// What a rebuild inherits from its predecessor is the predecessor's

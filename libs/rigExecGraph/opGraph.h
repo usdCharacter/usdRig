@@ -103,6 +103,11 @@ struct RigExecOpCallbacks {
     /// Optional asynchronous dispatch. wait joins every recursively submitted op.
     std::function<void(std::function<void()>)> dispatch;
     std::function<void()> wait;
+    /// Optional per-op mask, sized to the graph. An op it marks 0 is never
+    /// a candidate: not a seed, not a volatile run, not a successor. A
+    /// history tick runs only the ops a windowed op depends on this way
+    /// (windowHistory.h); the mask must be closed under predecessors.
+    const std::vector<char> *active = nullptr;
 };
 
 struct RigExecOpExecution {

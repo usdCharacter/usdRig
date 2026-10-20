@@ -576,6 +576,13 @@ bool RrInputsClear(RrProgram *program, size_t index, std::string *error);
 /// reader of an array runs on every Execute or compares by value.
 void RrInputsApplyTouched(RrProgram *program);
 
+/// Sets every input slot of \p to as it stands in \p from, a program opened
+/// from the same file: value, HasValue, authored and blocked marks, array
+/// elements, and the token text \p from interned. A slot that already
+/// matches is not written, so \p to's next run sees exactly the slots that
+/// moved against its own last run.
+void RrInputsCopyCurrent(const RrProgram &from, RrProgram *to);
+
 /// Lists slot \p slot in RrInputState::written. Every write to a slot's
 /// value, HasValue, authored mark or blocked flag calls it, whether or not
 /// anything moved, so a leaf keyed from input slots alone keeps its key

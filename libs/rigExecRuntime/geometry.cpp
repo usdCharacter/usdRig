@@ -653,6 +653,9 @@ struct RrGeoMoverParameters {
     RrMat4d externalTransform{1.0};
     std::vector<RrMat4d> externalInfluences;
     std::vector<RrVec3f> externalBasePoints;
+    // A windowed plugin mover's run (rigExecGraph/windowHistory.h): pointed
+    // at for the kernel run alone, and never compared.
+    RigExecWindowRun *window = nullptr;
 
     RrGeoMoverParameters()
     {
@@ -3332,7 +3335,39 @@ RrGeoApplyExternal(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts)
     const uint8_t *frameData=p.externalFrame?p.externalFrame->data():nullptr;
     const size_t frameSize=p.externalFrame?p.externalFrame->size():0;
     const RigExecExternalKernel &kernel = p.external->kernel;
-    if (kernel.applyWithProviders) {
+    if (p.window) {
+        // A windowed mover: capture this tick, then solve over the earlier
+        // ticks and it -- unless the run only captures, when the points
+        // stand as they entered. The native mover's branch, through the
+        // playback kernel.
+        RigExecWindowRun &run = *p.window;
+        if (!kernel.IsWindowed()) {
+            return false;
+        }
+        auto packet = std::make_shared<RigExecWindowPacket>();
+        RigExecWindowPacketPtr captured;
+        if (kernel.captureWindow(p.external->state.get(), phased.data(),
+                                 phased.size(), inputs.data(), inputs.size(),
+                                 xyz.data(), pts->size(), packet.get())) {
+            captured = std::move(packet);
+        }
+        if (run.capture && !RigExecWindowPacketsEqual(*run.capture, captured)) {
+            *run.capture = captured;
+        }
+        if (run.captureOnly) {
+            return true;
+        }
+        if (!captured) {
+            return false;
+        }
+        std::vector<const RigExecWindowPacket *> ticks;
+        RigExecWindowUsableTail(run.ring ? *run.ring : RigExecWindowRing(),
+                                captured.get(), &ticks);
+        if (!kernel.applyWindow(p.external->state.get(), ticks.data(),
+                                ticks.size(), xyz.data(), pts->size())) {
+            return false;
+        }
+    } else if (kernel.applyWithProviders) {
         std::vector<double> influences(p.externalInfluences.size() * 16);
         for (size_t k = 0; k < p.externalInfluences.size(); ++k) {
             std::memcpy(influences.data() + k * 16, p.externalInfluences[k]._mtx,
@@ -3920,6 +3955,9 @@ struct RrGeometryScratch {
         RigExecWireRestCache<RrVec3f,RrVec2f> wireRestCache;
         std::shared_ptr<const RrGeoWireBasisEntry> lastWireBasis;
         RrGeoMoverParameters parameters;
+        // A windowed revision's run, pointed at by parameters.window for
+        // its kernel run alone.
+        RigExecWindowRun windowRun;
         RrGeoMoverParameters lastParameters;
         RrGeoWeightPacket nativePacketCache;
         std::shared_ptr<const RrGeoWeightPacket::Arrays> currentPhaseArrays;
@@ -8409,6 +8447,13 @@ RrGeoRunRevisionChunkStep(RrProgram *program, RrGeometryScratch *scratch,
     if (!rev.chunked) {
         chunk.ok = false;
         if (!rev.status.AllowsApply()) {
+            // A disabled windowed revision captures nothing (the program's
+            // chunk does the same).
+            const int32_t window = step < program->windowOfStep.size()
+                                       ? program->windowOfStep[step] : -1;
+            if (window >= 0 && size_t(window) < store.windowCaptures.size()) {
+                store.windowCaptures[size_t(window)].reset();
+            }
             return true;
         }
         if (!skin) {
@@ -8424,11 +8469,26 @@ RrGeoRunRevisionChunkStep(RrProgram *program, RrGeometryScratch *scratch,
             // the envelope RevisionStatic resolved.
             rev.stagingOutput.resize(count);
             rev.stagingFresh = true;
+            // A windowed revision's run: its ring, its capture slot, and
+            // whether this tick only captures (the native chunk's).
+            const int32_t window = step < program->windowOfStep.size()
+                                       ? program->windowOfStep[step] : -1;
+            if (window >= 0 && size_t(window) < store.windowCaptures.size() &&
+                size_t(window) < store.windowRings.size()) {
+                const size_t w = size_t(window);
+                rev.windowRun.ring = &store.windowRings[w];
+                rev.windowRun.capture = &store.windowCaptures[w];
+                rev.windowRun.captureOnly =
+                    store.historyTick && !program->windowedOps[w].feedsWindow;
+                rev.windowRun.cache = nullptr;
+                rev.parameters.window = &rev.windowRun;
+            }
             chunk.ok = RrGeoRunRevisionKernel(
                 int(wire.op), rev.parameters, &rev.stagingOutput,
                 &scratch->wireBasis, useSimd, &rev.surfaceCache, &rev.wireRestCache, &rev.lastWireBasis,
                 !rev.fullStrength && rev.envelopeOk ? &rev.envelope : nullptr,
                 count > 0 ? points : nullptr, count, RrGeoSkinMaySplit(program));
+            rev.parameters.window = nullptr;
             return true;
         }
         if (!RrGeoSkinPacketIsUsable(rev) || !rev.influencesValid || !sized) {

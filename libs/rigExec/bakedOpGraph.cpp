@@ -1131,6 +1131,9 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
     B.sourceKeysBuilt=0;
     size_t keptMoved=0; uint32_t firstKeptMoved=0;
     const auto source=[&](uint32_t c) {
+        // A history tick leaves an op outside its mask untouched, keys
+        // included, so a later full run still sees what moved for it.
+        if(B.historyTick && B.historyMask.size()==B.opGraph.ops.size() && !B.historyMask[c]) return;
         const auto &step=B.steps[B.opGraph.ops[c].originalIndex];
         bool seed=(first && (c>=state.retainedFirst.size() || !state.retainedFirst[c])) || step.alwaysRuns;
         auto &input=state.sourceKeys[c]; auto &scratch=state.sourceScratch[c];
@@ -1191,6 +1194,15 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
             else { visit(dirtyList[i++]); ++j; }
         }
     } else for(const uint32_t c:state.sourceVisits) source(c);
+    // A windowed op whose placed history ring changed runs: the ring is a
+    // leaf its body reads (windowHistory.h).
+    for(size_t w=0;w<B.windowedOps.size() && w<B.windowRingChanged.size();++w) {
+        const uint32_t c=B.windowedOps[w].op;
+        if(!B.windowRingChanged[w] || c>=opCount) continue;
+        const auto at=std::lower_bound(state.seeds.begin(),state.seeds.end(),c);
+        if(at==state.seeds.end() || *at!=c) state.seeds.insert(at,c);
+    }
+    std::fill(B.windowRingChanged.begin(),B.windowRingChanged.end(),char(0));
     // Owner thread, before dispatch: one report for the run.
     if(keptMoved) {
         B.sourceKeyMismatches+=keptMoved;
@@ -1243,6 +1255,8 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
         // ChainDirty's key is its revision's RevisionDone key. Writes run in
         // (domain, slot) order, so the fuse has built that exact key already.
         const RigExecOpValueState *done=nullptr;
+        // A windowed op's values also key by its ring (windowHistory.h).
+        const int32_t window=c<B.windowOfOp.size()?B.windowOfOp[c]:-1;
         for(auto id:B.opGraph.ops[c].descriptor.writes) {
             auto &v=state.values[size_t(id)];
             // A fixed-size value compares in place: never RevisionDone or ChainDirty.
@@ -1252,6 +1266,8 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
             bool exact=true;
             RigExecOpPublishValue(&v,[&](uint32_t d,uint32_t slot,std::string *key) {
                 if(reuse) key->append(reuse->key); else sample(d,slot,key);
+                if(window>=0 && size_t(window)<B.windowRingSerial.size())
+                    RigExecOpKeyAppend(key,B.windowRingSerial[size_t(window)]);
                 // API4 opaque packets are deterministic in their declared
                 // inputs and immutable manifest. Retain their identity
                 // while every bound input version remains the same.
@@ -1273,6 +1289,8 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
         RigExecBakedFinishHeadOp(&B,step);
     };
     callbacks.skipEffects=&state.skipEffects;
+    // A history tick runs only what the windowed ops depend on.
+    if(B.historyTick && B.historyMask.size()==opCount) callbacks.active=&B.historyMask;
     bool ok=false;
     const auto execute=[&] { ok=RigExecExecuteOpGraph(B.opGraph,state.changedLeaves,state.seeds,force,
         callbacks,&B.opExecution,&error,&B.opWorkspace,&state.candidateOps); };

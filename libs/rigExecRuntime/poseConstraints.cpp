@@ -1892,6 +1892,141 @@ _RrRunConstraintStep(RrProgram *program, size_t step,
     if (c.target < 0) {
         return finish();
     }
+    if (c.harmonics) {
+        // RigExecBakedRunHarmonics (bakedHarmonics.cpp), on the runtime's
+        // own stores: capture the incoming origin in the measuring space,
+        // then, when solving, ring the window and revise the one target.
+        scratch->recordEveryTarget[size_t(wire.object)] = 0;
+        if (c.window < 0 || size_t(c.window) >= store.windowCaptures.size() ||
+            size_t(c.window) >= program->windowedOps.size() ||
+            size_t(wireCommit.targetRead) >= store.fin.size() ||
+            (c.spaceSlot >= 0 && size_t(c.spaceSlot) >= store.posedM.size()) ||
+            c.harmonicsConstants.size() != 3) {
+            if (error) {
+                *error = _RrStepHead(program, step) +
+                         " names no harmonics window";
+            }
+            return false;
+        }
+        const RrPointFrame input = store.fin[size_t(wireCommit.targetRead)];
+        RrMat4d space = _RrIdentity();
+        RrMat4d toSpace = _RrIdentity();
+        bool spaceUsable = true;
+        if (c.spaceSlot >= 0) {
+            space = store.posedM[size_t(c.spaceSlot)];
+            const double det = space.GetDeterminant();
+            spaceUsable = std::isfinite(det) && det != 0.0;
+            if (spaceUsable) toSpace = space.GetInverse();
+        }
+        RigExecWindowPacketPtr captured;
+        if (spaceUsable && RrFrameUsable(input)) {
+            const RrVec3d p = c.spaceSlot >= 0 ? toSpace.Transform(input.points[0])
+                                               : input.points[0];
+            if (std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+                auto packet = std::make_shared<RigExecWindowPacket>();
+                packet->scalars = {p[0], p[1], p[2]};
+                captured = std::move(packet);
+            }
+        }
+        RigExecWindowPacketPtr &held = store.windowCaptures[size_t(c.window)];
+        if (!RigExecWindowPacketsEqual(held, captured)) held = std::move(captured);
+        if (store.historyTick && !program->windowedOps[size_t(c.window)].feedsWindow) {
+            return finish();
+        }
+        if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
+            return finish();
+        }
+        double weight = 1.0;
+        if (c.weightObject != 0) {
+            const auto &field = store.weightFieldResults[size_t(c.weightField)];
+            if (!field.ok || field.values.size() != 1) {
+                output.diagnostics.push_back(cpath + ": " + field.error +
+                                             "; constraint passed through");
+                return finish();
+            }
+            weight = field.values[0];
+        } else {
+            weight = double(program->ReadConstraint(ci, RrConstraintDefaultWeight).f32);
+            if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
+                output.diagnostics.push_back(
+                    cpath +
+                    " has inputs:defaultWeight outside finite [0, 1]; "
+                    "constraint passed through");
+                return finish();
+            }
+        }
+        if (weight <= 0.0) return finish();
+        const std::string targetPath =
+            size_t(c.target) < program->slotMeta->paths.size()
+                ? program->TextOrEmpty(program->slotMeta->paths[size_t(c.target)])
+                : std::string();
+        if (!held) {
+            output.diagnostics.push_back(
+                cpath + " could not measure " + targetPath +
+                (spaceUsable ? "" : " in a degenerate rigExec:space") +
+                "; constraint passed through");
+            return finish();
+        }
+        const RigExecWindowRing &ring = store.windowRings[size_t(c.window)];
+        size_t begin = ring.size();
+        while (begin > 0 && ring[begin - 1] && ring[begin - 1]->scalars.size() == 3)
+            --begin;
+        std::vector<double> positions;
+        positions.reserve(3 * (ring.size() - begin + 1));
+        for (size_t k = begin; k < ring.size(); ++k)
+            positions.insert(positions.end(), ring[k]->scalars.begin(),
+                             ring[k]->scalars.end());
+        positions.insert(positions.end(), held->scalars.begin(), held->scalars.end());
+        const auto scalar = [&](int k) {
+            const RrInputValue value =
+                program->ReadConstraint(ci, RrConstraintHarmonicsFirst + k);
+            return value.tag == RrInputTag::Float ? double(value.f32) : value.f64;
+        };
+        RigExecHarmonicsSettings settings;
+        settings.waves = c.harmonicsConstants[0];
+        settings.waveLength = c.harmonicsConstants[1];
+        settings.frequency = c.harmonicsConstants[2];
+        settings.ignoreFirstFrame = c.harmonicsIgnoreFirstFrame;
+        RigExecHarmonicsParameters params;
+        params.amplitude = scalar(0);
+        params.decay = scalar(1);
+        params.termination = scalar(2);
+        const RrVec3d axis = program->ReadConstraint(ci, RrConstraintOffset).vec;
+        params.axisAmplitude[0] = axis[0];
+        params.axisAmplitude[1] = axis[1];
+        params.axisAmplitude[2] = axis[2];
+        params.matchVelocity = c.harmonicsMatchVelocity;
+        if (!std::isfinite(params.amplitude) || !std::isfinite(params.decay) ||
+            !std::isfinite(params.termination) || !std::isfinite(axis[0]) ||
+            !std::isfinite(axis[1]) || !std::isfinite(axis[2])) {
+            output.diagnostics.push_back(cpath +
+                                         " has a non-finite input; constraint "
+                                         "passed through");
+            return finish();
+        }
+        double ring3[3];
+        if (!RigExecHarmonicsOffset(
+                settings, params,
+                reinterpret_cast<const double(*)[3]>(positions.data()),
+                positions.size() / 3, ring3)) {
+            return finish();
+        }
+        RrVec3d offset(ring3[0], ring3[1], ring3[2]);
+        if (c.spaceSlot >= 0) offset = space.TransformDir(offset);
+        offset *= weight;
+        RrPointFrame candidate = input;
+        for (RrVec3d &q : candidate.points) q += offset;
+        if (!RrFrameUsable(candidate)) {
+            output.diagnostics.push_back(
+                cpath + " produced an invalid or degenerate frame for " +
+                targetPath + "; constraint passed through");
+            return finish();
+        }
+        commit.frames[0] = candidate;
+        commit.present[0] = 1;
+        commit.abandoned = false;
+        return finish();
+    }
     if (!program->ReadConstraint(ci, RrConstraintEnabled).boolean) {
         return finish();
     }

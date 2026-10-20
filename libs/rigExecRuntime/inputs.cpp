@@ -1482,6 +1482,8 @@ _RrConstraintField(const RigExecWireConstraint &c, int field)
     case RrConstraintMatchFirst + 4: case RrConstraintMatchFirst + 5:
     case RrConstraintMatchFirst + 6: {
         const size_t k = size_t(field - RrConstraintMatchFirst);
+        if (c.harmonics)
+            return k < c.harmonicsScalars.size() ? c.harmonicsScalars[k].get() : nullptr;
         return k < c.matchScalars.size() ? c.matchScalars[k].get() : nullptr;
     }
     default:
@@ -1683,7 +1685,9 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     for (size_t i = 0; i < poses.constraints.size(); ++i) {
         for (int field = 0; field < RrConstraintFieldCount; ++field) {
             if(field==RrConstraintStretch && !poses.constraints[i].stretch)continue;
-            if(field>=RrConstraintMatchFirst && !poses.constraints[i].ikFkMatch)continue;
+            if(field>=RrConstraintMatchFirst && !poses.constraints[i].ikFkMatch &&
+               !(poses.constraints[i].harmonics &&
+                 field<RrConstraintHarmonicsFirst+RrConstraintHarmonicsCount))continue;
             if (!bind(_RrConstraintField(poses.constraints[i], field),
                       _RrFamily::Constraint, i, size_t(field),
                       &program->constraintRead[i][size_t(field)])) {
@@ -2726,6 +2730,50 @@ RrInputsApplyTouched(RrProgram *program)
     store.anyOverridden =
         std::find(store.overridden.begin(), store.overridden.end(),
                   char(1)) != store.overridden.end();
+}
+
+void
+RrInputsCopyCurrent(const RrProgram &from, RrProgram *to)
+{
+    const RrInputState &a = from.inputState;
+    RrInputState &b = to->inputState;
+    // Token ids past the file's are handed out in order of first use, so
+    // the same text keeps the same id here.
+    for (size_t k = b.extraTokens.size(); k < a.extraTokens.size(); ++k) {
+        b.tokenIds.emplace(a.extraTokens[k], b.extraTokenBase + uint32_t(k));
+        b.extraTokens.push_back(a.extraTokens[k]);
+    }
+    const size_t slots = std::min(a.slotCurrent.size(), b.slotCurrent.size());
+    for (uint32_t s = 0; s < slots; ++s) {
+        if (_RrIsArraySlot(a, s) && _RrIsArraySlot(b, s)) {
+            const RrArraySlot &x = a.arrays[size_t(a.arrayOf[s])];
+            RrArraySlot &y = b.arrays[size_t(b.arrayOf[s])];
+            bool same = x.holdsSet == y.holdsSet && x.authored == y.authored &&
+                        a.slotHasValue[s] == b.slotHasValue[s];
+            if (same && x.holdsSet) {
+                const _RrElements held =
+                    _RrVectorElements(y.tag, _RrBufferVector(y.tag, y.held));
+                same = _RrSameElements(x.tag, _RrBufferVector(x.tag, x.held),
+                                       held.data, held.count);
+            }
+            if (same) continue;
+            _RrTouchArray(b, s, y);
+            y.held = x.held;
+            y.holdsSet = x.holdsSet;
+            y.authored = x.authored;
+            b.slotHasValue[s] = a.slotHasValue[s];
+            continue;
+        }
+        if (_RrSameValueBits(a.slotCurrent[s], b.slotCurrent[s]) &&
+            a.slotHasValue[s] == b.slotHasValue[s] &&
+            a.slotAuthored[s] == b.slotAuthored[s] &&
+            a.slotBlocked[s] == b.slotBlocked[s]) {
+            continue;
+        }
+        b.slotAuthored[s] = a.slotAuthored[s];
+        _RrStoreSlot(b, s, a.slotCurrent[s], a.slotHasValue[s] != 0);
+        b.slotBlocked[s] = a.slotBlocked[s];
+    }
 }
 
 void

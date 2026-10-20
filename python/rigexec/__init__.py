@@ -130,6 +130,7 @@ RotationConstraint = _native.RotationConstraint
 ScaleConstraint = _native.ScaleConstraint
 ParentConstraint = _native.ParentConstraint
 SingleChainIkConstraint = _native.SingleChainIkConstraint
+HarmonicsConstraint = _native.HarmonicsConstraint
 
 Weight = _native.Weight
 StaticWeight = _native.StaticWeight
@@ -154,6 +155,7 @@ PatchMover = _native.PatchMover
 SmoothMover = _native.SmoothMover
 DeltaMushMover = _native.DeltaMushMover
 WrinkleMover = _native.WrinkleMover
+ClothMover = _native.ClothMover
 VolumeCorrectMover = _native.VolumeCorrectMover
 FloatMathMover = _native.FloatMathMover
 Vec3fMathMover = _native.Vec3fMathMover
@@ -168,13 +170,14 @@ __all__ = [
     "BlendPointFrames", "TwistDistribution", "Ribbon", "SplineIk",
     "Constraint", "SourceConstraint", "AimConstraint", "PositionConstraint",
     "RotationConstraint", "ScaleConstraint", "ParentConstraint",
-    "SingleChainIkConstraint",
+    "SingleChainIkConstraint", "HarmonicsConstraint",
     "Weight", "StaticWeight", "DynamicWeight", "VolumeWeight", "SphereWeight",
     "PlaneWeight", "CurveWeight", "CombineWeight",
     "BlendInput", "BlendSample",
     "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "MlMover",
     "CurveMover",
-    "SurfaceMover", "PatchMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "VolumeCorrectMover",
+    "SurfaceMover", "PatchMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "ClothMover",
+    "VolumeCorrectMover",
     "FloatMathMover", "Vec3fMathMover", "MatrixMathMover",
     "MoverChain",
     "load_schema_plugin", "identity",
@@ -282,6 +285,7 @@ _CONCRETE_SCHEMA_NAMES = (
     "BlendPointFrames",
     "BlendSample",
     "BlendShapeMover",
+    "ClothMover",
     "CombineWeight",
     "Control",
     "CurveMover",
@@ -289,6 +293,7 @@ _CONCRETE_SCHEMA_NAMES = (
     "DynamicWeight",
     "FkChain",
     "FloatMathMover",
+    "HarmonicsConstraint",
     "Joint",
     "LatticeMover",
     "MatrixMathMover",

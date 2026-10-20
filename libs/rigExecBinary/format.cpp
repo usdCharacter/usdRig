@@ -8,6 +8,7 @@
 #include "rigExecGraph/providerRecords.h"
 #include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/conditionalTableKernel.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/mlpKernel.h"
 
 #include <algorithm>
@@ -1043,6 +1044,17 @@ private:
             ++_stepBacked;
         }
         _overrideCount = _f.pose->overrideCount;
+        // A windowed op names a step, and reads at most the longest window
+        // any windowed operation may ask for. Older formats hold none.
+        if (_f.formatVersion < 25 && !_f.windowedOps.empty())
+            return _Bad("windowed_ops in a format older than 25");
+        for (size_t w = 0; w < _f.windowedOps.size(); ++w) {
+            const auto &op = _f.windowedOps[w];
+            if (op.step < 0 || size_t(op.step) >= _steps)
+                return _Bad(_At("windowed_ops", "step", long(w)) + ": out of range");
+            if (op.frames == 0 || op.frames > RigExecHarmonicsMaxWindowFrames)
+                return _Bad(_At("windowed_ops", "frames", long(w)) + ": out of range");
+        }
         return true;
     }
 
@@ -4136,7 +4148,43 @@ private:
                _ReadPtr(c.twistDegrees, int(InputTag::Double), _Baked, row,
                         "twist_degrees") &&
                (!c.stretch || _ReadPtr(c.stretch,int(InputTag::Float),_Baked,row,"stretch")) &&
-               _Match(c, row);
+               _Match(c, row) && _Harmonics(c, row);
+    }
+
+    // A harmonics constraint's fields: absent on every other constraint. Its
+    // window names a windowed op whose step is a Constraint step.
+    bool _Harmonics(const fb::RigExecWireConstraint &c, const std::string &row)
+    {
+        if (!c.harmonics) {
+            if (!c.harmonicsScalars.empty() || !c.harmonicsConstants.empty() ||
+                c.window != -1)
+                return _Bad(row + ": harmonics fields on another constraint");
+            return true;
+        }
+        if (c.harmonicsScalars.size() != 3 || c.harmonicsConstants.size() != 3 ||
+            c.targetSlots.size() != 1 || !c.sources.empty())
+            return _Bad(row + ": harmonics field counts");
+        RigExecHarmonicsSettings settings;
+        settings.waves = c.harmonicsConstants[0];
+        settings.waveLength = c.harmonicsConstants[1];
+        settings.frequency = c.harmonicsConstants[2];
+        settings.ignoreFirstFrame = c.harmonicsIgnoreFirstFrame;
+        if (!RigExecHarmonicsSettingsValid(settings))
+            return _Bad(row + ": harmonics window is invalid");
+        if (c.window < 0 || size_t(c.window) >= _f.windowedOps.size())
+            return _Bad(row + ": window names no windowed op");
+        if (_f.windowedOps[size_t(c.window)].frames !=
+            uint32_t(RigExecHarmonicsWindowFrames(settings)))
+            return _Bad(row + ": window frames disagree with the harmonics settings");
+        for (size_t k = 0; k < c.harmonicsScalars.size(); ++k) {
+            const auto &input = c.harmonicsScalars[k];
+            const int tag = input ? int(input->tag) : -1;
+            const int type = tag == int(InputTag::Float) ? tag : int(InputTag::Double);
+            const std::string field = "harmonics_scalars[" + _N(k) + "]";
+            if (!_ReadPtr(input, type, _Baked, row, field.c_str()))
+                return false;
+        }
+        return true;
     }
 
     // An IK/FK match's fields: absent on every other constraint.

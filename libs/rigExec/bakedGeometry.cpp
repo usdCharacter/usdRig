@@ -1,6 +1,7 @@
 #include "rigExecScene/geometryProgram.h"
 #include "rigExecGraph/blendLayout.h"
 #include "rigExec/weightField.h"
+#include "rigExec/gpuCloth.h"
 // The baked program's geometry half: the chain/revision bake and the frame
 // path that runs those revisions and the derived maintenance behind them.
 // Split out of bakedProgram.cpp for the reason bakedPose.cpp was: a domain's
@@ -193,6 +194,22 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         }
         if (!out.moverPrim) {
             refuse("mover prim is missing", r.moverPath);
+        }
+        // A windowed external mover (windowHistory.h): its chunk body
+        // captures and solves over the window the handler names.
+        if (r.op == RigExecRevisionOp::External && out.moverPrim) {
+            const RigExecMoverHandler *handler =
+                RigExecFindMoverHandler(out.moverPrim.GetTypeName());
+            const uint32_t frames = handler && handler->windowFrames
+                                        ? handler->windowFrames(out.moverPrim)
+                                        : 0;
+            if (frames > 0) {
+                RigExecBakedProgramImpl::WindowedOp window;
+                window.frames = frames;
+                window.path = r.moverPath;
+                out.window = int(B.windowedOps.size());
+                B.windowedOps.push_back(std::move(window));
+            }
         }
         // The packet is assembled live from this prim every frame through
         // the generation's resolved inputs: nothing of it is captured, so a
@@ -4296,10 +4313,126 @@ RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
 }
 
 void
+RigExecBakedSelectWindowDevices(RigExecBakedProgramImpl *program)
+{
+    RigExecBakedProgramImpl &B = *program;
+    for (auto &chain : B.chains) {
+        chain.windowDeviceDerivedSteps.clear();
+        for (auto &revision : chain.revisions) {
+            revision.windowDevice = false;
+            revision.devicePending = false;
+            revision.deviceTicks.clear();
+        }
+    }
+    if (B.windowedOps.empty() || !RigExecGpuClothEnabled()) return;
+    B.windowDeviceMinPoints = RigExecGpuClothMinPoints();
+    // A chain whose points, versions or statuses a step outside it reads
+    // must produce them inside the graph, which a boundary solve does not.
+    std::vector<char> blocked(B.chains.size(), 0);
+    for (const RigExecBakedStep &step : B.steps) {
+        const int own = GpuStepChain(B, step);
+        for (const RigExecBakedSlotRange &read : step.reads) {
+            for (uint32_t slot = read.begin; slot < read.end; ++slot) {
+                const int chain = GpuSlotChain(B, read.domain, slot);
+                if (chain >= 0 && chain != own) blocked[size_t(chain)] = 1;
+            }
+        }
+    }
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        if (blocked[c] || chain.revisions.empty() || chain.gpu) continue;
+        RigExecBakedProgramImpl::GeomRevision &last = chain.revisions.back();
+        if (last.op != RigExecRevisionOp::External || last.window < 0 ||
+            size_t(last.window) >= B.windowedOps.size() ||
+            B.windowedOps[size_t(last.window)].feedsWindow || !last.moverPrim) {
+            continue;
+        }
+        const RigExecMoverHandler *handler =
+            RigExecFindMoverHandler(last.moverPrim.GetTypeName());
+        if (!handler || !handler->applyWindowDevice) continue;
+        last.windowDevice = true;
+        for (size_t i = 0; i < B.steps.size(); ++i) {
+            const RigExecBakedStep &step = B.steps[i];
+            if (step.kind == RigExecBakedStepKind::Derived &&
+                GpuStepChain(B, step) == int(c)) {
+                chain.windowDeviceDerivedSteps.push_back(int(i));
+            }
+        }
+    }
+}
+
+namespace {
+
+// The boundary half of a device revision (RigExecBakedSelectWindowDevices):
+// the window its chunk body captured, solved on the device -- the CPU kernel
+// when none solves it -- through the chunk's own kernel runner, published as
+// the chain's points; then the chain's Derived steps again on those points.
+void
+ResolveWindowDevices(RigExecBakedProgramImpl &B, UsdTimeCode time)
+{
+    std::vector<int> derived;
+    std::vector<GfVec3f> solved;
+    for (size_t c = 0; c < B.chains.size(); ++c) {
+        RigExecBakedProgramImpl::GeomChain &chain = B.chains[c];
+        if (chain.revisions.empty() || !chain.revisions.back().windowDevice ||
+            !chain.haveBase) {
+            continue;
+        }
+        const size_t r = chain.revisions.size() - 1;
+        RigExecBakedProgramImpl::GeomRevision &revision = chain.revisions[r];
+        // The chain published the points entering the solve: its chunk
+        // deferred this run, or ChainStatus published again without it.
+        const bool republished = chain.resultVersion != revision.deviceResultVersion;
+        if (!revision.devicePending && !republished) continue;
+        revision.devicePending = false;
+        if (revision.deviceTicks.empty()) {
+            revision.deviceResultVersion = chain.resultVersion;
+            continue;
+        }
+        const GfVec3f *points = nullptr;
+        size_t count = 0;
+        RigExecBakedVersionPoints(chain, r, &revision.wholeEntering, &points,
+                                  &count);
+        RigExecWindowRun run;
+        run.cache = &revision.windowCache;
+        run.solveTicks = &revision.deviceTicks;
+        run.device = count >= B.windowDeviceMinPoints;
+        revision.parameters.window = &run;
+        solved.clear();
+        const bool ok = geometryDetail::RunDiscardableGeometry(
+            revision.op, revision.parameters, points, count, &solved, B.useSimd,
+            &revision.wireBasis, &revision.surfaceCache,
+            !revision.fullStrength && revision.envelopeOk ? &revision.envelope
+                                                          : nullptr);
+        revision.parameters.window = nullptr;
+        // A failed solve keeps the points entering it, as the fuse does.
+        if (!ok || solved.size() != count) solved.assign(points, points + count);
+        chain.spare.clear();
+        chain.spare.resize(solved.size(), [&solved](GfVec3f *out, GfVec3f *end) {
+            std::uninitialized_copy(solved.begin(), solved.begin() + (end - out), out);
+        });
+        if (!SamePoints(chain.spare, chain.result)) ++chain.resultVersion;
+        chain.result.swap(chain.spare);
+        chain.haveResult = true;
+        revision.deviceResultVersion = chain.resultVersion;
+        derived.insert(derived.end(), chain.windowDeviceDerivedSteps.begin(),
+                       chain.windowDeviceDerivedSteps.end());
+    }
+    for (const int i : derived) {
+        RigExecBakedStep &step = B.steps[size_t(i)];
+        step.diagnostics.clear();
+        RigExecBakedRunGeometryStep(&B, &step, time);
+    }
+}
+
+}  // namespace
+
+void
 RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
                              UsdTimeCode time)
 {
     RigExecBakedProgramImpl &B = *program;
+    ResolveWindowDevices(B, time);
     if (B.gpuDeformMode != RigExecGpuDeformMode::Off && !B.gpuDerivedIndexed) {
         for (auto &chain : B.chains) {
             chain.gpuDerivedSteps.clear();
@@ -5043,12 +5176,19 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         }
         const bool sized = count == revision.precedingCount &&
                            revision.stagingOutput.size() == count;
-
         if (!revision.chunked) {
             // One chunk is the whole array, so there is nothing to speculate
             // about: it knows everything the fuse knows.
             chunk.ok = false;
+            revision.devicePending = false;
             if (!revision.status.AllowsApply()) {
+                revision.deviceTicks.clear();
+                // A disabled windowed revision captures nothing: the history
+                // after it starts at the next frame it runs.
+                if (revision.window >= 0 &&
+                    size_t(revision.window) < B.windowCaptures.size()) {
+                    B.windowCaptures[size_t(revision.window)].reset();
+                }
                 return;
             }
             if (!skin) {
@@ -5058,6 +5198,27 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 // fuse rather than copied.
                 revision.stagingOutput.resize(count);
                 revision.stagingFresh = true;
+                // A windowed revision's run: its ring, its capture slot, and
+                // whether this tick only captures. Pointed at for the kernel
+                // run alone: a copy of the packet never carries it.
+                if (revision.window >= 0 &&
+                    size_t(revision.window) < B.windowedOps.size()) {
+                    const size_t w = size_t(revision.window);
+                    revision.windowRun.ring = &B.windowRings[w];
+                    revision.windowRun.capture = &B.windowCaptures[w];
+                    revision.windowRun.captureOnly =
+                        B.historyTick && !B.windowedOps[w].feedsWindow;
+                    revision.windowRun.cache = &revision.windowCache;
+                    // A device revision captures here and solves at the
+                    // publication boundary (RigExecBakedResolveGpuChains).
+                    revision.windowRun.deferred =
+                        revision.windowDevice && !B.historyTick
+                            ? &revision.deviceTicks : nullptr;
+                    revision.windowRun.solveTicks = nullptr;
+                    revision.windowRun.device = false;
+                    if (revision.windowRun.deferred) revision.deviceTicks.clear();
+                    revision.parameters.window = &revision.windowRun;
+                }
                 // Not a second dispatch that mirrors _RevisionNode::Compute
                 // -- the same function the node calls. The packet check, the
                 // full-strength fast path, the kernel and the "apply once"
@@ -5071,6 +5232,13 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     &revision.surfaceCache,
                     !revision.fullStrength && revision.envelopeOk
                         ? &revision.envelope : nullptr);
+                if (revision.windowRun.deferred) {
+                    revision.devicePending =
+                        chunk.ok && !revision.deviceTicks.empty();
+                    if (!chunk.ok) revision.deviceTicks.clear();
+                    revision.windowRun.deferred = nullptr;
+                }
+                revision.parameters.window = nullptr;
                 return;
             }
             if (!SkinPacketIsUsable(revision) ||

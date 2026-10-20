@@ -1,6 +1,7 @@
 #include "rigExecGpu/gpuDeformExecutor.h"
 
 #include "rigExec/gpuDeformLowering.h"
+#include "rigExecGpu/clothShader.h"
 #include "rigExecGpu/glContext.h"
 #include "rigExecGpu/gpuDeformShader.h"
 
@@ -8,7 +9,10 @@
 #include "pxr/base/tf/getenv.h"
 #include "pxr/imaging/garch/glApi.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -86,6 +90,29 @@ struct _ChainBuffers {
     int32_t *mappedStatus = nullptr;
 };
 
+/// One cloth's device buffers, kept between solves: the mesh while its
+/// epoch holds, and storage the per-solve uploads reuse.
+struct _ClothBuffers {
+    uint64_t epochSerial = 0;
+    GLuint meshI = 0, meshF = 0, tickP = 0, params = 0, grid = 0, head = 0,
+           state = 0, out = 0;
+    // The mesh layout's offsets and counts, as the kernel's uniforms.
+    int oEnds = 0, oColor = 0, oAnchor = 0, oTris = 0, oKind = 0;
+    int oRest = 0, oInv = 0, oPin = 0, oTether = 0;
+    int constraints = 0, colors = 0, triangles = 0;
+};
+
+/// Replaces \p id's contents (creating it on first use). A zero-length
+/// storage buffer is not a buffer; keep a word.
+void
+_Upload(GLuint *id, size_t bytes, const void *data)
+{
+    if (!*id) glCreateBuffers(1, id);
+    static const int32_t zero = 0;
+    glNamedBufferData(*id, GLsizeiptr(bytes ? bytes : 4), bytes ? data : &zero,
+                      GL_STREAM_DRAW);
+}
+
 GLuint
 _ImmutableBuffer(size_t bytes, const void *data, GLbitfield flags)
 {
@@ -108,6 +135,16 @@ struct RigExecGpuDeformExecutor::Impl {
     GLint opCountLocation = -1;
     std::map<uint64_t, _ChainBuffers> chains;
     std::string description;
+    // The cloth kernel, compiled on its first solve; failure is remembered.
+    GLuint clothProgram = 0;
+    bool clothTried = false;
+    std::map<uint64_t, _ClothBuffers> cloths;
+    std::atomic<size_t> clothSolves{0};
+    // Per-solve staging, reused.
+    std::vector<float> clothTicks, clothParams;
+    std::vector<uint32_t> clothGrid, clothHead;
+    RigExecClothGrid clothGridScratch;
+    std::vector<uint64_t> clothCellScratch;
 
     // The queue between callers and the worker.
     std::mutex mutex;
@@ -134,6 +171,9 @@ struct RigExecGpuDeformExecutor::Impl {
         // Device objects go with the context that made them.
         for (auto &[key, b] : chains) Release(&b);
         chains.clear();
+        for (auto &[key, b] : cloths) ReleaseCloth(&b);
+        cloths.clear();
+        if (clothProgram) glDeleteProgram(clothProgram);
         if (program) glDeleteProgram(program);
         context.Destroy();
     }
@@ -219,6 +259,259 @@ struct RigExecGpuDeformExecutor::Impl {
         pointCountLocation = glGetUniformLocation(program, "pointCount");
         opCountLocation = glGetUniformLocation(program, "opCount");
         return true;
+    }
+
+    void ReleaseCloth(_ClothBuffers *b)
+    {
+        for (GLuint *id : {&b->meshI, &b->meshF, &b->tickP, &b->params,
+                           &b->grid, &b->head, &b->state, &b->out})
+            if (*id) glDeleteBuffers(1, id);
+        *b = _ClothBuffers();
+    }
+
+    bool CompileCloth()
+    {
+        if (clothTried) return clothProgram != 0;
+        clothTried = true;
+        const char *text = RigExecGpuClothKernelSource();
+        GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+        glShaderSource(shader, 1, &text, nullptr);
+        glCompileShader(shader);
+        GLint ok = 0;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[4096] = {0};
+            glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+            TF_WARN("rigExecGpu: cloth kernel failed to compile:\n%s", log);
+            glDeleteShader(shader);
+            return false;
+        }
+        GLuint linked = glCreateProgram();
+        glAttachShader(linked, shader);
+        glLinkProgram(linked);
+        glDeleteShader(shader);
+        glGetProgramiv(linked, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[4096] = {0};
+            glGetProgramInfoLog(linked, sizeof(log), nullptr, log);
+            TF_WARN("rigExecGpu: cloth program failed to link:\n%s", log);
+            glDeleteProgram(linked);
+            return false;
+        }
+        clothProgram = linked;
+        return true;
+    }
+
+    // The mesh's static arrays, laid out as the kernel reads them.
+    void UploadClothMesh(const RigExecGpuClothJob &job, _ClothBuffers *b)
+    {
+        const RigExecClothMesh &mesh = *job.mesh;
+        const RigExecClothColliders &colliders = *job.colliders;
+        std::vector<int32_t> ints;
+        b->oEnds = 0;
+        ints.insert(ints.end(), mesh.constraintEnds.begin(), mesh.constraintEnds.end());
+        b->oColor = int(ints.size());
+        for (const uint32_t start : mesh.colorStart) ints.push_back(int32_t(start));
+        b->oAnchor = int(ints.size());
+        ints.insert(ints.end(), mesh.tetherAnchor.begin(), mesh.tetherAnchor.end());
+        b->oTris = int(ints.size());
+        ints.insert(ints.end(), colliders.triangles.begin(), colliders.triangles.end());
+        b->oKind = int(ints.size());
+        for (const uint8_t kind : mesh.constraintKind) ints.push_back(int32_t(kind));
+        std::vector<float> floats;
+        b->oRest = 0;
+        floats.insert(floats.end(), mesh.constraintRest.begin(), mesh.constraintRest.end());
+        b->oInv = int(floats.size());
+        floats.insert(floats.end(), mesh.inverseMass.begin(), mesh.inverseMass.end());
+        b->oPin = int(floats.size());
+        floats.insert(floats.end(), mesh.pin.begin(), mesh.pin.end());
+        b->oTether = int(floats.size());
+        floats.insert(floats.end(), mesh.tetherRest.begin(), mesh.tetherRest.end());
+        _Upload(&b->meshI, ints.size() * 4, ints.data());
+        _Upload(&b->meshF, floats.size() * 4, floats.data());
+        b->constraints = int(mesh.constraintRest.size());
+        b->colors = int(mesh.ColorCount());
+        b->triangles = int(colliders.triangles.size() / 3);
+        b->epochSerial = job.epochSerial;
+    }
+
+    bool RunClothOnWorker(std::vector<RigExecGpuClothJob> *jobs)
+    {
+        if (!program || !CompileCloth()) return false;
+        // RIGEXEC_GPU_CLOTH_STATS prints where a solve's time went.
+        const bool stats = TfGetenvBool("RIGEXEC_GPU_CLOTH_STATS", false);
+        const auto now = [] { return std::chrono::steady_clock::now(); };
+        const auto ms = [](auto a, auto b) {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+        double gridMs = 0.0, uploadMs = 0.0, submitMs = 0.0;
+        size_t dispatches = 0;
+        glUseProgram(clothProgram);
+        const auto uniform = [this](const char *name) {
+            return glGetUniformLocation(clothProgram, name);
+        };
+        std::vector<_ClothBuffers *> used;
+        for (RigExecGpuClothJob &job : *jobs) {
+            job.ok = false;
+            used.push_back(nullptr);
+            if (!job.mesh || !job.colliders || !job.ticks || job.tickCount < 2 ||
+                !job.out || !job.mesh->valid) {
+                continue;
+            }
+            const RigExecClothMesh &mesh = *job.mesh;
+            const RigExecClothColliders &colliders = *job.colliders;
+            const size_t n = mesh.pointCount, m = colliders.pointCount;
+            _ClothBuffers &b = cloths[job.key];
+            if (b.epochSerial != job.epochSerial || !b.meshI) UploadClothMesh(job, &b);
+            // The window: entering then collider points per tick, and the
+            // parameters.
+            const size_t stride = 3 * n + 3 * m;
+            clothTicks.resize(job.tickCount * stride);
+            clothParams.resize(job.tickCount * 10);
+            for (size_t k = 0; k < job.tickCount; ++k) {
+                const RigExecClothTick &tick = job.ticks[k];
+                std::copy(tick.entering, tick.entering + 3 * n,
+                          clothTicks.begin() + std::ptrdiff_t(k * stride));
+                if (m && tick.colliders)
+                    std::copy(tick.colliders, tick.colliders + 3 * m,
+                              clothTicks.begin() + std::ptrdiff_t(k * stride + 3 * n));
+                const RigExecClothParameters &p = tick.parameters;
+                const float values[10] = {p.stretchCompliance, p.bendCompliance,
+                                          p.gravity[0], p.gravity[1], p.gravity[2],
+                                          p.damping, p.attract, p.thickness,
+                                          p.collisionDepth, p.friction};
+                std::copy(values, values + 10, clothParams.begin() + std::ptrdiff_t(k * 10));
+            }
+            // Each tick's collider grid, built here as the CPU solve builds
+            // it: swept from the tick before, padded by the tick's reach.
+            const auto g0 = now();
+            clothGrid.clear();
+            clothHead.assign(4 * job.tickCount, 0u);
+            const bool collide = m && !colliders.triangles.empty();
+            for (size_t k = 1; collide && k < job.tickCount; ++k) {
+                const RigExecClothParameters &p = job.ticks[k].parameters;
+                RigExecBuildClothGrid(colliders, job.ticks[k - 1].colliders,
+                                      job.ticks[k].colliders,
+                                      std::max(std::max(0.0f, p.thickness),
+                                               std::max(0.0f, p.collisionDepth)),
+                                      &clothGridScratch, &clothCellScratch);
+                clothHead[4 * k] = uint32_t(clothGrid.size());
+                clothGrid.insert(clothGrid.end(), clothGridScratch.bucketStart.begin(),
+                                 clothGridScratch.bucketStart.end());
+                clothHead[4 * k + 1] = uint32_t(clothGrid.size());
+                for (const int32_t tri : clothGridScratch.bucketTriangles)
+                    clothGrid.push_back(uint32_t(tri));
+                clothHead[4 * k + 2] = clothGridScratch.bucketMask;
+                float cell = clothGridScratch.cellSize;
+                uint32_t bits = 0;
+                std::memcpy(&bits, &cell, sizeof(bits));
+                clothHead[4 * k + 3] = bits;
+            }
+            const auto u0 = now();
+            gridMs += ms(g0, u0);
+            _Upload(&b.tickP, clothTicks.size() * 4, clothTicks.data());
+            _Upload(&b.params, clothParams.size() * 4, clothParams.data());
+            _Upload(&b.grid, clothGrid.size() * 4, clothGrid.data());
+            _Upload(&b.head, clothHead.size() * 4, clothHead.data());
+            _Upload(&b.state,
+                    (9 * n + size_t(b.constraints) + 3 * m + 16 * size_t(b.triangles)) * 4,
+                    nullptr);
+            _Upload(&b.out, 3 * n * 4, nullptr);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, b.meshI);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, b.meshF);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, b.tickP);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, b.params);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, b.grid);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, b.head);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, b.state);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, b.out);
+            const RigExecClothSettings &settings = job.settings;
+            const auto s0 = now();
+            uploadMs += ms(u0, s0);
+            const int substeps =
+                std::max(1, std::min(settings.substeps, RigExecClothMaxSubsteps));
+            const int iterations =
+                std::max(1, std::min(settings.iterations, RigExecClothMaxIterations));
+            glUniform1i(uniform("N"), GLint(n));
+            glUniform1i(uniform("M"), GLint(m));
+            glUniform1i(uniform("C"), GLint(b.constraints));
+            glUniform1i(uniform("T"), GLint(collide ? b.triangles : 0));
+            glUniform1i(uniform("tickCount"), GLint(job.tickCount));
+            glUniform1i(uniform("substeps"), GLint(substeps));
+            glUniform1f(uniform("frameSeconds"), float(job.frameSeconds));
+            glUniform1f(uniform("tetherSlack"), settings.tetherSlack);
+            glUniform1i(uniform("oEnds"), b.oEnds);
+            glUniform1i(uniform("oColor"), b.oColor);
+            glUniform1i(uniform("oAnchor"), b.oAnchor);
+            glUniform1i(uniform("oTris"), b.oTris);
+            glUniform1i(uniform("oKind"), b.oKind);
+            glUniform1i(uniform("oRest"), b.oRest);
+            glUniform1i(uniform("oInv"), b.oInv);
+            glUniform1i(uniform("oPin"), b.oPin);
+            glUniform1i(uniform("oTether"), b.oTether);
+            const GLint passAt = uniform("pass"), tickAt = uniform("tick"),
+                        subAt = uniform("sub"), colorAt = uniform("color"),
+                        firstAt = uniform("firstIteration"),
+                        lastAt = uniform("lastIteration");
+            const auto groups = [](size_t items) {
+                return GLuint((items + RigExecGpuClothLocalSize - 1) /
+                              RigExecGpuClothLocalSize);
+            };
+            // The CPU solve's order, one pass per dispatch; each pass reads
+            // what the one before it wrote.
+            const auto run = [&](GLuint count) {
+                if (count) glDispatchCompute(count, 1, 1);
+                ++dispatches;
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            };
+            glUniform1i(passAt, 0);
+            run(groups(n));
+            const size_t colors = mesh.ColorCount();
+            for (size_t k = 1; k < job.tickCount; ++k) {
+                glUniform1i(tickAt, GLint(k));
+                for (int sub = 1; sub <= substeps; ++sub) {
+                    glUniform1i(subAt, sub);
+                    if (collide) {
+                        glUniform1i(passAt, 3);
+                        run(groups(std::max(m, size_t(b.triangles))));
+                    }
+                    for (int it = 0; it < iterations; ++it) {
+                        glUniform1i(firstAt, it == 0 ? 1 : 0);
+                        glUniform1i(lastAt, it + 1 == iterations ? 1 : 0);
+                        glUniform1i(passAt, 1);
+                        for (size_t c = 0; c < colors; ++c) {
+                            glUniform1i(colorAt, GLint(c));
+                            run(groups(mesh.colorStart[c + 1] - mesh.colorStart[c]));
+                        }
+                        glUniform1i(passAt, 2);
+                        run(groups(n));
+                    }
+                }
+            }
+            submitMs += ms(s0, now());
+            used.back() = &b;
+        }
+        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+        const auto r0 = now();
+        for (size_t j = 0; j < jobs->size(); ++j) {
+            _ClothBuffers *b = used[j];
+            if (!b) continue;
+            RigExecGpuClothJob &job = (*jobs)[j];
+            const size_t floats = 3 * job.mesh->pointCount;
+            // Waits for the dispatch that wrote it.
+            glGetNamedBufferSubData(b->out, 0, GLsizeiptr(floats * 4), job.out);
+            bool finite = true;
+            for (size_t i = 0; i < floats && finite; ++i)
+                finite = std::isfinite(job.out[i]);
+            job.ok = finite;
+            if (finite) ++clothSolves;
+        }
+        if (stats) {
+            std::fprintf(stderr, "GPUCLOTH grids %.3f upload %.3f submit %.3f "
+                         "wait+read %.3f ms, %zu dispatches\n",
+                         gridMs, uploadMs, submitMs, ms(r0, now()), dispatches);
+        }
+        return glGetError() == GL_NO_ERROR;
     }
 
     void Release(_ChainBuffers *b)
@@ -376,6 +669,19 @@ RigExecGpuDeformExecutor::Run(std::vector<RigExecGpuDeformJob> *jobs)
     return ok;
 }
 
+bool
+RigExecGpuDeformExecutor::RunCloth(std::vector<RigExecGpuClothJob> *jobs)
+{
+    if (!jobs) return false;
+    return _impl->Post([this, jobs] { return _impl->RunClothOnWorker(jobs); });
+}
+
+size_t
+RigExecGpuDeformExecutor::ClothSolveCount() const
+{
+    return _impl->clothSolves.load();
+}
+
 double
 RigExecGpuDeformExecutor::LastRunMs() const
 {
@@ -397,12 +703,25 @@ _RunOnDevice(std::vector<RigExecGpuDeformJob> *jobs)
     return executor && executor->Run(jobs);
 }
 
+bool
+_RunClothOnDevice(std::vector<RigExecGpuClothJob> *jobs)
+{
+    RigExecGpuDeformExecutor *executor = RigExecGpuDeformExecutor::Get();
+    return executor && executor->RunCloth(jobs);
+}
+
 }  // namespace
 
 void
 RigExecGpuRegisterDeformRunner()
 {
     RigExecSetGpuDeformRunner(&_RunOnDevice);
+}
+
+void
+RigExecGpuRegisterClothRunner()
+{
+    RigExecSetGpuClothRunner(&_RunClothOnDevice);
 }
 
 }  // namespace rigExec

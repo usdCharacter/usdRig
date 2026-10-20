@@ -136,6 +136,13 @@ _VisitConstraintInputs(
             else fn(scalar.wide);
         }
     }
+    // A harmonics constraint's scalars, likewise.
+    if (constraint.harmonics) {
+        for (auto &scalar : constraint.harmonicsScalars) {
+            if (scalar.isFloat) fn(scalar.narrow);
+            else fn(scalar.wide);
+        }
+    }
 }
 
 template <class Obj, class Fn>
@@ -403,6 +410,13 @@ _SampleHolds<float>(const VtValue &held, float *out)
 bool
 _RunFrozen(const RigExecFrozenEvalContext &context,
            const RigExecFrameInputs &inputs, RigExecRigPose *pose);
+
+// One history tick (RigExecRunFrozenHistoryTick).
+bool
+_RunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
+                      const RigExecFrameInputs &inputs,
+                      const std::vector<RigExecWindowRing> &rings,
+                      std::vector<RigExecWindowPacketPtr> *captures);
 
 } // namespace frozenDetail
 

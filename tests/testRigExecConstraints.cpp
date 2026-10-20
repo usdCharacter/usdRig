@@ -1375,13 +1375,13 @@ TestConstraintRegistryCoversTheSchema()
          {"RigExecAimConstraint", "RigExecPositionConstraint",
           "RigExecRotationConstraint", "RigExecScaleConstraint",
           "RigExecParentConstraint", "RigExecSingleChainIkConstraint",
-          "RigExecIkFkMatchConstraint"}) {
+          "RigExecIkFkMatchConstraint", "RigExecHarmonicsConstraint"}) {
         CHECK(registry.FindConcretePrimDefinition(TfToken(typeName)));
         CHECK(RigExecConstraintHandlerCount(TfToken(typeName)) == 1);
     }
-    // Seven rows, no more: an unregistered type must not resolve.
+    // Eight rows, no more: an unregistered type must not resolve.
     CHECK(RigExecConstraintHandlerCount(TfToken("RigExecSmoothMover")) == 0);
-    CHECK(RigExecConstraintHandlerTotal() == 7);
+    CHECK(RigExecConstraintHandlerTotal() == 8);
 }
 
 // No authored constraint property is silently ignored. rigExec:rotationOrder

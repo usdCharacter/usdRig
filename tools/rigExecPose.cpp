@@ -745,6 +745,27 @@ _VerifySampledInputs(const rigExec::RigExecRigEvaluator &evaluator,
     return check;
 }
 
+// A drag's reference holds the dragged value in a session layer, so at every
+// frame, the earlier ones a windowed operation reads included: the reader's
+// history is replayed with the input held at that value, and the stage's
+// values everywhere else.
+bool
+_ReplayHeldHistory(rigExec::RigExecRuntimeReader *reader,
+                   rigExec::RigExecInputSampler *sampler,
+                   const std::string &name, double value, double time,
+                   std::string *error)
+{
+    reader->ClearHistory();
+    for (size_t k = reader->GetHistoryDepth(); k >= 1; --k) {
+        if (!sampler->Apply(UsdTimeCode(time - double(k)), reader, error) ||
+            !reader->SetInput(name, value, error) ||
+            !reader->ExecuteHistory(error)) {
+            return false;
+        }
+    }
+    return sampler->Apply(UsdTimeCode(time), reader, error);
+}
+
 int
 RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 const std::vector<UsdTimeCode> &frames,
@@ -802,6 +823,27 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     }
     std::printf("  sampler: %zu input(s), %zu sampled per frame\n",
                 reader->GetInputCount(), sampler.GetAnimatedCount());
+    // A rig with windowed operations (secondary motion, cloth) reads the
+    // frames before the one it runs: the reader replays them into its
+    // history first, as a host scrubbing to that frame does, and is then
+    // handed the frame itself. A rig without any runs as it always has.
+    const bool windowed = reader->GetWindowedOperationCount() > 0;
+    const auto prefill = [&](double t, std::string *why) {
+        if (!windowed) return true;
+        reader->ClearHistory();
+        for (size_t k = reader->GetHistoryDepth(); k >= 1; --k) {
+            if (!sampler.Apply(UsdTimeCode(t - double(k)), reader.get(), why) ||
+                !reader->ExecuteHistory(why)) {
+                return false;
+            }
+        }
+        return sampler.Apply(UsdTimeCode(t), reader.get(), why);
+    };
+    if (windowed) {
+        std::printf("  windowed: %zu operation(s), %zu frame(s) of history "
+                    "replayed before each run\n",
+                    reader->GetWindowedOperationCount(), reader->GetHistoryDepth());
+    }
 
     FILE *poseDump = nullptr;
     if (!poseOut.empty()) {
@@ -841,7 +883,7 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                         "(native generation or requested checks failed)\n",
                         bakeTime);
             status = 1;
-        } else if (!reader->Execute(&error)) {
+        } else if (!prefill(bakeTime, &error) || !reader->Execute(&error)) {
             std::printf("  defaults t=%g: FAIL: %s\n", bakeTime,
                         error.c_str());
             status = 1;
@@ -884,7 +926,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
             status = 1;
             continue;
         }
-        if (!sampler.Apply(frame, reader.get(), &error) ||
+        if (!prefill(t, &error) ||
+            !sampler.Apply(frame, reader.get(), &error) ||
             !reader->Execute(&error)) {
             std::printf("\n  frame %g: FAIL: %s\n", t, error.c_str());
             status = 1;
@@ -950,7 +993,8 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
     size_t dragsMatched = 0;
     size_t dragsTried = 0;
     if (!dragInputs.empty() &&
-        !sampler.Apply(dragTime, reader.get(), &error)) {
+        (!prefill(bakeTime, &error) ||
+         !sampler.Apply(dragTime, reader.get(), &error))) {
         std::printf("  drag: FAIL: %s\n", error.c_str());
         status = 1;
     }
@@ -1060,6 +1104,9 @@ RunVerifyBinary(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 for (const std::string &line : pose.diagnostics) {
                     _VerifyPush(&diffs, "  " + line.substr(0, 200));
                 }
+            } else if (windowed && !_ReplayHeldHistory(reader.get(), &sampler, name,
+                                                       value, bakeTime, &error)) {
+                _VerifyPush(&diffs, error);
             } else if (!reader->SetInput(name, value, &error) ||
                        !reader->Execute(&error)) {
                 _VerifyPush(&diffs, error);

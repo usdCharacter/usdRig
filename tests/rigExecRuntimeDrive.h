@@ -65,6 +65,28 @@ RigExecTestDrive(rigExec::RigExecRuntimeReader *reader,
            reader->Execute(error);
 }
 
+/// RigExecTestDrive as a host jumping to \p time runs it: a file with
+/// windowed operations reads the frames before \p time, so the sampler
+/// replays them into the reader's history first, oldest first. A file
+/// without any runs exactly as RigExecTestDrive does.
+inline bool
+RigExecTestDriveTo(rigExec::RigExecRuntimeReader *reader,
+                   rigExec::RigExecInputSampler *sampler, double time,
+                   std::string *error)
+{
+    if (reader->GetWindowedOperationCount() > 0) {
+        reader->ClearHistory();
+        for (size_t k = reader->GetHistoryDepth(); k >= 1; --k) {
+            if (!sampler->Apply(PXR_NS::UsdTimeCode(time - double(k)),
+                                reader, error) ||
+                !reader->ExecuteHistory(error)) {
+                return false;
+            }
+        }
+    }
+    return RigExecTestDrive(reader, sampler, time, error);
+}
+
 /// \p value typed to \p attribute the way SetInput(name, value) sets a
 /// Double or a Float input: a double attribute takes it as is, a float one
 /// static_cast<float>(value). Empty for any other attribute type.
@@ -257,27 +279,22 @@ public:
     const rigExec::RigExecInputSampler &Sampler() const { return _sampler; }
 
     /// The sampler at \p time, the held inputs set again where it sampled,
-    /// then Execute. False with the first reason.
+    /// then Execute. A file with windowed operations reads the frames
+    /// before \p time, so they are replayed into its history first, as a
+    /// host jumping to \p time does, with the held inputs standing at each
+    /// of them as an authored value would. False with the first reason.
     bool Play(double time, std::string *error)
     {
-        const bool moved = !_played || time != _time;
-        if (!_sampler.Apply(PXR_NS::UsdTimeCode(time), _reader.get(),
-                            error)) {
-            return false;
-        }
-        if (moved) {
-            for (const auto &[name, value] : _held) {
-                size_t index = 0;
-                if (_reader->FindInput(name, &index) &&
-                    _reader->GetInputInfo(index).animated &&
-                    !_reader->SetInput(name, value, error)) {
+        if (_reader->GetWindowedOperationCount() > 0) {
+            _reader->ClearHistory();
+            for (size_t k = _reader->GetHistoryDepth(); k >= 1; --k) {
+                if (!_Sample(time - double(k), error) ||
+                    !_reader->ExecuteHistory(error)) {
                     return false;
                 }
             }
         }
-        _played = true;
-        _time = time;
-        return _reader->Execute(error);
+        return _Sample(time, error) && _reader->Execute(error);
     }
 
     /// Sets input \p name to \p value and holds it there over later times.
@@ -303,6 +320,29 @@ public:
     }
 
 private:
+    // The sampler at \p time, then the held inputs again where it sampled.
+    bool _Sample(double time, std::string *error)
+    {
+        const bool moved = !_played || time != _time;
+        if (!_sampler.Apply(PXR_NS::UsdTimeCode(time), _reader.get(),
+                            error)) {
+            return false;
+        }
+        if (moved) {
+            for (const auto &[name, value] : _held) {
+                size_t index = 0;
+                if (_reader->FindInput(name, &index) &&
+                    _reader->GetInputInfo(index).animated &&
+                    !_reader->SetInput(name, value, error)) {
+                    return false;
+                }
+            }
+        }
+        _played = true;
+        _time = time;
+        return true;
+    }
+
     std::unique_ptr<rigExec::RigExecRuntimeReader> _reader;
     rigExec::RigExecInputSampler _sampler;
     std::map<std::string, double> _held;

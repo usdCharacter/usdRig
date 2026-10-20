@@ -10,6 +10,7 @@
 #ifndef RIGEXEC_GPU_DEFORM_EXECUTOR_H
 #define RIGEXEC_GPU_DEFORM_EXECUTOR_H
 
+#include "rigExec/gpuCloth.h"
 #include "rigExecMath/gpuDeformProgram.h"
 
 #include <cstdint>
@@ -29,6 +30,14 @@ public:
     /// device failed; each job's `ok` says how that chain fared.
     bool Run(std::vector<RigExecGpuDeformJob> *jobs);
 
+    /// Solves every cloth window (rigExec/gpuCloth.h) and waits for the
+    /// points. Returns false when the device failed; each job's `ok` says
+    /// how that cloth fared.
+    bool RunCloth(std::vector<RigExecGpuClothJob> *jobs);
+
+    /// How many cloth windows the device has solved, for tests.
+    size_t ClothSolveCount() const;
+
     /// Milliseconds the last Run took from submit to points on the CPU.
     double LastRunMs() const;
 
@@ -47,6 +56,11 @@ private:
 /// Hands the evaluator this executor as its GPU deform runner
 /// (RigExecSetGpuDeformRunner). Idempotent; a host calls it once at load.
 void RigExecGpuRegisterDeformRunner();
+
+/// Hands the evaluator this executor as its cloth solver
+/// (RigExecSetGpuClothRunner), so the live program solves cloth on the GPU
+/// unless RIGEXEC_GPU_CLOTH=0. Idempotent; a host calls it once at load.
+void RigExecGpuRegisterClothRunner();
 
 }  // namespace rigExec
 

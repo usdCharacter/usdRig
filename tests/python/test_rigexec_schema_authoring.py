@@ -133,6 +133,7 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecBlendPointFrames",
     "RigExecBlendSample",
     "RigExecBlendShapeMover",
+    "RigExecClothMover",
     "RigExecCombineWeight",
     "RigExecControl",
     "RigExecCurveMover",
@@ -140,6 +141,7 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecDynamicWeight",
     "RigExecFkChain",
     "RigExecFloatMathMover",
+    "RigExecHarmonicsConstraint",
     "RigExecJoint",
     "RigExecLatticeMover",
     "RigExecMatrixMathMover",
@@ -199,7 +201,7 @@ class SchemaFacadeTests(_ContractTestCase):
         self.stage = Usd.Stage.CreateInMemory()
 
     def test_all_concrete_types_define_and_get(self):
-        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 38)
+        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 40)
         self.assertEqual(
             set(rigexec.schema.names()), set(CONCRETE_SCHEMA_TYPES))
         self.assertFalse(hasattr(rigexec.schema, "CustomConstraint"))
@@ -1003,6 +1005,150 @@ class BuilderDependencyTests(_ContractTestCase):
         self.assertTrue(result.valid)
         for actual, expected in zip(result.moved_property("/Cloth.points"), posed):
             self.assertLess((Gf.Vec3f(*actual) - Gf.Vec3f(*expected)).GetLength(), 1e-6)
+
+    def test_cloth_authoring_and_evaluation(self):
+        width = 5
+        # A horizontal sheet pinned along one edge: the rest swings down.
+        rest = [(4.0 * x, 40.0, 4.0 * y)
+                for y in range(width) for x in range(width)]
+        mesh = UsdGeom.Mesh.Define(self.stage, "/Curtain")
+        mesh.CreatePointsAttr(rest)
+        mesh.CreateFaceVertexCountsAttr([4] * ((width - 1) ** 2))
+        mesh.CreateFaceVertexIndicesAttr([
+            index for y in range(width - 1) for x in range(width - 1)
+            for index in (y * width + x, y * width + x + 1,
+                          (y + 1) * width + x + 1, (y + 1) * width + x)])
+        mover = self.builder.new_mover_chain("Cloth").add_cloth_mover(
+            "Curtain", target="/Curtain.points")
+        self.assertIsInstance(mover, rigexec.ClothMover)
+        prim = self.stage.GetPrimAtPath(mover.path)
+        self.assertEqual(prim.GetTypeName(), "RigExecClothMover")
+        defaults = {
+            "rigExec:windowFrames": 16, "rigExec:substeps": 10,
+            "rigExec:iterations": 1, "rigExec:tethers": True,
+            "rigExec:tetherSlack": 0.05, "rigExec:frameRate": 0.0,
+            "inputs:stretchCompliance": 0.0, "inputs:bendCompliance": 0.001,
+            "inputs:damping": 0.1, "inputs:attract": 0.0,
+            "inputs:thickness": 0.5, "inputs:collisionDepth": 2.0,
+            "inputs:friction": 0.3,
+        }
+        for name, expected in defaults.items():
+            attr = prim.GetAttribute(name)
+            self.assert_api_property(attr)
+            if isinstance(expected, float):
+                self.assertAlmostEqual(attr.Get(), expected, places=6)
+            else:
+                self.assertEqual(attr.Get(), expected)
+        for name in ("rigExec:windowFrames", "rigExec:substeps", "rigExec:pinWeights"):
+            self.assertEqual(prim.GetAttribute(name).GetVariability(),
+                             Sdf.VariabilityUniform)
+        mover.set_pin_weights([1.0 if index < width else 0.0
+                               for index in range(width * width)])
+        mover.set_window_frames(12)
+        mover.set_substeps(8)
+        mover.set_iterations(2)
+        mover.set_tethers(True)
+        mover.set_tether_slack(0.1)
+        mover.set_frame_rate(24.0)
+        mover.set_stretch_compliance(0.0)
+        mover.set_bend_compliance(0.01)
+        mover.set_gravity(0.0, -981.0, 0.0)
+        mover.set_damping(0.2)
+        mover.set_attract(0.0)
+        mover.set_thickness(0.5)
+        mover.set_collision_depth(1.0)
+        mover.set_friction(0.4)
+        self.assertEqual(prim.GetAttribute("rigExec:windowFrames").Get(), 12)
+        self.assertAlmostEqual(prim.GetAttribute("inputs:friction").Get(), 0.4, places=6)
+        original = self.stage.GetRootLayer().ExportToString()
+        invalid_values = (
+            (mover.set_pin_weights, [1.5]),
+            (mover.set_pin_weights, [float("nan")]),
+            (mover.set_window_frames, 0),
+            (mover.set_window_frames, 1025),
+            (mover.set_substeps, 0),
+            (mover.set_iterations, 65),
+            (mover.set_tether_slack, -0.1),
+            (mover.set_frame_rate, float("inf")),
+            (mover.set_stretch_compliance, -1.0),
+            (mover.set_damping, 1.5),
+            (mover.set_thickness, float("nan")),
+            (mover.set_collision_depth, -1.0),
+            (mover.set_friction, -0.1),
+        )
+        for method, invalid in invalid_values:
+            with self.subTest(method=method.__name__, value=invalid):
+                with self.assertRaises(ValueError):
+                    method(invalid)
+                self.assertEqual(self.stage.GetRootLayer().ExportToString(), original)
+        rig = rigexec.Rig(self.stage, self.builder.root_path)
+        rig.compile()
+        result = rig.evaluate(10.0)
+        self.assertTrue(result.valid)
+        points = result.moved_property("/Curtain.points")
+        # The pinned edge stays; the free edge swings down.
+        for index in range(width):
+            self.assertLess((Gf.Vec3f(*points[index]) - Gf.Vec3f(*rest[index])).GetLength(), 1e-6)
+        self.assertLess(points[-1][1], rest[-1][1] - 5.0)
+        self.assertEqual(self.stage.GetRootLayer().ExportToString(), original)
+        mover.set_default_weight(0.0)
+        result = rig.evaluate(10.0)
+        for actual, expected in zip(result.moved_property("/Curtain.points"), rest):
+            self.assertLess((Gf.Vec3f(*actual) - Gf.Vec3f(*expected)).GetLength(), 1e-6)
+
+    def test_harmonics_authoring_and_evaluation(self):
+        root = self.builder.add_control("Root")
+        tip = self.builder.add_control(
+            "Tip", rest_space=[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 5, 0, 1],
+            parent=root.path)
+        tx = self.stage.GetPrimAtPath(root.path).CreateAttribute(
+            "avars:tx", Sdf.ValueTypeNames.Double)
+        tx.Set(0.0)
+        tx.Set(0.0, 1.0)
+        tx.Set(10.0, 11.0)
+        tx.Set(10.0, 40.0)
+        jiggle = self.builder.new_mover_chain("Secondary").add_harmonics_constraint(
+            "TipJiggle", target=tip.path)
+        self.assertIsInstance(jiggle, rigexec.HarmonicsConstraint)
+        prim = self.stage.GetPrimAtPath(jiggle.path)
+        self.assertEqual(prim.GetTypeName(), "RigExecHarmonicsConstraint")
+        for name, expected in {"rigExec:waves": 5.0, "rigExec:waveLength": 5.0,
+                               "rigExec:frequency": 1.0, "inputs:amplitude": 1.0,
+                               "inputs:decay": 3.0, "inputs:termination": 0.0}.items():
+            self.assertAlmostEqual(prim.GetAttribute(name).Get(), expected)
+        jiggle.set_waves(4.0)
+        jiggle.set_wave_length(6.0)
+        jiggle.set_frequency(1.0)
+        jiggle.set_ignore_first_frame(True)
+        jiggle.set_match_velocity(True)
+        jiggle.set_amplitude(1.5)
+        jiggle.set_axis_amplitude(1.0, 0.0, 1.0)
+        jiggle.set_decay(2.0)
+        jiggle.set_termination(0.1)
+        jiggle.set_space(root.path)
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:space")), [str(root.path)])
+        jiggle.set_space(None)
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:space")), [])
+        original = self.stage.GetRootLayer().ExportToString()
+        for method, invalid in ((jiggle.set_waves, 0.0), (jiggle.set_wave_length, -1.0),
+                                (jiggle.set_frequency, float("nan")),
+                                (jiggle.set_decay, -1.0), (jiggle.set_termination, 1.0),
+                                (jiggle.set_amplitude, float("inf"))):
+            with self.subTest(method=method.__name__, value=invalid):
+                with self.assertRaises(ValueError):
+                    method(invalid)
+                self.assertEqual(self.stage.GetRootLayer().ExportToString(), original)
+        rig = rigexec.Rig(self.stage, self.builder.root_path)
+        rig.compile()
+        # After the ramp stops at frame 11 the tip overshoots and rings.
+        overshoot = 0.0
+        for frame in range(12, 30):
+            result = rig.evaluate(float(frame))
+            self.assertTrue(result.valid)
+            origin = result.control_frame(str(tip.path)).origin
+            overshoot = max(overshoot, abs(origin[0] - 10.0))
+            self.assertAlmostEqual(origin[1], 5.0, places=9)
+        self.assertGreater(overshoot, 1e-3)
 
     def test_single_chain_ik_authors_the_complete_joint_write_set(self):
         root = self.builder.add_joint("Root")

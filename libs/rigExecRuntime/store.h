@@ -20,6 +20,7 @@
 #include "rigExecRuntime/values.h"
 #include "rigExecGraph/opValues.h"
 #include "rigExecGraph/providerRecords.h"
+#include "rigExecGraph/windowHistory.h"
 
 #include <array>
 #include <cstdint>
@@ -115,6 +116,10 @@ enum RrConstraintField : int {
     // An IK/FK match's scalars: switch, stretch, softDistance, upperScale,
     // lowerScale, pin, twist. Absent on every other constraint.
     RrConstraintMatchFirst = 22,
+    // A harmonics constraint's scalars, at the same fields: amplitude,
+    // decay, termination.
+    RrConstraintHarmonicsFirst = 22,
+    RrConstraintHarmonicsCount = 3,
     RrConstraintFieldCount = 29,
 };
 
@@ -475,6 +480,22 @@ struct RrStore {
     // on the owner thread after the join.
     std::vector<std::string> opErrors;
     std::vector<char> opFailed;
+    // Windowed operations (rigExecGraph/windowHistory.h), per windowed op:
+    // the packet its body captured at the last run (written only by that
+    // body), the earlier ticks' packets (oldest first, at most its frames),
+    // whether the ring may have moved since its body last read it, and the
+    // ring that body last read, which the next run compares by packet.
+    // historyTick marks a history run, which only the reader's history
+    // program makes (RigExecRuntimeReader::ExecuteHistory).
+    std::vector<RigExecWindowPacketPtr> windowCaptures;
+    std::vector<RigExecWindowRing> windowRings;
+    std::vector<char> windowRingChanged;
+    std::vector<RigExecWindowRing> windowRingRead;
+    // Per windowed op, advanced whenever its ring moved: the values its op
+    // publishes key by it, so a solve over a new history publishes a change
+    // even when the frame's inputs hold still.
+    std::vector<uint64_t> windowRingSerial;
+    bool historyTick = false;
     bool everRan = false;
     // An Animated input was set, or the caller said time moved
     // (RigExecRuntimeReader::TouchAnimatedInputs): the next closure dirties
@@ -625,6 +646,20 @@ struct RrProgram {
     fb::RigExecWireRequiredStageFramesAdmission requiredStageFramesAdmission;
     bool requiredStageFramesFullOwed=false;
     RigExecCompiledGraph opGraph;
+    /// The windowed operations, settled from the common graph at compile
+    /// (RigExecSettleWindowLayout), and the canonical-op mask of a history
+    /// tick.
+    struct WindowedOp {
+        int32_t step = -1;
+        uint32_t frames = 0;
+        uint32_t op = UINT32_MAX;
+        std::vector<uint32_t> inner;
+        bool feedsWindow = false;
+    };
+    std::vector<WindowedOp> windowedOps;
+    std::vector<char> historyMask;
+    /// Per step: the windowed op whose body it is, or -1.
+    std::vector<int32_t> windowOfStep;
     RigExecProviderPlainProgram providerProgram;
     /// What Open decoded. A program a test assembles by hand leaves it
     /// null and points the tables below at its own.

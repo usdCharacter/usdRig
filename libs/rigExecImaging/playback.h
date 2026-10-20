@@ -158,6 +158,11 @@ private:
     bool _ApplyUpstream(UsdTimeCode time, bool sampled, std::string *error);
     bool _LiftUpstream(const _UpstreamKey &key, UsdTimeCode time,
                        bool sampled, std::string *error);
+    // Windowed operations: the reader's history for a frame at \p time, as
+    // the USD evaluators read it (the stage at the frames before, with the
+    // upstream values). A frame right after the last one executed pushes
+    // that frame's captures; any other rebuilds the history from the stage.
+    bool _PrepareHistory(UsdTimeCode time, std::string *error);
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
@@ -182,6 +187,11 @@ private:
     std::map<SdfPath, _UpstreamKey> _upstreamApplied;
     std::vector<std::string> _upstreamDropLines;
     UsdTimeCode _upstreamTime = UsdTimeCode::Default();
+    // The frame the reader last executed from the stage, when its history
+    // is the stage's frames before it (cleared by any stage or upstream
+    // change).
+    UsdTimeCode _historyTime = UsdTimeCode::Default();
+    bool _historyHave = false;
 };
 
 /// Resolves the playback file a rig names, if any. True with the playable

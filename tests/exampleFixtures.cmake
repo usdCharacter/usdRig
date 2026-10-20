@@ -86,6 +86,9 @@ set(RIGEXEC_EXAMPLE_FIXTURES
     "16_ConnectionReadPhases.usda|1001,1012,1024,1036,1048|/PhaseConnectAsset/Rig/Controls/LiftCtl|avars:ty|/PhaseConnectAsset/Rig/Movers/Dial/Gain|inputs:value|YES|-|inputs"
     "17_PatchCurveShapes.usda|1001,1005,1010,1014,1019,1023,1028,1032,1037,1042,1048|/PatchAsset/Rig/Controls/Shapes|avars:east|/PatchAsset/Rig/Movers/Geometry/StickCurve|inputs:defaultWeight|NO|external-playback|inputs"
     "18_PatchMouth.usda|1001,1004,1007,1010,1013,1019,1025,1031,1037,1043,1049,1055,1061,1067,1073,1079,1085,1091,1097,1100,1103,1109,1115,1121,1127,1133,1139,1145,1151,1157,1163,1166,1169,1174,1179,1184,1189,1199,1209,1214,1219,1229,1239,1249,1259,1264,1269|/MouthAsset/Rig/Controls/Mouth|avars:jawOpen|/MouthAsset/Rig/Movers/Geometry/Lips|inputs:defaultWeight|NO|external-playback|inputs"
+    # Windowed: each frame reads the frames before it, so the frames sit
+    # inside the rings after each stop as well as on the keys.
+    "19_HarmonicsChain.usda|1001,1006,1009,1012,1015,1020,1030,1033,1036,1040,1054,1057,1060,1064,1072|/AntennaAsset/Rig/Controls/Base|avars:tx|/AntennaAsset/Rig/Movers/Pose/Jiggle/Jiggle4|inputs:amplitude|YES|-|inputs"
     # -- the constraint stages: every one aims at a plain UsdGeomXformable --
     "aimtest.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"
     "aimtest_points.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"

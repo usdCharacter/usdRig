@@ -279,6 +279,29 @@ public:
     // Replays the cluster DAG over the inputs. False naming the first
     // failing step; outputs keep their previous values.
     bool Execute(std::string *error);
+
+    // Windowed operations (secondary motion, cloth) solve from the inputs
+    // they captured at earlier ticks as well as the current one
+    // (docs/concepts/secondary-motion.md). The reader keeps those ticks:
+    // a game loop calls PushHistory after each Execute that advanced a
+    // frame; a stage sampler that jumps in time calls ClearHistory and
+    // ExecuteHistory at each of the GetHistoryDepth frames before the new
+    // one, oldest first, with that frame's inputs set. Fed the same
+    // frames, the reader matches the USD evaluators bit for bit. A drag
+    // is an Execute with no push: the history stays the frames before.
+    //
+    // How many windowed operations the file holds (0 for most rigs).
+    size_t GetWindowedOperationCount() const;
+    // How many earlier ticks a complete history reaches back.
+    size_t GetHistoryDepth() const;
+    // The last Execute's captures become the newest history tick.
+    void PushHistory();
+    // Runs a history tick at the inputs as set now: only the windowed
+    // operations and what they depend on, publishing nothing; its captures
+    // become the newest history tick. False naming the failing step.
+    bool ExecuteHistory(std::string *error);
+    // Forgets every history tick: the next Execute starts from rest.
+    void ClearHistory();
     /// Runs Execute's ready clusters through \p dispatch and joins with
     /// \p wait -- RigExecOpCallbacks' shape; both or neither, empty restores
     /// serial. A successful run's results, diagnostics and counts are
@@ -465,6 +488,17 @@ private:
     RigExecRuntimeReader();
 
     std::unique_ptr<RrProgram> _program;
+
+    // History ticks run on a second program opened from the same bytes,
+    // never on this one, so a run here sees only what changed against the
+    // last run here -- as the USD evaluators' history leaves their live
+    // program. Each tick copies the inputs as set here and this reader's
+    // history into it, and its captures come back as the newest tick. The
+    // bytes are kept only for a file with windowed operations; the program
+    // opens at the first ExecuteHistory.
+    std::shared_ptr<const std::vector<uint8_t>> _historyBytes;
+    std::unique_ptr<RigExecRuntimeReader> _history;
+    bool _RunHistoryTick(std::string *error);
 
     // What the input getters answer past the count: a Double +0.0, every
     // other member zero.

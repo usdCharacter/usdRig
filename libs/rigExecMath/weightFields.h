@@ -13,6 +13,7 @@
 #define RIGEXEC_MATH_WEIGHT_FIELDS_H
 
 #include "pointFrame.h"
+#include "rangeRunner.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -179,18 +180,23 @@ void RigExecCurveWeightField(
     std::vector<float> *weights);
 
 /// Borrowed input overloads. Views remain immutable through the call;
-/// localCurve is producer-owned retained transform scratch.
+/// localCurve is producer-owned retained transform scratch. Each point's
+/// weight depends only on that point, so \p ranges may split the point loop
+/// across threads; the field is bitwise the same either way.
 void RigExecSphereWeightField(RigExecWeightPointView points,
     const GfMatrix4d &, const RigExecFalloffParams &, std::vector<float> *,
     const GfVec3f &positiveScales = GfVec3f(1.0f),
-    const GfVec3f &negativeScales = GfVec3f(1.0f));
+    const GfVec3f &negativeScales = GfVec3f(1.0f),
+    const RigExecRangeRunner *ranges = nullptr);
 void RigExecPlaneWeightField(RigExecWeightPointView points,
     const GfMatrix4d &, int axis, const RigExecFalloffParams &,
-    std::vector<float> *, const RigExecPlaneBounds *bounds = nullptr);
+    std::vector<float> *, const RigExecPlaneBounds *bounds = nullptr,
+    const RigExecRangeRunner *ranges = nullptr);
 void RigExecCurveWeightField(RigExecWeightPointView points,
     RigExecWeightPointView curvePoints, const GfMatrix4d &,
     const RigExecFalloffParams &, std::vector<float> *,
-    std::vector<GfVec3f> *localCurve);
+    std::vector<GfVec3f> *localCurve,
+    const RigExecRangeRunner *ranges = nullptr);
 
 // Composition (spec §4.1 volumetric extension: weight objects compose).
 

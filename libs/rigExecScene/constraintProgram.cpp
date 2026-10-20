@@ -33,6 +33,9 @@ bool RigExecRunConstraint(const RigExecConstraintRecord &record,
     case RigExecConstraintKind::IkFkMatch:
         if(error)*error="an IK/FK match runs in the pose walk, not as a frame kernel";
         return false;
+    case RigExecConstraintKind::Harmonics:
+        if(error)*error="a harmonics constraint reads its history window in the pose walk, not as a frame kernel";
+        return false;
     }
     if(error)*error="unknown constraint kind";
     return false;

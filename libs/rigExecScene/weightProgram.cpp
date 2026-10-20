@@ -78,7 +78,7 @@ bool Volume(const std::vector<RigExecWeightRecord> &records, const std::vector<R
             }
             clip = &bounds;
         } else if (boundsName != "unbounded") { *error = who + ": unknown rigExec:planeBounds " + boundsName; return false; }
-        RigExecPlaneWeightField(samples, worldToLocal, axis, params, out, clip);
+        RigExecPlaneWeightField(samples, worldToLocal, axis, params, out, clip, workspace.ranges);
         return true;
     }
     const GfVec3f scale(read(8,1),read(9,1),read(10,1));
@@ -94,7 +94,7 @@ bool Volume(const std::vector<RigExecWeightRecord> &records, const std::vector<R
             !std::isfinite(negative[axis]) || negative[axis] <= 0) {
             *error = who + ": signed axis scales must be finite and positive"; return false;
         }
-        RigExecSphereWeightField(samples,worldToLocal,params,out,positive,negative); return true;
+        RigExecSphereWeightField(samples,worldToLocal,params,out,positive,negative,workspace.ranges); return true;
     }
     const auto curveInput = input.phasedPoints[2];
     const auto *curve = curveInput.declared ? nullptr : &input.rawPoints[2];
@@ -103,7 +103,7 @@ bool Volume(const std::vector<RigExecWeightRecord> &records, const std::vector<R
         *error = who + ": rigExec:curve must name exactly one points source"; return false;
     }
     RigExecCurveWeightField(samples,{curvePoints.data,curvePoints.count},worldToLocal,
-        params,out,&workspace.localCurve); return true;
+        params,out,&workspace.localCurve,workspace.ranges); return true;
 }
 bool Resolve(const std::vector<RigExecWeightRecord> &records, const std::vector<RigExecWeightFieldInputs> &inputs, size_t id, size_t count,
              const RigExecWeightPointView *current, RigExecWeightFieldWorkspace &workspace, size_t depth, std::vector<float> *out,

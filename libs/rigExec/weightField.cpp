@@ -2,6 +2,7 @@
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/crossDomainInputs.h"
 #include "rigExecScene/weightProgram.h"
+#include "rigExec/parallel.h"
 #include <pxr/usd/usdGeom/pointBased.h>
 #include <pxr/usd/sdf/types.h>
 #include <algorithm>
@@ -351,6 +352,7 @@ void RigExecBakedRunWeightField(Baked *program, RigExecBakedStep *step)
     const bool haveContext=RigExecBakedCaptureWeightFieldInputs(B,step->object,&inputs,&entering,&count);
     const auto *current=field.form==Field::Form::Revision?&entering:nullptr;
     field.count=count;field.error.clear();
+    field.workspace.ranges=RigExecGeometryRanges();
     field.ok = haveContext && RigExecRunWeightField(B.weightProgram,field.object,inputs,
         count,current,&field.workspace,&field.nextValues,&field.error);
     // Failed fields publish no partial values. Equality preserves signed-zero bits.

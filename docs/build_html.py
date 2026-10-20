@@ -1218,14 +1218,21 @@ def render_node(key, category, classes, concepts=()):
             '<p class="label">%s.usda</p>' % stage])
     inner.extend(['<div class="content">',
                   '<p class="summary">%s</p>' % _md_inline(note["example"])])
+    extras = note.get("extra_gifs", ())
+    for name, _src, caption in extras:
+        inner.append('<figure class="fig effect">'
+                     '<img src="../gifs/%s.gif" width="640" height="360" '
+                     'alt="%s"><figcaption>%s</figcaption></figure>'
+                     % (name, _esc(caption), _esc(caption)))
     if stage:
         inner.extend([
             "<p>Open it live with:</p>",
             "<pre><code>bin\\launch_usdview.bat docs\\examples\\%s.usda"
             "</code></pre>" % stage])
-    if not note.get("no_gif"):
+    if not note.get("no_gif") or extras:
         inner.extend([
-            "<p>Re-render the GIF above with:</p>",
+            "<p>%s</p>" % ("Re-render the GIFs on this page with:" if extras
+                           else "Re-render the GIF above with:"),
             "<pre><code>python docs/render_media.py --page %s"
             "</code></pre>" % key])
     inner.append("</div></div>")

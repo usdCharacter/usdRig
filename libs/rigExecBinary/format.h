@@ -538,7 +538,12 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// mask, float value inputs, any number of them) and animated maps (maps,
 /// primvar_slots, primvar_sources). Older files hold none of them, so every
 /// interpolator plays the pose solve.
-inline constexpr uint32_t RigExecFormatVersion = 24;
+///
+/// Format 25 adds windowed operations (File.windowed_ops, whose solve reads
+/// the inputs it captured over earlier ticks) and the harmonics constraint's
+/// fields to Constraint (harmonics and the harmonics_* fields, window).
+/// Older files hold neither.
+inline constexpr uint32_t RigExecFormatVersion = 25;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

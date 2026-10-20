@@ -576,6 +576,39 @@ _FoldUpstream(uint64_t hash, const std::vector<RigExecUpstreamValue> &upstream)
     return hash;
 }
 
+// The windowed operations' history (RigExecFrameInputs::windowRings): a
+// tag, the ring count, then per ring its length and per packet a presence
+// byte and its values' bits. No rings fold nothing, so a rig without
+// windowed operations keys as before.
+uint64_t
+_FoldWindowRings(uint64_t hash, const RigExecFrameInputs &inputs)
+{
+    if (inputs.windowRings.empty()) {
+        return hash;
+    }
+    hash = _FoldBytes(hash, "win\x1f", 4);
+    hash = _FoldU64(hash, static_cast<uint64_t>(inputs.windowRings.size()));
+    for (const RigExecWindowRing &ring : inputs.windowRings) {
+        hash = _FoldU64(hash, static_cast<uint64_t>(ring.size()));
+        for (const RigExecWindowPacketPtr &packet : ring) {
+            if (!packet) {
+                hash = _FoldBytes(hash, "\x00", 1);
+                continue;
+            }
+            hash = _FoldBytes(hash, "\x01", 1);
+            hash = _FoldU64(hash, static_cast<uint64_t>(packet->scalars.size()));
+            if (!packet->scalars.empty())
+                hash = _FoldBytes(hash, packet->scalars.data(),
+                                  packet->scalars.size() * sizeof(double));
+            hash = _FoldU64(hash, static_cast<uint64_t>(packet->points.size()));
+            if (!packet->points.empty())
+                hash = _FoldBytes(hash, packet->points.data(),
+                                  packet->points.size() * sizeof(float));
+        }
+    }
+    return hash;
+}
+
 uint64_t
 RigExecUpstreamFoldHash(const VtValue &value)
 {
@@ -890,6 +923,7 @@ RigExecControlStateDigest(const RigExecFrameInputs &inputs,
     hash = _FoldVaryingTransport(hash, inputs);
     hash = _FoldStageSeeds(hash, inputs.stageSeeds);
     hash = _FoldUpstream(hash, upstream);
+    hash = _FoldWindowRings(hash, inputs);
 
     return _FoldOverrides(hash, overrides);
 }
@@ -1005,6 +1039,7 @@ RigExecControlStateDigestWithBurstCache(
     // they are per-frame stage reads, so no static memo serves them.
     hash = _FoldStageSeeds(hash, inputs.stageSeeds);
     hash = _FoldUpstream(hash, upstream);
+    hash = _FoldWindowRings(hash, inputs);
     return _FoldOverrides(hash, overrides);
 }
 

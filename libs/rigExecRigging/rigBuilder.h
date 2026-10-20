@@ -331,6 +331,30 @@ public:
     void SetSourceWeights(const std::vector<float> &weights);
 };
 
+/// RigExecHarmonicsConstraint: secondary motion -- overshoot, lag and jiggle
+/// -- of one joint or control from the frames before the current one.
+class RigExecHarmonicsConstraintHandle : public RigExecConstraintHandle {
+public:
+    using RigExecConstraintHandle::RigExecConstraintHandle;
+
+    /// The control or joint the motion is measured in (rigExec:space); an
+    /// empty path measures in the rig root.
+    void SetSpace(const SdfPath &space);
+    /// Oscillations per impulse, frames per oscillation, and phase frames
+    /// one frame advances: each finite and above zero.
+    void SetWaves(double waves);
+    void SetWaveLength(double frames);
+    void SetFrequency(double frequency);
+    void SetIgnoreFirstFrame(bool ignore);
+    void SetMatchVelocity(bool match);
+    void SetAmplitude(double amplitude);
+    void SetAxisAmplitude(double x, double y, double z);
+    /// How fast a ring dies away, finite and >= 0.
+    void SetDecay(double decay);
+    /// The fraction of the amplitude a ring ends at, in [0,1).
+    void SetTermination(double termination);
+};
+
 /// RigExecAimConstraint: rotates the target so its aim vector points at the
 /// weighted source position.
 class RigExecAimConstraintHandle : public RigExecSourceConstraintHandle {
@@ -880,6 +904,42 @@ public:
     void SetSmoothingIterations(int iterations);
 };
 
+/// RigExecClothMover: cloth on one mesh, simulated over a window of the
+/// frames before the current one, colliding with other meshes.
+class RigExecClothMoverHandle : public RigExecMoverHandle {
+public:
+    using RigExecMoverHandle::RigExecMoverHandle;
+
+    /// Meshes the cloth collides with (rigExec:colliders).
+    void SetColliders(const std::vector<SdfPath> &meshes);
+    /// base | preceding | final, as rigExecReadPhase metadata on
+    /// rigExec:colliders: final collides with the posed body.
+    void SetCollidersReadPhase(const TfToken &phase);
+    /// One weight per cloth point in [0,1]; 1 follows the input. Empty pins
+    /// nothing.
+    void SetPinWeights(const std::vector<float> &weights);
+    /// Earlier frames the solve starts from, in [1,1024].
+    void SetWindowFrames(int frames);
+    /// Solver steps per frame, in [1,256].
+    void SetSubsteps(int substeps);
+    /// Constraint passes per step, in [1,64].
+    void SetIterations(int iterations);
+    void SetTethers(bool tethers);
+    /// Fraction past the rest distance a tether allows, finite and >= 0.
+    void SetTetherSlack(float slack);
+    /// Frames per second the window is simulated at; 0 uses the stage's.
+    void SetFrameRate(double framesPerSecond);
+    void SetStretchCompliance(float compliance);
+    void SetBendCompliance(float compliance);
+    /// Acceleration in the cloth mesh's local space.
+    void SetGravity(float x, float y, float z);
+    void SetDamping(float damping);
+    void SetAttract(float attract);
+    void SetThickness(float thickness);
+    void SetCollisionDepth(float depth);
+    void SetFriction(float friction);
+};
+
 /// RigExecSmoothMover: uniform-weight Laplacian smoothing.
 class RigExecSmoothMoverHandle : public RigExecMoverHandle {
 public:
@@ -1040,6 +1100,10 @@ public:
     RigExecWrinkleMoverHandle AddWrinkleMover(
         const std::string &name, float defaultWeight = 1.0f,
         const SdfPath &target = SdfPath());
+    /// Windowed cloth with the common mover envelope.
+    RigExecClothMoverHandle AddClothMover(
+        const std::string &name, float defaultWeight = 1.0f,
+        const SdfPath &target = SdfPath());
     RigExecSmoothMoverHandle AddSmoothMover(
         const std::string &name, float defaultWeight = 1.0f,
         const SdfPath &target = {});
@@ -1074,6 +1138,9 @@ public:
         float defaultWeight = 1.f);
 
 
+    /// Secondary motion of one joint or control.
+    RigExecHarmonicsConstraintHandle AddHarmonicsConstraint(
+        const std::string &name, const SdfPath &target = {});
     RigExecAimConstraintHandle AddAimConstraint(
         const std::string &name, const SdfPath &target = {});
     RigExecPositionConstraintHandle AddPositionConstraint(

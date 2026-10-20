@@ -245,6 +245,30 @@ struct RigExecMoverHandler {
     /// .rigexec file installs it into the runtime; a runtime without it
     /// passes this mover's points through with a warning.
     RigExecExternalKernel runtimeKernel;
+
+    /// Windowed external movers (rigExecGraph/windowHistory.h), all three or
+    /// none: how many earlier frames the solve reads (compile time; 0 makes
+    /// this revision an ordinary one), the packet a tick captures from the
+    /// payload and the preceding points, and the solve over the earlier
+    /// ticks' packets, oldest first, then this tick's, into the
+    /// full-strength candidate. \p cache is the revision's own slot for an
+    /// epoch-fixed build, compared on every use and rebuilt on a miss.
+    uint32_t (*windowFrames)(const UsdPrim &mover) = nullptr;
+    bool (*captureWindow)(const VtValue &data,
+                          const std::vector<GfVec3f> &entering,
+                          RigExecWindowPacket *packet) = nullptr;
+    bool (*applyWindow)(const VtValue &data,
+                        const RigExecWindowPacket *const *ticks,
+                        size_t tickCount, std::vector<GfVec3f> *points,
+                        std::shared_ptr<const void> *cache) = nullptr;
+    /// Optional: applyWindow on a device, which the live program runs at
+    /// the publication boundary for a windowed revision whose chain nothing
+    /// else reads (the GPU cloth). False when no device solved it; the
+    /// boundary then runs applyWindow. Never called from an op body.
+    bool (*applyWindowDevice)(const VtValue &data,
+                              const RigExecWindowPacket *const *ticks,
+                              size_t tickCount, std::vector<GfVec3f> *points,
+                              std::shared_ptr<const void> *cache) = nullptr;
 };
 
 /// External libraries identify this contract with
@@ -257,7 +281,11 @@ struct RigExecMoverHandler {
 /// RigExecMoverOracleContext::entering.
 /// Version 5 adds RigExecExternalKernel::applyWithProviders, which hands a
 /// playback kernel the provider values its binding reads.
-inline constexpr int RigExecMoverPluginApiVersion = 5;
+/// Version 6 adds windowed movers: the handler's windowFrames, captureWindow,
+/// applyWindow and applyWindowDevice, and RigExecExternalKernel::
+/// captureWindow and applyWindow. Both structs grew, so a plugin built for 5
+/// is rebuilt.
+inline constexpr int RigExecMoverPluginApiVersion = 6;
 
 /// Registers one mover, retaining an immutable copy and its schema name.
 /// Duplicate schema names and incomplete external callbacks are rejected.

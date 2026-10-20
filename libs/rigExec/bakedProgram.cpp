@@ -142,7 +142,8 @@ _IsBakedConstraintType(const TfToken &type)
            type == "RigExecParentConstraint" ||
            type == "RigExecAimConstraint" ||
            type == "RigExecSingleChainIkConstraint" ||
-           type == "RigExecIkFkMatchConstraint";
+           type == "RigExecIkFkMatchConstraint" ||
+           type == "RigExecHarmonicsConstraint";
     // RigExecRigEvaluator::GetConstraintOperatorTypeNames() is the authority
     // on which operators exist; this is the subset the program can express,
     // and it must stay a subset. A name here the evaluator does not register
@@ -695,6 +696,29 @@ RigExecBakedProgram::~RigExecBakedProgram() = default;
 
 size_t RigExecBakedProgram::GetProviderCount() const {
     return _impl->paths.size();
+}
+std::vector<RigExecBakedProgram::WindowedOpInfo>
+RigExecBakedProgram::GetWindowedOps() const {
+    std::vector<WindowedOpInfo> out;
+    out.reserve(_impl->windowedOps.size());
+    for (const auto &op : _impl->windowedOps) {
+        WindowedOpInfo info;
+        info.path = op.path;
+        info.frames = op.frames;
+        info.inner = op.inner;
+        info.feedsWindow = op.feedsWindow;
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+size_t RigExecBakedProgram::GetWindowedOpCount() const {
+    return _impl->windowedOps.size();
+}
+void RigExecBakedProgram::SetWindowRings(const std::vector<RigExecWindowRing> &rings) {
+    RigExecBakedPlaceWindowRings(_impl.get(), rings);
+}
+std::vector<RigExecWindowPacketPtr> RigExecBakedProgram::GetWindowCaptures() const {
+    return _impl->windowCaptures;
 }
 size_t RigExecBakedProgram::GetBoundInputCount() const {
     return _impl->boundInputs;
@@ -4387,6 +4411,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             return nullptr;
         }
         RigExecBakedBuildCones(&B);
+        if (!RigExecBakedSettleWindowedOps(&B, &invalid)) {
+            refuse("windowed operations could not settle: " + invalid, E._rigPath);
+            return nullptr;
+        }
     }
 
     if (RigExecBakedScheduleReportRequested()) {

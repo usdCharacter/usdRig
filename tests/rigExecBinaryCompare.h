@@ -1700,6 +1700,26 @@ _BinaryCompareConstraint(
     _BinaryCheckEqual(live.poleObjectNatives, wire.poleObjectNatives);
     _BinaryCompareInput(live.poleVector, wire.poleVector, file);
     _BinaryCompareInput(live.twistDegrees, wire.twistDegrees, file);
+    CHECK(live.harmonics == wire.harmonics);
+    CHECK(int64_t(live.window) == int64_t(wire.window));
+    if (live.harmonics) {
+        CHECK(wire.harmonicsScalars.size() == live.harmonicsScalars.size());
+        for (size_t k = 0; k < live.harmonicsScalars.size() &&
+                           k < wire.harmonicsScalars.size(); ++k) {
+            const auto &scalar = live.harmonicsScalars[k];
+            if (scalar.isFloat) {
+                _BinaryCompareInput(scalar.narrow, wire.harmonicsScalars[k], file);
+            } else {
+                _BinaryCompareInput(scalar.wide, wire.harmonicsScalars[k], file);
+            }
+        }
+        CHECK(wire.harmonicsConstants ==
+              std::vector<double>({live.harmonicsSettings.waves,
+                                   live.harmonicsSettings.waveLength,
+                                   live.harmonicsSettings.frequency}));
+        CHECK(live.harmonicsSettings.ignoreFirstFrame == wire.harmonicsIgnoreFirstFrame);
+        CHECK(live.harmonicsMatchVelocity == wire.harmonicsMatchVelocity);
+    }
     CHECK(live.ikFkMatch == wire.ikFkMatch);
     if (live.ikFkMatch) {
         CHECK(wire.matchScalars.size() == live.matchScalars.size());
@@ -3616,6 +3636,7 @@ _BinaryForEachRead(const _BinaryFile &file,
                 one(*read);
             }
             for (const auto &read : c.matchScalars) one(read);
+            for (const auto &read : c.harmonicsScalars) one(read);
         }
         for (const auto &ac : pose.autoClavicles)
             for (const auto &read : ac.scalars) visit(read);

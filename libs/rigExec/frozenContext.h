@@ -35,6 +35,8 @@
 #include "rigEvaluator.h"
 #include "scalarReferenceAdapter.h"
 
+#include "rigExecGraph/windowHistory.h"
+
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"
@@ -275,6 +277,13 @@ struct RigExecFrameInputs {
     /// leaves as sampled through that layer; the control-state digest folds
     /// the list itself (`ups` block), and the retained state counts it.
     std::vector<RigExecUpstreamValue> upstream;
+    /// One ring per windowed operation of the program (bakedProgram.h
+    /// GetWindowedOps): the packets its body captured at the earlier ticks
+    /// of its window, oldest first, read from the stage without the
+    /// interactive overrides. Empty for a rig without windowed operations.
+    /// Folded by the control-state digest: two frames with equal current
+    /// inputs and different histories are different frames.
+    std::vector<RigExecWindowRing> windowRings;
 
     /// Sets `overrides` and builds `overridePaths` from them.
     void SetOverrides(const std::vector<RigExecValueOverride> &list);
@@ -633,6 +642,22 @@ RigExecRigPose RigExecEvaluateFrozen(
 RigExecRigPose RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                                      const RigExecFrameInputs &inputs);
 
+/// Runs one history tick of a rig with windowed operations
+/// (rigExecGraph/windowHistory.h) on \p context's workspace: \p inputs are
+/// sampled at the tick's time, and \p rings are the inner windowed ops'
+/// rings at that tick (one per windowed op; the others may be empty). Only
+/// the windowed ops and the ops they depend on run, through the same graph
+/// and bodies as a frame; nothing is published. \p captures receives one
+/// packet per windowed op. False, with \p error, when the job declines:
+/// no admitted program, mismatched inputs, or a body that failed. Runs on
+/// the calling thread with no serial scope of its own, so an owner-thread
+/// caller keeps its kernels' parallelism.
+bool RigExecRunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
+                                 const RigExecFrameInputs &inputs,
+                                 const std::vector<RigExecWindowRing> &rings,
+                                 std::vector<RigExecWindowPacketPtr> *captures,
+                                 std::string *error = nullptr);
+
 /// One chain input as the epoch currency check pins it, the way the live
 /// path pins it on its first run: the attribute and a query over it,
 /// whether it carries authored connections (read as a walk then, never as
@@ -759,6 +784,17 @@ bool RigExecSampleFrameInputs(
     const std::vector<RigExecValueOverride> &overrides,
     const std::vector<RigExecUpstreamValue> &upstream,
     RigExecFrameInputs *out, std::string *error = nullptr);
+
+/// Samples one history tick of a rig with windowed operations
+/// (rigEvaluatorWindows.cpp): as the trusted pinned route, with no
+/// interactive overrides and without attaching the windows' own rings,
+/// which a history tick reads from its caller instead. UI thread only; the
+/// caller drops \p bindings on every stage notice.
+bool RigExecSampleHistoryTickInputs(
+    const RigExecRigEvaluator &evaluator, UsdTimeCode time,
+    const std::vector<RigExecUpstreamValue> &upstream,
+    const RigExecChainSampleBindings &bindings, RigExecFrameInputs *out,
+    std::string *error = nullptr);
 
 /// Samples exactly as RigExecSampleFrameInputs, but checks the caller's
 /// epoch-pinned \p bindings instead of binding fresh.

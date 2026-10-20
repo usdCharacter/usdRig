@@ -1,5 +1,6 @@
 #ifndef RIGEXEC_GRAPH_WEIGHT_PROGRAM_H
 #define RIGEXEC_GRAPH_WEIGHT_PROGRAM_H
+#include "rigExecMath/rangeRunner.h"
 #include "rigExec/weightPackets.h"
 #include "pxr/base/ts/spline.h"
 #include <array>
@@ -44,6 +45,9 @@ struct RigExecWeightFieldWorkspace {
     std::vector<uint32_t> seen;
     uint32_t seenGeneration=0;
     std::vector<GfVec3f> localCurve;
+    /// Splits the volume fields' point loops across threads when set; the
+    /// fields are bitwise the same either way.
+    const RigExecRangeRunner *ranges=nullptr;
 };
 bool RigExecRunWeightField(const std::vector<RigExecWeightRecord> &,int root,
     const std::vector<RigExecWeightFieldInputs> &,size_t count,

@@ -101,6 +101,35 @@ void
 RigExecBakedPlayback::NoteStageChanged()
 {
     if (_sampler) _sampler->NoteStageChanged();
+    _historyHave = false;
+}
+
+bool
+RigExecBakedPlayback::_PrepareHistory(UsdTimeCode time, std::string *error)
+{
+    if (time.IsDefault()) {
+        _reader->ClearHistory();
+        _historyHave = false;
+        return true;
+    }
+    if (_historyHave && _historyTime == time) return true;
+    if (_historyHave && !_historyTime.IsDefault() &&
+        _historyTime.GetValue() + 1.0 == time.GetValue()) {
+        _reader->PushHistory();
+        return true;
+    }
+    _historyHave = false;
+    _reader->ClearHistory();
+    const size_t depth = _reader->GetHistoryDepth();
+    for (size_t k = depth; k >= 1; --k) {
+        const UsdTimeCode tick(time.GetValue() - double(k));
+        bool sampled = false;
+        if (!_sampler->Apply(tick, _reader.get(), error, &sampled)) return false;
+        _AdmitUpstream(tick);
+        if (!_ApplyUpstream(tick, sampled, error)) return false;
+        if (!_reader->ExecuteHistory(error)) return false;
+    }
+    return true;
 }
 
 bool
@@ -200,6 +229,7 @@ void
 RigExecBakedPlayback::SetUpstreamInputs(
     std::vector<RigExecUpstreamValue> values)
 {
+    if (values != _upstreamRequested) _historyHave = false;
     _upstreamRequested = std::move(values);
     _AdmitUpstream(_upstreamTime);
 }
@@ -378,7 +408,11 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     // _sampler->Invalidate(): an invalidated Apply touches every Animated
     // input, so every varying step would re-run for a change that reaches
     // only its own readers.
-    bool ran = _sampler->Apply(time, _reader.get(), &why, &sampled);
+    bool ran = true;
+    if (_reader->GetWindowedOperationCount()) {
+        ran = _PrepareHistory(time, &why);
+    }
+    ran = ran && _sampler->Apply(time, _reader.get(), &why, &sampled);
     if (ran) {
         _AdmitUpstream(time);
         ran = _ApplyUpstream(time, sampled, &why);
@@ -405,8 +439,11 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         // scene, and the next good generation re-announces its epoch.
         result.dirtied = _store->Publish(nullptr);
         _publishedEpochDigest = 0;
+        _historyHave = false;
         return result;
     }
+    _historyTime = time;
+    _historyHave = true;
 
     auto snapshot = std::make_shared<RigExecImagingSnapshot>();
     snapshot->generation = ++_generation;

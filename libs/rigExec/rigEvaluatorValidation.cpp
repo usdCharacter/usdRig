@@ -4,6 +4,7 @@
 #include "rigEvaluatorConstraints.h"
 #include "movers/moverRegistry.h"
 #include "moverGraph.h"
+#include "rigExecMath/harmonicsKernel.h"
 
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
@@ -625,6 +626,41 @@ RigExecRigEvaluator::_DiscoverMovers(
                         prim.GetPath().GetString() +
                         " must move every joint in a chain of at least two "
                         "prim targets", {prim.GetPath()});
+                }
+            } else if (record.schemaType == "RigExecHarmonicsConstraint") {
+                // One joint or control, which is both what it measures and
+                // what it revises; the window must be finite and bounded.
+                const UsdPrim targetPrim =
+                    record.targets.size() == 1 && record.targets[0].IsPrimPath()
+                        ? _stage->GetPrimAtPath(record.targets[0])
+                        : UsdPrim();
+                const TfToken targetType =
+                    targetPrim ? targetPrim.GetTypeName() : TfToken();
+                if (targetType != "RigExecJoint" &&
+                    targetType != "RigExecControl") {
+                    return fail(
+                        "RigExecHarmonicsConstraint " +
+                        prim.GetPath().GetString() +
+                        " must move exactly one RigExecJoint or "
+                        "RigExecControl", {prim.GetPath()});
+                }
+                RigExecHarmonicsSettings settings;
+                const auto readUniform = [&prim](const char *name, auto *value) {
+                    if (const UsdAttribute a = prim.GetAttribute(TfToken(name)))
+                        a.Get(value);
+                };
+                readUniform("rigExec:waves", &settings.waves);
+                readUniform("rigExec:waveLength", &settings.waveLength);
+                readUniform("rigExec:frequency", &settings.frequency);
+                if (!RigExecHarmonicsSettingsValid(settings)) {
+                    return fail(
+                        "RigExecHarmonicsConstraint " +
+                        prim.GetPath().GetString() +
+                        " needs finite rigExec:waves, rigExec:waveLength and "
+                        "rigExec:frequency above zero, with a window of at "
+                        "most " +
+                        std::to_string(RigExecHarmonicsMaxWindowFrames - 2) +
+                        " frames", {prim.GetPath()});
                 }
             } else if (record.schemaType == "RigExecIkFkMatchConstraint") {
                 // The controls it revises; which is which is read from its

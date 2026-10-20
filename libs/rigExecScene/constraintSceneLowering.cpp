@@ -33,6 +33,7 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
     else if(type=="RigExecAimConstraint")result.record.kind=RigExecConstraintKind::Aim;
     else if(type=="RigExecSingleChainIkConstraint")result.record.kind=RigExecConstraintKind::SingleChainIk;
     else if(type=="RigExecIkFkMatchConstraint")result.record.kind=RigExecConstraintKind::IkFkMatch;
+    else if(type=="RigExecHarmonicsConstraint")result.record.kind=RigExecConstraintKind::Harmonics;
     else return Fail(error,"unsupported constraint: "+type.GetString());
     auto relation=[&](const char *name) { return source.Targets(path.AppendProperty(TfToken(name))); };
     auto first=[&](const char *name) { const auto rows=relation(name);return rows.empty()?SdfPath{}:rows.front(); };
@@ -67,7 +68,11 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
     result.order=Order(token);
     if(!raw("rigExec:blendShear",false,&result.blendShear) ||
        !raw("rigExec:worldUpRotationOnly",false,&result.worldUpRotationOnly))return false;
-    if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
+    if(result.record.kind==RigExecConstraintKind::Harmonics) {
+        // No sources, masks or offsets: its scalars and settings are bound
+        // by the pose walk, which holds the history window.
+        result.space=first("rigExec:space");
+    } else if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
         result.effector=first("rigExec:effector");result.space=first("rigExec:space");
         for(const char *name:{"inputs:switch","inputs:stretch","inputs:softDistance","inputs:upperScale",
                               "inputs:lowerScale","inputs:pin","inputs:twist"})
@@ -211,7 +216,8 @@ bool RigExecRefreshConstraintParameters(RigExecSceneConstraintDescriptor *descri
         record.singleChain.weight=double(*defaultWeight);
         return true;
     }
-    if(record.kind==RigExecConstraintKind::IkFkMatch)return true;
+    if(record.kind==RigExecConstraintKind::IkFkMatch ||
+       record.kind==RigExecConstraintKind::Harmonics)return true;
     VtFloatArray weights;
     if(!read("inputs:sourceWeights",VtFloatArray{},&weights))return false;
     if(!weights.empty() && weights.size()!=input->sources.size())
@@ -293,6 +299,7 @@ bool RigExecRefreshConstraintParameters(RigExecSceneConstraintDescriptor *descri
     }
     case RigExecConstraintKind::SingleChainIk:return true;
     case RigExecConstraintKind::IkFkMatch:return true;
+    case RigExecConstraintKind::Harmonics:return true;
     }
     return Fail(error,"unknown constraint input kind");
 }

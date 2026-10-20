@@ -4,10 +4,12 @@ Each entry supplies the user-facing description, wiring table, example
 story, tips, and cross-links for one operator. Parameter reference comes
 straight from libs/rigExecSchema/schema.usda at generation time.
 
-Two optional keys steer the media: "example_key" points a page at another
-operator's stage in docs/examples/ instead of its own, and "no_gif" marks
+Three optional keys steer the media: "example_key" points a page at another
+operator's stage in docs/examples/ instead of its own, "no_gif" marks
 a page that documents an annotation rather than a motion, so no GIF is
-rendered for it (such a page still links a stage if it sets "example_key").
+rendered for it (such a page still links a stage if it sets "example_key"),
+and "extra_gifs" lists (GIF name, repo-relative stage, caption) for more
+GIFs shown in the page's Example section.
 """
 
 CATEGORIES = [
@@ -20,10 +22,12 @@ CATEGORIES = [
     ("Constraints", ["aim_constraint", "position_constraint",
                      "rotation_constraint", "scale_constraint",
                      "parent_constraint", "single_chain_ik_constraint",
-                     "ikfk_match_constraint", "constraint_frame"]),
+                     "ikfk_match_constraint", "harmonics_constraint",
+                     "constraint_frame"]),
     ("Geometry movers", ["matrix_mover", "skin_mover", "layered_skin_mover", "blendshape_mover",
                          "curve_mover", "lattice_mover", "surface_mover", "surface_binding_mover", "patch_mover",
-                         "smooth_mover", "delta_mush_mover", "wrinkle_mover", "volume_correct_mover",
+                         "smooth_mover", "delta_mush_mover", "wrinkle_mover", "cloth_mover",
+                         "volume_correct_mover",
                          "ml_mover", "ml_output"]),
     ("Blend channels", ["blend_input", "blend_sample"]),
     ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map"]),
@@ -1295,6 +1299,75 @@ the aim revises the ankle. The picker's IK/FK buttons and the right-click
                      ("fk_chain", "FK Chain")],
     },
 
+    "harmonics_constraint": {
+        "title": "Harmonics Constraint",
+        "schema": "RigExecHarmonicsConstraint",
+        "example_key": "harmonics_constraint",
+        "extra_gifs": [
+            ("harmonics_chain", "examples/19_HarmonicsChain.usda",
+             "examples/19_HarmonicsChain.usda: rung aim targets bend the stalk behind each dash and whip it past the stop"),
+        ],
+        "summary": "Secondary motion: overshoot, lag and jiggle of one joint or control from the frames before the current one.",
+        "description": """Adds follow-through to one joint or control. Each change
+in the target's velocity over the last few frames rings as a damped sine, and
+the rings still sounding are added to the target's translation. A tail tip
+overshoots when the body stops, an antenna bobs after a hop, a belly jiggles
+after a step. The result depends only on the frames in a fixed window before
+the current one, so scrubbing, playback, a background cache and a `.rigexec`
+reader all agree. While a control is dragged, the earlier frames are the
+authored animation and the current frame is the drag, so the target is held
+back against the drag; the ring plays when time moves.
+See [Secondary motion and cloth](../concepts/secondary-motion.md) for how the
+window is evaluated, and [algorithm references](../references.md) for the
+method's source.""",
+        "how_it_works": """The constraint reads its target's incoming position, measured
+in `rigExec:space` (the rig root when none is named), at the current frame and
+at each of the `rigExec:waves * rigExec:waveLength / rigExec:frequency` frames
+before it. Those earlier frames are generations of the same compiled graph at
+those times, run only as far as the target's inputs reach, and they read the
+authored stage. From the positions the kernel (`harmonicsKernel.h`) takes each
+frame's acceleration and adds its ring: a sine of `waveLength / frequency`
+frames per period under an exponential envelope set by `inputs:decay`, ending
+at `inputs:termination` of the amplitude. `rigExec:matchVelocity` scales the
+ring so an impulse rings with the velocity change that caused it;
+`inputs:amplitude` and `inputs:axisAmplitude` scale it, per axis of the space.
+The sum is added to the target's translation and blended by the common mover
+envelope. Motion of the space itself does not ring, so a jiggle measured in
+the hips follows a walk and answers only the motion relative to them. A
+`.rigexec` reader keeps the same window of its own frames: a host pushes each
+frame it plays, or replays the frames before a jump.""",
+        "wiring": [
+            ("`rigExec:moves`", "The one joint or control whose translation rings.", "yes"),
+            ("`rigExec:space`", "A control or joint the motion is measured in.", "no"),
+        ],
+        "param_groups": [
+            ("Common mover envelope", "RigExecMoverAPI"),
+            ("Constraint base", "RigExecConstraint"),
+        ],
+        "example": """`harmonics_constraint.usda` puts a bob above a base that dashes
+left and right. The `Tip` control rides the `Root` control; the constraint
+rings `Tip` with four waves of six frames each, so the bob swings past the base
+at every stop and settles within a second. Dragging `Root` in usdview holds
+the bob back against the drag, further the further it goes, since the earlier
+frames stay the authored ones; the ring itself plays when time moves.
+
+`examples/19_HarmonicsChain.usda` turns rings into rotation down a chain: each
+segment of a four-joint stalk aims at a target control one segment higher,
+and a harmonics constraint rings each target, larger and slower up the stalk.
+The jiggles sit below the aim constraints in the stack, and the aims run from
+the base up, so the stalk leans behind each dash, whips past the stop and
+settles with its segment lengths unchanged.""",
+        "tips": [
+            "Window length is waves times waveLength over frequency: longer rings read more earlier frames.",
+            "To ring a chain's rotation, ring aim targets and aim each joint at the next one up; keep the jiggles below the aims in the stack.",
+            "Measure a jiggle in the part it hangs from (rigExec:space) so that part's own motion is not repeated.",
+            "Use inputs:axisAmplitude to keep a ring in one plane, for a pendulum or a door.",
+            "The first frames of a .rigexec reader have less history; rigExec:ignoreFirstFrame drops the jolt of starting from rest.",
+        ],
+        "see_also": [("cloth_mover", "Cloth Mover"), ("aim_constraint", "Aim Constraint"),
+                     ("control", "Control")],
+    },
+
     "single_chain_ik_constraint": {
         "title": "Single-Chain IK Constraint",
         "schema": "RigExecSingleChainIkConstraint",
@@ -2072,6 +2145,68 @@ One displacement-smoothing pass softens the transition to pinned borders.""",
         "see_also": [("skin_mover", "Skin Mover"),
                      ("delta_mush_mover", "Delta Mush Mover"),
                      ("smooth_mover", "Smooth Mover")],
+    },
+    "cloth_mover": {
+        "title": "Cloth Mover",
+        "schema": "RigExecClothMover",
+        "example_key": "cloth_mover",
+        "summary": "Cloth on one mesh, simulated over the frames before the current one, colliding with the body.",
+        "description": """Makes one mesh behave as cloth: it hangs, swings and folds
+under gravity, keeps its edge lengths, and slides over the meshes it collides
+with. Pinned points follow the mesh's incoming points -- usually a skinned
+garment -- and the rest are simulated. The result at a frame is a simulation
+over a fixed window of the frames before it, so scrubbing, playback, a
+background cache and a `.rigexec` reader agree. While a control is dragged,
+the earlier frames stay the authored ones, so the pinned points follow the
+drag and the rest of the cloth trails behind; the swing plays when time
+moves. The live evaluator solves the window on the GPU when
+the cloth is large enough and nothing else in the rig reads its points.
+See [Secondary motion and cloth](../concepts/secondary-motion.md) for the
+window, the GPU path and their costs, and
+[algorithm references](../references.md) for the methods.""",
+        "how_it_works": """At each of the `rigExec:windowFrames` frames before the
+current one, and at the current one, the mover captures its inputs: the
+points entering it, every collider's points (at the relationship's
+`rigExecReadPhase`; `final` collides with the posed body) and its parameters.
+The earlier frames are generations of the same compiled graph at those times,
+run only as far as the cloth's inputs reach, reading the authored stage. The
+solve (`clothKernel.h`) then starts the cloth on its incoming points at the
+oldest frame, moving with them, and steps it to the current frame:
+`rigExec:substeps` small steps per frame of extended position-based dynamics,
+each predicting the points under gravity, projecting the stretch and bend
+constraints colour by colour (no two constraints of a colour share a point),
+limiting each free point to its pin's rest distance (tethers), pulling points
+toward their incoming positions by their pin weight and `inputs:attract`, and
+pushing points out of the collider triangles they are within reach of, with
+friction. A point closes the collision gap along the closest violated
+triangle's normal, and a triangle counts only when its closest point is within
+`max(thickness, collisionDepth)`. The common mover envelope blends the
+result. On the GPU the same passes run as compute dispatches at the
+publication boundary, one per pass over the whole cloth.""",
+        "wiring": [
+            ("`rigExec:moves`", "One native mesh's points property: the cloth.", "yes"),
+            ("`rigExec:colliders`", "Meshes the cloth collides with; `rigExecReadPhase = \"final\"` reads their posed points.", "no"),
+            ("`rigExec:pinWeights`", "One weight per cloth point; 1 follows the incoming points exactly.", "no"),
+        ],
+        "param_groups": [("Common mover envelope", "RigExecMoverAPI")],
+        "example": """`cloth_mover.usda` hangs a 17-by-17 curtain from a bar that
+slides left and right while a ball rolls through it. The top row is pinned to
+the bar, and the ball's own matrix mover places it, so the curtain collides
+with the moving ball; the `Bar` and `Ball` controls sit on what they move.
+Each frame re-simulates the 16 frames before it, in about 11 ms on one CPU
+core. The last 16 frames are at rest, so the loop ends on its first frame.
+Dragging `Bar` in usdview carries the top row with it while the hem stays
+nearly where the authored frames left it, so the curtain slants back against
+the drag; it swings once time moves.""",
+        "tips": [
+            "Place the cloth above its garment's skin mover: the bottom sibling runs first.",
+            "Collider points must be in the cloth mesh's local space, as meshes skinned under one rig usually are.",
+            "Window frames and substeps set the cost: each evaluation solves windowFrames x substeps steps.",
+            "Large cloths (2048 points and more by default) solve on the GPU in the live viewer; RIGEXEC_GPU_CLOTH=0 keeps them on the CPU.",
+            "Topology, rest points and pins are fixed for a compile; editing them recompiles.",
+        ],
+        "see_also": [("harmonics_constraint", "Harmonics Constraint"), ("wrinkle_mover", "Wrinkle Mover"),
+                     ("skin_mover", "Skin Mover")],
     },
     "volume_correct_mover": {
         "title": "Volume Correct Mover",

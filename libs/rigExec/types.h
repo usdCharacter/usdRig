@@ -395,6 +395,10 @@ struct RigExecMoverParameters {
     const RigExecMoverHandler *externalHandler = nullptr;
     TfToken externalSchema;
     VtValue externalData;
+    /// A windowed external revision's run (rigExecGraph/windowHistory.h),
+    /// pointed at by the step body for the length of the kernel run and
+    /// null otherwise. Not part of the packet's value: excluded from ==.
+    struct RigExecWindowRun *window = nullptr;
 
     bool operator==(const RigExecMoverParameters &o) const {
         return kind == o.kind && enabled == o.enabled && valid == o.valid &&

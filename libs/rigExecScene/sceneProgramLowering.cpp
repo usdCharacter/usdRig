@@ -81,6 +81,10 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     for(const auto &[owner,targets]:moverTargets) {
         const auto node=scene.nodes.find(owner);if(node==scene.nodes.end())return Fail(error,"missing mover node");
         const auto *handler=RigExecFindMoverHandler(node->second.fact.type);
+        // A windowed mover reads earlier frames, which the scene program has
+        // no history ticks for.
+        if(handler && handler->windowFrames)
+            return Fail(error,"the scene program does not run a windowed mover: "+node->second.fact.type.GetString()+" "+owner.GetString());
         if(handler && handler->singleTarget && targets.size()!=1)
             return Fail(error,node->second.fact.type.GetString()+" "+owner.GetString()+" must have exactly one canonical points target in v0.1 (multi-target fan-out would alias mover-level parameters)");
         if(handler && handler->legacyEnvelopeAttribute) {
@@ -582,6 +586,8 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
             if(!RigExecLowerSceneConstraint(scene,a.owner,{a.target},&source,error))return false;
             if(source.record.kind==RigExecConstraintKind::IkFkMatch)
                 return Fail(error,"the scene program does not run an IK/FK match: "+a.owner.GetString());
+            if(source.record.kind==RigExecConstraintKind::Harmonics)
+                return Fail(error,"the scene program does not run a harmonics constraint: "+a.owner.GetString());
             target.incoming=application.incoming;target.output=application.candidate;
             RigExecSceneCompileInputs facts(scene);const auto weightTargets=facts.Targets(a.owner.AppendProperty(TfToken("rigExec:weightObject")));
             if(!weightTargets.empty() && !bindField(a.owner,weightTargets.front(),a.target,UINT64_MAX,key,&target.weight))return false;

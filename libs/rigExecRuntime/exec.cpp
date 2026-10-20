@@ -595,6 +595,104 @@ RigExecRuntimeReader::SampleGeometryForTesting(std::string *error)
     return RrPrologueGeometry(_program.get(), &diagnostics, error);
 }
 
+size_t
+RigExecRuntimeReader::GetWindowedOperationCount() const
+{
+    return _program->windowedOps.size();
+}
+
+size_t
+RigExecRuntimeReader::GetHistoryDepth() const
+{
+    std::vector<uint32_t> frames;
+    std::vector<std::vector<uint32_t>> inner;
+    for (const RrProgram::WindowedOp &op : _program->windowedOps) {
+        frames.push_back(op.frames);
+        inner.push_back(op.inner);
+    }
+    return RigExecWindowHistoryDepth(frames, inner);
+}
+
+void
+RigExecRuntimeReader::PushHistory()
+{
+    RrProgram &program = *_program;
+    RrStore &store = program.store;
+    for (size_t w = 0; w < program.windowedOps.size() &&
+                       w < store.windowRings.size() &&
+                       w < store.windowCaptures.size();
+         ++w) {
+        RigExecWindowRing &ring = store.windowRings[w];
+        ring.push_back(store.windowCaptures[w]);
+        const size_t keep = program.windowedOps[w].frames;
+        if (ring.size() > keep)
+            ring.erase(ring.begin(), ring.begin() + std::ptrdiff_t(ring.size() - keep));
+        store.windowRingChanged[w] = 1;
+    }
+}
+
+void
+RigExecRuntimeReader::ClearHistory()
+{
+    RrStore &store = _program->store;
+    for (size_t w = 0; w < store.windowRings.size(); ++w) {
+        if (!store.windowRings[w].empty()) store.windowRingChanged[w] = 1;
+        store.windowRings[w].clear();
+    }
+}
+
+bool
+RigExecRuntimeReader::ExecuteHistory(std::string *error)
+{
+    RrProgram &program = *_program;
+    if (program.windowedOps.empty()) return true;
+    if (!_history) {
+        if (!_historyBytes) {
+            if (error) *error = "the reader kept no bytes for its history";
+            return false;
+        }
+        _history = Open(_historyBytes->data(), _historyBytes->size(), error);
+        if (!_history) return false;
+        _history->_historyBytes.reset();
+    }
+    RrProgram &tick = *_history->_program;
+    // The kernels installed here; their prepared states are immutable.
+    for (size_t k = 0; k < program.externals.size() && k < tick.externals.size(); ++k) {
+        tick.externals[k].kernel = program.externals[k].kernel;
+        tick.externals[k].state = program.externals[k].state;
+    }
+    RrInputsCopyCurrent(program, &tick);
+    tick.store.windowRings = program.store.windowRings;
+    std::fill(tick.store.windowRingChanged.begin(),
+              tick.store.windowRingChanged.end(), char(1));
+    if (!_history->_RunHistoryTick(error)) return false;
+    program.store.windowRings = tick.store.windowRings;
+    std::fill(program.store.windowRingChanged.begin(),
+              program.store.windowRingChanged.end(), char(1));
+    return true;
+}
+
+// One history tick on this program, which runs nothing else: the masked
+// graph at the inputs as set, its captures pushed as the newest tick.
+bool
+RigExecRuntimeReader::_RunHistoryTick(std::string *error)
+{
+    RrProgram &program = *_program;
+    RrStore &store = program.store;
+    store.runTrace.clear();
+    RrInputsApplyTouched(&program);
+    std::vector<std::string> diagnostics;
+    RrProloguePose(&program);
+    store.historyTick = true;
+    const bool ran = RrPrologueGeometry(&program, &diagnostics, error) &&
+                     RrRunSteps(&program, false, error);
+    store.historyTick = false;
+    RrShareLatticeBinds(&program);
+    if (!ran) return false;
+    PushHistory();
+    return true;
+}
+
 bool
 RigExecRuntimeReader::Execute(std::string *error)
 {

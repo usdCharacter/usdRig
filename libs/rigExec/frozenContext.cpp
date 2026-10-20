@@ -126,6 +126,7 @@ RigExecFrameInputs::Clear()
     staticSamples.reset();
     digestOrder.reset();
     upstream.clear();
+    windowRings.clear();
 }
 
 bool
@@ -259,6 +260,28 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
     pose.time = inputs.time;
     pose.valid = false;
     return pose;
+}
+
+bool
+RigExecRunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
+                            const RigExecFrameInputs &inputs,
+                            const std::vector<RigExecWindowRing> &rings,
+                            std::vector<RigExecWindowPacketPtr> *captures,
+                            std::string *error)
+{
+    const auto fail = [error](const char *why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (!captures) return fail("no capture destination");
+    captures->clear();
+    if (!context.frozen) return fail("no frozen program");
+    if (context.flags & kRigExecFrozenBakeRefused) return fail("no admitted program");
+    if (inputs.values.size() != context.varyingInputCount)
+        return fail("history inputs were sampled for another program");
+    if (!_RunFrozenHistoryTick(context, inputs, rings, captures))
+        return fail("the history tick declined");
+    return true;
 }
 
 RigExecFrozenStepRunner

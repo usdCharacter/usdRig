@@ -883,6 +883,19 @@ _FileFill::_Constraint(size_t index, fb::RigExecWireConstraint *out)
         }
         out->matchPoleParentRides = constraint.matchPoleParentRides;
     }
+    out->harmonics = constraint.harmonics;
+    if (constraint.harmonics) {
+        for (size_t k = 0; k < constraint.harmonicsScalars.size(); ++k) {
+            out->harmonicsScalars.push_back(read(22 + k));
+        }
+        out->harmonicsConstants = {constraint.harmonicsSettings.waves,
+                                   constraint.harmonicsSettings.waveLength,
+                                   constraint.harmonicsSettings.frequency};
+        out->harmonicsIgnoreFirstFrame =
+            constraint.harmonicsSettings.ignoreFirstFrame;
+        out->harmonicsMatchVelocity = constraint.harmonicsMatchVelocity;
+    }
+    out->window = int32_t(constraint.window);
 }
 
 void
@@ -1713,6 +1726,14 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
         fb::RigExecWireCommonCycle row;
         row.keys = cycle;
         common.cycles.push_back(std::move(row));
+    }
+    // The windowed operations by step; a reader settles the rest from the
+    // common graph.
+    for (const auto &op : _program.windowedOps) {
+        fb::RigExecWireWindowedOp row;
+        row.step = int32_t(op.step);
+        row.frames = op.frames;
+        file->windowedOps.push_back(row);
     }
     RigExecProviderPlainProgram provider;
     if (!RigExecExportProviderRecords(_program.GetProviderProgram(),

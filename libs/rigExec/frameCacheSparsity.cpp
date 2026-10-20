@@ -337,6 +337,17 @@ RigExecCanReuseRetainedPose(const RigExecOutputAffectedIndex &index,
         !_SameVaryingRevisionLeaves(cached.inputs, requested)) {
         return false;
     }
+    // A windowed operation's history has no control id either: another
+    // history is another frame.
+    if (cached.inputs.windowRings.size() != requested.windowRings.size()) {
+        return false;
+    }
+    for (size_t w = 0; w < requested.windowRings.size(); ++w) {
+        if (!RigExecWindowRingsEqual(cached.inputs.windowRings[w],
+                                     requested.windowRings[w])) {
+            return false;
+        }
+    }
     const auto completeLayouts=[](const RigExecFrameInputs &inputs) {
         if(inputs.layoutLeaves.size()!=inputs.layoutSourcePaths.size()) return false;
         for(size_t row=0;row<inputs.layoutLeaves.size();++row) {

@@ -15,6 +15,8 @@
 #include "bakedTrace.h"
 #include "tapSet.h"
 
+#include "rigExecGraph/windowHistory.h"
+
 #include "rigExecMath/pointFrame.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -273,6 +275,26 @@ public:
     RigExecBakedBail GetLastBail() const { return _lastBail; }
 
     void RequestFullRun() const { _fullRunRequested = true; }
+
+    /// One windowed operation (rigExecGraph/windowHistory.h): a step whose
+    /// solve reads the inputs it captured over the `frames` earlier ticks.
+    struct WindowedOpInfo {
+        SdfPath path;
+        uint32_t frames = 0;
+        /// Windowed ops (indices here) whose results its inputs depend on.
+        std::vector<uint32_t> inner;
+        /// Another windowed op depends on this one's result.
+        bool feedsWindow = false;
+    };
+    /// Every windowed operation, in program order; empty for most rigs.
+    std::vector<WindowedOpInfo> GetWindowedOps() const;
+    size_t GetWindowedOpCount() const;
+    /// Places the earlier ticks' packets for the next Run: one ring per
+    /// windowed op, oldest first. A ring that changed re-runs its op.
+    void SetWindowRings(const std::vector<RigExecWindowRing> &rings);
+    /// The packet each windowed op's body captured at the last Run's time,
+    /// null where it captured nothing.
+    std::vector<RigExecWindowPacketPtr> GetWindowCaptures() const;
 
     /// Samples the stage-frame prologue's reads at \p time into \p seeds.
     ///

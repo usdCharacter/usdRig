@@ -33,6 +33,8 @@ table PresentationMaterial {
   specular: float;
   wrap_s: PresentationWrap;
   wrap_t: PresentationWrap;
+  /// Version 2: material opacity; 1 is opaque.
+  opacity: float = 1;
 }
 
 table PresentationMesh {
@@ -51,6 +53,11 @@ table PresentationMesh {
   /// Two per vertex_indices entry.
   uvs: [float];
   material: PresentationMaterial;
+  /// Version 2 rigid meshes: an evaluated provider transform moves
+  /// static positions/normals instead of deforming stencil points.
+  transform_path: string;
+  positions: [float];
+  normals: [float];
 }
 
 table Presentation {

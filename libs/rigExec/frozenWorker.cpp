@@ -683,12 +683,51 @@ _FrozenPlaceUpstream(RigExecBakedProgramImpl *program,
 bool _RunFrozen(const RigExecFrozenEvalContext &context,
                 const RigExecFrameInputs &inputs, RigExecRigPose *pose);
 
-// Runs one frozen frame: acquire, sample placement, common graph, publication.
-// False denotes incompatible transport or fatal execution; a declined run
-// leaves the pose invalid and publishes nothing.
+namespace {
+
+// A history tick of a windowed rig: the inner windowed ops' rings, and where
+// the windowed ops' captures go.
+struct _HistoryTick {
+    const std::vector<RigExecWindowRing> *rings = nullptr;
+    std::vector<RigExecWindowPacketPtr> *captures = nullptr;
+};
+
+bool _RunFrozenWith(const RigExecFrozenEvalContext &context,
+                    const RigExecFrameInputs &inputs, RigExecRigPose *pose,
+                    const _HistoryTick *history);
+
+}  // namespace
+
 bool
 _RunFrozen(const RigExecFrozenEvalContext &context,
            const RigExecFrameInputs &inputs, RigExecRigPose *pose)
+{
+    return _RunFrozenWith(context, inputs, pose, nullptr);
+}
+
+bool
+_RunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
+                      const RigExecFrameInputs &inputs,
+                      const std::vector<RigExecWindowRing> &rings,
+                      std::vector<RigExecWindowPacketPtr> *captures)
+{
+    _HistoryTick tick;
+    tick.rings = &rings;
+    tick.captures = captures;
+    RigExecRigPose scratch;
+    return _RunFrozenWith(context, inputs, &scratch, &tick);
+}
+
+namespace {
+
+// Runs one frozen frame: acquire, sample placement, common graph, publication.
+// False denotes incompatible transport or fatal execution; a declined run
+// leaves the pose invalid and publishes nothing. A history tick runs the
+// windowed ops' closure and returns their captures instead of publishing.
+bool
+_RunFrozenWith(const RigExecFrozenEvalContext &context,
+               const RigExecFrameInputs &inputs, RigExecRigPose *pose,
+               const _HistoryTick *history)
 {
     if (!pose || !context.frozen) {
         return false;
@@ -796,6 +835,15 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
         return false;
     }
 
+    // The rings this run reads: the inner windowed ops' at a history tick,
+    // every windowed op's for a published frame.
+    RigExecBakedPlaceWindowRings(&B, history ? *history->rings : inputs.windowRings);
+    B.historyTick = history != nullptr;
+    struct HistoryTickReset {
+        RigExecBakedProgramImpl &program;
+        ~HistoryTickReset() { program.historyTick = false; }
+    } historyTickReset{B};
+
     const UsdTimeCode time = inputs.time;
     RigExecRigPose working;
     RigExecBakedClearRunStamps(&B);
@@ -810,6 +858,14 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
     }
     if (!_FrozenExecuteGraph(&worker, time)) {
         return false;
+    }
+    if (history) {
+        // Nothing is published at a history tick; an unadmitted frame
+        // captured nothing usable.
+        if (!B.requiredStageFramesAdmission.admitted) return false;
+        if (history->captures) *history->captures = B.windowCaptures;
+        release.complete = true;
+        return true;
     }
 
     if (!B.requiredStageFramesAdmission.admitted) {
@@ -852,6 +908,8 @@ _RunFrozen(const RigExecFrozenEvalContext &context,
     release.complete = true;
     return true;
 }
+
+}  // namespace
 
 } // namespace frozenDetail
 

@@ -1,9 +1,12 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExec/rigEvaluator.h"
+#include "rigExec/moverGraph.h"
+#include "rigExec/parallel.h"
 #include "rigExecRigging/rigBuilder.h"
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"
 #include <cstring>
+#include <cstdio>
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/usd/usdGeom/mesh.h"
@@ -11,6 +14,11 @@
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
+#include <atomic>
+#if defined(_M_X64) || defined(_M_IX86) || defined(__SSE2__)
+#include <xmmintrin.h>
+#endif
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 #define CHECK(x) do {if(!(x))throw std::runtime_error(#x);}while(false)
@@ -124,10 +132,342 @@ static void CheckReferenceFixtures() {
         }));
     }
 }
+// The envelope-support kernel must equal the full kernel bit for bit on every
+// active vertex and leave every other point as it entered, for every
+// smoothing mode, frame transport, border pin, distance weight and per-vertex
+// smoothing weight. The mesh mixes quads and triangles so quad diagonals (two
+// edge rings apart, but one face apart) are exercised.
+// Splits every loop it is given into slices of 7 elements dealt round-robin
+// to four threads, ignoring the grain, so a kernel whose slices are not
+// independent shows up as a mismatch against its serial run.
+static const RigExecRangeRunner kInterleavedRanges =
+    [](size_t count, size_t, const RigExecRangeBody &body) {
+        constexpr size_t slice = 7, threads = 4;
+        std::vector<std::thread> pool;
+        for (size_t t = 0; t < threads; ++t)
+            pool.emplace_back([&body, count, t] {
+                for (size_t b = t * slice; b < count; b += threads * slice)
+                    body(b, std::min(count, b + slice));
+            });
+        for (std::thread &thread : pool) thread.join();
+    };
+
+static bool SameBytes(const std::vector<GfVec3f> &a, const std::vector<GfVec3f> &b) {
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(GfVec3f)) == 0;
+}
+
+
+// The floating-point environment (codex review, round 4). A host may run with
+// flush-to-zero, denormals-are-zero or another rounding mode. Split loops
+// must then still round as the calling thread does, and the radial matrix
+// kernel's zero-weight shortcut must still return what the identity
+// transform returns on that thread.
+static bool SameBytes(const std::vector<GfVec3f> &a, const std::vector<GfVec3f> &b);
+
+static void CheckFloatEnvironment() {
+#if defined(_M_X64) || defined(_M_IX86) || defined(__SSE2__)
+    const unsigned saved = _mm_getcsr();
+    CHECK(RigExecFloatEnvironmentIsDefault());
+    const unsigned environments[] = {
+        saved,
+        saved | 0x8040u,                      // flush-to-zero + denormals-are-zero
+        saved | 0x8000u,                      // flush-to-zero only
+        (saved & ~0x6000u) | 0x2000u,         // round toward negative
+    };
+    for (unsigned csr : environments) {
+        _mm_setcsr(csr);
+        CHECK(RigExecFloatEnvironmentIsDefault() == (csr == saved));
+        // Every slice of a split loop runs in the caller's environment.
+        std::atomic<bool> same(true);
+        // Control bits only; the low six are sticky status flags.
+        RigExecParallelForInCallerEnvironment(1 << 16, 256, [&](size_t, size_t) {
+            if ((_mm_getcsr() & ~0x3Fu) != (csr & ~0x3Fu)) same = false;
+        });
+        CHECK(same.load());
+        CHECK((_mm_getcsr() & ~0x3Fu) == (csr & ~0x3Fu));
+        // The radial kernel at weight 0 against the identity's own arithmetic
+        // on this thread: subnormals (flushed under FTZ/DAZ), -0 (kept by
+        // rounding toward negative), ordinary values.
+        RigExecMoverParameters p;
+        p.radialWeight = true;
+        p.transform = GfMatrix4d().SetTranslate(GfVec3d(0.5, -2, 3));
+        const std::vector<GfVec3f> entering{
+            {1e-40f, 1.0f, 2.0f}, {-0.0f, -1.0f, 2.0f}, {0.5f, -0.0f, 3.0f},
+            {-1e-41f, -0.0f, -0.0f}, {123.25f, 0.0f, -7.5f}};
+        const std::vector<float> zero(entering.size(), 0.0f);
+        auto shortcut = entering;
+        RigExecApplyMatrixKernelRange(p, zero.data(), 0, shortcut.size(), shortcut.data(), false);
+        for (size_t i = 0; i < entering.size(); ++i) {
+            const GfVec3f identity(GfMatrix4d(1.0).TransformAffine(GfVec3d(entering[i])));
+            CHECK(std::memcmp(&identity, &shortcut[i], sizeof(GfVec3f)) == 0);
+        }
+    }
+    _mm_setcsr(saved);
+    CHECK(RigExecFloatEnvironmentIsDefault());
+    // The masked delta mush memo remembers the control state with its result
+    // (codex review, round 5): a result cached under the default environment
+    // is not handed back under FTZ/DAZ, where the same inputs flush.
+    {
+        const std::vector<GfVec3f> restTwo{{0,0,0},{1,0,0},{0,1,0},{3,0,0},{4,0,0},{3,1,0}};
+        const std::vector<int> countsTwo{3, 3}, indicesTwo{0,1,2,3,4,5};
+        RigExecDeltaMushSettings settings;
+        settings.smoothing = RigExecDeltaMushSmoothing::Simple;
+        settings.onlySmooth = true;
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> data;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(restTwo, countsTwo, indicesTwo, 1, 0.5,
+                                                                false, 0, settings, &data)));
+        std::vector<GfVec3f> tiny = restTwo;
+        for (GfVec3f &p : tiny) p[0] = 1e-40f;
+        std::vector<char> mask(6, 0); mask[0] = 1;
+        RigExecDeltaMushMaskMemo<GfVec3f> memo;
+        auto first = tiny;
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&first, data, 1.0, mask, nullptr, &memo));
+        _mm_setcsr(saved | 0x8040u);
+        auto cached = tiny, fresh = tiny;
+        const bool cachedOk = RigExecApplyDeltaMushWithRestDataMasked(&cached, data, 1.0, mask, nullptr, &memo);
+        const bool freshOk = RigExecApplyDeltaMushWithRestDataMasked(&fresh, data, 1.0, mask);
+        _mm_setcsr(saved);
+        CHECK(cachedOk && freshOk);
+        CHECK(SameBytes(cached, fresh));
+        CHECK(!SameBytes(first, fresh));   // the environment really changes the answer
+        auto again = tiny;
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&again, data, 1.0, mask, nullptr, &memo));
+        CHECK(SameBytes(again, first));
+    }
+#endif
+}
+
+static void CheckMaskedMatchesFull() {
+    const int W = 24, H = 18;
+    std::vector<GfVec3f> rest;
+    for (int y = 0; y <= H; ++y)
+        for (int x = 0; x <= W; ++x)
+            rest.emplace_back(0.1f * x, 0.1f * y, 0.05f * std::sin(0.4f * x) * std::cos(0.3f * y));
+    std::vector<int> counts, indices;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            const int a = y * (W + 1) + x, b = a + 1, c = a + W + 2, d = a + W + 1;
+            if ((x + y) % 3 == 0) { counts.insert(counts.end(), {3, 3}); indices.insert(indices.end(), {a, b, c, a, c, d}); }
+            else { counts.push_back(4); indices.insert(indices.end(), {a, b, c, d}); }
+        }
+    std::vector<GfVec3f> posed = rest;
+    for (size_t i = 0; i < posed.size(); ++i)
+        posed[i] += GfVec3f(0.03f * std::sin(1.7f * float(i)), 0.02f * std::cos(0.9f * float(i)),
+                            0.08f * std::sin(0.11f * float(i)));
+    std::vector<char> active(rest.size(), 0);
+    for (size_t i = 0; i < rest.size(); ++i) {
+        const GfVec3f d = rest[i] - GfVec3f(1.1f, 0.9f, 0);
+        active[i] = d[0] * d[0] + d[1] * d[1] < 0.16f;          // a disc of ~50 vertices
+    }
+    active[0] = 1;                                              // and a border corner
+    std::vector<float> smoothWeights(rest.size());
+    for (size_t i = 0; i < rest.size(); ++i) smoothWeights[i] = float((i * 7) % 10) / 9.0f;
+    size_t cases = 0;
+    for (auto smoothing : {RigExecDeltaMushSmoothing::Rest, RigExecDeltaMushSmoothing::Simple,
+                           RigExecDeltaMushSmoothing::LengthWeighted})
+    for (auto transport : {RigExecDeltaMushFrameTransport::Corner, RigExecDeltaMushFrameTransport::Vertex})
+    for (bool onlySmooth : {false, true})
+    for (bool pin : {true, false})
+    for (bool weighted : {false, true})
+    for (double distanceWeight : {0.0, 0.5}) {
+        RigExecDeltaMushSettings settings;
+        settings.smoothing = smoothing; settings.frameTransport = transport; settings.onlySmooth = onlySmooth;
+        if (weighted) settings.smoothWeights = smoothWeights;
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> restData;
+        if (!RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(rest, counts, indices, 5, 0.5, pin,
+                                                              distanceWeight, settings, &restData))
+            continue;
+        auto full = posed, masked = posed;
+        CHECK(RigExecApplyDeltaMushWithRestData(&full, restData, 0.8));
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&masked, restData, 0.8, active));
+        for (size_t i = 0; i < rest.size(); ++i) {
+            const GfVec3f &want = active[i] ? full[i] : posed[i];
+            CHECK(std::memcmp(&masked[i], &want, sizeof(GfVec3f)) == 0);
+        }
+        // Split across threads: the same bytes, and the same verdict.
+        auto threaded = posed;
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&threaded, restData, 0.8, active,
+                                                      &kInterleavedRanges));
+        CHECK(SameBytes(threaded, masked));
+        CHECK(RigExecDeltaMushMaskPreservesVerdict(posed, restData, 0.8) ==
+              RigExecDeltaMushMaskPreservesVerdict(posed, restData, 0.8, &kInterleavedRanges));
+        // The memo answers every call exactly as a fresh call does: a
+        // repeat, an edit no active result reads, an edit one does, a new
+        // displacement, a new mask, and the original again.
+        {
+            RigExecDeltaMushMaskMemo<GfVec3f> memo;
+            const auto viaMemo = [&](std::vector<GfVec3f> in, double displacement,
+                                     const std::vector<char> &mask) {
+                CHECK(RigExecApplyDeltaMushWithRestDataMasked(&in, restData, displacement, mask,
+                                                              &kInterleavedRanges, &memo));
+                return in;
+            };
+            const auto fresh = [&](std::vector<GfVec3f> in, double displacement,
+                                   const std::vector<char> &mask) {
+                CHECK(RigExecApplyDeltaMushWithRestDataMasked(&in, restData, displacement, mask));
+                return in;
+            };
+            auto outside = posed, inside = posed;
+            outside.back() += GfVec3f(0.01f, -0.02f, 0.03f);   // the corner opposite the disc
+            for (size_t i = 0; i < inside.size(); ++i)
+                if (active[i] && i != 0) { inside[i] += GfVec3f(0.005f, 0, 0); break; }
+            std::vector<char> smaller = active; smaller[0] = 0;
+            CHECK(SameBytes(viaMemo(posed, 0.8, active), masked));
+            CHECK(SameBytes(viaMemo(posed, 0.8, active), masked));
+            CHECK(SameBytes(viaMemo(outside, 0.8, active), fresh(outside, 0.8, active)));
+            CHECK(SameBytes(viaMemo(inside, 0.8, active), fresh(inside, 0.8, active)));
+            CHECK(SameBytes(viaMemo(inside, 0.5, active), fresh(inside, 0.5, active)));
+            CHECK(SameBytes(viaMemo(inside, 0.5, smaller), fresh(inside, 0.5, smaller)));
+            CHECK(SameBytes(viaMemo(posed, 0.8, active), masked));
+            // Copy on write: a copy of the memo (what a program clone holds)
+            // shares the published plan and result, and a call through the
+            // copy replaces the copy's pointers without touching what the
+            // original points at.
+            {
+                using Memo = RigExecDeltaMushMaskMemo<GfVec3f>;
+                Memo clone = memo;
+                CHECK(clone.plan == memo.plan && clone.result == memo.result);
+                const auto plan0 = memo.plan;
+                const auto result0 = memo.result;
+                const std::vector<GfVec3f> held = result0 ? result0->activeResult
+                                                          : std::vector<GfVec3f>();
+                auto viaClone = inside;
+                CHECK(RigExecApplyDeltaMushWithRestDataMasked(&viaClone, restData, 0.5, smaller,
+                                                              &kInterleavedRanges, &clone));
+                CHECK(SameBytes(viaClone, fresh(inside, 0.5, smaller)));
+                CHECK(memo.plan == plan0 && memo.result == result0);
+                CHECK(!result0 || SameBytes(result0->activeResult, held));
+                CHECK(clone.plan != plan0);
+            }
+            // The memo is really consulted: a poisoned result comes back for
+            // an input it may reuse, and a recompute replaces it otherwise.
+            // Where the control word cannot be read, nothing is ever reused.
+            {
+                using Memo = RigExecDeltaMushMaskMemo<GfVec3f>;
+                auto poisoned = std::make_shared<Memo::Result>(*memo.result);
+                for (auto &p : poisoned->activeResult) p = GfVec3f(7);
+                memo.result = poisoned;
+            }
+            const auto reused = viaMemo(outside, 0.8, active);
+            if (RigExecFloatControlWord() != kRigExecUnknownFloatControl)
+                CHECK(memo.result && reused[memo.plan->activeList.front()] == GfVec3f(7));
+            else
+                CHECK(SameBytes(reused, fresh(outside, 0.8, active)));
+            CHECK(SameBytes(viaMemo(inside, 0.8, active), fresh(inside, 0.8, active)));
+        }
+        ++cases;
+    }
+    CHECK(cases >= 40);
+    // No active vertex is a pass-through; a full mask is the full kernel.
+    RigExecDeltaMushRestData<GfVec3f, GfVec3d> restData;
+    CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(rest, counts, indices, 5, 0.5, true, 0,
+                                                            RigExecDeltaMushSettings(), &restData)));
+    auto none = posed;
+    CHECK(RigExecApplyDeltaMushWithRestDataMasked(&none, restData, 1.0, std::vector<char>(rest.size(), 0)));
+    CHECK(std::memcmp(none.data(), posed.data(), posed.size() * sizeof(GfVec3f)) == 0);
+    auto all = posed, reference = posed;
+    CHECK(RigExecApplyDeltaMushWithRestDataMasked(&all, restData, 1.0, std::vector<char>(rest.size(), 1)));
+    CHECK(RigExecApplyDeltaMushWithRestData(&reference, restData, 1.0));
+    CHECK(std::memcmp(all.data(), reference.data(), posed.size() * sizeof(GfVec3f)) == 0);
+    // A mask of the wrong size is refused and leaves the points alone.
+    auto refused = posed;
+    CHECK(!RigExecApplyDeltaMushWithRestDataMasked(&refused, restData, 1.0, std::vector<char>(3, 1)));
+    CHECK(refused == posed);
+    // The default frame transport is vertex, which is never substituted.
+    CHECK(!RigExecDeltaMushMaskPreservesVerdict(posed, restData, 1.0));
+
+    // Verdict preservation (codex review): two disconnected triangles, only
+    // vertex 0 active, the second triangle collapsed to a point. Vertex
+    // transport fails the whole full kernel on the collapsed frame, which the
+    // masked kernel cannot see, so a host must not substitute it there.
+    // Corner transport tolerates the collapse, so the two agree and the
+    // substitution stays allowed.
+    const std::vector<GfVec3f> twoRest{{0,0,0},{1,0,0},{0,1,0},{3,0,0},{4,0,0},{3,1,0}};
+    const std::vector<int> twoCounts{3, 3}, twoIndices{0,1,2,3,4,5};
+    auto twoPosed = twoRest;
+    for (int i = 0; i < 3; ++i) twoPosed[i] *= 2.0f;
+    for (int i = 3; i < 6; ++i) twoPosed[i] = GfVec3f(3, 0, 0);
+    std::vector<char> first(6, 0); first[0] = 1;
+    for (auto transport : {RigExecDeltaMushFrameTransport::Vertex, RigExecDeltaMushFrameTransport::Corner}) {
+        RigExecDeltaMushSettings settings; settings.frameTransport = transport;
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> twoData;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(twoRest, twoCounts, twoIndices, 1, 0.5,
+                                                                false, 0, settings, &twoData)));
+        auto full = twoPosed, masked = twoPosed;
+        const bool fullOk = RigExecApplyDeltaMushWithRestData(&full, twoData, 1.0);
+        const bool maskedOk = RigExecApplyDeltaMushWithRestDataMasked(&masked, twoData, 1.0, first);
+        if (transport == RigExecDeltaMushFrameTransport::Vertex) {
+            CHECK(!fullOk && maskedOk);                     // the verdicts really differ
+            CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoPosed, twoData, 1.0));
+        } else {
+            CHECK(fullOk && maskedOk);
+            CHECK(std::memcmp(&full[0], &masked[0], sizeof(GfVec3f)) == 0);
+            CHECK(RigExecDeltaMushMaskPreservesVerdict(twoPosed, twoData, 1.0));
+        }
+    }
+
+    // Atomicity (codex review): finite entering points, vertex 0 computes
+    // normally, then vertex 3 overflows (an extrapolating simple step drives
+    // it past float max). The call fails and every point is untouched; the
+    // full kernel fails too and the magnitudes are never substituted.
+    {
+        RigExecDeltaMushSettings settings;
+        settings.smoothing = RigExecDeltaMushSmoothing::Simple;
+        settings.frameTransport = RigExecDeltaMushFrameTransport::Corner;
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> data;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(twoRest, twoCounts, twoIndices, 1, 3.0,
+                                                                false, 0, settings, &data)));
+        auto entering = twoRest;
+        entering[3] = GfVec3f(1e38f, 0, 0); entering[4] = GfVec3f(-1e38f, 0, 0);
+        entering[5] = GfVec3f(-1e38f, 1, 0);
+        std::vector<char> both(6, 0); both[0] = both[3] = 1;
+        auto attempt = entering, full = entering;
+        CHECK(!RigExecApplyDeltaMushWithRestDataMasked(&attempt, data, 1.0, both));
+        CHECK(std::memcmp(attempt.data(), entering.data(), 6 * sizeof(GfVec3f)) == 0);
+        CHECK(!RigExecApplyDeltaMushWithRestData(&full, data, 1.0));
+        CHECK(!RigExecDeltaMushMaskPreservesVerdict(entering, data, 1.0));
+    }
+    // Rest-side verdict gaps (codex review), both proved unsafe by the builder:
+    // (a) inverse-distance weights that underflow to zero (0/0 in the full
+    //     kernel on a triangle outside the support);
+    // (b) rest minus smoothed rest that overflows before the displacement
+    //     scale (NaN even at displacement 0).
+    {
+        RigExecDeltaMushSettings onlySmooth; onlySmooth.onlySmooth = true;
+        std::vector<GfVec3f> farRest = twoRest;
+        for (int i = 3; i < 6; ++i) farRest[i] = twoRest[i] * 5e37f;   // finite; edges ~5e37
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> a;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(farRest, twoCounts, twoIndices, 1, 0.5,
+                                                                false, 10, onlySmooth, &a)));
+        CHECK(!a.maskRestSafe);
+        CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoRest, a, 1.0));
+
+        RigExecDeltaMushSettings corner;
+        corner.smoothing = RigExecDeltaMushSmoothing::Simple;
+        corner.frameTransport = RigExecDeltaMushFrameTransport::Corner;
+        std::vector<GfVec3f> wideRest = twoRest;
+        wideRest[3] = GfVec3f(3e38f, 0, 0); wideRest[4] = GfVec3f(-3e38f, 1, 0);
+        wideRest[5] = GfVec3f(-3e38f, 0, 1);
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> b;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(wideRest, twoCounts, twoIndices, 1, 1.0,
+                                                                false, 0, corner, &b)));
+        CHECK(!b.maskRestSafe);
+        CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoRest, b, 0.0));
+
+        // An ordinary build is proved safe.
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> c;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(twoRest, twoCounts, twoIndices, 2, 0.5,
+                                                                false, 1, corner, &c)));
+        CHECK(c.maskRestSafe);
+        CHECK(RigExecDeltaMushMaskPreservesVerdict(twoRest, c, 1.0));
+    }
+}
 int main(int argc,char **argv) {
  try {
     CHECK(argc==2);PlugRegistry::GetInstance().RegisterPlugins(argv[1]);
     CheckReferenceFixtures();
+    CheckMaskedMatchesFull();
+    CheckFloatEnvironment();
     std::vector<GfVec3f> rest{{1,0,0},{0,1.2f,0},{-1,0,0},{0,-1,0},{0,0,1},{0,0,-1}};
     std::vector<int> counts(8,3),indices{0,1,4,1,2,4,2,3,4,3,0,4,1,0,5,2,1,5,3,2,5,0,3,5};
     auto saved=rest;CHECK(RigExecApplyDeltaMush(&saved,rest,counts,indices));CHECK(Near(saved,rest));

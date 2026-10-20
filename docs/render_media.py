@@ -4,9 +4,10 @@
 Usage: python docs/render_media.py [example.usda ...] [--page KEY]
                                   [--out DIR] [--samples N] [--sheet] [--list]
 
-A bare run renders one GIF per docs page that has one; `--page KEY` renders
-that page alone from whatever stage its OPERATORS entry names, and `--list`
-prints the `<key> <- <stage>` jobs without rendering.
+A bare run renders every GIF the docs pages show; `--page KEY` renders that
+page's alone, from whatever stage its OPERATORS entry names plus any
+"extra_gifs" it lists, and `--list` prints the `<key> <- <stage>` jobs
+without rendering.
 
 Each docs/examples stage is rendered LIVE -- no bake -- through an
 offscreen UsdImagingGL (Storm) engine, so what lands in the GIF is what
@@ -249,6 +250,50 @@ CAMERA_OVERRIDES = {
     # a guide sits in the row instead of by what it is. A shallow yaw puts
     # the whole row across the picture at one size.
     "control": (14.0, -20.0),
+    # The curtain hangs across X and the ball pushes it along Z: from near
+    # the side the bulge runs across the frame instead of into it.
+    "cloth_mover": (64.0, -14.0),
+}
+
+# Operators whose result at a frame depends on the frames before it
+# (docs/concepts/secondary-motion.md). Their pictures are about timing, so
+# a stage holding one is sampled at every authored frame and played at its
+# own frame rate: a six-frame ring sampled every three frames aliases into
+# a slower ring. Such a loop is never played backwards and its extreme pose
+# is not held, since both would show motion the operator did not make.
+WINDOWED_SCHEMAS = frozenset(("RigExecHarmonicsConstraint",
+                              "RigExecClothMover"))
+# The fastest a timed loop plays; a GIF frame delay is whole centiseconds.
+TIMED_FPS_MAX = 30.0
+# Frames between samples of a timed loop, per stage, where every frame is
+# more than the motion needs. Each entry needs a reason.
+TIMED_STEP = {
+    # The curtain has no six-frame ring to alias; it swings and drapes over
+    # tens of frames. Every other frame plays as smoothly at 12 fps, and
+    # a frame of moving wireframe costs about 28 KB.
+    "cloth_mover": 2,
+}
+
+# Rest-pose wire strength per stage, where the default hides the operator.
+# Each entry needs a reason.
+GHOST_ALPHA_OVERRIDES = {}
+# Stages whose rest-pose wire is drawn UNDER the live frame. Each entry
+# needs a reason.
+GHOST_UNDER = frozenset((
+    # The rest curtain is a flat sheet: drawn over the live curtain it
+    # covers the cloth it is the rest pose of, and the folds read only
+    # where the two have separated. Under it, the live cloth hides it
+    # wherever they overlap and the rest shows where the cloth swung away.
+    "cloth_mover",
+))
+
+# Guide size per stage, as (joint, control) factors on JOINT_GUIDE_RADIUS
+# and CONTROL_GUIDE_SCALE. Each entry needs a reason.
+GUIDE_SCALE_OVERRIDES = {
+    # A stalk 24 units tall and at most 2.4 across: joint spheres sized
+    # to the asset's diagonal are wider than the stalk and hide the bend
+    # they pose, and the aim-target spheres cover the segments between.
+    "19_HarmonicsChain": (0.2, 0.3),
 }
 
 # Guides are unit-sized by default, which is right at arm scale and
@@ -412,6 +457,8 @@ class Scene(object):
         self.frames = []
         self.samples = []
         self.pingpong = False
+        self.timed = False      # holds a WINDOWED_SCHEMAS operator
+        self.fps = GIF_FPS
         self.is_mover = False
         self.diag = 1.0
         self.fit = None
@@ -654,10 +701,15 @@ def _neutralise_geometry(stage, skip):
             attr.Set(Vt.Vec3fArray([neutral]))
 
 
-def _apply_guide_overrides(stage, diag):
-    """Size and colour the synthesized guides, in the session layer."""
+def _apply_guide_overrides(stage, diag, scale=(1.0, 1.0)):
+    """Size and colour the synthesized guides, in the session layer.
+
+    `scale` is the (joint, control) factor from GUIDE_SCALE_OVERRIDES.
+    """
     from pxr import Gf, Usd
 
+    joint_radius = diag * JOINT_GUIDE_RADIUS * scale[0]
+    control_scale = diag * CONTROL_GUIDE_SCALE * scale[1]
     steel = Gf.Vec3f(*JOINT_RGB)
     static = Gf.Vec3f(STATIC_CTRL[0] / 255.0, STATIC_CTRL[1] / 255.0,
                       STATIC_CTRL[2] / 255.0)
@@ -670,7 +722,7 @@ def _apply_guide_overrides(stage, diag):
                 for axis in "XYZ":
                     attr = prim.GetAttribute("guide:scale" + axis)
                     if attr:
-                        attr.Set(diag * CONTROL_GUIDE_SCALE)
+                        attr.Set(control_scale)
                 width = prim.GetAttribute("guide:wireWidth")
                 if width:
                     # wireWidth is in the guide's own pre-scale units, so it
@@ -694,7 +746,7 @@ def _apply_guide_overrides(stage, diag):
                     colour.Set(steel)
             radius = prim.GetAttribute("guide:radius")
             if radius:
-                radius.Set(diag * JOINT_GUIDE_RADIUS
+                radius.Set(joint_radius
                            if typename == "RigExecJoint" or SOLVER_GUIDES
                            else 0.0)
             opacity = prim.GetAttribute("guide:displayOpacity")
@@ -1101,9 +1153,13 @@ def _chain_line(stage, scene, moved):
     return "   \u2192   ".join(parts)
 
 
-def prepare_stage(src, samples=TARGET_SAMPLES, schema=None):
+def prepare_stage(src, samples=None, schema=None):
     """Open an example and make it ready to draw: geometry neutralised,
     guides sized to the asset, a ground grid, drivers marked, camera fit.
+
+    `samples` defaults to TARGET_SAMPLES, or for a stage with a windowed
+    operator (WINDOWED_SCHEMAS) to one per TIMED_STEP frames, every frame
+    unless the stage has an entry.
 
     `schema` is the type of the node the PAGE documents. When that is a
     weight object the field it resolves is painted onto its target
@@ -1120,10 +1176,21 @@ def prepare_stage(src, samples=TARGET_SAMPLES, schema=None):
     start = int(stage.GetStartTimeCode())
     end = int(stage.GetEndTimeCode())
     scene.frames = list(range(start, end + 1))
+    scene.timed = any(p.GetTypeName() in WINDOWED_SCHEMAS
+                      for p in stage.Traverse())
 
     span = max(1, end - start)
-    step = span / float(max(1, samples - 1))
-    scene.samples = [start + step * i for i in range(samples)]
+    if samples is None and scene.timed:
+        step = TIMED_STEP.get(name, 1)
+        scene.samples = [float(f) for f in range(start, end + 1, step)]
+    else:
+        samples = samples or TARGET_SAMPLES
+        step = span / float(max(1, samples - 1))
+        scene.samples = [start + step * i for i in range(samples)]
+    if scene.timed:
+        # One sample per `step` frames, played at the stage's own rate.
+        rate = stage.GetTimeCodesPerSecond() or 24.0
+        scene.fps = min(TIMED_FPS_MAX, rate / step)
 
     # Compiled before the session-layer edits below so the measurement is
     # of the example exactly as authored, and again afterwards for the
@@ -1158,7 +1225,8 @@ def prepare_stage(src, samples=TARGET_SAMPLES, schema=None):
         stage, cage_paths | set(scene.driver_paths) |
         _emitted_guide_targets(stage) |
         ({scene.overlay_target} if scene.overlay_target else set()))
-    _apply_guide_overrides(stage, scene.diag)
+    _apply_guide_overrides(stage, scene.diag,
+                           GUIDE_SCALE_OVERRIDES.get(name, (1.0, 1.0)))
     _mark_drivers(stage, scene.drivers, scene.diag, cage_paths)
     scene.links = _drive_links(stage)
     scene.controls = [str(p.GetPath()) for p in stage.Traverse()
@@ -1242,8 +1310,9 @@ def prepare_stage(src, samples=TARGET_SAMPLES, schema=None):
 
     # The loop only needs a ping-pong when it does not already close: most
     # docs examples animate out and back, and doubling those just makes a
-    # four-second GIF out of a two-second one.
-    scene.pingpong = not _loop_closes(scene)
+    # four-second GIF out of a two-second one. Motion that depends on the
+    # frames before it does not run backwards.
+    scene.pingpong = not scene.timed and not _loop_closes(scene)
     scene.has_joints = any(p.GetTypeName() == "RigExecJoint"
                            for p in stage.Traverse())
     # Last, because it projects through the camera the fit just chose.
@@ -2045,8 +2114,7 @@ class Chrome(object):
         over a dark gradient, which is a different colour: the swatch is
         now mixed down by the same alpha the frame uses.
         """
-        alpha = (GHOST_ALPHA_OVERLAY if scene.overlay_weight
-                 else GHOST_ALPHA_MOVER if scene.is_mover else GHOST_ALPHA)
+        alpha = _ghost_alpha(scene)
         ghost = tuple(int(c * 255 * alpha + BG_BOTTOM[i] * (1 - alpha))
                       for i, c in enumerate(GHOST_RGB))
         key = [("driver" if scene.driver_anchored else "value", ACCENT),
@@ -2172,18 +2240,30 @@ def _place_chips(pen, font, wanted, blockers=()):
     return boxes
 
 
+def _ghost_alpha(scene):
+    """How strongly the rest-pose wire is composited over the live frame.
+
+    On an overlay page the live surface carries the whole message, so the
+    wire is pulled back off it; GHOST_ALPHA_OVERRIDES wins over both.
+    """
+    if scene.name in GHOST_ALPHA_OVERRIDES:
+        return GHOST_ALPHA_OVERRIDES[scene.name]
+    if scene.overlay_weight:
+        return GHOST_ALPHA_OVERLAY
+    return GHOST_ALPHA_MOVER if scene.is_mover else GHOST_ALPHA
+
+
 def compose(chrome, passes, state, scene, index, total):
     grid, live, ghost, guides = passes
     view = Image.new("RGBA", (live.size), (0, 0, 0, 0))
     if grid is not None:
         view.alpha_composite(grid)
+    under = scene.name in GHOST_UNDER
+    if ghost is not None and under:
+        view.alpha_composite(_faded(ghost, _ghost_alpha(scene)))
     view.alpha_composite(live)
-    if ghost is not None:
-        # On an overlay page the live surface carries the whole message,
-        # so the rest-pose wire is pulled back off it.
-        view.alpha_composite(_faded(
-            ghost, GHOST_ALPHA_OVERLAY if scene.overlay_weight
-            else GHOST_ALPHA_MOVER if scene.is_mover else GHOST_ALPHA))
+    if ghost is not None and not under:
+        view.alpha_composite(_faded(ghost, _ghost_alpha(scene)))
     if guides is not None:
         # The guides are drawn HERE and nowhere else, at partial strength,
         # so the mesh the rig is deforming is visible through the skeleton
@@ -2317,7 +2397,9 @@ def compose(chrome, passes, state, scene, index, total):
                                   drawn[0][0].partition("   ")[2]),
                   drawn[0][1])]
     wanted = []
-    for index, (label, point) in enumerate(drawn):
+    # `slot`, not `index`: `index` is this frame's place in the loop, and
+    # the progress bar below reads it.
+    for slot, (label, point) in enumerate(drawn):
         pixel = to_pixel(point) if point is not None else None
         # A driver the frame does not contain gets a chip and no ring: a
         # ring clamped to the edge claims a position the control is not at.
@@ -2336,7 +2418,7 @@ def compose(chrome, passes, state, scene, index, total):
         # ring they label.
         blockers.append((x - 11, y - 11, x + 11, y + 11))
         side, margin = scene.chip_sides.get(
-            index, (1 if x < VIEW_W / 2 else -1,
+            slot, (1 if x < VIEW_W / 2 else -1,
                     abs(x - VIEW_W / 2.0) < VIEW_W * 0.16))
         wanted.append(((x, y), side, label, margin, True))
     placed = _place_chips(pen, chrome.label_font, wanted, blockers)
@@ -2463,7 +2545,13 @@ def _sequence(scene, frames):
     constant-rate encoder does not vary them.
     """
     order = []
+    hold_first = HOLD_FIRST
     extreme = extreme_sample(scene)
+    if scene.timed:
+        # The same dwell at the loop's start at the timed rate, and no
+        # pause mid-swing.
+        hold_first = max(1, int(round(HOLD_FIRST * scene.fps / GIF_FPS)))
+        extreme = None
     if not scene.pingpong and len(frames) > 2:
         # A loop that closes ends where it started, so the last sample IS
         # the first one: the GIF wrapped onto a duplicate frame, which
@@ -2475,7 +2563,7 @@ def _sequence(scene, frames):
     for index, frame in enumerate(frames):
         repeat = 1
         if index == 0:
-            repeat = HOLD_FIRST
+            repeat = hold_first
         elif index == extreme:
             repeat = HOLD_EXTREME
         order += [frame] * repeat
@@ -2506,7 +2594,7 @@ def page_notes(name, page=None):
 
 
 def render_one(src, viewport, bridge, out_dir, sheet=False,
-               samples=TARGET_SAMPLES, page=None, out_name=None):
+               samples=None, page=None, out_name=None):
     """Render one example to <out_dir>/<out_name or stage name>.gif.
 
     `out_name` exists because a page may borrow another page's stage: the
@@ -2575,7 +2663,7 @@ def render_one(src, viewport, bridge, out_dir, sheet=False,
 
     os.makedirs(out_dir, exist_ok=True)
     gif = os.path.join(out_dir, name + ".gif")
-    _write_gif(_sequence(scene, frames), gif)
+    _write_gif(_sequence(scene, frames), gif, fps=scene.fps)
     if sheet:
         _write_sheet(frames, os.path.join(out_dir, name + "_sheet.png"))
     return gif
@@ -2595,8 +2683,22 @@ def page_stage(key, notes=None):
     return os.path.join(RIG, "docs", "examples", stem + ".usda")
 
 
+def page_extras(key, notes=None):
+    """(GIF name, stage) for each extra GIF a page shows in its Example.
+
+    An "extra_gifs" entry names a stage by its repo-relative path, so a
+    page can show a numbered example from examples/ as well as its own.
+    """
+    if notes is None:
+        import operator_notes
+        notes = operator_notes.OPERATORS.get(key, {})
+    return [(name, os.path.join(RIG, *stage.split("/")))
+            for name, stage, _caption in notes.get("extra_gifs", ())]
+
+
 def page_jobs():
-    """(page key, stage) for every page with a GIF, in CATEGORIES order."""
+    """(page key, stage, GIF name) for every GIF a page shows, in
+    CATEGORIES order."""
     import operator_notes
 
     jobs = []
@@ -2605,10 +2707,12 @@ def page_jobs():
     ordered += [k for k in operator_notes.OPERATORS if k not in ordered]
     for key in ordered:
         notes = operator_notes.OPERATORS.get(key)
-        if notes is None or notes.get("no_gif") or key in seen:
+        if notes is None or key in seen:
             continue
         seen.add(key)
-        jobs.append((key, page_stage(key, notes)))
+        if not notes.get("no_gif"):
+            jobs.append((key, page_stage(key, notes), key))
+        jobs += [(key, src, name) for name, src in page_extras(key, notes)]
     return jobs
 
 
@@ -2635,7 +2739,9 @@ def main(argv):
                         "named after the page and titled from its "
                         "OPERATORS entry, whatever stage it comes from")
     parser.add_argument("--out", default=os.path.join(RIG, "docs", "gifs"))
-    parser.add_argument("--samples", type=int, default=TARGET_SAMPLES)
+    parser.add_argument("--samples", type=int, default=None,
+                        help="poses per loop (default %d, or every frame "
+                             "for a windowed operator)" % TARGET_SAMPLES)
     parser.add_argument("--sheet", action="store_true",
                         help="also write <name>_sheet.png, 6 frames across")
     parser.add_argument("--list", action="store_true", dest="list_only",
@@ -2646,15 +2752,17 @@ def main(argv):
     files = [a if os.path.isabs(a) else os.path.join(RIG, a)
              for a in args.stages]
     # (page key or None, stage, output name or None)
-    if args.page:
-        jobs = [(args.page, src, args.page) for src in
-                (files or [page_stage(args.page)])]
+    if args.page and files:
+        jobs = [(args.page, src, args.page) for src in files]
+    elif args.page:
+        jobs = [job for job in page_jobs() if job[0] == args.page] or [
+            (args.page, page_stage(args.page), args.page)]
     elif files:
         # An explicit stage path keeps the old contract: the GIF is named
         # after the stage, and page_notes falls back to the stage's key.
         jobs = [(None, src, None) for src in files]
     else:
-        jobs = [(key, src, key) for key, src in page_jobs()]
+        jobs = page_jobs()
 
     if args.list_only:
         for key, src, _name in jobs:

@@ -18,6 +18,8 @@
 #ifndef RIGEXEC_BINARY_EXTERNAL_H
 #define RIGEXEC_BINARY_EXTERNAL_H
 
+#include "rigExecGraph/windowHistory.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -107,7 +109,25 @@ struct RigExecExternalKernel {
                                const RigExecExternalProviders &providers,
                                float *xyz, size_t pointCount) = nullptr;
 
+    /// Optional, for a windowed mover (rigExecGraph/windowHistory.h),
+    /// both or neither: the packet this tick captures, from apply's
+    /// arguments and the preceding points, and the solve over the earlier
+    /// ticks' packets, oldest first, then this tick's, into \p xyz. The
+    /// runtime keeps the ticks; the kernel keeps nothing between calls.
+    bool (*captureWindow)(const void *state,
+                          const RigExecExternalPhasedPoints *phased,
+                          size_t phasedCount,
+                          const RigExecExternalInputValue *inputs,
+                          size_t inputCount, const float *xyz,
+                          size_t pointCount,
+                          RigExecWindowPacket *packet) = nullptr;
+    bool (*applyWindow)(const void *state,
+                        const RigExecWindowPacket *const *ticks,
+                        size_t tickCount, float *xyz,
+                        size_t pointCount) = nullptr;
+
     bool IsSet() const { return prepare && (apply || applyWithProviders); }
+    bool IsWindowed() const { return captureWindow && applyWindow; }
 };
 
 /// The revision op a plugin mover is written with (RigExecRevisionOp::

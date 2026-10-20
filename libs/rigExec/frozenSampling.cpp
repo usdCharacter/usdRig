@@ -2819,7 +2819,7 @@ _SampleWithPinnedChainBindings(
     const std::vector<RigExecValueOverride> &overrides,
     const std::vector<RigExecUpstreamValue> &upstream,
     const RigExecChainSampleBindings &bindings, RigExecFrameInputs *out,
-    std::string *error, bool verifyCurrency)
+    std::string *error, bool verifyCurrency, bool attachWindows = true)
 {
     const auto fail = [&error](const std::string &why) {
         if (error) {
@@ -3210,13 +3210,31 @@ _SampleWithPinnedChainBindings(
         }
     }
     _AttachDigestOrder(B, &memo, &sampled);
-
-
+    // The windowed operations' history at this time: every frame names the
+    // earlier ticks it reads (rigEvaluatorWindows.cpp). A history tick's own
+    // sample attaches none.
+    if (attachWindows && program->GetWindowedOpCount()) {
+        std::string why;
+        evaluator.GetWindowRings(time, &sampled.windowRings, &why);
+    }
 
     *out = std::move(sampled);
     return true;
 }
 } // namespace
+
+bool
+RigExecSampleHistoryTickInputs(
+    const RigExecRigEvaluator &evaluator, UsdTimeCode time,
+    const std::vector<RigExecUpstreamValue> &upstream,
+    const RigExecChainSampleBindings &bindings, RigExecFrameInputs *out,
+    std::string *error)
+{
+    return _SampleWithPinnedChainBindings(evaluator, time, {}, upstream,
+                                          bindings, out, error,
+                                          /* verifyCurrency = */ false,
+                                          /* attachWindows = */ false);
+}
 
 bool
 RigExecSampleFrameInputsWithChainBindings(
@@ -3776,6 +3794,12 @@ RigExecSampleFrameInputsWithBurstCache(
 
     _AttachDigestOrder(B, &memo, &sampled);
     samplePhase("Sample.OverrideFinish");
+    // The windowed operations' history at this time (see the pinned route).
+    if (cache->program->GetWindowedOpCount()) {
+        std::string why;
+        evaluator.GetWindowRings(time, &sampled.windowRings, &why);
+        samplePhase("Sample.WindowHistory");
+    }
     *out = std::move(sampled);
     return true;
 }

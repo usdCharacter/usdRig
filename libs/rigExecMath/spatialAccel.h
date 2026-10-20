@@ -497,12 +497,19 @@ struct RigExecSegmentBvh {
                 spatialAccelDetail::BoxLowerSq(left, p);
             const double lowerRight =
                 spatialAccelDetail::BoxLowerSq(right, p);
+            // The stack pops the LAST push, so the nearer child goes on
+            // last and is visited first. Visiting it first finds a tight
+            // best early and lets the farther subtree be pruned; the
+            // reverse order visits nearly every leaf (measured 2x slower
+            // than brute force on a 256-segment lip curve). Order never
+            // changes the result: pruning is strict and ties keep the
+            // lowest ordinal.
             if (lowerLeft < lowerRight) {
-                stack[top++] = node.child;
                 stack[top++] = node.child + 1;
+                stack[top++] = node.child;
             } else {
-                stack[top++] = node.child + 1;
                 stack[top++] = node.child;
+                stack[top++] = node.child + 1;
             }
         }
         return haveBest ? float(best)

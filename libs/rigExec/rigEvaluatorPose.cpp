@@ -67,6 +67,9 @@ _ConstraintHandlers()
          _ChannelGroup::None, _ChannelGroup::None, nullptr},
         {TfToken("RigExecIkFkMatchConstraint"), false, true, false, true,
          _ChannelGroup::None, _ChannelGroup::None, nullptr},
+        // Secondary motion: one target, no sources, its own history window.
+        {TfToken("RigExecHarmonicsConstraint"), false, true, false, true,
+         _ChannelGroup::None, _ChannelGroup::None, nullptr},
     };
     return handlers;
 }

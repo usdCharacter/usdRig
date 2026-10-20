@@ -50,6 +50,9 @@ template<class Point,class Wide> class RigExecSurfaceKernelCache {
                 a.smoothWeights.size()*sizeof(float)));
     }
     std::shared_ptr<const Mush> mush;
+    /// RigExecApplyDeltaMushWithRestDataMasked's memo for `mush`'s rest
+    /// data: reset whenever MushRest rebuilds it.
+    RigExecDeltaMushMaskMemo<Point> mushMask;
     struct Wrinkle { size_t points=0; std::vector<int> counts,indices;
         RigExecWrinkleTopology mode; int distance=0; RigExecWrinkleMesh value; };
     std::shared_ptr<const Wrinkle> wrinkle;
@@ -108,8 +111,10 @@ public:
         entry->points=p; entry->counts=c; entry->indices=i;
         entry->iterations=iterations; entry->step=step; entry->pin=pin; entry->distance=distance;
         entry->settings=settings;
-        mush=entry; return &mush->value;
+        mush=entry; mushMask=RigExecDeltaMushMaskMemo<Point>(); return &mush->value;
     }
+    /// The masked delta mush memo for the rest data MushRest last returned.
+    RigExecDeltaMushMaskMemo<Point> *MushMaskMemo() { return &mushMask; }
     const RigExecWrinkleMesh *WrinkleTopology(size_t points,
         const std::vector<int> &c,const std::vector<int> &i,
         RigExecWrinkleTopology mode,int distance) {

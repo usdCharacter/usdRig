@@ -192,6 +192,17 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.solverIndex = src.solverIndex;
     D.aggregates = src.aggregates;
     D.constraints = src.constraints;
+    // The windowed ops, their mask and the history the source last held:
+    // a clone's first run reads the rings it was handed, so the rings and
+    // captures travel as per-frame state.
+    D.windowedOps = src.windowedOps;
+    D.historyMask = src.historyMask;
+    D.historyTick = false;
+    D.windowCaptures = src.windowCaptures;
+    D.windowRings = src.windowRings;
+    D.windowRingChanged = src.windowRingChanged;
+    D.windowRingSerial = src.windowRingSerial;
+    D.windowOfOp = src.windowOfOp;
     D.walkSteps = src.walkSteps;
     D.steps = src.steps;
     // The steps' output travels with them, so the set of the steps holding
@@ -316,7 +327,12 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     // their scratch unique and the clone allocates on its first write. The
     // same for the revisions' idle scratch, whose contents are not state.
     for (auto &chain : D.chains) {
+        // A clone solves every window on the CPU, inside its own graph.
+        chain.windowDeviceDerivedSteps.clear();
         for (auto &revision : chain.revisions) {
+            revision.windowDevice = false;
+            revision.devicePending = false;
+            revision.deviceTicks.clear();
             revision.revisionInputs.Clear();
             for (auto &group : revision.groups) RigExecDropGroupSpare(&group);
             _DropRevisionScratch(&revision);

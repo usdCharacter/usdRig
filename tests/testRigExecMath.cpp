@@ -10,15 +10,18 @@
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/spatialAccel.h"
+#include "rigExecMath/weightFields.h"
 
 #include "pxr/base/gf/rotation.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
 #include <cstring>
 #include <cstdio>
 #include <limits>
+#include <thread>
 #include <vector>
 
 using namespace rigExec;
@@ -2713,6 +2716,314 @@ TestTriangleBvhRoundingTies()
     }
 }
 
+static void
+TestSegmentBvhNearestFirst()
+{
+    // A closed lip-like loop: an upper and a lower arc of 128 segments each,
+    // 0.3 mm apart at the centre, the shape curve-volume weights measure
+    // against. The BVH must (a) match the brute-force curve distance bit for
+    // bit and (b) visit the nearer child first, so a query evaluates a few
+    // segments rather than nearly all of them. The far-child-first order
+    // evaluated ~226 of 256 per query on the face rig and ran 2x slower than
+    // brute force.
+    std::vector<GfVec3f> curve;
+    for (int i = 0; i <= 128; ++i) {
+        const float x = -0.1f + 0.2f * float(i) / 128.0f;
+        curve.emplace_back(x, 0.0f, 0.752f + 0.004f * (x / 0.1f) * (x / 0.1f));
+    }
+    for (int i = 127; i >= 0; --i) {
+        const float x = -0.1f + 0.2f * float(i) / 128.0f;
+        curve.emplace_back(x, 0.0f, 0.7517f + 0.004f * (x / 0.1f) * (x / 0.1f));
+    }
+    RigExecSegmentBvh<GfVec3f> bvh;
+    CHECK(bvh.Build(curve.data(), curve.size()));
+    size_t calls = 0, queries = 0;
+    const auto counted = [&calls](const GfVec3f &p, const GfVec3f &a,
+                                  const GfVec3f &b) {
+        ++calls;
+        return RigExecSegmentDistance(p, a, b);
+    };
+    bool allMatch = true;
+    for (int ix = -40; ix <= 40; ++ix) {
+        for (int iz = -30; iz <= 30; ++iz) {
+            for (float y : {-0.05f, 0.0f, 0.02f}) {
+                const GfVec3f p(0.004f * float(ix), y, 0.75f + 0.003f * float(iz));
+                const float want =
+                    RigExecCurveDistance(p, curve.data(), curve.size());
+                const float got = bvh.QueryNearest(p, curve.data(), counted);
+                allMatch = allMatch && got == want;
+                ++queries;
+            }
+        }
+    }
+    CHECK(allMatch);
+    const double perQuery = double(calls) / double(queries);
+    std::printf("segment BVH: %.1f segment evaluations per query (brute 256)\n",
+                perQuery);
+    CHECK(perQuery < 32.0);
+}
+
+// Splits every loop it is given into slices of 7 elements dealt round-robin
+// to four threads, ignoring the grain, so a kernel whose slices are not
+// independent shows up as a mismatch against its serial run.
+static const RigExecRangeRunner kInterleavedRanges =
+    [](size_t count, size_t, const RigExecRangeBody &body) {
+        constexpr size_t slice = 7, threads = 4;
+        std::vector<std::thread> pool;
+        for (size_t t = 0; t < threads; ++t) {
+            pool.emplace_back([&body, count, t] {
+                for (size_t b = t * slice; b < count; b += threads * slice) {
+                    body(b, std::min(count, b + slice));
+                }
+            });
+        }
+        for (std::thread &thread : pool) {
+            thread.join();
+        }
+    };
+
+// The angle-weighted normals kernel as it stood before its face loop was
+// split from its sums: the oracle the split kernel must match bit for bit.
+static std::vector<GfVec3f>
+_OracleVertexNormals(const std::vector<GfVec3f> &pointsIn,
+                     const std::vector<int> &faceVertexCounts,
+                     const std::vector<int> &faceVertexIndices)
+{
+    const GfVec3f *points = pointsIn.data();
+    const size_t pointsSize = pointsIn.size();
+    std::vector<GfVec3f> normals(pointsSize, GfVec3f(0));
+    std::vector<int> ring;
+    size_t offset = 0;
+    for (size_t f = 0; f < faceVertexCounts.size(); ++f) {
+        const int faceCount = faceVertexCounts[f];
+        if (faceCount < 3 ||
+            offset + static_cast<size_t>(faceCount) > faceVertexIndices.size()) {
+            return normals;
+        }
+        ring.clear();
+        for (int k = 0; k < faceCount; ++k) {
+            const int v = faceVertexIndices[offset + k];
+            if (v >= 0 && static_cast<size_t>(v) < pointsSize) {
+                ring.push_back(v);
+            }
+        }
+        offset += faceCount;
+        const size_t n = ring.size();
+        if (n < 3) {
+            continue;
+        }
+        GfVec3f faceNormal(0);
+        for (size_t k = 0; k < n; ++k) {
+            const GfVec3f &p = points[ring[k]];
+            const GfVec3f &q = points[ring[(k + 1) % n]];
+            faceNormal += GfVec3f((p[1] - q[1]) * (p[2] + q[2]),
+                                  (p[2] - q[2]) * (p[0] + q[0]),
+                                  (p[0] - q[0]) * (p[1] + q[1]));
+        }
+        const float faceLength = faceNormal.GetLength();
+        if (faceLength < 1e-20f) {
+            continue;
+        }
+        faceNormal /= faceLength;
+        for (size_t k = 0; k < n; ++k) {
+            const GfVec3f &p = points[ring[k]];
+            const GfVec3f a = points[ring[(k + 1) % n]] - p;
+            const GfVec3f b = points[ring[(k + n - 1) % n]] - p;
+            const float la = a.GetLength(), lb = b.GetLength();
+            float weight = 1.0f;
+            if (la > 1e-20f && lb > 1e-20f) {
+                const GfVec3f ua = a / la, ub = b / lb;
+                weight = std::atan2(GfCross(ua, ub).GetLength(), GfDot(ua, ub));
+            }
+            normals[ring[k]] += faceNormal * weight;
+        }
+    }
+    for (GfVec3f &n : normals) {
+        const float len = n.GetLength();
+        if (len > 1e-12f) {
+            n /= len;
+        }
+    }
+    return normals;
+}
+
+static void
+TestRangedKernelsMatchSerial()
+{
+    // A wavy grid of quads, triangles and pentagons, with the faces the
+    // normals kernel has to step around: a collapsed quad, a face naming a
+    // point that does not exist, one naming a corner twice.
+    const int W = 31, H = 23;
+    std::vector<GfVec3f> points;
+    for (int y = 0; y <= H; ++y) {
+        for (int x = 0; x <= W; ++x) {
+            points.emplace_back(0.1f * x + 0.013f * std::sin(1.3f * float(x * y)),
+                                0.1f * y,
+                                0.05f * std::sin(0.4f * x) * std::cos(0.3f * y));
+        }
+    }
+    std::vector<int> counts, indices;
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            const int a = y * (W + 1) + x, b = a + 1, c = a + W + 2, d = a + W + 1;
+            if ((x + y) % 5 == 0) {
+                counts.insert(counts.end(), {3, 3});
+                indices.insert(indices.end(), {a, b, c, a, c, d});
+            } else if ((x * 7 + y) % 11 == 0 && x + 2 < W) {
+                counts.push_back(5);
+                indices.insert(indices.end(), {a, b, b + 1, c + 1, d});
+            } else {
+                counts.push_back(4);
+                indices.insert(indices.end(), {a, b, c, d});
+            }
+        }
+    }
+    points.emplace_back(2.0f, 2.0f, 2.0f);
+    const int lone = int(points.size()) - 1;
+    counts.insert(counts.end(), {4, 3, 4});
+    indices.insert(indices.end(), {lone, lone, lone, lone,       // collapsed
+                                   0, 1, int(points.size()) + 5, // missing point
+                                   2, 3, 3, W + 3});             // corner twice
+    const std::vector<GfVec3f> want = _OracleVertexNormals(points, counts, indices);
+    const auto normals = [&](const std::vector<int> &c, const std::vector<int> &i,
+                             const RigExecRangeRunner *ranges) {
+        return RigExecComputeVertexNormals(points.data(), points.size(), c.data(),
+                                           c.size(), i.data(), i.size(), ranges);
+    };
+    CHECK(SameVec3fArrayBits(normals(counts, indices, nullptr), want));
+    CHECK(SameVec3fArrayBits(normals(counts, indices, &kInterleavedRanges), want));
+    // A malformed face ends the walk with the sums so far, unnormalized.
+    std::vector<int> cut = counts;
+    cut.insert(cut.begin() + 200, 2);
+    std::vector<int> cutIndices = indices;
+    cutIndices.insert(cutIndices.begin() + 800, {0, 1});
+    const std::vector<GfVec3f> wantCut =
+        _OracleVertexNormals(points, cut, cutIndices);
+    CHECK(SameVec3fArrayBits(normals(cut, cutIndices, nullptr), wantCut));
+    CHECK(SameVec3fArrayBits(normals(cut, cutIndices, &kInterleavedRanges), wantCut));
+
+    // The volume fields, unbounded and bounded, over the same points.
+    const GfMatrix4d worldToLocal =
+        GfMatrix4d().SetRotate(GfRotation(GfVec3d(0.3, 1, 0.2), 25)) *
+        GfMatrix4d().SetTranslate(GfVec3d(-1.4, -1.1, 0.02));
+    RigExecFalloffParams params;
+    params.falloffMin = 0.1f;
+    params.falloffMax = 0.9f;
+    params.strength = 0.8f;
+    params.invert = 0.25f;
+    const RigExecWeightPointView view{points.data(), points.size()};
+    for (const RigExecRangeRunner *ranges : {&kInterleavedRanges}) {
+        std::vector<float> serial, split;
+        RigExecSphereWeightField(view, worldToLocal, params, &serial,
+                                 GfVec3f(1.0f, 0.5f, 2.0f), GfVec3f(0.7f));
+        RigExecSphereWeightField(view, worldToLocal, params, &split,
+                                 GfVec3f(1.0f, 0.5f, 2.0f), GfVec3f(0.7f), ranges);
+        CHECK(serial.size() == points.size() &&
+              !std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+        RigExecPlaneBounds bounds;
+        bounds.extentU = 0.6f;
+        bounds.extentV = 0.9f;
+        for (const RigExecPlaneBounds *clip : {(const RigExecPlaneBounds *)nullptr,
+                                               (const RigExecPlaneBounds *)&bounds}) {
+            RigExecPlaneWeightField(view, worldToLocal, 2, params, &serial, clip);
+            RigExecPlaneWeightField(view, worldToLocal, 2, params, &split, clip, ranges);
+            CHECK(!std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+        }
+        // A curve long enough for the BVH, and one short enough for the
+        // verbatim loop.
+        for (int segments : {96, 9}) {
+            std::vector<GfVec3f> curve;
+            for (int k = 0; k <= segments; ++k) {
+                const float t = float(k) / float(segments);
+                curve.emplace_back(3.1f * t, 1.2f + 0.4f * std::sin(6.0f * t), 0.1f * t);
+            }
+            std::vector<GfVec3f> scratchA, scratchB;
+            const RigExecWeightPointView curveView{curve.data(), curve.size()};
+            RigExecCurveWeightField(view, curveView, worldToLocal, params, &serial, &scratchA);
+            RigExecCurveWeightField(view, curveView, worldToLocal, params, &split, &scratchB, ranges);
+            CHECK(!std::memcmp(serial.data(), split.data(), serial.size() * sizeof(float)));
+        }
+    }
+
+    // A bicubic patch sampled at scattered (u, v): split equals serial, and a
+    // non-finite evaluation fails both.
+    std::vector<GfVec3f> cvs;
+    for (int v = 0; v < 5; ++v) {
+        for (int u = 0; u < 4; ++u) {
+            cvs.emplace_back(float(u), float(v), 0.3f * float((u * 3 + v) % 4));
+        }
+    }
+    const std::vector<double> weights(cvs.size(), 1.0);
+    const std::vector<double> uKnots{0, 0, 0, 0, 1, 1, 1, 1};
+    const std::vector<double> vKnots{0, 0, 0, 0, 0.5, 1, 1, 1, 1};
+    RigExecNurbsPatch patch;
+    patch.points = cvs.data();
+    patch.pointCount = cvs.size();
+    patch.pointWeights = weights.data();
+    patch.pointWeightCount = weights.size();
+    patch.uVertexCount = 4;
+    patch.vVertexCount = 5;
+    patch.uOrder = 4;
+    patch.vOrder = 4;
+    patch.uKnots = uKnots.data();
+    patch.uKnotCount = uKnots.size();
+    patch.vKnots = vKnots.data();
+    patch.vKnotCount = vKnots.size();
+    CHECK(patch.IsValid());
+    std::vector<GfVec3f> uv;
+    for (size_t i = 0; i < 997; ++i) {
+        uv.emplace_back(float((i * 37) % 101) / 100.0f, float((i * 53) % 89) / 88.0f, 0.0f);
+    }
+    std::vector<GfVec3f> serialPatch(uv.size()), splitPatch(uv.size());
+    CHECK(RigExecApplyPatchMover(&serialPatch, patch, uv.data(), uv.size()));
+    CHECK(RigExecApplyPatchMover(&splitPatch, patch, uv.data(), uv.size(),
+                                 &kInterleavedRanges));
+    CHECK(SameVec3fArrayBits(serialPatch, splitPatch));
+    // A broadcast UV read from the storage being written (codex review): the
+    // first write changes what every later point reads, so the call stays on
+    // one thread and matches the single loop.
+    std::vector<GfVec3f> aliasedSerial(8192, GfVec3f(0.25f, 0.25f, 0.0f));
+    std::vector<GfVec3f> aliasedSplit = aliasedSerial;
+    CHECK(RigExecApplyPatchMover(&aliasedSerial, patch, aliasedSerial.data(), 1));
+    CHECK(RigExecApplyPatchMover(&aliasedSplit, patch, aliasedSplit.data(), 1,
+                                 &kInterleavedRanges));
+    CHECK(SameVec3fArrayBits(aliasedSerial, aliasedSplit));
+    CHECK(!SameVec3fBits(aliasedSerial[0], aliasedSerial[1]));
+    std::vector<GfVec3f> badCvs = cvs;
+    badCvs[7][1] = std::numeric_limits<float>::infinity();
+    patch.points = badCvs.data();
+    CHECK(!RigExecApplyPatchMover(&serialPatch, patch, uv.data(), uv.size()) &&
+          !RigExecApplyPatchMover(&splitPatch, patch, uv.data(), uv.size(),
+                                  &kInterleavedRanges));
+}
+
+static void
+TestIdentityTransformKeepsFiniteBits()
+{
+    // The radial matrix kernel skips the identity's TransformAffine for a
+    // finite point and writes the point back with -0 turned into +0, and a
+    // range group whose weights are all zero passes through untouched when
+    // no coordinate is -0 (moverGraph.cpp). Both rest on this: the identity
+    // returns every finite coordinate unchanged except -0, which the
+    // translation row's "+ 0" turns into +0.
+    const GfMatrix4d identity(1.0);
+    const float specials[] = {0.0f, -0.0f, 1.0f, -1.0f, 1e-40f, -1e-40f,
+                              3.4e38f, -3.4e38f, 0.1f, -0.7f, 1e-7f, 123456.79f};
+    bool same = true;
+    for (float x : specials) {
+        for (float y : specials) {
+            for (float z : specials) {
+                const GfVec3f p(x, y, z);
+                const GfVec3f transformed(identity.TransformAffine(GfVec3d(p)));
+                const GfVec3f shortcut(x == 0.0f ? 0.0f : x, y == 0.0f ? 0.0f : y,
+                                       z == 0.0f ? 0.0f : z);
+                same = same && SameVec3fBits(transformed, shortcut);
+            }
+        }
+    }
+    CHECK(same);
+}
+
 static bool
 _SameHit(const RigExecSurfaceHit &a, const RigExecSurfaceHit &b)
 {
@@ -3604,6 +3915,9 @@ main()
     TestTrianglePathologicalFloatCandidates();
     TestTriangleBvhMatchesBruteForce();
     TestTriangleBvhRoundingTies();
+    TestSegmentBvhNearestFirst();
+    TestRangedKernelsMatchSerial();
+    TestIdentityTransformKeepsFiniteBits();
     TestSurfaceProjectEntryPaths();
     TestRaycastSharedTriangulation();
     TestSolverSharedTriangulation();

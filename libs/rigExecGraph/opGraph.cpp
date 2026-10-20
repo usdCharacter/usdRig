@@ -440,7 +440,11 @@ bool RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
     if (force) seeded.assign(count, 1);
     auto &pending = workspace.pending;
     pending.clear(); pending.reserve(count);
+    const std::vector<char> *active = callbacks.active;
+    if (active && active->size() != count) return fail("operation mask size mismatch");
+    const auto allowed = [active](uint32_t i) { return !active || (*active)[i] != 0; };
     const auto seed = [&](uint32_t i, bool mandatory) {
+        if (!allowed(i)) return;
         if (mandatory) seeded[i] = 1;
         if (!result.candidates[i]) { result.candidates[i] = 1; pending.push_back(i); }
     };
@@ -454,7 +458,9 @@ bool RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
     else for (uint32_t i : graph.volatileOps) seed(i, true);
     for (size_t at = 0; at < pending.size(); ++at)
         for (uint32_t next : graph.ops[pending[at]].successors)
-            if (!result.candidates[next]) { result.candidates[next] = 1; pending.push_back(next); }
+            if (!result.candidates[next] && allowed(next)) {
+                result.candidates[next] = 1; pending.push_back(next);
+            }
     auto &clusterCandidates = workspace.clusterCandidates;
     auto &ready = workspace.ready;
     // Each candidate cluster once, gathered in `ready`, then ascending.

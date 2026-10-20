@@ -2,6 +2,8 @@
 #ifndef RIGEXEC_PARALLEL_H
 #define RIGEXEC_PARALLEL_H
 
+#include "rigExecMath/rangeRunner.h"
+
 #include <cstddef>
 
 namespace rigExec {
@@ -37,6 +39,28 @@ inline constexpr size_t RigExecGeometryGrainSize = 512;
 /// dispatch and the join cost more than the work they would spread, and a
 /// rig is far more likely to hold many small meshes than one large one.
 inline constexpr size_t RigExecGeometryParallelThreshold = 4096;
+
+/// Whether this thread's floating-point environment is the IEEE default:
+/// round to nearest, no flush-to-zero, no denormals-are-zero. A shortcut that
+/// writes down what an arithmetic sequence returns, instead of performing it,
+/// is exact only there; a host (a DCC) may set either flag. False where the
+/// environment cannot be read.
+bool RigExecFloatEnvironmentIsDefault();
+
+/// WorkParallelForN over [0, n) in slices of at least \p grain, every slice
+/// run in the CALLING thread's floating-point environment (rounding mode,
+/// flush-to-zero, denormals-are-zero), restored afterwards. A loop split this
+/// way rounds exactly as the same loop on the calling thread, whatever the
+/// host set and whatever the pool's threads carry. No gating: callers decide.
+void RigExecParallelForInCallerEnvironment(size_t n, size_t grain,
+                                           const RigExecRangeBody &body);
+
+/// The runner rigExec hands to pure kernels (rigExecMath) for their
+/// per-element loops: RigExecParallelForInCallerEnvironment when
+/// RigExecParallelEvaluationEnabled holds, this thread is not in a frozen
+/// serial scope and the loop has at least RigExecGeometryParallelThreshold
+/// elements; the calling thread otherwise. Never null.
+const RigExecRangeRunner *RigExecGeometryRanges();
 
 }  // namespace rigExec
 

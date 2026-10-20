@@ -2,6 +2,7 @@
 // mixed toward weighted UV shapes, with contact pairs kept from crossing.
 #include "moverRegistry.h"
 #include "externalPlayback.h"
+#include "../parallel.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecScene/sceneDescriptors.h"
 
@@ -253,17 +254,24 @@ bool MixShapes(const std::vector<const GfVec3f *> &shapes,
         }
     }
     const VtVec3fArray neutral = *uvPoints;
-    for (size_t i = 0; i < neutral.size(); ++i) {
-        double u = double(neutral[i][0]), v = double(neutral[i][1]);
-        for (size_t k = 0; k < shapes.size(); ++k) {
-            if (weights[k] == 0.0) {
-                continue;
+    GfVec3f *const mixed = uvPoints->data();
+    // Each point mixes independently, so the loop may be split.
+    RigExecRunRanges(RigExecGeometryRanges(), neutral.size(), 1024,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            double u = double(neutral[i][0]), v = double(neutral[i][1]);
+            for (size_t k = 0; k < shapes.size(); ++k) {
+                if (weights[k] == 0.0) {
+                    continue;
+                }
+                u += weights[k] *
+                     (double(shapes[k][i][0]) - double(neutral[i][0]));
+                v += weights[k] *
+                     (double(shapes[k][i][1]) - double(neutral[i][1]));
             }
-            u += weights[k] * (double(shapes[k][i][0]) - double(neutral[i][0]));
-            v += weights[k] * (double(shapes[k][i][1]) - double(neutral[i][1]));
+            mixed[i] = GfVec3f(float(u), float(v), neutral[i][2]);
         }
-        (*uvPoints)[i] = GfVec3f(float(u), float(v), neutral[i][2]);
-    }
+    });
     return true;
 }
 
@@ -596,7 +604,8 @@ bool Apply(const VtValue &data, std::vector<GfVec3f> *output)
     patch.uPeriodic = *uPeriodic;
     patch.vPeriodic = *vPeriodic;
     return RigExecApplyPatchMover(
-        output, patch, uvPoints->cdata(), uvPoints->size());
+        output, patch, uvPoints->cdata(), uvPoints->size(),
+        RigExecGeometryRanges());
 }
 
 // A weight source's value through the resolved scene, as a double.

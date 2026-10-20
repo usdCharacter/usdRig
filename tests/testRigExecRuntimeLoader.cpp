@@ -1948,7 +1948,8 @@ static int samplerUnanimatedRows = 0;
 // ordered diagnostics and actual operation counts. A row whose
 // file has no Animated input still moves the counters with time: the
 // sampler's TouchAnimatedInputs is what dirties the steps a change of time
-// dirties in the program.
+// dirties in the program. A file with windowed operations replays the
+// frames before each time into its history first, as a host jumping does.
 static void
 _TestSamplerDrive(const RigExecExampleFixture &fixture,
                   const UsdStageRefPtr &stage, const SdfPath &rigPath,
@@ -1978,7 +1979,7 @@ _TestSamplerDrive(const RigExecExampleFixture &fixture,
     for (const double t : times) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
         CHECK(pose.valid);
-        const bool ran = RigExecTestDrive(reader.get(), &sampler, t, &error);
+        const bool ran = RigExecTestDriveTo(reader.get(), &sampler, t, &error);
         CHECK(ran);
         if (!ran) {
             std::printf("%s t=%g: drive: %s\n", fixture.stage, t,

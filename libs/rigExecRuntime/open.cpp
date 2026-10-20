@@ -12,6 +12,7 @@
 // reads the environment.
 // Cross-references that do not close are Open errors naming the table.
 #include "rigExecRuntime/runtime.h"
+#include "rigExecBinary/clothPlayback.h"
 
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/spaces.h"
@@ -719,6 +720,23 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     if (!RrOpenProviderProgram(&program, error) ||
         !RrCompileOpGraph(&program, error)) {
         return fail(error ? *error : std::string("common graph initialization failed"));
+    }
+    // The built-in movers the runtime plays itself, so a file plays with no
+    // host library; a host may still install its own kernel for the type.
+    // A revision whose epoch does not prepare passes its points through,
+    // and GetMissingExternalKernels names it.
+    for (const RrProgram::ExternalRevision &state : program.externals) {
+        if (state.type == RigExecClothMoverType) {
+            std::string ignored;
+            self->SetExternalKernel(RigExecClothMoverType,
+                                    RigExecClothPlaybackKernel(), &ignored);
+            break;
+        }
+    }
+    // History ticks open their own program from these (ExecuteHistory).
+    if (!program.windowedOps.empty()) {
+        self->_historyBytes =
+            std::make_shared<const std::vector<uint8_t>>(bytes, bytes + size);
     }
     return self;
 }

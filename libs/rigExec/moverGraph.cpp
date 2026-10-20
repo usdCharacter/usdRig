@@ -1,4 +1,5 @@
 // RigExec compiled mover graph (spec §7.2). See moverGraph.h.
+#include "rigExecGraph/windowHistory.h"
 #include "moverGraph.h"
 #include "parallel.h"
 #include "frameExtraction.h"
@@ -254,11 +255,17 @@ RigExecApplyMatrixKernelRange(const RigExecMoverParameters &p,
         RigExecPartialDecomposition decomposition;
         bool haveDecomposition=false;
         GfMatrix4d partial(1.0);
+        bool identity = true;
+        // The shortcut below writes down what the identity's arithmetic
+        // returns under round-to-nearest without flush-to-zero or
+        // denormals-are-zero; any other environment takes the transform.
+        const bool shortcut = RigExecFloatEnvironmentIsDefault();
         for (size_t i = begin; i < end; ++i) {
             const double w = envelope[i];
             if (w != cachedWeight) {
                 const double clamped=GfClamp(w,0.0,1.0);
-                if(clamped<=0.0) partial=GfMatrix4d(1.0);
+                identity = clamped<=0.0;
+                if(identity) partial=GfMatrix4d(1.0);
                 else if(clamped>=1.0) partial=p.transform;
                 else {
                     if(!haveDecomposition) {
@@ -268,6 +275,22 @@ RigExecApplyMatrixKernelRange(const RigExecMoverParameters &p,
                     partial=RigExecApplyPartialDecomposition(decomposition,clamped);
                 }
                 cachedWeight = w;
+            }
+            if (identity && shortcut) {
+                // What the identity's TransformAffine returns for a finite
+                // point, without the double round trip: each coordinate
+                // unchanged, except that the "+ 0" of the translation row
+                // turns -0 into +0. A dense eyelid falloff is zero over most
+                // of the head, so this is most points. Non-finite points
+                // take the transform (an infinity times 0 is NaN).
+                const GfVec3f &q = pts[i];
+                if (std::isfinite(q[0]) && std::isfinite(q[1]) &&
+                    std::isfinite(q[2])) {
+                    pts[i] = GfVec3f(q[0] == 0.0f ? 0.0f : q[0],
+                                     q[1] == 0.0f ? 0.0f : q[1],
+                                     q[2] == 0.0f ? 0.0f : q[2]);
+                    continue;
+                }
             }
             pts[i] = GfVec3f(partial.TransformAffine(GfVec3d(pts[i])));
         }
@@ -1077,8 +1100,11 @@ RigExecApplyDerivedKernel(RigExecRevisionOp op,
     const bool extent = op == RigExecRevisionOp::RecomputeExtent;
     std::vector<GfVec3f> values =
         extent ? RigExecComputeExtent(p.auxPoints, p.widths)
-               : RigExecComputeVertexNormals(p.auxPoints, p.topologyCounts,
-                                             p.topologyIndices);
+               : RigExecComputeVertexNormals(
+                     p.auxPoints.data(), p.auxPoints.size(),
+                     p.topologyCounts.data(), p.topologyCounts.size(),
+                     p.topologyIndices.data(), p.topologyIndices.size(),
+                     RigExecGeometryRanges());
     if (values.empty() || (extent && values.size() != 2) ||
         authoredCount != values.size()) return false;
     if (!RigExecEnvelopeIsFullStrength(p.weights)) {
@@ -1271,6 +1297,62 @@ ApplyRevisionKernel(RigExecRevisionOp op,
     }
     case RigExecRevisionOp::External: {
         const RigExecMoverHandler *handler = p.externalHandler;
+        if (handler && p.window) {
+            // A windowed revision (windowHistory.h): capture this tick, then
+            // solve over the earlier ticks and it -- unless the run only
+            // captures, when the points stand as they entered.
+            RigExecWindowRun &run = *p.window;
+            if (!handler->captureWindow || !handler->applyWindow) return false;
+            std::vector<const RigExecWindowPacket *> ticks;
+            // Owns this tick's packet through the solve: the capture slot
+            // keeps the packet it holds when the two are equal.
+            RigExecWindowPacketPtr captured;
+            const RigExecWindowRing none;
+            if (run.solveTicks) {
+                // The boundary's half of a deferred solve: the body captured.
+                for (const RigExecWindowPacketPtr &tick : *run.solveTicks)
+                    ticks.push_back(tick.get());
+                if (ticks.empty() || !ticks.back()) return false;
+            } else {
+                auto packet = std::make_shared<RigExecWindowPacket>();
+                if (handler->captureWindow(p.externalData, *pts, packet.get()))
+                    captured = std::move(packet);
+                if (run.capture && !RigExecWindowPacketsEqual(*run.capture, captured))
+                    *run.capture = captured;
+                if (run.captureOnly) return true;
+                if (!captured) return false;
+                const RigExecWindowRing &ring = run.ring ? *run.ring : none;
+                if (run.deferred) {
+                    // The solve waits for the publication boundary; the
+                    // points pass through until then.
+                    run.deferred->clear();
+                    size_t begin = ring.size();
+                    while (begin > 0 && ring[begin - 1]) --begin;
+                    run.deferred->assign(ring.begin() + std::ptrdiff_t(begin),
+                                         ring.end());
+                    run.deferred->push_back(captured);
+                    return true;
+                }
+                RigExecWindowUsableTail(ring, captured.get(), &ticks);
+            }
+            const size_t enteringCount = pts->size();
+            std::vector<GfVec3f> candidate;
+            std::vector<GfVec3f> *output = pts;
+            if (!discardable) { candidate = *pts; output = &candidate; }
+            const bool solved =
+                (run.device && handler->applyWindowDevice &&
+                 handler->applyWindowDevice(p.externalData, ticks.data(),
+                                            ticks.size(), output, run.cache)) ||
+                handler->applyWindow(p.externalData, ticks.data(), ticks.size(),
+                                     output, run.cache);
+            if (!solved || output->size() != enteringCount) return false;
+            for (const GfVec3f &point : *output) {
+                if (!std::isfinite(point[0]) || !std::isfinite(point[1]) ||
+                    !std::isfinite(point[2])) return false;
+            }
+            if (!discardable) pts->swap(candidate);
+            return true;
+        }
         if (!handler || !handler->applyExternal) return false;
         const size_t enteringCount = pts->size();
         std::vector<GfVec3f> candidate;
@@ -1510,6 +1592,38 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     return acceptance;
 }
 
+// Whether RigExecApplyMatrixKernelRange's radial arm returns every point of
+// a group at its entering bytes: every weight clamps to 0 (the partial
+// transform is the identity) and every point is finite with no -0
+// coordinate, which the identity's "+ 0" would turn into +0. That holds in
+// the default floating-point environment only (flush-to-zero or
+// denormals-are-zero zero a subnormal coordinate, and rounding toward
+// negative keeps -0 where nearest makes it +0), so any other environment
+// runs the kernel. A dense eyelid falloff is zero over most of the head, so
+// most groups of such a mover pass through by reference instead of being
+// copied.
+static bool
+_RadialGroupKeepsBytes(const float *weights, const GfVec3f *in, size_t n)
+{
+    if (!RigExecFloatEnvironmentIsDefault()) {
+        return false;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (!(weights[i] <= 0.0f)) {
+            return false;
+        }
+    }
+    for (size_t i = 0; i < n; ++i) {
+        for (int c = 0; c < 3; ++c) {
+            const float x = in[i][c];
+            if (!std::isfinite(x) || (x == 0.0f && std::signbit(x))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Each arm is RunRevisionKernel restricted to [begin, end), reading the
 // group's entering points at \p in and writing its result at \p out: the same
 // kernel over the same packet, through the group forms of its loops, with
@@ -1572,6 +1686,10 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
         }
         if (prepared.matrixWeights.size() != count) {
             return false;
+        }
+        if (p.radialWeight &&
+            _RadialGroupKeepsBytes(prepared.matrixWeights.data() + begin, in, n)) {
+            return passThrough();
         }
         seed();
         RigExecApplyMatrixKernelRange(p, prepared.matrixWeights.data() + begin,
@@ -1756,6 +1874,67 @@ RunRevisionKernel(RigExecRevisionOp op,
     }
     if (!RigExecRevisionTakesSeparateBlend(op, p.weights)) {
         return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable);
+    }
+
+    // A delta mush whose envelope covers a small part of the mesh only needs
+    // that part. The masked kernel is bit for bit the full kernel on the
+    // envelope's support and leaves every other point as it entered, which is
+    // what the blend below returns there anyway (zero weight returns the
+    // preceding point). A whole-head finish limited to the eyelids costs a
+    // tenth as much. It is substituted only where its verdict provably equals
+    // the full kernel's (RigExecDeltaMushMaskPreservesVerdict), so hosts that
+    // always run the full kernel -- binary playback, the uncached path --
+    // still agree. The full kernel runs when the map is not the identity, no
+    // rest cache exists, the support is half the mesh or more, or the verdict
+    // cannot be established (vertex transport, extreme magnitudes).
+    if (op == RigExecRevisionOp::DeltaMush && cache &&
+        !RigExecEnvelopeIsFullStrength(p.weights) &&
+        p.mushComputationToTarget == GfMatrix4d(1)) {
+        const size_t count = pts->size();
+        std::vector<float> resolved;
+        const float *weights =
+            envelope && envelope->size() == count ? envelope->data() : nullptr;
+        if (!weights) {
+            if (!p.weights.ResolveAll(count, &resolved)) {
+                return false;
+            }
+            weights = resolved.data();
+        }
+        std::vector<char> active(count, 0);
+        size_t activeCount = 0;
+        for (size_t i = 0; i < count; ++i) {
+            // The blend's own zero test: "weight <= 0" returns the preceding
+            // point; anything else (including NaN) reaches the arithmetic.
+            if (!(weights[i] <= 0.0f)) {
+                active[i] = 1;
+                ++activeCount;
+            }
+        }
+        if (activeCount * 2 <= count) {
+            const auto *rest = cache->MushRest(p.restPoints, p.topologyCounts,
+                p.topologyIndices, p.mushIterations, p.mushStep,
+                p.mushPinBorders, p.mushDistanceWeight, p.mushSettings);
+            if (!rest) {
+                return false;
+            }
+            if (RigExecDeltaMushMaskPreservesVerdict(*pts, *rest,
+                                                     p.mushDisplacement,
+                                                     RigExecGeometryRanges())) {
+                std::vector<GfVec3f> preceding;
+                if (!source) {
+                    preceding = *pts;
+                }
+                if (!RigExecApplyDeltaMushWithRestDataMasked<GfVec3f, GfVec3d>(
+                        pts, *rest, p.mushDisplacement, active,
+                        RigExecGeometryRanges(), cache->MushMaskMemo()) ||
+                    pts->size() != count) {
+                    return false;
+                }
+                RigExecBlendEnvelopeAll(source ? source : preceding.data(),
+                                        weights, count, pts->data());
+                return true;
+            }
+        }
     }
 
     // A constant envelope at exactly full strength makes the blend below the

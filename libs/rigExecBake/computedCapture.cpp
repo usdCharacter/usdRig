@@ -1352,6 +1352,16 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                           Family::Constraint, i, std::size(fields) + k);
                 }
             }
+            // A harmonics constraint's scalars, likewise.
+            if (c.harmonics) {
+                for (size_t k = 0; k < c.harmonicsScalars.size(); ++k) {
+                    const auto &scalar = c.harmonicsScalars[k];
+                    place(scalar.isFloat
+                              ? static_cast<const void *>(&scalar.narrow)
+                              : static_cast<const void *>(&scalar.wide),
+                          Family::Constraint, i, std::size(fields) + k);
+                }
+            }
         }
         for (size_t i = 0; i < B.weightObjects.size(); ++i) {
             const RigExecBakedProgramImpl::WeightObject &w =

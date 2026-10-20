@@ -2014,6 +2014,118 @@ class RigExecIkFkMatchConstraint "RigExecIkFkMatchConstraint" (
     )
 }
 
+class RigExecHarmonicsConstraint "RigExecHarmonicsConstraint" (
+    customData = {
+        string userDocBrief = """Secondary motion for one joint or control: overshoot, lag and
+    jiggle from the way it moved over the frames before the current one."""
+    }
+)
+{
+    bool inputs:affectRotationX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis rotation mask."
+        }
+    )
+    bool inputs:affectRotationY = 1
+    bool inputs:affectRotationZ = 1
+    bool inputs:affectScaleX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis scale mask."
+        }
+    )
+    bool inputs:affectScaleY = 1
+    bool inputs:affectScaleZ = 1
+    bool inputs:affectTranslationX = 1 (
+        customData = {
+            string userDocBrief = "Per-axis translation mask."
+        }
+    )
+    bool inputs:affectTranslationY = 1
+    bool inputs:affectTranslationZ = 1
+    double inputs:amplitude = 1 (
+        customData = {
+            string userDocBrief = "Overall multiplier on the ring."
+        }
+    )
+    double3 inputs:axisAmplitude = (1, 1, 1) (
+        customData = {
+            string userDocBrief = "Per-axis multipliers, along the axes of rigExec:space."
+        }
+    )
+    double inputs:decay = 3 (
+        customData = {
+            string userDocBrief = "How fast a ring dies away; 0 rings at full amplitude until it ends."
+        }
+    )
+    double3 inputs:rotationOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = "Additive Euler rotation offset in degrees, applied after the blend."
+        }
+    )
+    double3 inputs:scaleOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = """ADDITIVE scale offset applied after the blend, which is why
+        its identity is (0, 0, 0) and not (1, 1, 1): the kernel computes
+        blendedScale + offset."""
+        }
+    )
+    double inputs:termination = 0 (
+        customData = {
+            string userDocBrief = "The fraction of the amplitude a ring has left when it ends."
+        }
+    )
+    double3 inputs:translationOffset = (0, 0, 0) (
+        customData = {
+            string userDocBrief = "Additive translation offset applied after the source blend."
+        }
+    )
+    uniform double rigExec:frequency = 1 (
+        customData = {
+            string userDocBrief = "Phase frames one frame advances."
+        }
+    )
+    uniform bool rigExec:ignoreFirstFrame = 1 (
+        customData = {
+            string userDocBrief = """When the history is shorter than the window (a .rigexec
+        reader's first frames), drop the jolt of starting to move from
+        rest."""
+        }
+    )
+    uniform bool rigExec:locked = 0 (
+        customData = {
+            string userDocBrief = "Authoring lock metadata for application interchange."
+        }
+    )
+    uniform bool rigExec:matchVelocity = 1 (
+        customData = {
+            string userDocBrief = """Scale the amplitude by waveLength / (2 pi), so an impulse
+        rings with the velocity change that caused it."""
+        }
+    )
+    uniform token rigExec:rotationOrder = "XYZ" (
+        allowedTokens = ["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"]
+        customData = {
+            string userDocBrief = "Euler order for the operators that compose a rotation."
+        }
+    )
+    rel rigExec:space (
+        customData = {
+            string userDocBrief = """Optional single RigExecControl or RigExecJoint whose frame the
+        motion is measured in."""
+        }
+    )
+    uniform double rigExec:waveLength = 5 (
+        customData = {
+            string userDocBrief = "Frames per oscillation."
+        }
+    )
+    uniform double rigExec:waves = 5 (
+        customData = {
+            string userDocBrief = "How many oscillations one impulse rings for."
+        }
+    )
+}
+
 class RigExecSpaceSwitch "RigExecSpaceSwitch" (
     customData = {
         string userDocBrief = """A labelled list of parent spaces for one xformable, with a live
@@ -4335,6 +4447,102 @@ class RigExecWrinkleMover "RigExecWrinkleMover" (
     float inputs:wrinkleScale = 1 (
         customData = {
             string userDocBrief = "Finite nonnegative scale on solved displacement, still bounded by maxDisplacement."
+        }
+    )
+}
+
+class RigExecClothMover "RigExecClothMover" (
+    customData = {
+        string userDocBrief = """Cloth on one native mesh: the points rigExec:moves names hang,
+    swing and fold under gravity, keep their edge lengths, and slide over
+    the meshes rigExec:colliders names."""
+    }
+)
+{
+    float inputs:attract = 0 (
+        customData = {
+            string userDocBrief = """Fraction of the gap to its incoming position every free
+        point closes per frame, in [0,1], on top of its pin weight: 0 is
+        free cloth, 1 follows the input."""
+        }
+    )
+    float inputs:bendCompliance = 0.001 (
+        customData = {
+            string userDocBrief = "Compliance against bending across edges; larger folds more easily."
+        }
+    )
+    float inputs:collisionDepth = 2 (
+        customData = {
+            string userDocBrief = """How far behind a collider's surface a cloth point is still
+        pushed out; deeper points are taken as on the other side."""
+        }
+    )
+    float inputs:damping = 0.1 (
+        customData = {
+            string userDocBrief = "Fraction of velocity lost per second, in [0,1]."
+        }
+    )
+    float inputs:friction = 0.3 (
+        customData = {
+            string userDocBrief = "Fraction of tangential motion a collider contact removes, in [0,1]."
+        }
+    )
+    float3 inputs:gravity = (0, -981, 0) (
+        customData = {
+            string userDocBrief = "Acceleration in the cloth mesh's local space, in its units per second squared."
+        }
+    )
+    float inputs:stretchCompliance = 0 (
+        customData = {
+            string userDocBrief = "Compliance of the edges against stretch; 0 is inextensible."
+        }
+    )
+    float inputs:thickness = 0.5 (
+        customData = {
+            string userDocBrief = "Distance the cloth keeps from a collider's surface."
+        }
+    )
+    rel rigExec:colliders (
+        customData = {
+            string userDocBrief = """Meshes the cloth collides with, one-sided along their
+        outward normals."""
+        }
+    )
+    uniform double rigExec:frameRate = 0 (
+        customData = {
+            string userDocBrief = "Frames per second the window is simulated at."
+        }
+    )
+    uniform int rigExec:iterations = 1 (
+        customData = {
+            string userDocBrief = "Constraint passes per step, in [1,64]."
+        }
+    )
+    uniform float[] rigExec:pinWeights = [] (
+        customData = {
+            string userDocBrief = "One weight per cloth point in [0,1]."
+        }
+    )
+    uniform int rigExec:substeps = 10 (
+        customData = {
+            string userDocBrief = "Solver steps per frame, in [1,256]."
+        }
+    )
+    uniform bool rigExec:tethers = 1 (
+        customData = {
+            string userDocBrief = """Limit each free point's distance to its nearest pin to the
+        rest distance (plus rigExec:tetherSlack), so a hanging cloth does not
+        stretch under its own weight."""
+        }
+    )
+    uniform float rigExec:tetherSlack = 0.05 (
+        customData = {
+            string userDocBrief = "Fraction of the rest distance a tether allows beyond it."
+        }
+    )
+    uniform int rigExec:windowFrames = 16 (
+        customData = {
+            string userDocBrief = "How many earlier frames the solve starts from, in [1,1024]."
         }
     )
 }

@@ -139,6 +139,13 @@ def check_examples():
         if borrowed is not None and borrowed not in OPERATORS:
             raise SystemExit("%s: example_key \"%s\" is not an operator"
                              % (key, borrowed))
+        for name, stage, _caption in note.get("extra_gifs", ()):
+            if not os.path.isfile(os.path.join(RIG, *stage.split("/"))):
+                raise SystemExit("%s: extra_gifs stage %s does not exist"
+                                 % (key, stage))
+            if not os.path.isfile(os.path.join(GIFS_DIR, name + ".gif")):
+                sys.stderr.write("warning: %s: docs/gifs/%s.gif is missing\n"
+                                 % (key, name))
         if note.get("no_gif"):
             continue
         if not os.path.isfile(os.path.join(GIFS_DIR, key + ".gif")):
@@ -412,6 +419,10 @@ def render_page(key, note, classes):
     lines.append("")
     lines.append(note["example"].strip())
     lines.append("")
+    extras = note.get("extra_gifs", ())
+    for name, _stage, caption in extras:
+        lines.append("![%s](../gifs/%s.gif)" % (caption, name))
+        lines.append("")
     if stage:
         lines.append("Open it live with:")
         lines.append("")
@@ -419,8 +430,9 @@ def render_page(key, note, classes):
         lines.append("bin\\launch_usdview.bat docs\\examples\\%s.usda" % stage)
         lines.append("```")
         lines.append("")
-    if not note.get("no_gif"):
-        lines.append("Re-render the GIF above with:")
+    if not note.get("no_gif") or extras:
+        lines.append("Re-render the GIFs on this page with:" if extras
+                     else "Re-render the GIF above with:")
         lines.append("")
         lines.append("```bat")
         lines.append("python docs/render_media.py --page %s" % key)

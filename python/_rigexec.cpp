@@ -758,6 +758,8 @@ PYBIND11_MODULE(_rigexec, m) {
     m.attr("__version__") = "0.1.0";
     // RIGEXEC_GPU_DEFORM=readback deforms on this executor.
     rigExec::RigExecGpuRegisterDeformRunner();
+    // Cloth solves on this executor unless RIGEXEC_GPU_CLOTH=0.
+    rigExec::RigExecGpuRegisterClothRunner();
 
 
     py::class_<rigExec::RigExecPointFrame>(m, "PointFrame",
@@ -1652,6 +1654,22 @@ PYBIND11_MODULE(_rigexec, m) {
              &rigExec::RigExecSourceConstraintHandle::SetSourceWeights,
              py::arg("weights"));
 
+    py::class_<rigExec::RigExecHarmonicsConstraintHandle, rigExec::RigExecConstraintHandle>(m, "HarmonicsConstraint",
+        "Secondary motion of one joint or control from the frames before the current one.")
+        .def("set_space", [](rigExec::RigExecHarmonicsConstraintHandle &h, py::object p) {
+            h.SetSpace(_PythonToDependencyPath(p, h.GetStage()));
+        }, py::arg("path"))
+        .def("set_waves", &rigExec::RigExecHarmonicsConstraintHandle::SetWaves, py::arg("waves"))
+        .def("set_wave_length", &rigExec::RigExecHarmonicsConstraintHandle::SetWaveLength, py::arg("frames"))
+        .def("set_frequency", &rigExec::RigExecHarmonicsConstraintHandle::SetFrequency, py::arg("frequency"))
+        .def("set_ignore_first_frame", &rigExec::RigExecHarmonicsConstraintHandle::SetIgnoreFirstFrame, py::arg("ignore"))
+        .def("set_match_velocity", &rigExec::RigExecHarmonicsConstraintHandle::SetMatchVelocity, py::arg("match"))
+        .def("set_amplitude", &rigExec::RigExecHarmonicsConstraintHandle::SetAmplitude, py::arg("amplitude"))
+        .def("set_axis_amplitude", &rigExec::RigExecHarmonicsConstraintHandle::SetAxisAmplitude,
+             py::arg("x"), py::arg("y"), py::arg("z"))
+        .def("set_decay", &rigExec::RigExecHarmonicsConstraintHandle::SetDecay, py::arg("decay"))
+        .def("set_termination", &rigExec::RigExecHarmonicsConstraintHandle::SetTermination, py::arg("termination"));
+
     py::class_<rigExec::RigExecAimConstraintHandle, rigExec::RigExecSourceConstraintHandle>(m, "AimConstraint")
         .def("set_affect_rotation", &rigExec::RigExecAimConstraintHandle::SetAffectRotation,
              py::arg("x"), py::arg("y"), py::arg("z"))
@@ -2203,6 +2221,30 @@ PYBIND11_MODULE(_rigexec, m) {
         .def("set_distance_weight", &rigExec::RigExecDeltaMushMoverHandle::SetDistanceWeight, py::arg("weight"))
         .def("set_displacement", &rigExec::RigExecDeltaMushMoverHandle::SetDisplacement, py::arg("amount"));
 
+    py::class_<rigExec::RigExecClothMoverHandle, rigExec::RigExecMoverHandle>(m, "ClothMover",
+        "Cloth on one mesh, simulated over a window of the frames before the current one.")
+        .def("set_colliders", [](rigExec::RigExecClothMoverHandle &h, const py::iterable &paths) {
+            h.SetColliders(_PythonToDependencyPaths(paths, h.GetStage()));
+        }, py::arg("meshes"))
+        .def("set_colliders_read_phase", [](rigExec::RigExecClothMoverHandle &h, std::string v) {
+            h.SetCollidersReadPhase(TfToken(v));
+        }, py::arg("phase"))
+        .def("set_pin_weights", &rigExec::RigExecClothMoverHandle::SetPinWeights, py::arg("weights"))
+        .def("set_window_frames", &rigExec::RigExecClothMoverHandle::SetWindowFrames, py::arg("frames"))
+        .def("set_substeps", &rigExec::RigExecClothMoverHandle::SetSubsteps, py::arg("substeps"))
+        .def("set_iterations", &rigExec::RigExecClothMoverHandle::SetIterations, py::arg("iterations"))
+        .def("set_tethers", &rigExec::RigExecClothMoverHandle::SetTethers, py::arg("tethers"))
+        .def("set_tether_slack", &rigExec::RigExecClothMoverHandle::SetTetherSlack, py::arg("slack"))
+        .def("set_frame_rate", &rigExec::RigExecClothMoverHandle::SetFrameRate, py::arg("frames_per_second"))
+        .def("set_stretch_compliance", &rigExec::RigExecClothMoverHandle::SetStretchCompliance, py::arg("compliance"))
+        .def("set_bend_compliance", &rigExec::RigExecClothMoverHandle::SetBendCompliance, py::arg("compliance"))
+        .def("set_gravity", &rigExec::RigExecClothMoverHandle::SetGravity, py::arg("x"), py::arg("y"), py::arg("z"))
+        .def("set_damping", &rigExec::RigExecClothMoverHandle::SetDamping, py::arg("damping"))
+        .def("set_attract", &rigExec::RigExecClothMoverHandle::SetAttract, py::arg("attract"))
+        .def("set_thickness", &rigExec::RigExecClothMoverHandle::SetThickness, py::arg("thickness"))
+        .def("set_collision_depth", &rigExec::RigExecClothMoverHandle::SetCollisionDepth, py::arg("depth"))
+        .def("set_friction", &rigExec::RigExecClothMoverHandle::SetFriction, py::arg("friction"));
+
     py::class_<rigExec::RigExecWrinkleMoverHandle, rigExec::RigExecMoverHandle>(m, "WrinkleMover")
         .def("set_rest_points", [](rigExec::RigExecWrinkleMoverHandle &h, py::iterable values) {
             std::vector<GfVec3f> points;
@@ -2364,6 +2406,16 @@ PYBIND11_MODULE(_rigexec, m) {
                                          float weight, py::object target) {
             return c.AddDeltaMushMover(name,weight,_PythonToDependencyPath(target,c.GetStage()));
         }, py::arg("name"),py::arg("default_weight")=1.0f,py::arg("target")=py::none())
+        .def("add_cloth_mover", [](rigExec::RigExecMoverChain &c, std::string name,
+                                    float defaultWeight, py::object target) {
+            return c.AddClothMover(name, defaultWeight,
+                                   _PythonToDependencyPath(target, c.GetStage()));
+        }, py::arg("name"), py::arg("default_weight") = 1.0f,
+           py::arg("target") = py::none())
+        .def("add_harmonics_constraint", [](rigExec::RigExecMoverChain &c, std::string name,
+                                             py::object target) {
+            return c.AddHarmonicsConstraint(name, _PythonToDependencyPath(target, c.GetStage()));
+        }, py::arg("name"), py::arg("target") = py::none())
         .def("add_wrinkle_mover", [](rigExec::RigExecMoverChain &c, std::string name,
                                       float defaultWeight, py::object target) {
             return c.AddWrinkleMover(name, defaultWeight,

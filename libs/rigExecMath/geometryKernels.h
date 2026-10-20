@@ -6,6 +6,7 @@
 #ifndef RIGEXEC_MATH_GEOMETRY_KERNELS_H
 #define RIGEXEC_MATH_GEOMETRY_KERNELS_H
 
+#include "rangeRunner.h"
 #include "pointFrame.h"
 #include "wrinkleSettings.h"
 #include "meshConnectivity.h"
@@ -231,11 +232,14 @@ using RigExecVertexNormalsFn = std::vector<GfVec3f> (*)(
 /// The span form borrows every input range for the call only: the
 /// caller keeps the storage (e.g. the VtArray behind cdata()) alive
 /// until it returns. Bit-identical to the vector form, which
-/// delegates to it.
+/// delegates to it. \p ranges may spread the per-face and per-vertex
+/// work across threads; the sums into each vertex still run in face
+/// order, so the normals are bitwise the same either way.
 std::vector<GfVec3f> RigExecComputeVertexNormals(
     const GfVec3f *points, size_t pointsSize,
     const int *faceVertexCounts, size_t faceVertexCountsSize,
-    const int *faceVertexIndices, size_t faceVertexIndicesSize);
+    const int *faceVertexIndices, size_t faceVertexIndicesSize,
+    const RigExecRangeRunner *ranges = nullptr);
 
 /// Rotate target-local offsets through corresponding rest/posed surface frames.
 /// Area-weighted polygon normals supply each vertex normal. The longest
@@ -591,11 +595,15 @@ struct RigExecNurbsPatch {
 /// for each point in \p points (or broadcasts uvPoints[0] when uvPointCount == 1
 /// and points is non-empty). Returns false, leaving \p points untouched, when
 /// the patch is invalid, uvPoints is missing/mismatched, or any UV is non-finite.
+///
+/// Each point is evaluated independently, so \p ranges may split the loop
+/// across threads; the points are bitwise the same either way.
 bool RigExecApplyPatchMover(
     std::vector<GfVec3f> *points,
     const RigExecNurbsPatch &patch,
     const GfVec3f *uvPoints,
-    size_t uvPointCount);
+    size_t uvPointCount,
+    const RigExecRangeRunner *ranges = nullptr);
 }  // namespace rigExec
 
 #endif  // RIGEXEC_MATH_GEOMETRY_KERNELS_H

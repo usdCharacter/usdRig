@@ -567,6 +567,9 @@ RigExecImagingRegistry::RigExecImagingRegistry(
     // RIGEXEC_GPU_DEFORM=readback deforms on the GPU executor; the device
     // starts on its first run, not here.
     RigExecGpuRegisterDeformRunner();
+    // Cloth solves on the GPU by default (RIGEXEC_GPU_CLOTH=0 keeps it on
+    // the CPU); the device starts on the first solve.
+    RigExecGpuRegisterClothRunner();
     // No scheduler: a context without an active rig owns no threads. The
     // first activation starts one (see Activate).
 }

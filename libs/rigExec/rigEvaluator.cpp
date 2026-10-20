@@ -316,6 +316,15 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
             }
             _bakedProgram->SetPublishWeightFields(_publishWeightFields);
         }
+        // Windowed operations read their inputs at the earlier ticks of
+        // their windows: run the ticks the memo lacks, then place the rings.
+        if(_bakedProgram->GetWindowedOpCount()) {
+            RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.WindowHistory","evaluate");
+            std::vector<RigExecWindowRing> rings;
+            std::string why;
+            if(!GetWindowRings(time,&rings,&why)) pose.diagnostics.push_back(why);
+            _bakedProgram->SetWindowRings(rings);
+        }
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.Run","evaluate");
         return _bakedProgram->Run(time,&pose);
     };
@@ -344,6 +353,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         return pose;
     }
     _bakedProgram->AdoptBlendSampleLayouts(&_blendSampleShapes);
+    _NoteWindowCaptures(time);
     _skinTopologyObservationPending = false;
     ++_bakedGenerations;
     _bakedProgramPublished=true;

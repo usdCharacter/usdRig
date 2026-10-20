@@ -5,7 +5,9 @@
 namespace rigExec {
 /// IkFkMatch revises several controls from frames and channels the pose walk
 /// reads itself (ikFkMatchKernel.h); it has no single-frame kernel here.
-enum class RigExecConstraintKind { Position,Rotation,Scale,Parent,Aim,SingleChainIk,IkFkMatch };
+/// Harmonics reads its own history window (harmonicsKernel.h), which only
+/// the pose walk holds; it has no single-frame kernel either.
+enum class RigExecConstraintKind { Position,Rotation,Scale,Parent,Aim,SingleChainIk,IkFkMatch,Harmonics };
 /// Detached constraint parameters. Carry pointers in parameter structs must
 /// remain null; the current graph input owns the explicitly named carry.
 struct RigExecConstraintRecord {

@@ -99,6 +99,20 @@ RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
             handler.hasScalarOracle = false;
         }
     }
+    const bool windowed = handler.windowFrames || handler.captureWindow ||
+                          handler.applyWindow;
+    if ((windowed || handler.applyWindowDevice) &&
+        (!external || !handler.windowFrames || !handler.captureWindow ||
+         !handler.applyWindow)) {
+        return fail(std::string(handler.schemaType) +
+            ": a windowed mover is an external mover with windowFrames, "
+            "captureWindow and applyWindow");
+    }
+    if ((handler.runtimeKernel.captureWindow != nullptr) !=
+        (handler.runtimeKernel.applyWindow != nullptr)) {
+        return fail(std::string(handler.schemaType) +
+            ": a windowed playback kernel needs captureWindow and applyWindow");
+    }
     const bool applies = handler.runtimeKernel.apply ||
                          handler.runtimeKernel.applyWithProviders;
     if ((handler.encodeExternal || handler.runtimeKernel.prepare ||

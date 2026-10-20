@@ -2790,6 +2790,250 @@ RigExecMoverChain::AddWrinkleMover(
     return handle;
 }
 
+namespace {
+
+void
+_RequireFiniteAtLeast(double value, double lo, const char *what)
+{
+    if (!std::isfinite(value) || value < lo) {
+        throw std::invalid_argument(std::string(what) + " must be finite and at least " +
+                                    std::to_string(lo));
+    }
+}
+
+void
+_RequireIntIn(int value, int lo, int hi, const char *what)
+{
+    if (value < lo || value > hi) {
+        throw std::invalid_argument(std::string(what) + " must be in [" +
+                                    std::to_string(lo) + "," + std::to_string(hi) + "]");
+    }
+}
+
+}  // namespace
+
+void
+RigExecClothMoverHandle::SetColliders(const std::vector<SdfPath> &meshes)
+{
+    SetRel("rigExec:colliders", meshes);
+}
+
+void
+RigExecClothMoverHandle::SetCollidersReadPhase(const TfToken &phase)
+{
+    if (phase.IsEmpty()) {
+        throw std::invalid_argument("cloth collider read phase must not be empty");
+    }
+    RigExecMoverHandle::SetReadPhase(TfToken("rigExec:colliders"), phase.GetString());
+}
+
+void
+RigExecClothMoverHandle::SetPinWeights(const std::vector<float> &weights)
+{
+    for (const float w : weights) {
+        if (!std::isfinite(w) || w < 0.0f || w > 1.0f) {
+            throw std::invalid_argument("cloth pin weights must be in [0,1]");
+        }
+    }
+    _AuthorAttr(GetPrim(), "rigExec:pinWeights", SdfValueTypeNames->FloatArray,
+                VtValue(VtFloatArray(weights.begin(), weights.end())));
+}
+
+void
+RigExecClothMoverHandle::SetWindowFrames(int frames)
+{
+    _RequireIntIn(frames, 1, 1024, "cloth window frames");
+    _AuthorAttr(GetPrim(), "rigExec:windowFrames", SdfValueTypeNames->Int, VtValue(frames));
+}
+
+void
+RigExecClothMoverHandle::SetSubsteps(int substeps)
+{
+    _RequireIntIn(substeps, 1, 256, "cloth substeps");
+    _AuthorAttr(GetPrim(), "rigExec:substeps", SdfValueTypeNames->Int, VtValue(substeps));
+}
+
+void
+RigExecClothMoverHandle::SetIterations(int iterations)
+{
+    _RequireIntIn(iterations, 1, 64, "cloth iterations");
+    _AuthorAttr(GetPrim(), "rigExec:iterations", SdfValueTypeNames->Int, VtValue(iterations));
+}
+
+void
+RigExecClothMoverHandle::SetTethers(bool tethers)
+{
+    _AuthorAttr(GetPrim(), "rigExec:tethers", SdfValueTypeNames->Bool, VtValue(tethers));
+}
+
+void
+RigExecClothMoverHandle::SetTetherSlack(float slack)
+{
+    _RequireFiniteAtLeast(slack, 0.0, "cloth tether slack");
+    _AuthorAttr(GetPrim(), "rigExec:tetherSlack", SdfValueTypeNames->Float, VtValue(slack));
+}
+
+void
+RigExecClothMoverHandle::SetFrameRate(double framesPerSecond)
+{
+    _RequireFiniteAtLeast(framesPerSecond, 0.0, "cloth frame rate");
+    _AuthorAttr(GetPrim(), "rigExec:frameRate", SdfValueTypeNames->Double,
+                VtValue(framesPerSecond));
+}
+
+void
+RigExecClothMoverHandle::SetStretchCompliance(float compliance)
+{
+    _RequireFiniteAtLeast(compliance, 0.0, "cloth stretch compliance");
+    _AuthorAttr(GetPrim(), "inputs:stretchCompliance", SdfValueTypeNames->Float,
+                VtValue(compliance));
+}
+
+void
+RigExecClothMoverHandle::SetBendCompliance(float compliance)
+{
+    _RequireFiniteAtLeast(compliance, 0.0, "cloth bend compliance");
+    _AuthorAttr(GetPrim(), "inputs:bendCompliance", SdfValueTypeNames->Float,
+                VtValue(compliance));
+}
+
+void
+RigExecClothMoverHandle::SetGravity(float x, float y, float z)
+{
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+        throw std::invalid_argument("cloth gravity must be finite");
+    }
+    _AuthorAttr(GetPrim(), "inputs:gravity", SdfValueTypeNames->Float3,
+                VtValue(GfVec3f(x, y, z)));
+}
+
+void
+RigExecClothMoverHandle::SetDamping(float damping)
+{
+    _RequireNormalizedMoverWeight(damping);
+    _AuthorAttr(GetPrim(), "inputs:damping", SdfValueTypeNames->Float, VtValue(damping));
+}
+
+void
+RigExecClothMoverHandle::SetAttract(float attract)
+{
+    _RequireNormalizedMoverWeight(attract);
+    _AuthorAttr(GetPrim(), "inputs:attract", SdfValueTypeNames->Float, VtValue(attract));
+}
+
+void
+RigExecClothMoverHandle::SetThickness(float thickness)
+{
+    _RequireFiniteAtLeast(thickness, 0.0, "cloth thickness");
+    _AuthorAttr(GetPrim(), "inputs:thickness", SdfValueTypeNames->Float, VtValue(thickness));
+}
+
+void
+RigExecClothMoverHandle::SetCollisionDepth(float depth)
+{
+    _RequireFiniteAtLeast(depth, 0.0, "cloth collision depth");
+    _AuthorAttr(GetPrim(), "inputs:collisionDepth", SdfValueTypeNames->Float, VtValue(depth));
+}
+
+void
+RigExecClothMoverHandle::SetFriction(float friction)
+{
+    _RequireNormalizedMoverWeight(friction);
+    _AuthorAttr(GetPrim(), "inputs:friction", SdfValueTypeNames->Float, VtValue(friction));
+}
+
+RigExecClothMoverHandle
+RigExecMoverChain::AddClothMover(
+    const std::string &name, float defaultWeight, const SdfPath &target)
+{
+    _RequireNormalizedMoverWeight(defaultWeight);
+    RigExecClothMoverHandle handle(
+        _stage, _AddMoverPrim("RigExecClothMover", name, target));
+    handle.SetDefaultWeight(defaultWeight);
+    return handle;
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetSpace(const SdfPath &space)
+{
+    _SetSingleRel("rigExec:space", space);
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetWaves(double waves)
+{
+    if (!std::isfinite(waves) || !(waves > 0.0)) {
+        throw std::invalid_argument("harmonics waves must be finite and above zero");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:waves", SdfValueTypeNames->Double, VtValue(waves));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetWaveLength(double frames)
+{
+    if (!std::isfinite(frames) || !(frames > 0.0)) {
+        throw std::invalid_argument("harmonics wave length must be finite and above zero");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:waveLength", SdfValueTypeNames->Double, VtValue(frames));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetFrequency(double frequency)
+{
+    if (!std::isfinite(frequency) || !(frequency > 0.0)) {
+        throw std::invalid_argument("harmonics frequency must be finite and above zero");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:frequency", SdfValueTypeNames->Double, VtValue(frequency));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetIgnoreFirstFrame(bool ignore)
+{
+    _AuthorAttr(GetPrim(), "rigExec:ignoreFirstFrame", SdfValueTypeNames->Bool, VtValue(ignore));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetMatchVelocity(bool match)
+{
+    _AuthorAttr(GetPrim(), "rigExec:matchVelocity", SdfValueTypeNames->Bool, VtValue(match));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetAmplitude(double amplitude)
+{
+    if (!std::isfinite(amplitude)) {
+        throw std::invalid_argument("harmonics amplitude must be finite");
+    }
+    _AuthorAttr(GetPrim(), "inputs:amplitude", SdfValueTypeNames->Double, VtValue(amplitude));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetAxisAmplitude(double x, double y, double z)
+{
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+        throw std::invalid_argument("harmonics axis amplitude must be finite");
+    }
+    _AuthorAttr(GetPrim(), "inputs:axisAmplitude", SdfValueTypeNames->Double3,
+                VtValue(GfVec3d(x, y, z)));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetDecay(double decay)
+{
+    _RequireFiniteAtLeast(decay, 0.0, "harmonics decay");
+    _AuthorAttr(GetPrim(), "inputs:decay", SdfValueTypeNames->Double, VtValue(decay));
+}
+
+void
+RigExecHarmonicsConstraintHandle::SetTermination(double termination)
+{
+    if (!std::isfinite(termination) || termination < 0.0 || termination >= 1.0) {
+        throw std::invalid_argument("harmonics termination must be in [0,1)");
+    }
+    _AuthorAttr(GetPrim(), "inputs:termination", SdfValueTypeNames->Double,
+                VtValue(termination));
+}
+
 RigExecVolumeCorrectMoverHandle
 RigExecMoverChain::AddVolumeCorrectMover(
     const std::string &name, float defaultWeight, const SdfPath &target)
@@ -2902,6 +3146,13 @@ _PreflightExistingPrim(
 }
 
 }  // namespace
+
+RigExecHarmonicsConstraintHandle
+RigExecMoverChain::AddHarmonicsConstraint(const std::string &name, const SdfPath &target)
+{
+    return RigExecHarmonicsConstraintHandle(
+        _stage, _AddMoverPrim("RigExecHarmonicsConstraint", name, target));
+}
 
 RigExecAimConstraintHandle
 RigExecMoverChain::AddAimConstraint(const std::string &name, const SdfPath &target)

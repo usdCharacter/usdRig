@@ -1,4 +1,5 @@
 #include "weightPackets.h"
+#include "parallel.h"
 
 #include "frameExtraction.h"
 
@@ -409,7 +410,8 @@ _BuildSphereWeightPacket(const RigExecVolumeWeightInputs &inputs)
     std::vector<float> weights;
     RigExecSphereWeightField(
         points, _ApplyAxisScales(worldToLocal, inputs.scales), inputs.params,
-        &weights, inputs.positiveScales, inputs.negativeScales);
+        &weights, inputs.positiveScales, inputs.negativeScales,
+        RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
     }
@@ -460,7 +462,8 @@ _BuildPlaneWeightPacket(const RigExecVolumeWeightInputs &inputs)
 
     std::vector<float> weights;
     RigExecPlaneWeightField(
-        points, worldToLocal, axisIndex, inputs.params, &weights, extentPtr);
+        points, worldToLocal, axisIndex, inputs.params, &weights, extentPtr,
+        RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
     }
@@ -488,7 +491,8 @@ _BuildCurveWeightPacket(const RigExecVolumeWeightInputs &inputs)
     RigExecCurveWeightField(
         points, curve,
         _ApplyAxisScales(worldToLocal, inputs.scales), inputs.params,
-        &weights, inputs.localCurveScratch?inputs.localCurveScratch:&localCurve);
+        &weights, inputs.localCurveScratch?inputs.localCurveScratch:&localCurve,
+        RigExecGeometryRanges());
     if (!_FinishVolumeWeight(&packet, &weights)) {
         return RigExecWeightPacket();
     }

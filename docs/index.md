@@ -16,6 +16,7 @@ Storm viewport with the rig guides on.
 | ![What warming does](../icons/concept.png) | [What warming does](concepts/frame-cache-warming.md) | The per-frame cache in one page: what warms, what you see, what it costs, and the switches. |
 | ![Tutorial: a rolling ball rig](../icons/concept.png) | [Tutorial: a rolling ball rig](concepts/tutorial-rolling-ball.md) | Hand-build a rolling ball in usdview and Noodles, with a complete video and a screenshot for every step. |
 | ![Compression-driven wrinkles](../icons/concept.png) | [Compression-driven wrinkles](concepts/wrinkle-deformation.md) | How compression and a stable fold guide produce quasistatic wrinkles, with pins, attachment bounds, and local collision planes. |
+| ![Secondary motion and cloth](../icons/concept.png) | [Secondary motion and cloth](concepts/secondary-motion.md) | How the harmonics constraint and the cloth mover read the frames before the current one, inside the one evaluation loop, live, in background caches and in .rigexec playback. |
 | ![RigLogic behaviours](../icons/concept.png) | [RigLogic behaviours](concepts/riglogic.md) | RigLogic's radial-basis solvers, ML morph deformer and animated maps in RigExec, where each one comes from, and the examples that show them. |
 | ![Tutorial: Godot and baked rigs](../icons/concept.png) | [Tutorial: Godot and baked rigs](concepts/tutorial-godot-baked-rig.md) | Build the ball in usdview, bake one self-contained rig asset, and drive its exposed controllers in Godot, with GIF checkpoints. |
 | ![External mover plugins](../icons/concept.png) | [External mover plugins](concepts/external-movers.md) | Build and register point movers from a separate repository for native, frozen and .rigexec playback. |
@@ -64,6 +65,7 @@ Storm viewport with the rig guides on.
 | ![Parent Constraint](../icons/parent_constraint.png) | [Parent Constraint](nodes/parent_constraint.md) | Carries a target with its sources — position and rotation — under a per-source offset; weight attaches and releases. |
 | ![Single-Chain IK Constraint](../icons/single_chain_ik_constraint.png) | [Single-Chain IK Constraint](nodes/single_chain_ik_constraint.md) | Re-poses an existing joint chain of any length onto an effector goal. |
 | ![IK/FK Match Constraint](../icons/concept.png) | [IK/FK Match Constraint](nodes/ikfk_match_constraint.md) | Keeps a switchable limb's inactive half on its joints and publishes the values a switch authors. |
+| ![Harmonics Constraint](../icons/concept.png) | [Harmonics Constraint](nodes/harmonics_constraint.md) | Secondary motion: overshoot, lag and jiggle of one joint or control from the frames before the current one. |
 | ![Constraint Frame](../icons/concept.png) | [Constraint Frame](nodes/constraint_frame.md) | Computes ordered affine constraints in explicit owner and target spaces. |
 
 ## Geometry movers
@@ -82,6 +84,7 @@ Storm viewport with the rig guides on.
 | ![Smooth Mover](../icons/smooth_mover.png) | [Smooth Mover](nodes/smooth_mover.md) | Relaxes points with uniform Laplacian smoothing. |
 | ![Delta Mush Mover](../icons/concept.png) | [Delta Mush Mover](nodes/delta_mush_mover.md) | Smooths deformation and restores transported rest detail. |
 | ![Wrinkle Mover](../icons/concept.png) | [Wrinkle Mover](nodes/wrinkle_mover.md) | Solves coherent compression-driven folds on an already deformed mesh. |
+| ![Cloth Mover](../icons/concept.png) | [Cloth Mover](nodes/cloth_mover.md) | Cloth on one mesh, simulated over the frames before the current one, colliding with the body. |
 | ![Volume Correct Mover](../icons/volume_correct_mover.png) | [Volume Correct Mover](nodes/volume_correct_mover.md) | Pulls a deformation back toward its rest bound volume. |
 | ![ML Mover](../icons/concept.png) | [ML Mover](nodes/ml_mover.md) | A neural morph deformer: a small network maps the pose to morph weights. |
 | ![ML Output](../icons/concept.png) | [ML Output](nodes/ml_output.md) | One output of an ML mover's network, and the float it publishes. |

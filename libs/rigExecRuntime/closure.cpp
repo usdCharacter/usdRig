@@ -757,6 +757,42 @@ static bool RrCompileCommonGraph(RrProgram *p,std::string *error)
 bool RrCompileOpGraph(RrProgram *p,std::string *error)
 {
     if(!RrCompileCommonGraph(p,error)) return false;
+    // The windowed operations: canonical ops, inner ops and the history-tick
+    // mask, settled from the common graph exactly as the native program
+    // settles them.
+    p->windowedOps.clear();
+    if(p->file) for(const auto &row:p->file->windowedOps) {
+        RrProgram::WindowedOp op; op.step=row.step; op.frames=row.frames;
+        p->windowedOps.push_back(std::move(op));
+    }
+    {
+        std::vector<uint32_t> opOfStep(p->steps?p->steps->size():0,UINT32_MAX);
+        for(uint32_t c=0;c<p->opGraph.ops.size();++c)
+            if(p->opGraph.ops[c].originalIndex<opOfStep.size()) opOfStep[p->opGraph.ops[c].originalIndex]=c;
+        std::vector<uint32_t> ops;
+        for(auto &op:p->windowedOps) {
+            op.op=op.step>=0 && size_t(op.step)<opOfStep.size()?opOfStep[size_t(op.step)]:UINT32_MAX;
+            ops.push_back(op.op);
+        }
+        p->windowOfStep.assign(p->steps?p->steps->size():0,-1);
+        for(size_t w=0;w<p->windowedOps.size();++w) {
+            const int32_t step=p->windowedOps[w].step;
+            if(step>=0 && size_t(step)<p->windowOfStep.size()) p->windowOfStep[size_t(step)]=int32_t(w);
+        }
+        RigExecWindowLayout layout;
+        RigExecSettleWindowLayout(p->opGraph,ops,&layout);
+        p->historyMask=std::move(layout.mask);
+        for(size_t w=0;w<p->windowedOps.size();++w) {
+            p->windowedOps[w].inner=std::move(layout.inner[w]);
+            p->windowedOps[w].feedsWindow=layout.feedsWindow[w]!=0;
+        }
+        p->store.windowCaptures.assign(p->windowedOps.size(),RigExecWindowPacketPtr());
+        p->store.windowRings.assign(p->windowedOps.size(),RigExecWindowRing());
+        p->store.windowRingChanged.assign(p->windowedOps.size(),0);
+        p->store.windowRingRead.assign(p->windowedOps.size(),RigExecWindowRing());
+        p->store.windowRingSerial.assign(p->windowedOps.size(),0);
+        p->store.historyTick=false;
+    }
     // Wire steps are immutable after Open: one classification serves every run.
     auto &state=p->store.opAdapter;
     state.constantSource.assign(p->opGraph.ops.size(),0);
@@ -785,6 +821,9 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
     if(!state.compiled && !RrCompileOpGraph(p,error)) return false;
     force=force || p->requiredStageFramesFullOwed;
     const bool first=!state.everRan;
+    // A history tick (windowHistory.h): the masked graph on this store. It
+    // leaves what it owes the ops outside its mask for the next full run.
+    const bool history=s.historyTick && p->historyMask.size()==p->opGraph.ops.size();
     state.changedLeaves.clear(); state.seeds.clear(); state.candidateOps.clear();
     state.inputKeys.resize(p->opGraph.ops.size()); state.inputScratch.resize(p->opGraph.ops.size());
     state.coveredPropertyInputs.resize(p->opGraph.ops.size());
@@ -884,8 +923,12 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
         for(const uint32_t slot:inputs.written) if(size_t(slot)+1<p->slotSourceBegin.size())
             for(uint32_t k=p->slotSourceBegin[slot];k<p->slotSourceBegin[slot+1];++k)
                 sourceDirty[p->slotSourceOps[k]]=1;
-    for(const uint32_t slot:inputs.written) inputs.writtenFlag[slot]=0;
-    inputs.written.clear();
+    // A history tick keeps the slots written for the next full run, whose
+    // ops outside the mask have not read them yet.
+    if(!history) {
+        for(const uint32_t slot:inputs.written) inputs.writtenFlag[slot]=0;
+        inputs.written.clear();
+    }
     // A constant source memo is empty on every run, which an equal compare
     // reports unchanged. It is built on a first run; a later run visits only
     // the steps that can seed or change.
@@ -893,6 +936,9 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
     int64_t moved=-1, disagreed=-1, kept=-1;
     s.sourceKeysBuilt=0;
     const auto source=[&](uint32_t c) {
+        // A history tick leaves an op outside its mask untouched, memo
+        // included, so the next full run still sees what moved for it.
+        if(s.historyTick && p->historyMask.size()==p->opGraph.ops.size() && !p->historyMask[c]) return;
         const auto i=p->opGraph.ops[c].originalIndex; const auto &step=(*p->steps)[i];
         bool seed=first || step.headAlwaysRuns, changed=false;
         auto &input=s.headMemoKeys[i]; auto &scratch=s.opInputScratch[i];
@@ -940,7 +986,23 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
         state.everRan=false; s.everRan=false;
         return false;
     }
+    // A windowed op whose history ring moved runs: the ring is a leaf its
+    // body reads. A ring rebuilt with the same packets did not move, as the
+    // native placement compares (RigExecBakedPlaceWindowRings).
+    for(size_t w=0;w<p->windowedOps.size() && w<s.windowRingChanged.size();++w) {
+        const uint32_t c=p->windowedOps[w].op;
+        if(!s.windowRingChanged[w] || c>=p->opGraph.ops.size()) continue;
+        if(w<s.windowRingRead.size()) {
+            if(RigExecWindowRingsEqual(s.windowRingRead[w],s.windowRings[w])) continue;
+            s.windowRingRead[w]=s.windowRings[w];
+        }
+        if(w<s.windowRingSerial.size()) ++s.windowRingSerial[w];
+        const auto at=std::lower_bound(state.seeds.begin(),state.seeds.end(),c);
+        if(at==state.seeds.end() || *at!=c) state.seeds.insert(at,c);
+    }
+    std::fill(s.windowRingChanged.begin(),s.windowRingChanged.end(),char(0));
     RigExecOpCallbacks callbacks;
+    if(s.historyTick && p->historyMask.size()==p->opGraph.ops.size()) callbacks.active=&p->historyMask;
     callbacks.changed=[&](RigExecValueId id){return state.values[size_t(id)].changed!=0;};
     callbacks.inputChanged=[&](uint32_t c,RigExecValueId id){
         const auto &v=state.values[size_t(id)]; const auto &step=(*p->steps)[p->opGraph.ops[c].originalIndex];
@@ -1000,11 +1062,21 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
         // ChainDirty's key is its revision's RevisionDone key. Writes run in
         // (domain, slot) order, so the fuse has built that key already.
         const RigExecOpValueState *done=nullptr;
+        // A windowed op's values also key by its ring (windowHistory.h).
+        const int32_t window=i<p->windowOfStep.size()?p->windowOfStep[i]:-1;
+        const auto windowedSample=[&](uint32_t d,uint32_t slot,std::string *key) {
+            sample(d,slot,key);
+            if(window>=0 && size_t(window)<s.windowRingSerial.size())
+                RigExecOpKeyAppend(key,s.windowRingSerial[size_t(window)]);
+        };
         for(auto id:p->opGraph.ops[c].descriptor.writes) {
             auto &v=state.values[size_t(id)];
             if(done && v.slot==done->slot && v.domain==uint32_t(RigExecWireSlotDomain::ChainDirty))
                 RigExecOpPublishValue(&v,[&](uint32_t,uint32_t,std::string *key){key->append(done->key);});
-            else if(!RrPublishSmallValue(p,&v)) RigExecOpPublishValue(&v,sample);
+            else if(!RrPublishSmallValue(p,&v)) {
+                if(window>=0) RigExecOpPublishValue(&v,windowedSample);
+                else RigExecOpPublishValue(&v,sample);
+            }
             if(v.domain==uint32_t(RigExecWireSlotDomain::RevisionDone)) done=&v;
             if(v.domain==uint32_t(RigExecWireSlotDomain::PropertyResult)) s.propertyVersionChanged[v.slot]=v.changed;
             if(v.domain==uint32_t(RigExecWireSlotDomain::WeightField)) s.weightFieldChanged[v.slot]=v.changed;
@@ -1078,6 +1150,14 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
         return false;
     }
     s.lastClosedClusters=closedClusters;
+    if(history) {
+        // A history program runs nothing but ticks (RigExecRuntimeReader::
+        // _history): each one is its run, so the next compares with it.
+        RrPropertyPublish(p);
+        state.everRan=true; s.everRan=true;
+        std::fill(s.changedSinceRun.begin(),s.changedSinceRun.end(),char(0)); s.anyChangedSinceRun=false;
+        return true;
+    }
     RrPropertyPublish(p);
     // Refusal finishes preparation but owes a full pass on the next Execute.
     if(!p->requiredStageFramesAdmission.admitted) {

@@ -1738,6 +1738,27 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
                     return false;
                 }
             }
+        } else if (mover.schemaType == "RigExecHarmonicsConstraint") {
+            // One target, measured and revised; no sources. The optional
+            // space measures the motion, and a space that cannot supply a
+            // frame is dropped as the rotation constraint drops one.
+            constraint.targets = mover.targets;
+            const SdfPathVector space = getTargets(moverPrim, "rigExec:space");
+            if (space.size() > 1) {
+                return fail("RigExecHarmonicsConstraint " +
+                            mover.moverPath.GetString() +
+                            " has more than one rigExec:space",
+                            {mover.moverPath});
+            }
+            if (!space.empty()) {
+                const UsdPrim spacePrim = _stage->GetPrimAtPath(space[0]);
+                const TfToken spaceType =
+                    spacePrim ? spacePrim.GetTypeName() : TfToken();
+                if (spaceType == "RigExecControl" ||
+                    spaceType == "RigExecJoint") {
+                    constraint.spacePath = space[0];
+                }
+            }
         } else if (mover.schemaType == "RigExecIkFkMatchConstraint") {
             // It revises no frame a reader sees: its controls' revised
             // frames are presentation, applied where control frames are

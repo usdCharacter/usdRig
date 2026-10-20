@@ -7,6 +7,8 @@
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/rotation.h"
 
+#include <atomic>
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -333,7 +335,8 @@ std::vector<GfVec3f>
 RigExecComputeVertexNormals(
     const GfVec3f *points, size_t pointsSize,
     const int *faceVertexCounts, size_t faceVertexCountsSize,
-    const int *faceVertexIndices, size_t faceVertexIndicesSize)
+    const int *faceVertexIndices, size_t faceVertexIndicesSize,
+    const RigExecRangeRunner *ranges)
 {
     // A null range with a nonzero size answers like a mesh with no
     // usable faces: zero normals. A null range with size zero is the
@@ -344,81 +347,140 @@ RigExecComputeVertexNormals(
         return std::vector<GfVec3f>(pointsSize, GfVec3f(0));
     }
     std::vector<GfVec3f> normals(pointsSize, GfVec3f(0));
-    std::vector<int> ring;
+
+    // The faces before the first malformed one (fewer than three corners,
+    // or running past the index array). A malformed face ends the walk: the
+    // normals summed so far are returned as they stand, unnormalized.
+    std::vector<size_t> faceOffsets;
+    faceOffsets.reserve(faceVertexCountsSize);
     size_t offset = 0;
+    bool malformed = false;
     for (size_t f = 0; f < faceVertexCountsSize; ++f) {
         const int faceCount = faceVertexCounts[f];
         if (faceCount < 3 ||
             offset + static_cast<size_t>(faceCount) >
                 faceVertexIndicesSize) {
-            return normals;
+            malformed = true;
+            break;
         }
-        // Gather the face once, dropping indices that do not address a
-        // point rather than letting them into the arithmetic.
-        ring.clear();
-        for (int k = 0; k < faceCount; ++k) {
-            const int v = faceVertexIndices[offset + k];
-            if (v >= 0 && static_cast<size_t>(v) < pointsSize) {
-                ring.push_back(v);
+        faceOffsets.push_back(offset);
+        offset += faceCount;
+    }
+    const size_t faces = faceOffsets.size();
+    const auto isPoint = [pointsSize](int v) {
+        return v >= 0 && static_cast<size_t>(v) < pointsSize;
+    };
+
+    // Per face, independently: its unit Newell normal and each usable
+    // corner's interior angle. A face that contributes nothing (fewer than
+    // three usable corners, or fully degenerate) is marked by a zero
+    // normal and skipped below.
+    std::vector<GfVec3f> faceNormals(faces, GfVec3f(0));
+    std::vector<char> contributes(faces, 0);
+    std::vector<float> cornerWeights(offset, 0.0f);
+    RigExecRunRanges(ranges, faces, 512, [&](size_t begin, size_t end) {
+        std::vector<int> ring;
+        std::vector<size_t> slots;
+        for (size_t f = begin; f < end; ++f) {
+            const size_t first = faceOffsets[f];
+            const int faceCount = faceVertexCounts[f];
+            // Gather the face once, dropping indices that do not address a
+            // point rather than letting them into the arithmetic.
+            ring.clear();
+            slots.clear();
+            for (int k = 0; k < faceCount; ++k) {
+                const int v = faceVertexIndices[first + k];
+                if (isPoint(v)) {
+                    ring.push_back(v);
+                    slots.push_back(first + k);
+                }
+            }
+            const size_t n = ring.size();
+            if (n < 3) {
+                continue;
+            }
+
+            // Newell's method for the face normal: the only construction
+            // that is correct for a non-planar n-gon, and the only one that
+            // does not depend on how the polygon happens to be triangulated.
+            // Triangulating the face and accumulating per-triangle normals --
+            // which this kernel used to do -- gives every vertex only the fan
+            // triangles it happens to belong to. A vertex neighbouring the
+            // fan anchor gets exactly one sliver triangle out of the whole
+            // face, whose normal is the sliver's rather than the surface's;
+            // where two faces meet along a symmetry seam the two slivers are
+            // mirror images and cancel EXACTLY, leaving a valid manifold
+            // vertex with a zero normal. That is observable on puppetA
+            // (chars/puppetA), whose retopologised n-gons produce one such
+            // vertex.
+            GfVec3f faceNormal(0);
+            for (size_t k = 0; k < n; ++k) {
+                const GfVec3f &p = points[ring[k]];
+                const GfVec3f &q = points[ring[(k + 1) % n]];
+                faceNormal += GfVec3f((p[1] - q[1]) * (p[2] + q[2]),
+                                      (p[2] - q[2]) * (p[0] + q[0]),
+                                      (p[0] - q[0]) * (p[1] + q[1]));
+            }
+            const float faceLength = faceNormal.GetLength();
+            if (faceLength < 1e-20f) {
+                continue;  // a fully degenerate face contributes nothing
+            }
+            faceNormal /= faceLength;
+            faceNormals[f] = faceNormal;
+            contributes[f] = 1;
+
+            // Weighted by the interior angle at each corner, so the result
+            // is independent of tessellation and a vertex touching a face
+            // across a wide corner is influenced by it more than one
+            // clipping a corner. Zero-length edges fall back to an
+            // unweighted share rather than dropping the corner's
+            // contribution entirely.
+            for (size_t k = 0; k < n; ++k) {
+                const GfVec3f &p = points[ring[k]];
+                const GfVec3f a = points[ring[(k + 1) % n]] - p;
+                const GfVec3f b = points[ring[(k + n - 1) % n]] - p;
+                const float la = a.GetLength(), lb = b.GetLength();
+                float weight = 1.0f;
+                if (la > 1e-20f && lb > 1e-20f) {
+                    const GfVec3f ua = a / la, ub = b / lb;
+                    weight = std::atan2(GfCross(ua, ub).GetLength(),
+                                        GfDot(ua, ub));
+                }
+                cornerWeights[slots[k]] = weight;
             }
         }
-        offset += faceCount;
-        const size_t n = ring.size();
-        if (n < 3) {
+    });
+
+    // The sums, in face order and corner order within a face: a vertex's
+    // normal adds its contributions in exactly the sequence the single
+    // loop did, so its bits do not depend on how the faces were split.
+    for (size_t f = 0; f < faces; ++f) {
+        if (!contributes[f]) {
             continue;
         }
-
-        // Newell's method for the face normal: the only construction that
-        // is correct for a non-planar n-gon, and the only one that does
-        // not depend on how the polygon happens to be triangulated.
-        // Triangulating the face and accumulating per-triangle normals --
-        // which this kernel used to do -- gives every vertex only the fan
-        // triangles it happens to belong to. A vertex neighbouring the fan
-        // anchor gets exactly one sliver triangle out of the whole face,
-        // whose normal is the sliver's rather than the surface's; where two
-        // faces meet along a symmetry seam the two slivers are mirror
-        // images and cancel EXACTLY, leaving a valid manifold vertex with a
-        // zero normal. That is observable on puppetA (chars/puppetA),
-        // whose retopologised n-gons produce one such vertex.
-        GfVec3f faceNormal(0);
-        for (size_t k = 0; k < n; ++k) {
-            const GfVec3f &p = points[ring[k]];
-            const GfVec3f &q = points[ring[(k + 1) % n]];
-            faceNormal += GfVec3f((p[1] - q[1]) * (p[2] + q[2]),
-                                  (p[2] - q[2]) * (p[0] + q[0]),
-                                  (p[0] - q[0]) * (p[1] + q[1]));
-        }
-        const float faceLength = faceNormal.GetLength();
-        if (faceLength < 1e-20f) {
-            continue;  // a fully degenerate face contributes nothing
-        }
-        faceNormal /= faceLength;
-
-        // Weighted by the interior angle at each corner, so the result is
-        // independent of tessellation and a vertex touching a face across
-        // a wide corner is influenced by it more than one clipping a
-        // corner. Zero-length edges fall back to an unweighted share
-        // rather than dropping the corner's contribution entirely.
-        for (size_t k = 0; k < n; ++k) {
-            const GfVec3f &p = points[ring[k]];
-            const GfVec3f a = points[ring[(k + 1) % n]] - p;
-            const GfVec3f b = points[ring[(k + n - 1) % n]] - p;
-            const float la = a.GetLength(), lb = b.GetLength();
-            float weight = 1.0f;
-            if (la > 1e-20f && lb > 1e-20f) {
-                const GfVec3f ua = a / la, ub = b / lb;
-                weight = std::atan2(GfCross(ua, ub).GetLength(),
-                                    GfDot(ua, ub));
+        const GfVec3f &faceNormal = faceNormals[f];
+        const size_t first = faceOffsets[f];
+        const int faceCount = faceVertexCounts[f];
+        for (int k = 0; k < faceCount; ++k) {
+            const int v = faceVertexIndices[first + k];
+            if (isPoint(v)) {
+                normals[v] += faceNormal * cornerWeights[first + k];
             }
-            normals[ring[k]] += faceNormal * weight;
         }
     }
-    for (GfVec3f &n : normals) {
-        const float len = n.GetLength();
-        if (len > 1e-12f) {
-            n /= len;
-        }
+    if (malformed) {
+        return normals;
     }
+    RigExecRunRanges(ranges, normals.size(), 4096,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            GfVec3f &n = normals[i];
+            const float len = n.GetLength();
+            if (len > 1e-12f) {
+                n /= len;
+            }
+        }
+    });
     return normals;
 }
 
@@ -1447,7 +1509,8 @@ bool
 RigExecApplyPatchMover(std::vector<GfVec3f> *points,
                        const RigExecNurbsPatch &patch,
                        const GfVec3f *uvPoints,
-                       size_t uvPointCount)
+                       size_t uvPointCount,
+                       const RigExecRangeRunner *ranges)
 {
     if (!points || !patch.IsValid()) {
         return false;
@@ -1466,17 +1529,35 @@ RigExecApplyPatchMover(std::vector<GfVec3f> *points,
         }
     }
     const bool broadcast = uvPointCount == 1;
-    for (size_t i = 0; i < n; ++i) {
-        const GfVec3f &uv = uvPoints[broadcast ? 0 : i];
-        const GfVec3f evaluated =
-            patch.EvaluateNormalized(double(uv[0]), double(uv[1]));
-        if (!std::isfinite(evaluated[0]) || !std::isfinite(evaluated[1]) ||
-            !std::isfinite(evaluated[2])) {
-            return false;
+    GfVec3f *const out = points->data();
+    // UVs read from the storage being written depend on the order of the
+    // writes: only the single loop reproduces them.
+    const std::uintptr_t outBegin = reinterpret_cast<std::uintptr_t>(out);
+    const std::uintptr_t outEnd = reinterpret_cast<std::uintptr_t>(out + n);
+    const std::uintptr_t uvBegin = reinterpret_cast<std::uintptr_t>(uvPoints);
+    const std::uintptr_t uvEnd =
+        reinterpret_cast<std::uintptr_t>(uvPoints + uvPointCount);
+    const bool overlaps = uvBegin < outEnd && outBegin < uvEnd;
+    std::atomic<bool> finite(true);
+    RigExecRunRanges(overlaps ? nullptr : ranges, n, 512,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            if (!finite.load(std::memory_order_relaxed)) {
+                return;
+            }
+            const GfVec3f &uv = uvPoints[broadcast ? 0 : i];
+            const GfVec3f evaluated =
+                patch.EvaluateNormalized(double(uv[0]), double(uv[1]));
+            if (!std::isfinite(evaluated[0]) ||
+                !std::isfinite(evaluated[1]) ||
+                !std::isfinite(evaluated[2])) {
+                finite.store(false, std::memory_order_relaxed);
+                return;
+            }
+            out[i] = evaluated;
         }
-        (*points)[i] = evaluated;
-    }
-    return true;
+    });
+    return finite.load();
 }
 
 }  // namespace rigExec

@@ -163,6 +163,9 @@ _ToLocal(const GfMatrix4d &worldToLocal, const GfVec3f &p)
     return GfVec3f(worldToLocal.TransformAffine(GfVec3d(p)));
 }
 
+// Points per slice when a host splits a field's point loop.
+constexpr size_t kRigExecFieldGrain = 1024;
+
 }  // namespace
 
 void
@@ -195,18 +198,23 @@ RigExecSphereWeightField(
     const GfMatrix4d &worldToLocal,
     const RigExecFalloffParams &params,
     std::vector<float> *weights,
-    const GfVec3f &positiveScales, const GfVec3f &negativeScales)
+    const GfVec3f &positiveScales, const GfVec3f &negativeScales,
+    const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
-    for (size_t i = 0; i < points.count; ++i) {
-        GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
-        for (int axis = 0; axis < 3; ++axis) {
-            local[axis] /= local[axis] < 0.0f
-                ? negativeScales[axis] : positiveScales[axis];
+    float *const out = weights->data();
+    RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
+            for (int axis = 0; axis < 3; ++axis) {
+                local[axis] /= local[axis] < 0.0f
+                    ? negativeScales[axis] : positiveScales[axis];
+            }
+            const float d = RigExecSphereDistance(local);
+            out[i] = RigExecEvaluateFalloff(d, params);
         }
-        const float d = RigExecSphereDistance(local);
-        (*weights)[i] = RigExecEvaluateFalloff(d, params);
-    }
+    });
 }
 
 void
@@ -216,26 +224,31 @@ RigExecPlaneWeightField(
     int axis,
     const RigExecFalloffParams &params,
     std::vector<float> *weights,
-    const RigExecPlaneBounds *bounds)
+    const RigExecPlaneBounds *bounds,
+    const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
-    for (size_t i = 0; i < points.count; ++i) {
-        const GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
-        if (bounds && !RigExecPlaneWithinBounds(local, axis, *bounds)) {
-            // Outside the rectangle the field is ZERO, not the ramp's
-            // value at that distance: a bounded plane is a patch, and a
-            // patch grabs nothing beyond its own edge. Hard by design --
-            // see RigExecPlaneWithinBounds for why, and for what to
-            // compose with when a soft border is wanted.
-            (*weights)[i] = 0.0f;
-            continue;
+    float *const out = weights->data();
+    RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const GfVec3f local = _ToLocal(worldToLocal, points.data[i]);
+            if (bounds && !RigExecPlaneWithinBounds(local, axis, *bounds)) {
+                // Outside the rectangle the field is ZERO, not the ramp's
+                // value at that distance: a bounded plane is a patch, and a
+                // patch grabs nothing beyond its own edge. Hard by design --
+                // see RigExecPlaneWithinBounds for why, and for what to
+                // compose with when a soft border is wanted.
+                out[i] = 0.0f;
+                continue;
+            }
+            // Inside, the signed axis distance is exactly what an unbounded
+            // plane would measure: the bound clips the field, it does not
+            // reshape it, so switching bounds on cannot move an iso-surface.
+            const float d = RigExecPlaneDistance(local, axis);
+            out[i] = RigExecEvaluateFalloff(d, params);
         }
-        // Inside, the signed axis distance is exactly what an unbounded
-        // plane would measure: the bound clips the field, it does not
-        // reshape it, so switching bounds on cannot move an iso-surface.
-        const float d = RigExecPlaneDistance(local, axis);
-        (*weights)[i] = RigExecEvaluateFalloff(d, params);
-    }
+    });
 }
 
 void
@@ -244,7 +257,8 @@ RigExecCurveWeightField(
     RigExecWeightPointView curvePoints,
     const GfMatrix4d &worldToLocal,
     const RigExecFalloffParams &params,
-    std::vector<float> *weights, std::vector<GfVec3f> *curveScratch)
+    std::vector<float> *weights, std::vector<GfVec3f> *curveScratch,
+    const RigExecRangeRunner *ranges)
 {
     weights->resize(points.count);
     if (curvePoints.count == 0) {
@@ -264,23 +278,33 @@ RigExecCurveWeightField(
         points.count >= kRigExecBvhMinQueries) {
         RigExecSegmentBvh<GfVec3f> bvh;
         if (bvh.Build(localCurve.data(), localCurve.size())) {
-            for (size_t i = 0; i < points.count; ++i) {
-                const float d = bvh.QueryNearest(
-                    _ToLocal(worldToLocal, points.data[i]), localCurve.data(),
-                    RigExecSegmentDistance);
-                (*weights)[i] = RigExecEvaluateFalloff(d, params);
-            }
+            // QueryNearest is const and keeps its stack local, so the
+            // queries may run concurrently.
+            float *const out = weights->data();
+            RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
+                             [&](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    const float d = bvh.QueryNearest(
+                        _ToLocal(worldToLocal, points.data[i]),
+                        localCurve.data(), RigExecSegmentDistance);
+                    out[i] = RigExecEvaluateFalloff(d, params);
+                }
+            });
             return;
         }
         // Build failed (non-finite curve points): fall through to the
         // verbatim loop below.
     }
-    for (size_t i = 0; i < points.count; ++i) {
-        const float d = RigExecCurveDistance(
-            _ToLocal(worldToLocal, points.data[i]), localCurve.data(),
-            localCurve.size());
-        (*weights)[i] = RigExecEvaluateFalloff(d, params);
-    }
+    float *const out = weights->data();
+    RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const float d = RigExecCurveDistance(
+                _ToLocal(worldToLocal, points.data[i]), localCurve.data(),
+                localCurve.size());
+            out[i] = RigExecEvaluateFalloff(d, params);
+        }
+    });
 }
 
 float

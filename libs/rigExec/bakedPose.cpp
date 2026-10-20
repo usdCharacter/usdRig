@@ -959,6 +959,76 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                                            "softDistance") == "softDistance";
         }
 
+        if (fc.schemaType == "RigExecHarmonicsConstraint") {
+            c.harmonics = true;
+            if (c.targetSlots.size() != 1) {
+                refuse("harmonics constraint needs one pose-provider target",
+                       fc.moverPath);
+            }
+            // Uniform settings: they fix the window, so authoring one
+            // rebuilds the program.
+            for (const auto &[name, value] :
+                 {std::make_pair("rigExec:waves", &c.harmonicsSettings.waves),
+                  std::make_pair("rigExec:waveLength",
+                                 &c.harmonicsSettings.waveLength),
+                  std::make_pair("rigExec:frequency",
+                                 &c.harmonicsSettings.frequency)}) {
+                fold(prim, name);
+                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                         UsdTimeCode::Default(), value);
+            }
+            for (const auto &[name, value] :
+                 {std::make_pair("rigExec:ignoreFirstFrame",
+                                 &c.harmonicsSettings.ignoreFirstFrame),
+                  std::make_pair("rigExec:matchVelocity",
+                                 &c.harmonicsMatchVelocity)}) {
+                fold(prim, name);
+                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                         UsdTimeCode::Default(), value);
+            }
+            if (!RigExecHarmonicsSettingsValid(c.harmonicsSettings)) {
+                refuse("harmonics constraint window is invalid", fc.moverPath);
+            }
+            // Each scalar bound in the precision of the attribute its
+            // connection walk ends on, as the IK/FK match binds its own.
+            const char *const names[3] = {
+                "inputs:amplitude", "inputs:decay", "inputs:termination"};
+            const double fallbacks[3] = {1.0, 3.0, 0.0};
+            for (size_t k = 0; k < 3; ++k) {
+                auto &scalar = c.harmonicsScalars[k];
+                UsdAttribute end = prim.GetAttribute(TfToken(names[k]));
+                std::set<SdfPath> visited;
+                while (end && visited.insert(end.GetPath()).second) {
+                    SdfPathVector connections;
+                    end.GetConnections(&connections);
+                    if (connections.size() != 1) break;
+                    const UsdAttribute next =
+                        B.stage->GetAttributeAtPath(connections[0]);
+                    if (!next) break;
+                    end = next;
+                }
+                scalar.isFloat =
+                    end && end.GetTypeName() == SdfValueTypeNames->Float;
+                const UsdPrim owner = end ? end.GetPrim() : prim;
+                const std::string name =
+                    end ? end.GetName().GetString() : std::string(names[k]);
+                if (scalar.isFloat) {
+                    scalar.narrow =
+                        bind(owner, name.c_str(), float(fallbacks[k]));
+                } else {
+                    scalar.wide = bind(owner, name.c_str(), fallbacks[k]);
+                }
+            }
+            c.offset = bind(prim, "inputs:axisAmplitude", GfVec3d(1.0));
+            RigExecBakedProgramImpl::WindowedOp window;
+            window.frames =
+                uint32_t(RigExecHarmonicsWindowFrames(c.harmonicsSettings));
+            window.path = fc.moverPath;
+            c.window = int(B.windowedOps.size());
+            B.windowedOps.push_back(std::move(window));
+            c.harmonicsPositions.reserve(3 * (size_t(B.windowedOps.back().frames) + 1));
+        }
+
         if (fc.schemaType == "RigExecPositionConstraint") {
             c.affectX = bind(prim, "inputs:affectTranslationX", true);
             c.affectY = bind(prim, "inputs:affectTranslationY", true);
@@ -2707,6 +2777,13 @@ NoteConstraintInputs(const RigExecBakedProgramImpl::Constraint &constraint,
     // An IK/FK match's scalars, each in the one precision it is bound in.
     if (constraint.ikFkMatch) {
         for (const auto &scalar : constraint.matchScalars) {
+            if (scalar.isFloat) NoteInput(scalar.narrow, sink);
+            else NoteInput(scalar.wide, sink);
+        }
+    }
+    // A harmonics constraint's scalars, likewise.
+    if (constraint.harmonics) {
+        for (const auto &scalar : constraint.harmonicsScalars) {
             if (scalar.isFloat) NoteInput(scalar.narrow, sink);
             else NoteInput(scalar.wide, sink);
         }
@@ -4876,6 +4953,11 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             // No slot to revise: nothing the walk can commit, and nothing to
             // record. The dynamic path reaches its target through the frame
             // map and finds nothing either.
+            finish();
+            return;
+        }
+        if (c.harmonics) {
+            RigExecBakedRunHarmonics(B, step, c, commit);
             finish();
             return;
         }

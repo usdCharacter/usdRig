@@ -833,7 +833,17 @@ table Constraint {
   /// 0/1 per source of that switch: the source rides the IK control.
   match_pole_source_rides: [ubyte];
   match_pole_parent_rides: bool;
-
+  // Format 25. Harmonics (RigExecHarmonicsConstraint): one target,
+  // space_slot measures the motion, offset is inputs:axisAmplitude.
+  harmonics: bool;
+  /// inputs:amplitude, decay and termination, each a Float or a Double read.
+  harmonics_scalars: [Input];
+  /// rigExec:waves, waveLength and frequency.
+  harmonics_constants: [double];
+  harmonics_ignore_first_frame: bool;
+  harmonics_match_velocity: bool;
+  /// File.windowed_ops[] index, or -1.
+  window: int = -1;
 }
 table WalkStep {
   solver_batch: bool;
@@ -1722,6 +1732,12 @@ table ProviderProgram {
   leaves: [ulong];
 }
 
+/// Format 25: a windowed operation (rigExecGraph/windowHistory.h), a step
+/// whose solve reads the inputs it captured over the `frames` earlier ticks.
+/// A reader settles the inner windowed ops and the history-tick mask from
+/// common_graph (RigExecSettleWindowLayout).
+table WindowedOp { step: int = -1; frames: uint; }
+
 // -------------------------------------------------------------------- root
 
 table File {
@@ -1765,6 +1781,8 @@ table File {
   matrix4d_arrays: [Matrix4dArray] (native_inline);
   token_arrays: [TokenArray] (native_inline);
   bool_arrays: [BoolArray] (native_inline);
+  /// Format 25: the windowed operations, in program order.
+  windowed_ops: [WindowedOp] (native_inline);
 }
 
 root_type File;

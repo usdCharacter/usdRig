@@ -1625,6 +1625,69 @@ class RigExecIkFkMatchConstraint "RigExecIkFkMatchConstraint" (
     )
 }
 
+class RigExecHarmonicsConstraint "RigExecHarmonicsConstraint" (
+    inherits = </RigExecConstraint>
+    customData = {
+        string className = "HarmonicsConstraint"
+    }
+    doc = """Secondary motion for one joint or control: overshoot, lag and
+    jiggle from the way it moved over the frames before the current one.
+
+    The target's incoming position is measured in rigExec:space (the rig
+    root when none is named) at the current frame and at each earlier frame
+    of a fixed window. Every earlier frame's acceleration rings as a damped
+    sine, and the sum of the rings still sounding is added to the target's
+    translation, scaled by the MoverAPI envelope. The window is
+    rigExec:waves * rigExec:waveLength / rigExec:frequency frames, so the
+    result depends only on the frames in it: scrubbing, playback and a
+    background cache all agree. While a control is dragged the earlier
+    frames are the authored animation and the current frame is the dragged
+    pose, so the ring answers the drag.
+
+    The method is the harmonic solver of BlurHarmonics
+    (docs/references.md); see docs/concepts/secondary-motion.md."""
+)
+{
+    rel rigExec:space (
+        doc = """Optional single RigExecControl or RigExecJoint whose frame the
+        motion is measured in. Motion of the space itself does not ring: a
+        jiggle measured in the hips follows a walk and answers only the
+        motion relative to them."""
+    )
+    uniform double rigExec:waves = 5 (
+        doc = "How many oscillations one impulse rings for."
+    )
+    uniform double rigExec:waveLength = 5 (
+        doc = "Frames per oscillation."
+    )
+    uniform double rigExec:frequency = 1 (
+        doc = """Phase frames one frame advances. Above 1 the ring is faster
+        and the window shorter; below 1 it is slower and longer."""
+    )
+    uniform bool rigExec:ignoreFirstFrame = true (
+        doc = """When the history is shorter than the window (a .rigexec
+        reader's first frames), drop the jolt of starting to move from
+        rest."""
+    )
+    uniform bool rigExec:matchVelocity = true (
+        doc = """Scale the amplitude by waveLength / (2 pi), so an impulse
+        rings with the velocity change that caused it. Off uses
+        inputs:amplitude as the ring's amplitude."""
+    )
+    double inputs:amplitude = 1 (
+        doc = "Overall multiplier on the ring."
+    )
+    double3 inputs:axisAmplitude = (1, 1, 1) (
+        doc = "Per-axis multipliers, along the axes of rigExec:space."
+    )
+    double inputs:decay = 3 (
+        doc = "How fast a ring dies away; 0 rings at full amplitude until it ends."
+    )
+    double inputs:termination = 0 (
+        doc = "The fraction of the amplitude a ring has left when it ends."
+    )
+}
+
 class RigExecSpaceSwitch "RigExecSpaceSwitch" (
     inherits = </RigExecSourceConstraint>
     customData = {
@@ -3816,6 +3879,97 @@ class RigExecWrinkleMover "RigExecWrinkleMover" (
     )
     int inputs:smoothingIterations = 0 (
         doc = "Displacement-field averaging passes in [0,100]; not rest-detail transport."
+    )
+}
+
+class RigExecClothMover "RigExecClothMover" (
+    inherits = </Typed>
+    customData = { string className = "ClothMover" }
+    doc = """Cloth on one native mesh: the points rigExec:moves names hang,
+    swing and fold under gravity, keep their edge lengths, and slide over
+    the meshes rigExec:colliders names.
+
+    The result at a frame is a simulation over a fixed window of the frames
+    before it: the cloth starts at its incoming points rigExec:windowFrames
+    frames earlier and is solved forward, frame by frame, to the current
+    one, with pinned points following their incoming positions and the
+    colliders moving as they did. It depends only on the frames in the
+    window, so scrubbing, playback and a background cache all agree, and
+    while a control is dragged the earlier frames are the authored
+    animation and the current frame is the dragged pose.
+
+    The solver is extended position-based dynamics with small steps,
+    colored Gauss-Seidel stretch and bend projection, long-range tethers to
+    the pins, and a contact test against the collider triangles at every
+    step as the colliders move between frames (docs/references.md); see
+    docs/concepts/secondary-motion.md. The
+    cloth's points and the colliders' points are read in their own local
+    spaces, which must be the same space. The common mover envelope blends
+    the result once."""
+)
+{
+    rel rigExec:colliders (
+        doc = """Meshes the cloth collides with, one-sided along their
+        outward normals. Each collider's points are read at the
+        relationship's rigExecReadPhase (base by default; final reads the
+        points every mover on that mesh produces, such as a skinned body).
+        Topology is fixed for a compile."""
+    )
+    uniform float[] rigExec:pinWeights = [] (
+        doc = """One weight per cloth point in [0,1]. A point at 1 (0.999
+        or above) follows its incoming position exactly; a lower weight is
+        the fraction of the gap to its incoming position the point closes
+        every frame. Empty pins nothing."""
+    )
+    uniform int rigExec:windowFrames = 16 (
+        doc = """How many earlier frames the solve starts from, in [1,1024].
+        Longer windows let motion settle further; each frame of the window is
+        solved again at every evaluation."""
+    )
+    uniform int rigExec:substeps = 10 (
+        doc = "Solver steps per frame, in [1,256]. More steps are stiffer and collide more accurately."
+    )
+    uniform int rigExec:iterations = 1 (
+        doc = "Constraint passes per step, in [1,64]."
+    )
+    uniform bool rigExec:tethers = true (
+        doc = """Limit each free point's distance to its nearest pin to the
+        rest distance (plus rigExec:tetherSlack), so a hanging cloth does not
+        stretch under its own weight."""
+    )
+    uniform float rigExec:tetherSlack = 0.05 (
+        doc = "Fraction of the rest distance a tether allows beyond it."
+    )
+    uniform double rigExec:frameRate = 0 (
+        doc = """Frames per second the window is simulated at. Zero uses the
+        stage's timeCodesPerSecond."""
+    )
+    float inputs:stretchCompliance = 0 (
+        doc = "Compliance of the edges against stretch; 0 is inextensible."
+    )
+    float inputs:bendCompliance = 0.001 (
+        doc = "Compliance against bending across edges; larger folds more easily."
+    )
+    float3 inputs:gravity = (0, -981, 0) (
+        doc = "Acceleration in the cloth mesh's local space, in its units per second squared."
+    )
+    float inputs:damping = 0.1 (
+        doc = "Fraction of velocity lost per second, in [0,1]."
+    )
+    float inputs:attract = 0 (
+        doc = """Fraction of the gap to its incoming position every free
+        point closes per frame, in [0,1], on top of its pin weight: 0 is
+        free cloth, 1 follows the input."""
+    )
+    float inputs:thickness = 0.5 (
+        doc = "Distance the cloth keeps from a collider's surface."
+    )
+    float inputs:collisionDepth = 2 (
+        doc = """How far behind a collider's surface a cloth point is still
+        pushed out; deeper points are taken as on the other side."""
+    )
+    float inputs:friction = 0.3 (
+        doc = "Fraction of tangential motion a collider contact removes, in [0,1]."
     )
 }
 

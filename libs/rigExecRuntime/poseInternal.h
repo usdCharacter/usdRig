@@ -5,6 +5,7 @@
 
 #include "store.h"
 #include "rigExecMath/autoClavicleKernel.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecGraph/poseArithmetic.h"

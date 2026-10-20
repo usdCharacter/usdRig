@@ -11,11 +11,12 @@ callback and a points computation; no changes to RigExec's built-in mover list
 are required.
 
 Use the same compiler, architecture, build configuration, OpenUSD installation,
-and RigExec SDK as the host. Plugin API version 5 combines declared external
-input leaves, explicit phased oracle lookup callbacks and the optional
-provider-aware playback kernel. Libraries built for API 1, 2 or 3 must be
-rebuilt and migrate their assembly callback; libraries built for API 4 must be
-rebuilt.
+and RigExec SDK as the host. Plugin API version 6 combines declared external
+input leaves, explicit phased oracle lookup callbacks, the optional
+provider-aware playback kernel and optional windowed movers. Libraries built
+for API 1, 2 or 3 must be rebuilt and migrate their assembly callback;
+libraries built for API 4 or 5 must be rebuilt, since the handler and the
+playback kernel both grew.
 
 `declareExternalInputs` runs only at compilation and declares ordered typed
 `RigExecRevisionLeafKey` records. Each record specifies its canonical property
@@ -351,6 +352,26 @@ whose type has no kernel in the runtime is a no-op: its points pass through
 unchanged, and every `Execute` adds a `warning:` line naming the mover to the
 reader's diagnostics. A runtime built without USD carries a kernel only if it
 links one in; RigExec itself ships none.
+
+## Windowed movers
+
+A mover whose result at a frame depends on the frames before it -- a
+simulation, a lag -- is a windowed mover. It declares how many earlier frames
+it reads (`windowFrames`, at compile), the packet a frame captures from its
+payload and entering points (`captureWindow`), and the solve over the earlier
+frames' packets, oldest first, then the current one (`applyWindow`); all
+three or none. The earlier frames are generations of the same compiled graph
+at those times, run only as far as the mover's inputs reach, so the history is
+produced by the one loop and the result is a pure function of the window:
+scrubbing, playback and background caching agree. `applyWindow` receives a
+cache slot the revision owns for an epoch-fixed build; anything held there
+must not change the answer. An optional `applyWindowDevice` runs the same solve
+on a device; the live program calls it at the publication boundary, never from
+an operation body, and falls back to `applyWindow`. For `.rigexec` playback,
+`RigExecExternalKernel::captureWindow` and `applyWindow` mirror the two
+callbacks; the reader keeps the packets (`PushHistory`, `ExecuteHistory`,
+`ClearHistory`). The built-in cloth mover is written this way; see
+[secondary motion and cloth](secondary-motion.md).
 
 ## Discovery and supported evaluation
 

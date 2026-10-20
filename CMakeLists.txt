@@ -169,12 +169,14 @@ add_library(rigExec SHARED
     libs/rigExec/movers/latticeMover.cpp
     libs/rigExec/movers/surfaceBindingMover.cpp
     libs/rigExec/movers/patchMover.cpp
+    libs/rigExec/movers/clothMover.cpp
     libs/rigExec/movers/surfaceMover.cpp
     libs/rigExec/movers/curveMover.cpp
     libs/rigExec/movers/mathMovers.cpp
     libs/rigExec/movers/pathOperation.cpp
     libs/rigExec/moverGraph.cpp
     libs/rigExec/gpuDeformLowering.cpp
+    libs/rigExec/gpuCloth.cpp
     libs/rigExec/tapSet.cpp
     libs/rigExec/rigEvaluator.cpp
     libs/rigExec/rigEvaluatorChainPlan.cpp
@@ -188,10 +190,12 @@ add_library(rigExec SHARED
     libs/rigExec/rigEvaluatorPose.cpp
     libs/rigExec/rigEvaluatorProperties.cpp
     libs/rigExec/rigEvaluatorValidation.cpp
+    libs/rigExec/rigEvaluatorWindows.cpp
     libs/rigExec/bakedProgram.cpp
     libs/rigExec/crossDomainInputs.cpp
     libs/rigExec/bakedSpaces.cpp
     libs/rigExec/bakedIkFkMatch.cpp
+    libs/rigExec/bakedHarmonics.cpp
     libs/rigExec/bakedPose.cpp
     libs/rigExec/bakedProperties.cpp
     libs/rigExec/bakedOpValues.cpp
@@ -297,7 +301,8 @@ target_link_libraries(rigExecRigging PRIVATE rigExecMath)
 add_library(rigExecGpu SHARED
     libs/rigExecGpu/glContext.cpp
     libs/rigExecGpu/gpuDeformExecutor.cpp
-    libs/rigExecGpu/gpuDeformShader.cpp)
+    libs/rigExecGpu/gpuDeformShader.cpp
+    libs/rigExecGpu/clothShader.cpp)
 target_include_directories(rigExecGpu PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
@@ -537,6 +542,12 @@ add_test(NAME testRigExecSingleChainIk COMMAND testRigExecSingleChainIk)
 add_executable(testRigExecGpuDeform tests/testRigExecGpuDeform.cpp)
 target_link_libraries(testRigExecGpuDeform PRIVATE rigExec rigExecGpu)
 add_test(NAME testRigExecGpuDeform COMMAND testRigExecGpuDeform)
+# The cloth's device solve against the CPU kernel, and a live rig on it.
+add_executable(testRigExecGpuCloth tests/testRigExecGpuCloth.cpp)
+target_link_libraries(testRigExecGpuCloth PRIVATE rigExec rigExecScene rigExecGpu)
+target_compile_definitions(testRigExecGpuCloth PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecGpuCloth COMMAND testRigExecGpuCloth)
 add_executable(testRigExecDualQuat tests/testRigExecDualQuat.cpp)
 target_link_libraries(testRigExecDualQuat PRIVATE rigExecMath)
 add_test(NAME testRigExecDualQuat COMMAND testRigExecDualQuat)
@@ -557,6 +568,14 @@ add_executable(testRigExecRigLogicKernels tests/testRigExecRigLogicKernels.cpp)
 target_link_libraries(testRigExecRigLogicKernels PRIVATE rigExecGraph)
 add_test(NAME testRigExecRigLogicKernels COMMAND testRigExecRigLogicKernels)
 
+# The harmonics and cloth kernels are header-only and USD-free.
+add_executable(testRigExecHarmonicsKernel tests/testRigExecHarmonicsKernel.cpp)
+target_link_libraries(testRigExecHarmonicsKernel PRIVATE rigExecGraph)
+add_test(NAME testRigExecHarmonicsKernel COMMAND testRigExecHarmonicsKernel)
+add_executable(testRigExecClothKernel tests/testRigExecClothKernel.cpp)
+target_link_libraries(testRigExecClothKernel PRIVATE rigExecGraph)
+add_test(NAME testRigExecClothKernel COMMAND testRigExecClothKernel)
+
 # RigLogic's behaviours in a rig: live, frame cache and .rigexec parity.
 add_executable(testRigExecRigLogic tests/testRigExecRigLogic.cpp)
 target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecRigging
@@ -564,6 +583,22 @@ target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecRigging
 target_compile_definitions(testRigExecRigLogic PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecRigLogic COMMAND testRigExecRigLogic)
+
+# Secondary motion in a rig: native evaluation against the kernel, random
+# access, drags, the measuring space, the envelope and the history memo.
+add_executable(testRigExecHarmonics tests/testRigExecHarmonics.cpp)
+target_link_libraries(testRigExecHarmonics PRIVATE rigExec rigExecScene rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecHarmonics PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecHarmonics COMMAND testRigExecHarmonics)
+
+# Cloth in a rig: native evaluation against the kernel, random access,
+# drags, a background job and .rigexec parity with the runtime's own kernel.
+add_executable(testRigExecCloth tests/testRigExecCloth.cpp)
+target_link_libraries(testRigExecCloth PRIVATE rigExec rigExecScene rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecCloth PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecCloth COMMAND testRigExecCloth)
 
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)
 target_link_libraries(testRigExecConstraints PRIVATE rigExec rigExecBake rigExecRuntime rigExecSampler)
@@ -1308,6 +1343,19 @@ foreach(_entry IN LISTS RIGEXEC_RIGLOGIC_DOCS_EXAMPLES)
         FRAMES ${_frames} CLASS inputs
         DRAGS "${_riglogic_drags_${_stage}}")
 endforeach()
+
+# The secondary-motion and cloth docs examples: windowed operations, whose
+# .rigexec reader replays the frames before each one into its history (the
+# harness does, as a host scrubbing to that frame would). The drags move the
+# control that sets the motion off.
+rigexec_add_verify_binary_test(NAME docs_harmonics_constraint
+    STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/harmonics_constraint.usda"
+    FRAMES 1,10,26,33,50 CLASS inputs
+    DRAGS "/BobAsset/Rig/Controls/Root.avars:tx")
+rigexec_add_verify_binary_test(NAME docs_cloth_mover
+    STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda"
+    FRAMES 1,12,30,41,60 CLASS inputs
+    DRAGS "/ClothAsset/Rig/Controls/Bar.avars:tx")
 
 add_executable(testRigExecPack tests/testRigExecPack.cpp)
 target_link_libraries(testRigExecPack PRIVATE rigExecStandalone rigExecRigging)
