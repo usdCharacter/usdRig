@@ -493,6 +493,11 @@ add_dependencies(testRigExecExternalMovers testExternalMover)
 add_test(NAME testRigExecExternalMovers COMMAND testRigExecExternalMovers
     "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources"
     "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>")
+# TestRegistration asserts on the global loader, so an ambient plugin path
+# naming a stale third-party mover must not leak in. The test registers
+# both directories explicitly, so discovery adds nothing.
+set_tests_properties(testRigExecExternalMovers PROPERTIES ENVIRONMENT
+    "PXR_PLUGINPATH_NAME=${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)

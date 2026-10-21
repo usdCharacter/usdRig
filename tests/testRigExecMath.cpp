@@ -1636,7 +1636,11 @@ TestPartialDecompositionMatchesOneShot()
         }
     }
     // Fixed pin: the screw at w=0.5, frozen from the oracle-validated
-    // implementation so a future arithmetic change breaks loudly.
+    // implementation so a future arithmetic change breaks loudly. The
+    // pivot solve runs through libm transcendentals, which vary by a few
+    // ULPs across platforms, so the pin holds to 1e-12 rather than to the
+    // bit; the two-phase/one-shot check above keeps exactness within one
+    // platform.
     const double expectScrew[4][4] = {
         {1.2167756076626171, -0.066519034337087904, -0.27844629404632132, 0},
         {0.085383733153661448, 0.89983904049750907, 0.1581504968872646, 0},
@@ -1646,7 +1650,7 @@ TestPartialDecompositionMatchesOneShot()
     const GfMatrix4d screwHalf = RigExecPartialTransform(screw, 0.5);
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
-            CHECK(SameBits(screwHalf[i][j], expectScrew[i][j]));
+            CHECK(std::abs(screwHalf[i][j] - expectScrew[i][j]) <= 1e-12);
         }
     }
     const GfMatrix4d half = RigExecApplyPartialDecomposition(
