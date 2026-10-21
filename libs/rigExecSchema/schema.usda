@@ -3882,6 +3882,98 @@ class RigExecWrinkleMover "RigExecWrinkleMover" (
     )
 }
 
+class RigExecClothBinding "RigExecClothBinding" (
+    inherits = </Typed>
+    customData = { string className = "ClothBinding" }
+    doc = """Ordered cloth samples. Vertex, barycentric and UV bindings resolve
+    to weighted mesh vertices before simulation. Triangle indices refer to
+    orientation-correct fan triangulation of the bound mesh."""
+)
+{
+    uniform token rigExec:mode = "vertex" (allowedTokens = ["vertex", "barycentric", "uv"])
+    uniform int[] rigExec:indices = [] (
+        doc = """Vertex indices in vertex mode; triangle indices in barycentric
+        mode; optional triangle hints in UV mode (-1 searches). Overlapping UV
+        islands require hints; shared edges resolving to the same vertices do not."""
+    )
+    uniform float3[] rigExec:coordinates = [] (
+        doc = "Barycentric weights summing to one, or (u,v,0) UV samples. Empty in vertex mode."
+    )
+    rel rigExec:uvSet (
+        doc = "Optional exact texCoord2f[] or float2[] primvar; default primvars:st. Vertex and faceVarying interpolation, including indexed primvars, are supported."
+    )
+}
+
+class RigExecClothMap "RigExecClothMap" (
+    inherits = </Typed>
+    customData = { string className = "ClothMap" }
+    doc = """Paintable scalar cloth data. With no binding, one value broadcasts
+    or one value per cloth vertex is read. A binding supplies one sample per
+    cloth vertex, transferring a field from sourceMesh in vertex, barycentric
+    or UV space. Values are finite and nonnegative; edits invalidate the epoch."""
+)
+{
+    uniform float[] inputs:values = []
+    rel rigExec:values (doc = "Optional exact float[] property supplying the painted values, such as a dense RigExecStaticWeight.rigExec:values.")
+    rel rigExec:binding (doc = "Optional RigExecClothBinding, one sample per destination cloth vertex.")
+    rel rigExec:sourceMesh (doc = "Mesh sampled by the map binding; the simulated cloth when absent.")
+}
+
+class RigExecClothConstraintSet "RigExecClothConstraintSet" (
+    inherits = </Boundable>
+    customData = { string className = "ClothConstraintSet" }
+    doc = """A relationship-linked cloth constraint profile. Material profiles
+    replace the legacy scalar response in their selected region; later profiles
+    win where regions overlap. Attachment profiles add explicit links without
+    excluding their regions from independently authored collision profiles.
+    Soft constraints use XPBD compliance divided by strength;
+    hard constraints have zero compliance when strength is positive. Zero
+    strength disables the response. Hard constraints converge within the shared
+    solver iterations; incompatible hard constraints cannot all be satisfied.
+
+    Force is the estimated reaction load in normalized cloth mass times scene
+    units per second squared. The curve maps force to a blend between the
+    painted minimum and maximum strengths. Warp/weft/normal multiply response
+    along the UV material directions. Profiles and maps are fixed per epoch;
+    animated entering geometry and collider motion remain per-frame inputs.
+    Attachment profiles draw guide rods between paired source and target
+    samples on the displayed meshes. The guides never author geometry."""
+)
+{
+    uniform token purpose = "guide"
+    color3f guide:displayColor = (1, 0.7, 0.2)
+    float guide:displayOpacity = 0.8
+    double guide:wireWidth = 0.05 (doc = "Attachment rod width in asset units; nonpositive uses hairlines.")
+    uniform token rigExec:kind = "stretch" (
+        allowedTokens = ["stretch", "bend", "damping", "pin", "attachment", "collision", "selfCollision", "tether"]
+    )
+    uniform token rigExec:mode = "soft" (allowedTokens = ["soft", "hard"])
+    uniform bool rigExec:twoSided = true (doc = "Collision profiles respond on either side of a cloth surface; false uses outward collider normals.")
+    rel rigExec:sourceBinding (doc = "Source cloth samples or region; absent selects all vertices for material, pin and collision profiles.")
+    rel rigExec:targetBinding (doc = "Matching attachment samples or the second self-collision region; absent selects all vertices for self collision.")
+    rel rigExec:targetMesh (doc = "Optional external attachment/collision mesh. Also participates in collision, at the mover's colliders read phase. Absent means the simulated cloth; external meshes are captured inputs.")
+    uniform float inputs:minStrength = 1
+    uniform float inputs:maxStrength = 1
+    uniform float inputs:compliance = 0.0001
+    uniform float inputs:warp = 1
+    uniform float inputs:weft = 1
+    uniform float inputs:normal = 1
+    uniform float inputs:thickness = 0.5
+    uniform float inputs:friction = 0.3
+    uniform float inputs:restLength = -1 (doc = "Attachment distance; -1 measures the rest shape for internal links. External attachments need an explicit nonnegative distance.")
+    uniform float2[] rigExec:forceCurve = [] (
+        doc = "Strictly increasing nonnegative force keys with blend values in [0,1]. Piecewise linear, clamped at the ends. Empty uses maximum strength."
+    )
+    rel rigExec:maskMap
+    rel rigExec:minStrengthMap
+    rel rigExec:maxStrengthMap
+    rel rigExec:warpMap
+    rel rigExec:weftMap
+    rel rigExec:normalMap
+    rel rigExec:thicknessMap
+    rel rigExec:frictionMap
+}
+
 class RigExecClothMover "RigExecClothMover" (
     inherits = </Typed>
     customData = { string className = "ClothMover" }
@@ -3889,14 +3981,17 @@ class RigExecClothMover "RigExecClothMover" (
     swing and fold under gravity, keep their edge lengths, and slide over
     the meshes rigExec:colliders names.
 
-    The result at a frame is a simulation over a fixed window of the frames
+    The result at a frame is a simulation over a window of the frames
     before it: the cloth starts at its incoming points rigExec:windowFrames
     frames earlier and is solved forward, frame by frame, to the current
     one, with pinned points following their incoming positions and the
-    colliders moving as they did. It depends only on the frames in the
-    window, so scrubbing, playback and a background cache all agree, and
-    while a control is dragged the earlier frames are the authored
-    animation and the current frame is the dragged pose.
+    colliders moving as they did. Where a collider cuts through the
+    incoming cloth within a window before or after that first frame, the
+    window starts earlier, with a settling interval before contact (at most
+    rigExec:maxWindowFrames). It depends only on the frames in the window,
+    so scrubbing, playback and a background cache all agree, and while a
+    control is dragged the earlier frames are the authored animation and
+    the current frame is the dragged pose.
 
     The solver is extended position-based dynamics with small steps,
     colored Gauss-Seidel stretch and bend projection, long-range tethers to
@@ -3910,10 +4005,20 @@ class RigExecClothMover "RigExecClothMover" (
 {
     rel rigExec:colliders (
         doc = """Meshes the cloth collides with, one-sided along their
-        outward normals. Each collider's points are read at the
+        outward normals by default; collision profiles can enable two-sided
+        response and paint its strength. Each collider's points are read at the
         relationship's rigExecReadPhase (base by default; final reads the
         points every mover on that mesh produces, such as a skinned body).
         Topology is fixed for a compile."""
+    )
+    rel rigExec:constraints (
+        doc = "Ordered RigExecClothConstraintSet prims for material, pins, attachments and collision. All solve inside this mover's shared operation."
+    )
+    rel rigExec:restShape (
+        doc = "Optional mesh or exact point3f[] property defining rest distances and material frames. Same vertex order/count and coordinate space as the target. Absent uses target points at Default."
+    )
+    rel rigExec:uvSet (
+        doc = "Exact float2[] or texCoord2f[] primvar defining warp/weft. Supports vertex and indexed faceVarying UVs."
     )
     uniform float[] rigExec:pinWeights = [] (
         doc = """One weight per cloth point in [0,1]. A point at 1 (0.999
@@ -3923,8 +4028,19 @@ class RigExecClothMover "RigExecClothMover" (
     )
     uniform int rigExec:windowFrames = 16 (
         doc = """How many earlier frames the solve starts from, in [1,1024].
-        Longer windows let motion settle further; each frame of the window is
-        solved again at every evaluation."""
+        Motion older than the window is forgotten, so inputs:damping should
+        let a swing settle within it; each frame of the window is solved
+        again at every evaluation."""
+    )
+    uniform int rigExec:maxWindowFrames = 64 (
+        doc = """The most earlier frames a solve reaches back to, in
+        [1,1024]. When a collider cuts through the incoming cloth at the
+        window's first frame or within rigExec:windowFrames frames on either
+        side, the window starts at the latest earlier frame that is clear for
+        rigExec:windowFrames frames on both sides, checking only through the
+        current frame. This gives contact a consistent settling interval and
+        keeps the cloth on the side it came from. A value at most rigExec:windowFrames turns
+        this off. It is also the history the evaluator keeps."""
     )
     uniform int rigExec:substeps = 10 (
         doc = "Solver steps per frame, in [1,256]. More steps are stiffer and collide more accurately."
@@ -3953,8 +4069,12 @@ class RigExecClothMover "RigExecClothMover" (
     float3 inputs:gravity = (0, -981, 0) (
         doc = "Acceleration in the cloth mesh's local space, in its units per second squared."
     )
-    float inputs:damping = 0.1 (
-        doc = "Fraction of velocity lost per second, in [0,1]."
+    float inputs:damping = 2 (
+        doc = """How fast velocity decays: it falls by a factor of
+        e^-damping every second, so 1 loses about 63% of it per second and
+        2 about 86%. The solve forgets motion older than its window, so a
+        swing should settle within rigExec:windowFrames; low damping
+        flutters and pops as old motion leaves the window."""
     )
     float inputs:attract = 0 (
         doc = """Fraction of the gap to its incoming position every free

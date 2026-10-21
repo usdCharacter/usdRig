@@ -12,13 +12,17 @@ affiliation, endorsement, or ownership of the underlying techniques.
 | Delta Mush | Mancewicz, Derksen, and Wilson, *Delta Mush: Smoothing Deformations While Preserving Detail* (2014), [publisher entry](https://dl.acm.org/doi/10.1145/2614106.2614144) | `libs/rigExecMath/deltaMushKernel.h` |
 | Position projection concepts | Müller, Heidelberger, Hennix, and Ratcliff, *Position Based Dynamics* (2007), [author-hosted paper](https://matthias-research.github.io/pages/publications/posBasedDyn.pdf), [DOI](https://doi.org/10.1016/j.jvcir.2007.01.005) | `libs/rigExecMath/wrinkleKernel.h` |
 | Harmonic secondary motion | tbttfox, [BlurHarmonics](https://github.com/tbttfox/BlurHarmonics) ("a simplified mass/spring solver that lets you tweak parameters after you run the solve"): each frame's acceleration rings as a damped sine over a fixed window. The repository states no license, so RigExec reimplements the method from its description and contains none of its code | `libs/rigExecMath/harmonicsKernel.h` (RigExecHarmonicsConstraint); [secondary motion and cloth](concepts/secondary-motion.md) |
-| Compliant position-based dynamics | Macklin, Müller, and Chentanez, *XPBD: Position-Based Simulation of Compliant Constrained Dynamics*, Motion in Games (2016), [author-hosted paper](https://matthias-research.github.io/pages/publications/XPBD.pdf), [DOI](https://doi.org/10.1145/2994258.2994272) | `libs/rigExecMath/clothKernel.h` (RigExecClothMover constraints) |
+| Compliant position-based dynamics | Macklin, Müller, and Chentanez, *XPBD: Position-Based Simulation of Compliant Constrained Dynamics*, Motion in Games (2016), [author-hosted paper](https://matthias-research.github.io/pages/publications/XPBD.pdf), [DOI](https://doi.org/10.1145/2994258.2994272) | `libs/rigExecMath/clothKernel.h` (RigExecClothMover constraints); `libs/rigExecMath/clothModel.h` (`RigExecClothStrength`: force-dependent strength from the constraint force estimate) |
 | Many substeps, one iteration each | Macklin, Storey, Lu, Terdiman, Chentanez, Jeschke, and Müller, *Small Steps in Physics Simulation*, Symposium on Computer Animation (2019), [author-hosted paper](https://matthias-research.github.io/pages/publications/smallsteps.pdf), [DOI](https://doi.org/10.1145/3309486.3340247) | `libs/rigExecMath/clothKernel.h` (`rigExec:substeps`) |
 | Coloured Gauss-Seidel constraint projection | Fratarcangeli, Tibaldo, and Pellacini, *Vivace: a Practical Gauss-Seidel Method for Stable Soft Body Dynamics*, ACM Transactions on Graphics 35(6) (2016), [DOI](https://doi.org/10.1145/2980179.2982437) | `libs/rigExecMath/clothKernel.h` (`RigExecBuildClothMesh` colouring), `libs/rigExecGpu/clothShader.cpp` |
 | Long-range tethers to pins | Kim, Chentanez, and Müller, *Long Range Attachments - A Method to Simulate Inextensible Clothing in Computer Games*, Symposium on Computer Animation (2012), [author-hosted paper](https://matthias-research.github.io/pages/publications/sca2012cloth.pdf) | `libs/rigExecMath/clothKernel.h` (`rigExec:tethers`) |
 | Collider spatial hashing | Teschner, Heidelberger, Müller, Pomeranets, and Gross, *Optimized Spatial Hashing for Collision Detection of Deformable Objects*, Vision, Modeling, and Visualization (2003), [author-hosted paper](https://matthias-research.github.io/pages/publications/tetraederCollision.pdf) | `libs/rigExecMath/clothKernel.h` (`RigExecBuildClothGrid`) |
-| Collision thickness and friction | Bridson, Fedkiw, and Anderson, *Robust Treatment of Collisions, Contact and Friction for Cloth Animation*, ACM Transactions on Graphics 21(3) (2002), [DOI](https://doi.org/10.1145/566654.566623) | `libs/rigExecMath/clothKernel.h` (`RigExecClothFindContact`, `RigExecClothParticlePass`) |
+| Collision thickness and friction | Bridson, Fedkiw, and Anderson, *Robust Treatment of Collisions, Contact and Friction for Cloth Animation*, ACM Transactions on Graphics 21(3) (2002), [DOI](https://doi.org/10.1145/566654.566623) | `libs/rigExecMath/clothKernel.h` (`RigExecClothFindContact`, `RigExecClothParticlePass`; `RigExecClothSelfContacts`, two-sided vertex/triangle and edge/edge self-contact) |
+| Barycentric coordinates | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 3.4 | `libs/rigExec/movers/clothInputs.h` (`Samples`, UV and barycentric cloth bindings), `libs/rigExecMath/clothModel.h` (`RigExecClothSampleMap`) |
+| Warp and weft axes from UV coordinates | Baraff and Witkin, *Large Steps in Cloth Simulation*, SIGGRAPH (1998), [DOI](https://doi.org/10.1145/280814.280821) | `libs/rigExecMath/clothKernel.h` (`RigExecClothMaterialFrame`) |
 | Closest point on a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.5 | `libs/rigExecMath/clothKernel.h` (`ClosestBarycentric`), `libs/rigExecGpu/clothShader.cpp` |
+| Closest points between segments | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.9 | `libs/rigExecMath/clothKernel.h` (`ClosestSegments`, edge/edge self-contact) |
+| Segment crossing a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.3.6 | `libs/rigExecMath/clothKernel.h` (`RigExecClothClearOfColliders`, where a cloth window starts) |
 | Wrinkle reference lengths and bounded offsets | Müller and Chentanez, *Wrinkle Meshes* (2010), [author-hosted paper](https://matthias-research.github.io/pages/publications/wrinkleMeshes.pdf), [DOI](https://doi.org/10.2312/SCA/SCA10/085-091) | `libs/rigExecMath/wrinkleKernel.h`; [method and limitations](concepts/wrinkle-deformation.md) |
 | Lattice (free-form) deformation | Sederberg and Parry, *Free-Form Deformation of Solid Geometric Models*, ACM SIGGRAPH Computer Graphics 20(4):151–160 (1986), [DOI](https://doi.org/10.1145/15886.15903) | `libs/rigExecMath/latticeKernel.h` |
 | Ray-triangle intersection | Möller and Trumbore, *Fast, Minimum Storage Ray-Triangle Intersection*, Journal of Graphics Tools 2(1):21–28 (1997), [publication entry](https://en-cg-web.coecis.cornell.edu/pubs/1997/MT97.html) | `libs/rigExecMath/surfaceProjectorKernel.h` (surface projector, `RigExecRaycastSurface`) |
@@ -30,10 +34,15 @@ affiliation, endorsement, or ownership of the underlying techniques.
 
 Implementation details and limitations are documented with each operator.
 The cloth mover combines the sources above in one solver of its own: a
-window re-simulated from the incoming points at every evaluation, collision
+window re-simulated from the incoming points at every evaluation, starting
+before any contact that cuts through them, collision
 against swept collider triangles within a fixed reach, and a GPU twin of the
 same passes; [secondary motion and cloth](concepts/secondary-motion.md)
-describes it. Citing them does not claim any author's implementation.
+describes it. Its directional strength weights the warp, weft and normal
+scales by the squared cosines between a constraint's direction and those
+axes (`RigExecClothStrength`); that blend is RigExec's own and is not taken
+from the cited sources. Citing them does not claim any author's
+implementation.
 In particular, referencing Delta Mush does not claim implementation of the
 distinct Direct Delta Mush method. Third-party source and asset provenance
 is tracked separately in [third-party notices](../THIRD_PARTY_NOTICES.md).

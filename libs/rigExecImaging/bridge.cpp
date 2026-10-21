@@ -6,6 +6,8 @@
 #include "rigExecMath/pointFrame.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCacheSparsity.h"
+#include "rigExecBinary/clothPlayback.h"
+#include "rigExec/movers/clothInputs.h"
 
 #include "pxr/base/gf/quatd.h"
 #include "pxr/base/gf/rotation.h"
@@ -20,6 +22,7 @@
 #include "pxr/usd/usdGeom/imageable.h"
 #include "pxr/usd/usdGeom/tokens.h"
 #include "pxr/usd/usdGeom/xformable.h"
+#include "pxr/usd/usdGeom/xformCache.h"
 
 #include <algorithm>
 #include <array>
@@ -976,6 +979,7 @@ RigExecImagingBridge::_FillProviderXforms(
 void
 RigExecImagingBridge::InvalidateGuideCaches()
 {
+    _clothGuideSerial = ~uint64_t(0);
     _guideInputs.clear();
     _jointChildren.clear();
     _jointChildrenValid = false;
@@ -1319,6 +1323,135 @@ RigExecImagingBridge::_JointChildren(const RigExecRigPose &pose) const
     _jointChildrenKey = key;
     _jointChildrenValid = true;
     return _jointChildren;
+}
+
+void
+RigExecImagingBridge::_FillClothConstraintGuides(
+    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
+{
+    // Resolve the same weighted samples as the mover, through its own
+    // declaration and leaf reads, only when authored inputs change.
+    // Publication runs on the stage's owning thread.
+    const uint64_t serial = _evaluator->GetStageEditSerial();
+    if (_clothGuideSerial != serial) {
+        _clothGuideBindings.clear();
+        for (const auto &mover : _evaluator->GetMoverOrder()) {
+            if (mover.schemaType != "RigExecClothMover") continue;
+            const UsdPrim moverPrim = _stage->GetPrimAtPath(mover.moverPath);
+            if (!moverPrim) continue;
+            for (const auto &constraint :
+                 RigExecRelationshipTargets(moverPrim, "rigExec:constraints")) {
+                for (const auto &destination : mover.targets) {
+                    if (destination.GetNameToken() != _tPoints) continue;
+                    _ClothGuideBinding guide;
+                    guide.constraint = constraint;
+                    guide.sourceMesh = destination.GetPrimPath();
+                    std::vector<RigExecRevisionLeafKey> leaves;
+                    RigExecRevisionBinding binding;
+                    auto declaration = cloth_inputs::StageDeclaration(_stage, &leaves, &binding);
+                    if (declaration.type(constraint) != "RigExecClothConstraintSet") continue;
+                    VtDictionary kind;
+                    declaration.Attribute(&kind, "kind", constraint, "rigExec:kind",
+                                          RigExecRevisionLeafType::Token, VtValue(TfToken("stretch")));
+                    guide.targetMesh = declaration.Target(constraint, "rigExec:targetMesh").GetPrimPath();
+                    if (guide.targetMesh.IsEmpty()) guide.targetMesh = guide.sourceMesh;
+                    const auto source = declaration.Binding(
+                        declaration.Target(constraint, "rigExec:sourceBinding"), guide.sourceMesh);
+                    const auto target = declaration.Binding(
+                        declaration.Target(constraint, "rigExec:targetBinding"), guide.targetMesh);
+                    const auto values = cloth_inputs::SampleLeaves(_stage, leaves, UsdTimeCode::Default());
+                    const auto *attachment = cloth_inputs::Value<TfToken>(values, kind, "kind");
+                    if (declaration.valid && attachment && *attachment == "attachment" &&
+                        cloth_inputs::Samples(values, source, &guide.source, nullptr) &&
+                        cloth_inputs::Samples(values, target, &guide.target, nullptr) &&
+                        !guide.source.empty() && guide.source.size() == guide.target.size()) {
+                        _clothGuideBindings.push_back(std::move(guide));
+                    }
+                }
+            }
+        }
+        _clothGuideSerial = serial;
+    }
+    if (_clothGuideBindings.empty()) return;
+
+    UsdGeomXformCache xforms(pose.time);
+    const SdfPath asset = _rigPath.GetParentPath();
+    const GfMatrix4d worldToAsset =
+        xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(asset)).GetInverse();
+    const auto points = [&](const SdfPath &mesh, VtVec3fArray *result) {
+        // GPU readback, when present, has already joined this generation.
+        const auto published = snapshot->prims.find(mesh);
+        if (published != snapshot->prims.end() && published->second.hasPoints) {
+            *result = published->second.points;
+            return true;
+        }
+        const SdfPath path = mesh.AppendProperty(_tPoints);
+        const auto moved = pose.movedProperties.find(path);
+        if (moved != pose.movedProperties.end()) {
+            if (!moved->second.IsHolding<VtVec3fArray>()) return false;
+            *result = moved->second.UncheckedGet<VtVec3fArray>();
+            return true;
+        }
+        const auto attr = _stage->GetAttributeAtPath(path);
+        return attr && attr.Get(result, pose.time);
+    };
+    const auto placement = [&](const SdfPath &mesh) {
+        const GfMatrix4d base =
+            xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(mesh)) * worldToAsset;
+        // Apply the nearest driven ancestor, respecting resetXformStack.
+        for (SdfPath path = mesh; !path.IsAbsoluteRootPath(); path = path.GetParentPath()) {
+            const auto driven = pose.providerXforms.find(path);
+            if (driven != pose.providerXforms.end()) {
+                const GfMatrix4d ancestor =
+                    xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(path)) * worldToAsset;
+                return base * ancestor.GetInverse() * driven->second;
+            }
+            const UsdGeomXformable xform(_stage->GetPrimAtPath(path));
+            if (xform && xform.GetResetXformStack()) break;
+        }
+        return base;
+    };
+    const auto sample = [](const RigExecClothSample &binding,
+                           const VtVec3fArray &vertices, const GfMatrix4d &matrix,
+                           GfVec3f *result) {
+        GfVec3d value(0);
+        double sum = 0;
+        for (size_t k = 0; k < 3; ++k) {
+            const int32_t index = binding.vertices[k];
+            const float weight = binding.weights[k];
+            if (index < 0 || size_t(index) >= vertices.size() ||
+                !std::isfinite(weight) || weight < 0) return false;
+            value += GfVec3d(vertices[size_t(index)]) * weight;
+            sum += weight;
+        }
+        if (std::abs(sum - 1) > 1e-5) return false;
+        *result = GfVec3f(matrix.Transform(value));
+        return std::isfinite((*result)[0]) && std::isfinite((*result)[1]) &&
+               std::isfinite((*result)[2]);
+    };
+    for (const auto &guide : _clothGuideBindings) {
+        VtVec3fArray source, target;
+        if (!points(guide.sourceMesh, &source) || !points(guide.targetMesh, &target)) continue;
+        const GfMatrix4d sourceFrame = placement(guide.sourceMesh);
+        const GfMatrix4d targetFrame = placement(guide.targetMesh);
+        auto &published = snapshot->prims[guide.constraint];
+        published.assetRoot = asset;
+        published.controlGuideShape = TfToken("custom");
+        published.controlGuideDrawMode = _tWire;
+        published.controlGuidePlaneNormal = _tY;
+        _ReadGuideStyleCached(_GuideInputsFor(guide.constraint), pose, &published);
+        const auto width = _stage->GetPrimAtPath(guide.constraint).GetAttribute(_tGuideWireWidth);
+        if (width) width.Get(&published.controlGuideWireWidth, pose.time);
+        for (size_t i = 0; i < guide.source.size(); ++i) {
+            GfVec3f a, b;
+            if (!sample(guide.source[i], source, sourceFrame, &a) ||
+                !sample(guide.target[i], target, targetFrame, &b)) continue;
+            published.controlGuidePoints.push_back(a);
+            published.controlGuidePoints.push_back(b);
+            published.controlGuideCounts.push_back(2);
+        }
+        published.hasControlGuide = !published.controlGuideCounts.empty();
+    }
 }
 
 void
@@ -3073,6 +3206,7 @@ RigExecImagingBridge::_PublishPoseSnapshot(
         _FillGuides(pose, snapshot.get());
         _FillControlGuides(pose, snapshot.get());
         _FillVolumeGuides(pose, snapshot.get());
+        _FillClothConstraintGuides(pose, snapshot.get());
         _FillWeightOverlay(pose, snapshot.get());
     }
 
@@ -3303,6 +3437,7 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             _FillGuides(pose, snapshot.get());
             _FillControlGuides(pose, snapshot.get());
             _FillVolumeGuides(pose, snapshot.get());
+            _FillClothConstraintGuides(pose, snapshot.get());
             _FillWeightOverlay(pose, snapshot.get());
         }
         for (const auto &[propertyPath, value] : pose.movedProperties) {

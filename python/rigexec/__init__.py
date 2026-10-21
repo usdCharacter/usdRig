@@ -156,6 +156,9 @@ SmoothMover = _native.SmoothMover
 DeltaMushMover = _native.DeltaMushMover
 WrinkleMover = _native.WrinkleMover
 ClothMover = _native.ClothMover
+ClothBinding = _native.ClothBinding
+ClothMap = _native.ClothMap
+ClothConstraint = _native.ClothConstraint
 VolumeCorrectMover = _native.VolumeCorrectMover
 FloatMathMover = _native.FloatMathMover
 Vec3fMathMover = _native.Vec3fMathMover
@@ -177,6 +180,7 @@ __all__ = [
     "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "MlMover",
     "CurveMover",
     "SurfaceMover", "PatchMover", "SmoothMover", "DeltaMushMover", "WrinkleMover", "ClothMover",
+    "ClothBinding", "ClothMap", "ClothConstraint",
     "VolumeCorrectMover",
     "FloatMathMover", "Vec3fMathMover", "MatrixMathMover",
     "MoverChain",
@@ -286,6 +290,9 @@ _CONCRETE_SCHEMA_NAMES = (
     "BlendSample",
     "BlendShapeMover",
     "ClothMover",
+    "ClothBinding",
+    "ClothMap",
+    "ClothConstraintSet",
     "CombineWeight",
     "Control",
     "CurveMover",

@@ -20,6 +20,7 @@
 #include "rigExec/bakedTrace.h"
 #include "rigExec/frozenContext.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecClothStage.h"
 
 #include "pxr/usd/sdf/assetPath.h"
 #include "pxr/usd/sdf/types.h"
@@ -7647,6 +7648,108 @@ TestUpstreamSceneIndexDrivesRigInputs(const std::string &examplesDir)
     _UpstreamArraySteps(fixture);
 }
 
+static void
+TestClothConstraintGuides()
+{
+    using namespace rigExecClothStage;
+    auto stage = MakeStage(true, "uniform int rigExec:windowFrames = 1\n"
+                                "uniform int rigExec:maxWindowFrames = 1\n");
+    auto cloth = stage->GetPrimAtPath(kCurtain.GetPrimPath());
+    VtVec3fArray rest;
+    cloth.GetAttribute(TfToken("points")).Get(&rest);
+    VtVec2fArray uv;
+    for (const auto &p : rest) uv.push_back(GfVec2f(p[0], p[1]));
+    auto st = cloth.CreateAttribute(TfToken("primvars:st"), SdfValueTypeNames->TexCoord2fArray);
+    st.Set(uv);
+    st.SetMetadata(TfToken("interpolation"), VtValue(TfToken("vertex")));
+    const auto binding = [&](const char *name, const char *mode, int index,
+                             const VtVec3fArray &coordinates) {
+        auto prim = stage->DefinePrim(kCloth.AppendChild(TfToken(name)), TfToken("RigExecClothBinding"));
+        prim.GetAttribute(TfToken("rigExec:mode")).Set(TfToken(mode));
+        prim.GetAttribute(TfToken("rigExec:indices")).Set(VtIntArray{index});
+        prim.GetAttribute(TfToken("rigExec:coordinates")).Set(coordinates);
+        return prim.GetPath();
+    };
+    const SdfPath sources[] = {
+        binding("Vertex", "vertex", 0, {}),
+        binding("Barycentric", "barycentric", 0, {{0.25f, 0.5f, 0.25f}}),
+        binding("UV", "uv", -1, {{-12, 40, 0}})};
+    const auto target = binding("Target", "vertex", 6, {});
+    const auto externalTarget = binding("ExternalTarget", "vertex", 0, {});
+    SdfPathVector constraints;
+    for (int i = 0; i < 4; ++i) {
+        const auto path = kCloth.AppendChild(TfToken("Link" + std::to_string(i)));
+        const auto prim = stage->DefinePrim(path, TfToken("RigExecClothConstraintSet"));
+        prim.GetAttribute(TfToken("rigExec:kind")).Set(TfToken("attachment"));
+        prim.GetAttribute(TfToken("inputs:restLength")).Set(1.0f);
+        prim.GetAttribute(TfToken("inputs:minStrength")).Set(0.0f);
+        prim.GetAttribute(TfToken("inputs:maxStrength")).Set(0.0f);
+        prim.GetRelationship(TfToken("rigExec:sourceBinding")).SetTargets({sources[i % 3]});
+        prim.GetRelationship(TfToken("rigExec:targetBinding")).SetTargets({i == 3 ? externalTarget : target});
+        if (i == 3) prim.GetRelationship(TfToken("rigExec:targetMesh")).SetTargets({kBox.GetPrimPath()});
+        constraints.push_back(path);
+    }
+    const auto mover = stage->GetPrimAtPath(kCloth);
+    mover.GetRelationship(TfToken("rigExec:constraints")).SetTargets(constraints);
+    std::string authored;
+    stage->GetRootLayer()->ExportToString(&authored);
+    RigExecImagingBridge bridge(stage, kRig);
+    CHECK(bridge.Compile());
+    auto upstream = HdRetainedSceneIndex::New();
+    for (const auto &path : constraints)
+        upstream->AddPrims({{path, TfToken(), HdRetainedContainerDataSource::New()}});
+    auto results = RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
+    for (double time : {1.0, 9.0, 1.0}) {
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode(time)));
+        const auto snapshot = bridge.GetStore()->Get();
+        const auto &points = snapshot->prims.at(kCurtain.GetPrimPath()).points;
+        const auto &box = snapshot->prims.at(kBox.GetPrimPath()).points;
+        for (size_t i = 0; i < constraints.size(); ++i) {
+            const auto found = snapshot->prims.find(constraints[i]);
+            CHECK(found != snapshot->prims.end());
+            if (found == snapshot->prims.end()) continue;
+            const auto &guide = found->second;
+            CHECK(guide.hasControlGuide);
+            CHECK(guide.guidePurpose == UsdGeomTokens->guide);
+            CHECK(guide.controlGuideCounts == VtIntArray{2});
+            CHECK(guide.controlGuidePoints.size() == 2);
+            if (guide.controlGuidePoints.size() != 2) continue;
+            const auto expected = i == 1 ? points[0] * 0.25f + points[1] * 0.5f +
+                points[1 + kColumns] * 0.25f : points[0];
+            CHECK((guide.controlGuidePoints[0] - expected).GetLength() < 1e-4f);
+            CHECK((guide.controlGuidePoints[1] - (i == 3 ? box[0] : points[6])).GetLength() < 1e-4f);
+            const auto drawn = results->GetPrim(constraints[i].AppendChild(TfToken("rigGuideCtrl")));
+            CHECK(drawn.primType == HdPrimTypeTokens->basisCurves);
+        }
+    }
+    std::string after;
+    stage->GetRootLayer()->ExportToString(&after);
+    CHECK(authored == after);
+    CHECK(stage->GetPrimAtPath(sources[0]).GetAttribute(TfToken("rigExec:indices")).Set(VtIntArray{1}));
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
+    auto snapshot = bridge.GetStore()->Get();
+    CHECK(snapshot->prims.at(constraints[0]).controlGuidePoints[0] ==
+          snapshot->prims.at(kCurtain.GetPrimPath()).points[1]);
+    // Mesh-local placement is included once; asset placement stays in the
+    // guide transform supplied by the scene index.
+    const GfVec3d offset(3, 4, 5);
+    cloth.CreateAttribute(TfToken("xformOp:translate"), SdfValueTypeNames->Double3).Set(offset);
+    cloth.CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
+        .Set(VtTokenArray{TfToken("xformOp:translate")});
+    const auto asset = stage->GetPrimAtPath(SdfPath("/Asset"));
+    asset.CreateAttribute(TfToken("xformOp:translate"), SdfValueTypeNames->Double3).Set(GfVec3d(100, 0, 0));
+    asset.CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
+        .Set(VtTokenArray{TfToken("xformOp:translate")});
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
+    snapshot = bridge.GetStore()->Get();
+    CHECK((snapshot->prims.at(constraints[0]).controlGuidePoints[0] -
+          snapshot->prims.at(kCurtain.GetPrimPath()).points[1] - GfVec3f(offset)).GetLength() < 1e-4f);
+    mover.GetRelationship(TfToken("rigExec:constraints")).SetTargets({});
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
+    CHECK(!bridge.GetStore()->Get()->prims.count(constraints[0]));
+    CHECK(results->GetPrim(constraints[0].AppendChild(TfToken("rigGuideCtrl"))).primType.IsEmpty());
+}
+
 int
 main(int argc, char **argv)
 {
@@ -7683,6 +7786,7 @@ main(int argc, char **argv)
     TestFilterChainOverRetainedScene();
     TestBridgeOverShotStage(examplesDir);
     TestStandaloneControlGuide();
+    TestClothConstraintGuides();
     TestCustomControlRestExtent();
     TestControlGuideSource();
     TestJointHierarchyGuides(examplesDir);

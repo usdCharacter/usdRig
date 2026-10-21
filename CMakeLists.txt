@@ -597,7 +597,8 @@ add_test(NAME testRigExecHarmonics COMMAND testRigExecHarmonics)
 add_executable(testRigExecCloth tests/testRigExecCloth.cpp)
 target_link_libraries(testRigExecCloth PRIVATE rigExec rigExecScene rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecCloth PRIVATE
-    ${_rigexec_schema_resource_define})
+    ${_rigexec_schema_resource_define}
+    RIGEXEC_CLOTH_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda")
 add_test(NAME testRigExecCloth COMMAND testRigExecCloth)
 
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)
@@ -2581,7 +2582,7 @@ foreach(_rigexec_boundable
         RigExecXformable RigExecControl RigExecJoint RigExecFkChain
         RigExecTwoBoneIk RigExecBlendPointFrames RigExecTwistDistribution
         RigExecRibbon RigExecSplineIk RigExecVolumeWeight RigExecSphereWeight
-        RigExecPlaneWeight RigExecCurveWeight)
+        RigExecPlaneWeight RigExecCurveWeight RigExecClothConstraintSet)
     string(REPLACE
         "\"schemaIdentifier\": \"${_rigexec_boundable}\""
         "\"implementsComputeExtent\": true, \"schemaIdentifier\": \"${_rigexec_boundable}\""

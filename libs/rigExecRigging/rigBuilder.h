@@ -24,6 +24,7 @@
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/value.h"
@@ -904,11 +905,53 @@ public:
     void SetSmoothingIterations(int iterations);
 };
 
+class RigExecClothBindingHandle : public RigExecHandleBase {
+public:
+    using RigExecHandleBase::RigExecHandleBase;
+    void SetVertices(const std::vector<int> &indices);
+    void SetBarycentric(const std::vector<int> &triangles, const std::vector<GfVec3f> &weights);
+    void SetUV(const std::vector<GfVec3f> &coordinates, const std::vector<int> &triangles = {});
+    void SetUvSet(const SdfPath &path);
+};
+
+class RigExecClothMapHandle : public RigExecHandleBase {
+public:
+    using RigExecHandleBase::RigExecHandleBase;
+    void SetValues(const std::vector<float> &values);
+    void SetValuesSource(const SdfPath &path);
+    void SetBinding(const SdfPath &path);
+    void SetSourceMesh(const SdfPath &path);
+};
+
+class RigExecClothConstraintHandle : public RigExecHandleBase {
+public:
+    using RigExecHandleBase::RigExecHandleBase;
+    void SetMode(const TfToken &mode);
+    void SetStrength(float minimum, float maximum);
+    void SetCompliance(float compliance);
+    void SetMaterialDirections(float warp, float weft, float normal = 1);
+    void SetForceCurve(const std::vector<GfVec2f> &keys);
+    void SetSourceBinding(const SdfPath &path);
+    void SetTargetBinding(const SdfPath &path);
+    void SetTargetMesh(const SdfPath &path);
+    void SetMap(const TfToken &channel, const SdfPath &path);
+    void SetRestLength(float length);
+    void SetContact(float thickness, float friction);
+};
+
 /// RigExecClothMover: cloth on one mesh, simulated over a window of the
 /// frames before the current one, colliding with other meshes.
 class RigExecClothMoverHandle : public RigExecMoverHandle {
 public:
     using RigExecMoverHandle::RigExecMoverHandle;
+
+    void SetRestShape(const SdfPath &path);
+    void SetUvSet(const SdfPath &path);
+    void SetConstraints(const std::vector<SdfPath> &paths);
+    RigExecClothConstraintHandle AddConstraint(const std::string &name, const TfToken &kind,
+                                              const TfToken &mode = TfToken("soft"));
+    RigExecClothBindingHandle AddBinding(const std::string &name);
+    RigExecClothMapHandle AddMap(const std::string &name);
 
     /// Meshes the cloth collides with (rigExec:colliders).
     void SetColliders(const std::vector<SdfPath> &meshes);
@@ -920,6 +963,9 @@ public:
     void SetPinWeights(const std::vector<float> &weights);
     /// Earlier frames the solve starts from, in [1,1024].
     void SetWindowFrames(int frames);
+    /// The most earlier frames a solve reaches back to when the cloth starts
+    /// cut by a collider, in [1,1024]; at most the window frames turns it off.
+    void SetMaxWindowFrames(int frames);
     /// Solver steps per frame, in [1,256].
     void SetSubsteps(int substeps);
     /// Constraint passes per step, in [1,64].
@@ -933,6 +979,7 @@ public:
     void SetBendCompliance(float compliance);
     /// Acceleration in the cloth mesh's local space.
     void SetGravity(float x, float y, float z);
+    /// Velocity decay rate per second, finite and >= 0.
     void SetDamping(float damping);
     void SetAttract(float attract);
     void SetThickness(float thickness);

@@ -84,7 +84,7 @@ Storm viewport with the rig guides on.
 | ![Smooth Mover](../icons/smooth_mover.png) | [Smooth Mover](nodes/smooth_mover.md) | Relaxes points with uniform Laplacian smoothing. |
 | ![Delta Mush Mover](../icons/concept.png) | [Delta Mush Mover](nodes/delta_mush_mover.md) | Smooths deformation and restores transported rest detail. |
 | ![Wrinkle Mover](../icons/concept.png) | [Wrinkle Mover](nodes/wrinkle_mover.md) | Solves coherent compression-driven folds on an already deformed mesh. |
-| ![Cloth Mover](../icons/concept.png) | [Cloth Mover](nodes/cloth_mover.md) | Cloth on one mesh, simulated over the frames before the current one, colliding with the body. |
+| ![Cloth Mover](../icons/concept.png) | [Cloth Mover](nodes/cloth_mover.md) | Cloth with painted anisotropic materials, attachments and contact, simulated over the frames before the current one. |
 | ![Volume Correct Mover](../icons/volume_correct_mover.png) | [Volume Correct Mover](nodes/volume_correct_mover.md) | Pulls a deformation back toward its rest bound volume. |
 | ![ML Mover](../icons/concept.png) | [ML Mover](nodes/ml_mover.md) | A neural morph deformer: a small network maps the pose to morph weights. |
 | ![ML Output](../icons/concept.png) | [ML Output](nodes/ml_output.md) | One output of an ML mover's network, and the float it publishes. |

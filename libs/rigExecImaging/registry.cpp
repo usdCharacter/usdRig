@@ -5158,6 +5158,7 @@ TF_REGISTRY_FUNCTION(UsdGeomBoundable)
     // inherit Boundable directly, so they are named individually.
     for (const char *name : {"RigExecXformable",
                              "RigExecVolumeWeight",
+                             "RigExecClothConstraintSet",
                              "RigExecFkChain",
                              "RigExecTwoBoneIk",
                              "RigExecBlendPointFrames",

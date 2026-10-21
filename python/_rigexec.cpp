@@ -2221,8 +2221,86 @@ PYBIND11_MODULE(_rigexec, m) {
         .def("set_distance_weight", &rigExec::RigExecDeltaMushMoverHandle::SetDistanceWeight, py::arg("weight"))
         .def("set_displacement", &rigExec::RigExecDeltaMushMoverHandle::SetDisplacement, py::arg("amount"));
 
+    py::class_<rigExec::RigExecClothBindingHandle, RigExecHandleBase>(m, "ClothBinding")
+        .def("set_vertices", &rigExec::RigExecClothBindingHandle::SetVertices)
+        .def("set_barycentric", [](rigExec::RigExecClothBindingHandle &h,
+                                   const std::vector<int> &triangles, py::iterable weights) {
+            std::vector<GfVec3f> values;
+            for (const auto &p : weights) values.push_back(_PythonToVec3f(p, "barycentric weights"));
+            h.SetBarycentric(triangles, values);
+        }, py::arg("triangles"), py::arg("weights"))
+        .def("set_uv", [](rigExec::RigExecClothBindingHandle &h, py::iterable coordinates,
+                          const std::vector<int> &triangles) {
+            std::vector<GfVec3f> values;
+            for (const auto &p : coordinates) {
+                const auto v = py::cast<std::vector<float>>(p);
+                if (v.size() != 2 && v.size() != 3) throw py::value_error("UV samples need two or three coordinates");
+                values.emplace_back(v[0], v[1], v.size() == 3 ? v[2] : 0);
+            }
+            h.SetUV(values, triangles);
+        }, py::arg("coordinates"), py::arg("triangles") = std::vector<int>())
+        .def("set_uv_set", [](rigExec::RigExecClothBindingHandle &h, py::object p) {
+            h.SetUvSet(_PythonToDependencyPath(p, h.GetStage()));
+        });
+    py::class_<rigExec::RigExecClothMapHandle, RigExecHandleBase>(m, "ClothMap")
+        .def("set_values", &rigExec::RigExecClothMapHandle::SetValues)
+        .def("set_values_source", [](rigExec::RigExecClothMapHandle &h, py::object p) {
+            h.SetValuesSource(_PythonToDependencyPath(p, h.GetStage()));
+        })
+        .def("set_binding", [](rigExec::RigExecClothMapHandle &h, py::object p) {
+            h.SetBinding(_PythonToDependencyPath(p, h.GetStage(), TfToken("RigExecClothBinding")));
+        })
+        .def("set_source_mesh", [](rigExec::RigExecClothMapHandle &h, py::object p) {
+            h.SetSourceMesh(_PythonToDependencyPath(p, h.GetStage()));
+        });
+    py::class_<rigExec::RigExecClothConstraintHandle, RigExecHandleBase>(m, "ClothConstraint")
+        .def("set_mode", [](rigExec::RigExecClothConstraintHandle &h, std::string mode) { h.SetMode(TfToken(mode)); })
+        .def("set_strength", &rigExec::RigExecClothConstraintHandle::SetStrength,
+             py::arg("minimum"), py::arg("maximum"))
+        .def("set_compliance", &rigExec::RigExecClothConstraintHandle::SetCompliance)
+        .def("set_material_directions", &rigExec::RigExecClothConstraintHandle::SetMaterialDirections,
+             py::arg("warp"), py::arg("weft"), py::arg("normal") = 1)
+        .def("set_force_curve", [](rigExec::RigExecClothConstraintHandle &h, py::iterable keys) {
+            std::vector<GfVec2f> values;
+            for (const auto &key : keys) {
+                const auto v = py::cast<std::array<float, 2>>(key);
+                values.emplace_back(v[0], v[1]);
+            }
+            h.SetForceCurve(values);
+        })
+        .def("set_source_binding", [](rigExec::RigExecClothConstraintHandle &h, py::object p) {
+            h.SetSourceBinding(_PythonToDependencyPath(p, h.GetStage(), TfToken("RigExecClothBinding")));
+        })
+        .def("set_target_binding", [](rigExec::RigExecClothConstraintHandle &h, py::object p) {
+            h.SetTargetBinding(_PythonToDependencyPath(p, h.GetStage(), TfToken("RigExecClothBinding")));
+        })
+        .def("set_target_mesh", [](rigExec::RigExecClothConstraintHandle &h, py::object p) {
+            h.SetTargetMesh(_PythonToDependencyPath(p, h.GetStage()));
+        })
+        .def("set_map", [](rigExec::RigExecClothConstraintHandle &h, std::string channel, py::object p) {
+            h.SetMap(TfToken(channel), _PythonToDependencyPath(p, h.GetStage()));
+        }, py::arg("channel"), py::arg("path"))
+        .def("set_rest_length", &rigExec::RigExecClothConstraintHandle::SetRestLength)
+        .def("set_contact", &rigExec::RigExecClothConstraintHandle::SetContact,
+             py::arg("thickness"), py::arg("friction"));
+
     py::class_<rigExec::RigExecClothMoverHandle, rigExec::RigExecMoverHandle>(m, "ClothMover",
         "Cloth on one mesh, simulated over a window of the frames before the current one.")
+        .def("set_rest_shape", [](rigExec::RigExecClothMoverHandle &h, py::object p) {
+            h.SetRestShape(_PythonToDependencyPath(p, h.GetStage()));
+        })
+        .def("set_uv_set", [](rigExec::RigExecClothMoverHandle &h, py::object p) {
+            h.SetUvSet(_PythonToDependencyPath(p, h.GetStage()));
+        })
+        .def("set_constraints", [](rigExec::RigExecClothMoverHandle &h, py::iterable paths) {
+            h.SetConstraints(_PythonToDependencyPaths(paths, h.GetStage(), TfToken("RigExecClothConstraintSet")));
+        })
+        .def("add_constraint", [](rigExec::RigExecClothMoverHandle &h, std::string name,
+                                  std::string kind, std::string mode) {
+            return h.AddConstraint(name, TfToken(kind), TfToken(mode));
+        }, py::arg("name"), py::arg("kind"), py::arg("mode") = "soft")
+        .def("add_binding", &rigExec::RigExecClothMoverHandle::AddBinding, py::arg("name"))
+        .def("add_map", &rigExec::RigExecClothMoverHandle::AddMap, py::arg("name"))
         .def("set_colliders", [](rigExec::RigExecClothMoverHandle &h, const py::iterable &paths) {
             h.SetColliders(_PythonToDependencyPaths(paths, h.GetStage()));
         }, py::arg("meshes"))
@@ -2231,6 +2309,7 @@ PYBIND11_MODULE(_rigexec, m) {
         }, py::arg("phase"))
         .def("set_pin_weights", &rigExec::RigExecClothMoverHandle::SetPinWeights, py::arg("weights"))
         .def("set_window_frames", &rigExec::RigExecClothMoverHandle::SetWindowFrames, py::arg("frames"))
+        .def("set_max_window_frames", &rigExec::RigExecClothMoverHandle::SetMaxWindowFrames, py::arg("frames"))
         .def("set_substeps", &rigExec::RigExecClothMoverHandle::SetSubsteps, py::arg("substeps"))
         .def("set_iterations", &rigExec::RigExecClothMoverHandle::SetIterations, py::arg("iterations"))
         .def("set_tethers", &rigExec::RigExecClothMoverHandle::SetTethers, py::arg("tethers"))

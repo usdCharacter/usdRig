@@ -134,6 +134,9 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecBlendSample",
     "RigExecBlendShapeMover",
     "RigExecClothMover",
+    "RigExecClothBinding",
+    "RigExecClothMap",
+    "RigExecClothConstraintSet",
     "RigExecCombineWeight",
     "RigExecControl",
     "RigExecCurveMover",
@@ -201,7 +204,7 @@ class SchemaFacadeTests(_ContractTestCase):
         self.stage = Usd.Stage.CreateInMemory()
 
     def test_all_concrete_types_define_and_get(self):
-        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 40)
+        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 43)
         self.assertEqual(
             set(rigexec.schema.names()), set(CONCRETE_SCHEMA_TYPES))
         self.assertFalse(hasattr(rigexec.schema, "CustomConstraint"))
@@ -1024,11 +1027,12 @@ class BuilderDependencyTests(_ContractTestCase):
         prim = self.stage.GetPrimAtPath(mover.path)
         self.assertEqual(prim.GetTypeName(), "RigExecClothMover")
         defaults = {
-            "rigExec:windowFrames": 16, "rigExec:substeps": 10,
+            "rigExec:windowFrames": 16, "rigExec:maxWindowFrames": 64,
+            "rigExec:substeps": 10,
             "rigExec:iterations": 1, "rigExec:tethers": True,
             "rigExec:tetherSlack": 0.05, "rigExec:frameRate": 0.0,
             "inputs:stretchCompliance": 0.0, "inputs:bendCompliance": 0.001,
-            "inputs:damping": 0.1, "inputs:attract": 0.0,
+            "inputs:damping": 2.0, "inputs:attract": 0.0,
             "inputs:thickness": 0.5, "inputs:collisionDepth": 2.0,
             "inputs:friction": 0.3,
         }
@@ -1039,12 +1043,14 @@ class BuilderDependencyTests(_ContractTestCase):
                 self.assertAlmostEqual(attr.Get(), expected, places=6)
             else:
                 self.assertEqual(attr.Get(), expected)
-        for name in ("rigExec:windowFrames", "rigExec:substeps", "rigExec:pinWeights"):
+        for name in ("rigExec:windowFrames", "rigExec:maxWindowFrames", "rigExec:substeps",
+                     "rigExec:pinWeights"):
             self.assertEqual(prim.GetAttribute(name).GetVariability(),
                              Sdf.VariabilityUniform)
         mover.set_pin_weights([1.0 if index < width else 0.0
                                for index in range(width * width)])
         mover.set_window_frames(12)
+        mover.set_max_window_frames(48)
         mover.set_substeps(8)
         mover.set_iterations(2)
         mover.set_tethers(True)
@@ -1059,6 +1065,7 @@ class BuilderDependencyTests(_ContractTestCase):
         mover.set_collision_depth(1.0)
         mover.set_friction(0.4)
         self.assertEqual(prim.GetAttribute("rigExec:windowFrames").Get(), 12)
+        self.assertEqual(prim.GetAttribute("rigExec:maxWindowFrames").Get(), 48)
         self.assertAlmostEqual(prim.GetAttribute("inputs:friction").Get(), 0.4, places=6)
         original = self.stage.GetRootLayer().ExportToString()
         invalid_values = (
@@ -1066,12 +1073,13 @@ class BuilderDependencyTests(_ContractTestCase):
             (mover.set_pin_weights, [float("nan")]),
             (mover.set_window_frames, 0),
             (mover.set_window_frames, 1025),
+            (mover.set_max_window_frames, 0),
             (mover.set_substeps, 0),
             (mover.set_iterations, 65),
             (mover.set_tether_slack, -0.1),
             (mover.set_frame_rate, float("inf")),
             (mover.set_stretch_compliance, -1.0),
-            (mover.set_damping, 1.5),
+            (mover.set_damping, -1.0),
             (mover.set_thickness, float("nan")),
             (mover.set_collision_depth, -1.0),
             (mover.set_friction, -0.1),
@@ -1095,6 +1103,60 @@ class BuilderDependencyTests(_ContractTestCase):
         result = rig.evaluate(10.0)
         for actual, expected in zip(result.moved_property("/Curtain.points"), rest):
             self.assertLess((Gf.Vec3f(*actual) - Gf.Vec3f(*expected)).GetLength(), 1e-6)
+
+    def test_cloth_constraint_relationships(self):
+        mesh = UsdGeom.Mesh.Define(self.stage, "/Cloth")
+        mesh.CreatePointsAttr([(0, 2, 0), (1, 2, 0), (0, 3, 0), (1, 3, 0)])
+        mesh.CreateFaceVertexCountsAttr([3, 3])
+        mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 1, 3, 2])
+        uv = UsdGeom.PrimvarsAPI(mesh).CreatePrimvar(
+            "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+        uv.Set([(0, 0), (1, 0), (0, 1), (1, 1)])
+        mover = self.builder.new_mover_chain("Cloth").add_cloth_mover(
+            "Solve", target="/Cloth.points")
+        mover.set_rest_shape(mesh.GetPrim())
+        mover.set_uv_set(uv.GetAttr())
+        mover.set_pin_weights([1, 1, 0, 0])
+        a, b = mover.add_binding("A"), mover.add_binding("B")
+        a.set_vertices([2])
+        b.set_barycentric([1], [(0, 1, 0)])
+        b.set_uv([(1, 1)], triangles=[1])
+        link = mover.add_constraint("Link", "attachment", "soft")
+        link.set_source_binding(a)
+        link.set_target_binding(b)
+        link.set_strength(0.1, 2.0)
+        link.set_force_curve([(0, 1), (100, 0)])
+        link.set_compliance(0.001)
+        link.set_material_directions(2, 1, 0.5)
+        link.set_rest_length(1)
+        contact = mover.add_constraint("Contact", "selfCollision", "hard")
+        contact.set_contact(0.02, 0.3)
+        damping = mover.add_constraint("Damping", "damping")
+        damping.set_strength(8, 8)
+        paint = mover.add_map("Paint")
+        paint.set_values([1, 1, 0.5, 0.5])
+        damping.set_map("mask", paint)
+        prim = self.stage.GetPrimAtPath(mover.path)
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:constraints")),
+                         [link.path, contact.path, damping.path])
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:restShape")), ["/Cloth"])
+        self.assertEqual(_targets(prim.GetRelationship("rigExec:uvSet")), ["/Cloth.primvars:st"])
+        original = self.stage.GetRootLayer().ExportToString()
+        for action in (lambda: link.set_strength(2, 1),
+                       lambda: link.set_force_curve([(2, 1), (1, 0)]),
+                       lambda: link.set_rest_length(-0.5),
+                       lambda: paint.set_values([float("nan")]),
+                       lambda: a.set_barycentric([0], [(0.5, 0.5, 0.5)]),
+                       lambda: link.set_map("unknown", paint)):
+            with self.assertRaises(ValueError):
+                action()
+            self.assertEqual(self.stage.GetRootLayer().ExportToString(), original)
+        rig = rigexec.Rig(self.stage, self.builder.root_path)
+        rig.compile()
+        result = rig.evaluate(10)
+        self.assertTrue(result.valid)
+        self.assertEqual(len(result.moved_property("/Cloth.points")), 4)
+        self.assertEqual(self.stage.GetRootLayer().ExportToString(), original)
 
     def test_harmonics_authoring_and_evaluation(self):
         root = self.builder.add_control("Root")

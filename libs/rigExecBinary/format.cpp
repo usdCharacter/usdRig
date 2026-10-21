@@ -6952,7 +6952,15 @@ private:
                     return _Bad(at+": invalid read time/flavour");
                 if(!_ReadPtr(declaration.read,declaration.read ? int(declaration.read->tag) : _AnyTag,_AnyMode,at,"read")) return false;
                 const bool raw=declaration.flavour == fb::ExternalInputFlavour::Raw || declaration.flavour == fb::ExternalInputFlavour::OverlayThenRaw || declaration.flavour == fb::ExternalInputFlavour::Present;
-                if(raw && declaration.read->mode!=ReadMode::Raw)
+                // An absent optional property has no input slot. Capture
+                // transports its fallback as a literal (arrays use Resolved
+                // with an empty walk); this does not change the declaration's
+                // raw sampling semantics.
+                const auto &read=*declaration.read;
+                const bool literal=read.walk.empty() && read.propertyCandidates.empty() &&
+                    read.doubleCandidates.empty() && read.rawFallbackSlot==-1 && read.flags==0 &&
+                    read.mode==(RigExecFormatIsArrayTag(read.tag) ? ReadMode::Resolved : ReadMode::Pinned);
+                if(raw && declaration.read->mode!=ReadMode::Raw && !literal)
                     return _Bad(at+": raw/present declaration requires raw read metadata");
                 if(!raw && declaration.read->mode!=ReadMode::Resolved)
                     return _Bad(at+": resolved declaration requires resolved read metadata");

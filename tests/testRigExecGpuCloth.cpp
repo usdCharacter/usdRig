@@ -143,6 +143,10 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
         }
         window[k].entering = curtain.points.data();
         window[k].colliders = spheres[k].data();
+        // The scene's own damping. At the default (2) the 24 x 24 sweep folds
+        // at a knife edge: the CPU alone moves a fold 3 units for a 1e-4
+        // nudge of the input, so it would measure the scene, not the device.
+        window[k].parameters.damping = 0.1f;
     }
     std::vector<float> cpu(3 * mesh.pointCount), gpu(3 * mesh.pointCount);
     RigExecClothWorkspace ws;
@@ -310,6 +314,27 @@ CompareRig(RigExecGpuDeformExecutor *executor)
         // Every evaluation of the device rig went to the GPU.
         CHECK(executor->ClothSolveCount() >= before + 6);
     }
+    auto profile = stage->DefinePrim(kCloth.AppendChild(TfToken("Damping")),
+                                    TfToken("RigExecClothConstraintSet"));
+    profile.CreateAttribute(TfToken("rigExec:kind"), SdfValueTypeNames->Token).Set(TfToken("damping"));
+    profile.CreateAttribute(TfToken("inputs:minStrength"), SdfValueTypeNames->Float).Set(8.0f);
+    profile.CreateAttribute(TfToken("inputs:maxStrength"), SdfValueTypeNames->Float).Set(8.0f);
+    stage->GetPrimAtPath(kCloth).CreateRelationship(TfToken("rigExec:constraints"))
+        .SetTargets({profile.GetPath()});
+    SetEnv("RIGEXEC_GPU_CLOTH_MIN_POINTS", "0");
+    RigExecRigEvaluator profiled(stage, kRig);
+    CHECK(profiled.Compile());
+    SetEnv("RIGEXEC_GPU_CLOTH", "0");
+    RigExecRigEvaluator reference(stage, kRig);
+    CHECK(reference.Compile());
+    SetEnv("RIGEXEC_GPU_CLOTH", nullptr);
+    SetEnv("RIGEXEC_GPU_CLOTH_MIN_POINTS", nullptr);
+    const size_t count = executor ? executor->ClothSolveCount() : 0;
+    const auto actual = profiled.Evaluate(UsdTimeCode(13));
+    const auto expected = reference.Evaluate(UsdTimeCode(13));
+    CHECK(actual.valid && expected.valid);
+    CHECK(SameBits(PointsOf(actual, kCurtain), PointsOf(expected, kCurtain)));
+    if (executor) CHECK(executor->ClothSolveCount() == count);
 }
 
 }  // namespace

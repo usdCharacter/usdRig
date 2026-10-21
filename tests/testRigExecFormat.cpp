@@ -1477,13 +1477,13 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 25 &&
+    static_assert(RigExecFormatVersion == 26 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
-                  "RigLogic's solves and format 25 windowed operations; "
-                  "per-group range chains pin the oldest readable format "
-                  "at 20");
+                  "RigLogic's solves, format 25 windowed operations and "
+                  "format 26 the cloth's material model (RCL3); per-group "
+                  "range chains pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
     // Range skins, private constants) mean something else to an older
@@ -1496,7 +1496,7 @@ TestOpenRefusals()
         _context = "open refusals: version " + std::to_string(version);
         versioned.formatVersion = version;
         const std::string expected = "unsupported .rigexec format version " +
-            std::to_string(version) + " (this reader reads 20 through 25); " +
+            std::to_string(version) + " (this reader reads 20 through 26); " +
             (version < 20 ? "re-export: per-group range chains" : "rebake");
         CHECK(!_Open(_PackUnchecked(versioned), &why) && why == expected);
         ++(version < 20 ? reexports : rebakes);
@@ -1508,7 +1508,7 @@ TestOpenRefusals()
     CHECK(previous && previous->formatVersion == 20);
     std::vector<uint8_t> unwritten = {1, 2, 3};
     CHECK(!_Write(versioned, &unwritten, &why) && unwritten.empty() &&
-          _Contains(why, "format_version is 20; a writer writes 25"));
+          _Contains(why, "format_version is 20; a writer writes 26"));
     for (uint32_t older = 21; older < RigExecFormatVersion; ++older) {
         _context = "open refusals: version " + std::to_string(older);
         versioned.formatVersion = older;
@@ -2279,6 +2279,31 @@ TestExternalMovers()
     RigExecWireFile empty = _Copy(file);
     empty.externalMovers[0].v2Frame.clear();
     CHECK(RigExecFormatValidate(empty, &why));
+
+    // Missing optional raw properties carry a typed literal fallback, with
+    // no source slot or connection traversal.
+    auto optional = file;
+    for (const auto tag : {InputTag::Float, InputTag::IntArray}) {
+        fb::RigExecWireExternalDeclaredInput declaration;
+        declaration.path = optional.inputs[0].name();
+        declaration.flavour = fb::ExternalInputFlavour::Raw;
+        declaration.time = fb::ExternalInputTime::AtDefault;
+        declaration.fallbackHasValue = true;
+        RigExecWireValue fallback; fallback.tag = tag; fallback.array = 0;
+        declaration.read = std::make_unique<RigExecWireInput>();
+        declaration.read->tag = tag;
+        declaration.read->sampleTime = 1;
+        declaration.read->mode = tag == InputTag::Float ? ReadMode::Pinned : ReadMode::Resolved;
+        declaration.read->constant = uint32_t(optional.values.size());
+        optional.values.push_back(fallback);
+        optional.externalMovers[0].declaredInputs.push_back(declaration);
+    }
+    CHECK(_Write(optional, &bytes, &why));
+    CHECK(_Open(bytes, &why));
+    auto traversing = optional;
+    auto &read = *traversing.externalMovers[0].declaredInputs.back().read;
+    read.walk = {0};
+    CHECK(!RigExecFormatValidate(traversing, &why));
 
     const std::string stale =
         "external_movers[1].v2_frame: bytes of an assembly that failed "

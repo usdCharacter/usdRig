@@ -13,6 +13,7 @@
 #include "rigExecBinary/clothPlayback.h"
 
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/stage.h"
@@ -75,8 +76,8 @@ StageEpoch(const UsdStageRefPtr &stage)
     return epoch;
 }
 
-// The cloth at t from the kernel: the entering curtain and the box at
-// t - windowFrames .. t, as an evaluator whose cloth is disabled publishes
+// The cloth at t from the kernel: the entering curtain and the box over the
+// history a window may read, as an evaluator whose cloth is disabled publishes
 // them, solved by hand. \p dragAt, when set, is the drag the current frame
 // carries.
 Points
@@ -84,7 +85,7 @@ Expected(RigExecRigEvaluator &entering, const RigExecClothPrepared &prepared, in
          const std::vector<RigExecValueOverride> *drag = nullptr,
          std::vector<RigExecWindowPacket> *window = nullptr)
 {
-    const int frames = prepared.epoch.settings.windowFrames;
+    const int frames = RigExecClothHistoryFrames(prepared.epoch.settings);
     std::vector<RigExecWindowPacket> packets;
     for (int k = frames; k >= 0; --k) {
         if (k == 0 && drag) entering.SetInteractiveOverrides(*drag);
@@ -119,6 +120,129 @@ Compile(RigExecRigEvaluator &evaluator)
     const bool ok = evaluator.Compile(&errors);
     for (const std::string &e : errors) std::printf("compile: %s\n", e.c_str());
     return ok;
+}
+
+UsdStageRefPtr FeatureStage()
+{
+    auto stage = MakeStage();
+    auto cloth = stage->GetPrimAtPath(kCurtain.GetPrimPath());
+    auto mover = stage->GetPrimAtPath(kCloth);
+    VtVec3fArray rest;
+    cloth.GetAttribute(TfToken("points")).Get(&rest);
+    VtVec2fArray uv;
+    for (const auto &point : rest) uv.push_back(GfVec2f(point[0], point[1]));
+    auto st = cloth.CreateAttribute(TfToken("primvars:st"), SdfValueTypeNames->TexCoord2fArray);
+    st.Set(uv); st.SetMetadata(TfToken("interpolation"), VtValue(TfToken("vertex")));
+    mover.CreateRelationship(TfToken("rigExec:uvSet")).SetTargets({st.GetPath()});
+    auto shape = stage->DefinePrim(SdfPath("/Asset/Rest"), TfToken("Mesh"));
+    shape.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray).Set(rest);
+    mover.CreateRelationship(TfToken("rigExec:restShape")).SetTargets({shape.GetPath()});
+    const auto profile = [&](const char *name, const char *kind) {
+        auto prim = stage->DefinePrim(kCloth.AppendChild(TfToken(name)), TfToken("RigExecClothConstraintSet"));
+        prim.CreateAttribute(TfToken("rigExec:kind"), SdfValueTypeNames->Token).Set(TfToken(kind));
+        return prim;
+    };
+    auto stretch = profile("Stretch", "stretch");
+    stretch.CreateAttribute(TfToken("inputs:warp"), SdfValueTypeNames->Float).Set(4.0f);
+    stretch.CreateAttribute(TfToken("inputs:weft"), SdfValueTypeNames->Float).Set(.5f);
+    stretch.CreateAttribute(TfToken("rigExec:forceCurve"), SdfValueTypeNames->Float2Array)
+        .Set(VtVec2fArray{GfVec2f(0, 1), GfVec2f(10000, .2f)});
+    auto damping = profile("Damping", "damping");
+    damping.CreateAttribute(TfToken("inputs:minStrength"), SdfValueTypeNames->Float).Set(8.0f);
+    damping.CreateAttribute(TfToken("inputs:maxStrength"), SdfValueTypeNames->Float).Set(8.0f);
+    auto paint = cloth.CreateAttribute(TfToken("primvars:damping"), SdfValueTypeNames->FloatArray);
+    paint.Set(VtFloatArray(rest.size(), 1.0f));
+    damping.CreateRelationship(TfToken("rigExec:maskMap")).SetTargets({paint.GetPath()});
+    auto a = stage->DefinePrim(kCloth.AppendChild(TfToken("A")), TfToken("RigExecClothBinding"));
+    a.CreateAttribute(TfToken("rigExec:indices"), SdfValueTypeNames->IntArray).Set(VtIntArray{42});
+    auto b = stage->DefinePrim(kCloth.AppendChild(TfToken("B")), TfToken("RigExecClothBinding"));
+    b.CreateAttribute(TfToken("rigExec:mode"), SdfValueTypeNames->Token).Set(TfToken("uv"));
+    b.CreateAttribute(TfToken("rigExec:coordinates"), SdfValueTypeNames->Float3Array)
+        .Set(VtVec3fArray{GfVec3f(0, 40, 0)});
+    auto attachment = profile("Link", "attachment");
+    attachment.CreateRelationship(TfToken("rigExec:sourceBinding")).SetTargets({a.GetPath()});
+    attachment.CreateRelationship(TfToken("rigExec:targetBinding")).SetTargets({b.GetPath()});
+    mover.CreateRelationship(TfToken("rigExec:constraints"))
+        .SetTargets({stretch.GetPath(), damping.GetPath(), attachment.GetPath()});
+    return stage;
+}
+
+void TestPaintAndRestInvalidation()
+{
+    auto stage = FeatureStage();
+    RigExecRigEvaluator evaluator(stage, kRig);
+    CHECK(Compile(evaluator));
+    auto first = evaluator.Evaluate(UsdTimeCode(12));
+    CHECK(first.valid);
+    auto paint = stage->GetAttributeAtPath(kCurtain.GetPrimPath().AppendProperty(TfToken("primvars:damping")));
+    paint.Set(VtFloatArray(kColumns * kRows, 0.0f));
+    const auto changed = evaluator.Evaluate(UsdTimeCode(12));
+    CHECK(changed.valid);
+    CHECK(Furthest(PointsOf(first, kCurtain), PointsOf(changed, kCurtain)) > 1e-3f);
+    RigExecRigEvaluator fresh(stage, kRig);
+    CHECK(Compile(fresh));
+    CHECK(SameBits(PointsOf(changed, kCurtain), PointsOf(fresh.Evaluate(UsdTimeCode(12)), kCurtain)));
+    // The solve keeps its material model across frames while the model's
+    // reads hold, and rebuilds it when a profile value changes.
+    CHECK(evaluator.Evaluate(UsdTimeCode(9)).valid);
+    CHECK(SameBits(PointsOf(changed, kCurtain), PointsOf(evaluator.Evaluate(UsdTimeCode(12)), kCurtain)));
+    CHECK(stage->GetAttributeAtPath(kCloth.AppendChild(TfToken("Stretch"))
+                                        .AppendProperty(TfToken("inputs:warp"))).Set(1.0f));
+    const auto rewarped = evaluator.Evaluate(UsdTimeCode(12));
+    CHECK(rewarped.valid);
+    CHECK(!SameBits(PointsOf(changed, kCurtain), PointsOf(rewarped, kCurtain)));
+    RigExecRigEvaluator again(stage, kRig);
+    CHECK(Compile(again));
+    CHECK(SameBits(PointsOf(rewarped, kCurtain), PointsOf(again.Evaluate(UsdTimeCode(12)), kCurtain)));
+    auto shape = stage->GetAttributeAtPath(SdfPath("/Asset/Rest.points"));
+    VtVec3fArray points; shape.Get(&points);
+    for (auto &p : points) p[0] *= .8f;
+    shape.Set(points);
+    const auto reshaped = evaluator.Evaluate(UsdTimeCode(12));
+    CHECK(reshaped.valid);
+    CHECK(Furthest(PointsOf(changed, kCurtain), PointsOf(reshaped, kCurtain)) > 1e-3f);
+}
+
+void TestBindingAndMapTransfer()
+{
+    auto stage = FeatureStage();
+    const auto evaluate = [&]() {
+        RigExecRigEvaluator rig(stage, kRig);
+        CHECK(Compile(rig));
+        const auto pose = rig.Evaluate(UsdTimeCode(12));
+        CHECK(pose.valid);
+        return PointsOf(pose, kCurtain);
+    };
+    const auto uvResult = evaluate();
+    auto binding = stage->GetPrimAtPath(kCloth.AppendChild(TfToken("B")));
+    binding.GetAttribute(TfToken("rigExec:mode")).Set(TfToken("vertex"));
+    binding.CreateAttribute(TfToken("rigExec:indices"), SdfValueTypeNames->IntArray).Set(VtIntArray{3});
+    binding.GetAttribute(TfToken("rigExec:coordinates")).Set(VtVec3fArray());
+    CHECK(SameBits(uvResult, evaluate()));
+    binding.GetAttribute(TfToken("rigExec:mode")).Set(TfToken("barycentric"));
+    binding.GetAttribute(TfToken("rigExec:indices")).Set(VtIntArray{4});
+    binding.GetAttribute(TfToken("rigExec:coordinates")).Set(VtVec3fArray{GfVec3f(0, 1, 0)});
+    CHECK(SameBits(uvResult, evaluate()));
+
+    auto cloth = stage->GetPrimAtPath(kCurtain.GetPrimPath());
+    VtVec3fArray rest; cloth.GetAttribute(TfToken("points")).Get(&rest);
+    auto transfer = stage->DefinePrim(kCloth.AppendChild(TfToken("Transfer")), TfToken("RigExecClothBinding"));
+    transfer.CreateAttribute(TfToken("rigExec:mode"), SdfValueTypeNames->Token).Set(TfToken("uv"));
+    VtVec3fArray coordinates;
+    for (const auto &point : rest) coordinates.push_back(GfVec3f(point[0], point[1], 0));
+    transfer.CreateAttribute(TfToken("rigExec:coordinates"), SdfValueTypeNames->Float3Array).Set(coordinates);
+    auto map = stage->DefinePrim(kCloth.AppendChild(TfToken("Paint")), TfToken("RigExecClothMap"));
+    map.CreateRelationship(TfToken("rigExec:values")).SetTargets({cloth.GetPath().AppendProperty(TfToken("primvars:damping"))});
+    map.CreateRelationship(TfToken("rigExec:binding")).SetTargets({transfer.GetPath()});
+    stage->GetPrimAtPath(kCloth.AppendChild(TfToken("Damping")))
+        .GetRelationship(TfToken("rigExec:maskMap")).SetTargets({map.GetPath()});
+    CHECK(SameBits(uvResult, evaluate()));
+    // Indexed face-varying UVs use corners, not vertex indices as UV indices.
+    VtIntArray corners; cloth.GetAttribute(TfToken("faceVertexIndices")).Get(&corners);
+    auto st = cloth.GetAttribute(TfToken("primvars:st"));
+    st.SetMetadata(TfToken("interpolation"), VtValue(TfToken("faceVarying")));
+    cloth.CreateAttribute(TfToken("primvars:st:indices"), SdfValueTypeNames->IntArray).Set(corners);
+    CHECK(SameBits(uvResult, evaluate()));
 }
 
 void
@@ -240,9 +364,9 @@ TestDragReadsAuthoredHistory()
 }
 
 void
-TestFrozenJobsMatchLive()
+TestFrozenJobsMatchLive(bool features = false)
 {
-    UsdStageRefPtr stage = MakeStage();
+    UsdStageRefPtr stage = features ? FeatureStage() : MakeStage();
     RigExecRigEvaluator evaluator(stage, kRig);
     CHECK(Compile(evaluator));
     evaluator.Evaluate(UsdTimeCode(1));
@@ -267,14 +391,16 @@ TestFrozenJobsMatchLive()
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(t), {}, &inputs, &why));
         CHECK(inputs.windowRings.size() == 1);
-        // A full window: every earlier frame captured the cloth's inputs.
+        // A full history: every earlier frame a window may reach back to
+        // captured the cloth's inputs.
         if (inputs.windowRings.size() == 1) {
             const RigExecWindowRing &ring = inputs.windowRings[0];
+            const size_t history = size_t(RigExecClothHistoryFrames(RigExecClothSettings()));
             size_t held = 0;
             for (const auto &packet : ring) held += packet ? 1 : 0;
-            if (ring.size() != 16 || held != 16)
+            if (ring.size() != history || held != history)
                 std::printf("t=%d ring %zu packets, %zu held\n", t, ring.size(), held);
-            CHECK(ring.size() == 16 && held == 16);
+            CHECK(ring.size() == history && held == history);
         }
         context.varyingInputCount = inputs.values.size();
         const RigExecRigPose job = RigExecEvaluateFrozen(context, inputs, runner);
@@ -314,9 +440,9 @@ SameAsNative(const RigExecRigPose &pose, const RigExecRuntimeReader &reader, int
 }
 
 void
-TestBinaryParity()
+TestBinaryParity(bool features = false)
 {
-    UsdStageRefPtr stage = MakeStage();
+    UsdStageRefPtr stage = features ? FeatureStage() : MakeStage();
     RigExecRigEvaluator evaluator(stage, kRig);
     std::string why;
     CHECK(Compile(evaluator));
@@ -338,7 +464,7 @@ TestBinaryParity()
     CHECK(reader->GetMissingExternalKernels().empty());
     CHECK(reader->GetWindowedOperationCount() == 1);
     const size_t depth = reader->GetHistoryDepth();
-    CHECK(depth == 16);
+    CHECK(depth == size_t(RigExecClothHistoryFrames(RigExecClothSettings())));
     RigExecInputSampler sampler;
     CHECK(sampler.Bind(stage, *reader, &why));
     for (int t = 1; t <= 40; ++t) {
@@ -382,6 +508,41 @@ TestValidation()
           !pose.valid);
 }
 
+void
+TestExampleSettlesDuringContact()
+{
+    UsdStageRefPtr stage = UsdStage::Open(RIGEXEC_CLOTH_EXAMPLE);
+    CHECK(stage);
+    if (!stage) return;
+    RigExecRigEvaluator evaluator(stage, SdfPath("/ClothAsset/Rig"));
+    CHECK(Compile(evaluator));
+    const SdfPath curtain("/ClothAsset/Geom/Curtain.points");
+    Points previous, beforePrevious;
+    double worst = 0.0;
+    // The ball holds from 58 through 66. By 63, adjacent frames should
+    // describe settling cloth, without jumps from changing its startup.
+    // 0.35 is under one fifth of the example's two-unit edge length.
+    for (int t = 61; t <= 66; ++t) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
+        CHECK(pose.valid);
+        const Points points = PointsOf(pose, curtain);
+        CHECK(points.size() == 17 * 17);
+        if (points.size() != 17 * 17) return;
+        if (!beforePrevious.empty()) {
+            double sum = 0.0;
+            for (size_t i = 17; i < points.size(); ++i) {
+                const GfVec3f delta = points[i] - 2.0f * previous[i] + beforePrevious[i];
+                sum += double(delta.GetLengthSq());
+            }
+            worst = std::max(worst, std::sqrt(sum / double(points.size() - 17)));
+        }
+        beforePrevious = previous;
+        previous = points;
+    }
+    std::printf("cloth example held-contact RMS second difference: %g\n", worst);
+    CHECK(worst < 0.35);
+}
+
 }  // namespace
 
 int
@@ -393,7 +554,12 @@ main()
     TestDragReadsAuthoredHistory();
     TestFrozenJobsMatchLive();
     TestBinaryParity();
+    TestFrozenJobsMatchLive(true);
+    TestBinaryParity(true);
+    TestPaintAndRestInvalidation();
+    TestBindingAndMapTransfer();
     TestValidation();
+    TestExampleSettlesDuringContact();
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);
         return 1;

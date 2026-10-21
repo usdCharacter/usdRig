@@ -16,6 +16,7 @@
 #include "rigExec/outputAffectedIndex.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/taskListCache.h"
+#include "rigExecMath/clothModel.h"
 
 #include "pxr/base/gf/quatf.h"
 #include "pxr/usd/usd/notice.h"
@@ -521,6 +522,15 @@ private:
     void _FillVolumeGuides(
         const RigExecRigPose &pose,
         RigExecImagingSnapshot *snapshot) const;
+
+    void _FillClothConstraintGuides(
+        const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const;
+    struct _ClothGuideBinding {
+        SdfPath constraint, sourceMesh, targetMesh;
+        std::vector<RigExecClothSample> source, target;
+    };
+    mutable std::vector<_ClothGuideBinding> _clothGuideBindings;
+    mutable uint64_t _clothGuideSerial = ~uint64_t(0);
 
     /// Copies the selected weight object's resolved field onto the
     /// geometry prim it weights (spec §10.3 influence-overlay extension).

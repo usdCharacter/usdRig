@@ -42,6 +42,7 @@ enum RigExecClothInput : size_t {
     RigExecClothRest,
     RigExecClothPins,
     RigExecClothWindowFrames,
+    RigExecClothMaxWindow,
     RigExecClothSubsteps,
     RigExecClothIterations,
     RigExecClothTethers,
@@ -88,6 +89,7 @@ struct RigExecClothEpoch {
     RigExecClothSettings settings;
     double frameSeconds = 1.0 / 24.0;
     std::vector<RigExecClothColliderTopology> colliders;
+    RigExecClothModel model;
 
     bool operator==(const RigExecClothEpoch &o) const
     {
@@ -102,7 +104,7 @@ struct RigExecClothEpoch {
                bits(rest, o.rest) && bits(pins, o.pins) &&
                settings == o.settings &&
                std::memcmp(&frameSeconds, &o.frameSeconds, sizeof(double)) == 0 &&
-               colliders == o.colliders;
+               colliders == o.colliders && model == o.model;
     }
 };
 
@@ -117,7 +119,11 @@ struct RigExecClothPrepared {
 
 namespace cloth_playback_detail {
 
-constexpr char kTag[] = {'R', 'C', 'L', '1'};
+/// The epoch a writer writes: RCL3 (format 26). Format 25 files hold RCL1,
+/// which has no maxWindowFrames and no material model, and whose declared
+/// inputs have no rigExec:maxWindowFrames slot (RigExecClothInputSlot).
+constexpr char kTag[] = {'R', 'C', 'L', '3'};
+constexpr char kLegacyRevision = '1';
 
 inline void PutU32(std::vector<uint8_t> *out, uint32_t v)
 {
@@ -167,6 +173,68 @@ struct Reader {
 
 }  // namespace cloth_playback_detail
 
+inline void RigExecEncodeClothModel(const RigExecClothModel &model, std::vector<uint8_t> *out)
+{
+    using namespace cloth_playback_detail;
+    PutVector(out, model.triangleUV);
+    PutU32(out, uint32_t(model.profiles.size()));
+    for (const auto &p : model.profiles) {
+        PutU32(out, uint32_t(p.kind)); PutU32(out, p.hard ? 1 : 0);
+        PutU32(out, p.twoSided ? 1 : 0);
+        PutU32(out, uint32_t(p.targetCollider));
+        const float values[] = {p.minStrength, p.maxStrength, p.compliance, p.warp,
+            p.weft, p.normal, p.thickness, p.friction, p.restLength};
+        PutBytes(out, values, sizeof(values));
+        PutVector(out, p.forceCurve);
+        for (const auto &map : p.maps) PutVector(out, map);
+        for (const auto *samples : {&p.source, &p.target}) {
+            PutU32(out, uint32_t(samples->size()));
+            for (const auto &sample : *samples) {
+                for (int32_t i : sample.vertices) PutU32(out, uint32_t(i));
+                PutBytes(out, sample.weights.data(), 3 * sizeof(float));
+            }
+        }
+        PutVector(out, p.sourceMask); PutVector(out, p.targetMask);
+    }
+}
+
+inline bool RigExecDecodeClothModel(cloth_playback_detail::Reader *reader,
+                                    RigExecClothModel *model)
+{
+    auto &r = *reader;
+    model->profiles.clear();
+    model->triangleUV = r.GetVector<float>();
+    const uint32_t count = r.Get<uint32_t>();
+    for (uint32_t k = 0; r.ok && k < count; ++k) {
+        RigExecClothProfile p;
+        p.kind = RigExecClothProfileKind(r.Get<uint32_t>());
+        const uint32_t hard = r.Get<uint32_t>();
+        if (hard > 1) r.ok = false;
+        p.hard = hard != 0;
+        const uint32_t twoSided = r.Get<uint32_t>();
+        if (twoSided > 1) r.ok = false;
+        p.twoSided = twoSided != 0;
+        p.targetCollider = int32_t(r.Get<uint32_t>());
+        float *values[] = {&p.minStrength, &p.maxStrength, &p.compliance, &p.warp,
+            &p.weft, &p.normal, &p.thickness, &p.friction, &p.restLength};
+        for (float *value : values) *value = r.Get<float>();
+        p.forceCurve = r.GetVector<float>();
+        for (auto &map : p.maps) map = r.GetVector<float>();
+        for (auto *samples : {&p.source, &p.target}) {
+            const uint32_t n = r.Get<uint32_t>();
+            for (uint32_t j = 0; r.ok && j < n; ++j) {
+                RigExecClothSample sample;
+                for (int32_t &i : sample.vertices) i = int32_t(r.Get<uint32_t>());
+                for (float &v : sample.weights) v = r.Get<float>();
+                samples->push_back(sample);
+            }
+        }
+        p.sourceMask = r.GetVector<float>(); p.targetMask = r.GetVector<float>();
+        model->profiles.push_back(std::move(p));
+    }
+    return r.ok;
+}
+
 /// The epoch's bytes, as a .rigexec file holds them.
 inline void
 RigExecEncodeClothEpoch(const RigExecClothEpoch &e, std::vector<uint8_t> *out)
@@ -180,6 +248,7 @@ RigExecEncodeClothEpoch(const RigExecClothEpoch &e, std::vector<uint8_t> *out)
     PutVector(out, e.rest);
     PutVector(out, e.pins);
     PutU32(out, uint32_t(e.settings.windowFrames));
+    PutU32(out, uint32_t(e.settings.maxWindowFrames));
     PutU32(out, uint32_t(e.settings.substeps));
     PutU32(out, uint32_t(e.settings.iterations));
     PutU32(out, e.settings.tethers ? 1u : 0u);
@@ -194,19 +263,25 @@ RigExecEncodeClothEpoch(const RigExecClothEpoch &e, std::vector<uint8_t> *out)
         PutVector(out, c.indices);
         PutU32(out, c.leftHanded ? 1u : 0u);
     }
+    RigExecEncodeClothModel(e.model, out);
 }
 
-/// Decodes RigExecEncodeClothEpoch's bytes. False with \p why on bytes it
-/// did not write.
+/// Decodes RigExecEncodeClothEpoch's bytes, or a format-25 RCL1 epoch,
+/// which plays as it was exported: maxWindowFrames equal to windowFrames
+/// (no reach-back; the history is the window) and no material model.
+/// \p legacy, when set, says whether the bytes were RCL1. False with \p why
+/// on bytes neither wrote.
 inline bool
 RigExecDecodeClothEpoch(const uint8_t *data, size_t size, RigExecClothEpoch *e,
-                        std::string *why)
+                        std::string *why, bool *legacy = nullptr)
 {
     using namespace cloth_playback_detail;
-    if (size < sizeof(kTag) || std::memcmp(data, kTag, sizeof(kTag)) != 0) {
+    if (size < sizeof(kTag) || std::memcmp(data, kTag, 3) != 0 ||
+        (data[3] != kTag[3] && data[3] != kLegacyRevision)) {
         if (why) *why = "not a cloth mover epoch";
         return false;
     }
+    const bool rcl1 = data[3] == kLegacyRevision;
     Reader r;
     r.data = data;
     r.size = size;
@@ -219,6 +294,8 @@ RigExecDecodeClothEpoch(const uint8_t *data, size_t size, RigExecClothEpoch *e,
     out.rest = r.GetVector<float>();
     out.pins = r.GetVector<float>();
     out.settings.windowFrames = int(r.Get<uint32_t>());
+    out.settings.maxWindowFrames =
+        rcl1 ? out.settings.windowFrames : int(r.Get<uint32_t>());
     out.settings.substeps = int(r.Get<uint32_t>());
     out.settings.iterations = int(r.Get<uint32_t>());
     out.settings.tethers = r.Get<uint32_t>() != 0;
@@ -235,12 +312,26 @@ RigExecDecodeClothEpoch(const uint8_t *data, size_t size, RigExecClothEpoch *e,
         c.leftHanded = r.Get<uint32_t>() != 0;
         out.colliders.push_back(std::move(c));
     }
+    if (!rcl1 && !RigExecDecodeClothModel(&r, &out.model)) {
+        if (why) *why = "corrupt cloth material model";
+        return false;
+    }
     if (!r.ok || r.at != size) {
         if (why) *why = "corrupt cloth mover epoch";
         return false;
     }
     *e = std::move(out);
+    if (legacy) *legacy = rcl1;
     return true;
+}
+
+/// Where a declared input \p k of RigExecClothInput sits in the inputs a
+/// file's cloth revision carries: one slot earlier past windowFrames for a
+/// format-25 (RCL1) epoch, which declared no rigExec:maxWindowFrames.
+constexpr size_t
+RigExecClothInputSlot(size_t k, bool legacy)
+{
+    return legacy && k > RigExecClothWindowFrames ? k - 1 : k;
 }
 
 /// Builds \p epoch's mesh and colliders. False with \p why when the cloth
@@ -278,6 +369,10 @@ RigExecPrepareCloth(const RigExecClothEpoch &epoch, RigExecClothPrepared *out,
             return fail("collider " + c.path + " has invalid topology");
         }
     }
+    std::vector<size_t> colliderCounts;
+    for (const auto &c : epoch.colliders) colliderCounts.push_back(c.pointCount);
+    if (!RigExecPrepareClothModel(&prepared.mesh, epoch.model, epoch.rest.data(),
+                                 colliderCounts, &reason)) return fail(reason);
     *out = std::move(prepared);
     return true;
 }
@@ -321,9 +416,10 @@ RigExecClothPacket(const RigExecClothEpoch &epoch, const float *entering,
 
 /// The window a solve reads from packets \p ticks (oldest first, the last
 /// the current frame, each a RigExecClothPacket): a null tick or one of
-/// another shape ends the history before it, and at most windowFrames
-/// earlier ticks are kept. The ticks borrow the packets. False when the
-/// current packet is unusable.
+/// another shape ends the history before it, at most
+/// RigExecClothHistoryFrames earlier ticks are read, and the window starts
+/// at RigExecClothWindowStart of those. The ticks borrow the packets. False
+/// when the current packet is unusable.
 inline bool
 RigExecClothTicksFromPackets(const RigExecClothPrepared &prepared,
                              const RigExecWindowPacket *const *ticks,
@@ -343,8 +439,8 @@ RigExecClothTicksFromPackets(const RigExecClothPrepared &prepared,
     }
     size_t begin = count - 1;
     while (begin > 0 && usable(ticks[begin - 1])) --begin;
-    // At most the window's own length: the oldest tick, then windowFrames.
-    const size_t keep = size_t(std::max(0, epoch.settings.windowFrames)) + 1;
+    // At most the history a window may reach back over, then the start.
+    const size_t keep = size_t(RigExecClothHistoryFrames(epoch.settings)) + 1;
     if (count - begin > keep) begin = count - keep;
     window->reserve(count - begin);
     for (size_t k = begin; k < count; ++k) {
@@ -367,6 +463,10 @@ RigExecClothTicksFromPackets(const RigExecClothPrepared &prepared,
         p.friction = float(t.scalars[9]);
         window->push_back(tick);
     }
+    const size_t start = RigExecClothWindowStart(prepared.mesh, prepared.colliders,
+                                                 epoch.settings, window->data(),
+                                                 window->size());
+    window->erase(window->begin(), window->begin() + std::ptrdiff_t(start));
     return true;
 }
 
@@ -391,15 +491,26 @@ RigExecClothSolvePackets(const RigExecClothPrepared &prepared,
 
 namespace cloth_playback_detail {
 
-// The playback kernel's state: the prepared epoch.
+// The playback kernel's state: the prepared epoch, and whether it came from
+// a format-25 (RCL1) file, whose declared inputs sit at their format-25
+// slots (RigExecClothInputSlot).
+struct State {
+    RigExecClothPrepared prepared;
+    bool legacy = false;
+};
+
+// inputs:damping's schema fallback in format 25.
+constexpr float kLegacyDamping = 0.1f;
+
 inline std::shared_ptr<const void>
 Prepare(const uint8_t *epoch, size_t size, std::string *error)
 {
     RigExecClothEpoch decoded;
-    if (!RigExecDecodeClothEpoch(epoch, size, &decoded, error)) return nullptr;
-    auto prepared = std::make_shared<RigExecClothPrepared>();
-    if (!RigExecPrepareCloth(decoded, prepared.get(), error)) return nullptr;
-    return prepared;
+    auto state = std::make_shared<State>();
+    if (!RigExecDecodeClothEpoch(epoch, size, &decoded, error, &state->legacy))
+        return nullptr;
+    if (!RigExecPrepareCloth(decoded, &state->prepared, error)) return nullptr;
+    return state;
 }
 
 inline const float *
@@ -430,12 +541,14 @@ Capture(const void *state, const RigExecExternalPhasedPoints *phased,
         RigExecWindowPacket *packet)
 {
     if (!state || !packet) return false;
-    const auto &prepared = *static_cast<const RigExecClothPrepared *>(state);
-    const RigExecClothEpoch &epoch = prepared.epoch;
+    const auto &held = *static_cast<const State *>(state);
+    const RigExecClothEpoch &epoch = held.prepared.epoch;
+    const auto slot = [&](size_t k) { return RigExecClothInputSlot(k, held.legacy); };
     RigExecClothParameters p;
+    if (held.legacy) p.damping = kLegacyDamping;
     float v = 0.0f;
     const auto scalar = [&](size_t k, float *out) {
-        const float *got = ScalarFloat(inputs, inputCount, k, &v);
+        const float *got = ScalarFloat(inputs, inputCount, slot(k), &v);
         if (got) *out = *got;
     };
     scalar(RigExecClothStretchCompliance, &p.stretchCompliance);
@@ -445,10 +558,11 @@ Capture(const void *state, const RigExecExternalPhasedPoints *phased,
     scalar(RigExecClothThickness, &p.thickness);
     scalar(RigExecClothCollisionDepth, &p.collisionDepth);
     scalar(RigExecClothFriction, &p.friction);
-    if (RigExecClothGravity < inputCount && inputs[RigExecClothGravity].hasValue &&
-        inputs[RigExecClothGravity].type == uint8_t(RigExecExternalInputType::Vec3f) &&
-        inputs[RigExecClothGravity].data) {
-        std::memcpy(p.gravity, inputs[RigExecClothGravity].data, 3 * sizeof(float));
+    const size_t gravity = slot(RigExecClothGravity);
+    if (gravity < inputCount && inputs[gravity].hasValue &&
+        inputs[gravity].type == uint8_t(RigExecExternalInputType::Vec3f) &&
+        inputs[gravity].data) {
+        std::memcpy(p.gravity, inputs[gravity].data, 3 * sizeof(float));
     }
     std::vector<const float *> colliders(epoch.colliders.size(), nullptr);
     std::vector<size_t> counts(epoch.colliders.size(), 0);
@@ -460,7 +574,7 @@ Capture(const void *state, const RigExecExternalPhasedPoints *phased,
                 counts[k] = phased[j].count;
             }
         }
-        const size_t at = RigExecClothFirstCollider + k * RigExecClothInputsPerCollider;
+        const size_t at = slot(RigExecClothFirstCollider) + k * RigExecClothInputsPerCollider;
         if (!colliders[k] && at < inputCount && inputs[at].hasValue &&
             inputs[at].type == uint8_t(RigExecExternalInputType::Vec3fArray)) {
             colliders[k] = static_cast<const float *>(inputs[at].data);
@@ -475,7 +589,7 @@ ApplyWindow(const void *state, const RigExecWindowPacket *const *ticks,
             size_t tickCount, float *xyz, size_t pointCount)
 {
     if (!state) return false;
-    const auto &prepared = *static_cast<const RigExecClothPrepared *>(state);
+    const auto &prepared = static_cast<const State *>(state)->prepared;
     if (pointCount != prepared.epoch.pointCount) return false;
     std::vector<float> out(3 * pointCount);
     std::string why;

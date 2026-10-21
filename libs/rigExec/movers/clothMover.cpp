@@ -16,6 +16,7 @@
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/usd/usdGeom/mesh.h"
 #include "pxr/usd/usdGeom/tokens.h"
+#include "clothInputs.h"
 
 #include <algorithm>
 #include <atomic>
@@ -34,6 +35,7 @@ namespace {
 const TfToken _colliders("rigExec:colliders");
 const TfToken _pinWeights("rigExec:pinWeights");
 const TfToken _windowFrames("rigExec:windowFrames");
+const TfToken _maxWindowFrames("rigExec:maxWindowFrames");
 const TfToken _substeps("rigExec:substeps");
 const TfToken _iterations("rigExec:iterations");
 const TfToken _tethers("rigExec:tethers");
@@ -56,6 +58,7 @@ const TfToken _leftHanded("leftHanded");
 
 // The schema's fallbacks, which the declared inputs repeat.
 constexpr int kWindowFrames = 16;
+constexpr int kMaxWindowFrames = 64;
 constexpr int kSubsteps = 10;
 constexpr int kIterations = 1;
 constexpr float kTetherSlack = 0.05f;
@@ -91,6 +94,8 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &target,
        Flavour::Raw, VtValue(VtFloatArray()));
     at(mover.AppendProperty(_windowFrames), Type::Int, Time::AtDefault,
        Flavour::Raw, VtValue(kWindowFrames));
+    at(mover.AppendProperty(_maxWindowFrames), Type::Int, Time::AtDefault,
+       Flavour::Raw, VtValue(kMaxWindowFrames));
     at(mover.AppendProperty(_substeps), Type::Int, Time::AtDefault,
        Flavour::Raw, VtValue(kSubsteps));
     at(mover.AppendProperty(_iterations), Type::Int, Time::AtDefault,
@@ -139,7 +144,29 @@ CollidersOf(const UsdPrim &mover)
     SdfPathVector out;
     for (const SdfPath &path : RigExecRelationshipTargets(mover, "rigExec:colliders"))
         out.push_back(MeshOf(path));
+    const auto moves = RigExecRelationshipTargets(mover, "rigExec:moves");
+    const SdfPath cloth = moves.size() == 1 ? MeshOf(moves[0]) : SdfPath();
+    for (const auto &path : RigExecRelationshipTargets(mover, "rigExec:constraints")) {
+        const UsdPrim profile = mover.GetStage()->GetPrimAtPath(path);
+        for (const auto &target : RigExecRelationshipTargets(profile, "rigExec:targetMesh")) {
+            const SdfPath mesh = MeshOf(target);
+            if (mesh != cloth && std::find(out.begin(), out.end(), mesh) == out.end()) out.push_back(mesh);
+        }
+    }
     return out;
+}
+
+void DeclareModel(const UsdPrim &mover, const SdfPath &target,
+                   const SdfPathVector &colliders,
+                   std::vector<RigExecRevisionLeafKey> *inputs,
+                   RigExecRevisionBinding *binding)
+{
+    const auto stage = mover.GetStage();
+    auto declaration = cloth_inputs::StageDeclaration(stage, inputs, binding);
+    VtDictionary data;
+    data["frameRate"] = VtValue(stage->GetTimeCodesPerSecond());
+    data["layout"] = VtValue(cloth_inputs::Declare(mover.GetPath(), MeshOf(target), colliders, &declaration));
+    binding->externalCompileData = VtValue(data);
 }
 
 template <class T>
@@ -167,6 +194,12 @@ float FloatOr(const VtValue &value, float fallback)
 // The stage's time codes per second the binding carries, else 24.
 double StageRate(const RigExecRevisionBinding &binding)
 {
+    if (binding.externalCompileData.IsHolding<VtDictionary>()) {
+        const auto &d = binding.externalCompileData.UncheckedGet<VtDictionary>();
+        const auto found = d.find("frameRate");
+        if (found != d.end() && found->second.IsHolding<double>())
+            return found->second.UncheckedGet<double>();
+    }
     if (binding.externalCompileData.IsHolding<double>()) {
         const double rate = binding.externalCompileData.UncheckedGet<double>();
         if (rate > 0.0 && std::isfinite(rate)) return rate;
@@ -180,19 +213,30 @@ std::vector<int32_t> Ints(const VtIntArray &a)
 }
 
 // The declared inputs as the payload: a dictionary of the epoch's arrays
-// and settings, the parameters and the collider points. False when an
-// input is missing or of another type.
+// and settings, the parameters and the collider points, and the material
+// model's reads with the layout that names them. The model itself is
+// assembled once per epoch (PreparedFor), not per evaluation. False when
+// an input is missing or of another type.
 bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &binding,
              VtValue *out)
 {
-    if (in.size() < RigExecClothFirstCollider ||
-        (in.size() - RigExecClothFirstCollider) % RigExecClothInputsPerCollider != 0) {
+    const VtValue *layoutValue = nullptr;
+    if (binding.externalCompileData.IsHolding<VtDictionary>()) {
+        const auto &compiled = binding.externalCompileData.UncheckedGet<VtDictionary>();
+        const auto found = compiled.find("layout");
+        if (found != compiled.end() && found->second.IsHolding<VtDictionary>())
+            layoutValue = &found->second;
+    }
+    const VtDictionary *layout =
+        layoutValue ? &layoutValue->UncheckedGet<VtDictionary>() : nullptr;
+    if (in.size() < RigExecClothFirstCollider) {
         return false;
     }
     VtIntArray counts, indices;
     VtVec3fArray rest;
     VtFloatArray pins;
-    int windowFrames = kWindowFrames, substeps = kSubsteps, iterations = kIterations;
+    int windowFrames = kWindowFrames, maxWindowFrames = kMaxWindowFrames;
+    int substeps = kSubsteps, iterations = kIterations;
     bool tethers = true;
     double frameRate = 0.0;
     if (!As(in[RigExecClothCounts], &counts) || !As(in[RigExecClothIndices], &indices) ||
@@ -201,6 +245,7 @@ bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &bindi
     }
     As(in[RigExecClothPins], &pins);
     As(in[RigExecClothWindowFrames], &windowFrames);
+    As(in[RigExecClothMaxWindow], &maxWindowFrames);
     As(in[RigExecClothSubsteps], &substeps);
     As(in[RigExecClothIterations], &iterations);
     As(in[RigExecClothTethers], &tethers);
@@ -229,14 +274,16 @@ bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &bindi
     d["rest"] = VtValue(rest);
     d["pins"] = VtValue(pins);
     d["windowFrames"] = VtValue(windowFrames);
+    d["maxWindowFrames"] = VtValue(maxWindowFrames);
     d["substeps"] = VtValue(substeps);
     d["iterations"] = VtValue(iterations);
     d["tethers"] = VtValue(tethers);
     d["tetherSlack"] = VtValue(slack);
     d["frameSeconds"] = VtValue(1.0 / rate);
     d["params"] = VtValue(params);
-    const size_t colliders =
+    const size_t colliders = layout ? size_t(cloth_inputs::Index(*layout, "colliderCount")) :
         (in.size() - RigExecClothFirstCollider) / RigExecClothInputsPerCollider;
+    if (colliders > (in.size() - RigExecClothFirstCollider) / RigExecClothInputsPerCollider) return false;
     std::vector<VtValue> points(colliders), cCounts(colliders), cIndices(colliders),
         cLeft(colliders), cPaths(colliders);
     for (size_t k = 0; k < colliders; ++k) {
@@ -258,6 +305,16 @@ bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &bindi
     d["colliderIndices"] = VtValue(cIndices);
     d["colliderLeftHanded"] = VtValue(cLeft);
     d["colliderPaths"] = VtValue(cPaths);
+    if (layout) {
+        // Declare appends the model's reads after the colliders'. Copies
+        // share the arrays and the layout; nothing is assembled here.
+        const size_t start =
+            RigExecClothFirstCollider + colliders * RigExecClothInputsPerCollider;
+        d["layout"] = *layoutValue;
+        d["modelStart"] = VtValue(int(start));
+        d["modelInputs"] = VtValue(std::vector<VtValue>(
+            in.begin() + std::ptrdiff_t(start), in.end()));
+    }
     *out = VtValue(d);
     return true;
 }
@@ -271,8 +328,9 @@ const T *Get(const VtDictionary &d, const char *key)
                : nullptr;
 }
 
-// The payload's epoch. False on a payload Payload did not build.
-bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch)
+// The payload's epoch without its material model. False on a payload
+// Payload did not build.
+bool ShapeOf(const VtValue &data, RigExecClothEpoch *epoch)
 {
     if (!data.IsHolding<VtDictionary>()) return false;
     const VtDictionary &d = data.UncheckedGet<VtDictionary>();
@@ -282,6 +340,7 @@ bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch)
     const auto *rest = Get<VtVec3fArray>(d, "rest");
     const auto *pins = Get<VtFloatArray>(d, "pins");
     const auto *windowFrames = Get<int>(d, "windowFrames");
+    const auto *maxWindowFrames = Get<int>(d, "maxWindowFrames");
     const auto *substeps = Get<int>(d, "substeps");
     const auto *iterations = Get<int>(d, "iterations");
     const auto *tethers = Get<bool>(d, "tethers");
@@ -293,7 +352,7 @@ bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch)
     const auto *cPaths = Get<std::vector<VtValue>>(d, "colliderPaths");
     const auto *cPoints = Get<std::vector<VtValue>>(d, "colliderPoints");
     if (!counts || !indices || !left || !rest || !pins || !windowFrames ||
-        !substeps || !iterations || !tethers || !slack || !frameSeconds ||
+        !maxWindowFrames || !substeps || !iterations || !tethers || !slack || !frameSeconds ||
         !cCounts || !cIndices || !cLeft || !cPaths || !cPoints ||
         cCounts->size() != cPoints->size() || cIndices->size() != cPoints->size() ||
         cLeft->size() != cPoints->size() || cPaths->size() != cPoints->size()) {
@@ -308,6 +367,7 @@ bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch)
     if (!rest->empty()) std::memcpy(e.rest.data(), rest->cdata(), e.rest.size() * sizeof(float));
     e.pins.assign(pins->begin(), pins->end());
     e.settings.windowFrames = *windowFrames;
+    e.settings.maxWindowFrames = *maxWindowFrames;
     e.settings.substeps = *substeps;
     e.settings.iterations = *iterations;
     e.settings.tethers = *tethers;
@@ -335,6 +395,32 @@ bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch)
     return true;
 }
 
+// The material model the payload's model reads assemble over \p epoch's
+// topology; empty for a binding declared without a layout. This is the
+// UV binding search and the map transfer: it runs when an epoch is built,
+// never per evaluation.
+bool ModelOf(const VtDictionary &d, RigExecClothEpoch *epoch, std::string *why)
+{
+    epoch->model = RigExecClothModel();
+    const auto *layout = Get<VtDictionary>(d, "layout");
+    if (!layout) return true;
+    const auto *reads = Get<std::vector<VtValue>>(d, "modelInputs");
+    const auto *start = Get<int>(d, "modelStart");
+    if (!reads || !start || *start < 0) return false;
+    // The layout indexes the declared inputs; slots before the model's
+    // reads stay empty, and Assemble reads none of them.
+    std::vector<VtValue> in(static_cast<size_t>(*start));
+    in.insert(in.end(), reads->begin(), reads->end());
+    return cloth_inputs::Assemble(in, *layout, *epoch, &epoch->model, why);
+}
+
+// The payload's whole epoch, material model included.
+bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch, std::string *why = nullptr)
+{
+    return ShapeOf(data, epoch) &&
+           ModelOf(data.UncheckedGet<VtDictionary>(), epoch, why);
+}
+
 void Bind(const RigExecMoverBindContext &ctx)
 {
     auto &b = *ctx.binding;
@@ -343,8 +429,9 @@ void Bind(const RigExecMoverBindContext &ctx)
         for (const SdfPath &collider : CollidersOf(ctx.moverPrim))
             b.phases[collider.AppendProperty(_points)] = phase;
     }
-    // The window length is the history the program runs: an edit rebuilds.
+    // The window lengths set the history the program runs: an edit rebuilds.
     b.externalStructure.push_back(ctx.moverPrim.GetPath().AppendProperty(_windowFrames));
+    b.externalStructure.push_back(ctx.moverPrim.GetPath().AppendProperty(_maxWindowFrames));
     b.externalCompileData =
         VtValue(double(ctx.moverPrim.GetStage()->GetTimeCodesPerSecond()));
 }
@@ -354,6 +441,7 @@ void DeclareInputs(const RigExecMoverBindContext &ctx,
 {
     *inputs = DeclaredInputs(ctx.moverPrim.GetPath(), ctx.target,
                              CollidersOf(ctx.moverPrim));
+    DeclareModel(ctx.moverPrim, ctx.target, CollidersOf(ctx.moverPrim), inputs, ctx.binding);
 }
 
 bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
@@ -361,6 +449,10 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                   std::string *error)
 {
     if (!binding) return false;
+    const auto targets = [&scene](const SdfPath &prim, const char *name) {
+        const auto found = scene.relationships.find(prim.AppendProperty(TfToken(name)));
+        return found == scene.relationships.end() ? SdfPathVector() : found->second.fact.targets;
+    };
     SdfPathVector colliders;
     const auto found = scene.relationships.find(mover.AppendProperty(_colliders));
     if (found != scene.relationships.end()) {
@@ -373,9 +465,39 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                 binding->phases[collider.AppendProperty(_points)] = phase;
         }
     }
+    for (const auto &profile : targets(mover, "rigExec:constraints"))
+        for (const auto &path : targets(profile, "rigExec:targetMesh")) {
+            const SdfPath mesh = MeshOf(path);
+            if (mesh != MeshOf(target) && std::find(colliders.begin(), colliders.end(), mesh) == colliders.end())
+                colliders.push_back(mesh);
+        }
+    if (found != scene.relationships.end()) {
+        RigExecReadPhase phase;
+        if (!RigExecParseReadPhase(found->second.readPhase.GetString(), &phase, error)) return false;
+        if (!phase.IsBase()) for (const auto &collider : colliders)
+            binding->phases[collider.AppendProperty(_points)] = phase;
+    }
     binding->externalStructure.push_back(mover.AppendProperty(_windowFrames));
-    binding->externalCompileData = VtValue(double(scene.timeCodesPerSecond));
+    binding->externalStructure.push_back(mover.AppendProperty(_maxWindowFrames));
     binding->externalInputs = DeclaredInputs(mover, target, colliders);
+    cloth_inputs::Declaration declaration{&binding->externalInputs, binding, targets,
+        [&scene](const SdfPath &path) {
+            const auto found = scene.attributes.find(path);
+            if (found != scene.attributes.end()) {
+                const auto interpolation = found->second.fact.metadata.find("interpolation");
+                if (interpolation != found->second.fact.metadata.end() && interpolation->second.IsHolding<TfToken>())
+                    return interpolation->second.UncheckedGet<TfToken>();
+            }
+            return TfToken("vertex");
+        },
+        [&scene](const SdfPath &path) {
+            const auto found = scene.nodes.find(path);
+            return found != scene.nodes.end() && found->second.fact.active ? found->second.fact.type : TfToken();
+        }};
+    VtDictionary data;
+    data["frameRate"] = VtValue(double(scene.timeCodesPerSecond));
+    data["layout"] = VtValue(cloth_inputs::Declare(mover, MeshOf(target), colliders, &declaration));
+    binding->externalCompileData = VtValue(data);
     return true;
 }
 
@@ -422,23 +544,62 @@ bool CaptureWindow(const VtValue &data, const std::vector<GfVec3f> &entering,
 // moved. Constant-initialized: no guard stands in front of it.
 std::atomic<uint64_t> _preparedSerial{0};
 
-// The prepared epoch the revision keeps: reused while the epoch holds the
-// same bits, built again when it does not.
+// What a revision's window cache holds: the prepared epoch, material model
+// included, and the payload it was built from. Immutable once stored.
+struct Built {
+    RigExecClothPrepared prepared;
+    VtDictionary source;
+};
+
+// Whether payloads \p a and \p b build the same epoch: every entry is equal
+// but the ones a packet carries per tick, the parameters and the collider
+// points, of which only the point counts reach the epoch. The payload's
+// arrays are shared leaves, so an unchanged input compares by identity.
+bool SameEpoch(const VtDictionary &a, const VtDictionary &b)
+{
+    if (a.size() != b.size()) return false;
+    for (const auto &entry : a) {
+        const auto other = b.find(entry.first);
+        if (other == b.end()) return false;
+        if (entry.first == "params") continue;
+        if (entry.first != "colliderPoints") {
+            if (entry.second != other->second) return false;
+            continue;
+        }
+        if (!entry.second.IsHolding<std::vector<VtValue>>() ||
+            !other->second.IsHolding<std::vector<VtValue>>()) return false;
+        const auto &x = entry.second.UncheckedGet<std::vector<VtValue>>();
+        const auto &y = other->second.UncheckedGet<std::vector<VtValue>>();
+        if (x.size() != y.size()) return false;
+        for (size_t k = 0; k < x.size(); ++k)
+            if (!x[k].IsHolding<VtVec3fArray>() || !y[k].IsHolding<VtVec3fArray>() ||
+                x[k].UncheckedGet<VtVec3fArray>().size() !=
+                    y[k].UncheckedGet<VtVec3fArray>().size()) return false;
+    }
+    return true;
+}
+
+// The prepared epoch the revision keeps: reused while the payload builds
+// the same epoch, built again, material model and all, when it does not.
 std::shared_ptr<const RigExecClothPrepared>
 PreparedFor(const VtValue &data, std::shared_ptr<const void> *cache)
 {
+    if (!data.IsHolding<VtDictionary>()) return nullptr;
+    const VtDictionary &d = data.UncheckedGet<VtDictionary>();
+    if (cache && *cache) {
+        auto held = std::static_pointer_cast<const Built>(*cache);
+        if (SameEpoch(held->source, d))
+            return std::shared_ptr<const RigExecClothPrepared>(held, &held->prepared);
+    }
     RigExecClothEpoch epoch;
     if (!EpochOf(data, &epoch)) return nullptr;
-    if (cache && *cache) {
-        auto held = std::static_pointer_cast<const RigExecClothPrepared>(*cache);
-        if (held->epoch == epoch) return held;
-    }
-    auto built = std::make_shared<RigExecClothPrepared>();
+    auto built = std::make_shared<Built>();
     std::string why;
-    if (!RigExecPrepareCloth(epoch, built.get(), &why)) return nullptr;
-    built->serial = ++_preparedSerial;
+    if (!RigExecPrepareCloth(epoch, &built->prepared, &why)) return nullptr;
+    built->prepared.serial = ++_preparedSerial;
+    built->source = d;
     if (cache) *cache = built;
-    return built;
+    return std::shared_ptr<const RigExecClothPrepared>(built, &built->prepared);
 }
 
 bool ApplyWindow(const VtValue &data, const RigExecWindowPacket *const *ticks,
@@ -464,6 +625,7 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     const auto prepared = PreparedFor(data, cache);
     if (!prepared || points->size() != prepared->epoch.pointCount) return false;
     std::vector<RigExecClothTick> window;
+    if (!prepared->mesh.model.Empty()) return false;
     if (!RigExecClothTicksFromPackets(*prepared, ticks, tickCount, &window, nullptr) ||
         window.size() < 2 ||
         !RigExecClothWindowUsable(prepared->mesh, prepared->colliders,
@@ -489,11 +651,16 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     return true;
 }
 
+// The history the window may read: the longer of the two window lengths.
 uint32_t WindowFrames(const UsdPrim &mover)
 {
-    int frames = kWindowFrames;
-    if (const UsdAttribute a = mover.GetAttribute(_windowFrames)) a.Get(&frames);
-    return uint32_t(std::max(1, std::min(frames, RigExecClothMaxWindowFrames)));
+    RigExecClothSettings settings;
+    settings.windowFrames = kWindowFrames;
+    settings.maxWindowFrames = kMaxWindowFrames;
+    if (const UsdAttribute a = mover.GetAttribute(_windowFrames)) a.Get(&settings.windowFrames);
+    if (const UsdAttribute a = mover.GetAttribute(_maxWindowFrames))
+        a.Get(&settings.maxWindowFrames);
+    return uint32_t(RigExecClothHistoryFrames(settings));
 }
 
 // The epoch from the bake's payload, and no frame bytes: the parameters and
@@ -543,9 +710,11 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         return value >= lo && value <= hi;
     };
     if (!intIn(_windowFrames, kWindowFrames, 1, RigExecClothMaxWindowFrames) ||
+        !intIn(_maxWindowFrames, kMaxWindowFrames, 1, RigExecClothMaxWindowFrames) ||
         !intIn(_substeps, kSubsteps, 1, RigExecClothMaxSubsteps) ||
         !intIn(_iterations, kIterations, 1, RigExecClothMaxIterations)) {
-        *error = who + ": rigExec:windowFrames, substeps or iterations is out of range";
+        *error = who + ": rigExec:windowFrames, maxWindowFrames, substeps or iterations "
+                       "is out of range";
         return false;
     }
     for (const SdfPath &collider : CollidersOf(ctx.prim)) {
@@ -561,6 +730,33 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
             return false;
         }
     }
+    if (!RigExecRelationshipTargets(ctx.prim, "rigExec:constraints").empty() ||
+        !RigExecRelationshipTargets(ctx.prim, "rigExec:restShape").empty() ||
+        !RigExecRelationshipTargets(ctx.prim, "rigExec:uvSet").empty()) {
+        RigExecRevisionBinding binding;
+        const auto colliders = CollidersOf(ctx.prim);
+        binding.externalInputs = DeclaredInputs(ctx.prim.GetPath(), ctx.targets[0], colliders);
+        DeclareModel(ctx.prim, ctx.targets[0], colliders, &binding.externalInputs, &binding);
+        std::vector<VtValue> values;
+        for (const auto &leaf : binding.externalInputs) {
+            VtValue value = leaf.fallback;
+            if (const auto attr = ctx.stage->GetAttributeAtPath(leaf.path)) {
+                VtValue authored;
+                if (attr.Get(&authored) && !authored.IsEmpty()) value = std::move(authored);
+            }
+            values.push_back(std::move(value));
+        }
+        VtValue payload;
+        RigExecClothEpoch epoch;
+        RigExecClothPrepared prepared;
+        std::string why;
+        if (!Payload(values, binding, &payload) || !EpochOf(payload, &epoch, &why) ||
+            epoch.pointCount != rest.size() || !RigExecPrepareCloth(epoch, &prepared, &why)) {
+            *error = who + ": invalid cloth rest shape, UVs, constraint binding or painted map";
+            if (!why.empty()) *error += ": " + why;
+            return false;
+        }
+    }
     return true;
 }
 
@@ -571,6 +767,7 @@ RigExecMoverHandler Handler()
         &RigExecFixedMoverOp<RigExecRevisionOp::External>,
         RigExecMoverDomain::Points);
     h.singleTarget = true;
+    h.sceneDataSchemas = {"RigExecClothConstraintSet", "RigExecClothBinding", "RigExecClothMap"};
     h.hasScalarOracle = false;
     h.bind = &Bind;
     h.validate = &Validate;

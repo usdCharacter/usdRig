@@ -4451,6 +4451,160 @@ class RigExecWrinkleMover "RigExecWrinkleMover" (
     )
 }
 
+class RigExecClothBinding "RigExecClothBinding" (
+    customData = {
+        string userDocBrief = "Ordered cloth samples."
+    }
+)
+{
+    uniform float3[] rigExec:coordinates = [] (
+        customData = {
+            string userDocBrief = "Barycentric weights summing to one, or (u,v,0) UV samples."
+        }
+    )
+    uniform int[] rigExec:indices = [] (
+        customData = {
+            string userDocBrief = """Vertex indices in vertex mode; triangle indices in barycentric
+        mode; optional triangle hints in UV mode (-1 searches)."""
+        }
+    )
+    uniform token rigExec:mode = "vertex" (
+        allowedTokens = ["vertex", "barycentric", "uv"]
+    )
+    rel rigExec:uvSet (
+        customData = {
+            string userDocBrief = "Optional exact texCoord2f[] or float2[] primvar; default primvars:st."
+        }
+    )
+}
+
+class RigExecClothMap "RigExecClothMap" (
+    customData = {
+        string userDocBrief = "Paintable scalar cloth data."
+    }
+)
+{
+    uniform float[] inputs:values = []
+    rel rigExec:binding (
+        customData = {
+            string userDocBrief = "Optional RigExecClothBinding, one sample per destination cloth vertex."
+        }
+    )
+    rel rigExec:sourceMesh (
+        customData = {
+            string userDocBrief = "Mesh sampled by the map binding; the simulated cloth when absent."
+        }
+    )
+    rel rigExec:values (
+        customData = {
+            string userDocBrief = "Optional exact float[] property supplying the painted values, such as a dense RigExecStaticWeight.rigExec:values."
+        }
+    )
+}
+
+class RigExecClothConstraintSet "RigExecClothConstraintSet" (
+    customData = {
+        string userDocBrief = "A relationship-linked cloth constraint profile."
+    }
+)
+{
+    float3[] extent (
+        customData = {
+            string userDocBrief = """Extent is a three dimensional range measuring the geometric
+        extent of the authored gprim in its own local space (i.e."""
+        }
+    )
+    color3f guide:displayColor = (1, 0.7, 0.2)
+    float guide:displayOpacity = 0.8
+    double guide:wireWidth = 0.05 (
+        customData = {
+            string userDocBrief = "Attachment rod width in asset units; nonpositive uses hairlines."
+        }
+    )
+    uniform float inputs:compliance = 0.0001
+    uniform float inputs:friction = 0.3
+    uniform float inputs:maxStrength = 1
+    uniform float inputs:minStrength = 1
+    uniform float inputs:normal = 1
+    uniform float inputs:restLength = -1 (
+        customData = {
+            string userDocBrief = "Attachment distance; -1 measures the rest shape for internal links."
+        }
+    )
+    uniform float inputs:thickness = 0.5
+    uniform float inputs:warp = 1
+    uniform float inputs:weft = 1
+    rel proxyPrim (
+        customData = {
+            string userDocBrief = '''The proxyPrim relationship allows us to link a
+        prim whose purpose is "render" to its (single target)
+        purpose="proxy" prim.'''
+        }
+    )
+    uniform token purpose = "guide" (
+        allowedTokens = ["default", "render", "proxy", "guide"]
+        customData = {
+            string userDocBrief = """Purpose is a classification of geometry into categories that
+        can each be independently included or excluded from traversals of prims
+        on a stage, such as rendering or bounding-box computation traversals."""
+        }
+    )
+    uniform float2[] rigExec:forceCurve = [] (
+        customData = {
+            string userDocBrief = "Strictly increasing nonnegative force keys with blend values in [0,1]."
+        }
+    )
+    rel rigExec:frictionMap
+    uniform token rigExec:kind = "stretch" (
+        allowedTokens = ["stretch", "bend", "damping", "pin", "attachment", "collision", "selfCollision", "tether"]
+    )
+    rel rigExec:maskMap
+    rel rigExec:maxStrengthMap
+    rel rigExec:minStrengthMap
+    uniform token rigExec:mode = "soft" (
+        allowedTokens = ["soft", "hard"]
+    )
+    rel rigExec:normalMap
+    rel rigExec:sourceBinding (
+        customData = {
+            string userDocBrief = "Source cloth samples or region; absent selects all vertices for material, pin and collision profiles."
+        }
+    )
+    rel rigExec:targetBinding (
+        customData = {
+            string userDocBrief = "Matching attachment samples or the second self-collision region; absent selects all vertices for self collision."
+        }
+    )
+    rel rigExec:targetMesh (
+        customData = {
+            string userDocBrief = "Optional external attachment/collision mesh."
+        }
+    )
+    rel rigExec:thicknessMap
+    uniform bool rigExec:twoSided = 1 (
+        customData = {
+            string userDocBrief = "Collision profiles respond on either side of a cloth surface; false uses outward collider normals."
+        }
+    )
+    rel rigExec:warpMap
+    rel rigExec:weftMap
+    token visibility = "inherited" (
+        allowedTokens = ["inherited", "invisible"]
+        customData = {
+            string userDocBrief = '''Visibility is meant to be the simplest form of "pruning"
+        visibility that is supported by most applications.'''
+        }
+    )
+    uniform token[] xformOpOrder (
+        customData = {
+            string userDocBrief = """Encodes the sequence of transformation operations in the
+        order in which they should be pushed onto a transform stack while
+        visiting a UsdStage's prims in a graph traversal that will effect
+        the desired positioning for this prim and its descendant prims."""
+        }
+    )
+}
+
 class RigExecClothMover "RigExecClothMover" (
     customData = {
         string userDocBrief = """Cloth on one native mesh: the points rigExec:moves names hang,
@@ -4477,9 +4631,11 @@ class RigExecClothMover "RigExecClothMover" (
         pushed out; deeper points are taken as on the other side."""
         }
     )
-    float inputs:damping = 0.1 (
+    float inputs:damping = 2 (
         customData = {
-            string userDocBrief = "Fraction of velocity lost per second, in [0,1]."
+            string userDocBrief = """How fast velocity decays: it falls by a factor of
+        e^-damping every second, so 1 loses about 63% of it per second and
+        2 about 86%."""
         }
     )
     float inputs:friction = 0.3 (
@@ -4505,7 +4661,13 @@ class RigExecClothMover "RigExecClothMover" (
     rel rigExec:colliders (
         customData = {
             string userDocBrief = """Meshes the cloth collides with, one-sided along their
-        outward normals."""
+        outward normals by default; collision profiles can enable two-sided
+        response and paint its strength."""
+        }
+    )
+    rel rigExec:constraints (
+        customData = {
+            string userDocBrief = "Ordered RigExecClothConstraintSet prims for material, pins, attachments and collision."
         }
     )
     uniform double rigExec:frameRate = 0 (
@@ -4518,9 +4680,20 @@ class RigExecClothMover "RigExecClothMover" (
             string userDocBrief = "Constraint passes per step, in [1,64]."
         }
     )
+    uniform int rigExec:maxWindowFrames = 64 (
+        customData = {
+            string userDocBrief = """The most earlier frames a solve reaches back to, in
+        [1,1024]."""
+        }
+    )
     uniform float[] rigExec:pinWeights = [] (
         customData = {
             string userDocBrief = "One weight per cloth point in [0,1]."
+        }
+    )
+    rel rigExec:restShape (
+        customData = {
+            string userDocBrief = "Optional mesh or exact point3f[] property defining rest distances and material frames."
         }
     )
     uniform int rigExec:substeps = 10 (
@@ -4538,6 +4711,11 @@ class RigExecClothMover "RigExecClothMover" (
     uniform float rigExec:tetherSlack = 0.05 (
         customData = {
             string userDocBrief = "Fraction of the rest distance a tether allows beyond it."
+        }
+    )
+    rel rigExec:uvSet (
+        customData = {
+            string userDocBrief = "Exact float2[] or texCoord2f[] primvar defining warp/weft."
         }
     )
     uniform int rigExec:windowFrames = 16 (

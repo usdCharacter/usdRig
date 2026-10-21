@@ -2818,6 +2818,156 @@ RigExecClothMoverHandle::SetColliders(const std::vector<SdfPath> &meshes)
     SetRel("rigExec:colliders", meshes);
 }
 
+namespace {
+SdfPath _ClothDataPrim(const UsdStageRefPtr &stage, const SdfPath &parent,
+                       const std::string &name, const char *type)
+{
+    _RequireName(name, "cloth data name");
+    const SdfPath path = parent.AppendChild(TfToken(name));
+    const UsdPrim existing = stage->GetPrimAtPath(path);
+    if (existing && existing.GetTypeName() != TfToken(type))
+        throw std::invalid_argument("cloth data name already has a different type");
+    stage->DefinePrim(path, TfToken(type));
+    return path;
+}
+void _ClothMode(const TfToken &mode)
+{
+    if (mode != TfToken("hard") && mode != TfToken("soft"))
+        throw std::invalid_argument("cloth constraint mode must be hard or soft");
+}
+}
+
+void RigExecClothMoverHandle::SetRestShape(const SdfPath &path)
+{ SetRel("rigExec:restShape", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothMoverHandle::SetUvSet(const SdfPath &path)
+{ SetRel("rigExec:uvSet", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothMoverHandle::SetConstraints(const std::vector<SdfPath> &paths)
+{ SetRel("rigExec:constraints", paths); }
+
+RigExecClothConstraintHandle RigExecClothMoverHandle::AddConstraint(
+    const std::string &name, const TfToken &kind, const TfToken &mode)
+{
+    const std::vector<TfToken> kinds = {TfToken("stretch"), TfToken("bend"), TfToken("damping"),
+        TfToken("pin"), TfToken("attachment"), TfToken("collision"), TfToken("selfCollision"), TfToken("tether")};
+    if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end())
+        throw std::invalid_argument("unknown cloth constraint kind");
+    _ClothMode(mode);
+    const SdfPath path = _ClothDataPrim(_stage, _path, name, "RigExecClothConstraintSet");
+    RigExecClothConstraintHandle handle(_stage, path);
+    _AuthorAttr(handle.GetPrim(), "rigExec:kind", SdfValueTypeNames->Token, VtValue(kind));
+    handle.SetMode(mode);
+    SdfPathVector targets;
+    GetPrim().GetRelationship(TfToken("rigExec:constraints")).GetTargets(&targets);
+    if (std::find(targets.begin(), targets.end(), path) == targets.end()) targets.push_back(path);
+    SetConstraints(targets);
+    return handle;
+}
+RigExecClothBindingHandle RigExecClothMoverHandle::AddBinding(const std::string &name)
+{ return {_stage, _ClothDataPrim(_stage, _path, name, "RigExecClothBinding")}; }
+RigExecClothMapHandle RigExecClothMoverHandle::AddMap(const std::string &name)
+{ return {_stage, _ClothDataPrim(_stage, _path, name, "RigExecClothMap")}; }
+
+void RigExecClothBindingHandle::SetVertices(const std::vector<int> &indices)
+{
+    for (int i : indices) _RequireFiniteAtLeast(i, 0, "cloth vertex index");
+    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("vertex")));
+    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(indices.begin(), indices.end())));
+    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray()));
+}
+void RigExecClothBindingHandle::SetBarycentric(const std::vector<int> &triangles,
+                                             const std::vector<GfVec3f> &weights)
+{
+    if (triangles.size() != weights.size()) throw std::invalid_argument("cloth binding sizes differ");
+    for (size_t i = 0; i < triangles.size(); ++i) {
+        _RequireFiniteAtLeast(triangles[i], 0, "cloth triangle index");
+        float sum = 0;
+        for (int k = 0; k < 3; ++k) { _RequireFiniteAtLeast(weights[i][k], 0, "barycentric weight"); sum += weights[i][k]; }
+        if (std::abs(sum - 1) > 1e-5f) throw std::invalid_argument("barycentric weights must sum to one");
+    }
+    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("barycentric")));
+    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(triangles.begin(), triangles.end())));
+    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray(weights.begin(), weights.end())));
+}
+void RigExecClothBindingHandle::SetUV(const std::vector<GfVec3f> &coordinates,
+                                     const std::vector<int> &triangles)
+{
+    if (!triangles.empty() && triangles.size() != coordinates.size())
+        throw std::invalid_argument("UV triangle hints must match coordinates");
+    for (int i : triangles) _RequireFiniteAtLeast(i, -1, "UV triangle hint");
+    for (const auto &p : coordinates)
+        for (int k = 0; k < 3; ++k) if (!std::isfinite(p[k])) throw std::invalid_argument("UV coordinate must be finite");
+    _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(TfToken("uv")));
+    _AuthorAttr(GetPrim(), "rigExec:indices", SdfValueTypeNames->IntArray, VtValue(VtIntArray(triangles.begin(), triangles.end())));
+    _AuthorAttr(GetPrim(), "rigExec:coordinates", SdfValueTypeNames->Float3Array, VtValue(VtVec3fArray(coordinates.begin(), coordinates.end())));
+}
+void RigExecClothBindingHandle::SetUvSet(const SdfPath &path)
+{ SetRel("rigExec:uvSet", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothMapHandle::SetValues(const std::vector<float> &values)
+{
+    for (float v : values) _RequireFiniteAtLeast(v, 0, "cloth map value");
+    _AuthorAttr(GetPrim(), "inputs:values", SdfValueTypeNames->FloatArray, VtValue(VtFloatArray(values.begin(), values.end())));
+}
+void RigExecClothMapHandle::SetValuesSource(const SdfPath &path)
+{ SetRel("rigExec:values", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothMapHandle::SetBinding(const SdfPath &path)
+{ SetRel("rigExec:binding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothMapHandle::SetSourceMesh(const SdfPath &path)
+{ SetRel("rigExec:sourceMesh", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothConstraintHandle::SetMode(const TfToken &mode)
+{ _ClothMode(mode); _AuthorAttr(GetPrim(), "rigExec:mode", SdfValueTypeNames->Token, VtValue(mode)); }
+void RigExecClothConstraintHandle::SetStrength(float minimum, float maximum)
+{
+    _RequireFiniteAtLeast(minimum, 0, "minimum strength");
+    _RequireFiniteAtLeast(maximum, minimum, "maximum strength");
+    _AuthorAttr(GetPrim(), "inputs:minStrength", SdfValueTypeNames->Float, VtValue(minimum));
+    _AuthorAttr(GetPrim(), "inputs:maxStrength", SdfValueTypeNames->Float, VtValue(maximum));
+}
+void RigExecClothConstraintHandle::SetCompliance(float compliance)
+{ _RequireFiniteAtLeast(compliance, 0, "compliance"); _AuthorAttr(GetPrim(), "inputs:compliance", SdfValueTypeNames->Float, VtValue(compliance)); }
+void RigExecClothConstraintHandle::SetMaterialDirections(float warp, float weft, float normal)
+{
+    for (float v : {warp, weft, normal}) _RequireFiniteAtLeast(v, 0, "material strength");
+    _AuthorAttr(GetPrim(), "inputs:warp", SdfValueTypeNames->Float, VtValue(warp));
+    _AuthorAttr(GetPrim(), "inputs:weft", SdfValueTypeNames->Float, VtValue(weft));
+    _AuthorAttr(GetPrim(), "inputs:normal", SdfValueTypeNames->Float, VtValue(normal));
+}
+void RigExecClothConstraintHandle::SetForceCurve(const std::vector<GfVec2f> &keys)
+{
+    float previous = -1;
+    for (const auto &key : keys) {
+        _RequireFiniteAtLeast(key[0], 0, "force"); _RequireFiniteAtLeast(key[1], 0, "strength blend");
+        if (key[0] <= previous || key[1] > 1) throw std::invalid_argument("invalid force-to-strength curve");
+        previous = key[0];
+    }
+    _AuthorAttr(GetPrim(), "rigExec:forceCurve", SdfValueTypeNames->Float2Array, VtValue(VtVec2fArray(keys.begin(), keys.end())));
+}
+void RigExecClothConstraintHandle::SetSourceBinding(const SdfPath &path)
+{ SetRel("rigExec:sourceBinding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothConstraintHandle::SetTargetBinding(const SdfPath &path)
+{ SetRel("rigExec:targetBinding", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothConstraintHandle::SetTargetMesh(const SdfPath &path)
+{ SetRel("rigExec:targetMesh", path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path}); }
+void RigExecClothConstraintHandle::SetMap(const TfToken &channel, const SdfPath &path)
+{
+    const std::vector<std::string> channels = {"mask", "minStrength", "maxStrength", "warp", "weft", "normal", "thickness", "friction"};
+    if (std::find(channels.begin(), channels.end(), channel.GetString()) == channels.end())
+        throw std::invalid_argument("unknown cloth map channel");
+    SetRel(("rigExec:" + channel.GetString() + "Map").c_str(),
+           path.IsEmpty() ? std::vector<SdfPath>() : std::vector<SdfPath>{path});
+}
+void RigExecClothConstraintHandle::SetRestLength(float length)
+{
+    _RequireFiniteAtLeast(length, -1, "rest length");
+    if (length < 0 && length != -1) throw std::invalid_argument("rest length must be -1 or nonnegative");
+    _AuthorAttr(GetPrim(), "inputs:restLength", SdfValueTypeNames->Float, VtValue(length));
+}
+void RigExecClothConstraintHandle::SetContact(float thickness, float friction)
+{
+    _RequireFiniteAtLeast(thickness, 0, "thickness"); _RequireFiniteAtLeast(friction, 0, "friction");
+    _AuthorAttr(GetPrim(), "inputs:thickness", SdfValueTypeNames->Float, VtValue(thickness));
+    _AuthorAttr(GetPrim(), "inputs:friction", SdfValueTypeNames->Float, VtValue(friction));
+}
+
 void
 RigExecClothMoverHandle::SetCollidersReadPhase(const TfToken &phase)
 {
@@ -2844,6 +2994,13 @@ RigExecClothMoverHandle::SetWindowFrames(int frames)
 {
     _RequireIntIn(frames, 1, 1024, "cloth window frames");
     _AuthorAttr(GetPrim(), "rigExec:windowFrames", SdfValueTypeNames->Int, VtValue(frames));
+}
+
+void
+RigExecClothMoverHandle::SetMaxWindowFrames(int frames)
+{
+    _RequireIntIn(frames, 1, 1024, "cloth max window frames");
+    _AuthorAttr(GetPrim(), "rigExec:maxWindowFrames", SdfValueTypeNames->Int, VtValue(frames));
 }
 
 void
@@ -2910,7 +3067,7 @@ RigExecClothMoverHandle::SetGravity(float x, float y, float z)
 void
 RigExecClothMoverHandle::SetDamping(float damping)
 {
-    _RequireNormalizedMoverWeight(damping);
+    _RequireFiniteAtLeast(damping, 0.0, "cloth damping");
     _AuthorAttr(GetPrim(), "inputs:damping", SdfValueTypeNames->Float, VtValue(damping));
 }
 
