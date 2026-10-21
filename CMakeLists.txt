@@ -5,6 +5,12 @@ project(rigExec VERSION 0.1.0 LANGUAGES C CXX)
 set(USD_INSTALL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../usd-install"
     CACHE PATH "OpenUSD installation prefix")
 
+# garch's exported link interface names OpenGL::GL, so that imported
+# target must exist before pxrTargets is included. A cross toolchain
+# keeps today's behavior: its USD prefix names its own graphics API.
+if (NOT CMAKE_CROSSCOMPILING)
+    find_package(OpenGL REQUIRED)
+endif()
 find_package(pxr REQUIRED CONFIG PATHS "${USD_INSTALL_DIR}" NO_DEFAULT_PATH)
 
 set(CMAKE_CXX_STANDARD 17)
