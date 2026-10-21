@@ -364,11 +364,11 @@ target_include_directories(rigExecFlatBuffers INTERFACE
 add_library(rigExec::rigExecFlatBuffers ALIAS rigExecFlatBuffers)
 
 add_library(rigExecLzma STATIC
-    third_party/lzma/C/LzmaEnc.c
-    third_party/lzma/C/LzmaDec.c
-    third_party/lzma/C/LzFind.c
-    third_party/lzma/C/CpuArch.c)
-target_include_directories(rigExecLzma PRIVATE third_party/lzma/C)
+    thirdparty/lzma/C/LzmaEnc.c
+    thirdparty/lzma/C/LzmaDec.c
+    thirdparty/lzma/C/LzFind.c
+    thirdparty/lzma/C/CpuArch.c)
+target_include_directories(rigExecLzma PRIVATE thirdparty/lzma/C)
 target_compile_definitions(rigExecLzma PRIVATE Z7_ST RIGEXEC_LZMA_PORTABLE_SCALAR)
 set_target_properties(rigExecLzma PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
@@ -378,7 +378,7 @@ add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
 target_include_directories(rigExecBinary PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_include_directories(rigExecBinary PRIVATE third_party/lzma/C)
+target_include_directories(rigExecBinary PRIVATE thirdparty/lzma/C)
 target_link_libraries(rigExecBinary PUBLIC rigExecFlatBuffers PRIVATE rigExecLzma)
 set_target_properties(rigExecBinary PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -2689,7 +2689,7 @@ install(FILES plugin/usdNoodles/LICENSE.txt
 install(FILES thirdparty/flatbuffers/LICENSE
     DESTINATION "share/rigExec/licenses" RENAME FlatBuffers-LICENSE.txt)
 
-install(FILES third_party/lzma/NOTICE.md
+install(FILES thirdparty/lzma/NOTICE.md
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-NOTICE.md)
-install(FILES third_party/lzma/DOC/lzma-sdk.txt
+install(FILES thirdparty/lzma/DOC/lzma-sdk.txt
     DESTINATION "share/rigExec/licenses" RENAME LZMA-SDK-LICENSE.txt)

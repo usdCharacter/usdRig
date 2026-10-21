@@ -5,10 +5,10 @@ It does not replace licenses or grant rights in material owned by others.
 
 ## Bundled code
 
-`third_party/lzma` contains the public-domain LZMA SDK 26.04 by Igor Pavlov.
-The [SDK notice](third_party/lzma/NOTICE.md) records the official source,
+`thirdparty/lzma` contains the public-domain LZMA SDK 26.04 by Igor Pavlov.
+The [SDK notice](thirdparty/lzma/NOTICE.md) records the official source,
 archive hash and local scalar-dispatch patch; its original
-[license text](third_party/lzma/DOC/lzma-sdk.txt) accompanies installed binaries.
+[license text](thirdparty/lzma/DOC/lzma-sdk.txt) accompanies installed binaries.
 The runtime codec uses the single-threaded scalar implementation without USD.
 
 

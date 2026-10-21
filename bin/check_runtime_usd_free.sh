@@ -12,11 +12,11 @@ CXXFLAGS=(
     -std=c++17 -O2 -fno-fast-math -ffp-contract=off -pthread
     -I "$ROOT/libs"
     -I "$ROOT/thirdparty/flatbuffers/include"
-    -I "$ROOT/third_party/lzma/C"
+    -I "$ROOT/thirdparty/lzma/C"
 )
 CFLAGS=(
     -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
-    -I "$ROOT/third_party/lzma/C"
+    -I "$ROOT/thirdparty/lzma/C"
 )
 
 objs=()
@@ -52,10 +52,10 @@ sources=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
     "$ROOT/libs/rigExecBinary/format.cpp"
     "$ROOT/libs/rigExecBinary/transport.cpp"
-    "$ROOT/third_party/lzma/C/LzmaEnc.c"
-    "$ROOT/third_party/lzma/C/LzmaDec.c"
-    "$ROOT/third_party/lzma/C/LzFind.c"
-    "$ROOT/third_party/lzma/C/CpuArch.c"
+    "$ROOT/thirdparty/lzma/C/LzmaEnc.c"
+    "$ROOT/thirdparty/lzma/C/LzmaDec.c"
+    "$ROOT/thirdparty/lzma/C/LzFind.c"
+    "$ROOT/thirdparty/lzma/C/CpuArch.c"
 )
 
 for src in "${sources[@]}"; do

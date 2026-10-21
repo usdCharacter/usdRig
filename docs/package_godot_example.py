@@ -57,8 +57,8 @@ def main():
         ("LICENSE-OpenUSD", ROOT / "plugin/usdNoodles/LICENSE.txt"),
         ("LICENSE-flatbuffers", ROOT / "thirdparty/flatbuffers/LICENSE"),
         ("THIRD_PARTY_NOTICES-usdRig.md", ROOT / "THIRD_PARTY_NOTICES.md"),
-        ("LICENSE-LZMA-SDK", ROOT / "third_party/lzma/DOC/lzma-sdk.txt"),
-        ("NOTICE-LZMA-SDK.md", ROOT / "third_party/lzma/NOTICE.md"),
+        ("LICENSE-LZMA-SDK", ROOT / "thirdparty/lzma/DOC/lzma-sdk.txt"),
+        ("NOTICE-LZMA-SDK.md", ROOT / "thirdparty/lzma/NOTICE.md"),
         ("LICENSE-godot-cpp", PLUGIN / "thirdparty/godot-cpp/LICENSE.md"),
     )
     missing = [str(path) for path, _ in members if not path.is_file()]

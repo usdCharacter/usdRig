@@ -390,7 +390,7 @@ def files_including(header_rel: str) -> list[str]:
         dirnames[:] = [
             d
             for d in dirnames
-            if d not in {".git", "build", "third_party", "thirdparty", "plugin"}
+            if d not in {".git", "build", "thirdparty", "plugin"}
         ]
         for fn in filenames:
             if not fn.endswith((".h", ".cpp", ".c")):
