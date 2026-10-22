@@ -27,7 +27,7 @@ inline bool RigExecInputActionsRunProgram(
             "direct program Run with authored-input native counterpart",true);
         okay=program.Run(time,pose);
     }
-    // Epoch-binding refusal has no mathematical native equivalent. The
+    // Compiled rig binding refusal has no mathematical native equivalent. The
     // caller retains its explicit false/empty diagnostic assertions.
     if(!okay)return false;
     const auto native=owner.Evaluate(time);

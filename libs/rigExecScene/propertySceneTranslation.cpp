@@ -1,13 +1,20 @@
-#include "propertySceneLowering.h"
+#include "propertySceneTranslation.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/base/tf/type.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <type_traits>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecOperation,"rigExec:operation")) ((rigExecWeightObject,"rigExec:weightObject"))
+    ((inputsEnabled,"inputs:enabled")) ((inputsDefaultWeight,"inputs:defaultWeight"))
+    ((inputsValue,"inputs:value")) ((inputsMin,"inputs:min")) ((inputsMax,"inputs:max"))
+    ((inputsKeys,"inputs:keys")) ((inputsTangents,"inputs:tangents"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message;return false; }
 }
-bool RigExecLowerSceneProperty(const RigExecSceneDescriptors &scene,const SdfPath &mover,
+bool RigExecTranslateSceneProperty(const RigExecSceneDescriptors &scene,const SdfPath &mover,
     const SdfPath &target,RigExecScenePropertyDescriptor *output,std::string *error) {
     if(!output)return Fail(error,"null property descriptor destination");
     const RigExecSceneCompileInputs source(scene);
@@ -26,7 +33,7 @@ bool RigExecLowerSceneProperty(const RigExecSceneDescriptors &scene,const SdfPat
     else return Fail(error,"property mover/target type mismatch: "+target.GetString());
     TfToken operation;
     RigExecSceneBoundInput operationRead;
-    const auto operationPath=mover.AppendProperty(TfToken("rigExec:operation"));
+    const auto operationPath=mover.AppendProperty(_tokens->rigExecOperation);
     if(source.Attribute(operationPath)) {
         VtValue raw;
         if(!source.Bind(operationPath,RigExecSceneReadRoute::Raw,&operationRead,error) ||
@@ -38,32 +45,31 @@ bool RigExecLowerSceneProperty(const RigExecSceneDescriptors &scene,const SdfPat
     std::visit([&](auto &record) { record.op=op;record.opValid=valid; },result.record);
     // Existing property movers read the first direct authored weight target,
     // rather than forwarding a relationship-property target.
-    if(const auto *weight=source.Relationship(mover.AppendProperty(TfToken("rigExec:weightObject"))))
+    if(const auto *weight=source.Relationship(mover.AppendProperty(_tokens->rigExecWeightObject)))
         if(!weight->fact.targets.empty())result.weightObject=weight->fact.targets.front();
-    auto bind=[&](const char *name) {
-        const auto path=mover.AppendProperty(TfToken(name));
+    auto bind=[&](const TfToken &name) {
+        const auto path=mover.AppendProperty(name);
         if(!source.Attribute(path))return true;
         RigExecSceneBoundInput input;
         if(!source.Bind(path,RigExecSceneReadRoute::ConnectionResolved,&input,error))return false;
         SdfValueTypeName requested;
-        const std::string field(name);
-        if(field=="inputs:enabled")requested=SdfValueTypeNames->Bool;
-        else if(field=="inputs:defaultWeight")requested=SdfValueTypeNames->Float;
-        else if(field=="inputs:keys" || field=="inputs:tangents")requested=SdfValueTypeNames->Float2Array;
+        if(name==_tokens->inputsEnabled)requested=SdfValueTypeNames->Bool;
+        else if(name==_tokens->inputsDefaultWeight)requested=SdfValueTypeNames->Float;
+        else if(name==_tokens->inputsKeys || name==_tokens->inputsTangents)requested=SdfValueTypeNames->Float2Array;
         else requested=scalar?SdfValueTypeNames->Float:
             std::holds_alternative<RigExecMatrixPropertyRecord>(result.record)?SdfValueTypeNames->Matrix4d:SdfValueTypeNames->Float3;
         RigExecSceneTypedRead typed;
         if(!RigExecBindSceneTypedRead(scene,path,requested,&typed,error))return false;
-        result.typedReads.emplace(name,std::move(typed));
-        result.inputs.emplace(name,std::move(input));return true;
+        result.typedReads.emplace(name.GetString(),std::move(typed));
+        result.inputs.emplace(name.GetString(),std::move(input));return true;
     };
-    if(!bind("inputs:enabled") || !bind("inputs:defaultWeight") || !bind("inputs:value"))return false;
+    if(!bind(_tokens->inputsEnabled) || !bind(_tokens->inputsDefaultWeight) || !bind(_tokens->inputsValue))return false;
     if(!std::holds_alternative<RigExecMatrixPropertyRecord>(result.record))
-        if(!bind("inputs:min") || !bind("inputs:max"))return false;
+        if(!bind(_tokens->inputsMin) || !bind(_tokens->inputsMax))return false;
     if(scalar && valid && op==RigExecPropertyOp::Curve) {
-        if(!bind("inputs:keys") || !bind("inputs:tangents"))return false;
+        if(!bind(_tokens->inputsKeys) || !bind(_tokens->inputsTangents))return false;
         std::get<RigExecFloatPropertyRecord>(result.record).hasTangents=
-            source.Attribute(mover.AppendProperty(TfToken("inputs:tangents")))!=nullptr;
+            source.Attribute(mover.AppendProperty(_tokens->inputsTangents))!=nullptr;
     }
     *output=std::move(result);return true;
 }

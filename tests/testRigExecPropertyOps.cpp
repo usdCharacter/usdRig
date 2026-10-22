@@ -622,8 +622,8 @@ TestPerVersionMemo()
 }
 
 // A chain target removed, then authored again as a double, with nothing
-// else edited: the epoch digest names the target's path but not its type, so
-// the epoch stands, and the ops must answer from the target as it now is --
+// else edited: the compiled rig signature names the target's path but not its type, so
+// the compiled rig stands, and the ops must answer from the target as it now is --
 // the evaluator rebinds its chain on any edit that reaches the target.
 std::vector<std::string> ChainLines(const RigExecRigPose &pose);
 
@@ -646,7 +646,7 @@ TestATargetRetypedInPlaceRebinds()
         CHECK(pose.valid);
         CHECK(evaluator->GetBakedGenerationCount() == generations + 1);
         if (targetMissing) {
-            // ORIGINAL 6d83d42's detached walk keeps this committed epoch's
+            // ORIGINAL 6d83d42's detached walk keeps this committed compiled rig's
             // phase records after removal. A fresh compile admits different
             // movers. These exact literals were confirmed independently by
             // that original walk and original baked evaluator, with the same
@@ -1896,7 +1896,7 @@ CheckFrozenJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
     CHECK(!inputs.HasChainResolvedInputs());
     RigExecBackgroundScheduler scheduler;
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.generation = scheduler.CurrentGeneration(rig);
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();

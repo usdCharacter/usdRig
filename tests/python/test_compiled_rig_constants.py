@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-What the evaluator is allowed to settle once per epoch, and what it must
+What the evaluator is allowed to settle once per rig compilation, and what it must
 still re-read on every frame.
 
   * a provider's rest frame, which is a function of rest:space and the six
     rest avars of the provider and its RigExec ancestors. The rests are
     pulled once at Compile and refreshed when an edit arrives, so an edit to
     a rest channel must still move the joint -- with a recompile, and also
-    without one, because the epoch digest hashes wiring, not values.
+    without one, because the compiled rig signature hashes wiring, not values.
 
   * a static input read (inputs:enabled, inputs:defaultWeight, offsets), held
     per evaluator for values that are neither connected nor time-varying. An
@@ -18,7 +18,7 @@ still re-read on every frame.
     the stage's start time code, and the frame asked for first can be any
     other frame, which must still get its own values.
 
-Usage: test_epoch_constants.py [<generated schema resources dir>]
+Usage: test_compiled_rig_constants.py [<generated schema resources dir>]
 Requires the native _rigexec binding (build-python/python on PYTHONPATH).
 """
 import os
@@ -132,7 +132,7 @@ def _Reference(edit):
 
 
 def TestRestEditAfterRecompile():
-    """A rest edit plus an explicit recompile rebuilds the epoch's rests."""
+    """A rest edit plus an explicit recompile rebuilds the compiled rig's rests."""
     import _rigexec
     edit = lambda stage: _MoveRest(stage, _EYE_L, 3.0)  # noqa: E731
     reference = _Reference(edit)
@@ -152,9 +152,9 @@ def TestRestEditAfterRecompile():
 def TestRestEditWithoutRecompile():
     """A rest edit alone reaches the next evaluate.
 
-    A value edit does not change the epoch digest -- the digest hashes
+    A value edit does not change the compiled rig signature -- the digest hashes
     wiring, sample counts and cardinalities, never values -- so nothing
-    recompiles here, and the epoch's rest frames have to be refreshed on
+    recompiles here, and the compiled rig's rest frames have to be refreshed on
     their own.
     """
     import _rigexec
@@ -163,12 +163,12 @@ def TestRestEditWithoutRecompile():
     stage = _Open()
     rig = _rigexec.Rig(stage, _RIG)
     rig.compile()
-    digest = rig.binding_epoch_digest()
+    digest = rig.compiled_rig_signature()
     _Pose(rig, _AIMED)
     edit(stage)
     after = _Pose(rig, _AIMED)
-    _Check(rig.binding_epoch_digest() == digest,
-           "a rest value edit changed the epoch digest; this test asserts "
+    _Check(rig.compiled_rig_signature() == digest,
+           "a rest value edit changed the compiled rig signature; this test asserts "
            "the no-recompile path and needs an edit that does not recompile")
     _CheckSame(after, reference, "after a rest edit with no recompile")
 
@@ -229,7 +229,7 @@ def TestEnabledEditFollows():
     inputs:enabled is exactly the shape the static cache admits: authored,
     unconnected, no time samples. It is authored true before the compile so
     the first evaluate reads and holds it, then flipped -- with no recompile,
-    because a value edit does not change the epoch digest.
+    because a value edit does not change the compiled rig signature.
     """
     import _rigexec
     stage = _Open()
@@ -238,12 +238,12 @@ def TestEnabledEditFollows():
     enabled.Set(True)
     rig = _rigexec.Rig(stage, _RIG)
     rig.compile()
-    digest = rig.binding_epoch_digest()
+    digest = rig.compiled_rig_signature()
     aimed = _ZAxis(rig.evaluate(_AIMED), _EYE_L)
     enabled.Set(False)
     off = _ZAxis(rig.evaluate(_AIMED), _EYE_L)
-    _Check(rig.binding_epoch_digest() == digest,
-           "disabling the constraint changed the epoch digest; this test "
+    _Check(rig.compiled_rig_signature() == digest,
+           "disabling the constraint changed the compiled rig signature; this test "
            "asserts the no-recompile path")
     _Check((aimed - off).GetLength() > 1e-6,
            "EyeL aimed the same way with the constraint disabled (%s vs %s); "
@@ -317,7 +317,7 @@ def main():
     for name, fn in groups:
         fn()
         print("  ok: %s" % name)
-    print("RIGEXEC_EPOCH_CONSTANTS_OK (%d groups)" % len(groups))
+    print("RIGEXEC_COMPILED_RIG_CONSTANTS_OK (%d groups)" % len(groups))
     return 0
 
 

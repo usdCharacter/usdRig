@@ -17,7 +17,7 @@ An empty rig path lists available roots. Playback-only sessions are not exposed
 as live evaluators.
 
 Pass the last `graph_key` and `generation` to omit unchanged data. Graph keys
-identify the session's compiled program and binding epoch; a changed key requires
+identify the session's compiled program and compiled rig; a changed key requires
 replacing the graph and discarding old trace history. Graph rows contain canonical
 operation IDs, declared predecessor/successor edges, read/write ranges, and
 cluster IDs. Range endpoints are inclusive, matching `Rig.op_graph()`.

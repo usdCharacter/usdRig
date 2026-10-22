@@ -64,7 +64,7 @@ points, so a point keeps the weight its bind pose earned and a mover's
 own output cannot feed back into its own weights; `preceding` re-measures
 the points as they stand at that position in the mover stack. The band, invert and strength
 are live per-frame inputs; `rigExec:falloffProfile` and `rigExec:falloffCurve` are
-structural and are baked to one lookup table per binding epoch.
+structural and are baked to one lookup table per compiled rig.
 
 ## Wiring
 
@@ -99,7 +99,7 @@ domain.
 Its rigExecReadPhase metadata chooses which points the distance
 function measures. `base`, the default, samples the STATIC
 authored points (or rigExec:sampleSource), so the field is
-computed once per epoch and a point keeps the weight its bind pose
+computed once per rig compilation and a point keeps the weight its bind pose
 earned -- the behaviour of a painted map, and what a matrix mover
 wants so that its own output cannot feed back into its own weights.
 
@@ -196,10 +196,10 @@ parameter -- 1 at falloffMin, 0 at falloffMax -- and the value is
 the weight.
 
 This is a STRUCTURAL read, resampled to a lookup table once per
-binding epoch, NOT a per-frame input: a per-frame input is a
+compiled rig, NOT a per-frame input: a per-frame input is a
 value at one time, and a curve is the whole function. The animatable knobs are falloffMin/Max, invert, and
 strength; the curve is a rig-authoring parameter, which is also
-what keeps the field epoch-shape-stable (spec section 4.1).
+what keeps the field fixed-shape (spec section 4.1).
 
 Held extrapolation outside [0, 1] is the Ts default and is
 exactly right here, so a curve authored over a shorter span still

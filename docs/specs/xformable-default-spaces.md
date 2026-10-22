@@ -2,7 +2,7 @@
 
 `RigExecJoint`, `RigExecControl`, and volume weight providers evaluate their
 declared default-space channels as operations in the shared graph. Editing
-these inputs dirties their consumers without replacing the rig's binding epoch.
+these inputs dirties their consumers without replacing the rig's compiled rig.
 
 The formulas below use USD's row-vector matrix convention: the leftmost
 transform applies first. `R` is the existing orthonormalized rest transform,

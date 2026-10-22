@@ -1587,7 +1587,7 @@ _BinaryCompareSolver(const rigExec::RigExecBakedProgramImpl::Solver &live,
           _BinaryText(file, wire.ribbonPointsPath));
     CHECK(_BinarySamePoints(live.ribbonRestPoints, wire.ribbonRestPoints));
     // Static at the bake time: a varying driver's points as the run read
-    // them, else the epoch constant.
+    // them, else the compiled rig constant.
     CHECK(_BinarySamePoints(live.ribbonPointsVarying
                                 ? live.ribbonPoints
                                 : live.ribbonConstantPoints,
@@ -3781,7 +3781,7 @@ struct _BinaryArrayOwner {
     std::set<std::string> owners;
 };
 
-// Build this inventory from the native epoch and source attributes, never
+// Build this inventory from the native compiled rig and source attributes, never
 // from the serialized array/live table being judged. Multiple sites may
 // share storage; a current reader wins over Default readers. Public upstream
 // admission then supplies the evaluator's explicit physical-slot policy.

@@ -90,7 +90,7 @@ bool RigExecExportProviderRecords(const RigExecProviderProgram &program,
     }
     for(const auto &op:program.ops) {
         if(op.kind==RigExecProviderOpKind::LocalXform || op.kind==RigExecProviderOpKind::InterveningXform)
-            return fail("provider wire export requires intervening transforms lowered to external matrix leaves");
+            return fail("provider wire export requires intervening transforms translated to external matrix leaves");
         records.ops.push_back({op.kind,op.owner.GetString(),op.output,op.inputs,op.scaleAvars,
             op.affineKind,op.affineTargets});
     }

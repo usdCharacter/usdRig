@@ -207,7 +207,7 @@ _WithOp(const fb::RigExecWireFile &file, uint8_t op)
 }
 
 /// \p file's first revision made a plugin mover, with its entry: a Token
-/// node naming the type, an epoch and the frame bytes of a successful
+/// node naming the type, a compiled rig and the frame bytes of a successful
 /// assembly.
 static fb::RigExecWireFile
 _WithPlugin(const fb::RigExecWireFile &file)
@@ -3817,7 +3817,7 @@ TestBakeRestoresLiveRoles()
     restored("after a failed bake");
 }
 
-// An export is lowered for the reference concurrency whatever the baking
+// An export is translated for the reference concurrency whatever the baking
 // machine's work limit. The fixture is the first whose
 // serial cost gives different grains at one and two workers, so a bake that
 // followed the limit would differ under the two.
@@ -4154,7 +4154,7 @@ TestBake(const std::string &fixture, const std::vector<double> &tableFrames,
                                 &error));
     }
 
-    // A bake is of the authored epoch: a held drag refuses it rather than
+    // A bake is of the authored compiled rig: a held drag refuses it rather than
     // printing its value into the defaults.
     RigExecRigEvaluator evaluator(stage, rigPath);
     RigExecValueOverride drag;
@@ -4313,7 +4313,7 @@ main(int argc, char **argv)
     }
     if (argc > 1 && std::string(argv[1]) == "--conformance") {
         // CLI artifact, one fresh independent bake, then every physical
-        // owner/default/route assertion and the authored-epoch refusal.
+        // owner/default/route assertion and the authored-compiled rig refusal.
         if (argc != 6) {
             std::fprintf(stderr, "usage: --conformance STAGE TIME CLASS ARTIFACT\n");
             return 2;

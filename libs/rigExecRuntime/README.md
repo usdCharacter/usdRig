@@ -78,7 +78,7 @@ value at a sampled time, of any count: only the reads at the evaluation time
 take it, and each reader judges the count as the evaluators do. Topology is
 the exception: a skin's joint indices, a mesh's face counts and indices, a
 curve's order and knots and a sparse blend shape's offsets and point indices
-are epoch state, which a reader never recompiles, so a sampled set of
+are compiled rig state, which a reader never recompiles, so a sampled set of
 another count is refused with the reason. A fixed skin
 layout's arrays, a chain's base points and admitted weight-oracle points
 read through such inputs. Structural painted arrays and excluded point reads

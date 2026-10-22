@@ -74,8 +74,8 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
 /// readers and whose later members have no extra predecessors. Readiness at
 /// a cluster boundary therefore introduces no cross-branch dependency.
 /// Costs are in canonical op order; empty uses one microsecond per op.
-/// Zero grain gives singleton clusters. Lower once, serialize unchanged.
-bool RigExecLowerOpClusters(RigExecCompiledGraph *graph,
+/// Zero grain gives singleton clusters. Translate once, serialize unchanged.
+bool RigExecTranslateOpClusters(RigExecCompiledGraph *graph,
     const std::vector<double> &opCostsUs, double grainUs,
     std::string *error = nullptr);
 

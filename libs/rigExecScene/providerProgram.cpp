@@ -4,6 +4,7 @@
 #include "rigExecMath/avarScale.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/vec3i.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usdGeom/xformOp.h"
@@ -17,6 +18,20 @@
 #include <variant>
 
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (xformOpOrder) ((restSpace,"rest:space")) ((posedSpace,"posed:space"))
+    ((defaultSpace,"default:space")) ((avarsDefaultSpace,"avars:defaultSpace"))
+    ((posedDefaultSpace,"posed:defaultSpace")) ((parentSpace,"parent:space"))
+    ((parentDefaultSpace,"parent:defaultSpace")) ((restTx,"rest:tx")) ((restTy,"rest:ty"))
+    ((restTz,"rest:tz")) ((restRx,"rest:rx")) ((restRy,"rest:ry")) ((restRz,"rest:rz"))
+    ((defaultTx,"default:tx")) ((defaultTy,"default:ty")) ((defaultTz,"default:tz"))
+    ((defaultRx,"default:rx")) ((defaultRy,"default:ry")) ((defaultRz,"default:rz"))
+    ((avarsUnitScaleFactor,"avars:unitScaleFactor")) ((avarsTx,"avars:tx")) ((avarsTy,"avars:ty"))
+    ((avarsTz,"avars:tz")) ((avarsSx,"avars:sx")) ((avarsSy,"avars:sy")) ((avarsSz,"avars:sz"))
+    ((avarsRx,"avars:rx")) ((avarsRy,"avars:ry")) ((avarsRz,"avars:rz"))
+    ((avarsRspin,"avars:rspin")) ((avarsRotationOrder,"avars:rotationOrder"))
+    ((avarsRotationSign,"avars:rotationSign"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message; return false; }
 bool Provider(const TfToken &type) {
@@ -57,8 +72,33 @@ bool AffineOutput(const RigExecSceneDescriptors &scene,const SdfPath &attribute,
     *kind=AffineTypeOf(node->second.fact.type);
     return *kind<affineTypeCount;
 }
-SdfPathVector AffineTargets(const RigExecSceneDescriptors &scene,const SdfPath &prim,const char *name) {
-    const auto found=scene.relationships.find(prim.AppendProperty(TfToken(name)));
+// RigExecAffineFrameTypes' USD-free names as tokens, built once when the
+// library loads, so translation never builds one from text.
+struct AffineTokens {
+    std::vector<TfToken> attributes,relations;
+    TfToken targets,targetObjects;
+};
+const std::vector<AffineTokens> _affineTokens=[] {
+    std::vector<AffineTokens> table;
+    for(const auto &type:RigExecAffineFrameTypes) {
+        AffineTokens tokens;
+        for(uint32_t k=0;k<type.attributeCount;++k)tokens.attributes.emplace_back(type.attributes[k].name);
+        for(uint32_t k=0;k<type.relationCount;++k)tokens.relations.emplace_back(type.relations[k].name);
+        if(type.targets)tokens.targets=TfToken(type.targets);
+        if(type.targetObjects)tokens.targetObjects=TfToken(type.targetObjects);
+        table.push_back(std::move(tokens));
+    }
+    return table;
+}();
+// The xform operation type a name's type part spells, from the type tokens.
+UsdGeomXformOp::Type XformOpType(const std::string &name,size_t begin,size_t count) {
+    for(int t=UsdGeomXformOp::TypeInvalid+1;t<=UsdGeomXformOp::TypeTransform;++t)
+        if(!name.compare(begin,count,UsdGeomXformOp::GetOpTypeToken(UsdGeomXformOp::Type(t)).GetString()))return UsdGeomXformOp::Type(t);
+    return UsdGeomXformOp::TypeInvalid;
+}
+SdfPathVector AffineTargets(const RigExecSceneDescriptors &scene,const SdfPath &prim,const TfToken &name) {
+    if(name.IsEmpty())return {};
+    const auto found=scene.relationships.find(prim.AppendProperty(name));
     return found==scene.relationships.end()?SdfPathVector():found->second.fact.targets;
 }
 // A provider's point frame from its four landmarks, as a matrix: the axes
@@ -164,29 +204,29 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     // An affine frame expression reads its input attributes and the point
     // frames of the providers its relationships name.
     includeAffine=[&](const SdfPath &prim,uint32_t kind) {
-        const RigExecAffineFrameType &type=RigExecAffineFrameTypes[kind];
-        for(uint32_t k=0;k<type.attributeCount;++k)
-            includeAttribute(prim.AppendProperty(TfToken(type.attributes[k].name)));
-        const auto frames=[&](const char *name) {
-            if(!name)return;
+        const AffineTokens &tokens=_affineTokens[kind];
+        for(const auto &name:tokens.attributes)includeAttribute(prim.AppendProperty(name));
+        const auto frames=[&](const TfToken &name) {
+            if(name.IsEmpty())return;
             for(const auto &target:AffineTargets(scene,prim,name)) {
                 const auto node=scene.nodes.find(target);
                 if(target.IsPrimPath() && node!=scene.nodes.end() && node->second.fact.active &&
                    Provider(node->second.fact.type))includeProvider(target);
             }
         };
-        for(uint32_t k=0;k<type.relationCount;++k)frames(type.relations[k].name);
-        frames(type.targets);frames(type.targetObjects);
+        for(const auto &name:tokens.relations)frames(name);
+        frames(tokens.targets);frames(tokens.targetObjects);
     };
     includeProvider=[&](const SdfPath &path) {
         if(path.IsEmpty() || !providerPaths.insert(path).second)return;
         includeProvider(ParentProvider(scene,path));
-        const char *const inputs[]={"rest:space","posed:space","default:space","avars:defaultSpace","posed:defaultSpace",
-            "parent:space","parent:defaultSpace","rest:tx","rest:ty","rest:tz","rest:rx","rest:ry","rest:rz",
-            "default:tx","default:ty","default:tz","default:rx","default:ry","default:rz",
-            "avars:unitScaleFactor","avars:tx","avars:ty","avars:tz","avars:sx","avars:sy","avars:sz",
-            "avars:rx","avars:ry","avars:rz","avars:rspin","avars:rotationOrder","avars:rotationSign"};
-        for(const auto *input:inputs)includeAttribute(path.AppendProperty(TfToken(input)));
+        const TfToken *const inputs[]={&_tokens->restSpace,&_tokens->posedSpace,&_tokens->defaultSpace,&_tokens->avarsDefaultSpace,&_tokens->posedDefaultSpace,
+            &_tokens->parentSpace,&_tokens->parentDefaultSpace,&_tokens->restTx,&_tokens->restTy,&_tokens->restTz,
+            &_tokens->restRx,&_tokens->restRy,&_tokens->restRz,&_tokens->defaultTx,&_tokens->defaultTy,&_tokens->defaultTz,
+            &_tokens->defaultRx,&_tokens->defaultRy,&_tokens->defaultRz,&_tokens->avarsUnitScaleFactor,&_tokens->avarsTx,&_tokens->avarsTy,
+            &_tokens->avarsTz,&_tokens->avarsSx,&_tokens->avarsSy,&_tokens->avarsSz,&_tokens->avarsRx,&_tokens->avarsRy,
+            &_tokens->avarsRz,&_tokens->avarsRspin,&_tokens->avarsRotationOrder,&_tokens->avarsRotationSign};
+        for(const auto *input:inputs)includeAttribute(path.AppendProperty(*input));
     };
     for(const auto &[path,node]:scene.nodes)
         if(node.fact.active && Provider(node.fact.type) && (!selectedProviders || selectedProviders->count(path)))includeProvider(path);
@@ -241,8 +281,8 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             program.routedInputs.push_back({value,path,attr.fact.connections.front(),attr.readPhase});
         }
     }
-    const auto attrId=[&](const SdfPath &path,const char *name) {
-        return program.FindValue(RigExecProviderAttributeKey(path.AppendProperty(TfToken(name))));
+    const auto attrId=[&](const SdfPath &path,const TfToken &name) {
+        return program.FindValue(RigExecProviderAttributeKey(path.AppendProperty(name)));
     };
     const auto compId=[&](const SdfPath &path,const char *name) {
         return path.IsEmpty()?RigExecNoProviderValue:program.FindValue(RigExecProviderValueKey(path,name));
@@ -287,34 +327,35 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             const auto frame=[&](const SdfPath &target) {
                 return target.IsPrimPath()?compId(target,"computePointFrame"):RigExecNoProviderValue;
             };
-            for(uint32_t k=0;k<type.attributeCount;++k)op.inputs.push_back(attrId(prim,type.attributes[k].name));
+            const AffineTokens &tokens=_affineTokens[affine];
+            for(uint32_t k=0;k<type.attributeCount;++k)op.inputs.push_back(attrId(prim,tokens.attributes[k]));
             for(uint32_t k=0;k<type.relationCount;++k) {
-                const auto targets=AffineTargets(scene,prim,type.relations[k].name);
+                const auto targets=AffineTargets(scene,prim,tokens.relations[k]);
                 op.inputs.push_back(targets.empty()?RigExecNoProviderValue:frame(targets.front()));
             }
             if(type.targets) {
-                const auto targets=AffineTargets(scene,prim,type.targets);
+                const auto targets=AffineTargets(scene,prim,tokens.targets);
                 for(const auto &target:targets)op.inputs.push_back(frame(target));
                 op.affineTargets=uint32_t(targets.size());
-                for(const auto &target:AffineTargets(scene,prim,type.targetObjects))op.inputs.push_back(frame(target));
+                for(const auto &target:AffineTargets(scene,prim,tokens.targetObjects))op.inputs.push_back(frame(target));
             }
             add(std::move(op),"affineFrame:"+path.GetString());
             continue;
         }
         if(attr.fact.connections.size()>1 && attr.fact.type.IsArray() &&
             node->second.fact.type.GetString().rfind("RigExec",0)==0)
-            return Fail(error,"provider lowering needs typed array connection concatenation: "+path.GetString());
+            return Fail(error,"provider translation needs typed array connection concatenation: "+path.GetString());
         add({RigExecProviderOpKind::Attribute,path,value,{raw,connect(attr.fact)}},"attribute:"+path.GetString());
     }
     if(composeFrames)for(const auto &[path,node]:scene.nodes) {
         if(!xformPaths.count(path))continue;
-        const auto order=program.FindValue(RigExecProviderRawKey(path.AppendProperty(TfToken("xformOpOrder"))));
+        const auto order=program.FindValue(RigExecProviderRawKey(path.AppendProperty(_tokens->xformOpOrder)));
         RigExecProviderOp op{RigExecProviderOpKind::LocalXform,path,compId(path,"localXform"),{order}};
         for(const auto &attribute:node.attributes) {
             const std::string name=attribute.GetName();
             if(name.rfind("xformOp:",0)!=0)continue;
             const auto end=name.find(':',8);
-            const auto type=UsdGeomXformOp::GetOpTypeEnum(TfToken(name.substr(8,end==std::string::npos?end:end-8)));
+            const auto type=XformOpType(name,8,end==std::string::npos?end:end-8);
             if(type==UsdGeomXformOp::TypeInvalid)return Fail(error,"unknown pure xform operation: "+attribute.GetString());
             op.xforms.push_back({attribute.GetNameToken(),program.FindValue(RigExecProviderRawKey(attribute)),int(type)});
         }
@@ -323,7 +364,7 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     for(const auto &path:nativeFrames) {
         RigExecProviderOp relative{RigExecProviderOpKind::RelativeXform,path,compId(path,"computedDefaultSpace"),{}};
         for(auto ancestor=path;!ancestor.IsEmpty() && ancestor!=scene.rigRoot.GetParentPath();ancestor=ancestor.GetParentPath()) {
-            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(TfToken("xformOpOrder")))));}
+            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));}
         }
         add(std::move(relative),"stageRelativeXform:"+path.GetString());
         add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computePointFrame"),{compId(path,"computedDefaultSpace")}},"stageFrame:"+path.GetString());
@@ -347,13 +388,13 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
                 const auto local=compId(ancestor,"localXform");
                 if(local!=RigExecNoProviderValue) {
                     ix.inputs.push_back(local);
-                    ix.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(TfToken("xformOpOrder")))));
+                    ix.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));
                 }
             }
             add(std::move(ix),"interveningXform:"+path.GetString());
-            add({RigExecProviderOpKind::RestFrame,path,selfRest,{attrId(path,"rest:space"),
-                attrId(path,"rest:tx"),attrId(path,"rest:ty"),attrId(path,"rest:tz"),
-                attrId(path,"rest:rx"),attrId(path,"rest:ry"),attrId(path,"rest:rz"),parentRest,intervening}},
+            add({RigExecProviderOpKind::RestFrame,path,selfRest,{attrId(path,_tokens->restSpace),
+                attrId(path,_tokens->restTx),attrId(path,_tokens->restTy),attrId(path,_tokens->restTz),
+                attrId(path,_tokens->restRx),attrId(path,_tokens->restRy),attrId(path,_tokens->restRz),parentRest,intervening}},
                 "restFrame:"+path.GetString());
         }
         add({RigExecProviderOpKind::FrameToSpace,path,compId(path,"computedParentDefaultSpace"),
@@ -361,33 +402,33 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         add({RigExecProviderOpKind::FrameToSpace,path,compId(path,"computedParentSpace"),
             {compId(parent,"computePointFrame")}},"parentPosed:"+path.GetString());
         add({RigExecProviderOpKind::DefaultSpace,path,compId(path,"computedDefaultSpace"),
-            {selfRest,parentRest,attrId(path,"parent:defaultSpace"),
-             attrId(path,"default:tx"),attrId(path,"default:ty"),attrId(path,"default:tz"),
-             attrId(path,"default:rx"),attrId(path,"default:ry"),attrId(path,"default:rz")}},"computedDefault:"+path.GetString());
-        for(const auto *expression:expressions) {
-            const SdfPath property=path.AppendProperty(TfToken(expression));
+            {selfRest,parentRest,attrId(path,_tokens->parentDefaultSpace),
+             attrId(path,_tokens->defaultTx),attrId(path,_tokens->defaultTy),attrId(path,_tokens->defaultTz),
+             attrId(path,_tokens->defaultRx),attrId(path,_tokens->defaultRy),attrId(path,_tokens->defaultRz)}},"computedDefault:"+path.GetString());
+        for(const auto *expression:{&_tokens->defaultSpace,&_tokens->avarsDefaultSpace,&_tokens->posedDefaultSpace,&_tokens->parentSpace,&_tokens->parentDefaultSpace}) {
+            const SdfPath property=path.AppendProperty(*expression);
             const auto fact=scene.attributes.find(property);
             if(fact==scene.attributes.end())return Fail(error,"provider expression attribute missing: "+property.GetString());
             RigExecValueId fallback;
-            if(std::string_view(expression)=="default:space")fallback=compId(path,"computedDefaultSpace");
-            else if(std::string_view(expression)=="avars:defaultSpace")fallback=attrId(path,"default:space");
-            else if(std::string_view(expression)=="posed:defaultSpace")fallback=attrId(path,"avars:defaultSpace");
-            else if(std::string_view(expression)=="parent:space")fallback=compId(path,"computedParentSpace");
+            if(*expression==_tokens->defaultSpace)fallback=compId(path,"computedDefaultSpace");
+            else if(*expression==_tokens->avarsDefaultSpace)fallback=attrId(path,_tokens->defaultSpace);
+            else if(*expression==_tokens->posedDefaultSpace)fallback=attrId(path,_tokens->avarsDefaultSpace);
+            else if(*expression==_tokens->parentSpace)fallback=compId(path,"computedParentSpace");
             else fallback=compId(path,"computedParentDefaultSpace");
             add({RigExecProviderOpKind::SpaceExpression,property,
                 program.FindValue(RigExecProviderAttributeKey(property)),
                 {program.FindValue(RigExecProviderRawKey(property)),connect(fact->second.fact),fallback}},
                 "spaceExpression:"+property.GetString());
         }
-        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeDefaultFrame"),{attrId(path,"default:space")}},
+        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeDefaultFrame"),{attrId(path,_tokens->defaultSpace)}},
             "defaultFrame:"+path.GetString());
         if(composeFrames) {
             RigExecProviderOp posed{RigExecProviderOpKind::PosedFrame,path,selfPose,
-                {attrId(path,"posed:space"),attrId(path,"posed:defaultSpace"),attrId(path,"parent:defaultSpace"),attrId(path,"parent:space"),
-                 attrId(path,"avars:unitScaleFactor"),attrId(path,"avars:tx"),attrId(path,"avars:ty"),attrId(path,"avars:tz"),
-                 attrId(path,"avars:sx"),attrId(path,"avars:sy"),attrId(path,"avars:sz"),
-                 attrId(path,"avars:rx"),attrId(path,"avars:ry"),attrId(path,"avars:rz"),attrId(path,"avars:rspin"),
-                 attrId(path,"avars:rotationOrder"),attrId(path,"avars:rotationSign")}};
+                {attrId(path,_tokens->posedSpace),attrId(path,_tokens->posedDefaultSpace),attrId(path,_tokens->parentDefaultSpace),attrId(path,_tokens->parentSpace),
+                 attrId(path,_tokens->avarsUnitScaleFactor),attrId(path,_tokens->avarsTx),attrId(path,_tokens->avarsTy),attrId(path,_tokens->avarsTz),
+                 attrId(path,_tokens->avarsSx),attrId(path,_tokens->avarsSy),attrId(path,_tokens->avarsSz),
+                 attrId(path,_tokens->avarsRx),attrId(path,_tokens->avarsRy),attrId(path,_tokens->avarsRz),attrId(path,_tokens->avarsRspin),
+                 attrId(path,_tokens->avarsRotationOrder),attrId(path,_tokens->avarsRotationSign)}};
             RigExecProviderOp avars{RigExecProviderOpKind::AvarMatrix,path,compId(path,"computeAvarMatrix"),
                 std::vector<RigExecValueId>(posed.inputs.begin()+4,posed.inputs.end())};
             avars.scaleAvars=node.fact.type=="RigExecControl" || node.fact.type=="RigExecJoint";

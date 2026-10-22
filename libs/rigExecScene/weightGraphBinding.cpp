@@ -3,8 +3,12 @@
 #include "rigExec/frameExtraction.h"
 #include <algorithm>
 #include <cstring>
+#include "pxr/base/tf/staticTokens.h"
 #include <type_traits>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (base) ((finalPhase,"final"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &text){if(error)*error=text;return false;}
 template<class T> const T *Read(const RigExecTypedValueStore &store,RigExecValueId id) {
@@ -59,7 +63,7 @@ static bool BindWeightGraph(const RigExecSceneWeightProgram &program,const RigEx
     const RigExecSceneGraphBindingContext *typedContext,RigExecWeightGraphBinding *output,std::string *error) {
     if(!output || !resolve || program.objects.size()!=program.records.size())return Fail(error,"invalid weight graph binding");
     RigExecWeightGraphBinding result;result.records=program.records;result.root=program.root;result.objects.resize(program.objects.size());
-    const TfToken base("base");
+    const TfToken &base=_tokens->base;
     auto bindRead=[&](const RigExecSceneTypedRead &read,RigExecWeightGraphRead *out) {
         if(typedContext && typedContext->effectiveRead) {
             RigExecGraphTypedRead bound;
@@ -115,7 +119,7 @@ static bool BindWeightGraph(const RigExecSceneWeightProgram &program,const RigEx
         if(object.boundsAttribute && !resolve(object.bounds.consumer,object.bounds.consumer,RigExecWeightValueRole::Raw,base,&binding.bounds,error))return false;
         binding.fieldReads.push_back(binding.axis);binding.fieldReads.push_back(binding.bounds);
         if(result.records[id].kind>=3) {
-            if(!resolve(object.path,object.path,RigExecWeightValueRole::Placement,TfToken("final"),&binding.placement,error) ||
+            if(!resolve(object.path,object.path,RigExecWeightValueRole::Placement,_tokens->finalPhase,&binding.placement,error) ||
                !resolve(object.path,object.path,RigExecWeightValueRole::BaseFrame,base,&binding.baseFrame,error))return false;
             binding.fieldReads.push_back(binding.placement);binding.packetReads.push_back(binding.baseFrame);
         }

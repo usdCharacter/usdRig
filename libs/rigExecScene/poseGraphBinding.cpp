@@ -1,7 +1,12 @@
 #include "poseGraphBinding.h"
 #include "rigExec/frameExtraction.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (base) ((finalPhase,"final"))
+    ((posedDefaultSpace,"posed:defaultSpace")) ((parentDefaultSpace,"parent:defaultSpace"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}
 void TypedInputs(const RigExecGraphTypedRead &input,std::vector<RigExecValueId> *reads) {
@@ -30,12 +35,12 @@ bool RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         if(provider.IsEmpty())return true;
         RigExecSceneGraphReadRequest request;request.source=provider;request.reader=source.path;
         request.consumer=source.target;request.domain=RigExecSceneValueDomain::ProviderSpace;
-        request.phase=TfToken("base");request.computation=computation;
+        request.phase=_tokens->base;request.computation=computation;
         if(!context.resolve(request,value,error))return false;packet.reads.push_back(*value);return true;
     };
-    const auto attribute=[&](const char *name,RigExecValueId *value) {
-        RigExecSceneGraphReadRequest request;request.source=source.target.AppendProperty(TfToken(name));
-        request.consumer=request.source;request.reader=source.path;request.phase=TfToken("base");
+    const auto attribute=[&](const TfToken &name,RigExecValueId *value) {
+        RigExecSceneGraphReadRequest request;request.source=source.target.AppendProperty(name);
+        request.consumer=request.source;request.reader=source.path;request.phase=_tokens->base;
         request.domain=RigExecSceneValueDomain::ProviderSpace;
         if(!context.resolve(request,value,error))return false;packet.reads.push_back(*value);return true;
     };
@@ -47,8 +52,8 @@ bool RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
            type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight")) {parent=path;break;}
     }
     if(!named(source.target,"computeAvarMatrix",&packet.avars) ||
-       !attribute("posed:defaultSpace",&packet.posedDefault) ||
-       !attribute("parent:defaultSpace",&packet.parentExpression) ||
+       !attribute(_tokens->posedDefaultSpace,&packet.posedDefault) ||
+       !attribute(_tokens->parentDefaultSpace,&packet.parentExpression) ||
        !(parentContext!=UINT64_MAX?(packet.parentPosed=parentContext,
             packet.reads.push_back(parentContext),true):
             named(parent,"computePointFrame",&packet.parentPosed)) ||
@@ -98,7 +103,7 @@ bool RigExecBindScenePoseInterpolator(const RigExecScenePoseInterpolatorDescript
         if(provider.IsEmpty())return true;
         RigExecSceneGraphReadRequest request;request.consumer=source.path;request.reader=source.path;
         request.source=provider;request.domain=RigExecSceneValueDomain::Pose;
-        request.phase=TfToken("final");if(rest)request.computation="computeRestFrame";
+        request.phase=_tokens->finalPhase;if(rest)request.computation="computeRestFrame";
         if(!context.resolve(request,id,error))return false;packet.reads.push_back(*id);return true;
     };
     if((packet.numeric.empty() || source.ml) && (!frame(source.driver,false,&packet.driverFinal) ||

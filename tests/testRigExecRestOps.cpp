@@ -1,6 +1,6 @@
 // Rest and default-space composition participate in the ordinary value graph.
 // These cases compare retained memo state with a fresh program, bit for bit,
-// across examples, fixtures, biped and epoch edits. That comparison verifies
+// across examples, fixtures, biped and compiled rig edits. That comparison verifies
 // invalidation; independent numeric and scalar-reference checks remain below.
 // They also require every actual rest/ladder body input and reject missing
 // producers, while allowing descriptor enumeration across domain boundaries.
@@ -183,7 +183,7 @@ LadderDrag(const RigExecBakedProgramImpl &B, bool rest, double delta,
     return true;
 }
 
-// One rig's memo tables against an independently compiled fresh original epoch.
+// One rig's memo tables against an independently compiled fresh original compiled rig.
 size_t
 CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
                  const SdfPath &rig)
@@ -217,7 +217,7 @@ CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
         const int slot = FirstDifference(want, got, &table);
         if (slot >= 0) {
             ++failures;
-            std::printf("FAIL %s %s: %s differs from the fresh epoch at "
+            std::printf("FAIL %s %s: %s differs from the fresh compiled rig at "
                         "%s\n",
                         name.c_str(), when.c_str(), table.c_str(),
                         program->GetStepGraph().paths[size_t(slot)].GetText());
@@ -252,12 +252,12 @@ CheckTablesOfRig(const std::string &name, const UsdStageRefPtr &stage,
     return compared;
 }
 
-// The ten memoized tables equal the independently compiled fresh epoch
+// The ten memoized tables equal the independently compiled fresh compiled rig
 // bit for bit, on every example and fixture rig
 // that bakes, the biped, and the tail with an animated rest, a connected
 // rest and a property chain on its rest space.
 void
-TestTheRestTablesMatchFreshEpochs(const std::string &examples)
+TestTheRestTablesMatchFreshCompiledRigs(const std::string &examples)
 {
     std::vector<std::string> files;
     for (const std::string &dir :
@@ -284,7 +284,7 @@ TestTheRestTablesMatchFreshEpochs(const std::string &examples)
         rigs += n > 0 ? 1 : 0;
         compared += n;
     }
-    // The epoch-rest stages: a ladder that recomposes every frame.
+    // The compiled rig-rest stages: a ladder that recomposes every frame.
     const SdfPath tailRig("/TailAsset/Rig");
     const SdfPath joint("/TailAsset/Rig/Joints/Seg1/Seg2");
     const std::vector<std::pair<std::string,
@@ -1108,7 +1108,7 @@ main(int argc, char **argv)
     TestTheValidatorRequiresComposeInputs(examples);
     TestTheValidatorAcceptsDomainEnumerationOrder(examples);
     TestEveryRestReaderDeclaresIt(examples);
-    TestTheRestTablesMatchFreshEpochs(examples);
+    TestTheRestTablesMatchFreshCompiledRigs(examples);
     std::printf("testRigExecRestOps: %d failure(s)\n", failures);
     return failures ? 1 : 0;
 }

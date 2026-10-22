@@ -8,6 +8,16 @@ revise transforms, properties, or geometry in a defined dependency order.
 Hydra scene indices publish evaluated data to `usdview` and other consumers.
 The root README is the build entry point; `docs/index.md` is the node catalog.
 
+## Repository skills
+
+Skills live in `skills/<skill-name>/SKILL.md`. Read the relevant skill before
+starting its workflow, and keep this list current when adding or changing skills.
+
+- [compose-character](skills/compose-character/SKILL.md): Use when composing,
+  fitting, or rebuilding a character from `asset_lib/components`, or adapting
+  an existing rig to that library. Covers component selection, character fit
+  layers, bindings, deformation attachments, assembly, and validation.
+
 ## Code map
 
 - `libs/rigExecMath`: numerical kernels. Keep math independent of stage access.
@@ -21,7 +31,7 @@ The root README is the build entry point; `docs/index.md` is the node catalog.
   into the runtime. Runtime links the archive publicly. `rigExec` and the
   scene library link it privately, so an edit here does not select every
   evaluator test. Do not add a stage or `pxr/` include here.
-- `libs/rigExecScene`: USD scene lowering, built as `librigExecScene.so`.
+- `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
   publicly; graph and math are private. `librigExec.so` does not link it.
   Imaging, bake, and the standalone adapter link it privately, so playback,
@@ -105,7 +115,7 @@ cycle handling, and native/frozen/runtime parity. See
   per-evaluator special cases. When one evaluator lacks support, add it there;
   refusing the bake so another path runs is not a fix. Refuse only genuine
   cycles, and refuse them in every evaluator.
-- Topology is fixed per epoch. Point counts, indices, skin layouts, and chunk
+- Topology is fixed per compiled rig. Point counts, indices, skin layouts, and chunk
   partitions are compiled once; reconnecting a mover to new geometry
   recompiles. Do not sample, hash, or validate topology per frame.
 - A `.rigexec` holds a static graph, its static data, and inputs with
@@ -180,12 +190,16 @@ scripts; their defaults look for a sibling dependency install.
 1. Read relevant code and current changes before editing. Preserve user work.
 2. Make the whole set of related changes, then build once. Do not alternate
    one edit, a rebuild and a test run.
-3. Rebuild only the targets you need, e.g.
+3. Before testing, and again before committing, review the whole change
+   against this file's rules: unified loop, rig semantics, no-mutex zones,
+   hidden locks, USD-free runtime, and documentation hygiene. Fix every
+   violation first; do not test or commit code that breaks a rule here.
+4. Rebuild only the targets you need, e.g.
    `cmake --build build --target testRigExecOpValues rigExecPose`.
    `bin/build_rigexec.sh` / `bin\build_rigexec.bat` configure, build
    everything, and run the whole ctest suite unless given `--no-test`; use
    them for a fresh checkout only.
-4. Run the smallest set of tests that covers the change, capped at 4 minutes
+5. Run the smallest set of tests that covers the change, capped at 4 minutes
    of wall clock. `bin/test_changed.sh <paths>` prints that set.
    `bin/test_changed.sh --run <paths>` builds the direct executables and
    runs them. The direct set is the inner loop; run the transitive set
@@ -204,11 +218,11 @@ scripts; their defaults look for a sibling dependency install.
    ccache when it is on `PATH`. `.clangd` reads that database.
    `bin/check_runtime_usd_free.sh` compiles the runtime with no `pxr`
    include path; it calls `gcc` and `g++`, so it does not run under MSVC.
-5. Use `bin/test/run_python_tests.sh` or `.bat` only for Qt-free interaction
+6. Use `bin/test/run_python_tests.sh` or `.bat` only for Qt-free interaction
    changes, and the relevant `bin/test/run_testusdview*` helper only for
    viewport changes. The `execstack` and `ikfk_opacity` helpers need ignored
    `biped_*.usda` stages and exit with "stage not found" in a fresh checkout.
-6. Report checks actually run and any unavailable dependency or graphics test.
+7. Report checks actually run and any unavailable dependency or graphics test.
 
 CI runs on Linux only: a Release build, `ctest -R '^testRigExec' -E
 'Cones_|ExampleParity'`, the USD-free runtime check, and an install check.

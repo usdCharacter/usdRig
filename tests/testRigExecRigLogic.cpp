@@ -323,7 +323,7 @@ TestCase(const Case &c)
         }
     }
 
-    // A solve setting is epoch identity: an edit recompiles and changes the
+    // A solve setting is compiled rig identity: an edit recompiles and changes the
     // weights, and evaluation never authors.
     const RigExecRigPose beforePose = evaluator.Evaluate(UsdTimeCode(3.0));
     RigExecPoseInterpolatorHandle(stage, kInterpolator).SetRadius(
@@ -536,7 +536,7 @@ TestMlMover()
         const GfVec3f want = rig.base[i] + 0.5f * (fullPoints[i] - rig.base[i]);
         CHECK((halfPoints[i] - want).GetLength() < 1e-5f);
     }
-    // A weight edit is epoch identity: it recompiles and moves the outputs.
+    // A weight edit is compiled rig identity: it recompiles and moves the outputs.
     VtFloatArray weights;
     rig.stage->GetPrimAtPath(rig.mover).GetAttribute(TfToken("rigExec:weights")).Get(&weights);
     weights[20] += 1.0f;
@@ -647,7 +647,7 @@ TestAnimatedMaps()
     CHECK(sawClamp && sawGroup);
     CheckEvaluators(evaluator, stage, "maps");
 
-    // A row edit is epoch identity; a disabled node publishes zeros.
+    // A row edit is compiled rig identity; a disabled node publishes zeros.
     stage->GetPrimAtPath(raise.GetPrimPath()).GetAttribute(TfToken("rigExec:rowCut"))
         .Set(VtFloatArray{0.25f, 1.5f, 0.0f});
     const RigExecRigPose cut = evaluator.Evaluate(UsdTimeCode(2.0));

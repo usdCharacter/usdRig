@@ -29,7 +29,7 @@
 //     memoize sampling+digest and burst prep on the bridge profiler,
 //     per-sweep-time factory cost on the scheduler profiler.
 //   * INDEX. The warm-frame index, driven directly: completions under the
-//     query generation+epoch read cached; older ones read dirty;
+//     query generation+compiled rig read cached; older ones read dirty;
 //     evictions retire only their own key; queue transitions drive
 //     warming; reset clears.
 //   * EVICT. The cache reports every drop with the key and time the index
@@ -65,8 +65,8 @@
 //     cold frame (no store consultation) records nothing, a hit records
 //     cacheHit, and a proven lookup that misses the store records
 //     cacheMiss.
-//   * EPOCH. A notice that hits the baked capture index drops the epoch's
-//     frames eagerly on the notice -- while the epoch half still names
+//   * COMPILED RIG. A notice that hits the baked capture index drops the compiled rig's
+//     frames eagerly on the notice -- while the compiled rig half still names
 //     them -- instead of leaving them for LRU; a miss leaves every entry
 //     standing for D1 reachability to decide.
 //   * BRANCHES. One case per 2.1 evaluator branch (patched / stamp-bumped
@@ -172,7 +172,7 @@ constexpr size_t kTinyPointCount = 8;
 // One skinned mesh over two animated controls: frames genuinely differ
 // instead of hashing alike (see testRigExecFrozenContext.cpp).
 // \p staticY authors AlongY's ty as a default value only (no time samples),
-// so the bake treats it as an epoch constant rather than a varying input.
+// so the bake treats it as a compiled rig constant rather than a varying input.
 UsdStageRefPtr
 MakeTinyRig(bool staticY = false)
 {
@@ -540,7 +540,7 @@ TestCacheOffMatchesCacheOn()
 }
 
 // D1: the digest must cover every source value the frame reads. A control
-// authored as a default value only is an epoch constant to the bake, not a
+// authored as a default value only is a compiled rig constant to the bake, not a
 // varying input; editing it must still move every cached frame out of
 // reach. The cache-off session is the reference.
 void
@@ -832,14 +832,14 @@ TestAnAnimatedRestRigServesWarmedHits()
     registry.Deactivate();
 }
 
-// EPOCH. A stage notice that hits the baked capture index drops the epoch's
-// cached frames eagerly on the notice -- while the epoch half still names
+// COMPILED RIG. A stage notice that hits the baked capture index drops the compiled rig's
+// cached frames eagerly on the notice -- while the compiled rig half still names
 // them -- instead of leaving them for LRU; a notice that misses the index
 // leaves every entry standing for D1 reachability to decide.
 void
-TestCaptureIndexHitDropsEpochEagerly()
+TestCaptureIndexHitDropsCompiledRigEagerly()
 {
-    std::printf("progress: TestCaptureIndexHitDropsEpochEagerly\n");
+    std::printf("progress: TestCaptureIndexHitDropsCompiledRigEagerly\n");
     std::fflush(stdout);
     SetEnv("RIGEXEC_FRAME_CACHE", "on");
     SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
@@ -852,7 +852,7 @@ TestCaptureIndexHitDropsEpochEagerly()
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
 
     // Hit: a default-value edit on a captured avar. The value patch takes
-    // the scoped path (no epoch move, no eviction): the old frames stand
+    // the scoped path (no compiled rig move, no eviction): the old frames stand
     // unreachable under the new digest plus the fresh playhead memo the
     // notice path re-evaluated.
     {
@@ -1090,7 +1090,7 @@ TestBackgroundCompletionFence()
     CHECK(cache->Lookup(key, &served));
     CHECK(served.valid);
     RigExecFrameCacheKey indexed;
-    CHECK(index.FindCachedKey(rig, 3.0, generation, key.epochDigest, &indexed));
+    CHECK(index.FindCachedKey(rig, 3.0, generation, key.compiledRigSignature, &indexed));
     CHECK(indexed == key);
 
     // An edit lands: the same token no longer publishes.
@@ -1109,7 +1109,7 @@ TestBackgroundCompletionFence()
         cache, stale, UsdTimeCode(4.0), pose, fresh, &scheduler, rig,
         RigExecWarmFenceToken(0), nullptr, 0, nullptr, &index));
     CHECK(cache->Lookup(stale, &served));
-    CHECK(index.FindCachedKey(rig, 4.0, fresh, stale.epochDigest, &indexed));
+    CHECK(index.FindCachedKey(rig, 4.0, fresh, stale.compiledRigSignature, &indexed));
     CHECK(indexed == stale);
 
     // Invalid poses and null caches never publish, with or without a fence.
@@ -1129,7 +1129,7 @@ TestBackgroundCompletionFence()
         cache, unfenced, UsdTimeCode(6.0), pose, fresh,
         nullptr, rig, RigExecWarmFenceToken(0), nullptr, 0, nullptr, &index));
     CHECK(cache->Lookup(unfenced, &served));
-    CHECK(index.FindCachedKey(rig, 6.0, fresh, unfenced.epochDigest, &indexed));
+    CHECK(index.FindCachedKey(rig, 6.0, fresh, unfenced.compiledRigSignature, &indexed));
     CHECK(indexed == unfenced);
 
     // A rejected insertion must not make the index advertise a cached frame.
@@ -1591,7 +1591,7 @@ TestProductionTriggerPathEnqueuesAndFences()
 
 // A rig the program cannot express: one provider's posed:space is
 // CONNECTED, so its value is whatever an arbitrary exec computation says
-// from the middle of the pose walk, and there is no epoch-constant summary
+// from the middle of the pose walk, and there is no compiled rig constant summary
 // of that to compile (see testRigExecBakedMode.cpp, whose in-memory fixture
 // this is, animated). The joint's connection reads the control's posed:space
 // attribute -- not its computed frame, and providers read no xformOp -- so
@@ -1623,7 +1623,7 @@ MakeConnectedSpaceRig()
     // The connection is to the control's own posed:space, which
     // is the identity the joint would have composed anyway -- so the rig
     // still evaluates to a comparable pose, and the only thing the
-    // connection changes is that a value which was an epoch constant is now
+    // connection changes is that a value which was a compiled rig constant is now
     // an exec answer.
     joint.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .AddConnection(root.GetPath().AppendProperty(TfToken("posed:space")));
@@ -2306,7 +2306,7 @@ TestCachedServeSkipsLookupSample()
 }
 
 // INDEX. The warm-frame index, driven directly: completions under the
-// query generation+epoch read cached; older generations or epochs read
+// query generation+compiled rig read cached; older generations or compiled rig versions read
 // dirty; evictions retire only their own key; queue transitions drive
 // warming; reset clears.
 void
@@ -2393,7 +2393,7 @@ TestWarmFrameIndexStates()
     CHECK(index.State(rig, 2.0, 3, 7) == RigExecWarmFrameState::Uncached);
 }
 
-// EVICT. The cache reports every drop -- single, epoch, cap, clear -- with
+// EVICT. The cache reports every drop -- single, compiled rig, cap, clear -- with
 // the key and time the index retires on.
 void
 TestFrameCacheEvictionCallbackReportsDrops()
@@ -2406,12 +2406,12 @@ TestFrameCacheEvictionCallbackReportsDrops()
         [&reported](const std::vector<RigExecFrameCacheEviction> &evicted) {
             reported.insert(reported.end(), evicted.begin(), evicted.end());
         });
-    const auto publish = [&cache](uint64_t epoch, uint64_t control,
+    const auto publish = [&cache](uint64_t compiledRig, uint64_t control,
                                   double time) {
         RigExecRigPose pose;
         pose.valid = true;
         pose.time = UsdTimeCode(time);
-        const RigExecFrameCacheKey key{epoch, control};
+        const RigExecFrameCacheKey key{compiledRig, control};
         CHECK(cache.Publish(key, UsdTimeCode(time), pose));
     };
     publish(7, 1, 1.0);
@@ -2424,7 +2424,7 @@ TestFrameCacheEvictionCallbackReportsDrops()
         CHECK(reported[0].key == (RigExecFrameCacheKey{7, 1}));
         CHECK(reported[0].time == UsdTimeCode(1.0));
     }
-    CHECK(cache.EvictEpoch(7) == 1);
+    CHECK(cache.EvictCompiledRig(7) == 1);
     CHECK(reported.size() == 2);
     if (reported.size() == 2) {
         CHECK(reported[1].key == (RigExecFrameCacheKey{7, 2}));
@@ -2432,7 +2432,7 @@ TestFrameCacheEvictionCallbackReportsDrops()
     }
     // A miss reports nothing.
     CHECK(!cache.Evict((RigExecFrameCacheKey{7, 1})));
-    CHECK(cache.EvictEpoch(9) == 0);
+    CHECK(cache.EvictCompiledRig(9) == 0);
     CHECK(reported.size() == 2);
     // The cap pass and Clear report the rest.
     cache.SetByteCap(0);
@@ -2536,7 +2536,7 @@ TestFrameStatesScriptedSequence()
 }
 
 // STATES. An eviction retires the index record: after the capture index
-// drops the old epoch, the retired frame reads uncached (not dirty) while
+// drops the old compiled rig, the retired frame reads uncached (not dirty) while
 // the fresh playhead memo stands cached.
 void
 TestFrameStatesEvictionRetires()
@@ -2907,7 +2907,7 @@ TestWarmFrameStreaks()
 }
 
 // Progress is bounded to a request and never grants a cache hit. Eviction,
-// failure, late request tokens, epoch changes and cancellation are distinct.
+// failure, late request tokens, compiled rig changes and cancellation are distinct.
 void TestWarmRangeProgress()
 {
     RigExecWarmFrameIndex index;
@@ -2925,7 +2925,7 @@ void TestWarmRangeProgress()
     CHECK(index.IsVisitable(rig, 1.0, 3, 7)); // explicit foreground miss
     CHECK(!index.IsCursorVisitable(rig, 1.0, 3, 7)); // finite range progressed
     CHECK(index.IsCursorVisitable(rig, 2.0, 3, 7)); // never published
-    CHECK(index.IsCursorVisitable(rig, 1.0, 3, 8)); // different epoch
+    CHECK(index.IsCursorVisitable(rig, 1.0, 3, 8)); // different compiled rig
     index.InvalidateRequest(rig);
     index.NoteRequestPublished(rig, 1.0, key, 3, first); // late fenced job
     CHECK(index.IsCursorVisitable(rig, 1.0, 3, 7));
@@ -3242,7 +3242,7 @@ TestStackFullRangeCursorWarmsEveryFrame(const std::string &examplesDir)
 // captured avar, a keyframe nudge on a varying input, and a structural
 // removal. Each pins the recorded disposition plus the registry behavior
 // the branch drives: scoped (no generation bump, affected frames dirty,
-// playhead re-memoized) for patch/stamp, global (bump plus epoch eviction)
+// playhead re-memoized) for patch/stamp, global (bump plus compiled rig eviction)
 // for stale.
 void
 TestEvaluatorBranchesDriveRetirement()
@@ -3393,7 +3393,7 @@ TestEvaluatorBranchesDriveRetirement()
         registry.Deactivate();
     }
 
-    // Stale: the program rebuilds, the epoch moves, and epoch-half eviction
+    // Stale: the program rebuilds, the compiled rig moves, and compiled rig eviction
     // plus generation cancel stand.
     {
         std::vector<std::string> errors;
@@ -3504,7 +3504,7 @@ TestCarryOverRekeysCleanEntries()
     CHECK(bridge->GetEvaluator().GetLastNoticeDisposition() ==
           RigExecNoticeDisposition::Patched);
     CHECK(registry.CurrentFrameGeneration(rig) == gen);
-    // Carried: new key under the same epoch, old key evicted, proof
+    // Carried: new key under the same compiled rig, old key evicted, proof
     // re-pointed at the new digest.
     RigExecFrameCacheKey newKey{0, 0};
     foundKey = false;
@@ -3515,7 +3515,7 @@ TestCarryOverRekeysCleanEntries()
         }
     }
     CHECK(foundKey);
-    CHECK(newKey.epochDigest == oldKey.epochDigest);
+    CHECK(newKey.compiledRigSignature == oldKey.compiledRigSignature);
     CHECK(newKey.controlDigest != oldKey.controlDigest);
     RigExecRigPose evicted;
     CHECK(!cache->Lookup(oldKey, &evicted));
@@ -4340,7 +4340,7 @@ TestWrinkleParameterEditsRetireAndRewarm()
                 CHECK(states.size() == 2);
                 for (const auto state : states) {
                     // First opinions on uniform inputs may rebuild the
-                    // epoch and clear its entries instead of retaining rows.
+                    // compiled rig and clear its entries instead of retaining rows.
                     CHECK(state == RigExecWarmFrameState::Dirty ||
                           (authored == 0 && !parameter.varying &&
                            state == RigExecWarmFrameState::Uncached));
@@ -4370,7 +4370,7 @@ TestWrinkleParameterEditsRetireAndRewarm()
 }
 
 // DRAG. A drag keeps the interactive bypass; building warm work under its
-// standing overrides admits the override identities to the epoch index
+// standing overrides admits the override identities to the compiled rig index
 // (the MapControl production caller); on release the commit burst
 // re-warms what the committed values retired.
 void
@@ -4729,7 +4729,7 @@ AuthorWeightSamples(const UsdStageRefPtr &stage)
 }
 
 // MakeStaticTinyRig with rigExec:jointWeights time-sampled (and a default,
-// at which compile validates the layout): the layout is not epoch state,
+// at which compile validates the layout): the layout is not compiled rig state,
 // and the weights are all that moves.
 UsdStageRefPtr
 MakeAnimatedWeightsRig()
@@ -4824,7 +4824,7 @@ TestTimeSampledSkinWeightsKeyFramesApart()
     RigExecBurstSampleCache burst;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, none,
-        RigExecFrameCacheEpochDigest(evaluator), &burst, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &burst, &error));
     std::vector<uint64_t> digests;
     for (double frame : {1.0, 2.0, 3.0}) {
         RigExecFrameInputs plain, burstInputs;
@@ -4981,11 +4981,11 @@ TestInSessionWeightSamplesKeyFramesApart()
 }  // namespace
 
 
-// The live sampler's chain bindings are bound once per binding epoch and kept
+// The live sampler's chain bindings are bound once per compiled rig and kept
 // current by stage notices rather than re-verified on every sample (which on
 // the full biped stack cost 60 ms per call, twice per viewport release). The
 // contract that replaces the check: a chain mover's constant edited
-// mid-epoch -- which moves no epoch digest -- rebinds them; an edit to a
+// mid-compiled rig -- which moves no compiled rig signature -- rebinds them; an edit to a
 // control that no chain reads does not; and the trusted sample always
 // digests exactly as the self-binding sampler's. Since the frozen worker runs
 // the chains itself, the bindings carry no value into a sample: bindings
@@ -5056,17 +5056,17 @@ TestLiveChainBindingsFollowNotices()
     bridge.AcquireChainBindings(&now);
     CHECK(now == first);
 
-    // The chain mover's folded constant, edited mid-epoch: same binding
-    // epoch, new bindings, and the trusted sample is still exact.
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    // The chain mover's folded constant, edited mid-compiled rig: same binding
+    // compiled rig, new bindings, and the trusted sample is still exact.
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     stage->GetAttributeAtPath(
             SdfPath("/Asset/Rig/Movers/TxGain.inputs:defaultWeight"))
         .Set(0.5f);
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     bound = bridge.AcquireChainBindings(&now);
     CHECK(bound != nullptr && now != first);
     CHECK(bound && digestsAgree(*bound));
-    // The pre-edit bindings sample the same vector: they are the epoch's
+    // The pre-edit bindings sample the same vector: they are the compiled rig's
     // currency check only, and the sampled values (head leaves included)
     // are read off the stage at the job's time, never through them.
     CHECK(digestsAgree(before));
@@ -5106,7 +5106,7 @@ main(int argc, char **argv)
     TestStaticControlEditInvalidatesCachedFrames();
     TestARestEditIsNotServedStale();
     TestAnAnimatedRestRigServesWarmedHits();
-    TestCaptureIndexHitDropsEpochEagerly();
+    TestCaptureIndexHitDropsCompiledRigEagerly();
     TestOverlayChangeClearsCache();
     TestPlaybackBypassesCache(scratch);
     TestEditBumpsGenerationAndDropsStaleWork();

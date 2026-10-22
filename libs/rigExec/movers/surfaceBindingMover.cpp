@@ -335,30 +335,30 @@ bool Apply(const VtValue &data,std::vector<GfVec3f> *output) {
     if(!good.load())return false;
     *output=std::move(candidate);return true;
 }
-// .rigexec playback: the epoch is a format tag and the bound surface's
+// .rigexec playback: the compiled rig is a format tag and the bound surface's
 // points path, and the frame bytes are empty. The kernel assembles and
 // deforms through Payload and Apply from the declared inputs, the surface
 // points playback evaluated at the binding's phase, and its provider
 // values, so a posed playback follows the surface and the frames.
-constexpr char kEpochTag[]={'R','S','B','1'};
-bool EncodeEpoch(const RigExecRevisionBinding &binding,std::vector<uint8_t> *epoch) {
-    epoch->assign(kEpochTag,kEpochTag+sizeof(kEpochTag));
+constexpr char kCompiledDataTag[]={'R','S','B','1'};
+bool EncodeCompiledData(const RigExecRevisionBinding &binding,std::vector<uint8_t> *compiledRig) {
+    compiledRig->assign(kCompiledDataTag,kCompiledDataTag+sizeof(kCompiledDataTag));
     const std::string surface=binding.surfacePoints.IsEmpty()?std::string():binding.surfacePoints.GetString();
-    epoch->insert(epoch->end(),surface.begin(),surface.end());
+    compiledRig->insert(compiledRig->end(),surface.begin(),surface.end());
     return true;
 }
 bool Encode(const VtValue &,const RigExecRevisionBinding &binding,
-            std::vector<uint8_t> *epoch,std::vector<uint8_t> *frame) {
-    frame->clear();return EncodeEpoch(binding,epoch);
+            std::vector<uint8_t> *compiledRig,std::vector<uint8_t> *frame) {
+    frame->clear();return EncodeCompiledData(binding,compiledRig);
 }
 // The prepared state: the bound surface's points path.
-std::shared_ptr<const void> Prepare(const uint8_t *epoch,size_t size,std::string *error) {
-    if(size<sizeof(kEpochTag) || std::memcmp(epoch,kEpochTag,sizeof(kEpochTag))!=0) {
-        if(error)*error="not a surface binding epoch";
+std::shared_ptr<const void> Prepare(const uint8_t *compiledRig,size_t size,std::string *error) {
+    if(size<sizeof(kCompiledDataTag) || std::memcmp(compiledRig,kCompiledDataTag,sizeof(kCompiledDataTag))!=0) {
+        if(error)*error="not a surface compiled rig";
         return nullptr;
     }
-    return std::make_shared<const std::string>(reinterpret_cast<const char *>(epoch)+sizeof(kEpochTag),
-                                               size-sizeof(kEpochTag));
+    return std::make_shared<const std::string>(reinterpret_cast<const char *>(compiledRig)+sizeof(kCompiledDataTag),
+                                               size-sizeof(kCompiledDataTag));
 }
 bool Play(const void *state,const uint8_t *,size_t,const RigExecExternalPhasedPoints *phased,size_t phasedCount,
           const RigExecExternalInputValue *inputs,size_t inputCount,
@@ -402,7 +402,7 @@ RigExecMoverHandler Handler() {
     h.singleTarget=true;h.bind=&Bind;h.validate=&Validate;
     h.declareExternalInputs=&DeclareInputs;h.compileScene=&CompileScene;
     h.assembleExternal=&Assemble;h.applyExternal=&Apply;
-    h.encodeExternalEpoch=&EncodeEpoch;h.encodeExternal=&Encode;
+    h.encodeExternalCompiledData=&EncodeCompiledData;h.encodeExternal=&Encode;
     h.runtimeKernel.prepare=&Prepare;h.runtimeKernel.applyWithProviders=&Play;
     h.frameRelationships={"rigExec:frames"};h.transformRelationship="rigExec:frames";h.hasScalarOracle=false;
     return h;

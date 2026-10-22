@@ -1,0 +1,637 @@
+{
+  "version": 1,
+  "component": "head",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_Neck": {
+      "prim": "/Component/Control_Neck",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Chest",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Head": {
+      "prim": "/Component/Control_Head",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Neck",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_CheekR": {
+      "prim": "/Component/Control_CheekR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_EarR": {
+      "prim": "/Component/Control_EarR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowR": {
+      "prim": "/Component/Control_BrowR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowInnerR": {
+      "prim": "/Component/Control_BrowInnerR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_BrowR",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowOuterR": {
+      "prim": "/Component/Control_BrowOuterR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_BrowR",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_CheekL": {
+      "prim": "/Component/Control_CheekL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_EarL": {
+      "prim": "/Component/Control_EarL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowL": {
+      "prim": "/Component/Control_BrowL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowInnerL": {
+      "prim": "/Component/Control_BrowInnerL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_BrowL",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_BrowOuterL": {
+      "prim": "/Component/Control_BrowOuterL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_BrowL",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Nose": {
+      "prim": "/Component/Control_Nose",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_LookAt": {
+      "prim": "/Component/Control_LookAt",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Head",
+      "relationships": {},
+      "connections": {}
+    }
+  },
+  "templates": {
+    "Weight": {
+      "prim": "/Component/Weight",
+      "type": "RigExecStaticWeight",
+      "fit": [
+        {
+          "name": "rigExec:indices",
+          "type": "int[]"
+        },
+        {
+          "name": "rigExec:values",
+          "type": "float[]"
+        }
+      ],
+      "relationships": [
+        "rigExec:weightTarget"
+      ]
+    },
+    "Deform_Neck_Weighted": {
+      "prim": "/Component/Deform_Neck_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Head_Weighted": {
+      "prim": "/Component/Deform_Head_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_CheekR_Weighted": {
+      "prim": "/Component/Deform_CheekR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_CheekL_Weighted": {
+      "prim": "/Component/Deform_CheekL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Nose_Weighted": {
+      "prim": "/Component/Deform_Nose_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowR_Weighted": {
+      "prim": "/Component/Deform_BrowR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowInnerR_Weighted": {
+      "prim": "/Component/Deform_BrowInnerR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowOuterR_Weighted": {
+      "prim": "/Component/Deform_BrowOuterR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowL_Weighted": {
+      "prim": "/Component/Deform_BrowL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowInnerL_Weighted": {
+      "prim": "/Component/Deform_BrowInnerL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_BrowOuterL_Weighted": {
+      "prim": "/Component/Deform_BrowOuterL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_EarR_Weighted": {
+      "prim": "/Component/Deform_EarR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_EarL_Weighted": {
+      "prim": "/Component/Deform_EarL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Head_Absolute": {
+      "prim": "/Component/Deform_Head_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    }
+  },
+  "ports": {
+    "Chest": {
+      "description": "External Chest prim; provide an absolute prim path."
+    }
+  }
+}

@@ -2,7 +2,7 @@
 #include "rigExecScene/weightGraphBinding.h"
 #include "rigExecScene/sceneTypedReads.h"
 #include "rigExecScene/sceneGraphTypedRead.h"
-#include "rigExecScene/weightSceneLowering.h"
+#include "rigExecScene/weightSceneTranslation.h"
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -289,7 +289,7 @@ void TestCompositionUsesCommonCycleReporter() {
     relation(a,"rigExec:baseWeight",b);relation(b,"rigExec:baseWeight",a);
     relation(a,"rigExec:weightTarget",points);relation(b,"rigExec:weightTarget",points);
     RigExecSceneWeightProgram program;std::string error;
-    Check(RigExecLowerSceneWeight(scene,a,&program,&error),"capture rejected a cycle before common graph compilation");
+    Check(RigExecTranslateSceneWeight(scene,a,&program,&error),"capture rejected a cycle before common graph compilation");
     Check(program.records.size()==2 && program.records[0].base==1 && program.records[1].base==0,"capture lost cyclic producer IDs");
     std::vector<RigExecOpDescriptor> ops(3);
     for(size_t i=0;i<2;++i){ops[i].key=program.records[i].name;ops[i].writes={i};ops[i].reads={RigExecValueId(program.records[i].base)};}
@@ -325,7 +325,7 @@ void TestVolumeEnvelopeTargetDomains() {
         };
         relation("rigExec:sampleSource",geometry);relation("rigExec:weightTarget",target);
         RigExecSceneWeightProgram program;std::string error;
-        Check(RigExecLowerSceneWeight(scene,weight,&program,&error),"volume envelope capture refused target domain");
+        Check(RigExecTranslateSceneWeight(scene,weight,&program,&error),"volume envelope capture refused target domain");
         Check(program.objects[0].points[0].pointArrays==std::vector<char>({1}) &&
             program.objects[0].points[1].pointArrays==std::vector<char>({0}),"volume target raw type fact lost");
         RigExecSceneGraphBindingContext context;

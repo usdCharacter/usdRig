@@ -242,7 +242,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         // RESYNC (the property appearing, disappearing or being retargeted,
         // which also invalidates any retained query) finds them, and not in
         // `rebuild`, which is for values the program captured -- except the
-        // topology among them, which is epoch state (below).
+        // topology among them, which is compiled rig state (below).
         // Named unconditionally rather than per operation: the binding
         // carries exactly the paths the operation resolved, so an empty one
         // is an operation that does not read it and an authored one is a
@@ -345,7 +345,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                         // what is named here is the shape prim, so a resync
                         // under it rebuilds. Its offsets and point indices
                         // are topology, so an edit to either rebuilds too
-                        // (the epoch reads below).
+                        // (the compiled rig reads below).
                         B.prims.insert(binding.blendShape.GetPrimPath());
                     }
                     channel.samples.push_back(std::move(sample));
@@ -386,7 +386,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             const auto solver = B.solverIndex.find(r.binding.driverFrames);
             if (solver == B.solverIndex.end()) {
                 // Compile admitted this revision against its aggregate
-                // batch. A miss here is a lowering correspondence failure,
+                // batch. A miss here is a translation correspondence failure,
                 // not the optional-driver admission policy.
                 refuse("admitted driver frames solver is absent from the native table",
                        r.binding.driverFrames);
@@ -406,7 +406,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             RigExecBakedBakeWeightObject(ctx, r.binding.weightObject);
         if (out.weightObject >= 0) {
             // WHAT the published field says it weights, decided here because
-            // it is a relationship read and a relationship is epoch state.
+            // it is a relationship read and a relationship is compiled rig state.
             // The condition is the dynamic path's, verbatim: exactly one
             // declared target, and it is this mover, means the field weights
             // the OPERATION and carries one element; anything else weights
@@ -467,14 +467,14 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                 }
             }
         }
-        // Topology is epoch state: the reads the role table marks
+        // Topology is compiled rig state: the reads the role table marks
         // (RigExecRevisionLeafRoleIsTopology) and a sparse sample's offsets
         // and point indices. An authored edit to one -- a value, a time
-        // sample, a connection -- rebuilds the program into a new epoch
+        // sample, a connection -- rebuilds the program into a new compiled rig
         // instead of reaching the next generation through a re-read, so
         // inside one program such a read moves only with the time or an
         // override (RigExecBakedSamplePathLeaves).
-        const auto epoch = [&](int k) {
+        const auto compiledRig = [&](int k) {
             if (k < 0 || size_t(k) >= decl.keys.size() ||
                 !decl.keys[size_t(k)].path.IsPropertyPath()) {
                 return;
@@ -487,34 +487,34 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         for (size_t role = 0; role < decl.roles.size(); ++role) {
             if (RigExecRevisionLeafRoleIsTopology(
                     RigExecRevisionLeafRole(role))) {
-                epoch(decl.roles[role]);
+                compiledRig(decl.roles[role]);
             }
         }
         for (const auto &channel : out.blendChannels) {
             for (const auto &sample : channel.samples) {
-                epoch(sample.offsetsLeaf);
-                epoch(sample.indicesLeaf);
+                compiledRig(sample.offsetsLeaf);
+                compiledRig(sample.indicesLeaf);
             }
         }
         out.kernelRecord.op=out.op;
         out.kernelRecord.binding=out.binding;
         out.kernelRecord.leaves=decl;
-        // Detached lowering consumes the already captured scene facts. USD
+        // Detached translation consumes the already captured scene facts. USD
         // handles above remain confined to the native sampling adapter.
         if(B.sceneDescriptors) {
             std::string error;
-            if(!RigExecDispatchLowerSceneGeometry(*B.sceneDescriptors,out.moverPath,out.target,
+            if(!RigExecDispatchTranslateSceneGeometry(*B.sceneDescriptors,out.moverPath,out.target,
                     &out.sceneGeometry,&error,&out.kernelRecord))
                 refuse(error,out.moverPath);
         }
         return out;
     };
     // A revision's leaves bound, its sparse samples' offsets and point
-    // indices marked epoch keys beside the role table's.
+    // indices marked compiled rig keys beside the role table's.
     const auto bindRevisionLeaves =
         [&](RigExecBakedProgramImpl::GeomRevision *revision) {
             RigExecBakedBindPathLeaves(B.stage, &revision->leaves);
-            std::vector<char> &marks = revision->leaves.epoch;
+            std::vector<char> &marks = revision->leaves.compiledRig;
             for (const auto &channel : revision->blendChannels) {
                 for (const auto &sample : channel.samples) {
                     for (const int k : {sample.offsetsLeaf, sample.indicesLeaf}) {
@@ -929,9 +929,9 @@ namespace {
 
 /// Cuts \p revision at Build, from the layout the stage authors.
 ///
-/// Only a SKIN revision whose layout the epoch fixed is cut into more than
+/// Only a SKIN revision whose layout the compiled rig fixed is cut into more than
 /// one chunk. Two reasons, and they are the same reason twice: a layout that
-/// can move within the epoch is one whose keys a Build-time cut cannot
+/// can move within the compiled rig is one whose keys a Build-time cut cannot
 /// promise anything about, and a mover with such a layout already re-reads
 /// and re-validates every element of it once per frame, which is far more
 /// than a partition would save. Everything else -- every other operation, and
@@ -955,7 +955,7 @@ PartitionAtBuild(const RigExecBakedProgramImpl &B,
     }
     // Read directly, at Default: Build holds no layout handle yet. Fixed
     // means the arrays do not vary in time, so the default-time read IS the
-    // epoch's. A handle whose arrays disagree with it (an override standing
+    // compiled rig's. A handle whose arrays disagree with it (an override standing
     // on the indices at Build) is never adopted, and the revision runs whole
     // (RigExecBakedAdoptPartition).
     VtIntArray indices;
@@ -1388,7 +1388,7 @@ ClassifyRevision(const RoleReads &reads,
                                              : GeomRole::Whole;
     }
     case RigExecRevisionOp::Skin: {
-        // The keys of a Range skin rest on an epoch-fixed layout; without
+        // The keys of a Range skin rest on a compiled rig layout; without
         // one the method decides nothing and nothing is pinned.
         VtIntArray indices;
         int elementSize = 1;
@@ -1586,8 +1586,8 @@ GateRevision(const RoleReads &reads,
 /// chunks. A chain is range-pipelined when chunking would split
 /// it, it holds two or more groups and one of its revisions takes the Range
 /// role; every other chain keeps its Legacy chunks. The skinning methods and
-/// delta spaces of an eligible chain are epoch keys: an authored edit to one
-/// rebuilds, so only an override or upstream value flips a role in-epoch.
+/// delta spaces of an eligible chain are compiled rig keys: an authored edit to one
+/// rebuilds, so only an override or upstream value flips a role within the compiled rig.
 void
 AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                  RigExecBakedProgramImpl::GeomChain *chain, size_t points)
@@ -2855,7 +2855,7 @@ RevisionValues(RigExecBakedProgramImpl &B,
         values.driverFrames =
             &B.aggregates[size_t(revision->driverFramesSolver)];
     }
-    // Epoch-fixed layouts were adopted in the PROLOGUE from the SkinTopology
+    // Compiled rig layouts were adopted in the PROLOGUE from the SkinTopology
     // op, which builds them by the dynamic cache's own rules
     // (RigExecBuildSkinTopology) -- so the two paths cannot hold different
     // arrays, and no step body reads one off the stage.
@@ -3221,7 +3221,7 @@ ResolveEnvelope(RigExecBakedProgramImpl::GeomRevision *revision, size_t count)
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
-/// carries -- a weight-paint edit the epoch let through, an interactive
+/// carries -- a weight-paint edit the compiled rig let through, an interactive
 /// override on the indices, a cache that refused the mover after all. The
 /// keys cannot be trusted, so the chunks stand down and the one step that
 /// holds both the folded table and the preceding points runs the revision
@@ -3433,7 +3433,7 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     const bool skin = revision->op == RigExecRevisionOp::Skin;
     RigExecSkinTransformsView view;
     if (skin) {
-        // Range skins rest on an epoch-fixed layout (a NoLayoutOverride pin),
+        // Range skins rest on a compiled rig layout (a NoLayoutOverride pin),
         // so the keys describe the vertices; a stale partition is a pin hole
         // and refuses rather than skinning against identities.
         if (revision->partitionStale || g >= revision->chunks.size()) {
@@ -3964,11 +3964,11 @@ RigExecBakedSkipGeometryStep(RigExecBakedProgramImpl *program,
 
 namespace {
 
-// A GPU chain's revisions as the lowering reads them: the packets this
+// A GPU chain's revisions as the translation reads them: the packets this
 // generation assembled, the folded skin tables, the unsummed channels and
 // each fuse's decision.
 void
-LowerGpuChain(const RigExecBakedProgramImpl &B,
+TranslateGpuChain(const RigExecBakedProgramImpl &B,
               RigExecBakedProgramImpl::GeomChain *chain)
 {
     std::vector<RigExecGpuRevisionInput> inputs;
@@ -3994,7 +3994,7 @@ LowerGpuChain(const RigExecBakedProgramImpl &B,
         }
         inputs.push_back(in);
     }
-    chain->gpuLowered = chain->gpuLowering.Lower(
+    chain->gpuTranslated = chain->gpuTranslation.Translate(
         inputs, chain->lastBase.size(), &chain->gpuFrame);
     chain->gpuPending = true;
 }
@@ -4035,9 +4035,9 @@ RunGpuChainOnCpu(RigExecBakedProgramImpl &B,
     }
 }
 
-// The shader-mode boundary: each lowered chain publishes its program in
+// The shader-mode boundary: each translated chain publishes its program in
 // place of its points, and its derived extents are measured from the
-// extent sample. A chain that did not lower runs its CPU kernels and
+// extent sample. A chain that did not translate runs its CPU kernels and
 // publishes points as always.
 void
 ResolveShaderChains(RigExecBakedProgramImpl &B)
@@ -4048,7 +4048,7 @@ ResolveShaderChains(RigExecBakedProgramImpl &B)
         if (!chain.gpu || !chain.gpuPending) continue;
         chain.gpuPending = false;
         if (!chain.haveBase) continue;
-        if (!chain.gpuLowered || !chain.gpuFrame.layout) {
+        if (!chain.gpuTranslated || !chain.gpuFrame.layout) {
             RunGpuChainOnCpu(B, &chain, &points);
             chain.spare.clear();
             chain.spare.resize(points.size(), [&points](GfVec3f *out, GfVec3f *end) {
@@ -4455,11 +4455,11 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
         }
         B.gpuDerivedIndexed = true;
     }
-    // The chains a fuse touched this run, lowered from their revisions'
+    // The chains a fuse touched this run, translated from their revisions'
     // persisted packets here rather than by ChainStatus: whether a run
     // reaches ChainStatus depends on the history its skips branch from, a
     // frozen clone's included. Side by side, except on a frozen worker.
-    std::vector<RigExecBakedProgramImpl::GeomChain *> lower;
+    std::vector<RigExecBakedProgramImpl::GeomChain *> translate;
     for (auto &chain : B.chains) {
         if (!chain.gpu) continue;
         for (auto &revision : chain.revisions) {
@@ -4467,21 +4467,21 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
             revision.gpuTouched = false;
         }
         if (chain.gpuPending && chain.haveBase) {
-            lower.push_back(&chain);
+            translate.push_back(&chain);
         }
     }
-    const auto lowerRange = [&B, &lower](size_t begin, size_t end) {
-        for (size_t k = begin; k < end; ++k) LowerGpuChain(B, lower[k]);
+    const auto translateRange = [&B, &translate](size_t begin, size_t end) {
+        for (size_t k = begin; k < end; ++k) TranslateGpuChain(B, translate[k]);
     };
-    if (lower.size() > 1 && RigExecParallelEvaluationEnabled() &&
+    if (translate.size() > 1 && RigExecParallelEvaluationEnabled() &&
         !RigExecFrozenSerialActive()) {
-        WorkParallelForN(lower.size(), lowerRange, 1);
+        WorkParallelForN(translate.size(), translateRange, 1);
     } else {
-        lowerRange(0, lower.size());
+        translateRange(0, translate.size());
     }
     if (B.gpuDeformMode == RigExecGpuDeformMode::Shader) {
         ResolveShaderChains(B);
-        RekeyGpuChains(B, lower);
+        RekeyGpuChains(B, translate);
         return;
     }
     if (B.gpuDeformMode != RigExecGpuDeformMode::Readback) {
@@ -4495,12 +4495,12 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
         chain.gpuPending = false;
         if (!chain.haveBase) continue;
         const bool unchanged =
-            chain.gpuLowered && chain.haveResult && chain.gpuFrame.layout &&
+            chain.gpuTranslated && chain.haveResult && chain.gpuFrame.layout &&
             chain.gpuFrame.layout->serial == chain.gpuLastSerial &&
             chain.gpuLastBaseVersion == chain.baseVersion &&
             chain.gpuFrame.frame == chain.gpuLastFrame;
         if (unchanged) continue;
-        if (!chain.gpuLowered) {
+        if (!chain.gpuTranslated) {
             cpu.push_back(c);
             continue;
         }
@@ -4574,7 +4574,7 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
         runDerived(0, derived.size());
     }
     B.gpuBoundary = false;
-    RekeyGpuChains(B, lower);
+    RekeyGpuChains(B, translate);
     static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
     if (stats) {
         const auto t2 = std::chrono::steady_clock::now();
@@ -4584,7 +4584,7 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
             std::chrono::duration<double, std::milli>(t2 - t1).count());
         for (const size_t c : device)
             std::fprintf(stderr, "GPUSTATS chain %s builds %zu points %zu ops %zu staticF %zu\n",
-                B.chains[c].target.GetText(), B.chains[c].gpuLowering.LayoutBuilds(),
+                B.chains[c].target.GetText(), B.chains[c].gpuTranslation.LayoutBuilds(),
                 B.chains[c].lastBase.size(), B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->OpCount() : 0,
                 B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->staticF.size() : 0);
         for (size_t j = 0; j < device.size(); ++j)
@@ -4725,7 +4725,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         }
         step->counters.chainsBuilt = 1;
         if (chain.gpu) {
-            chain.gpuPending = true;  // lowered at the boundary
+            chain.gpuPending = true;  // translated at the boundary
             return;
         }
         const size_t last = chain.revisions.size();
@@ -5293,7 +5293,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             if (!revision.gpuApplies && revision.status.AllowsApply()) {
                 revision.resultStatus = _tokens->moverFailed;
             }
-            // The boundary lowers the chain whenever any of its fuses ran.
+            // The boundary translates the chain whenever any of its fuses ran.
             ++revision.doneVersion;
             revision.gpuTouched = true;
             revision.lastStatus = revision.status;
@@ -5726,13 +5726,13 @@ RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
         leaves->varying[k] = varying ? 1 : 0;
         leaves->values.push_back(key.fallback);
     }
-    leaves->epoch.assign(n, 0);
+    leaves->compiledRig.assign(n, 0);
     leaves->overrideReached.assign(n, 0);
     for (size_t role = 0; role < leaves->decl.roles.size(); ++role) {
         const int k = leaves->decl.roles[role];
         if (k >= 0 && size_t(k) < n &&
             RigExecRevisionLeafRoleIsTopology(RigExecRevisionLeafRole(role))) {
-            leaves->epoch[size_t(k)] = 1;
+            leaves->compiledRig[size_t(k)] = 1;
         }
     }
     leaves->changed.assign(n, 0);
@@ -6022,12 +6022,12 @@ RigExecBakedSamplePathLeaves(RigExecBakedProgramImpl *program,
         const bool rebind = all || leaves->VarianceStale(B.programStamp, k);
         const bool atTime = key.time == RigExecRevisionLeafTime::AtTime;
         // A standing override moves a gated key only where one stands on its
-        // hops, now or at its last sample: a topology key (epoch state)
+        // hops, now or at its last sample: a topology key (compiled rig state)
         // always, any key whose hops list every overlay read while
         // RIGEXEC_PATH_LEAF_GATING is on.
-        const bool epoch = k < leaves->epoch.size() && leaves->epoch[k] != 0;
+        const bool compiledRig = k < leaves->compiledRig.size() && leaves->compiledRig[k] != 0;
         const bool gated =
-            epoch || (B.pathLeafGating && RigExecRevisionLeafHopsComplete(key));
+            compiledRig || (B.pathLeafGating && RigExecRevisionLeafHopsComplete(key));
         bool reached = gated && overrideReaches(k);
         const bool overrideMoves =
             overridden &&
@@ -6038,7 +6038,7 @@ RigExecBakedSamplePathLeaves(RigExecBakedProgramImpl *program,
             !(atTime && timeMoved && (leaves->varying[k] || defaultMoved))) {
             // RIGEXEC_VERIFY_PATH_LEAF_GATING: a key only the gate kept
             // reads what it holds.
-            if (B.verifyPathLeafGating && overridden && gated && !epoch &&
+            if (B.verifyPathLeafGating && overridden && gated && !compiledRig &&
                 !RigExecBakedHeadValueSame(read(key, k), leaves->values[k])) {
                 ++B.pathLeafGateMismatches;
                 TF_VERIFY(false, "path leaf %s skipped by its override gate reads another value", key.path.GetText());

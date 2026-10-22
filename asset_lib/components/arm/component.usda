@@ -1,0 +1,404 @@
+#usda 1.0
+(
+    defaultPrim = "Component"
+    doc = "Reusable arm rig definitions. Bind with component.json and character fit data."
+)
+
+def Scope "Component"
+{
+    def RigExecControl "Control_Clavicle" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The shoulder: +rz shrugs it up."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_ShoulderRoot" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "Where the arm's IK chain starts."
+    )
+    {
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_HandIK" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "IK hand: moves and turns the hand (world axes); the arm follows."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "cube"
+    }
+
+    def RigExecControl "Control_ElbowPole" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "Pole: the elbow points toward it."
+    )
+    {
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "diamond"
+    }
+
+    def RigExecControl "Control_Hand" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "Follows the wrist; carries the finger controls."
+    )
+    {
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Thumb1" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "+ry curls toward the palm, rz spreads."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Thumb2" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Thumb3" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Index1" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "+ry curls toward the palm, rz spreads."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Index2" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Index3" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Middle1" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "+ry curls toward the palm, rz spreads."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Middle2" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Middle3" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Ring1" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "+ry curls toward the palm, rz spreads."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Ring2" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Ring3" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Pinky1" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "+ry curls toward the palm, rz spreads."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Pinky2" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Pinky3" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecJoint "Joint_ArmUpper"
+    {
+    }
+
+    def RigExecJoint "Joint_ArmLower"
+    {
+    }
+
+    def RigExecJoint "Joint_Hand"
+    {
+    }
+
+    def RigExecTwoBoneIk "Solver_ArmIK"
+    {
+        float inputs:softness = 0
+        float inputs:stretch = 0
+    }
+
+    def RigExecStaticWeight "Weight"
+    {
+        uniform float rigExec:defaultWeight = 0
+        uniform token rigExec:representation = "sparse"
+    }
+
+    def RigExecMatrixMover "Deform_ArmLower_Absolute" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Hand_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Thumb1_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Thumb2_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Thumb3_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Index1_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Index2_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Index3_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Middle1_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Middle2_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Middle3_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Ring1_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Ring2_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Ring3_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Pinky1_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Pinky2_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Pinky3_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Clavicle_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_ArmUpper_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_ArmLower_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecParentConstraint "Constraint_HandFollow" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+    }
+}
+

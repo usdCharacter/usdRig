@@ -281,10 +281,10 @@ RigExecBindingResolvingSceneIndex::RigExecBindingResolvingSceneIndex(
 }
 
 void
-RigExecBindingResolvingSceneIndex::SetBindingEpoch(BindingEpochConstPtr epoch)
+RigExecBindingResolvingSceneIndex::SetCompiledRigBinding(CompiledRigBindingConstPtr compiledRig)
 {
-    BindingEpochConstPtr previous = std::atomic_load(&_epoch);
-    std::atomic_store(&_epoch, std::move(epoch));
+    CompiledRigBindingConstPtr previous = std::atomic_load(&_compiledRig);
+    std::atomic_store(&_compiledRig, std::move(compiledRig));
 
     if (!_IsObserved()) {
         return;
@@ -292,7 +292,7 @@ RigExecBindingResolvingSceneIndex::SetBindingEpoch(BindingEpochConstPtr epoch)
     // An output-set/binding change uses universal dirtiness on every
     // affected output prim (spec §10.4).
     HdSceneIndexObserver::DirtiedPrimEntries dirtied;
-    BindingEpochConstPtr current = std::atomic_load(&_epoch);
+    CompiledRigBindingConstPtr current = std::atomic_load(&_compiledRig);
     if (previous) {
         for (const SdfPath &p : previous->publishedPrims) {
             dirtied.emplace_back(p, HdDataSourceLocatorSet::UniversalSet());
@@ -1739,7 +1739,7 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
                 .SetRole(_Token(HdPrimvarSchemaTokens->point))
                 .Build());
-        // Whenever the epoch owns/publishes final points, the overlay
+        // Whenever the compiled rig owns/publishes final points, the overlay
         // blocks the complete upstream velocities and accelerations
         // entries: ownership, not value comparison (spec §10.5).
         primvarNames.push_back(HdTokens->velocities);
@@ -3084,7 +3084,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             leaves.insert(HdDataSourceLocator(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->points,
                 HdPrimvarSchemaTokens->primvarValue));
-            // The epoch-owned structural blocks ride with owned points
+            // The compiled rig-owned structural blocks ride with owned points
             // (spec §10.4 locator table): the complete entries.
             leaves.insert(HdDataSourceLocator(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
@@ -3241,7 +3241,7 @@ RigExecResultsSceneIndex::_BindToStageContext(
         return;
     }
     // The directory seeds this chain from the context (store, scopes,
-    // deltas, epoch) and records the key; a chain it does not know -- a
+    // deltas, compiled rig) and records the key; a chain it does not know -- a
     // hand-built one -- stays exactly as it was built.
     RigExecImagingRegistry::BindChain(this, key);
     // The old context dropped this chain's table; the new one has none yet.
@@ -3288,7 +3288,7 @@ RigExecResultsSceneIndex::_NoteUpstreamDirtied(
         if (!entry.dirtyLocators.Intersects(inputs)) {
             continue;
         }
-        // A universal dirty (an epoch swap's, among others) names no
+        // A universal dirty (a compiled rig swap's, among others) names no
         // source: it re-pulls a prim already known to carry one, and
         // discovers none.
         if (entry.dirtyLocators.Contains(
@@ -3488,7 +3488,7 @@ RigExecResultsSceneIndex::_IsTimeTriggerDirty(
     // A dirty that drives live evaluation: it touches the rigExec/time
     // trigger leaf on an ACTIVE rig root of THIS chain's context
     // (rigAdapter.cpp). The root check is what keeps this from re-entering:
-    // binding-epoch swaps dirty outputs universally, and a universal
+    // compiled rig swaps dirty outputs universally, and a universal
     // locator intersects everything. The locator test runs first, so the
     // xform-preview dirties sent while a context holds its lock never
     // reach the context lookup.

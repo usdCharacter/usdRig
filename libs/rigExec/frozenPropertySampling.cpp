@@ -1,5 +1,5 @@
 // Stage-side property-chain discovery and binding, for the freeze gate and
-// the samplers' epoch currency check.
+// the samplers' compiled rig currency check.
 
 #include "frozenContextInternal.h"
 #include "movers/moverRegistry.h"
@@ -248,8 +248,8 @@ RigExecChainSampleBindingsStillCurrent(
         return false;
     }
     // The discovery signature: the same math movers over the same targets.
-    // Mover membership is epoch-digest-covered, so a mismatch also means a
-    // new epoch -- but the check is cheap and the failure mode of trusting
+    // Mover membership is compiled rig-digest-covered, so a mismatch also means a
+    // new compiled rig -- but the check is cheap and the failure mode of trusting
     // it is a silently misbound chain.
     std::vector<_ChainMoverDesc> movers;
     std::string ignored;
@@ -264,7 +264,7 @@ RigExecChainSampleBindingsStillCurrent(
         return false;
     }
     // The same phased reads, each over the same hops: a phase edit or a
-    // rewire re-epochs the evaluator, which resolves them afresh, and the
+    // rewire recompiles the evaluator, which resolves them afresh, and the
     // hops decide who stands aside for a drag.
     size_t phasedBound = 0;
     for (const RigExecChainSampleChain &chain : bindings.chains) {
@@ -310,8 +310,8 @@ RigExecChainSampleBindingsStillCurrent(
             }
         }
         // The target resolves as it did, to the same type: the evaluation
-        // dispatches on the target's type, and a mid-epoch retype moves no
-        // epoch digest.
+        // dispatches on the target's type, and a mid-compiled rig retype moves no
+        // compiled rig signature.
         const UsdAttribute freshTarget =
             stage->GetAttributeAtPath(chain.targetPath);
         if (bool(freshTarget) != bool(chain.target)) {
@@ -335,8 +335,8 @@ RigExecChainSampleBindingsStillCurrent(
             }
             // Every pin: still present iff pinned, still classified as
             // pinned, and a folded constant still reading its pinned value.
-            // Value edits move no epoch digest, so without this a constant
-            // edited mid-epoch would read stale until the next recompile.
+            // Value edits move no compiled rig signature, so without this a constant
+            // edited mid-compiled rig would read stale until the next recompile.
             for (size_t i = 0; i < 8; ++i) {
                 const RigExecChainSampleInput *pinned =
                     _ChainBoundInput(revision, i);

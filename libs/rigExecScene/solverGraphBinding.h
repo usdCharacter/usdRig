@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_GRAPH_SOLVER_GRAPH_BINDING_H
 #define RIGEXEC_GRAPH_SOLVER_GRAPH_BINDING_H
-#include "solverSceneLowering.h"
+#include "solverSceneTranslation.h"
 #include "sceneGraphTypedRead.h"
 namespace rigExec {
 struct RigExecBoundGraphInput {

@@ -39,7 +39,7 @@ RigExecFrozenMatchesLive(rigExec::RigExecRigEvaluator *evaluator,
     }
     RigExecBackgroundScheduler scheduler(0);
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.generation = scheduler.CurrentGeneration(rig);
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();

@@ -1,7 +1,11 @@
 #include "sceneProgramLayout.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "sceneCompileInputs.h"
 #include <algorithm>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (base)
+);
 namespace { bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;} }
 RigExecValueId RigExecSceneProgramLayout::Allocate(const std::string &key) {
     const auto id=RigExecValueId(valueKeys.size());valueKeys.push_back(key);return id;
@@ -103,7 +107,7 @@ bool RigExecSceneProgramLayout::Resolve(const RigExecSceneDescriptors &scene,
         if(sampled!=sampleIndex.end()){*out=samples[sampled->second].selectedDefault;return true;}
     }
     return routes.Resolve(scene,{request.source,request.domain},request.reader,
-        request.phase.IsEmpty()?TfToken("base"):request.phase,out,error);
+        request.phase.IsEmpty()?_tokens->base:request.phase,out,error);
 }
 RigExecSceneGraphBindingContext RigExecSceneProgramLayout::BindingContext(const RigExecSceneDescriptors &scene) const {
     RigExecSceneGraphBindingContext context;

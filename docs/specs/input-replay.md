@@ -140,7 +140,7 @@ actual run is followed by a real owning native Evaluate with the same authored
 inputs, options and time; exact publication bytes must agree. Original replay
 independently judges that added native visit. No produced value is passed as
 input. This changes that harness's visit count and is recorded in its source
-provenance. The later epoch-binding refusal retains its false/empty status
+provenance. The later compiled rig binding refusal retains its false/empty status
 assertions and the unchanged original negative test; it has no mathematical
 native counterpart. Distinct direct overrides or frozen/runtime histories
 without such a counterpart need their own input adapter and coverage entry.

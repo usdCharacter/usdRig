@@ -874,7 +874,7 @@ WarmFrozen(const std::string &what, RigExecRigEvaluator *evaluator,
     }
     RigExecBackgroundScheduler scheduler;
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.generation = scheduler.CurrentGeneration(rig);
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.programDigest = 0;
@@ -1106,7 +1106,7 @@ TestReorderFlipsTheStack()
     CHECK(moved);
 
     // The same edit on a LIVE evaluator, in the session layer, with no
-    // Compile() call: the composed solver order is part of the binding-epoch
+    // Compile() call: the composed solver order is part of the compiled rig
     // digest, so Evaluate has to notice and rebuild. A reordered stack that
     // kept a stale schedule would be the same rig quietly answering with the
     // other solver's solution.
@@ -1119,7 +1119,7 @@ TestReorderFlipsTheStack()
     CHECK(live.Compile(&liveErrors));
     const RigExecRigPose before = live.Evaluate(UsdTimeCode(5.0));
     CHECK(before.valid);
-    const size_t beforeDigest = live.GetBindingEpochDigest();
+    const size_t beforeDigest = live.GetCompiledRigSignature();
 
     liveStage->SetEditTarget(liveStage->GetSessionLayer());
     const UsdPrim solvers =
@@ -1130,7 +1130,7 @@ TestReorderFlipsTheStack()
 
     const RigExecRigPose after = live.Evaluate(UsdTimeCode(5.0));
     CHECK(after.valid);
-    CHECK(live.GetBindingEpochDigest() != beforeDigest);
+    CHECK(live.GetCompiledRigSignature() != beforeDigest);
     // The live edit lands on exactly the answer the reordered TEXT gives,
     // and not on the one it had a moment ago.
     for (const SdfPath &joint : {kHip, kKnee, kAnkle}) {

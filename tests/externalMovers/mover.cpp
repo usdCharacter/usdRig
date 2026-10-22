@@ -121,31 +121,31 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     return RigExecOracleResult::Blend;
 }
 
-// .rigexec export: epoch bytes are a format tag the kernel checks; frame
+// .rigexec export: compiled data bytes are a format tag the kernel checks; frame
 // bytes are the payload's three floats.
-constexpr char kEpochTag[] = {'Q', 'U', 'A', '1'};
+constexpr char kCompiledDataTag[] = {'Q', 'U', 'A', '1'};
 
-bool EncodeEpoch(const RigExecRevisionBinding &,std::vector<uint8_t> *epoch) {
-    epoch->assign(kEpochTag,kEpochTag+sizeof(kEpochTag));return true;
+bool EncodeCompiledData(const RigExecRevisionBinding &,std::vector<uint8_t> *compiledRig) {
+    compiledRig->assign(kCompiledDataTag,kCompiledDataTag+sizeof(kCompiledDataTag));return true;
 }
 
 bool Encode(const VtValue &data, const RigExecRevisionBinding &,
-            std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame)
+            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
 {
     if (!data.IsHolding<Payload>()) return false;
     const Payload &payload = data.UncheckedGet<Payload>();
-    epoch->assign(kEpochTag, kEpochTag + sizeof(kEpochTag));
+    compiledRig->assign(kCompiledDataTag, kCompiledDataTag + sizeof(kCompiledDataTag));
     frame->resize(sizeof(float) * 3);
     std::memcpy(frame->data(), payload.data(), frame->size());
     return true;
 }
 
-std::shared_ptr<const void> Prepare(const uint8_t *epoch, size_t size,
+std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size,
                                     std::string *error)
 {
-    if (size != sizeof(kEpochTag) ||
-        std::memcmp(epoch, kEpochTag, size) != 0) {
-        if (error) *error = "unknown epoch format";
+    if (size != sizeof(kCompiledDataTag) ||
+        std::memcmp(compiledRig, kCompiledDataTag, size) != 0) {
+        if (error) *error = "unknown compiled rig format";
         return nullptr;
     }
     return std::make_shared<int>(1);
@@ -192,7 +192,7 @@ RigExecMoverHandler Handler()
     handler.assembleExternal = &Assemble;
     handler.applyExternal = &Apply;
     handler.oracle = &Oracle;
-    handler.encodeExternalEpoch = &EncodeEpoch;
+    handler.encodeExternalCompiledData = &EncodeCompiledData;
     handler.encodeExternal = &Encode;
     handler.runtimeKernel.prepare = &Prepare;
     handler.runtimeKernel.apply = &Play;
@@ -204,7 +204,7 @@ RigExecMoverHandler UnexportableHandler()
 {
     RigExecMoverHandler handler = Handler();
     handler.schemaType = "ExternalUnexportableMover";
-    handler.encodeExternalEpoch = nullptr;
+    handler.encodeExternalCompiledData = nullptr;
     handler.encodeExternal = nullptr;
     handler.runtimeKernel = RigExecExternalKernel();
     return handler;

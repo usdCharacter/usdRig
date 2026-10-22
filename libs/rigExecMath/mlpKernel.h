@@ -60,7 +60,7 @@ struct RigExecMlLayer {
     }
 };
 
-/// A network as data. Built once per epoch; evaluation only reads it.
+/// A network as data. Built once per rig compilation; evaluation only reads it.
 struct RigExecMlNetwork {
     size_t inputCount = 0;
     std::vector<RigExecMlLayer> layers;

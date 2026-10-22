@@ -256,7 +256,7 @@ struct RrPoseSplineIkRest {
 };
 
 // One solver's mutable rest description: what RefreshSolverRests and the
-// Solve step rewrite every run. The wire solver is the epoch half.
+// Solve step rewrite every run. The wire solver is the compiled rig half.
 struct RrPoseSolverState {
     std::vector<std::array<RrVec3d, 4>> jointRests;
     std::vector<std::array<RrVec3d, 4>> controlRests;

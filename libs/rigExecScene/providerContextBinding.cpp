@@ -1,7 +1,20 @@
 #include "providerContextBinding.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <functional>
 #include <algorithm>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((avarsUnitScaleFactor,"avars:unitScaleFactor")) ((avarsTx,"avars:tx")) ((avarsTy,"avars:ty"))
+    ((avarsTz,"avars:tz")) ((avarsSx,"avars:sx")) ((avarsSy,"avars:sy")) ((avarsSz,"avars:sz"))
+    ((avarsRx,"avars:rx")) ((avarsRy,"avars:ry")) ((avarsRz,"avars:rz"))
+    ((avarsRspin,"avars:rspin")) ((avarsRotationOrder,"avars:rotationOrder"))
+    ((avarsRotationSign,"avars:rotationSign")) ((posedSpace,"posed:space"))
+    ((posedDefaultSpace,"posed:defaultSpace")) ((parentDefaultSpace,"parent:defaultSpace"))
+    ((parentSpace,"parent:space")) ((restTx,"rest:tx")) ((restTy,"rest:ty")) ((restTz,"rest:tz"))
+    ((restRx,"rest:rx")) ((restRy,"rest:ry")) ((restRz,"rest:rz")) ((defaultTx,"default:tx"))
+    ((defaultTy,"default:ty")) ((defaultTz,"default:tz")) ((defaultRx,"default:rx"))
+    ((defaultRy,"default:ry")) ((defaultRz,"default:rz")) ((restSpace,"rest:space"))
+);
 namespace {bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}}
 bool RigExecBindProviderContext(RigExecProviderProgram *program,
     const std::vector<std::string> &fullValueKeys,RigExecValueId sourceResult,
@@ -130,34 +143,34 @@ bool RigExecRebindProviderInputs(RigExecProviderProgram *program,size_t initialO
     const RigExecProviderInputBinding &bind,std::string *error) {
     if(!program || !bind || initialOpCount>program->ops.size() ||
        program->ops.size()!=program->descriptors.size())return Fail(error,"invalid original provider input binding");
-    const char *const channels[]={"avars:unitScaleFactor","avars:tx","avars:ty","avars:tz",
-        "avars:sx","avars:sy","avars:sz","avars:rx","avars:ry","avars:rz","avars:rspin",
-        "avars:rotationOrder","avars:rotationSign"};
-    const char *const spaces[]={"posed:space","posed:defaultSpace","parent:defaultSpace","parent:space"};
-    const char *const restChannels[]={"rest:tx","rest:ty","rest:tz","rest:rx","rest:ry","rest:rz"};
-    const char *const defaultChannels[]={"default:tx","default:ty","default:tz","default:rx","default:ry","default:rz"};
+    const TfToken *const channels[]={&_tokens->avarsUnitScaleFactor,&_tokens->avarsTx,&_tokens->avarsTy,&_tokens->avarsTz,
+        &_tokens->avarsSx,&_tokens->avarsSy,&_tokens->avarsSz,&_tokens->avarsRx,&_tokens->avarsRy,&_tokens->avarsRz,
+        &_tokens->avarsRspin,&_tokens->avarsRotationOrder,&_tokens->avarsRotationSign};
+    const TfToken *const spaces[]={&_tokens->posedSpace,&_tokens->posedDefaultSpace,&_tokens->parentDefaultSpace,&_tokens->parentSpace};
+    const TfToken *const restChannels[]={&_tokens->restTx,&_tokens->restTy,&_tokens->restTz,&_tokens->restRx,&_tokens->restRy,&_tokens->restRz};
+    const TfToken *const defaultChannels[]={&_tokens->defaultTx,&_tokens->defaultTy,&_tokens->defaultTz,&_tokens->defaultRx,&_tokens->defaultRy,&_tokens->defaultRz};
     for(size_t i=0;i<initialOpCount;++i) {
         auto op=program->ops[i];bool changed=false;
-        const auto input=[&](size_t k,const char *name) {
+        const auto input=[&](size_t k,const TfToken &name) {
             if(k>=op.inputs.size())return Fail(error,"provider operation has an incomplete input record");
             const auto original=op.inputs[k];RigExecValueId value=original;
-            if(!bind(op.owner.AppendProperty(TfToken(name)),original,&value,error))return false;
+            if(!bind(op.owner.AppendProperty(name),original,&value,error))return false;
             if((value==RigExecNoProviderValue && original!=RigExecNoProviderValue) ||
                (value!=RigExecNoProviderValue && value>=program->valueKeys.size()))
                 return Fail(error,"provider input binding has no produced value");
             changed|=value!=original;op.inputs[k]=value;return true;
         };
         if(op.kind==RigExecProviderOpKind::RestFrame) {
-            if(!input(0,"rest:space"))return false;
-            for(size_t k=0;k<6;++k)if(!input(k+1,restChannels[k]))return false;
+            if(!input(0,_tokens->restSpace))return false;
+            for(size_t k=0;k<6;++k)if(!input(k+1,*restChannels[k]))return false;
         } else if(op.kind==RigExecProviderOpKind::DefaultSpace) {
-            if(!input(2,"parent:defaultSpace"))return false;
-            for(size_t k=0;k<6;++k)if(!input(k+3,defaultChannels[k]))return false;
+            if(!input(2,_tokens->parentDefaultSpace))return false;
+            for(size_t k=0;k<6;++k)if(!input(k+3,*defaultChannels[k]))return false;
         } else if(op.kind==RigExecProviderOpKind::PosedFrame) {
-            for(size_t k=0;k<4;++k)if(!input(k,spaces[k]))return false;
-            for(size_t k=0;k<13;++k)if(!input(k+4,channels[k]))return false;
+            for(size_t k=0;k<4;++k)if(!input(k,*spaces[k]))return false;
+            for(size_t k=0;k<13;++k)if(!input(k+4,*channels[k]))return false;
         } else if(op.kind==RigExecProviderOpKind::AvarMatrix) {
-            for(size_t k=0;k<13;++k)if(!input(k,channels[k]))return false;
+            for(size_t k=0;k<13;++k)if(!input(k,*channels[k]))return false;
         }
         if(!changed)continue;
         program->ops[i]=std::move(op);auto &descriptor=program->descriptors[i];descriptor.reads.clear();

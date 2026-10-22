@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    defaultPrim = "Component"
+    doc = "Reusable torso rig definitions. Bind with component.json and character fit data."
+)
+
+def Scope "Component"
+{
+    def RigExecControl "Control_World" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "Moves the whole character."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_COG" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The centre of gravity: moves and turns everything but the IK hands and feet."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Hips" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The pelvis: turns the hips and the legs' roots without the spine."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecStaticWeight "Weight"
+    {
+        uniform float rigExec:defaultWeight = 0
+        uniform token rigExec:representation = "sparse"
+    }
+
+    def RigExecMatrixMover "Deform_COG_Absolute" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Hips_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+}
+

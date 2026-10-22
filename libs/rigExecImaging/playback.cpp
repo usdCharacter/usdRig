@@ -35,7 +35,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (extent)
 );
 
-// FNV-1a 64 over the file bytes: the binding-epoch digest. Only stability
+// FNV-1a 64 over the file bytes: the compiled rig digest. Only stability
 // per file is required (a binary's published prim set never changes), so
 // a non-cryptographic hash is the whole of it.
 uint64_t
@@ -199,7 +199,7 @@ RigExecBakedPlayback::Open(const std::string &resolvedPath,
     // Static inputs are read again only after a stage notice, which the
     // registry forwards (NoteStageChanged).
     _sampler->SetStaticInputSkip(true);
-    _epochDigest = _PlaybackDigestBytes(bytes);
+    _compiledRigSignature = _PlaybackDigestBytes(bytes);
     _reader = std::move(reader);
     // In-tree playback runs the reader's clusters in parallel by default
     // (RIGEXEC_RUNTIME_DISPATCH=0 opts out); the serial schedule knob and
@@ -436,9 +436,9 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     }
     if (!ran) {
         // The bridge's rule: a rig that cannot evaluate stops driving the
-        // scene, and the next good generation re-announces its epoch.
+        // scene, and the next good generation re-announces its compiled rig.
         result.dirtied = _store->Publish(nullptr);
-        _publishedEpochDigest = 0;
+        _publishedCompiledRigSignature = 0;
         _historyHave = false;
         return result;
     }
@@ -581,17 +581,17 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         }
     }
 
-    // One epoch ever: the digest is stable per file, so only the first
+    // One compiled rig ever: the digest is stable per file, so only the first
     // publication carries it.
-    if (_epochDigest != _publishedEpochDigest) {
-        auto epoch = std::make_shared<
-            RigExecBindingResolvingSceneIndex::BindingEpoch>();
-        epoch->id = _epochDigest;
+    if (_compiledRigSignature != _publishedCompiledRigSignature) {
+        auto compiledRig = std::make_shared<
+            RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
+        compiledRig->id = _compiledRigSignature;
         for (const auto &[primPath, published] : snapshot->prims) {
-            epoch->publishedPrims.insert(primPath);
+            compiledRig->publishedPrims.insert(primPath);
         }
-        result.epoch = std::move(epoch);
-        _publishedEpochDigest = _epochDigest;
+        result.compiledRig = std::move(compiledRig);
+        _publishedCompiledRigSignature = _compiledRigSignature;
     }
 
     result.dirtied = _store->Publish(std::move(snapshot));

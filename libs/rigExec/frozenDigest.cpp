@@ -1,4 +1,4 @@
-// Exact frame-input and epoch-constant fingerprints.
+// Exact frame-input and compiled rig constant fingerprints.
 
 #include "frozenContextInternal.h"
 #include "pxr/base/gf/vec2f.h"
@@ -210,7 +210,7 @@ RigExecFrozenPurityAudit()
          "byte-identical numbers"},
         {"RigExecBakedProgramImpl structure (steps, edges, clusters, "
          "cones, walk, rest and ladder op declarations)",
-         RigExecFrozenPurity::EpochPinned,
+         RigExecFrozenPurity::CompiledRigPinned,
          "immutable after Build; safe as the programDigest check names it, "
          "never as a live read of per-frame working state"},
         {"skin layout handles (bakedGeometry.cpp SkinTopology ops)",
@@ -232,11 +232,11 @@ RigExecFrozenPurityAudit()
          "read they reach was sampled through the same values on the UI "
          "thread"},
         {"skin/blend bindings (shared_ptr<const> topologies and layouts)",
-         RigExecFrozenPurity::EpochPinned,
+         RigExecFrozenPurity::CompiledRigPinned,
          "immutable snapshots resolved at Build/prologue; the worker runs "
          "from its own references, never from the live caches"},
         {"RigExecStaticInputCache VALUES",
-         RigExecFrozenPurity::EpochPinned,
+         RigExecFrozenPurity::CompiledRigPinned,
          "admission promises the same answer at every time code; safe as "
          "sampled values, while the cache OBJECT is the row below"},
         {"UsdStage, UsdAttribute, UsdAttributeQuery, UsdPrim, "
@@ -245,7 +245,7 @@ RigExecFrozenPurityAudit()
          "every prologue read; sampled into the input vector on the UI "
          "thread, never named by the context, inputs, arena, or runner"},
         {"RigExecRigEvaluator (resolved inputs, live graphs, tap sets, "
-         "overrides, profiler, epoch rests)",
+         "overrides, profiler, compiled rig rests)",
          RigExecFrozenPurity::LiveOnly,
          "live state by definition; the program's captured pointers to it "
          "are why workers run a private arena, never the live program"},
@@ -254,7 +254,7 @@ RigExecFrozenPurityAudit()
          "guideTaps)",
          RigExecFrozenPurity::LiveOnly,
          "snapshot construction clears live pointers; each frozen lane "
-         "rebinds only its private resolver, profiler, and copied epoch tables"},
+         "rebinds only its private resolver, profiler, and copied compiled rig tables"},
         {"ExecUsdSystem / TapSet / Snapshot (dynamic path)",
          RigExecFrozenPurity::LiveOnly,
          "owning-thread source capture and optional reference checks only; "
@@ -301,9 +301,9 @@ RigExecFrozenPurityAudit()
 }
 
 uint64_t
-RigExecFrameCacheEpochDigest(const RigExecRigEvaluator &evaluator)
+RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator)
 {
-    uint64_t h = evaluator.GetBindingEpochDigest();
+    uint64_t h = evaluator.GetCompiledRigSignature();
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     if (!program) {
         return h;
@@ -313,7 +313,7 @@ RigExecFrameCacheEpochDigest(const RigExecRigEvaluator &evaluator)
     // Structure only (plan D3): the binding-table shapes, never the
     // constant values. A value patch moves the constant digest the
     // control half folds -- not this -- so it opens a new key namespace
-    // instead of evicting the epoch.
+    // instead of evicting the compiled rig.
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
     const uint64_t constants = uint64_t(B.avarConstants.size());
     h = _HashBytes(h, &constants, sizeof(constants));
@@ -332,7 +332,7 @@ RigExecFrameCacheEpochDigest(const RigExecRigEvaluator &evaluator)
 }
 
 uint64_t
-RigExecEpochConstantDigest(const RigExecBakedProgram &program)
+RigExecCompiledRigConstantDigest(const RigExecBakedProgram &program)
 {
     return RigExecFrozenAvarRegionDigest(program);
 }
@@ -462,7 +462,7 @@ RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
     if (patch.programStamp != S.programStamp) {
         P.programStamp = patch.programStamp;
     }
-    // The epoch's side-tables, unchanged by a constant patch.
+    // The compiled rig's side-tables, unchanged by a constant patch.
     snapshot->jointSolverBinding = base.jointSolverBinding;
     snapshot->solverGuidesPresent = base.solverGuidesPresent;
     snapshot->inputHeadPaths = base.inputHeadPaths;

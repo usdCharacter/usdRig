@@ -112,7 +112,7 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
     const RigExecRigPose before = rig.Evaluate(UsdTimeCode(1.0));
     CHECK(before.valid);
 
-    // Author into the session layer, which is a value edit: the epoch digest
+    // Author into the session layer, which is a value edit: the compiled rig signature
     // hashes it, but a program that captured the old value would not notice
     // on its own.
     stage->SetEditTarget(UsdEditTarget(stage->GetSessionLayer()));
@@ -149,7 +149,7 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
     CHECK(moved);
 }
 
-// An epoch compiled for the program commits its solver batches without the
+// A compiled rig compiled for the program commits its solver batches without the
 // solver-input index, and the first dynamic generation builds it -- so the
 // index a dynamic session routes edits through is, after a mode switch, one
 // built long after the compile, from what the compile handed over. The two
@@ -159,7 +159,7 @@ TestAnEditAfterTheBakeIsFollowed(const std::string &examplesDir)
 // comes out right. The second lands after the build and has to reach its
 // batch through the index, and that is the one a missing index entry fails.
 // A rest edit on a joint the leg IK names, because it is the kind of edit
-// only the index can deliver: it does not recompile the epoch (the digest
+// only the index can deliver: it does not recompile the compiled rig (the digest
 // hashes no rest channel), and what the batch reads of it comes off the
 // stage rather than through the overrides its cache is keyed on -- so a
 // batch the handler failed to dirty would hand back its cached, pre-edit
@@ -327,7 +327,7 @@ ComparePose(const std::string &where, const RigExecRigPose &reference,
     rigExecTest::ComparePose(&failures, where, reference, baked);
 }
 
-// Edit an existing native epoch, then compare eight generations with a
+// Edit an existing native compiled rig, then compare eight generations with a
 // fresh compile that saw the edited source before its first evaluation.
 // \p expectRebuild is the other half of the contract and the reason this is
 // not just another equality test: an edit that moved something the bake
@@ -357,7 +357,7 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
     CHECK(rig.GetBakedGenerationCount() == 1);
     const size_t builds = rig.GetBakedProgramBuildCount();
     CHECK(builds == 1);
-    const size_t digestBefore = rig.GetBindingEpochDigest();
+    const size_t digestBefore = rig.GetCompiledRigSignature();
 
     edit(stage, rigPath);
 
@@ -392,7 +392,7 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
                     expectMoved ? "did not move" : "unexpectedly moved");
     }
     // Every one of the eight was the program's: the edit settled into the
-    // epoch before the first of them chose a path.
+    // compiled rig before the first of them chose a path.
     CHECK(rig.GetBakedGenerationCount() == 9);
     if (expectRebuild) {
         if (rig.GetBakedProgramBuildCount() <= builds) {
@@ -405,7 +405,7 @@ TestEditAfterTheBake(const std::string &examplesDir, const char *stageName,
         std::printf("FAIL %s: the program was rebuilt for an edit that "
                     "touched nothing it captured (digest %zu -> %zu)\n",
                     where.c_str(), digestBefore,
-                    rig.GetBindingEpochDigest());
+                    rig.GetCompiledRigSignature());
     }
 }
 
@@ -546,7 +546,7 @@ EditKeyedBlendDisabledConstraintAndRest(const UsdStageRefPtr &stage,
 // The program runs those chains itself, off the authored stage, so nothing
 // about the roll is captured.
 // Two edits, because they are two different questions. Keying it makes the
-// attribute animated, which is a STRUCTURAL change the epoch digest hashes --
+// attribute animated, which is a STRUCTURAL change the compiled rig signature hashes --
 // the rig recompiles and rebakes, and what is being tested is that eight
 // keyed frames come out right. Moving its value is not: the chains re-read it
 // every generation, so the answer has to follow with nothing rebuilt.
@@ -625,7 +625,7 @@ EditAKeyedAvarValue(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 }
 
 // A prim the rig has never heard of. The whole point of the index is that
-// this costs nothing: the epoch is unchanged, no captured value moved, and
+// this costs nothing: the compiled rig is unchanged, no captured value moved, and
 // the program keeps answering.
 static void
 TestAnUnrelatedEditLeavesTheProgramStanding(const std::string &examplesDir)
@@ -770,7 +770,7 @@ MakeAConnectedSpaceRig()
 // strongest opinion is exactly one time sample of a non-composable type, while
 // a Default read -- which is what the bake captures at -- never sees a time
 // sample at all. So a single-keyed input is the one shape that can be
-// classified as an epoch constant and then captured as the value it does NOT
+// classified as a compiled rig constant and then captured as the value it does NOT
 // have. An animator's first pose key is exactly that shape, which is why
 // these two edits are the ones worth spending fixtures on.
 
@@ -1193,9 +1193,9 @@ TestPoseComparatorIsExact(const std::string &examplesDir)
     CHECK(quiet.comparisonMismatches == 0);
 }
 
-// An unrelated structural notice preserves a valid native epoch.
+// An unrelated structural notice preserves a valid native compiled rig.
 static void
-TestDirtyEpochStillEvaluates(const std::string &examplesDir)
+TestDirtyCompiledRigStillEvaluates(const std::string &examplesDir)
 {
     const auto stage = UsdStage::Open(examplesDir + "/biped/Biped.usda");
     CHECK(stage);
@@ -1211,7 +1211,7 @@ TestDirtyEpochStillEvaluates(const std::string &examplesDir)
         CHECK(before.back().valid);
     }
     const size_t builds = rig.GetBakedProgramBuildCount();
-    const size_t digest = rig.GetBindingEpochDigest();
+    const size_t digest = rig.GetCompiledRigSignature();
     stage->DefinePrim(SdfPath("/Scratch"), TfToken("Scope"));
     CHECK(rig.IsBakeable());
     for (double frame = 1; frame <= 5; ++frame) {
@@ -1221,10 +1221,10 @@ TestDirtyEpochStillEvaluates(const std::string &examplesDir)
         CHECK(after.executedOpCount == rig.GetLastOpTrace().size());
     }
     CHECK(rig.GetBakedProgramBuildCount() == builds);
-    CHECK(rig.GetBindingEpochDigest() == digest);
+    CHECK(rig.GetCompiledRigSignature() == digest);
 }
 
-// A rest-channel edit is evaluated after the binding epoch has been built.
+// A rest-channel edit is evaluated after the compiled rig has been built.
 static void
 MoveARestChannel(const UsdStageRefPtr &stage)
 {
@@ -1959,7 +1959,7 @@ main(int argc, char **argv)
     TestPoseComparatorIsExact(examplesDir);
 
     // An unrelated structural notice preserves a valid native program.
-    TestDirtyEpochStillEvaluates(examplesDir);
+    TestDirtyCompiledRigStillEvaluates(examplesDir);
 
 
     // A read phase naming a point in the pose walk, which no shipped rig

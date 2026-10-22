@@ -5,6 +5,10 @@
 #include <map>
 
 namespace rigExec {
+/// Read phases named by scene translation; built once at load, never per read.
+inline const TfToken RigExecSceneBasePhase("base");
+inline const TfToken RigExecScenePrecedingPhase("preceding");
+inline const TfToken RigExecSceneFinalPhase("final");
 enum class RigExecSceneDomain {
     Data, Provider, Solver, PropertyMover, GeometryMover, Weight,
     Constraint, SpaceSwitch, PoseInterpolator, UnknownRigExec, AutoClavicle
@@ -19,12 +23,12 @@ struct RigExecSceneInput {
 };
 struct RigExecSceneAttributeDescriptor {
     RigExecSceneAttribute fact;
-    TfToken readPhase = TfToken("base");
+    TfToken readPhase = RigExecSceneBasePhase;
     std::vector<RigExecSceneInput> inputs;
 };
 struct RigExecSceneRelationshipDescriptor {
     RigExecSceneRelationship fact;
-    TfToken readPhase = TfToken("base");
+    TfToken readPhase = RigExecSceneBasePhase;
     /// Original forwarded order and cardinality, including nonexistent targets.
     SdfPathVector forwardedTargets;
     std::vector<char> targetExists;
@@ -63,7 +67,19 @@ struct RigExecSceneDescriptors {
     double timeCodesPerSecond = 24, framesPerSecond = 24;
     TfToken interpolation;
     TfToken upAxis;
+    /// Primvar property names translation publishes to ("primvars:" and an
+    /// authored or prim name). No captured property carries them, so capture
+    /// interns them on the owner thread and translation builds no token.
+    std::map<std::string, TfToken> primvarNames;
 };
+/// The interned primvar property name for "primvars:" + \p name, or null when
+/// capture did not see it.
+inline const TfToken *RigExecFindScenePrimvarName(const RigExecSceneDescriptors &scene,
+    const std::string &name)
+{
+    const auto found = scene.primvarNames.find(name);
+    return found == scene.primvarNames.end() ? nullptr : &found->second;
+}
 bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &scene,
     const SdfPath &rigRoot, const std::vector<UsdTimeCode> &identities,
     RigExecSceneDescriptors *result, std::string *error = nullptr);
@@ -74,13 +90,13 @@ bool RigExecSelectSceneDescriptorIdentities(const RigExecSceneDescriptors &scene
     const std::vector<UsdTimeCode> &identities,
     RigExecSceneDescriptors *result, std::string *error = nullptr);
 
-/// Typed production kernel lowering supplies operation/value identities. This
+/// Typed production kernel translation supplies operation/value identities. This
 /// boundary never substitutes raw input for a computed provider expression.
-using RigExecSceneKernelLowering = std::function<bool(
+using RigExecSceneKernelTranslation = std::function<bool(
     const RigExecSceneDescriptors &, std::vector<RigExecOpDescriptor> *,
     std::vector<RigExecValueId> *, std::string *)>;
 bool RigExecCompileSceneDescriptors(const RigExecSceneDescriptors &scene,
-    const RigExecSceneKernelLowering &lower, RigExecCyclePolicy cyclePolicy,
+    const RigExecSceneKernelTranslation &translate, RigExecCyclePolicy cyclePolicy,
     RigExecCompiledGraph *graph, std::string *error = nullptr);
 }
 #endif

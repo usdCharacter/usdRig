@@ -7,6 +7,7 @@
 // matching the native points.
 #include "rigExecClothStage.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecSceneProgramDrive.h"
 #include "rigExec/frameCache.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
@@ -40,12 +41,12 @@ int failures = 0;
         }                                                                  \
     } while (0)
 
-// The epoch the mover compiles for the stage: its topology, rest points and
+// The compiled rig the mover compiles for the stage: its topology, rest points and
 // pins, the default settings, 24 frames per second, and the box.
-RigExecClothEpoch
-StageEpoch(const UsdStageRefPtr &stage)
+RigExecClothCompiledData
+StageCompiledRig(const UsdStageRefPtr &stage)
 {
-    RigExecClothEpoch epoch;
+    RigExecClothCompiledData compiledRig;
     const UsdPrim curtain = stage->GetPrimAtPath(kCurtain.GetPrimPath());
     VtIntArray counts, indices;
     VtVec3fArray rest;
@@ -54,13 +55,13 @@ StageEpoch(const UsdStageRefPtr &stage)
     curtain.GetAttribute(TfToken("faceVertexIndices")).Get(&indices);
     curtain.GetAttribute(TfToken("points")).Get(&rest);
     stage->GetPrimAtPath(kCloth).GetAttribute(TfToken("rigExec:pinWeights")).Get(&pins);
-    epoch.pointCount = uint32_t(rest.size());
-    epoch.counts.assign(counts.begin(), counts.end());
-    epoch.indices.assign(indices.begin(), indices.end());
-    epoch.rest.resize(3 * rest.size());
-    std::memcpy(epoch.rest.data(), rest.cdata(), epoch.rest.size() * sizeof(float));
-    epoch.pins.assign(pins.begin(), pins.end());
-    epoch.frameSeconds = 1.0 / 24.0;
+    compiledRig.pointCount = uint32_t(rest.size());
+    compiledRig.counts.assign(counts.begin(), counts.end());
+    compiledRig.indices.assign(indices.begin(), indices.end());
+    compiledRig.rest.resize(3 * rest.size());
+    std::memcpy(compiledRig.rest.data(), rest.cdata(), compiledRig.rest.size() * sizeof(float));
+    compiledRig.pins.assign(pins.begin(), pins.end());
+    compiledRig.frameSeconds = 1.0 / 24.0;
     const UsdPrim box = stage->GetPrimAtPath(kBox.GetPrimPath());
     VtIntArray boxCounts, boxIndices;
     VtVec3fArray boxPoints;
@@ -72,8 +73,8 @@ StageEpoch(const UsdStageRefPtr &stage)
     collider.pointCount = uint32_t(boxPoints.size());
     collider.counts.assign(boxCounts.begin(), boxCounts.end());
     collider.indices.assign(boxIndices.begin(), boxIndices.end());
-    epoch.colliders.push_back(collider);
-    return epoch;
+    compiledRig.colliders.push_back(collider);
+    return compiledRig;
 }
 
 // The cloth at t from the kernel: the entering curtain and the box over the
@@ -85,7 +86,7 @@ Expected(RigExecRigEvaluator &entering, const RigExecClothPrepared &prepared, in
          const std::vector<RigExecValueOverride> *drag = nullptr,
          std::vector<RigExecWindowPacket> *window = nullptr)
 {
-    const int frames = RigExecClothHistoryFrames(prepared.epoch.settings);
+    const int frames = RigExecClothHistoryFrames(prepared.compiledRig.settings);
     std::vector<RigExecWindowPacket> packets;
     for (int k = frames; k >= 0; --k) {
         if (k == 0 && drag) entering.SetInteractiveOverrides(*drag);
@@ -95,7 +96,7 @@ Expected(RigExecRigEvaluator &entering, const RigExecClothPrepared &prepared, in
         const Points box = PointsOf(pose, kBox);
         RigExecWindowPacket packet;
         const RigExecClothParameters params;
-        CHECK(RigExecClothPacket(prepared.epoch,
+        CHECK(RigExecClothPacket(prepared.compiledRig,
                                  reinterpret_cast<const float *>(curtain.data()),
                                  curtain.size(),
                                  {reinterpret_cast<const float *>(box.data())},
@@ -104,7 +105,7 @@ Expected(RigExecRigEvaluator &entering, const RigExecClothPrepared &prepared, in
     }
     std::vector<const RigExecWindowPacket *> ticks;
     for (const auto &packet : packets) ticks.push_back(&packet);
-    Points out(prepared.epoch.pointCount);
+    Points out(prepared.compiledRig.pointCount);
     std::string why;
     CHECK(RigExecClothSolvePackets(prepared, ticks.data(), ticks.size(),
                                    reinterpret_cast<float *>(out.data()), &why));
@@ -256,7 +257,7 @@ TestMatchesKernel()
     CHECK(Compile(entering));
     RigExecClothPrepared prepared;
     std::string why;
-    CHECK(RigExecPrepareCloth(StageEpoch(stage), &prepared, &why));
+    CHECK(RigExecPrepareCloth(StageCompiledRig(stage), &prepared, &why));
     float sag = 0.0f;
     for (int t = 1; t <= 40; t += 3) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
@@ -331,6 +332,46 @@ TestRandomAccessAgrees()
     CHECK(playback.GetHistoryTickCountForTesting() == first);
 }
 
+// The scene program runs the same window: sequential play pushing each
+// frame, and jumps that rebuild the history, match the native points.
+void
+TestSceneProgramMatchesNative()
+{
+    using rigExecSceneProgramDrive::SceneRun;
+    UsdStageRefPtr stage = MakeStage();
+    RigExecRigEvaluator native(stage, kRig);
+    CHECK(Compile(native));
+    std::vector<Points> want(41);
+    for (int t = 1; t <= 40; ++t) want[size_t(t)] = PointsOf(native.Evaluate(UsdTimeCode(t)), kCurtain);
+    const auto curtain = [](const SceneRun &scene) {
+        const VtValue points = scene.Final(kCurtain, RigExecSceneValueDomain::Points);
+        return points.IsHolding<VtVec3fArray>()
+                   ? Points(points.UncheckedGet<VtVec3fArray>().begin(), points.UncheckedGet<VtVec3fArray>().end())
+                   : Points();
+    };
+    SceneRun scene(stage, kRig, -70, 40);
+    CHECK(scene.ok);
+    if (!scene.ok) return;
+    CHECK(scene.program.windowedOps.size() == 1);
+    for (int t = -70; t <= 40; ++t) {
+        CHECK(scene.Evaluate(t));
+        scene.runtime.PushHistory();
+        if (t >= 1 && !SameBits(curtain(scene), want[size_t(t)])) {
+            std::printf("t=%d scene and native differ by %g\n", t, Furthest(curtain(scene), want[size_t(t)]));
+            CHECK(false);
+            break;
+        }
+    }
+    SceneRun jumping(stage, kRig, -70, 40);
+    for (int t : {33, 9, 40, 1}) {
+        CHECK(jumping.Jump(t));
+        if (!SameBits(curtain(jumping), want[size_t(t)]))
+            std::printf("t=%d jump differs by %g (depth %zu)\n", t, Furthest(curtain(jumping), want[size_t(t)]),
+                        jumping.program.GetHistoryDepth());
+        CHECK(SameBits(curtain(jumping), want[size_t(t)]));
+    }
+}
+
 std::vector<RigExecValueOverride>
 Drag(double tx)
 {
@@ -352,7 +393,7 @@ TestDragReadsAuthoredHistory()
     CHECK(Compile(entering));
     RigExecClothPrepared prepared;
     std::string why;
-    CHECK(RigExecPrepareCloth(StageEpoch(stage), &prepared, &why));
+    CHECK(RigExecPrepareCloth(StageCompiledRig(stage), &prepared, &why));
     const Points authored = PointsOf(evaluator.Evaluate(UsdTimeCode(14)), kCurtain);
     const auto drag = Drag(-6.0);
     evaluator.SetInteractiveOverrides(drag);
@@ -379,10 +420,10 @@ TestFrozenJobsMatchLive(bool features = false)
     }
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.programDigest =
-        context.epochDigest ^
+        context.compiledRigSignature ^
         (uint64_t(program->GetBoundInputCount()) * 1099511628211ull) ^
         (uint64_t(program->GetVaryingInputCount()) * 16777619ull);
     context.frozen = frozen.get();
@@ -551,6 +592,7 @@ main()
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestMatchesKernel();
     TestRandomAccessAgrees();
+    TestSceneProgramMatchesNative();
     TestDragReadsAuthoredHistory();
     TestFrozenJobsMatchLive();
     TestBinaryParity();

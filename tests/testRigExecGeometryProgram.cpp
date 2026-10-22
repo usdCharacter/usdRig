@@ -1,5 +1,5 @@
 #include "rigExecScene/geometryProgram.h"
-#include "rigExecScene/geometrySceneLowering.h"
+#include "rigExecScene/geometrySceneTranslation.h"
 #include "rigExecScene/geometryGraphBinding.h"
 #include "rigExec/moverGraph.h"
 #include <cstdio>
@@ -70,7 +70,7 @@ int main() {
     if(!gathered[0].samples[0].layout)return 1;
     CHECK(!gathered[0].samples[0].layout->valid);
     CHECK(!RigExecGeometryBlendDeltas(gathered,{{0,0,0},{0,0,0}},&deltas));
-    // Detached lowering preserves declared provider phase and missing targets.
+    // Detached translation preserves declared provider phase and missing targets.
     RigExecSceneDescriptors scene;
     scene.rigRoot=SdfPath("/Rig");scene.identities={UsdTimeCode::Default()};
     RigExecSceneNodeDescriptor mover;
@@ -84,16 +84,16 @@ int main() {
     relationship.readPhase=TfToken("final");
     relationship.forwardedTargets={SdfPath("/Rig/Missing")};relationship.targetExists={0};
     scene.relationships.emplace(relationship.fact.path,relationship);
-    RigExecSceneGeometryDescriptor lowered;
+    RigExecSceneGeometryDescriptor translated;
     std::string error;
-    CHECK(RigExecLowerSceneGeometry(scene,mover.fact.path,target.fact.path,&lowered,&error));
-    CHECK(lowered.record.binding.transform==SdfPath("/Rig/Missing"));
-    CHECK(lowered.record.binding.transformPhase.kind==RigExecReadPhaseKind::Final);
+    CHECK(RigExecTranslateSceneGeometry(scene,mover.fact.path,target.fact.path,&translated,&error));
+    CHECK(translated.record.binding.transform==SdfPath("/Rig/Missing"));
+    CHECK(translated.record.binding.transformPhase.kind==RigExecReadPhaseKind::Final);
     std::vector<VtValue> detachedLeaves;
-    CHECK(RigExecResolveSceneGeometryLeaves(scene,lowered,UsdTimeCode::Default(),{},&detachedLeaves,&error));
-    CHECK(detachedLeaves.size()==lowered.record.leaves.keys.size());
+    CHECK(RigExecResolveSceneGeometryLeaves(scene,translated,UsdTimeCode::Default(),{},&detachedLeaves,&error));
+    CHECK(detachedLeaves.size()==translated.record.leaves.keys.size());
     scene.relationships[relationship.fact.path].readPhase=TfToken("bad relative path");
-    CHECK(!RigExecLowerSceneGeometry(scene,mover.fact.path,target.fact.path,&lowered,&error));
+    CHECK(!RigExecTranslateSceneGeometry(scene,mover.fact.path,target.fact.path,&translated,&error));
     // The extended settings' frame providers (a Delta Mush's rigExec:frame,
     // a lattice's or a surface's rigExec:frames) bind as influences at their
     // relationship's phase, as each mover's Bind binds them.
@@ -111,11 +111,11 @@ int main() {
         frames.forwardedTargets={SdfPath("/Rig/CageFrame"),SdfPath("/Rig/TargetFrame")};frames.targetExists={1,1};
         framed.relationships.emplace(frames.fact.path,frames);
         RigExecSceneGeometryDescriptor detached;
-        CHECK(RigExecLowerSceneGeometry(framed,deformer.fact.path,target.fact.path,&detached,&error));
+        CHECK(RigExecTranslateSceneGeometry(framed,deformer.fact.path,target.fact.path,&detached,&error));
         CHECK(detached.record.binding.influences==SdfPathVector({SdfPath("/Rig/CageFrame"),SdfPath("/Rig/TargetFrame")}));
         CHECK(detached.record.binding.transformPhase.kind==RigExecReadPhaseKind::Final);
         framed.relationships[frames.fact.path].readPhase=TfToken("bad relative path");
-        CHECK(!RigExecLowerSceneGeometry(framed,deformer.fact.path,target.fact.path,&detached,&error));
+        CHECK(!RigExecTranslateSceneGeometry(framed,deformer.fact.path,target.fact.path,&detached,&error));
     }
     RigExecSceneGeometryDescriptor graphDescriptor;
     graphDescriptor.mover=SdfPath("/Rig/Move");
@@ -180,8 +180,10 @@ int main() {
     RigExecSceneNodeDescriptor projector;
     projector.fact.path=SdfPath("/Rig/Projector");projector.fact.type=TfToken("RigExecSurfaceProjector");
     projector.fact.active=true;scene.nodes[projector.fact.path]=projector;
+    // Capture interns the primvar names translation publishes to.
+    scene.primvarNames.emplace("primvars:eyeProjector",TfToken("primvars:eyeProjector"));
     std::vector<RigExecSceneGeometryDescriptor> variants;
-    CHECK(RigExecLowerSceneGeometryVariants(scene,projector.fact.path,SdfPath("/Mesh.points"),&variants,&error));
+    CHECK(RigExecTranslateSceneGeometryVariants(scene,projector.fact.path,SdfPath("/Mesh.points"),&variants,&error));
     CHECK(variants.size()==1 && variants[0].matrixOutput && variants[0].derived);
     if(variants.empty())return 1;
     CHECK(variants[0].target==SdfPath("/Mesh.primvars:eyeProjector") && variants[0].pointsTarget==SdfPath("/Mesh.points"));
@@ -191,7 +193,7 @@ int main() {
     extent.fact.hasAuthoredValue=true;extent.inputs.resize(1);
     extent.inputs[0].raw=VtValue(VtVec3fArray{GfVec3f(-1),GfVec3f(1)});
     scene.attributes[extent.fact.path]=extent;
-    CHECK(RigExecLowerSceneDerivedGeometry(scene,SdfPath("/Mesh.points"),&variants,&error));
+    CHECK(RigExecTranslateSceneDerivedGeometry(scene,SdfPath("/Mesh.points"),&variants,&error));
     CHECK(variants.size()==1 && variants[0].derived && !variants[0].matrixOutput);
     CHECK(variants[0].record.op==RigExecRevisionOp::RecomputeExtent && variants[0].target==extent.fact.path);
     return failures?1:0;

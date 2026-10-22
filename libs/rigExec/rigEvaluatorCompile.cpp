@@ -1,10 +1,10 @@
-// Binding epochs: validation, graph construction, and request preparation.
+// Compiled rigs: validation, graph construction, and request preparation.
 
 #include "rigEvaluatorInternal.h"
 #include "crossDomainInputs.h"
 #include "inputReplay.h"
 #include "moverGraph.h"
-#include "rigExecScene/poseSceneLowering.h"
+#include "rigExecScene/poseSceneTranslation.h"
 #include "sceneDispatch.h"
 #include "rigEvaluatorDependencies.h"
 #include "rigEvaluatorPropertyBindings.h"
@@ -89,7 +89,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
             }
         }
     }
-    const bool compiled = _CompileEpoch(errors);
+    const bool compiled = _CompileRig(errors);
     // The shadow is asked every question this evaluator is, in the same
     // order, so that the one thing that differs between them is how their
     // notices clear the value caches.
@@ -106,7 +106,7 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
 // outputs. Structural edits retry all operations; a failure with no operation
 // owner rejects the rig as a whole.
 bool
-RigExecRigEvaluator::_CompileEpoch(std::vector<std::string> *errors)
+RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
 {
     // Bounds the retries on a rig that is broken everywhere at once; past it
     // the rig fails as a whole, as it always did.
@@ -118,7 +118,7 @@ RigExecRigEvaluator::_CompileEpoch(std::vector<std::string> *errors)
     for (;;) {
         attempt.clear();
         _CompileFailure failure;
-        if (_CompileEpochAttempt(&attempt, &failure)) {
+        if (_CompileRigAttempt(&attempt, &failure)) {
             break;
         }
         // The operation the error is about -- or, for a dependency cycle,
@@ -170,7 +170,7 @@ RigExecRigEvaluator::_CompileEpoch(std::vector<std::string> *errors)
 }
 
 bool
-RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
+RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                          _CompileFailure *failure)
 {
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile", "compile");
@@ -197,18 +197,18 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
         _profiler.Record(name, "compile", compileRegionStart, now);
         compileRegionStart = now;
     };
-    // The program describes the epoch this call is about to replace, so it
+    // The program describes the compiled rig this call is about to replace, so it
     // stops being the rig's program here: a Compile that fails and restores
-    // the previous epoch returns before the rebuild at the tail, this local
+    // the previous compiled rig returns before the rebuild at the tail, this local
     // goes out of scope, and the rig is left dynamic -- slower and never
     // wrong. Retired rather than destroyed, because its persistent GEOMETRY
-    // state (which node ran with which packet) is not about the epoch: the
+    // state (which node ran with which packet) is not about the compiled rig: the
     // dynamic path keeps its _liveGraphs across a recompile and reconnects
     // whichever nodes survive, and the rebuild below does the same.
     std::unique_ptr<RigExecBakedProgram> retiringBakedProgram =
         std::move(_bakedProgram);
     _bakedProgramStale = false;
-    // A new epoch is a new question: whatever refused the last one said
+    // A new compiled rig is a new question: whatever refused the last one said
     // nothing about this one, and whatever made its program bail neither.
     _bakeRefused = false;
     _bakeRefusalReasons.clear();
@@ -239,7 +239,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     stampCompileRegion("Compile.DerivedStartFrames");
 
     // The structure digest is a pure read of the composed stage that boils it
-    // down to one number, and that number is not consulted until the epoch is
+    // down to one number, and that number is not consulted until the compiled rig is
     // committed far below: nothing in between reads it, and compile authors
     // nothing to the stage for it to miss past the derived opinions above
     // (which the digest reads, deterministically, as composed targets). So
@@ -325,14 +325,14 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // cannot leave one open.
     RigExecProfilePhases compileBlocks(&_profiler, "compile");
 
-    std::function<void()> invalidateEpoch;
-    auto fail = [errors, failure, &invalidateEpoch](const std::string &message,
+    std::function<void()> invalidateCompiledRig;
+    auto fail = [errors, failure, &invalidateCompiledRig](const std::string &message,
                                        SdfPathVector operations = {}) {
         *failure = {message, std::move(operations)};
         if (errors) {
             errors->push_back(message);
         }
-        if (invalidateEpoch) invalidateEpoch();
+        if (invalidateCompiledRig) invalidateCompiledRig();
         return false;
     };
 
@@ -354,7 +354,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     }
     // Phase A: validation into locals. Nothing below mutates evaluator
     // state until every check passes, so a failed structural edit keeps
-    // the previous epoch publishable (spec §4.1 atomic transactions).
+    // the previous compiled rig publishable (spec §4.1 atomic transactions).
     std::vector<SdfPath> newJointPaths =
         _DiscoverJointOutputs(_stage, _rigPath, _skippedOperations);
     // A rig with no joints is legal.
@@ -399,15 +399,15 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // Dispatched as early as its inputs allow: straight after the providers
     // are discovered, ahead of the pose-interpolator solve and the
     // transform-authority pass, which read the stage and author nothing. The
-    // lane task is compile's critical path in both kinds of epoch -- the
+    // lane task is compile's critical path in both kinds of compiled rig -- the
     // warm-up and the solver-request preparations behind it in an eager
     // one, the guides in a deferred one -- so every millisecond it starts
     // earlier is one off the compile. MEASURED on puppetA: those two passes
     // are ~1.9 ms that used to sit in front of the dispatch.
-    // Warm the shared exec network, off the critical path, in an epoch that
+    // Warm the shared exec network, off the critical path, in a compiled rig that
     // prepares its requests here.
-    // Every request an eager epoch prepares -- the solver batches, the
-    // first-frame pose, the main epoch request, the guides -- compiles into
+    // Every request an eager compiled rig prepares -- the solver batches, the
+    // first-frame pose, the main compiled rig request, the guides -- compiles into
     // the SAME exec network for this stage, and whichever request asks for a
     // provider first pays to compile it. Asking for all of them at once,
     // here, builds that shared network in one wide parallel round rather
@@ -440,7 +440,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
                                        compileScene.get(),&_profiler)) {
             return fail(interpolatorError, {interpolatorOperation});
         }
-        // No interpolators means no capture. All existing lowering reads
+        // No interpolators means no capture. All existing translation reads
         // still use the same fresh Default snapshot at their original site.
         if (compileScene->rigRoot.IsEmpty()) {
             compileScene.reset();
@@ -590,7 +590,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
         // A ribbon's driver-curve points, resolved to the exact native
         // attribute. This replaces the compiler's last authoring pass:
         // the resolution is compiled state (rewiring the relationship is
-        // structural, and the epoch digest already treats it that way),
+        // structural, and the compiled rig signature already treats it that way),
         // and the values ride in as exec overrides at evaluation time.
         if (child.GetTypeName() == "RigExecRibbon") {
             SdfPathVector curves;
@@ -731,8 +731,8 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
 
     compileBlocks.Next("DiscoverValidate.SolverJointBinding");
     // View-free solver->joint binding validation. This
-    // runs in Phase A, BEFORE any epoch teardown, so an invalid binding
-    // rejects the compile while the previous epoch stays publishable (the
+    // runs in Phase A, BEFORE any compiled rig teardown, so an invalid binding
+    // rejects the compile while the previous compiled rig stays publishable (the
     // BLOCKER fix: compile Pass 0 must never be the first place a bad
     // binding is discovered, because by then the old layer is gone and
     // restoration would re-hit the same invalid state). Recursive over the
@@ -770,7 +770,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // It is a pre-order of the WHOLE rig, not a sibling order: two solvers in
     // different scopes are ordered by where their scopes sit, and a nested
     // solver comes before its ancestor. This is deliberately the same walk
-    // the epoch digest uses (see the aggregate-solver segment of the digest
+    // the compiled rig signature uses (see the aggregate-solver segment of the digest
     // below), so an order edit can never retain the old digest while
     // executing a different stack.
     std::map<SdfPath, int> solverStackOrdinal;
@@ -1321,10 +1321,10 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // their shared compiler context. The stock network handles changed USD
     // bindings incrementally; no whole execution-system replacement is needed.
 
-    invalidateEpoch = [&]() { _compiled = false; };
+    invalidateCompiledRig = [&]() { _compiled = false; };
 
     compileBlocks.Next("SolverSchedule.VolumeWeights");
-    // Volumetric weight epoch state (spec §4.1 volumetric extension).
+    // Volumetric weight compiled rig state (spec §4.1 volumetric extension).
     std::vector<RigExecValueOverride> newFalloffLutOverrides;
     std::set<SdfPath> newCurrentPhaseWeights;
     std::set<SdfPath> newVolumeWeightProviders;
@@ -1335,7 +1335,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // is authoring error, and the bound only has to keep this
     // terminating.
     // Structural authoring errors on a volume weight, collected during
-    // the walk below and reported before the epoch commits.
+    // the walk below and reported before the compiled rig commits.
     // These are cardinality rules on the points-bearing relationships,
     // and they exist because the two evaluation paths CANNOT disagree
     // about them safely: the exec kernel receives a relationship's
@@ -1487,7 +1487,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
         registerVolumeWeights(volumePath);
     }
 
-    // Gather volumetric epoch state for every common mover envelope, not only
+    // Gather volumetric compiled rig state for every common mover envelope, not only
     // point-graph revisions. Geometry-domain constraints publish directly
     // after the pose walk and therefore never appear in _graphChains, but a
     // sphere/plane/curve field bound to one still needs the same placement tap
@@ -1959,7 +1959,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
                     // inputs: namespace, which is not path syntax, and the
                     // revised targets are property paths. AppendPath here
                     // builds an invalid path that can never match, silently
-                    // freezing every chain-driven mask at its epoch value.
+                    // freezing every chain-driven mask at its compiled rig value.
                     if (propertyRevisedTargets.count(
                             constraint.moverPath.AppendProperty(
                                 TfToken(name)))) {
@@ -2205,14 +2205,14 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
             // Declared leaves capture blend samples. A computeBlendChannel
             // request here would duplicate that sampling.
             if (revision.op == RigExecRevisionOp::Skin) {
-                // Whether the per-point layout can change WITHIN this epoch
+                // Whether the per-point layout can change WITHIN this compiled rig
                 // is a question about the stage, so it is answered here once
                 // rather than guessed at per frame. The three ways it can:
                 // an authored time sample (the arrays differ per time code),
                 // an authored connection (the value comes from somewhere
                 // else, which may itself be animated), and a property chain
                 // writing the attribute (the evaluator computes it per
-                // generation). Anything else is epoch-constant by the same
+                // generation). Anything else is compiled rig constant by the same
                 // definition the digest uses, so the layout is resolved once
                 // and shared instead of re-read, re-copied and re-validated
                 // on every frame.
@@ -2527,7 +2527,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // what makes seeding it generously safe.
     std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash>
         poseInfoPrefetch;
-    // Shared, not local: a deferred epoch hands it to
+    // Shared, not local: a deferred compiled rig hands it to
     // _RealizeDeferredExecPrep, which materializes the attribute sets the
     // solver-input index reads from it.
     const auto poseInputGraph = std::make_shared<_PoseInputGraph>();
@@ -3241,21 +3241,21 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     std::vector<_SolverBatch> newSolverBatches;
     // Provider identities include every required namespace ancestor.
     std::set<SdfPath> newNativeProviderPaths;
-    std::set<SdfPath> newRestEpochProviders;
-    const auto seedRestEpochProvider = [&](SdfPath path) {
+    std::set<SdfPath> newRestCompiledRigProviders;
+    const auto seedRestCompiledRigProvider = [&](SdfPath path) {
         for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
              path = path.GetParentPath()) {
-            if (newRestEpochProviders.count(path)) break;
+            if (newRestCompiledRigProviders.count(path)) break;
             if (!isFrameProvider(path)) continue;
-            newRestEpochProviders.insert(path);
+            newRestCompiledRigProviders.insert(path);
         }
     };
     // Preserve the already-reached connected-read keys, without seeding their
     // namespace ancestors until the original late connected-input pass.
     std::set<SdfPath> restLatePoseInputs;
     for (const auto &entry : newPoseInputInfo) restLatePoseInputs.insert(entry.first);
-    auto seedProvider = [&](SdfPath path, bool restEpoch = true) {
-        if (restEpoch) seedRestEpochProvider(path);
+    auto seedProvider = [&](SdfPath path, bool restCompiledRig = true) {
+        if (restCompiledRig) seedRestCompiledRigProvider(path);
         for (; !path.IsEmpty() && path != SdfPath::AbsoluteRootPath();
              path = path.GetParentPath()) {
             if (newNativeProviderPaths.count(path)) break;
@@ -3312,12 +3312,12 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
                 std::string error;
                 if(!RigExecDispatchCaptureSceneDescriptors(_stage,_rigPath,{UsdTimeCode::Default()},compileScene.get(),&error))return fail(error);
                 // A notice during capture makes the snapshot ineligible for
-                // later reuse; its original switch lowering still runs here.
+                // later reuse; its original switch translation still runs here.
                 compileSceneSerial=before;
                 compileSceneReusable=before==GetStageEditSerial();
             }
             auto captured=std::make_shared<RigExecSceneSpaceSwitchDescriptor>();std::string error;
-            if(!RigExecDispatchLowerSceneSpaceSwitch(*compileScene,path,captured.get(),&error))return fail(error);
+            if(!RigExecDispatchTranslateSceneSpaceSwitch(*compileScene,path,captured.get(),&error))return fail(error);
             if(!targets.insert(captured->target).second)
                 return fail(captured->target.GetString()+" is the target of more than one space switch");
             _SpaceSwitch record;record.descriptor=captured;record.switchPath=path;record.target=captured->target;
@@ -3343,8 +3343,8 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
             seedProvider(member, false);
     // Close exactly the original first-frame/rest provider roots, separately
     // from native geometry-only source roots. This adds no operation or tap.
-    const std::vector<SdfPath> restSeedPaths(newRestEpochProviders.begin(),
-                                           newRestEpochProviders.end());
+    const std::vector<SdfPath> restSeedPaths(newRestCompiledRigProviders.begin(),
+                                           newRestCompiledRigProviders.end());
     for (const SdfPath &provider : restSeedPaths) {
         const auto &closure = poseProviderClosure(provider);
         restLatePoseInputs.insert(closure.begin(), closure.end());
@@ -3352,11 +3352,11 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // ORIGINAL seeds the reached connected inputs and their namespace
     // ancestors after the explicit-root closure; it does not close those
     // newly introduced namespace roots a second time.
-    for (const SdfPath &input : restLatePoseInputs) seedRestEpochProvider(input);
+    for (const SdfPath &input : restLatePoseInputs) seedRestCompiledRigProvider(input);
     // The first-frame/rest request admits only valid USD providers, as the
     // original request preparation did. Geometry-only inputs are not roots
     // of this request and retain their independent availability policy.
-    for (const SdfPath &path : newRestEpochProviders) {
+    for (const SdfPath &path : newRestCompiledRigProviders) {
         const UsdPrim provider = _stage->GetPrimAtPath(path);
         if (!provider || !UsdPrimDefaultPredicate(provider)) {
             return fail("failed to prepare pose provider inputs");
@@ -3364,7 +3364,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     }
     compileBlocks.Next("SolverSchedule.SolverBatches");
     // Capture native domain descriptors in authored stack order. Scheduling
-    // belongs to the single graph built after every domain is lowered.
+    // belongs to the single graph built after every domain is translated.
     std::vector<SdfPath> authoredPose;
     for(const auto &entry:poseDependencies) authoredPose.push_back(entry.first);
     std::sort(authoredPose.begin(),authoredPose.end(),[&](const SdfPath &a,const SdfPath &b) {
@@ -3488,13 +3488,13 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     // Close the provider universe from connected-expression facts. Values
     // are composed by native domain operations after all producers exist.
     for (const auto &[provider, info] : newPoseInputInfo) seedProvider(provider, false);
-    bool newEpochRestsConstant = true;
+    bool newCompiledRigRestsConstant = true;
     std::set<SdfPath> restChainTargets;
     for (const auto &entry : newPropertyChains) restChainTargets.insert(entry.first);
-    for (const SdfPath &provider : newRestEpochProviders) {
+    for (const SdfPath &provider : newRestCompiledRigProviders) {
         if (_ProviderRestMightVary(_stage, _restInputNames, provider,
                                   restChainTargets)) {
-            newEpochRestsConstant = false;
+            newCompiledRigRestsConstant = false;
             break;
         }
     }
@@ -3512,7 +3512,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     }
     stampCompileRegion("Compile.ChainOrderValidate");
 
-    // Publish descriptor facts atomically before native graph lowering.
+    // Publish descriptor facts atomically before native graph translation.
     _movers = std::move(newMovers);
     _jointPaths = std::move(newJointPaths);
     _controlPaths = std::move(newControlPaths);
@@ -3543,13 +3543,13 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     _nativePoseOrdinals = std::move(poseStackOrdinal);
 
     _nativeProviderPaths = std::move(newNativeProviderPaths);
-    _restEpochProviderPaths = std::move(newRestEpochProviders);
-    _epochRestsConstant = newEpochRestsConstant;
+    _restCompiledRigProviderPaths = std::move(newRestCompiledRigProviders);
+    _compiledRigRestsConstant = newCompiledRigRestsConstant;
     _hierarchicalProviderSet.clear();
     _hierarchicalProviderSet.reserve(_nativeProviderPaths.size());
     for (const SdfPath &provider : _nativeProviderPaths)
         _hierarchicalProviderSet.insert(provider);
-    // Anchors and intervening-Xform candidates for the new epoch. Both are
+    // Anchors and intervening-Xform candidates for the new compiled rig. Both are
     // pure namespace topology; recomputing them per frame cost an xform-cache
     // query per provider only to be told "identity" on every rig that has no
     // such Xform, which is nearly all of them.
@@ -3582,7 +3582,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     _nativePhaseCheckpoints = std::move(newPhaseCheckpoints);
     _graphChains = std::move(newGraphChains);
     _graphDerivedChains = std::move(newGraphDerivedChains);
-    // Both caches below are keyed by nothing but a path, so the epoch they
+    // Both caches below are keyed by nothing but a path, so the compiled rig they
     // belong to has to be stated by emptying them when it ends: the
     // influence table a layout was range-checked against and the base points
     // a source holds are both things a recompile can have changed.
@@ -3635,7 +3635,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
     stampCompileRegion("Compile.Commit");
     _compiled = true;
 
-    // Build the dense provider universe once per compile epoch. _providerPaths
+    // Build the dense provider universe once per compile compiled rig. _providerPaths
     // is SdfPath-sorted, so ascending live-index iteration reproduces the
     // std::map key order the frame-domain publish loops previously relied on.
     {
@@ -3685,7 +3685,7 @@ RigExecRigEvaluator::_CompileEpochAttempt(std::vector<std::string> *errors,
         }
     }
     _structureDirty = false;
-    // Compile the complete native domain graph for this epoch.
+    // Compile the complete native domain graph for this compiled rig.
     _RebuildBakedProgram(std::move(retiringBakedProgram),
                          compileSceneReusable?compileScene.get():nullptr,
                          compileSceneStage,compileSceneSerial);
@@ -3747,7 +3747,7 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
     // recompilation failed" is the settle's, and it adds that itself on a
     // replay as it does here).
     std::vector<std::string> errors;
-    const bool ok = _CompileEpoch(&errors);
+    const bool ok = _CompileRig(&errors);
     if (diagnostics) {
         diagnostics->insert(diagnostics->end(), errors.begin(), errors.end());
     }
@@ -3768,12 +3768,12 @@ RigExecRigEvaluator::_CompileUnlessKnownBroken(
 }
 
 bool
-RigExecRigEvaluator::_SettleEpoch(std::vector<std::string> *diagnostics)
+RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
 {
     if (!_compiled && !_CompileUnlessKnownBroken(diagnostics)) {
         return false;
     }
-    // Structural edits begin a new epoch: recompile when the composed
+    // Structural edits begin a new compiled rig: recompile when the composed
     // mover topology digest changed (spec §4.2, §6.3).
     // A standing failure memo answers ahead of the digest. It can only match
     // here when the failure it holds was this same structural recompile:
@@ -3829,7 +3829,7 @@ RigExecRigEvaluator::_SettleEpoch(std::vector<std::string> *diagnostics)
         }
         recompiled = true;
         if (!certain || _structureDigest != digestBefore) {
-            diagnostics->push_back("structural edit: epoch rebuilt");
+            diagnostics->push_back("structural edit: compiled rig rebuilt");
         } else if (counts) {
             ++counts->falsePositives;
             std::fprintf(stderr,

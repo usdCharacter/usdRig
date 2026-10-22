@@ -1,16 +1,16 @@
 // RigExec live operation graph: the evaluator's in-memory operation
 // structures as one diagnostic graph.
-// The compiled epoch is scattered across a dozen members -- solver
+// The compiled rig is scattered across a dozen members -- solver
 // batches, pose steps, frame constraints, geometry revision chains with
 // their live VdfNetworks, property chains, tap sets -- and each answers
 // only its own question. This is the union: every operation as a node,
 // every dependency the compile derived as an edge, so a visualizer (or
-// a test holding the compile to account) reads the whole epoch at once.
+// a test holding the compile to account) reads the whole compiled rig at once.
 // Nodes carry the profiler scope that fires them, so a generation's
 // profile events attribute straight onto the graph.
 // Built only on request (RigExecRigEvaluator::DescribeLiveOperations);
 // compile and evaluation never build or read it.
-// Ids are stable within the epoch and read as paths where they can be:
+// Ids are stable within the compiled rig and read as paths where they can be:
 //   batch:<index>              one solver batch (the exec request unit)
 //   solver:<path>              one aggregate solver
 //   constraint:<mover path>    one compiled frame constraint
@@ -46,7 +46,7 @@
 
 namespace rigExec {
 
-/// One operation, value, or exec tap of the compiled epoch.
+/// One operation, value, or exec tap of the compiled rig.
 struct RigExecLiveOpNode {
     std::string id;
     /// batch, solver, constraint, chain, revision, propchain, proprev,
@@ -79,7 +79,7 @@ struct RigExecLiveOpEdge {
     std::string kind;
 };
 
-/// The whole compiled epoch, as nodes plus edges. Node ids are unique;
+/// The whole compiled rig, as nodes plus edges. Node ids are unique;
 /// edges name only nodes of the same graph.
 struct RigExecLiveOperationGraph {
     std::vector<RigExecLiveOpNode> nodes;

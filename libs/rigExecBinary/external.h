@@ -3,14 +3,16 @@
 //
 // A plugin mover assembles its payload from the stage, which playback does
 // not have. Export therefore asks the plugin to split its assembled payload
-// into EPOCH bytes, written once per revision, and FRAME bytes. Playback
+// into Compiled data bytes, written once per revision, and FRAME bytes. Playback
 // hands both back to the plugin's kernel together with the points the
 // mover's binding reads at a declared phase, which the runtime evaluates
 // itself -- so a posed playback moves those -- and with the preceding
 // points to revise. The bytes are the plugin's own format: the engine never
 // interprets them. The file holds one ExternalMover entry per plugin
-// revision (rigexec.fbs): its type, its epoch bytes and the frame bytes of
+// revision (rigexec.fbs): its type, its compiled data bytes and the frame bytes of
 // the bake's run.
+// The serialized schema retains the field name `epoch` for compiled data;
+// this naming does not change the binary format or the payload tags.
 //
 // Everything here is plain data and function pointers: a runtime without
 // USD can carry a kernel, and a runtime with no kernel for a type passes
@@ -82,11 +84,11 @@ struct RigExecExternalProviders {
 
 /// A plugin mover's playback kernel.
 struct RigExecExternalKernel {
-    /// Decodes one revision's epoch bytes into immutable state, once per
+    /// Decodes one revision's compiled data bytes into immutable state, once per
     /// opened file. Null, with a reason, when the bytes are not ones this
     /// kernel can read; the revision then passes its points through.
     std::shared_ptr<const void> (*prepare)(
-        const uint8_t *epoch, size_t epochSize, std::string *error) = nullptr;
+        const uint8_t *compiledRig, size_t compiledRigSize, std::string *error) = nullptr;
     /// Revises \p xyz (\p pointCount triples, the preceding revision's
     /// points) in place to the full-strength candidate; the runtime applies
     /// the mover's envelope afterwards. Must not change the point count or

@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_GRAPH_WEIGHT_GRAPH_BINDING_H
 #define RIGEXEC_GRAPH_WEIGHT_GRAPH_BINDING_H
-#include "weightSceneLowering.h"
+#include "weightSceneTranslation.h"
 #include "typedValues.h"
 #include "sceneGraphBinding.h"
 #include <functional>

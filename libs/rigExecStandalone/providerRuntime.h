@@ -4,7 +4,7 @@
 #include "rigExecScene/providerProgram.h"
 namespace rigExec {
 /// Concrete stage-free provider execution. Full rig execution must additionally
-/// lower solver, mover, weight and switch domain kernels into the same graph.
+/// translate solver, mover, weight and switch domain kernels into the same graph.
 class RigExecStandaloneProviderRuntime {
 public:
     bool Prepare(const RigExecSceneDb &database,const SdfPath &rigRoot,

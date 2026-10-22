@@ -2087,7 +2087,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         auto &slots = C.headInputSlots[index];
         // Painted storage is private, but its current payload still schedules
         // the packet and diagnostic field that read it. Folded native arrays
-        // rebuild the epoch; detached input slots must wake the same bodies.
+        // rebuild the compiled rig; detached input slots must wake the same bodies.
         const auto paintedSlots = [&](int object) {
             if (object < 0 || size_t(object) >= C.weightObjects.size()) return;
             const auto &weight = C.weightObjects[size_t(object)];

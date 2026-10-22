@@ -219,7 +219,7 @@ RigExecRigEvaluator::GetSkinTopologyCacheSize() const
 }
 
 size_t
-RigExecRigEvaluator::GetEpochRestFrameCount() const
+RigExecRigEvaluator::GetCompiledRigRestFrameCount() const
 {
     if (!_bakedProgram) return 0;
     const auto &B = _bakedProgram->GetStepGraph();

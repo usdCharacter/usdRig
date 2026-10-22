@@ -1,15 +1,78 @@
-#include "geometrySceneLowering.h"
+#include "geometrySceneTranslation.h"
 #include "providerProgram.h"
 #include "rigExec/movers/moverRegistry.h"
 #include "rigExec/moverGraph.h"
 #include "pxr/usd/usdGeom/xformOp.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 #include <cstring>
 namespace rigExec {
 namespace {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (base)
+    (computeBlendChannel)
+    (extent)
+    (eyeProjector)
+    (faceVertexCounts)
+    (faceVertexIndices)
+    (final)
+    (knots)
+    (normals)
+    (offsets)
+    (order)
+    (pointIndices)
+    (points)
+    (preceding)
+    (widths)
+    (xformOpOrder)
+    ((inputsWeight, "inputs:weight"))
+    ((rigExecActivation, "rigExec:activation"))
+    ((rigExecBindCoordinates, "rigExec:bindCoordinates"))
+    ((rigExecBlendInputs, "rigExec:blendInputs"))
+    ((rigExecBlendShape, "rigExec:blendShape"))
+    ((rigExecCage, "rigExec:cage"))
+    ((rigExecDriverBaseTransformSpaces, "rigExec:driverBaseTransformSpaces"))
+    ((rigExecDriverBaseTransforms, "rigExec:driverBaseTransforms"))
+    ((rigExecDriverCurve, "rigExec:driverCurve"))
+    ((rigExecDriverFrames, "rigExec:driverFrames"))
+    ((rigExecDriverTransformSpaces, "rigExec:driverTransformSpaces"))
+    ((rigExecDriverTransforms, "rigExec:driverTransforms"))
+    ((rigExecFrame, "rigExec:frame"))
+    ((rigExecFrames, "rigExec:frames"))
+    ((rigExecInfluences, "rigExec:influences"))
+    ((rigExecMode, "rigExec:mode"))
+    ((rigExecReferenceTransform, "rigExec:referenceTransform"))
+    ((rigExecReferenceTransformSpace, "rigExec:referenceTransformSpace"))
+    ((rigExecSamples, "rigExec:samples"))
+    ((rigExecShaderDialPrimvar, "rigExec:shaderDialPrimvar"))
+    ((rigExecShaderDialSources, "rigExec:shaderDialSources"))
+    ((rigExecShaderPrimvar, "rigExec:shaderPrimvar"))
+    ((rigExecSourceSpace, "rigExec:sourceSpace"))
+    ((rigExecSources, "rigExec:sources"))
+    ((rigExecSpace, "rigExec:space"))
+    ((rigExecSurface, "rigExec:surface"))
+    ((rigExecTargetPoints, "rigExec:targetPoints"))
+    ((rigExecTransform, "rigExec:transform"))
+    ((rigExecTransformSpace, "rigExec:transformSpace"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+);
 bool Fail(std::string *error,const std::string &message) {if(error)*error=message;return false;}
+TfToken ReadPhaseToken(const RigExecReadPhase &phase) {
+    switch(phase.kind) {
+    case RigExecReadPhaseKind::Base:return _tokens->base;
+    case RigExecReadPhaseKind::Preceding:return _tokens->preceding;
+    case RigExecReadPhaseKind::Final:return _tokens->final;
+    case RigExecReadPhaseKind::AtPrim:return phase.prim.GetAsToken();
+    }
+    return _tokens->base;
 }
-bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPath &mover,
+UsdGeomXformOp::Type XformOpType(const std::string &name,size_t begin,size_t count) {
+    for(int t=UsdGeomXformOp::TypeInvalid+1;t<=UsdGeomXformOp::TypeTransform;++t)
+        if(!name.compare(begin,count,UsdGeomXformOp::GetOpTypeToken(UsdGeomXformOp::Type(t)).GetString()))return UsdGeomXformOp::Type(t);
+    return UsdGeomXformOp::TypeInvalid;
+}
+}
+bool RigExecTranslateSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPath &mover,
     const SdfPath &target,RigExecSceneGeometryDescriptor *out,std::string *error,
     const RigExecGeometryRecord *normalized)
 {
@@ -23,19 +86,19 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
     result.pointsTarget=target;
     result.targetExists=targetAttribute!=nullptr;
     if(targetAttribute)result.targetType=targetAttribute->fact.type;
-    auto targets=[&](const SdfPath &owner,const char *name) {
-        return source.Targets(owner.AppendProperty(TfToken(name)));
+    auto targets=[&](const SdfPath &owner,const TfToken &name) {
+        return source.Targets(owner.AppendProperty(name));
     };
-    auto first=[&](const char *name) {auto t=targets(mover,name);return t.empty()?SdfPath():t.front();};
-    auto points=[&](SdfPath path) {return path.IsPrimPath()?path.AppendProperty(TfToken("points")):path;};
-    auto phase=[&](const SdfPath &owner,const char *name,RigExecReadPhase *value) {
-        const auto *rel=source.Relationship(owner.AppendProperty(TfToken(name)));
+    auto first=[&](const TfToken &name) {auto t=targets(mover,name);return t.empty()?SdfPath():t.front();};
+    auto points=[&](SdfPath path) {return path.IsPrimPath()?path.AppendProperty(_tokens->points):path;};
+    auto phase=[&](const SdfPath &owner,const TfToken &name,RigExecReadPhase *value) {
+        const auto *rel=source.Relationship(owner.AppendProperty(name));
         return !rel || RigExecParseReadPhase(rel->readPhase.GetString(),value,error);
     };
     if(normalized)result.record=*normalized;
     else {
         TfToken mode;
-        const auto *attribute=source.Attribute(mover.AppendProperty(TfToken("rigExec:mode")));
+        const auto *attribute=source.Attribute(mover.AppendProperty(_tokens->rigExecMode));
         if(attribute && !attribute->inputs.empty() && attribute->inputs.front().raw.IsHolding<TfToken>())
             mode=attribute->inputs.front().raw.UncheckedGet<TfToken>();
         auto op=RigExecRevisionOpForSchema(node->fact.type,mode);
@@ -45,34 +108,34 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
     auto &binding=result.record.binding;
     binding.moverPath=mover;binding.target=target;
     if(!normalized) {
-        binding.weightObject=first("rigExec:weightObject");
+        binding.weightObject=first(_tokens->rigExecWeightObject);
         const auto owner=target.GetPrimPath();
         auto meshTopology=[&](const SdfPath &mesh) {
-            binding.topologyCounts=mesh.AppendProperty(TfToken("faceVertexCounts"));
-            binding.topologyIndices=mesh.AppendProperty(TfToken("faceVertexIndices"));
+            binding.topologyCounts=mesh.AppendProperty(_tokens->faceVertexCounts);
+            binding.topologyIndices=mesh.AppendProperty(_tokens->faceVertexIndices);
         };
         switch(result.record.op) {
         case RigExecRevisionOp::Matrix:
-            binding.transform=first("rigExec:transform");
-            binding.transformSpace=first("rigExec:transformSpace");binding.carrySpace=first("rigExec:space");
-            if(!phase(mover,"rigExec:transform",&binding.transformPhase))return false;
-            for(const char *name:{"rigExec:referenceTransform","rigExec:referenceTransformSpace"}) {
+            binding.transform=first(_tokens->rigExecTransform);
+            binding.transformSpace=first(_tokens->rigExecTransformSpace);binding.carrySpace=first(_tokens->rigExecSpace);
+            if(!phase(mover,_tokens->rigExecTransform,&binding.transformPhase))return false;
+            for(const auto &name:{_tokens->rigExecReferenceTransform,_tokens->rigExecReferenceTransformSpace}) {
                 const auto t=targets(mover,name);if(!t.empty())binding.influences.push_back(t.front());
             } break;
         case RigExecRevisionOp::Skin:
-            binding.influences=targets(mover,"rigExec:influences");
-            if(!phase(mover,"rigExec:influences",&binding.transformPhase))return false;
+            binding.influences=targets(mover,_tokens->rigExecInfluences);
+            if(!phase(mover,_tokens->rigExecInfluences,&binding.transformPhase))return false;
             break;
         case RigExecRevisionOp::BlendShape:
             binding.base=target;
             if(const auto *mesh=source.Node(owner))if(mesh->fact.type=="Mesh")meshTopology(owner);
-            binding.blendInputs=targets(mover,"rigExec:blendInputs");
+            binding.blendInputs=targets(mover,_tokens->rigExecBlendInputs);
             std::sort(binding.blendInputs.begin(),binding.blendInputs.end());
-            for(const auto &input:binding.blendInputs)for(const auto &sample:targets(input,"rigExec:samples")) {
-                const auto p=targets(sample,"rigExec:targetPoints"),shape=targets(sample,"rigExec:blendShape");
+            for(const auto &input:binding.blendInputs)for(const auto &sample:targets(input,_tokens->rigExecSamples)) {
+                const auto p=targets(sample,_tokens->rigExecTargetPoints),shape=targets(sample,_tokens->rigExecBlendShape);
                 if(p.size()+shape.size()!=1)return Fail(error,"blend sample must name one shape: "+sample.GetString());
                 RigExecReadPhase readPhase;
-                if(!p.empty() && !phase(sample,"rigExec:targetPoints",&readPhase))return false;
+                if(!p.empty() && !phase(sample,_tokens->rigExecTargetPoints,&readPhase))return false;
                 binding.blendSamples[input].push_back({sample,p.empty()?SdfPath():points(p.front()),readPhase,
                                                        shape.empty()?SdfPath():shape.front()});
             } break;
@@ -84,53 +147,53 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
         // at their relationship's phase, as each mover's Bind binds them.
         case RigExecRevisionOp::DeltaMush:
             binding.base=target;meshTopology(owner);
-            binding.influences=targets(mover,"rigExec:frame");
-            if(!phase(mover,"rigExec:frame",&binding.transformPhase))return false;
+            binding.influences=targets(mover,_tokens->rigExecFrame);
+            if(!phase(mover,_tokens->rigExecFrame,&binding.transformPhase))return false;
             break;
         case RigExecRevisionOp::Lattice: {
-            binding.base=target;binding.cagePoints=points(first("rigExec:cage"));
-            RigExecReadPhase p;if(!phase(mover,"rigExec:cage",&p))return false;
+            binding.base=target;binding.cagePoints=points(first(_tokens->rigExecCage));
+            RigExecReadPhase p;if(!phase(mover,_tokens->rigExecCage,&p))return false;
             if(!p.IsBase())binding.phases[binding.cagePoints]=p;
-            binding.influences=targets(mover,"rigExec:frames");
-            if(!phase(mover,"rigExec:frames",&binding.transformPhase))return false;
+            binding.influences=targets(mover,_tokens->rigExecFrames);
+            if(!phase(mover,_tokens->rigExecFrames,&binding.transformPhase))return false;
             break;
         }
         case RigExecRevisionOp::SurfaceProject: {
-            const auto surface=first("rigExec:surface").GetPrimPath();
+            const auto surface=first(_tokens->rigExecSurface).GetPrimPath();
             if(!surface.IsEmpty()) {binding.surfacePoints=points(surface);meshTopology(surface);}
-            RigExecReadPhase p;if(!phase(mover,"rigExec:surface",&p))return false;
+            RigExecReadPhase p;if(!phase(mover,_tokens->rigExecSurface,&p))return false;
             if(!p.IsBase())binding.phases[binding.surfacePoints]=p;
-            binding.influences=targets(mover,"rigExec:frames");
-            if(!phase(mover,"rigExec:frames",&binding.transformPhase))return false;
+            binding.influences=targets(mover,_tokens->rigExecFrames);
+            if(!phase(mover,_tokens->rigExecFrames,&binding.transformPhase))return false;
             break;
         }
         case RigExecRevisionOp::Ribbon:case RigExecRevisionOp::Wire:case RigExecRevisionOp::EmitGuidePoints: {
-            binding.bindCoords=first("rigExec:bindCoordinates");binding.driverFrames=first("rigExec:driverFrames");
-            const auto curve=first("rigExec:driverCurve").GetPrimPath();
+            binding.bindCoords=first(_tokens->rigExecBindCoordinates);binding.driverFrames=first(_tokens->rigExecDriverFrames);
+            const auto curve=first(_tokens->rigExecDriverCurve).GetPrimPath();
             if(!curve.IsEmpty()) {
-                binding.driverCurvePoints=points(curve);binding.driverCurveOrder=curve.AppendProperty(TfToken("order"));
-                binding.driverCurveKnots=curve.AppendProperty(TfToken("knots"));
-                RigExecReadPhase p;if(!phase(mover,"rigExec:driverCurve",&p))return false;
+                binding.driverCurvePoints=points(curve);binding.driverCurveOrder=curve.AppendProperty(_tokens->order);
+                binding.driverCurveKnots=curve.AppendProperty(_tokens->knots);
+                RigExecReadPhase p;if(!phase(mover,_tokens->rigExecDriverCurve,&p))return false;
                 if(!p.IsBase())binding.phases[binding.driverCurvePoints]=p;
             }
-            const auto transforms=targets(mover,"rigExec:driverTransforms");
+            const auto transforms=targets(mover,_tokens->rigExecDriverTransforms);
             if(!transforms.empty()) {
-                if(!phase(mover,"rigExec:driverTransforms",&binding.transformPhase))return false;
+                if(!phase(mover,_tokens->rigExecDriverTransforms,&binding.transformPhase))return false;
                 binding.influences=transforms;binding.driverTransformCount=int(transforms.size());
-                for(const char *name:{"rigExec:driverTransformSpaces","rigExec:driverBaseTransforms","rigExec:driverBaseTransformSpaces"}) {
+                for(const auto &name:{_tokens->rigExecDriverTransformSpaces,_tokens->rigExecDriverBaseTransforms,_tokens->rigExecDriverBaseTransformSpaces}) {
                     auto list=targets(mover,name);
-                    if(std::string(name)=="rigExec:driverTransformSpaces")binding.driverSpaceCount=int(list.size());
-                    if(std::string(name)=="rigExec:driverBaseTransforms")binding.driverBaseTransformCount=int(list.size());
+                    if(name==_tokens->rigExecDriverTransformSpaces)binding.driverSpaceCount=int(list.size());
+                    if(name==_tokens->rigExecDriverBaseTransforms)binding.driverBaseTransformCount=int(list.size());
                     binding.influences.insert(binding.influences.end(),list.begin(),list.end());
                 }
-                binding.carrySpace=first("rigExec:space");
+                binding.carrySpace=first(_tokens->rigExecSpace);
             }
-            RigExecReadPhase p;if(!phase(mover,"rigExec:bindCoordinates",&p))return false;
+            RigExecReadPhase p;if(!phase(mover,_tokens->rigExecBindCoordinates,&p))return false;
             if(!p.IsBase())binding.phases[binding.bindCoords]=p;
             break;
         }
         case RigExecRevisionOp::RecomputeExtent:
-            binding.widths=owner.AppendProperty(TfToken("widths"));break;
+            binding.widths=owner.AppendProperty(_tokens->widths);break;
         case RigExecRevisionOp::SurfaceProjector:case RigExecRevisionOp::ShaderDials:
             return Fail(error,"projector requires normalized static mesh/frame binding");
         case RigExecRevisionOp::External: {
@@ -154,20 +217,20 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
     using Flavour=RigExecRevisionLeafFlavour;
     for(const auto &input:binding.blendInputs) {
         RigExecSceneGeometryBlendChannel channel;
-        channel.weight=result.record.leaves.Add({input.AppendProperty(TfToken("inputs:weight")),
+        channel.weight=result.record.leaves.Add({input.AppendProperty(_tokens->inputsWeight),
             Type::Float,Time::AtTime,Flavour::ResolvedOnly,VtValue(0.0f)});
         const auto found=binding.blendSamples.find(input);
         if(found!=binding.blendSamples.end())for(const auto &sample:found->second) {
             RigExecSceneGeometryBlendSample item;item.path=sample.sample;
-            item.activation=result.record.leaves.Add({sample.sample.AppendProperty(TfToken("rigExec:activation")),
+            item.activation=result.record.leaves.Add({sample.sample.AppendProperty(_tokens->rigExecActivation),
                 Type::Float,Time::AtTime,Flavour::ResolvedOnly,VtValue(1.0f)});
             item.sparse=!sample.blendShape.IsEmpty();
             if(item.sparse) {
                 const auto shape=sample.blendShape.GetPrimPath();const auto *node=source.Node(shape);
                 item.shapeExists=node && node->fact.type=="BlendShape";
-                item.offsets=result.record.leaves.Add({shape.AppendProperty(TfToken("offsets")),
+                item.offsets=result.record.leaves.Add({shape.AppendProperty(_tokens->offsets),
                     Type::Vec3fArray,Time::AtDefault,Flavour::Raw,VtValue(VtVec3fArray())});
-                item.indices=result.record.leaves.Add({shape.AppendProperty(TfToken("pointIndices")),
+                item.indices=result.record.leaves.Add({shape.AppendProperty(_tokens->pointIndices),
                     Type::IntArray,Time::AtDefault,Flavour::Raw,VtValue(VtIntArray())});
             } else {
                 item.points=result.record.leaves.Add({sample.points,Type::Vec3fArray,
@@ -209,7 +272,7 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
             if(key.flavour==Flavour::Present)requested=source.Attribute(key.path)->fact.type;
             if(!RigExecBindSceneTypedRead(scene,key.path,requested,&result.typedLeaves[k],error))return false;
             const auto phase=binding.phases.find(key.path);
-            if(phase!=binding.phases.end())result.typedLeaves[k].readPhase=TfToken(phase->second.GetAsString());
+            if(phase!=binding.phases.end())result.typedLeaves[k].readPhase=ReadPhaseToken(phase->second);
             if(key.flavour==Flavour::Present || key.flavour==Flavour::OverlayThenRaw) {
                 result.typedLeaves[k].hops.resize(std::min(size_t(1),result.typedLeaves[k].hops.size()));
                 result.typedLeaves[k].doubleHops.clear();
@@ -219,7 +282,7 @@ bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &scene,const SdfPat
     }
     *out=std::move(result);return true;
 }
-bool RigExecLowerSceneBlendChannel(const RigExecSceneDescriptors &scene,const SdfPath &channel,
+bool RigExecTranslateSceneBlendChannel(const RigExecSceneDescriptors &scene,const SdfPath &channel,
     RigExecSceneGeometryDescriptor *out,std::string *error)
 {
     RigExecSceneCompileInputs source(scene);const auto *node=source.Node(channel);
@@ -227,16 +290,16 @@ bool RigExecLowerSceneBlendChannel(const RigExecSceneDescriptors &scene,const Sd
     RigExecGeometryRecord record;record.op=RigExecRevisionOp::BlendShape;
     record.binding.moverPath=channel;record.binding.blendInputs={channel};
     std::vector<size_t> groups;
-    for(const auto &sample:source.Targets(channel.AppendProperty(TfToken("rigExec:samples")))) {
-        const auto points=source.Targets(sample.AppendProperty(TfToken("rigExec:targetPoints")));
+    for(const auto &sample:source.Targets(channel.AppendProperty(_tokens->rigExecSamples))) {
+        const auto points=source.Targets(sample.AppendProperty(_tokens->rigExecTargetPoints));
         RigExecReadPhase phase;
-        const auto *relationship=source.Relationship(sample.AppendProperty(TfToken("rigExec:targetPoints")));
+        const auto *relationship=source.Relationship(sample.AppendProperty(_tokens->rigExecTargetPoints));
         if(relationship && !RigExecParseReadPhase(relationship->readPhase.GetString(),&phase,error))return false;
         groups.push_back(std::max(size_t(1),points.size()));
         if(points.empty())record.binding.blendSamples[channel].push_back({sample,{},phase,{}});
-        else for(auto path:points){if(path.IsPrimPath())path=path.AppendProperty(TfToken("points"));record.binding.blendSamples[channel].push_back({sample,path,phase,{}});}
+        else for(auto path:points){if(path.IsPrimPath())path=path.AppendProperty(_tokens->points);record.binding.blendSamples[channel].push_back({sample,path,phase,{}});}
     }
-    if(!RigExecLowerSceneGeometry(scene,channel,channel.AppendProperty(TfToken("computeBlendChannel")),out,error,&record))return false;
+    if(!RigExecTranslateSceneGeometry(scene,channel,channel.AppendProperty(_tokens->computeBlendChannel),out,error,&record))return false;
     if(out->blendChannels.size()!=1)return Fail(error,"invalid public channel descriptor");
     auto &samples=out->blendChannels.front().samples;std::vector<RigExecSceneGeometryBlendSample> grouped;
     size_t first=0;for(size_t count:groups){auto sample=std::move(samples[first]);for(size_t n=1;n<count;++n)sample.additionalPoints.push_back(samples[first+n].points);grouped.push_back(std::move(sample));first+=count;}
@@ -343,7 +406,7 @@ bool StaticMeshWorld(const RigExecSceneDescriptors &scene,const SdfPath &mesh,Gf
             values.values.emplace_back();values.PublishSource(*id,value);return true;
         };
         RigExecValueId order;
-        if(!raw(owner.AppendProperty(TfToken("xformOpOrder")),&order))return false;
+        if(!raw(owner.AppendProperty(_tokens->xformOpOrder),&order))return false;
         op.inputs.push_back(order);bool reset=false;
         VtValue orderValue;
         if(order!=RigExecNoProviderValue)orderValue=values.values[size_t(order)].raw;
@@ -354,10 +417,18 @@ bool StaticMeshWorld(const RigExecSceneDescriptors &scene,const SdfPath &mesh,Gf
             if(std::find_if(op.xforms.begin(),op.xforms.end(),[&](const auto &x){return x.name.GetString()==name;})!=op.xforms.end())continue;
             if(name.rfind("xformOp:",0)!=0)return Fail(error,"invalid projector xform operation: "+name);
             const auto end=name.find(':',8);
-            const auto type=UsdGeomXformOp::GetOpTypeEnum(TfToken(name.substr(8,end==std::string::npos?end:end-8)));
+            const auto type=XformOpType(name,8,end==std::string::npos?end:end-8);
             if(type==UsdGeomXformOp::TypeInvalid)return Fail(error,"unknown projector xform operation: "+name);
-            RigExecValueId id;if(!raw(owner.AppendProperty(TfToken(name)),&id))return false;
-            op.xforms.push_back({TfToken(name),id,int(type)});
+            TfToken opName=token;
+            if(name.size()!=token.size()) {
+                opName=TfToken();
+                for(const auto &path:node->attributes)if(path.GetName()==name){opName=path.GetNameToken();break;}
+                // An operation with no captured attribute has no value: the
+                // local xform reports it as an uncaptured operation.
+                if(opName.IsEmpty())continue;
+            }
+            RigExecValueId id;if(!raw(owner.AppendProperty(opName),&id))return false;
+            op.xforms.push_back({opName,id,int(type)});
         }
         program.ops.push_back(std::move(op));
         RigExecSpellProviderOwners(&program);
@@ -382,7 +453,7 @@ bool StaticMeshWorld(const RigExecSceneDescriptors &scene,const SdfPath &mesh,Gf
     return true;
 }
 }
-bool RigExecLowerSceneGeometryVariants(const RigExecSceneDescriptors &scene,const SdfPath &mover,
+bool RigExecTranslateSceneGeometryVariants(const RigExecSceneDescriptors &scene,const SdfPath &mover,
     const SdfPath &pointsTarget,std::vector<RigExecSceneGeometryDescriptor> *out,std::string *error)
 {
     if(!out)return Fail(error,"null geometry variants");out->clear();
@@ -390,29 +461,29 @@ bool RigExecLowerSceneGeometryVariants(const RigExecSceneDescriptors &scene,cons
     if(!node)return Fail(error,"missing geometry mover: "+mover.GetString());
     if(node->fact.type!="RigExecSurfaceProjector") {
         RigExecSceneGeometryDescriptor descriptor;
-        if(!RigExecLowerSceneGeometry(scene,mover,pointsTarget,&descriptor,error))return false;
+        if(!RigExecTranslateSceneGeometry(scene,mover,pointsTarget,&descriptor,error))return false;
         out->push_back(std::move(descriptor));return true;
     }
     const auto mesh=pointsTarget.GetPrimPath();const auto *surface=source.Node(mesh);
     if(!surface || surface->fact.type!="Mesh")return Fail(error,"surface projector must move one mesh's points");
     RigExecGeometryRecord record;record.binding.moverPath=mover;record.binding.base=pointsTarget;
-    record.binding.topologyCounts=mesh.AppendProperty(TfToken("faceVertexCounts"));
-    record.binding.topologyIndices=mesh.AppendProperty(TfToken("faceVertexIndices"));
+    record.binding.topologyCounts=mesh.AppendProperty(_tokens->faceVertexCounts);
+    record.binding.topologyIndices=mesh.AppendProperty(_tokens->faceVertexIndices);
     GfMatrix4d world;if(!StaticMeshWorld(scene,mesh,&world,error))return false;
     record.binding.meshWorldInverse=world.GetInverse();
-    auto provider=[&](const char *name,SdfPath *value) {
-        const auto paths=source.Targets(mover.AppendProperty(TfToken(name)));
-        if(paths.size()>1)return Fail(error,"projector has more than one "+std::string(name));
+    auto provider=[&](const TfToken &name,SdfPath *value) {
+        const auto paths=source.Targets(mover.AppendProperty(name));
+        if(paths.size()>1)return Fail(error,"projector has more than one "+name.GetString());
         if(paths.empty())return true;
         const auto *node=source.Node(paths[0].GetPrimPath());
         if(!node || node->domain!=RigExecSceneDomain::Provider)return Fail(error,"projector target is not a frame provider: "+paths[0].GetString());
         *value=paths[0].GetPrimPath();return true;
     };
-    if(!provider("rigExec:sources",&record.binding.transform) ||
-       !provider("rigExec:sourceSpace",&record.binding.transformSpace) ||
-       !provider("rigExec:space",&record.binding.carrySpace))return false;
-    auto name=[&](const char *attribute,const TfToken &fallback,TfToken *value) {
-        *value=fallback;const auto path=mover.AppendProperty(TfToken(attribute));
+    if(!provider(_tokens->rigExecSources,&record.binding.transform) ||
+       !provider(_tokens->rigExecSourceSpace,&record.binding.transformSpace) ||
+       !provider(_tokens->rigExecSpace,&record.binding.carrySpace))return false;
+    auto name=[&](const TfToken &attribute,const TfToken &fallback,TfToken *value) {
+        *value=fallback;const auto path=mover.AppendProperty(attribute);
         if(!source.Attribute(path))return true;
         RigExecSceneBoundInput input;VtValue boxed;
         if(!source.Bind(path,RigExecSceneReadRoute::Raw,&input,error) ||
@@ -421,44 +492,46 @@ bool RigExecLowerSceneGeometryVariants(const RigExecSceneDescriptors &scene,cons
     };
     for(bool dials:{false,true}) {
         TfToken primvar;
-        if(!name(dials?"rigExec:shaderDialPrimvar":"rigExec:shaderPrimvar",dials?TfToken():TfToken("eyeProjector"),&primvar))return false;
+        if(!name(dials?_tokens->rigExecShaderDialPrimvar:_tokens->rigExecShaderPrimvar,dials?TfToken():_tokens->eyeProjector,&primvar))return false;
         if(primvar.IsEmpty())continue;
         auto variant=record;variant.op=dials?RigExecRevisionOp::ShaderDials:RigExecRevisionOp::SurfaceProjector;
         if(dials) {
             variant.binding.transform=SdfPath();variant.binding.transformSpace=SdfPath();variant.binding.carrySpace=SdfPath();
             variant.binding.topologyCounts=SdfPath();variant.binding.topologyIndices=SdfPath();
-            for(const auto &dial:source.Targets(mover.AppendProperty(TfToken("rigExec:shaderDialSources")))) {
+            for(const auto &dial:source.Targets(mover.AppendProperty(_tokens->rigExecShaderDialSources))) {
                 if(!dial.IsPropertyPath())return Fail(error,"shader dial source must be a property: "+dial.GetString());
                 if(variant.binding.shaderDials.size()==16)break;
                 variant.binding.shaderDials.push_back(dial);
             }
         }
-        const auto target=mesh.AppendProperty(TfToken("primvars:"+primvar.GetString()));
+        const TfToken *primvarName=RigExecFindScenePrimvarName(scene,"primvars:"+primvar.GetString());
+        if(!primvarName)return Fail(error,"projector primvar name was not captured: "+mover.GetString());
+        const auto target=mesh.AppendProperty(*primvarName);
         RigExecSceneGeometryDescriptor descriptor;
-        if(!RigExecLowerSceneGeometry(scene,mover,target,&descriptor,error,&variant))return false;
+        if(!RigExecTranslateSceneGeometry(scene,mover,target,&descriptor,error,&variant))return false;
         descriptor.pointsTarget=pointsTarget;descriptor.derived=true;descriptor.matrixOutput=true;
         descriptor.targetType=SdfValueTypeNames->Matrix4d;out->push_back(std::move(descriptor));
     }
     return true;
 }
-bool RigExecLowerSceneDerivedGeometry(const RigExecSceneDescriptors &scene,const SdfPath &pointsTarget,
+bool RigExecTranslateSceneDerivedGeometry(const RigExecSceneDescriptors &scene,const SdfPath &pointsTarget,
     std::vector<RigExecSceneGeometryDescriptor> *out,std::string *error)
 {
     if(!out)return Fail(error,"null derived geometry variants");out->clear();
     RigExecSceneCompileInputs source(scene);const auto owner=pointsTarget.GetPrimPath();const auto *node=source.Node(owner);
     if(!node)return Fail(error,"missing derived geometry owner");
     for(bool normals:{true,false}) {
-        const auto target=owner.AppendProperty(TfToken(normals?"normals":"extent"));const auto *attribute=source.Attribute(target);
+        const auto target=owner.AppendProperty(normals?_tokens->normals:_tokens->extent);const auto *attribute=source.Attribute(target);
         if(!attribute || !attribute->fact.hasAuthoredValue)continue;
         if(normals && node->fact.type!="Mesh")return Fail(error,"authored normals on non-mesh points target");
         RigExecGeometryRecord record;record.op=normals?RigExecRevisionOp::RecomputeNormals:RigExecRevisionOp::RecomputeExtent;
         record.binding.moverPath=owner;record.binding.target=target;
-        record.binding.topologyCounts=owner.AppendProperty(TfToken("faceVertexCounts"));
-        record.binding.topologyIndices=owner.AppendProperty(TfToken("faceVertexIndices"));
-        const auto widths=owner.AppendProperty(TfToken("widths"));
+        record.binding.topologyCounts=owner.AppendProperty(_tokens->faceVertexCounts);
+        record.binding.topologyIndices=owner.AppendProperty(_tokens->faceVertexIndices);
+        const auto widths=owner.AppendProperty(_tokens->widths);
         if(!normals)if(const auto *value=source.Attribute(widths))if(value->fact.hasAuthoredValue)record.binding.widths=widths;
         RigExecSceneGeometryDescriptor descriptor;
-        if(!RigExecLowerSceneGeometry(scene,owner,target,&descriptor,error,&record))return false;
+        if(!RigExecTranslateSceneGeometry(scene,owner,target,&descriptor,error,&record))return false;
         descriptor.pointsTarget=pointsTarget;descriptor.derived=true;out->push_back(std::move(descriptor));
     }
     return true;

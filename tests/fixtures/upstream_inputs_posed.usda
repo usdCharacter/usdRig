@@ -3,7 +3,7 @@
     doc = """upstream_inputs.usda with BRoot's posed:space connected to the
     same upstream matrix as its rest:space (testRigExecUpstreamInputs). The
     dynamic walk follows an upstream value there; the program refuses a
-    connected posed space, so the epoch does not bake."""
+    connected posed space, so the compiled rig does not bake."""
     defaultPrim = "LimbsAsset"
     endTimeCode = 12
     metersPerUnit = 0.01

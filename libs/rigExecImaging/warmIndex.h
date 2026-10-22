@@ -9,7 +9,7 @@
 //   * the queue visibility (queued/running), fed by the scheduler's
 //     per-frame transition hooks.
 // Dirtiness is computed, not stored: a completion under an older generation
-// or epoch than the query's is dirty (global until Stream 2 scopes it).
+// or compiled rig than the query's is dirty (global until Stream 2 scopes it).
 // Proofs are NOT consulted here -- no per-frame sampling on the query path,
 // and no callbacks into bridges, which sessions may destroy under live jobs.
 // Locking: the index mutex is a leaf, taken under the registry mutex (query,
@@ -39,9 +39,9 @@ enum class RigExecWarmFrameState {
     Uncached = 0,
     /// Queued or running under the live queue.
     Warming = 1,
-    /// A completion under the query's generation and epoch.
+    /// A completion under the query's generation and compiled rig.
     Cached = 2,
-    /// A completion under an older generation or epoch: re-warm to serve.
+    /// A completion under an older generation or compiled rig: re-warm to serve.
     Dirty = 3,
 };
 
@@ -78,7 +78,7 @@ public:
     };
     RequestPublication RequestPublicationFor(const SdfPath &rig,
         double timeValue, RigExecFrameGeneration generation,
-        uint64_t epochDigest);
+        uint64_t compiledRigSignature);
 
     /// Records the rig's current warming generation (the registry pushes on
     /// every cancel; 0 for a rig never pushed). Also clears the rig's
@@ -93,27 +93,27 @@ public:
     bool IsUnwarmable(const SdfPath &rig, double timeValue) const;
 
     /// Whether the cursor should visit the time under the query's
-    /// generation and epoch: not un-warmable, and no current completion.
+    /// generation and compiled rig: not un-warmable, and no current completion.
     /// One call (one lock) per candidate per trigger.
     bool IsVisitable(const SdfPath &rig, double timeValue,
                      RigExecFrameGeneration generation,
-                     uint64_t epochDigest) const;
+                     uint64_t compiledRigSignature) const;
     RigExecFrameGeneration CurrentGeneration(const SdfPath &rig) const;
 
     /// OWNER ONLY: called under existing registry ownership, not on workers.
     /// Bounded progress for one explicit range request. This is never cache
     /// residency: FindCachedKey/State and foreground requests are unchanged.
     void SetRequest(const SdfPath &rig, const std::vector<double> &times,
-                    RigExecFrameGeneration generation, uint64_t epochDigest);
+                    RigExecFrameGeneration generation, uint64_t compiledRigSignature);
     uint64_t RequestToken(const SdfPath &rig) const;
     void InvalidateRequest(const SdfPath &rig);
     void NoteRequestPublished(const SdfPath &rig, double timeValue,
         const RigExecFrameCacheKey &key, RigExecFrameGeneration generation,
         uint64_t requestToken);
     bool HasRequestPublished(const SdfPath &rig, double timeValue,
-        RigExecFrameGeneration generation, uint64_t epochDigest) const;
+        RigExecFrameGeneration generation, uint64_t compiledRigSignature) const;
     bool IsCursorVisitable(const SdfPath &rig, double timeValue,
-        RigExecFrameGeneration generation, uint64_t epochDigest) const;
+        RigExecFrameGeneration generation, uint64_t compiledRigSignature) const;
 
 
     /// Records a publish completion: \p timeValue now holds \p key under \p
@@ -151,7 +151,7 @@ public:
                  RigExecFrameCacheKey *key) const;
 
     /// Answers the recorded completion key when the time's completion is
-    /// servable under (\p generation, \p epochDigest): recorded, clean,
+    /// servable under (\p generation, \p compiledRigSignature): recorded, clean,
     /// and under both tags. Queued/running transitions do NOT block: an
     /// in-flight re-warm leaves the standing completion servable until
     /// its publish replaces the row. One call (one lock) per lookup; the
@@ -159,7 +159,7 @@ public:
     /// under the answered key (a concurrently evicted entry).
     bool FindCachedKey(const SdfPath &rig, double timeValue,
                        RigExecFrameGeneration generation,
-                       uint64_t epochDigest,
+                       uint64_t compiledRigSignature,
                        RigExecFrameCacheKey *key) const;
 
     /// Retires the time's completion when \p key is the recorded one; a
@@ -176,18 +176,18 @@ public:
     bool TakePartialFallback(const SdfPath &rig, double timeValue);
 
     /// One frame's state under the caller's current (\p generation, \p
-    /// epochDigest): warming while queued or running; cached when the
+    /// compiledRigSignature): warming while queued or running; cached when the
     /// recorded completion is under both; dirty when a completion stands
-    /// under an older generation or epoch; uncached otherwise.
+    /// under an older generation or compiled rig; uncached otherwise.
     RigExecWarmFrameState State(const SdfPath &rig, double timeValue,
                                 RigExecFrameGeneration generation,
-                                uint64_t epochDigest) const;
+                                uint64_t compiledRigSignature) const;
 
     /// Batched states for \p timeValues, in order -- one call per strip
     /// repaint, no sampling on the query path.
     std::vector<RigExecWarmFrameState> States(
         const SdfPath &rig, const std::vector<double> &timeValues,
-        RigExecFrameGeneration generation, uint64_t epochDigest,
+        RigExecFrameGeneration generation, uint64_t compiledRigSignature,
         std::vector<bool> *currentCompletions = nullptr) const;
 
 private:
@@ -206,9 +206,9 @@ private:
 
     struct _Progress {
         _Progress(RigExecFrameGeneration g, uint64_t e, bool ready = false)
-            : generation(g), epochDigest(e), state(ready ? 2 : 0) {}
+            : generation(g), compiledRigSignature(e), state(ready ? 2 : 0) {}
         const RigExecFrameGeneration generation;
-        const uint64_t epochDigest;
+        const uint64_t compiledRigSignature;
         // 0 unclaimed, 1 claimed, 2 ready. Never reset while captured.
         std::atomic<uint8_t> state;
     };
@@ -226,7 +226,7 @@ private:
     // The state rule over a found-or-absent record. Call with _mutex held.
     static RigExecWarmFrameState _StateFor(
         const _Frame *frame, RigExecFrameGeneration generation,
-        uint64_t epochDigest);
+        uint64_t compiledRigSignature);
 
     mutable std::mutex _mutex;
     std::map<std::pair<SdfPath, double>, _Frame> _frames;

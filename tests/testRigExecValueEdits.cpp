@@ -556,7 +556,7 @@ TestARetargetedWalkRebuildsBeforeItsUpstreamEdit(
     TfNotice::Revoke(key);
     // The walk resolved through a chain every frame, so nothing about its
     // value was captured -- and still the retarget is the program's own
-    // reason to rebuild (and a new epoch: the connection walk is in the
+    // reason to rebuild (and a new compiled rig: the connection walk is in the
     // structure digest).
     CHECK(probe.invalidated);
     CHECK(evaluator.GetLastNoticeDisposition() ==

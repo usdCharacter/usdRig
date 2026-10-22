@@ -235,7 +235,7 @@ MakeEvaluator(const UsdStageRefPtr &stage, const SdfPath &rig)
     return evaluator;
 }
 
-// A freshly compiled epoch at \p time under \p overrides.
+// A freshly compiled rig at \p time under \p overrides.
 RigExecRigPose
 FreshOverridePose(const UsdStageRefPtr &stage, const SdfPath &rig, UsdTimeCode time,
           const std::vector<RigExecValueOverride> &overrides)
@@ -1110,7 +1110,7 @@ RoutedChainCases(const std::string &examples)
         std::printf("routed %s: %zu rebuild(s)\n", name.c_str(),
                     evaluator->GetBakedProgramBuildCount() - builds);
     };
-    // The target's own value is no epoch input, so this one re-binds its
+    // The target's own value is no compiled rig input, so this one re-binds its
     // head leaf as varying in the standing program.
     animate(SdfPath("/PropMathAsset/Rig/Channels/Dials.rigExec:gain"),
             VtValue(0.25f), VtValue(0.75f), "chain target");
@@ -1325,7 +1325,7 @@ Fnv(const std::vector<uint8_t> &bytes)
 // un-keyed, each through RigExecProgramAvarPatch. After each the binding
 // holds exactly what the patch writes, the leaf is the read, and the leaf
 // holds the value the stage gives. The bake after the edits prints its
-// hash: RigExecBakeToBinary compiles the epoch again first, so it exports a
+// hash: RigExecBakeToBinary compiles the compiled rig again first, so it exports a
 // program built on the edited stage, and the hash must equal the parent's.
 void
 TestAnAvarPatchExportsThePatchedBinding(const std::string &examples)
@@ -2378,7 +2378,7 @@ RoutedDeformerCases(const std::string &examples)
         return;
     }
     const SdfPath cage = lattice->binding.cagePoints;
-    // The bind's Bernstein factors are the revision's own epoch data: a
+    // The bind's Bernstein factors are the revision's own compiled rig data: a
     // frame that moves only the posed cage reuses them.
     const size_t binds = lattice->surfaceCache.LatticeBuilds();
     CHECK(binds > 0);
@@ -2548,7 +2548,7 @@ TestAFrozenCloneKeepsTheBuildSettings(const std::string &examples)
     source->verifySparseSampling = true;
     source->verifyCloneKeys = true;
     source->opWorkspace.verifyReset = true;
-    source->leafFlagEpoch = 11;
+    source->leafFlagCompiledRig = 11;
     source->avarConstantSerial = 13;
     const std::vector<uint32_t> timed{2, 0};
     source->timedClusters = timed;
@@ -2572,7 +2572,7 @@ TestAFrozenCloneKeepsTheBuildSettings(const std::string &examples)
     clone->verifySparseSampling = false;
     clone->verifyCloneKeys = false;
     clone->opWorkspace.verifyReset = false;
-    clone->leafFlagEpoch = 1;
+    clone->leafFlagCompiledRig = 1;
     clone->avarConstantSerial = 1;
     clone->timedClusters.assign(1, 9);
     clone->providerStepsPruned = 1;
@@ -2595,7 +2595,7 @@ TestAFrozenCloneKeepsTheBuildSettings(const std::string &examples)
     CHECK(clone->verifySparseSampling);
     CHECK(clone->verifyCloneKeys);
     CHECK(clone->opWorkspace.verifyReset);
-    CHECK(clone->leafFlagEpoch == 11);
+    CHECK(clone->leafFlagCompiledRig == 11);
     CHECK(clone->avarConstantSerial == 13);
     CHECK(clone->timedClusters == timed);
     CHECK(clone->providerStepsPruned == 17);
@@ -3296,7 +3296,7 @@ over "Asset"
 }
 )usda";
 
-// The constraint operator arrays are epoch state (ConstraintArrays::
+// The constraint operator arrays are compiled rig state (ConstraintArrays::
 // variance): the prologue reads a channel again only when the time moves
 // and its read can move with it, or the time moves to or from Default, and
 // every channel after any stage notice; the frozen plain sampler serves the
@@ -3311,7 +3311,7 @@ over "Asset"
 // made now, the pose equals a freshly compiled program's, and a program
 // that stood through a notice read every channel.
 void
-TestConstraintArraysAreEpochState()
+TestConstraintArraysAreCompiledRigState()
 {
     using Arrays = RigExecBakedProgramImpl::ConstraintArrays;
     const SdfPath rig("/Asset/Rig");
@@ -3330,7 +3330,7 @@ TestConstraintArraysAreEpochState()
         return B ? 4 * uint64_t(B->constraintArrays.size()) : 0;
     };
     // Every raw channel of the standing program against a read made now,
-    // as the prologue made it before the channels were epoch state.
+    // as the prologue made it before the channels were compiled rig state.
     const auto rawMismatches = [&](UsdTimeCode time, const std::string &what) {
         const RigExecBakedProgramImpl *B = Program(*evaluator);
         if (!B) {
@@ -4102,7 +4102,7 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
             return keyed;
         }
         RigExecFrozenEvalContext context;
-        context.epochDigest = evaluator->GetBindingEpochDigest();
+        context.compiledRigSignature = evaluator->GetCompiledRigSignature();
         context.slotCount = program->GetProviderCount();
         context.varyingInputCount = inputs.values.size();
         if (evaluator->GetPublishWeightFields()) {
@@ -4219,7 +4219,7 @@ WatchFrozenJob(const RigExecRigEvaluator &evaluator,
         return RigExecRigPose();
     }
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     if (evaluator.GetPublishWeightFields()) {
@@ -5176,11 +5176,11 @@ TestTheChangedListsClearTheFlags(const std::string &examples)
 
     // The next first pass at the held frame reads nothing and clears every
     // flag through the lists.
-    const uint64_t epoch = B->leafFlagEpoch;
+    const uint64_t compiledRig = B->leafFlagCompiledRig;
     const uint64_t samples = B->leafSamples;
     RigExecBakedSampleLeaves(B, UsdTimeCode(1010), /*all=*/false,
                              RigExecBakedLeafPass::BeforeHead);
-    CHECK(B->leafFlagEpoch == epoch + 1);
+    CHECK(B->leafFlagCompiledRig == compiledRig + 1);
     CHECK(B->leafSamples == samples);
     CHECK(unlisted(B, &flagged) == 0);
     CHECK(flagged == 0);
@@ -5319,7 +5319,7 @@ main(int argc, char **argv)
     TestTheWireBasisMemoIsOwned();
     TestNoBodyReadsTheStage(examples);
     TestSparseProviderLeaves(examples);
-    TestConstraintArraysAreEpochState();
+    TestConstraintArraysAreCompiledRigState();
     TestEqualLatticeBindsShareOneBasis();
     TestSparseSourceKeys(examples);
     TestAFrozenCloneKeepsSparseSourceKeys(examples);

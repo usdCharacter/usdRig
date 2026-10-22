@@ -43,7 +43,7 @@
   <rect x="56" y="442" width="238" height="118" rx="8" fill="#f1f5f9" stroke="#64748b"/>
   <text x="68" y="466" font-size="14" font-weight="700" fill="#0f172a">Stage notices</text>
   <text x="68" y="486" font-size="12" fill="#334155">ObjectsChanged → registry.</text>
-  <text x="68" y="503" font-size="12" fill="#334155">Classified: epoch rebuild,</text>
+  <text x="68" y="503" font-size="12" fill="#334155">Classified: rig recompilation,</text>
   <text x="68" y="520" font-size="12" fill="#334155">cache retire, chain rebind.</text>
   <text x="68" y="537" font-size="12" fill="#334155">Serial retires pose-only.</text>
 
@@ -126,7 +126,7 @@
   <text x="648" y="542" font-size="14" font-weight="700" fill="#0f172a">ⓓ Dirtied notices</text>
   <text x="648" y="562" font-size="12" fill="#334155">Precise coalesced notices</text>
   <text x="648" y="579" font-size="12" fill="#334155">only AFTER the swap.</text>
-  <text x="648" y="596" font-size="12" fill="#334155">+ epoch swap if moved.</text>
+  <text x="648" y="596" font-size="12" fill="#334155">+ compiled rig swap if moved.</text>
 
   <text x="765" y="656" font-size="12" font-weight="700" fill="#7c3aed" text-anchor="middle">EvaluateAndPublish(time)</text>
   <text x="765" y="730" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">motion: preflight, then</text>
@@ -141,7 +141,7 @@
   <text x="1075" y="149" font-size="17" font-weight="700" fill="#ffffff" text-anchor="middle">4 · Execution</text>
 
   <rect x="946" y="182" width="258" height="118" rx="8" fill="#ecfdf5" stroke="#059669"/>
-  <text x="958" y="206" font-size="14" font-weight="700" fill="#0f172a">Compile epoch</text>
+  <text x="958" y="206" font-size="14" font-weight="700" fill="#0f172a">Compile rig</text>
   <text x="958" y="226" font-size="12" fill="#334155">Discovery, validation,</text>
   <text x="958" y="243" font-size="12" fill="#334155">typed bindings, read-phase</text>
   <text x="958" y="260" font-size="12" fill="#334155">→ producer versions.</text>
@@ -190,7 +190,7 @@
   <text x="1268" y="340" font-size="12" fill="#334155">↑ UsdImaging upstream</text>
   <text x="1268" y="360" font-size="12" font-weight="700" fill="#0f172a">① Pruning: owned</text>
   <text x="1280" y="377" font-size="12" fill="#334155">__RigExecGenerated only</text>
-  <text x="1268" y="397" font-size="12" font-weight="700" fill="#0f172a">② Binding-resolve: epoch</text>
+  <text x="1268" y="397" font-size="12" font-weight="700" fill="#0f172a">② Binding-resolve: rig bindings</text>
   <text x="1280" y="414" font-size="12" fill="#334155">immutable per generation</text>
   <text x="1268" y="434" font-size="12" font-weight="700" fill="#0f172a">③ Results: snapshot overlay</text>
   <text x="1280" y="451" font-size="12" fill="#334155">GetPrim reads store only</text>

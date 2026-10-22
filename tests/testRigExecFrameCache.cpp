@@ -1,4 +1,4 @@
-// RigExecFrameCache, Stream A: the (epochDigest, controlDigest) store.
+// RigExecFrameCache, Stream A: the (compiledRigSignature, controlDigest) store.
 // The key, entry, and stats types keep the semantics Stream 0 asserted, so
 // those tests stand unchanged below. The stub half of the Stream 0 file is
 // replaced here by the store's own contract, one rule per test group in the
@@ -12,7 +12,7 @@
 //     RigExecRefusalControlDigest is the D7 time-plus-serial fallback for
 //     rigs with no baked program: the frame moves it, an edit moves it at
 //     every frame, a drag moves it, and it never equals a sampled digest
-//     under the same epoch. Both fold the frame's upstream values as a
+//     under the same compiled rig. Both fold the frame's upstream values as a
 //     block of their own, which folds nothing when there are none.
 //   * LRU. A per-rig byte cap with least-recently-used eviction, accounted
 //     in RigExecFrameCachePoseBytes; oversized entries are dropped, never
@@ -123,19 +123,19 @@ TestKeyEqualitySeesBothDigests()
 {
     const RigExecFrameCacheKey base{7, 11};
     const RigExecFrameCacheKey same{7, 11};
-    const RigExecFrameCacheKey otherEpoch{8, 11};
+    const RigExecFrameCacheKey otherCompiledRig{8, 11};
     const RigExecFrameCacheKey otherControl{7, 12};
     CHECK(base == same);
     CHECK(!(base != same));
-    CHECK(base != otherEpoch);
+    CHECK(base != otherCompiledRig);
     CHECK(base != otherControl);
-    CHECK(!(base == otherEpoch));
+    CHECK(!(base == otherCompiledRig));
 }
 
 // Ordered containers of keys stay usable: strict-weak ordering over the
-// epoch half first, the control half second.
+// compiled rig half first, the control half second.
 void
-TestKeyOrderingIsEpochThenControl()
+TestKeyOrderingIsCompiledRigThenControl()
 {
     const RigExecFrameCacheKey a{1, 9};
     const RigExecFrameCacheKey b{2, 0};
@@ -225,7 +225,7 @@ TestPublishThenLookupHits()
     CHECK(stats.bytes == RigExecFrameCachePoseBytes(published));
 }
 
-// Either digest half misses: the epoch the program was built for and the
+// Either digest half misses: the compiled rig the program was built for and the
 // control state are both key material, and neighbors of a held key are cold.
 void
 TestEitherDigestHalfMisses()
@@ -671,7 +671,7 @@ TestRecordedOrderAndStaticTableFoldAsPlain()
 // apart (Default most of all), an edit (a moved serial) digests apart at
 // every frame, a drag always digests apart from the authored frame, override
 // order never matters, and the domain tag keeps it from ever equaling a
-// sampled digest under the same epoch.
+// sampled digest under the same compiled rig.
 void
 TestRefusalDigestKeysTimeAndOverrides()
 {
@@ -706,7 +706,7 @@ TestRefusalDigestKeysTimeAndOverrides()
           RigExecRefusalControlDigest(UsdTimeCode(2.0), 7, last));
 
     // The domain tag: a mode toggle crosses sampled and refusal digests
-    // without moving the epoch, so the two must never agree.
+    // without moving the compiled rig, so the two must never agree.
     const RigExecFrameInputs inputs = MakeInputs({{"/Rig/A", 1.0}});
     CHECK(RigExecRefusalControlDigest(UsdTimeCode(3.0), 7, none) !=
           RigExecControlStateDigest(inputs));
@@ -933,7 +933,7 @@ TestOversizedPublishDeclines()
     CHECK(stats.bytes == 0);
 }
 
-// Lowering the cap evicts down to it immediately, least-recently-used
+// Reducing the cap evicts down to it immediately, least-recently-used
 // first: the newest entry is the one left standing.
 void
 TestLoweringCapEvictsDown()
@@ -1102,7 +1102,7 @@ int
 main()
 {
     TestKeyEqualitySeesBothDigests();
-    TestKeyOrderingIsEpochThenControl();
+    TestKeyOrderingIsCompiledRigThenControl();
     TestEqualKeysHashEqual();
     TestTimeRidesTheEntry();
     TestAnEmptyCacheMisses();

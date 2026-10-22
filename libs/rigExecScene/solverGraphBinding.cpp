@@ -2,7 +2,16 @@
 #include "rigExec/types.h"
 #include <algorithm>
 #include "pxr/base/vt/types.h"
+#include "pxr/base/tf/staticTokens.h"
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecEnd,"rigExec:end")) ((rigExecEffectorControl,"rigExec:effectorControl"))
+    ((rigExecEndControl,"rigExec:endControl")) ((rigExecStart,"rigExec:start"))
+    ((rigExecRootControl,"rigExec:rootControl")) ((rigExecControls,"rigExec:controls"))
+    ((rigExecStartFrame,"rigExec:startFrame")) ((rigExecMidControl,"rigExec:midControl"))
+    ((rigExecPoleControl,"rigExec:poleControl")) ((rigExecSpace,"rigExec:space"))
+    ((rigExecInputA,"rigExec:inputA")) ((rigExecInputB,"rigExec:inputB")) (base) (preceding)
+);
 namespace {
 void Add(std::vector<RigExecValueId> *reads,RigExecValueId id) {
     if(id!=UINT64_MAX)reads->push_back(id);
@@ -63,13 +72,13 @@ bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
     RigExecSolverGraphBinding bound;bound.record=source.record;bound.output=output;
     bound.hasSpace=!source.space.IsEmpty();bound.spaceRest=source.spaceRest;
     if(!RigExecBindGraphInputs(source.inputs,source.typedReads,source.path,context,&bound.inputs,&bound.reads,error))return false;
-    const auto bind=[&](const SdfPath &path,const char *name,RigExecValueId *id,bool aggregate=false,bool *required=nullptr) {
+    const auto bind=[&](const SdfPath &path,const TfToken &name,RigExecValueId *id,bool aggregate=false,bool *required=nullptr) {
         if(path.IsEmpty() || source.record.degenerate)return true;
         RigExecSceneGraphReadRequest request;
-        request.consumer=source.path.AppendProperty(TfToken(name));request.source=path;request.reader=source.path;
+        request.consumer=source.path.AppendProperty(name);request.source=path;request.reader=source.path;
         request.domain=aggregate?RigExecSceneValueDomain::SolverAggregate:RigExecSceneValueDomain::Pose;
-        const auto relation=source.frameBindings.find(name);
-        request.phase=relation==source.frameBindings.end()?TfToken("base"):relation->second.phase;
+        const auto relation=source.frameBindings.find(name.GetString());
+        request.phase=relation==source.frameBindings.end()?_tokens->base:relation->second.phase;
         if(required)*required=request.phase!="base";
         if(!context.resolve(request,id,error))return false;
         if(*id==UINT64_MAX)return Fail(error,"solver resolver returned no value ID");
@@ -77,23 +86,23 @@ bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
     };
     for(const auto &control:source.controls) {
         bound.controls.push_back(UINT64_MAX);
-        if(!bind(control,"rigExec:controls",&bound.controls.back()))return false;
+        if(!bind(control,_tokens->rigExecControls,&bound.controls.back()))return false;
     }
     const bool twist=source.record.kind==RigExecSolverKind::TwistDistribution;
     const bool ik=source.record.kind==RigExecSolverKind::TwoBoneIk;
-    if(!bind(source.start,"rigExec:startFrame",&bound.start) ||
-       !bind(source.root,twist?"rigExec:start":"rigExec:rootControl",&bound.root) ||
-       !bind(source.mid,"rigExec:midControl",&bound.mid) ||
-       !bind(source.end,twist?"rigExec:end":ik?"rigExec:effectorControl":"rigExec:endControl",&bound.end) ||
-       !bind(source.pole,"rigExec:poleControl",&bound.pole) || !bind(source.space,"rigExec:space",&bound.space) ||
-       !bind(source.blendA,"rigExec:inputA",&bound.blendA,true,&bound.blendARequired) ||
-       !bind(source.blendB,"rigExec:inputB",&bound.blendB,true,&bound.blendBRequired))return false;
+    if(!bind(source.start,_tokens->rigExecStartFrame,&bound.start) ||
+       !bind(source.root,twist?_tokens->rigExecStart:_tokens->rigExecRootControl,&bound.root) ||
+       !bind(source.mid,_tokens->rigExecMidControl,&bound.mid) ||
+       !bind(source.end,twist?_tokens->rigExecEnd:ik?_tokens->rigExecEffectorControl:_tokens->rigExecEndControl,&bound.end) ||
+       !bind(source.pole,_tokens->rigExecPoleControl,&bound.pole) || !bind(source.space,_tokens->rigExecSpace,&bound.space) ||
+       !bind(source.blendA,_tokens->rigExecInputA,&bound.blendA,true,&bound.blendARequired) ||
+       !bind(source.blendB,_tokens->rigExecInputB,&bound.blendB,true,&bound.blendBRequired))return false;
     const auto rest=[&](const SdfPath &path,RigExecValueId *id,bool live=false,bool *liveRest=nullptr) {
         if(path.IsEmpty() || source.record.degenerate)return true;
         RigExecSceneGraphReadRequest request;
         request.consumer=source.path;request.source=path;request.reader=source.path;
         request.domain=RigExecSceneValueDomain::Pose;request.computation="computeRestFrame";
-        request.phase=TfToken(live?"preceding":"base");request.liveRest=liveRest;
+        request.phase=live?_tokens->preceding:_tokens->base;request.liveRest=liveRest;
         if(!context.resolve(request,id,error))return false;
         if(*id==UINT64_MAX)return Fail(error,"solver resolver returned no value ID");
         Add(&bound.reads,*id);return true;

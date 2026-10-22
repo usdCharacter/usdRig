@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "component": "spine",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_Spine1": {
+      "prim": "/Component/Control_Spine1",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:COG",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Spine2": {
+      "prim": "/Component/Control_Spine2",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Spine1",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Chest": {
+      "prim": "/Component/Control_Chest",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Spine2",
+      "relationships": {},
+      "connections": {}
+    }
+  },
+  "templates": {
+    "Weight": {
+      "prim": "/Component/Weight",
+      "type": "RigExecStaticWeight",
+      "fit": [
+        {
+          "name": "rigExec:indices",
+          "type": "int[]"
+        },
+        {
+          "name": "rigExec:values",
+          "type": "float[]"
+        }
+      ],
+      "relationships": [
+        "rigExec:weightTarget"
+      ]
+    },
+    "Deform_Chest_Absolute": {
+      "prim": "/Component/Deform_Chest_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    },
+    "Deform_Spine1_Weighted": {
+      "prim": "/Component/Deform_Spine1_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Spine2_Weighted": {
+      "prim": "/Component/Deform_Spine2_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Chest_Weighted": {
+      "prim": "/Component/Deform_Chest_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Spine2_Absolute": {
+      "prim": "/Component/Deform_Spine2_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    },
+    "Deform_Spine1_Absolute": {
+      "prim": "/Component/Deform_Spine1_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    }
+  },
+  "ports": {
+    "COG": {
+      "description": "External COG prim; provide an absolute prim path."
+    }
+  }
+}

@@ -2964,7 +2964,7 @@ TestSparseSkinTopology()
             }
             // The file's layout: the 16 entries less the third row's
             // trailing (0, +0), in order and bit for bit. A negative weight
-            // fails the layout's validation, so the bake keeps no epoch
+            // fails the layout's validation, so the bake keeps no compiled rig
             // layout and both sides read the per-frame arrays.
             RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
             std::vector<uint8_t> bytes;
@@ -3411,7 +3411,7 @@ TestStageArrayOracleAndChain()
             : privateOracle ? "/Asset/Geom/Sampler.points"
                             : "/Asset/Geom/M.points");
         if (!privateOracle) {
-            // Changing weighted-domain cardinality is an epoch refusal.
+            // Changing weighted-domain cardinality is a compiled rig refusal.
             // This clean unweighted chain exercises legal sampled base changes.
             stage = UsdStage::CreateInMemory();
             stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
@@ -4342,7 +4342,7 @@ TestRepaintedChunkLayoutRunsWhole()
     };
     play("as built", asBuilt, false);
 
-    // Topology is epoch state: live baked rebuilds once for the authored
+    // Topology is compiled rig state: live baked rebuilds once for the authored
     // repaint and cuts fresh keys, and still plays as the file does.
     const size_t builds = evaluator.GetBakedProgramBuildCount();
     stage->GetAttributeAtPath(SdfPath(skinPath + ".rigExec:jointIndices"))

@@ -10,7 +10,7 @@ diff against a later run.
 
 WHY IT RUNS ON DEMAND AND NOT CONTINUOUSLY. Measuring costs a compile and
 a few hundred evaluations, and the `author` workload deliberately dirties
-the epoch -- so doing that on every selection change would make usdview
+the compiled rig -- so doing that on every selection change would make usdview
 feel exactly as slow as the thing being measured. The button is the point.
 
 The panel opens a SECOND stage over the same layers, for the same reason
@@ -152,7 +152,7 @@ class ProfilerPanel(QtWidgets.QDialog):
                     "  drag    interactive overrides, what a manipulator does\n"
                     "  author  set an avar on the stage and evaluate\n\n"
                     "`author` is usually an order of magnitude above `drag`\n"
-                    "because an authored edit invalidates the compiled epoch\n"
+                    "because an authored edit invalidates the compiled rig\n"
                     "and the next evaluate pays to rebuild it. That is the\n"
                     "single most common way to measure a rig wrongly, so the\n"
                     "three are reported apart.\n\n"

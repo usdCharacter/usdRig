@@ -1052,7 +1052,7 @@ bool RrEffectiveInputMemo(const RrProgram *program,uint32_t stepIndex,std::strin
         return step.headInputSlots.empty();
     }
     if (!step.headInputSlots.empty() || !step.overrideInputs.empty()) return false;
-    // These bodies consume only their declared typed values and immutable epoch facts.
+    // These bodies consume only their declared typed values and immutable compiled rig facts.
     // The adapter independently compares every typed read revision.
     switch (step.kind) {
     case RigExecWireStepKind::ComposeSubtree:
@@ -2192,7 +2192,7 @@ _RrSetArraySlot(RrProgram *program, size_t index,
                                   "count, not " +
                                   std::to_string(value.count));
     }
-    // Topology is epoch state, and the reader never recompiles: another
+    // Topology is compiled rig state, and the reader never recompiles: another
     // count is outside its contract, refused rather than followed.
     if (index < state.slotTopology.size() && state.slotTopology[index] &&
         value.count != info.defaultCount) {

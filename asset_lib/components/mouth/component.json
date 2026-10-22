@@ -1,0 +1,251 @@
+{
+  "version": 1,
+  "component": "mouth",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_Jaw": {
+      "prim": "/Component/Control_Jaw",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_LowerLip": {
+      "prim": "/Component/Control_LowerLip",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_Jaw",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_UpperLip": {
+      "prim": "/Component/Control_UpperLip",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_MouthCornerR": {
+      "prim": "/Component/Control_MouthCornerR",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_MouthCornerL": {
+      "prim": "/Component/Control_MouthCornerL",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    }
+  },
+  "templates": {
+    "Weight": {
+      "prim": "/Component/Weight",
+      "type": "RigExecStaticWeight",
+      "fit": [
+        {
+          "name": "rigExec:indices",
+          "type": "int[]"
+        },
+        {
+          "name": "rigExec:values",
+          "type": "float[]"
+        }
+      ],
+      "relationships": [
+        "rigExec:weightTarget"
+      ]
+    },
+    "Deform_Jaw_Weighted": {
+      "prim": "/Component/Deform_Jaw_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_LowerLip_Weighted": {
+      "prim": "/Component/Deform_LowerLip_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_UpperLip_Weighted": {
+      "prim": "/Component/Deform_UpperLip_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_MouthCornerR_Weighted": {
+      "prim": "/Component/Deform_MouthCornerR_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_MouthCornerL_Weighted": {
+      "prim": "/Component/Deform_MouthCornerL_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    }
+  },
+  "ports": {
+    "Head": {
+      "description": "External Head prim; provide an absolute prim path."
+    }
+  }
+}

@@ -76,7 +76,7 @@ _LIMBS = [_CTL + "/" + name for name in ("L_Arm", "R_Arm", "L_Leg", "R_Leg")]
 def _open(mode, carrier):
     """One stage, one compile, per carrier.
 
-    `inputs:enabled` is an ordinary per-frame input, not epoch identity,
+    `inputs:enabled` is an ordinary per-frame input, not compiled rig identity,
     so toggling it re-evaluates without recompiling. Opening a stage per
     wire instead took 374 seconds -- past the suite's own 120s timeout --
     for an answer identical to this one.

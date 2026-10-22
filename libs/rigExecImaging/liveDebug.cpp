@@ -55,12 +55,12 @@ std::string RigExecImagingRegistry::LiveDebugJson(
         const auto &evaluator = session.bridge->GetEvaluator();
         const auto *program = evaluator.GetBakedProgram();
         if (!program) continue;
-        const auto epoch = evaluator.GetBindingEpochDigest();
+        const auto compiledRig = evaluator.GetCompiledRigSignature();
         const auto builds = evaluator.GetBakedProgramBuildCount();
         if (session.debugGraphKey.empty() || session.debugProgram != program ||
-            session.debugEpoch != epoch || session.debugBuildCount != builds) {
+            session.debugCompiledRig != compiledRig || session.debugBuildCount != builds) {
             session.debugProgram = program;
-            session.debugEpoch = epoch;
+            session.debugCompiledRig = compiledRig;
             session.debugBuildCount = builds;
             session.debugGraphKey = std::to_string(_key) + ":" +
                                      std::to_string(++_nextDebugGraph);

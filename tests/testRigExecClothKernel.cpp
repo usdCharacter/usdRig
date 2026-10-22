@@ -5,7 +5,7 @@
 // rigid input motion is carried rigidly, repeated solves are bit-identical,
 // and a window whose first frame has a collider cutting through the cloth
 // starts before the contact, so a ball pushed through a curtain keeps it in
-// front frame after frame. A format-25 (RCL1) epoch plays as it was
+// front frame after frame. A format-25 (RCL1) compiled rig plays as it was
 // exported. Header-only and USD-free.
 #include "rigExecMath/clothKernel.h"
 #include "rigExecBinary/clothPlayback.h"
@@ -706,38 +706,38 @@ void TestSelfContactKeepsAttachments()
     }
 }
 
-void TestMaterialEpochRoundTrip()
+void TestMaterialCompiledRigRoundTrip()
 {
-    RigExecClothEpoch epoch;
+    RigExecClothCompiledData compiledRig;
     const Mesh m = Curtain(2,2,2);
-    epoch.pointCount = uint32_t(m.Size()); epoch.rest = m.points;
-    epoch.counts = m.counts; epoch.indices = m.indices;
+    compiledRig.pointCount = uint32_t(m.Size()); compiledRig.rest = m.points;
+    compiledRig.counts = m.counts; compiledRig.indices = m.indices;
     RigExecClothProfile profile;
     profile.kind = RigExecClothProfileKind::Bend;
     profile.forceCurve = {0,1,100,0}; profile.minStrength = .2f;
     profile.maps[ClothMask] = {1,.5f,.25f,0};
-    epoch.model.profiles = {profile};
-    std::vector<uint8_t> bytes; RigExecEncodeClothEpoch(epoch,&bytes);
-    RigExecClothEpoch decoded; std::string why;
-    CHECK(RigExecDecodeClothEpoch(bytes.data(),bytes.size(),&decoded,&why));
-    CHECK(decoded == epoch);
+    compiledRig.model.profiles = {profile};
+    std::vector<uint8_t> bytes; RigExecEncodeClothCompiledData(compiledRig,&bytes);
+    RigExecClothCompiledData decoded; std::string why;
+    CHECK(RigExecDecodeClothCompiledData(bytes.data(),bytes.size(),&decoded,&why));
+    CHECK(decoded == compiledRig);
     RigExecClothPrepared prepared;
     CHECK(RigExecPrepareCloth(decoded,&prepared,&why));
     bytes.pop_back();
-    CHECK(!RigExecDecodeClothEpoch(bytes.data(),bytes.size(),&decoded,&why));
+    CHECK(!RigExecDecodeClothCompiledData(bytes.data(),bytes.size(),&decoded,&why));
     // RCL2 was never written by a released format: refused.
-    epoch.model = RigExecClothModel();
-    RigExecEncodeClothEpoch(epoch,&bytes);
+    compiledRig.model = RigExecClothModel();
+    RigExecEncodeClothCompiledData(compiledRig,&bytes);
     CHECK(bytes[3] == '3');
     bytes.resize(bytes.size()-8); bytes[3] = '2';
-    CHECK(!RigExecDecodeClothEpoch(bytes.data(),bytes.size(),&decoded,&why) &&
-          why == "not a cloth mover epoch");
+    CHECK(!RigExecDecodeClothCompiledData(bytes.data(),bytes.size(),&decoded,&why) &&
+          why == "not a cloth mover compiled rig");
 }
 
 // The bytes a format-25 writer wrote (RCL1): no maxWindowFrames and no
-// material model. Written here rather than by RigExecEncodeClothEpoch, so
+// material model. Written here rather than by RigExecEncodeClothCompiledData, so
 // the layout stays pinned as the writer moves on.
-std::vector<uint8_t> Format25Epoch(const RigExecClothEpoch &e)
+std::vector<uint8_t> Format25CompiledData(const RigExecClothCompiledData &e)
 {
     using namespace cloth_playback_detail;
     std::vector<uint8_t> out = {'R', 'C', 'L', '1'};
@@ -767,11 +767,11 @@ std::vector<uint8_t> Format25Epoch(const RigExecClothEpoch &e)
 
 // A format-25 cloth plays as exported: its declared inputs at their
 // format-25 slots (no rigExec:maxWindowFrames), no reach-back, and the same
-// packets and solve as a current epoch whose reach-back is off.
-void TestFormat25EpochPlays()
+// packets and solve as a current compiled rig whose reach-back is off.
+void TestFormat25CompiledDataPlays()
 {
     PushThrough scene;
-    RigExecClothEpoch current;
+    RigExecClothCompiledData current;
     current.pointCount = uint32_t(scene.curtain.Size());
     current.counts = scene.curtain.counts;
     current.indices = scene.curtain.indices;
@@ -787,17 +787,17 @@ void TestFormat25EpochPlays()
     current.colliders = {ball};
 
     // An RCL1 file cannot hold a longer reach-back: it reads as the window.
-    RigExecClothEpoch exported = current;
+    RigExecClothCompiledData exported = current;
     exported.settings.maxWindowFrames = 64;
-    const std::vector<uint8_t> old = Format25Epoch(exported);
-    RigExecClothEpoch decoded;
+    const std::vector<uint8_t> old = Format25CompiledData(exported);
+    RigExecClothCompiledData decoded;
     std::string why;
     bool legacy = false;
-    CHECK(RigExecDecodeClothEpoch(old.data(), old.size(), &decoded, &why, &legacy));
+    CHECK(RigExecDecodeClothCompiledData(old.data(), old.size(), &decoded, &why, &legacy));
     CHECK(legacy && decoded == current);
     std::vector<uint8_t> now;
-    RigExecEncodeClothEpoch(current, &now);
-    CHECK(RigExecDecodeClothEpoch(now.data(), now.size(), &decoded, &why, &legacy));
+    RigExecEncodeClothCompiledData(current, &now);
+    CHECK(RigExecDecodeClothCompiledData(now.data(), now.size(), &decoded, &why, &legacy));
     CHECK(!legacy && decoded == current);
 
     const RigExecExternalKernel kernel = RigExecClothPlaybackKernel();
@@ -913,8 +913,8 @@ int main()
     TestForceResponseAndDirectionalMaterial();
     TestHardSoftBarycentricAttachments();
     TestSelfContactKeepsAttachments();
-    TestMaterialEpochRoundTrip();
-    TestFormat25EpochPlays();
+    TestMaterialCompiledRigRoundTrip();
+    TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();
     if (failures) {
         std::printf("%d failure(s)\n", failures);

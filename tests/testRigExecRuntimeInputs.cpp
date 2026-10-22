@@ -792,14 +792,14 @@ _TestRetainedPointFinalAvailability(const std::string &examples)
     RigExecRigEvaluator evaluator(stage,rig);
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    const auto epoch=evaluator.GetBindingEpochDigest();
+    const auto compiledRig=evaluator.GetCompiledRigSignature();
     const std::string fallback="diag /ReadPhaseAsset/Rig/Movers/Geometry/SlabLattice: read phase 'final' for "+cage.GetString()+" resolved to nothing; read the authored base";
     VtVec3fArray first,recovered;
     for(double frame:{1001.0,1002.0,1003.0}) {
         const bool blocked=frame==1002.0;
         CHECK(RigExecTestDrive(reader.get(),&sampler,frame,&error));
         const auto pose=evaluator.Evaluate(UsdTimeCode(frame));
-        CHECK(pose.valid && evaluator.GetBindingEpochDigest()==epoch);
+        CHECK(pose.valid && evaluator.GetCompiledRigSignature()==compiledRig);
         std::vector<std::string> diffs;
         const bool same=RigExecCompareRuntimeRun(pose,*reader,&diffs);
         if(!same)for(const auto &line:diffs)std::printf("retained point availability frame%g: %s\n",frame,line.c_str());

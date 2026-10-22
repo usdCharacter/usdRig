@@ -99,14 +99,14 @@ RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
             handler.hasScalarOracle = false;
         }
     }
-    const bool windowed = handler.windowFrames || handler.captureWindow ||
-                          handler.applyWindow;
+    const bool windowed = handler.windowFrames || handler.windowFramesScene ||
+                          handler.captureWindow || handler.applyWindow;
     if ((windowed || handler.applyWindowDevice) &&
-        (!external || !handler.windowFrames || !handler.captureWindow ||
-         !handler.applyWindow)) {
+        (!external || !handler.windowFrames || !handler.windowFramesScene ||
+         !handler.captureWindow || !handler.applyWindow)) {
         return fail(std::string(handler.schemaType) +
             ": a windowed mover is an external mover with windowFrames, "
-            "captureWindow and applyWindow");
+            "windowFramesScene, captureWindow and applyWindow");
     }
     if ((handler.runtimeKernel.captureWindow != nullptr) !=
         (handler.runtimeKernel.applyWindow != nullptr)) {
@@ -462,13 +462,13 @@ RigExecResolveBlendSampleLayout(
     const UsdSkelBlendShape shape(
         stage->GetPrimAtPath(blendShapePath.GetPrimPath()));
     if (!shape) {
-        return true;   // cache the miss; it cannot become a hit this epoch
+        return true;   // cache the miss; it cannot become a hit this compiled rig
     }
     const UsdAttribute offsetsAttr = shape.GetOffsetsAttr();
     const UsdAttribute indicesAttr = shape.GetPointIndicesAttr();
 
     // The admission rule. `uniform` already forbids time samples, so a
-    // connection is the only route by which these can change while the epoch
+    // connection is the only route by which these can change while the compiled rig
     // stands -- and a connected value may itself be animated, which is
     // exactly what the skin layout refuses for.
     // Noted and carried, NOT returned early: a refusal means "read this every

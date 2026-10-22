@@ -1521,7 +1521,7 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         }
         return true;
     }
-    // Every weight object type the epoch can hold has an arm above; an
+    // Every weight object type the compiled rig can hold has an arm above; an
     // unknown type is an invalid packet, which is a MoverFailed
     // pass-through rather than a plausible wrong deformation.
     store.weightPackets[index] = RrWeightPacket();
@@ -2144,7 +2144,7 @@ bool RrWeightFieldEffectiveInputMemo(const RrProgram *program,uint32_t fieldInde
             raw.constant=program->file->inputs[size_t(slot)].value();
             RrSourceReadMemo(program,raw,key);
         }
-        // Field evaluation reads the epoch cycle gate, independently of
+        // Field evaluation reads the compiled rig cycle gate, independently of
         // ordinary packet publication and its geometry consumer.
         append(bool(scratch->oracleBlocked[size_t(object)]));
         const auto &kind=scratch->oracleKinds[size_t(object)];

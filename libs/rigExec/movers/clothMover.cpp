@@ -2,7 +2,7 @@
 // meshes, solved over a window of the frames before the current one
 // (rigExecGraph/windowHistory.h, rigExecMath/clothKernel.h).
 //
-// A built-in external mover. The payload carries the epoch (topology, rest
+// A built-in external mover. The payload carries the compiled rig (topology, rest
 // points, pins, settings, frame time, collider topology), this frame's
 // parameters and collider points; a tick's packet is the cloth's entering
 // points, the collider points and the parameters (rigExecBinary/
@@ -12,6 +12,7 @@
 #include "rigExec/gpuCloth.h"
 #include "rigExecBinary/clothPlayback.h"
 #include "rigExecScene/sceneDescriptors.h"
+#include "rigExecScene/sceneCompileInputs.h"
 
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/usd/usdGeom/mesh.h"
@@ -212,10 +213,10 @@ std::vector<int32_t> Ints(const VtIntArray &a)
     return std::vector<int32_t>(a.begin(), a.end());
 }
 
-// The declared inputs as the payload: a dictionary of the epoch's arrays
+// The declared inputs as the payload: a dictionary of the compiled rig's arrays
 // and settings, the parameters and the collider points, and the material
 // model's reads with the layout that names them. The model itself is
-// assembled once per epoch (PreparedFor), not per evaluation. False when
+// assembled once per rig compilation (PreparedFor), not per evaluation. False when
 // an input is missing or of another type.
 bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &binding,
              VtValue *out)
@@ -328,9 +329,9 @@ const T *Get(const VtDictionary &d, const char *key)
                : nullptr;
 }
 
-// The payload's epoch without its material model. False on a payload
+// The payload's compiled rig without its material model. False on a payload
 // Payload did not build.
-bool ShapeOf(const VtValue &data, RigExecClothEpoch *epoch)
+bool ShapeOf(const VtValue &data, RigExecClothCompiledData *compiledRig)
 {
     if (!data.IsHolding<VtDictionary>()) return false;
     const VtDictionary &d = data.UncheckedGet<VtDictionary>();
@@ -358,7 +359,7 @@ bool ShapeOf(const VtValue &data, RigExecClothEpoch *epoch)
         cLeft->size() != cPoints->size() || cPaths->size() != cPoints->size()) {
         return false;
     }
-    RigExecClothEpoch e;
+    RigExecClothCompiledData e;
     e.pointCount = uint32_t(rest->size());
     e.counts = Ints(*counts);
     e.indices = Ints(*indices);
@@ -391,17 +392,17 @@ bool ShapeOf(const VtValue &data, RigExecClothEpoch *epoch)
         c.leftHanded = cl;
         e.colliders.push_back(std::move(c));
     }
-    *epoch = std::move(e);
+    *compiledRig = std::move(e);
     return true;
 }
 
-// The material model the payload's model reads assemble over \p epoch's
+// The material model the payload's model reads assemble over \p compiledRig's
 // topology; empty for a binding declared without a layout. This is the
-// UV binding search and the map transfer: it runs when an epoch is built,
+// UV binding search and the map transfer: it runs when a compiled rig is built,
 // never per evaluation.
-bool ModelOf(const VtDictionary &d, RigExecClothEpoch *epoch, std::string *why)
+bool ModelOf(const VtDictionary &d, RigExecClothCompiledData *compiledRig, std::string *why)
 {
-    epoch->model = RigExecClothModel();
+    compiledRig->model = RigExecClothModel();
     const auto *layout = Get<VtDictionary>(d, "layout");
     if (!layout) return true;
     const auto *reads = Get<std::vector<VtValue>>(d, "modelInputs");
@@ -411,14 +412,14 @@ bool ModelOf(const VtDictionary &d, RigExecClothEpoch *epoch, std::string *why)
     // reads stay empty, and Assemble reads none of them.
     std::vector<VtValue> in(static_cast<size_t>(*start));
     in.insert(in.end(), reads->begin(), reads->end());
-    return cloth_inputs::Assemble(in, *layout, *epoch, &epoch->model, why);
+    return cloth_inputs::Assemble(in, *layout, *compiledRig, &compiledRig->model, why);
 }
 
-// The payload's whole epoch, material model included.
-bool EpochOf(const VtValue &data, RigExecClothEpoch *epoch, std::string *why = nullptr)
+// The payload's whole compiled rig, material model included.
+bool CompiledRigOf(const VtValue &data, RigExecClothCompiledData *compiledRig, std::string *why = nullptr)
 {
-    return ShapeOf(data, epoch) &&
-           ModelOf(data.UncheckedGet<VtDictionary>(), epoch, why);
+    return ShapeOf(data, compiledRig) &&
+           ModelOf(data.UncheckedGet<VtDictionary>(), compiledRig, why);
 }
 
 void Bind(const RigExecMoverBindContext &ctx)
@@ -540,22 +541,22 @@ bool CaptureWindow(const VtValue &data, const std::vector<GfVec3f> &entering,
     return true;
 }
 
-// Names each prepared epoch, so a device re-uploads a mesh only when it
+// Names each prepared compiled rig, so a device re-uploads a mesh only when it
 // moved. Constant-initialized: no guard stands in front of it.
 std::atomic<uint64_t> _preparedSerial{0};
 
-// What a revision's window cache holds: the prepared epoch, material model
+// What a revision's window cache holds: the prepared compiled rig, material model
 // included, and the payload it was built from. Immutable once stored.
 struct Built {
     RigExecClothPrepared prepared;
     VtDictionary source;
 };
 
-// Whether payloads \p a and \p b build the same epoch: every entry is equal
+// Whether payloads \p a and \p b build the same compiled rig: every entry is equal
 // but the ones a packet carries per tick, the parameters and the collider
-// points, of which only the point counts reach the epoch. The payload's
+// points, of which only the point counts reach the compiled rig. The payload's
 // arrays are shared leaves, so an unchanged input compares by identity.
-bool SameEpoch(const VtDictionary &a, const VtDictionary &b)
+bool SameCompiledRig(const VtDictionary &a, const VtDictionary &b)
 {
     if (a.size() != b.size()) return false;
     for (const auto &entry : a) {
@@ -579,8 +580,8 @@ bool SameEpoch(const VtDictionary &a, const VtDictionary &b)
     return true;
 }
 
-// The prepared epoch the revision keeps: reused while the payload builds
-// the same epoch, built again, material model and all, when it does not.
+// The prepared compiled rig the revision keeps: reused while the payload builds
+// the same compiled rig, built again, material model and all, when it does not.
 std::shared_ptr<const RigExecClothPrepared>
 PreparedFor(const VtValue &data, std::shared_ptr<const void> *cache)
 {
@@ -588,14 +589,14 @@ PreparedFor(const VtValue &data, std::shared_ptr<const void> *cache)
     const VtDictionary &d = data.UncheckedGet<VtDictionary>();
     if (cache && *cache) {
         auto held = std::static_pointer_cast<const Built>(*cache);
-        if (SameEpoch(held->source, d))
+        if (SameCompiledRig(held->source, d))
             return std::shared_ptr<const RigExecClothPrepared>(held, &held->prepared);
     }
-    RigExecClothEpoch epoch;
-    if (!EpochOf(data, &epoch)) return nullptr;
+    RigExecClothCompiledData compiledRig;
+    if (!CompiledRigOf(data, &compiledRig)) return nullptr;
     auto built = std::make_shared<Built>();
     std::string why;
-    if (!RigExecPrepareCloth(epoch, &built->prepared, &why)) return nullptr;
+    if (!RigExecPrepareCloth(compiledRig, &built->prepared, &why)) return nullptr;
     built->prepared.serial = ++_preparedSerial;
     built->source = d;
     if (cache) *cache = built;
@@ -608,7 +609,7 @@ bool ApplyWindow(const VtValue &data, const RigExecWindowPacket *const *ticks,
 {
     if (!points) return false;
     const auto prepared = PreparedFor(data, cache);
-    if (!prepared || points->size() != prepared->epoch.pointCount) return false;
+    if (!prepared || points->size() != prepared->compiledRig.pointCount) return false;
     return RigExecClothSolvePackets(*prepared, ticks, tickCount,
                                     reinterpret_cast<float *>(points->data()),
                                     nullptr);
@@ -623,7 +624,7 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     const RigExecGpuClothRunner runner = RigExecGetGpuClothRunner();
     if (!points || !runner) return false;
     const auto prepared = PreparedFor(data, cache);
-    if (!prepared || points->size() != prepared->epoch.pointCount) return false;
+    if (!prepared || points->size() != prepared->compiledRig.pointCount) return false;
     std::vector<RigExecClothTick> window;
     if (!prepared->mesh.model.Empty()) return false;
     if (!RigExecClothTicksFromPackets(*prepared, ticks, tickCount, &window, nullptr) ||
@@ -636,11 +637,11 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     std::vector<RigExecGpuClothJob> jobs(1);
     RigExecGpuClothJob &job = jobs[0];
     job.key = uint64_t(reinterpret_cast<uintptr_t>(cache));
-    job.epochSerial = prepared->serial;
+    job.compiledRigSerial = prepared->serial;
     job.mesh = &prepared->mesh;
     job.colliders = &prepared->colliders;
-    job.settings = prepared->epoch.settings;
-    job.frameSeconds = prepared->epoch.frameSeconds;
+    job.settings = prepared->compiledRig.settings;
+    job.frameSeconds = prepared->compiledRig.frameSeconds;
     job.ticks = window.data();
     job.tickCount = window.size();
     job.out = out.data();
@@ -663,14 +664,30 @@ uint32_t WindowFrames(const UsdPrim &mover)
     return uint32_t(RigExecClothHistoryFrames(settings));
 }
 
-// The epoch from the bake's payload, and no frame bytes: the parameters and
+uint32_t WindowFramesScene(const RigExecSceneDescriptors &scene, const SdfPath &mover)
+{
+    RigExecClothSettings settings;
+    settings.windowFrames = kWindowFrames;
+    settings.maxWindowFrames = kMaxWindowFrames;
+    const RigExecSceneCompileInputs facts(scene);
+    for (const auto &[name, value] : {std::make_pair(&_windowFrames, &settings.windowFrames),
+                                      std::make_pair(&_maxWindowFrames, &settings.maxWindowFrames)}) {
+        RigExecSceneBoundInput input;
+        const SdfPath path = mover.AppendProperty(*name);
+        if (facts.Attribute(path) && facts.Bind(path, RigExecSceneReadRoute::Raw, &input))
+            facts.Read(input, UsdTimeCode::Default(), value);
+    }
+    return uint32_t(RigExecClothHistoryFrames(settings));
+}
+
+// The compiled rig from the bake's payload, and no frame bytes: the parameters and
 // collider points reach playback as inputs and phased points.
 bool Encode(const VtValue &data, const RigExecRevisionBinding &,
-            std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame)
+            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
 {
-    RigExecClothEpoch decoded;
-    if (!EpochOf(data, &decoded)) return false;
-    RigExecEncodeClothEpoch(decoded, epoch);
+    RigExecClothCompiledData decoded;
+    if (!CompiledRigOf(data, &decoded)) return false;
+    RigExecEncodeClothCompiledData(decoded, compiledRig);
     frame->clear();
     return true;
 }
@@ -747,11 +764,11 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
             values.push_back(std::move(value));
         }
         VtValue payload;
-        RigExecClothEpoch epoch;
+        RigExecClothCompiledData compiledRig;
         RigExecClothPrepared prepared;
         std::string why;
-        if (!Payload(values, binding, &payload) || !EpochOf(payload, &epoch, &why) ||
-            epoch.pointCount != rest.size() || !RigExecPrepareCloth(epoch, &prepared, &why)) {
+        if (!Payload(values, binding, &payload) || !CompiledRigOf(payload, &compiledRig, &why) ||
+            compiledRig.pointCount != rest.size() || !RigExecPrepareCloth(compiledRig, &prepared, &why)) {
             *error = who + ": invalid cloth rest shape, UVs, constraint binding or painted map";
             if (!why.empty()) *error += ": " + why;
             return false;
@@ -777,6 +794,7 @@ RigExecMoverHandler Handler()
     h.applyExternal = &Apply;
     h.encodeExternal = &Encode;
     h.windowFrames = &WindowFrames;
+    h.windowFramesScene = &WindowFramesScene;
     h.captureWindow = &CaptureWindow;
     h.applyWindow = &ApplyWindow;
     h.applyWindowDevice = &ApplyWindowDevice;

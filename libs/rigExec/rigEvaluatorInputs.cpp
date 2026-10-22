@@ -140,7 +140,7 @@ _AuthoredConnections(const UsdAttribute &attribute)
 // child order between sibling branches.
 // Keep this as the one traversal primitive for both the structural digest and
 // compilation. If those walks ever disagree, an order edit can retain the old
-// epoch digest while executing a different chain.
+// compiled rig signature while executing a different chain.
 std::vector<UsdPrim>
 _GetPoseStackOrder(const UsdPrim &root)
 {
@@ -242,8 +242,8 @@ _IsRestInputName(const std::vector<TfToken> &names, const TfToken &name)
     return std::find(names.begin(), names.end(), name) != names.end();
 }
 
-// Whether any rest channel of \p provider can move within an epoch.
-// Three ways it can, and the epoch-constant rest path is refused for all
+// Whether any rest channel of \p provider can move within a compiled rig.
+// Three ways it can, and the compiled rig constant rest path is refused for all
 // three: an authored connection (which can reach anything, including an
 // animated avar, so it counts without being followed); time samples anywhere
 // in the composition -- BOTH tests, because ValueMightBeTimeVarying() is
@@ -656,13 +656,13 @@ RigExecRigEvaluator::_AdmitUpstreamInputs(UsdTimeCode time)
         _SetUpstreamAdmitted(std::move(admitted), std::move(dropLines));
         return;
     }
-    // Condition 3 against the program standing now. With none (an epoch
+    // Condition 3 against the program standing now. With none (a compiled rig
     // that cannot bake, or a mode that runs no program) conditions 1 and 2
     // decide: the walk reads every attribute through the same overlay, and
-    // such an epoch has no file to agree with.
+    // such a compiled rig has no file to agree with.
     const std::map<SdfPath, TfType> *listed =
         _bakedProgram ? &_bakedProgram->GetUpstreamAdmissible() : nullptr;
-    // The array part, from the compiled epoch in every mode (program or
+    // The array part, from the compiled rig in every mode (program or
     // none), and only while array admission is on and an array is given.
     std::map<SdfPath, TfType> arrays;
     if (RigExecUpstreamArrayAdmission() &&

@@ -378,7 +378,7 @@ size_t ComputedCount(const RigExecGroupState<GfVec3f> &g)
 // Put's packet bytes with three arrays keyed by the content versions their
 // writers keep instead: a range-chain blend's deltas (deltasVersion, moved
 // exactly when their bytes do), a Range lattice's held rest (the chain base
-// version it is a copy of) and the epoch layout the SkinTopology op built
+// version it is a copy of) and the compiled rig layout the SkinTopology op built
 // (layoutSerial, which names the immutable `layoutCandidate`).
 // RigExecBakedPacketContentKey keys the bytes.
 void PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)

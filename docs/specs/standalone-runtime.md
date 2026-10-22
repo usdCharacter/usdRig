@@ -3,10 +3,10 @@
 `RigExecStandaloneSystem` evaluates a rig from an owned `RigExecSceneDb` of
 resolved values and scene descriptors. It retains no `UsdStage` and does not
 run OpenExec. Preparation captures scene descriptors from the database and
-lowers them with `RigExecLowerSceneProgram` into a `RigExecSceneProgram`,
+translates them with `RigExecTranslateSceneProgram` into a `RigExecSceneProgram`,
 which uses the shared operation-graph compiler, readiness rules and kernels
 (`libs/rigExecStandalone/sceneRuntime.cpp:4-18`,
-`libs/rigExecGraph/sceneProgramLowering.cpp:648`). The library still links
+`libs/rigExecGraph/sceneProgramTranslation.cpp:648`). The library still links
 the OpenUSD libraries and `rigExec`; this is stage independence, not a
 USD-free binary dependency tree.
 
@@ -15,11 +15,11 @@ prim, property, relationship and attribute-query interfaces over
 `RigExecSceneDb`. Nothing calls it. See
 [OpenExec reference checks](../concepts/baked-vs-dynamic.md#openexec-reference-checks).
 
-Lowering covers providers, solvers and their joint bindings, constraints,
+Translation covers providers, solvers and their joint bindings, constraints,
 space switches, auto-clavicles, weights, pose interpolators, and geometry
 and property movers. An active
 prim of an unknown RigExec type fails preparation
-(`libs/rigExecGraph/sceneProgramLowering.cpp:71-72`). Native USD attributes
+(`libs/rigExecGraph/sceneProgramTranslation.cpp:71-72`). Native USD attributes
 are source values. The runtime and [pack exporter/loader](standalone-pack.md)
 validate capabilities by preparing the same scene program. A tap phase must
 be `base` or `final`. An unknown requested computation fails instead of
@@ -61,7 +61,7 @@ through their connection or computed fallback, as described in
 [default spaces](xformable-default-spaces.md).
 
 Applied APIs are an explicit capability list
-(`libs/rigExecGraph/sceneProgramLowering.cpp:73`): `RigExecMoverAPI`,
+(`libs/rigExecGraph/sceneProgramTranslation.cpp:73`): `RigExecMoverAPI`,
 `RigExecControlAPI`, `NodeGraphNodeAPI` and the data-only CollectionAPI,
 GeomModelAPI, MotionAPI, VisibilityAPI, MaterialBindingAPI and
 SkelBindingAPI. Any other applied API fails preparation.

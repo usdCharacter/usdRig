@@ -13,7 +13,7 @@ bool RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &,uint32_t,
 void RigExecBakedAdoptSkinOpState(RigExecBakedProgramImpl *,const RigExecBakedProgramImpl &);
 bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *, std::string *);
 
-bool RigExecBakedLowerOpGraph(RigExecBakedProgramImpl *, std::string *);
+bool RigExecBakedTranslateOpGraph(RigExecBakedProgramImpl *, std::string *);
 
 bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *, UsdTimeCode, bool);
 

@@ -2448,7 +2448,7 @@ class RigExecStaticWeight "RigExecStaticWeight" (
 
 class RigExecDynamicWeight "RigExecDynamicWeight" (
     customData = {
-        string userDocBrief = """Epoch-shape-stable weight field recomputed from statically
+        string userDocBrief = """Fixed-shape weight field recomputed from statically
     declared inputs, optionally modulating a base weight object:
     r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i) (spec section 4.1)."""
     }

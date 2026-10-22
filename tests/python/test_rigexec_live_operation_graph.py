@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-The live operation graph describes the compiled epoch without touching it.
+The live operation graph describes the compiled rig without touching it.
 
 Example 16 reads one revised dial at every phase: Base and BaseCard at the
 default (base), Gain and GainCard at the checkpoint after the Gain revision,

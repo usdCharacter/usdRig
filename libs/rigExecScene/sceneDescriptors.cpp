@@ -8,8 +8,20 @@
 #include "pxr/usd/usdGeom/xformable.h"
 #include <algorithm>
 #include <set>
+#include "pxr/base/tf/staticTokens.h"
 
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (points)
+    ((rigExecMoves, "rigExec:moves"))
+    ((rigExecTarget, "rigExec:target"))
+    ((rigExecJoints, "rigExec:joints"))
+    ((rigExecJointElements, "rigExec:jointElements"))
+    ((rigExecPrimvarName, "rigExec:primvarName"))
+    ((rigExecShaderPrimvar, "rigExec:shaderPrimvar"))
+    ((rigExecShaderDialPrimvar, "rigExec:shaderDialPrimvar"))
+    (eyeProjector)
+);
 namespace {
 bool Fail(std::string *error, const std::string &message) {
     if (error) *error = message;
@@ -47,17 +59,28 @@ RigExecSceneDomain Domain(const TfToken &type) {
     return RigExecSceneDomain::UnknownRigExec;
 }
 bool Phase(const VtDictionary &metadata, TfToken *phase, std::string *error, const SdfPath &path) {
-    *phase = TfToken("base");
+    *phase = RigExecSceneBasePhase;
     const auto found = metadata.find("rigExecReadPhase");
     if (found == metadata.end() || found->second.IsEmpty()) return true;
+    if (found->second.IsHolding<std::string>()) {
+        // An authored string: parsed, then its phase's token chosen.
+        const auto &text = found->second.UncheckedGet<std::string>();
+        RigExecReadPhase parsed;
+        std::string why;
+        if (!RigExecParseReadPhase(text, &parsed, &why))
+            return Fail(error,"invalid rigExecReadPhase: "+path.GetString()+": "+why);
+        *phase = text.empty() || parsed.kind == RigExecReadPhaseKind::Base ? RigExecSceneBasePhase :
+            parsed.kind == RigExecReadPhaseKind::Preceding ? RigExecScenePrecedingPhase :
+            parsed.kind == RigExecReadPhaseKind::Final ? RigExecSceneFinalPhase : parsed.prim.GetAsToken();
+        return true;
+    }
     if (found->second.IsHolding<TfToken>()) *phase = found->second.UncheckedGet<TfToken>();
-    else if (found->second.IsHolding<std::string>()) *phase = TfToken(found->second.UncheckedGet<std::string>());
     else return Fail(error,"invalid rigExecReadPhase type: " + path.GetString());
     RigExecReadPhase parsed;
     std::string why;
     if(!RigExecParseReadPhase(phase->GetString(),&parsed,&why))
         return Fail(error,"invalid rigExecReadPhase: "+path.GetString()+": "+why);
-    if(phase->IsEmpty())*phase=TfToken("base");
+    if(phase->IsEmpty())*phase=RigExecSceneBasePhase;
     return true;
 }
 bool Expression(const RigExecSceneDescriptors &scene, const SdfPath &path) {
@@ -164,6 +187,26 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         }
         scene.nodes.emplace(path,std::move(node));
     }
+    // Primvar names translation publishes to: an animated map's authored
+    // rigExec:primvarName or its prim name, a projector's authored shader
+    // primvars and the eyeProjector fallback. Interned here, on the owner
+    // thread, so translation never builds a token from text.
+    const auto intern = [&](const std::string &name) {
+        if (name.empty()) return;
+        const std::string primvar = "primvars:" + name;
+        if (!scene.primvarNames.count(primvar)) scene.primvarNames.emplace(primvar, TfToken(primvar));
+    };
+    intern(_tokens->eyeProjector.GetString());
+    for (const auto &[path, node] : scene.nodes)
+        if (node.fact.type == "RigExecAnimatedMap") intern(path.GetName());
+    for (const auto &[path, attribute] : scene.attributes) {
+        const TfToken &name = path.GetNameToken();
+        if (name != _tokens->rigExecPrimvarName && name != _tokens->rigExecShaderPrimvar &&
+            name != _tokens->rigExecShaderDialPrimvar) continue;
+        for (const auto &input : attribute.inputs)
+            if (input.raw.IsHolding<TfToken>() && !input.raw.UncheckedGet<TfToken>().IsEmpty())
+                intern(input.raw.UncheckedGet<TfToken>().GetString());
+    }
     const auto rig = scene.nodes.find(root);
     if (rig == scene.nodes.end() || !rig->second.fact.active ||
         (root!=SdfPath::AbsoluteRootPath() && rig->second.fact.type != "RigExecRoot"))
@@ -205,25 +248,25 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         for (size_t i = 0; i < identities.size(); ++i) attr.inputs[i] = Input(scene,path,i);
     for (const auto &[path, node] : scene.nodes) {
         if (node.stackOrdinal < 0 || !node.fact.active) continue;
-        const auto moves = scene.relationships.find(path.AppendProperty(TfToken("rigExec:moves")));
+        const auto moves = scene.relationships.find(path.AppendProperty(_tokens->rigExecMoves));
         if (moves != scene.relationships.end()) for (size_t targetIndex=0;targetIndex<moves->second.forwardedTargets.size();++targetIndex) {
             const auto &target=moves->second.forwardedTargets[targetIndex];
             SdfPath canonical = target;
-            if (target.IsPrimPath() && scene.attributes.count(target.AppendProperty(TfToken("points"))))
-                canonical = target.AppendProperty(TfToken("points"));
+            if (target.IsPrimPath() && scene.attributes.count(target.AppendProperty(_tokens->points)))
+                canonical = target.AppendProperty(_tokens->points);
             scene.applications.push_back({path,target,node.domain,node.stackOrdinal,canonical,targetIndex});
         }
         if (node.domain == RigExecSceneDomain::SpaceSwitch || node.domain == RigExecSceneDomain::AutoClavicle) {
-            const auto target = scene.relationships.find(path.AppendProperty(TfToken("rigExec:target")));
+            const auto target = scene.relationships.find(path.AppendProperty(_tokens->rigExecTarget));
             if (target != scene.relationships.end()) for (size_t targetIndex=0;targetIndex<target->second.forwardedTargets.size();++targetIndex) {
                 const auto &provider=target->second.forwardedTargets[targetIndex];
                 scene.applications.push_back({path,provider,node.domain,node.stackOrdinal,provider,targetIndex});
             }
         }
-        const auto joints = scene.relationships.find(path.AppendProperty(TfToken("rigExec:joints")));
+        const auto joints = scene.relationships.find(path.AppendProperty(_tokens->rigExecJoints));
         if (node.domain == RigExecSceneDomain::Solver && joints != scene.relationships.end()) {
             VtIntArray elements;
-            const auto elementPath=path.AppendProperty(TfToken("rigExec:jointElements"));
+            const auto elementPath=path.AppendProperty(_tokens->rigExecJointElements);
             const auto elementFact=scene.attributes.find(elementPath);
             if(elementFact!=scene.attributes.end()) {
                 if(!elementFact->second.fact.sampleTimes.empty())
@@ -275,12 +318,12 @@ bool RigExecSelectSceneDescriptorIdentities(const RigExecSceneDescriptors &sourc
     return true;
 }
 bool RigExecCompileSceneDescriptors(const RigExecSceneDescriptors &scene,
-    const RigExecSceneKernelLowering &lower, RigExecCyclePolicy policy,
+    const RigExecSceneKernelTranslation &translate, RigExecCyclePolicy policy,
     RigExecCompiledGraph *graph, std::string *error) {
-    if (!lower) return Fail(error,"scene compiler needs production typed kernel lowering");
+    if (!translate) return Fail(error,"scene compiler needs production typed kernel translation");
     std::vector<RigExecOpDescriptor> ops;
     std::vector<RigExecValueId> leaves;
-    if (!lower(scene,&ops,&leaves,error)) return false;
+    if (!translate(scene,&ops,&leaves,error)) return false;
     return RigExecCompileOpGraph(ops,leaves,policy,graph,error);
 }
 }

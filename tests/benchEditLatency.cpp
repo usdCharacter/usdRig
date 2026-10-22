@@ -10,7 +10,7 @@
 // itself with --child), on a freshly opened stage and a fresh evaluator,
 // compiled with optional scalar reference checks, profiled, and warmed with three evaluates
 // at the held time before anything is timed. A process is the unit because
-// compile and settle costs drift upward with the number of epochs a process
+// compile and settle costs drift upward with the number of compiled rig versions a process
 // has compiled -- measured on the biped, thirty compiled-and-dropped
 // evaluators took the volumeWeights rebuild from 52 to 78 ms -- and a
 // scenario's number must not depend on its place in the list. A scenario

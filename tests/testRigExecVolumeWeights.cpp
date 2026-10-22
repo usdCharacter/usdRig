@@ -135,7 +135,7 @@ struct Fixture {
     // it is what this fixture used to do -- and it is the one placement the
     // baked program declines, because a posed:space is whatever an arbitrary
     // computation says from the middle of the pose walk and there is no
-    // epoch-constant summary of that. Over an identity rest with no default
+    // compiled rig constant summary of that. Over an identity rest with no default
     // and no posed parent, a translation composed from avars is the same
     // frame to the bit; saying it this way is what lets this suite's
     // coverage reach both evaluation paths (see BakedPathRequested).
@@ -402,13 +402,13 @@ TestSphereDirectionalEdits()
         CHECK(Near(points[1], Moved(f.base[1], wn)));
     };
     check(UsdTimeCode::Default(), 0.5f, 0.5f);
-    const auto digest = evaluator.GetBindingEpochDigest();
+    const auto digest = evaluator.GetCompiledRigSignature();
     CHECK(pos.Set(2.0f));
     check(UsdTimeCode::Default(), 0.75f, 0.5f);
-    CHECK(evaluator.GetBindingEpochDigest() == digest);
+    CHECK(evaluator.GetCompiledRigSignature() == digest);
     CHECK(neg.Set(0.5f));
     check(UsdTimeCode::Default(), 0.75f, 0.0f);
-    CHECK(evaluator.GetBindingEpochDigest() == digest);
+    CHECK(evaluator.GetCompiledRigSignature() == digest);
     CHECK(pos.Set(1.0f, UsdTimeCode(1)));
     CHECK(pos.Set(2.0f, UsdTimeCode(2)));
     check(UsdTimeCode(1), 0.5f, 0.0f);
@@ -579,10 +579,10 @@ TestPlaneBounded()
     }
 }
 
-// The structural / animatable split in the epoch digest, for the two
+// The structural / animatable split in the compiled rig signature, for the two
 // properties this shape added.
 // rigExec:planeBounds SELECTS WHICH FIELD FUNCTION RUNS, so it has to be
-// hashed: an unhashed structural token leaves exec replaying the epoch's
+// hashed: an unhashed structural token leaves exec replaying the compiled rig's
 // baked packet shape while the CPU oracle reads the live one. The
 // extents are ordinary per-frame floats and must NOT be, because a digest
 // that hashes an animatable value recompiles the whole rig on every
@@ -592,7 +592,7 @@ TestPlaneBounded()
 // meaningful: "the digest did not change" is only good news next to a
 // field that DID.
 static void
-TestPlaneBoundsEpochSplit()
+TestPlaneBoundsCompiledRigSplit()
 {
     Fixture f(VtVec3fArray{GfVec3f(0, -1, 0), GfVec3f(0, 0, 0),
                            GfVec3f(0, 1, 0), GfVec3f(9, -5, 9)},
@@ -618,7 +618,7 @@ TestPlaneBoundsEpochSplit()
     std::vector<std::string> errors;
     if (!evaluator.Compile(&errors)) {
         for (const std::string &e : errors) {
-            std::printf("plane-epoch: compile error: %s\n", e.c_str());
+            std::printf("plane-compiled rig: compile error: %s\n", e.c_str());
         }
         ++failures;
         return;
@@ -631,10 +631,10 @@ TestPlaneBoundsEpochSplit()
         // Without this the whole case passes vacuously on a rig that
         // never built a revision at all.
         CheckTheHarnessRan(
-            (std::string("plane-epoch ") + label).c_str(), pose);
+            (std::string("plane-compiled rig ") + label).c_str(), pose);
         bool rebuilt = false;
         for (const std::string &d : pose.diagnostics) {
-            if (d.find("epoch rebuilt") != std::string::npos) {
+            if (d.find("compiled rig rebuilt") != std::string::npos) {
                 rebuilt = true;
             }
         }
@@ -650,36 +650,36 @@ TestPlaneBoundsEpochSplit()
     };
 
     const auto first = weightOfFarPoint("bounded");
-    const size_t digest = evaluator.GetBindingEpochDigest();
+    const size_t digest = evaluator.GetCompiledRigSignature();
     CHECK(Near(GfVec3f(first.first, 0, 0), GfVec3f(0.0f, 0, 0)));
 
     extentU.Set(20.0f);
     extentV.Set(20.0f);
     const auto widened = weightOfFarPoint("wide extents");
     CHECK(Near(GfVec3f(widened.first, 0, 0), GfVec3f(1.0f, 0, 0)));
-    if (evaluator.GetBindingEpochDigest() != digest) {
+    if (evaluator.GetCompiledRigSignature() != digest) {
         ++failures;
-        std::printf("FAIL inputs:extentU/V changed the binding-epoch "
+        std::printf("FAIL inputs:extentU/V changed the compiled rig "
                     "digest -- a scrub of an animatable float would "
                     "recompile the rig every frame\n");
     }
     if (widened.second) {
         ++failures;
-        std::printf("FAIL inputs:extentU/V triggered an epoch rebuild\n");
+        std::printf("FAIL inputs:extentU/V triggered a compiled rig rebuild\n");
     }
 
     // bounded kernel while the oracle runs the unbounded one.
     bounds.Set(TfToken("unbounded"));
     const auto freed = weightOfFarPoint("unbounded");
     CHECK(Near(GfVec3f(freed.first, 0, 0), GfVec3f(1.0f, 0, 0)));
-    if (evaluator.GetBindingEpochDigest() == digest) {
+    if (evaluator.GetCompiledRigSignature() == digest) {
         ++failures;
         std::printf("FAIL rigExec:planeBounds did not change the "
-                    "binding-epoch digest\n");
+                    "compiled rig digest\n");
     }
     if (!freed.second) {
         ++failures;
-        std::printf("FAIL rigExec:planeBounds did not trigger an epoch "
+        std::printf("FAIL rigExec:planeBounds did not trigger a compiled rig "
                     "rebuild\n");
     }
 }
@@ -740,7 +740,7 @@ TestPlaneBoundedInvalidExtents()
     }
 
     // ...and a valid extent on the same rig recovers, which is what says
-    // the rejection was the extent and not a broken epoch.
+    // the rejection was the extent and not a broken compiled rig.
     extentU.Set(2.0f);
     const RigExecRigPose fixed = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(fixed.valid);
@@ -2318,7 +2318,7 @@ static void TestWeightFieldTokenProducer()
         CHECK(RigExecSampleFrameInputs(baked,UsdTimeCode(frame),{},{},&inputs,&frozenError));
         if (snapshot) {
             RigExecFrozenEvalContext context;
-            context.epochDigest = baked.GetBindingEpochDigest();
+            context.compiledRigSignature = baked.GetCompiledRigSignature();
             context.slotCount = baked.GetBakedProgram()->GetProviderCount();
             context.varyingInputCount = inputs.values.size();
             context.flags = (baked.GetPublishWeightFields()?kRigExecFrozenPublishWeightFields:0) |
@@ -2476,7 +2476,7 @@ main(int argc, char **argv)
     TestVolumeIgnoresTransformScaleAvars();
     TestPlaneWeight();
     TestPlaneBounded();
-    TestPlaneBoundsEpochSplit();
+    TestPlaneBoundsCompiledRigSplit();
     TestPlaneBoundedInvalidExtents();
     TestCurveWeight();
     TestCombineMultiply();

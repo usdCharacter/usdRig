@@ -394,14 +394,14 @@ public:
 
     /// Cancels the rig's queued jobs for \p times only, WITHOUT bumping
     /// the generation (plan 2.1 scoped cancellation): the outcome-driven
-    /// notice path calls this for patch/stamp-bump edits, where the epoch
+    /// notice path calls this for patch/stamp-bump edits, where the compiled rig
     /// stands and only affected times requeue. Each affected time gets a
     /// fresh per-time fence token from the rig's monotonic counter, so an
     /// old job for a requeued time drops at the publish fence on token
     /// mismatch; unaffected times keep their tokens and their running
     /// jobs publish normally. Queued jobs for other times and other rigs
     /// are untouched. Answers how many jobs were purged. Global
-    /// CancelGeneration stays for epoch moves only.
+    /// CancelGeneration stays for compiled rig moves only.
     size_t CancelGenerationTimes(const SdfPath &rig,
                                  const std::vector<UsdTimeCode> &times);
 
@@ -513,7 +513,7 @@ public:
     size_t NotePlaybackAdvanced(const SdfPath &rig, UsdTimeCode playhead);
 
     /// The per-rig in-flight cap (queued plus running). Defaults to
-    /// kRigExecBackgroundSchedulerDefaultPerRigJobs. Lowering it declines new
+    /// kRigExecBackgroundSchedulerDefaultPerRigJobs. Reducing it declines new
     /// jobs until the rig drains below it; it never purges.
     void SetPerRigJobCap(size_t cap);
     size_t GetPerRigJobCap() const;

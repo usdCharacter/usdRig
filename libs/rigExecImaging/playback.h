@@ -98,8 +98,8 @@ public:
     void NoteStageChanged();
 
     /// Stable per file (FNV-1a over the bytes): the published prim set of
-    /// a binary never changes, so one epoch is published ever.
-    uint64_t GetBindingEpochDigest() const { return _epochDigest; }
+    /// a binary never changes, so one compiled rig is published ever.
+    uint64_t GetCompiledRigSignature() const { return _compiledRigSignature; }
 
     /// The reserved generated scope this rig owns (for pruning). Playback
     /// publishes nothing under it; the scope keeps the pruning behavior
@@ -171,13 +171,13 @@ private:
     std::unique_ptr<RigExecRuntimeReader> _reader;
     std::unique_ptr<RigExecInputSampler> _sampler;
     std::string _assetPath;
-    uint64_t _epochDigest = 0;
+    uint64_t _compiledRigSignature = 0;
     // RIGEXEC_RUNTIME_DISPATCH under the parallel schedule, read at Open:
     // Execute runs the reader's clusters through a WorkDispatcher.
     bool _dispatchExecute = false;
     SdfPath _weightOverlay;
     uint64_t _generation = 0;
-    uint64_t _publishedEpochDigest = 0;
+    uint64_t _publishedCompiledRigSignature = 0;
     // The listed inputs by path, with the type each holds (condition 3).
     std::map<SdfPath, TfType> _listedInputs;
     std::vector<RigExecUpstreamValue> _upstreamRequested;

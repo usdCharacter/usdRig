@@ -133,8 +133,8 @@ struct RigExecWeightPacket {
 /// function, so it cannot be an ordinary input.
 ///
 /// That is not a workaround so much as the correct shape: the curve is
-/// epoch-structural (spec §4.1 shape stability), so baking it once per
-/// binding epoch and overriding is exactly what the ribbon's driver
+/// structural (spec §4.1 shape stability), so baking it once per
+/// compiled rig and overriding is exactly what the ribbon's driver
 /// points already do for the same class of reason (see
 /// RigExecPointsPacket and RigExecValueOverride::attribute).
 struct RigExecFalloffLut {
@@ -148,11 +148,11 @@ struct RigExecFalloffLut {
     }
 };
 
-/// One blend sample's shape, resolved once per binding epoch and shared.
+/// One blend sample's shape, resolved once per compiled rig and shared.
 ///
 /// Peer of RigExecSkinTopology, and there for the same reason: the expensive
-/// half of the operation depends only on data that cannot move within an
-/// epoch, so it is read once and handed round by pointer.
+/// half of the operation depends only on data that cannot move within a
+/// compiled rig, so it is read once and handed round by pointer.
 ///
 /// `indices` empty means `offsets` is dense and parallel to the base points;
 /// otherwise the two are parallel to each other and name the points that
@@ -194,7 +194,7 @@ struct RigExecBlendSampleLayout {
 /// resolved from rigExec:blendShape, which carries the offsets directly.
 ///
 /// Exactly one is populated. `layout` is compared by POINTER, not by value:
-/// two packets naming the same epoch-resolved shape name the same object, so
+/// two packets naming the same compiled shape name the same object, so
 /// an unchanged sample costs one pointer compare instead of a 26,276-element
 /// array compare -- the same trick, and the same reason, as
 /// RigExecMoverParameters::skinTopology.
@@ -241,12 +241,12 @@ struct RigExecBlendChannel {
 };
 
 /// The per-point influence layout of one skin mover, resolved once per
-/// binding epoch.
+/// compiled rig.
 ///
 /// rigExec:jointIndices and rigExec:jointWeights are the largest static
 /// inputs any mover reads -- one int and one float per influence slot per
 /// point -- and they are LAYOUT: which joints move a point and how much,
-/// which is exactly what a binding epoch fixes. Carrying them by value in
+/// which is exactly what a compiled rig fixes. Carrying them by value in
 /// the packet meant re-reading them off the stage, re-copying them into the
 /// packet, and re-validating every element on every frame, all to arrive at
 /// the same arrays the frame before had.
@@ -259,7 +259,7 @@ struct RigExecSkinTopology {
     int elementSize = 0;          ///< influence slots per point
     size_t pointCount = 0;        ///< indices.size() / elementSize
     /// The influence-table size the indices were range-checked against.
-    /// Epoch state (rigExec:influences is), and the O(1) guard that lets the
+    /// Compiled rig state (rigExec:influences is), and the O(1) guard that lets the
     /// kernel trust the range check without repeating it.
     size_t influenceCount = 0;
     /// The shape, the index range and the weight values all passed; only
@@ -372,13 +372,13 @@ struct RigExecMoverParameters {
     int skinElementSize = 0;
     TfToken skinningMethod;
 
-    /// The epoch-fixed layout, when the evaluator resolved one. Set means
+    /// The compiled rig layout, when the evaluator resolved one. Set means
     /// skinIndices/skinWeights are empty and the kernel reads the arrays
     /// here instead -- which avoids re-reading, re-copying and re-validating
     /// them once per frame.
     std::shared_ptr<const RigExecSkinTopology> skinTopology;
 
-    /// The epoch-fixed rest state, when the evaluator resolved one: the
+    /// The compiled rig rest state, when the evaluator resolved one: the
     /// smoothing table, the smoothed rest surface and the transport
     /// frames, derived once instead of on every frame. The packet arrays
     /// stay filled -- the entry feeds the kernel only, and deliberately

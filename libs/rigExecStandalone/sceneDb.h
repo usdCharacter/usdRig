@@ -20,7 +20,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 std::string RigExecStandaloneTimeKey(UsdTimeCode time);
 
 /// Shared export/runtime capability policy. Non-RigExec types are retained as
-/// source data; production domain support is verified by shared graph lowering.
+/// source data; production domain support is verified by shared graph translation.
 bool RigExecStandaloneSupportsPrimType(const TfToken &type);
 
 struct RigExecStandaloneAttribute {
@@ -41,7 +41,7 @@ struct RigExecStandaloneAttribute {
     /// Actual composed authored sample times, independent of exported identities.
     std::vector<double> sampleTimes;
     SdfVariability variability = SdfVariabilityVarying;
-    /// Owned composed spline for compile-time LUT lowering, empty when absent.
+    /// Owned composed spline for compile-time LUT translation, empty when absent.
     VtValue spline;
     std::set<std::string> blockedIdentities;
 };
@@ -72,7 +72,7 @@ public:
     std::string sourceAssetId;
 
     bool Validate(std::string *error = nullptr) const;
-    /// Capture and lower the supported production scene without a UsdStage.
+    /// Capture and translate the supported production scene without a UsdStage.
     bool ValidateCapabilities(std::string *error = nullptr) const;
     bool HasObject(const SdfPath &path) const;
     bool IsActive(const SdfPath &path) const;

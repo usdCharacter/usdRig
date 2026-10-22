@@ -1,4 +1,4 @@
-#include "rigExec/gpuDeformLowering.h"
+#include "rigExec/gpuDeformTranslation.h"
 
 #include "rigExec/moverGraph.h"
 #include "rigExecMath/dualQuat.h"
@@ -112,7 +112,7 @@ _SampleCount(const std::vector<RigExecBlendChannel> &channels)
 
 /// What one op's layout entry was built from. Equal keys build equal
 /// entries, so a frame whose keys all hold reuses the layout.
-struct RigExecGpuDeformLowering::_Key {
+struct RigExecGpuDeformTranslation::_Key {
     RigExecRevisionOp op = RigExecRevisionOp::Matrix;
     RigExecGpuOpKind kind = RigExecGpuOpKind::Matrix;
     RigExecWeightPacket weights;
@@ -295,15 +295,15 @@ RigExecGpuDeformPadExtent(GfVec3f *min, GfVec3f *max)
     *max += GfVec3f(pad);
 }
 
-RigExecGpuDeformLowering::RigExecGpuDeformLowering() = default;
-RigExecGpuDeformLowering::~RigExecGpuDeformLowering() = default;
-RigExecGpuDeformLowering::RigExecGpuDeformLowering(
-    const RigExecGpuDeformLowering &) = default;
-RigExecGpuDeformLowering &RigExecGpuDeformLowering::operator=(
-    const RigExecGpuDeformLowering &) = default;
+RigExecGpuDeformTranslation::RigExecGpuDeformTranslation() = default;
+RigExecGpuDeformTranslation::~RigExecGpuDeformTranslation() = default;
+RigExecGpuDeformTranslation::RigExecGpuDeformTranslation(
+    const RigExecGpuDeformTranslation &) = default;
+RigExecGpuDeformTranslation &RigExecGpuDeformTranslation::operator=(
+    const RigExecGpuDeformTranslation &) = default;
 
 bool
-RigExecGpuDeformLowering::Lower(
+RigExecGpuDeformTranslation::Translate(
     const std::vector<RigExecGpuRevisionInput> &revisions, size_t pointCount,
     RigExecGpuDeformFrame *frame, std::string *why)
 {
@@ -566,7 +566,7 @@ RigExecGpuDeformLowering::Lower(
 }
 
 bool
-RigExecGpuDeformLowering::_KeyHolds(const _Key &key,
+RigExecGpuDeformTranslation::_KeyHolds(const _Key &key,
                                     const RigExecGpuRevisionInput &in)
 {
     const RigExecMoverParameters &p = *in.parameters;
@@ -615,7 +615,7 @@ RigExecGpuDeformLowering::_KeyHolds(const _Key &key,
 }
 
 void
-RigExecGpuDeformLowering::_FillFrame(
+RigExecGpuDeformTranslation::_FillFrame(
     const std::vector<RigExecGpuRevisionInput> &revisions,
     RigExecGpuDeformFrame *frame) const
 {

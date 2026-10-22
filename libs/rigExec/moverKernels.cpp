@@ -697,7 +697,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
 // computeFalloffLut is a STUB that returns an empty (linear) table. The
 // real bake -- a named analytic profile, or the resampled spline authored
 // on rigExec:falloffCurve -- arrives as a RigExecValueOverride supplied
-// once per binding epoch by the evaluator, because exec has no accessor
+// once per compiled rig by the evaluator, because exec has no accessor
 // for an attribute's spline (see RigExecFalloffLut in types.h). This is
 // the same shape the ribbon uses for its driver-curve points, and for the
 // same class of reason.

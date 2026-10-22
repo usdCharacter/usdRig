@@ -32,7 +32,7 @@ namespace rigExec {
 /// is still the rig's current one. Asked by the worker before it evaluates.
 ///
 /// A stale token means an edit landed between enqueue and run. The sampled
-/// input vector is still a faithful record of the older edit, but the epoch
+/// input vector is still a faithful record of the older edit, but the compiled rig
 /// it was sampled for no longer stands, so running would warm a frame nobody
 /// will ever ask for under a digest nobody will ever compute. The worker
 /// frees its arena and exits; the caller evaluates live instead.

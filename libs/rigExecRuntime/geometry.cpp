@@ -8,7 +8,7 @@
 // input slots, and so is every array the file lists as an input (path-read
 // array rows, blend sample points, chain bases, fixed skin layouts); the
 // remaining stage reads replay from the bake's captured path reads
-// (RrStatic); epoch state (skin layouts, blend shapes, partitions) replays
+// (RrStatic); compiled rig state (skin layouts, blend shapes, partitions) replays
 // from the wire geometry tables. Bitwise: same ops in the same order, float
 // stays float.
 
@@ -4197,9 +4197,9 @@ struct RrGeometryScratch {
     // the file's chunk bases lay them out; Open state. {-1, -1}: none.
     std::vector<std::pair<int32_t, int32_t>> chunkOwner;
     std::unordered_map<uint64_t, RrGeoWireBasisEntry> wireBasis;
-    std::vector<std::shared_ptr<const RrGeoSkinTopology>> epochTopologies;
+    std::vector<std::shared_ptr<const RrGeoSkinTopology>> compiledRigTopologies;
     std::vector<std::shared_ptr<const RrGeoSkinTopology>>
-        epochPartitionTopologies;
+        compiledRigPartitionTopologies;
     // Gated Range revisions whose packet failed the gate while applying, and
     // Range skins that met a stale partition (a pin hole the file's private
     // constants rule out). Counted by RevisionStatic and the group steps,
@@ -5209,8 +5209,8 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
     }
 
     scratch->chains.resize(geo.chains.size());
-    scratch->epochTopologies.resize(geo.revisionIndex.size() + geo.derivedIndex.size());
-    scratch->epochPartitionTopologies.resize(geo.revisionIndex.size());
+    scratch->compiledRigTopologies.resize(geo.revisionIndex.size() + geo.derivedIndex.size());
+    scratch->compiledRigPartitionTopologies.resize(geo.revisionIndex.size());
     for (size_t c = 0; c < geo.chains.size(); ++c) {
         const RigExecWireChain &chain = geo.chains[c];
         RrGeometryScratch::Chain &out = scratch->chains[c];
@@ -5357,14 +5357,14 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                 RrGeoWireTopology(wire.topology.get());
             if (wire.topologyResolved) {
                 rev.topology = topology;
-                scratch->epochTopologies[id] = rev.topology;
+                scratch->compiledRigTopologies[id] = rev.topology;
             }
-            rev.layoutHandle = scratch->epochTopologies[id];
+            rev.layoutHandle = scratch->compiledRigTopologies[id];
             rev.partitionTopology =
                 wire.partitionSameAsTopology
                     ? topology
                     : RrGeoWireTopology(wire.partitionTopology.get());
-            scratch->epochPartitionTopologies[id] = rev.partitionTopology;
+            scratch->compiledRigPartitionTopologies[id] = rev.partitionTopology;
             rev.partitionElementSize = wire.partitionElementSize;
             rev.partitionIndexCount = size_t(wire.partitionIndexCount);
             rev.partitionPointCount = size_t(wire.partitionPointCount);
@@ -5396,8 +5396,8 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
         RrGeoMarkTopologySlots(program, wire, revision);
         const size_t layout = geo.revisionIndex.size() + d;
         if (wire.topologyResolved)
-            scratch->epochTopologies[layout] = RrGeoWireTopology(wire.topology.get());
-        revision.layoutHandle = scratch->epochTopologies[layout];
+            scratch->compiledRigTopologies[layout] = RrGeoWireTopology(wire.topology.get());
+        revision.layoutHandle = scratch->compiledRigTopologies[layout];
     }
 
     // The chains' and derived targets' base points, converted once: the
@@ -5429,12 +5429,12 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
             const fb::RigExecWireValue &value =
                 file.values[file.inputs[s].value()];
             if (value.arraySource == RigExecWireArraySource::Pool ||
-                value.array >= scratch->epochTopologies.size() ||
-                !scratch->epochTopologies[value.array]) {
+                value.array >= scratch->compiledRigTopologies.size() ||
+                !scratch->compiledRigTopologies[value.array]) {
                 continue;
             }
             const RrGeoSkinTopology &layout =
-                *scratch->epochTopologies[value.array];
+                *scratch->compiledRigTopologies[value.array];
             RrInputsBindArrayDefault(
                 program, uint32_t(s),
                 value.arraySource == RigExecWireArraySource::SkinIndices
@@ -5723,7 +5723,7 @@ RrGeoResolveRevisionPhases(RrProgram *program,
 }
 
 // Assembly: one revision's packet out of the static data, the path reads
-// and the epoch tables. A port of AssembleRevision plus the RigExecAssemble*
+// and the compiled rig tables. A port of AssembleRevision plus the RigExecAssemble*
 // per-operation bodies it ends in.
 
 struct RrGeoAssembleInputs {
@@ -7211,7 +7211,7 @@ RrGeoResetRevision(RrGeometryScratch::Revision *rev)
     rev->lastAuxPoints.clear();
     rev->lastStatus = RrGeoMoverStatus();
     // A Range or Whole revision's groups and join or fuse publish anew,
-    // their versions never lowered; its caller restores it as its own
+    // their versions never translated; its caller restores it as its own
     // source.
     for (RigExecGroupState<RrVec3f> &state : rev->groups) {
         RigExecResetGroup(&state);
@@ -7270,9 +7270,9 @@ RrGeoRunLayoutOp(const RrProgram *program, const RrGeometryScratch &scratch,
     built->validated = RigExecFormatSkinLayoutValidates(
         built->indices.data(), built->indices.size(), built->weights.data(),
         built->weights.size(), elementSize, built->influenceCount);
-    if (id < scratch.epochTopologies.size() && scratch.epochTopologies[id] &&
-        *scratch.epochTopologies[id] == *built) {
-        rev->layoutHandle = scratch.epochTopologies[id];
+    if (id < scratch.compiledRigTopologies.size() && scratch.compiledRigTopologies[id] &&
+        *scratch.compiledRigTopologies[id] == *built) {
+        rev->layoutHandle = scratch.compiledRigTopologies[id];
         return;
     }
     if (rev->layoutHandle && *rev->layoutHandle == *built) {
@@ -7325,8 +7325,8 @@ RrGeometrySkinLayoutIsOpenForTesting(const RrProgram *program,
             }
             const size_t id = size_t(geo.chainRevisionBegin[c] + int(r));
             const auto &topology = scratch->chains[c].revisions[r].topology;
-            return topology && id < scratch->epochTopologies.size() &&
-                   topology == scratch->epochTopologies[id];
+            return topology && id < scratch->compiledRigTopologies.size() &&
+                   topology == scratch->compiledRigTopologies[id];
         }
     }
     return false;
@@ -7932,8 +7932,8 @@ RrGeoRunRevisionStaticStep(RrProgram *program, RrGeometryScratch *scratch,
     const bool skin = wire.op == uint8_t(RrGeoOpSkin);
     if(wire.op==uint8_t(RrGeoOpSkin)) {
         rev.topology=rev.layoutHandle; rev.topologyResolved=true;
-        RrGeoAdoptPartition(&rev,size_t(id)<scratch->epochPartitionTopologies.size()
-            ?scratch->epochPartitionTopologies[size_t(id)].get():nullptr);
+        RrGeoAdoptPartition(&rev,size_t(id)<scratch->compiledRigPartitionTopologies.size()
+            ?scratch->compiledRigPartitionTopologies[size_t(id)].get():nullptr);
     }
 
     if (wire.weightCurrentPhase && wire.weightObject >= 0) {

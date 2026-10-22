@@ -1,4 +1,4 @@
-// Per-evaluator input and epoch caches the evaluator and the baked program
+// Per-evaluator input and compiled rig caches the evaluator and the baked program
 // hold by value: static inputs, resolved inputs, skin layouts, blend sample
 // shapes and wire bases.
 #ifndef RIGEXEC_MOVER_GRAPH_CACHES_H
@@ -480,10 +480,10 @@ private:
     RigExecStaticInputCache *_cache = nullptr;
 };
 
-/// Per-epoch skin layouts, keyed by the mover that owns them.
+/// Per-compiled rig skin layouts, keyed by the mover that owns them.
 ///
 /// The expensive half of the operation depends only on the layout, and the
-/// layout is what an epoch IS. Here that half is reading two megabyte-scale
+/// layout is what a compiled rig IS. Here that half is reading two megabyte-scale
 /// arrays off the stage and range-checking every element of them.
 ///
 /// Owned by the evaluator, never a static: a cache that outlives the
@@ -494,17 +494,17 @@ private:
 /// chain walk runs independent chains concurrently and every skinned chain
 /// asks here. The lock decides nothing: a layout is a pure function of the
 /// mover's authored arrays, so whichever task happens to build it builds the
-/// same one, and after the first frame of an epoch every call is a hit.
+/// same one, and after the first frame of a compiled rig every call is a hit.
 class RigExecSkinTopologyCache
 {
 public:
     /// The layout for \p mover, calling \p build on a miss. \p build fills
     /// a fresh topology; whatever it produces -- validated or not -- is what
-    /// this epoch uses, so a rejected layout is not re-read every frame
+    /// this compiled rig uses, so a rejected layout is not re-read every frame
     /// either.
     ///
     /// \p build returns false to REFUSE the cache for this mover: the layout
-    /// can move within the epoch after all, and the caller must read it per
+    /// can move within the compiled rig after all, and the caller must read it per
     /// frame instead. The refusal is remembered exactly as a layout is, so
     /// the question costs one answer per notice and not one per frame; a
     /// refused mover answers null until the next Clear().
@@ -543,7 +543,7 @@ private:
     std::map<SdfPath, std::shared_ptr<const RigExecSkinTopology>> _candidates;
 };
 
-/// Per-epoch blend sample shapes, keyed by the sample prim that owns them.
+/// Per-compiled rig blend sample shapes, keyed by the sample prim that owns them.
 ///
 /// Peer of RigExecSkinTopologyCache, and there for the same reason, but the
 /// arithmetic is starker here. A dense blend sample's full points array is
@@ -551,7 +551,7 @@ private:
 /// channel sits at 0 or at 1 -- measured at 0.37-0.38 ms per sample per frame
 /// on a 26,276-point body, so 169 correctives cost ~65 ms/frame with the rig
 /// standing at REST. Resolving the shape
-/// once per epoch and sharing it by pointer is what removes that, and the
+/// once per rig compilation and sharing it by pointer is what removes that, and the
 /// sparse layout is what makes the resolved shape small: the real correctives
 /// move 1,279 points on average, 4.87% of the mesh.
 ///
@@ -568,7 +568,7 @@ public:
     /// The shape for \p sample, calling \p build on a miss.
     ///
     /// \p build returns false to REFUSE the cache for this sample: the shape
-    /// can move within the epoch after all, and the caller must read it per
+    /// can move within the compiled rig after all, and the caller must read it per
     /// frame instead. The refusal is remembered exactly as a shape is, so the
     /// question costs one answer per notice and not one per frame; a refused
     /// sample answers null until the next Clear().

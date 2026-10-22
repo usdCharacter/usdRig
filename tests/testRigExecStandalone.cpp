@@ -7,8 +7,8 @@
 #include "rigExecScene/providerRecordExport.h"
 #include "rigExecScene/providerContextBinding.h"
 #include "rigExecScene/sceneCompileInputs.h"
-#include "rigExecScene/solverSceneLowering.h"
-#include "rigExecScene/propertySceneLowering.h"
+#include "rigExecScene/solverSceneTranslation.h"
+#include "rigExecScene/propertySceneTranslation.h"
 #include "pxr/usd/sdf/attributeSpec.h"
 #include "rigExec/types.h"
 #include "rigExecRigging/rigBuilder.h"
@@ -289,14 +289,14 @@ static void TestSceneDescriptors()
     const auto restFrame=RigExecFrameFromMatrix(GfMatrix4d(1.0));
     GfMatrix4d movedMatrix(1.0);movedMatrix.SetTranslate(GfVec3d(3,4,5));
     const auto movedFrame=RigExecFrameFromMatrix(movedMatrix);
-    RigExecSceneSolverDescriptor loweredSolver;
-    CHECK(RigExecLowerSceneSolver(scene,solver.GetPath(),{{joint.GetPath(),restFrame}},&loweredSolver,&error));
+    RigExecSceneSolverDescriptor translatedSolver;
+    CHECK(RigExecTranslateSceneSolver(scene,solver.GetPath(),{{joint.GetPath(),restFrame}},&translatedSolver,&error));
     RigExecSolverInputs solverInputs;
-    CHECK(RigExecResolveSceneSolverInputs(scene,loweredSolver,UsdTimeCode::Default(),
+    CHECK(RigExecResolveSceneSolverInputs(scene,translatedSolver,UsdTimeCode::Default(),
         {{joint.GetPath(),movedFrame}},{},{},&solverInputs,&error));
     RigExecSolverWorkspace solverWorkspace;
     RigExecPointFrameArray solverResult;
-    CHECK(RigExecRunSolver(loweredSolver.record,solverInputs,&solverWorkspace,&solverResult,&error));
+    CHECK(RigExecRunSolver(translatedSolver.record,solverInputs,&solverWorkspace,&solverResult,&error));
     RigExecFkChainElement expectedElement;
     expectedElement.restPoints=restFrame.points;expectedElement.posePoints=movedFrame.points;
     expectedElement.hasOutRest=false;expectedElement.parentIndex=-1;
@@ -305,7 +305,7 @@ static void TestSceneDescriptors()
     CHECK(solverResult.rests==std::vector<RigExecSolverRest>{restFrame.points});
 
     RigExecScenePropertyDescriptor propertyDescriptor;
-    CHECK(RigExecLowerSceneProperty(scene,propertyMover.GetPath(),input.GetPath(),&propertyDescriptor,&error));
+    CHECK(RigExecTranslateSceneProperty(scene,propertyMover.GetPath(),input.GetPath(),&propertyDescriptor,&error));
     bool enabled=false;float defaultWeight=0;
     CHECK(RigExecResolveSceneProperty(scene,&propertyDescriptor,UsdTimeCode::Default(),{},&enabled,&defaultWeight,&error));
     CHECK(enabled && defaultWeight==1.0f);
@@ -334,7 +334,7 @@ static void TestSceneDescriptors()
     RigExecCompiledGraph graph;
     CHECK(!RigExecCompileStandaloneGraph(database,rig.GetPath(),{UsdTimeCode::Default()},
         {},RigExecCyclePolicy::Reject,&scene,&graph,&error));
-    CHECK(error == "scene compiler needs production typed kernel lowering");
+    CHECK(error == "scene compiler needs production typed kernel translation");
 }
 static void TestUnavailableDriverFramesRevision()
 {
@@ -431,7 +431,7 @@ static void TestPublicProductionDomains()
     CHECK(recovered.Get<GfVec3f>(selectedTap)==GfVec3f(3,0,0));
     stage.Reset();CHECK(system.Evaluate(UsdTimeCode::Default()).valid);
 }
-static void TestProjectorCapturedDefaultEpoch()
+static void TestProjectorCapturedDefaultCompiledRig()
 {
     auto stage=UsdStage::CreateInMemory();auto rig=RigExecRigBuilder::Create(stage,SdfPath("/Rig"));
     auto parent=UsdGeomXform::Define(stage,SdfPath("/Rig/Parent"));
@@ -835,7 +835,7 @@ int main()
     TestPublicProductionDomains();
     TestUnavailableDriverFramesRevision();
     TestScopedExternalProducers();
-    TestProjectorCapturedDefaultEpoch();
+    TestProjectorCapturedDefaultCompiledRig();
     TfErrorMark errors;
     auto stage = UsdStage::CreateInMemory();
     const auto control = [&](const char *path, double rest) {

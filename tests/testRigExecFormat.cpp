@@ -4219,10 +4219,10 @@ TestChunkTables()
     }, row + ": chunked with 1 chunk(s)");
     refuse("a matrix revision",
            [](F &, R &r) { r.op = uint8_t(fb::RevisionOp::Matrix); },
-           row + ": chunked, but not a skin whose layout the epoch fixes");
-    refuse("a layout the epoch does not fix",
+           row + ": chunked, but not a skin whose layout the compiled rig fixes");
+    refuse("a layout the compiled rig does not fix",
            [](F &, R &r) { r.skinTopologyFixed = false; },
-           row + ": chunked, but not a skin whose layout the epoch fixes");
+           row + ": chunked, but not a skin whose layout the compiled rig fixes");
     // Unchunked with two ranges, a skin is a Range Skin (format 20), keyed
     // like a chunked one: unkeyed ranges differ from its producer sets.
     refuse("two chunks, unchunked", [](F &f, R &r) {
@@ -5305,7 +5305,7 @@ TestArrayInputs()
     expect("a layout past the revisions",
            "values[" + at(_vSkinIndices) + "].array: 1 out of range (1)",
            [](F &f) { f.values[_vSkinIndices].array = 1; });
-    expect("a layout of a revision the epoch does not fix",
+    expect("a layout of a revision the compiled rig does not fix",
            "values[" + at(_vSkinIndices) +
                "]: revision 0 stores no fixed layout",
            [](F &f) {
@@ -5483,16 +5483,16 @@ TestArrayInputs()
            });
     expect("layout slots on a derived revision",
            "geometry.chains[0].derived[0].revision: layout slots on a "
-           "revision that is not a main skin whose layout the epoch fixes",
+           "revision that is not a main skin whose layout the compiled rig fixes",
            [](F &f) {
                fb::RigExecWireRevision &r =
                    *f.geometry->chains[0].derived[0].revision;
                r.jointIndicesSlot = int32_t(_sJointIndices);
                r.jointWeightsSlot = int32_t(_sJointWeights);
            });
-    expect("layout slots on a revision the epoch does not fix",
+    expect("layout slots on a revision the compiled rig does not fix",
            revision + ": layout slots on a revision that is not a main "
-                      "skin whose layout the epoch fixes",
+                      "skin whose layout the compiled rig fixes",
            [](F &f) {
                f.geometry->chains[0].revisions[0].skinTopologyFixed = false;
            });

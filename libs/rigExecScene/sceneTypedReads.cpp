@@ -15,7 +15,7 @@ bool RigExecBindSceneTypedRead(const RigExecSceneDescriptors &scene,const SdfPat
     const RigExecSceneCompileInputs source(scene);const auto *head=source.Attribute(path);
     RigExecSceneTypedRead read;read.consumer=path;read.requested=requested;
     read.cppType=std::type_index(requested.GetType().GetTypeid());
-    read.readPhase=head?head->readPhase:TfToken("base");
+    read.readPhase=head?head->readPhase:RigExecSceneBasePhase;
     if(head) {
         const auto element=head->fact.metadata.find("rigExecInputElement");
         if(element!=head->fact.metadata.end()) {

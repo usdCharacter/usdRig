@@ -177,7 +177,7 @@ CompareSweep(RigExecGpuDeformExecutor *executor, int n, float radius, int rings,
     std::vector<RigExecGpuClothJob> jobs(1);
     RigExecGpuClothJob &job = jobs[0];
     job.key = uint64_t(n);
-    job.epochSerial = 1;
+    job.compiledRigSerial = 1;
     job.mesh = &mesh;
     job.colliders = &colliders;
     job.settings = settings;
@@ -251,7 +251,7 @@ CompareFree(RigExecGpuDeformExecutor *executor, int ticks, int substeps, int n =
                             1.0 / 24.0, &ws, cpu.data(), &why));
     std::vector<RigExecGpuClothJob> jobs(1);
     jobs[0].key = 1000 + uint64_t(ticks * 100 + substeps) + uint64_t(n) * 100000;
-    jobs[0].epochSerial = 1;
+    jobs[0].compiledRigSerial = 1;
     jobs[0].mesh = &mesh;
     jobs[0].colliders = &colliders;
     jobs[0].settings = settings;

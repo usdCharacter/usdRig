@@ -82,7 +82,7 @@ _AdoptCloneVerdict(RigExecBakedProgramImpl *program, bool stands)
 // copied, including the per-frame working state (the history the frozen
 // run branches from) and the USD handles (copied but dead; see the audit).
 // When a field is added to RigExecBakedProgramImpl, it must be added here:
-// a missing epoch field silently changes the frozen run's answers, and a
+// a missing compiled rig field silently changes the frozen run's answers, and a
 // missing per-frame field silently changes its history. The bit-identity
 // test is the backstop, not the discipline.
 void
@@ -411,7 +411,7 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.pathLeafGating = src.pathLeafGating;
     D.verifyPathLeafGating = src.verifyPathLeafGating;
     D.pathLeafGateMismatches = 0;
-    D.leafFlagEpoch = src.leafFlagEpoch;
+    D.leafFlagCompiledRig = src.leafFlagCompiledRig;
     D.avarConstantSerial = src.avarConstantSerial;
     D.sparseSampling = src.sparseSampling;
     D.verifySparseSampling = src.verifySparseSampling;
@@ -532,7 +532,7 @@ RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
     }
     const RigExecBakedProgramImpl &B = program->GetStepGraph();
     // Property chains and weight envelopes run as declared graph operations.
-    // Source discovery must match the compiled epoch and every envelope
+    // Source discovery must match the compiled rig and every envelope
     // must name its compiled field producer.
     {
         RigExecChainSampleBindings bound;

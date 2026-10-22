@@ -43,7 +43,7 @@ RigExecWarmFrameIndex::IsUnwarmable(const SdfPath &rig,
 bool
 RigExecWarmFrameIndex::IsVisitable(
     const SdfPath &rig, double timeValue, RigExecFrameGeneration generation,
-    uint64_t epochDigest) const
+    uint64_t compiledRigSignature) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     const auto found = _frames.find(std::make_pair(rig, timeValue));
@@ -52,7 +52,7 @@ RigExecWarmFrameIndex::IsVisitable(
         return false;
     }
     return _StateFor(found == _frames.end() ? nullptr : &found->second,
-                     generation, epochDigest) !=
+                     generation, compiledRigSignature) !=
         RigExecWarmFrameState::Cached;
 }
 
@@ -157,7 +157,7 @@ RigExecWarmFrameIndex::FindKey(const SdfPath &rig, double timeValue,
 bool
 RigExecWarmFrameIndex::FindCachedKey(const SdfPath &rig, double timeValue,
                                      RigExecFrameGeneration generation,
-                                     uint64_t epochDigest,
+                                     uint64_t compiledRigSignature,
                                      RigExecFrameCacheKey *key) const
 {
     if (!key) {
@@ -174,7 +174,7 @@ RigExecWarmFrameIndex::FindCachedKey(const SdfPath &rig, double timeValue,
     // row, so the standing completion serves while it flies.
     if (!frame.hasCompletion || frame.dirty ||
         frame.completedGeneration != generation ||
-        frame.key.epochDigest != epochDigest) {
+        frame.key.compiledRigSignature != compiledRigSignature) {
         return false;
     }
     *key = frame.key;
@@ -244,7 +244,7 @@ RigExecWarmFrameIndex::ResetRig(const SdfPath &rig)
 RigExecWarmFrameState
 RigExecWarmFrameIndex::_StateFor(const _Frame *frame,
                                  RigExecFrameGeneration generation,
-                                 uint64_t epochDigest)
+                                 uint64_t compiledRigSignature)
 {
     if (!frame) {
         return RigExecWarmFrameState::Uncached;
@@ -261,7 +261,7 @@ RigExecWarmFrameIndex::_StateFor(const _Frame *frame,
     if (frame->completedGeneration != generation) {
         return RigExecWarmFrameState::Dirty;
     }
-    if (frame->key.epochDigest != epochDigest) {
+    if (frame->key.compiledRigSignature != compiledRigSignature) {
         return RigExecWarmFrameState::Dirty;
     }
     return RigExecWarmFrameState::Cached;
@@ -270,18 +270,18 @@ RigExecWarmFrameIndex::_StateFor(const _Frame *frame,
 RigExecWarmFrameState
 RigExecWarmFrameIndex::State(const SdfPath &rig, double timeValue,
                              RigExecFrameGeneration generation,
-                             uint64_t epochDigest) const
+                             uint64_t compiledRigSignature) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     const auto found = _frames.find(std::make_pair(rig, timeValue));
     return _StateFor(found == _frames.end() ? nullptr : &found->second,
-                     generation, epochDigest);
+                     generation, compiledRigSignature);
 }
 
 std::vector<RigExecWarmFrameState>
 RigExecWarmFrameIndex::States(const SdfPath &rig,
                               const std::vector<double> &timeValues,
-    RigExecFrameGeneration generation, uint64_t epochDigest,
+    RigExecFrameGeneration generation, uint64_t compiledRigSignature,
     std::vector<bool> *currentCompletions) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -295,12 +295,12 @@ RigExecWarmFrameIndex::States(const SdfPath &rig,
         const auto found = _frames.find(std::make_pair(rig, timeValue));
         states.push_back(
             _StateFor(found == _frames.end() ? nullptr : &found->second,
-                      generation, epochDigest));
+                      generation, compiledRigSignature));
         if (currentCompletions) {
             const _Frame *frame = found == _frames.end() ? nullptr : &found->second;
             currentCompletions->push_back(frame && frame->hasCompletion &&
                 !frame->dirty && frame->completedGeneration == generation &&
-                frame->key.epochDigest == epochDigest);
+                frame->key.compiledRigSignature == compiledRigSignature);
         }
     }
     return states;
@@ -311,18 +311,18 @@ RigExecWarmFrameIndex::States(const SdfPath &rig,
 // cross the thread boundary; none of these methods acquires a new mutex.
 void RigExecWarmFrameIndex::SetRequest(const SdfPath &rig,
     const std::vector<double> &times, RigExecFrameGeneration generation,
-    uint64_t epochDigest)
+    uint64_t compiledRigSignature)
 {
     // Reuse the existing single batched cache-state critical section. A
     // standing completion seeds progress even while its rewarm is running.
     std::vector<bool> cached;
-    States(rig, times, generation, epochDigest, &cached);
+    States(rig, times, generation, compiledRigSignature, &cached);
     _Request &request = _requests[rig];
     request.token = ++_nextRequest;
     request.frames.clear();
     for (size_t i = 0; i < times.size(); ++i)
         request.frames[times[i]] = cached[i]
-            ? std::make_shared<_Progress>(generation, epochDigest, true)
+            ? std::make_shared<_Progress>(generation, compiledRigSignature, true)
             : std::shared_ptr<_Progress>();
 }
 
@@ -342,7 +342,7 @@ void RigExecWarmFrameIndex::InvalidateRequest(const SdfPath &rig)
 
 RigExecWarmFrameIndex::RequestPublication
 RigExecWarmFrameIndex::RequestPublicationFor(const SdfPath &rig,
-    double timeValue, RigExecFrameGeneration generation, uint64_t epochDigest)
+    double timeValue, RigExecFrameGeneration generation, uint64_t compiledRigSignature)
 {
     RequestPublication result;
     const auto request = _requests.find(rig);
@@ -352,10 +352,10 @@ RigExecWarmFrameIndex::RequestPublicationFor(const SdfPath &rig,
     if (request == _requests.end() || generation != live) return result;
     const auto row = request->second.frames.find(timeValue);
     if (row == request->second.frames.end()) return result;
-    // A changed epoch/generation gets a new immutable cell, never an in-place
+    // A changed compiled rig/generation gets a new immutable cell, never an in-place
     // reset. Old jobs keep their old cell alive but cannot mark the new row.
-    if (!row->second || row->second->generation != generation || row->second->epochDigest != epochDigest)
-        row->second = std::make_shared<_Progress>(generation, epochDigest);
+    if (!row->second || row->second->generation != generation || row->second->compiledRigSignature != compiledRigSignature)
+        row->second = std::make_shared<_Progress>(generation, compiledRigSignature);
     result._progress = row->second;
     return result;
 }
@@ -366,7 +366,7 @@ bool RigExecWarmFrameIndex::RequestPublication::Publish(
     static_assert(std::atomic<uint8_t>::is_always_lock_free,
                   "warm publication handoff must not introduce a hidden lock");
     if (!_progress || generation != _progress->generation ||
-        key.epochDigest != _progress->epochDigest) return false;
+        key.compiledRigSignature != _progress->compiledRigSignature) return false;
     uint8_t empty = 0;
     if (!_progress->state.compare_exchange_strong(empty, uint8_t(1),
             std::memory_order_relaxed, std::memory_order_relaxed)) return false;
@@ -381,12 +381,12 @@ void RigExecWarmFrameIndex::NoteRequestPublished(const SdfPath &rig,
     const auto request = _requests.find(rig);
     if (!requestToken || request == _requests.end() ||
         request->second.token != requestToken) return;
-    RequestPublicationFor(rig, timeValue, generation, key.epochDigest).Publish(key, generation);
+    RequestPublicationFor(rig, timeValue, generation, key.compiledRigSignature).Publish(key, generation);
 }
 
 bool RigExecWarmFrameIndex::HasRequestPublished(const SdfPath &rig,
     double timeValue, RigExecFrameGeneration generation,
-    uint64_t epochDigest) const
+    uint64_t compiledRigSignature) const
 {
     const auto request = _requests.find(rig);
     if (request == _requests.end()) return false;
@@ -394,15 +394,15 @@ bool RigExecWarmFrameIndex::HasRequestPublished(const SdfPath &rig,
     return row != request->second.frames.end() && row->second &&
         row->second->state.load(std::memory_order_acquire) == 2 &&
         row->second->generation == generation &&
-        row->second->epochDigest == epochDigest;
+        row->second->compiledRigSignature == compiledRigSignature;
 }
 
 bool RigExecWarmFrameIndex::IsCursorVisitable(const SdfPath &rig,
     double timeValue, RigExecFrameGeneration generation,
-    uint64_t epochDigest) const
+    uint64_t compiledRigSignature) const
 {
-    return !HasRequestPublished(rig, timeValue, generation, epochDigest) &&
-        IsVisitable(rig, timeValue, generation, epochDigest);
+    return !HasRequestPublished(rig, timeValue, generation, compiledRigSignature) &&
+        IsVisitable(rig, timeValue, generation, compiledRigSignature);
 }
 
 }  // namespace rigExec

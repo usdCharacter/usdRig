@@ -53,7 +53,7 @@ descendants before their parent, and the *bottom* sibling branch in usdview
 first — to number ONE pose stack of joint-writing solvers and frame
 constraints, of which the mover order is a restriction; the walk uses the standard
 `UsdPrimRange` predicate, so a deactivated or unloaded branch is simply not
-part of the rig and changing that is a structural (epoch-rebuilding) edit
+part of the rig and changing that is a structural (rig-recompiling) edit
 rather than a value edit. A rig that finds no controls, joints, volume weights,
 and no movers at all is a compile error ("Rig publishes no outputs"), and every
 mover target is checked against the root's *parent* prim, which is the rig

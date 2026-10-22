@@ -41,7 +41,7 @@ struct RigExecOpAdapterState {
     std::vector<std::vector<uint32_t>> coveredPropertyInputs;
     std::vector<std::vector<std::pair<uint32_t,uint32_t>>> coveredTypedInputs;
     std::vector<char> inputExact;
-    /// Native retained pure bodies are candidates on their replacement epoch first run.
+    /// Native retained pure bodies are candidates on their replacement compiled rig first run.
     std::vector<char> retainedFirst;
     /// Per op, set at compile: its source key reads no state that can change,
     /// so a run that rebuilds no source keys treats it as an equal compare.

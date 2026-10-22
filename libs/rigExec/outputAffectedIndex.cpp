@@ -39,11 +39,11 @@ RigExecIntersectClusterSets(const RigExecBakedClusterSet &dirty,
 
 void
 RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
-                                 uint64_t epochDigest)
+                                 uint64_t compiledRigSignature)
 {
     Clear();
     _clusterCount = program.clustering.clusters.size();
-    _epochDigest = epochDigest;
+    _compiledRigSignature = compiledRigSignature;
     if (_clusterCount == 0) {
         return;
     }
@@ -245,7 +245,7 @@ void
 RigExecOutputAffectedIndex::Clear()
 {
     _clusterCount = 0;
-    _epochDigest = 0;
+    _compiledRigSignature = 0;
     _cones.reset();
     _always = RigExecBakedClusterSet();
     _varying = RigExecBakedClusterSet();

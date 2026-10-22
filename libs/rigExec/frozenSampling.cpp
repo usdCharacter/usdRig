@@ -272,7 +272,7 @@ _ResolvedWalk(const UsdAttribute &attribute, std::vector<SdfPath> *hops,
     RigExecRevisionLeafHops(key, attribute, hops, varying);
 }
 
-// Samples one bound input. Epoch constants are not per-frame inputs and are
+// Samples one bound input. Compiled rig constants are not per-frame inputs and are
 // skipped; everything else is read through the route the frame path reads
 // (RigExecBakedRead): the retained query, else the resolved walk through
 // \p refreshed (the job's overrides, which are all a walk that meets no
@@ -2403,7 +2403,7 @@ _FrozenOverridePaths(const std::vector<RigExecValueOverride> &overrides)
 }
 
 // Replicates RigExecBakedProgram::SetOverrides (bakedProgram.cpp:1319)
-// against the given epoch tables, writing the job's placement flags. The
+// against the given compiled rig tables, writing the job's placement flags. The
 // sampler uses it to read overridden bindings the long way; the worker uses
 // it for the flags cone dirtiness reads. Returns false when an override is
 // unplaceable -- live then runs dynamically, so a frozen job at these
@@ -2575,7 +2575,7 @@ _AdmitFrameUpstream(const RigExecBakedProgram &program,
     const RigExecBakedProgramImpl &B = program.GetStepGraph();
     const std::map<SdfPath, TfType> &listed = program.GetUpstreamAdmissible();
     // The array part, as live judges it (RigExecBakedUpstreamAdmissibleArrays
-    // over the same compiled epoch).
+    // over the same compiled rig).
     std::map<SdfPath, TfType> arrays;
     if (RigExecUpstreamArrayAdmission() && B.evaluator &&
         std::any_of(upstream.begin(), upstream.end(),
@@ -3290,7 +3290,7 @@ void
 RigExecBurstSampleCache::Clear()
 {
     program = nullptr;
-    epochDigest = 0;
+    compiledRigSignature = 0;
     bindings = RigExecChainSampleBindings();
     overrides.clear();
     overrideFlags.clear();
@@ -3319,11 +3319,11 @@ bool
 RigExecBuildBurstSampleCache(
     const RigExecBakedProgram &program,
     const RigExecChainSampleBindings &bindings,
-    const std::vector<RigExecValueOverride> &overrides, uint64_t epochDigest,
+    const std::vector<RigExecValueOverride> &overrides, uint64_t compiledRigSignature,
     RigExecBurstSampleCache *cache, std::string *error)
 {
     return RigExecBuildBurstSampleCache(program, bindings, overrides, {},
-                                        epochDigest, cache, error);
+                                        compiledRigSignature, cache, error);
 }
 
 bool
@@ -3331,7 +3331,7 @@ RigExecBuildBurstSampleCache(
     const RigExecBakedProgram &program,
     const RigExecChainSampleBindings &bindings,
     const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream, uint64_t epochDigest,
+    const std::vector<RigExecUpstreamValue> &upstream, uint64_t compiledRigSignature,
     RigExecBurstSampleCache *cache, std::string *error)
 {
     const auto fail = [&error, cache](const std::string &why) {
@@ -3360,7 +3360,7 @@ RigExecBuildBurstSampleCache(
                     "these overrides, which no frozen job can reproduce");
     }
     cache->program = &program;
-    cache->epochDigest = epochDigest;
+    cache->compiledRigSignature = compiledRigSignature;
     cache->bindings = bindings;
     cache->overrides = overrides;
     cache->upstream = upstream;

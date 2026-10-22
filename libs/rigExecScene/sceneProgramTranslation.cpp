@@ -1,11 +1,17 @@
-#include "sceneProgramLowering.h"
+#include "sceneProgramTranslation.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "providerContextBinding.h"
 #include "rigExecGraph/poseArithmetic.h"
 #include "rigExec/movers/moverRegistry.h"
+#include "rigExecMath/harmonicsKernel.h"
 #include <set>
 #include <algorithm>
 #include <limits>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (points) ((parentSpace,"parent:space")) (preceding) (base) ((inputsDefaultWeight,"inputs:defaultWeight"))
+    ((rigExecWeightTarget,"rigExec:weightTarget")) ((rigExecWeightObject,"rigExec:weightObject")) (final) (dense) (strict)
+);
 namespace {
 bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}
 bool Hierarchical(const TfToken &type){return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";}
@@ -15,7 +21,7 @@ RigExecSceneValueDomain Domain(RigExecSceneDomain domain) {
     return RigExecSceneValueDomain::Pose;
 }
 }
-static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
+static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     const std::set<SdfPath> &excludedPoseWriters,const std::set<SdfPath> &excludedSolverBodies,
     const RigExecOpExclusionProof &proof,
     RigExecSceneProgram *destination,std::string *error) {
@@ -81,20 +87,19 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     for(const auto &[owner,targets]:moverTargets) {
         const auto node=scene.nodes.find(owner);if(node==scene.nodes.end())return Fail(error,"missing mover node");
         const auto *handler=RigExecFindMoverHandler(node->second.fact.type);
-        // A windowed mover reads earlier frames, which the scene program has
-        // no history ticks for.
-        if(handler && handler->windowFrames)
-            return Fail(error,"the scene program does not run a windowed mover: "+node->second.fact.type.GetString()+" "+owner.GetString());
         if(handler && handler->singleTarget && targets.size()!=1)
             return Fail(error,node->second.fact.type.GetString()+" "+owner.GetString()+" must have exactly one canonical points target in v0.1 (multi-target fan-out would alias mover-level parameters)");
         if(handler && handler->legacyEnvelopeAttribute) {
-            const auto old=scene.attributes.find(owner.AppendProperty(TfToken(handler->legacyEnvelopeAttribute)));
+            // Matched by name among the captured attributes: no token from text.
+            auto old=scene.attributes.end();
+            for(const auto &path:node->second.attributes)
+                if(path.GetName()==handler->legacyEnvelopeAttribute){old=scene.attributes.find(path);break;}
             if(old!=scene.attributes.end() && old->second.fact.hasAuthoredReadableValue)
                 return Fail(error,node->second.fact.type.GetString()+" "+owner.GetString()+" authors "+handler->legacyEnvelopeAttribute+", which was replaced by inputs:defaultWeight");
         }
         if(node->second.domain==RigExecSceneDomain::GeometryMover)for(const auto &target:targets) {
             const auto prim=scene.nodes.find(target.GetPrimPath());const auto attr=scene.attributes.find(target);
-            if(!target.IsPropertyPath() || target.GetNameToken()!=TfToken("points") || prim==scene.nodes.end() || !prim->second.pointBased || attr==scene.attributes.end() || attr->second.fact.type!=SdfValueTypeNames->Point3fArray)
+            if(!target.IsPropertyPath() || target.GetNameToken()!=_tokens->points || prim==scene.nodes.end() || !prim->second.pointBased || attr==scene.attributes.end() || attr->second.fact.type!=SdfValueTypeNames->Point3fArray)
                 return Fail(error,node->second.fact.type.GetString()+" "+owner.GetString()+" target "+target.GetString()+" is not a native UsdGeomPointBased point3f[] points attribute");
         }
     }
@@ -142,7 +147,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
             bool solverBarrier=false,parentBlocked=false;
             for(auto parent=path.GetParentPath();!parent.IsEmpty() && parent!=closest;parent=parent.GetParentPath())solverBarrier|=extracted.count(parent)!=0;
             for(auto parent=path;!parent.IsEmpty() && parent!=closest;parent=parent.GetParentPath()) {
-                const auto attribute=scene.attributes.find(parent.AppendProperty(TfToken("parent:space")));
+                const auto attribute=scene.attributes.find(parent.AppendProperty(_tokens->parentSpace));
                 if(attribute!=scene.attributes.end())parentBlocked|=attribute->second.fact.hasAuthoredValue ||
                     (attribute->second.fact.hasAuthoredConnections && !attribute->second.fact.connections.empty());
             }
@@ -177,7 +182,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const auto node=scene.nodes.find(application.owner);
         if(node!=scene.nodes.end() && node->second.fact.type=="RigExecSurfaceProjector" && !movedPoints.count(application.canonicalTarget))continue;
         std::vector<RigExecSceneGeometryDescriptor> variants;
-        if(!RigExecLowerSceneGeometryVariants(scene,application.owner,application.canonicalTarget,&variants,error))return false;
+        if(!RigExecTranslateSceneGeometryVariants(scene,application.owner,application.canonicalTarget,&variants,error))return false;
         for(size_t i=0;i<variants.size();++i) {
             if(!admitDriverFrames(variants[i]))continue;
             auto expanded=application;expanded.target=variants[i].target;expanded.canonicalTarget=variants[i].target;expanded.targetIndex=application.targetIndex*2+i;
@@ -185,7 +190,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         }
     }
     for(const auto &points:movedPoints) {
-        std::vector<RigExecSceneGeometryDescriptor> variants;if(!RigExecLowerSceneDerivedGeometry(scene,points,&variants,error))return false;
+        std::vector<RigExecSceneGeometryDescriptor> variants;if(!RigExecTranslateSceneDerivedGeometry(scene,points,&variants,error))return false;
         for(size_t i=0;i<variants.size();++i) {
             auto &descriptor=variants[i];if(!admitDriverFrames(descriptor))continue;
             RigExecSceneApplicationDescriptor application{descriptor.mover,descriptor.target,RigExecSceneDomain::GeometryMover,terminalOrdinal,descriptor.target,i};
@@ -198,7 +203,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     };
     std::map<SdfPath,RigExecSceneConstraintDescriptor> chainConstraints;
     for(const auto &[path,node]:scene.nodes)if(!excludedPoseWriters.count(path) && node.stackOrdinal>=0 && node.fact.active && node.fact.type=="RigExecSingleChainIkConstraint") {
-        RigExecSceneConstraintDescriptor source;if(!RigExecLowerSceneConstraint(scene,path,{},&source,error))return false;
+        RigExecSceneConstraintDescriptor source;if(!RigExecTranslateSceneConstraint(scene,path,{},&source,error))return false;
         authoredApplications.erase(std::remove_if(authoredApplications.begin(),authoredApplications.end(),[&](const auto &a){return a.owner==path;}),authoredApplications.end());
         for(size_t i=0;i<source.ikChain.size();++i)authoredApplications.push_back({path,source.ikChain[i],RigExecSceneDomain::Constraint,node.stackOrdinal,source.ikChain[i],i});
         chainConstraints.emplace(path,std::move(source));
@@ -244,7 +249,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 bool solverBarrier=false,parentBlocked=false;
                 for(auto parent=path;!parent.IsEmpty() && parent!=closest;parent=parent.GetParentPath()) {
                     solverBarrier|=extracted.count(parent)!=0;
-                    const auto attribute=scene.attributes.find(parent.AppendProperty(TfToken("parent:space")));
+                    const auto attribute=scene.attributes.find(parent.AppendProperty(_tokens->parentSpace));
                     if(attribute!=scene.attributes.end())parentBlocked|=attribute->second.fact.hasAuthoredValue ||
                         (attribute->second.fact.hasAuthoredConnections && !attribute->second.fact.connections.empty());
                 }
@@ -264,12 +269,12 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         commit.reads.clear();const auto &joints=solverJointPaths.at(solver);
         for(size_t i=0;i<commit.candidates.size();++i) {
             auto &candidate=commit.candidates[i];
-            if(!program.layout.routes.Resolve(scene,{joints[i],RigExecSceneValueDomain::Pose},solver,TfToken("preceding"),&candidate.before,error))return false;
+            if(!program.layout.routes.Resolve(scene,{joints[i],RigExecSceneValueDomain::Pose},solver,_tokens->preceding,&candidate.before,error))return false;
             commit.reads.push_back(candidate.before);commit.reads.push_back(candidate.candidate);
         }
         for(auto &descendant:commit.descendants) {
             SdfPath path;for(const auto &[key,chain]:program.layout.routes.chains)if(key.domain==RigExecSceneValueDomain::Pose && chain.poseBase==descendant.output){path=key.path;break;}
-            if(path.IsEmpty() || !program.layout.routes.Resolve(scene,{path,RigExecSceneValueDomain::Pose},solver,TfToken("preceding"),&descendant.current,error))return false;
+            if(path.IsEmpty() || !program.layout.routes.Resolve(scene,{path,RigExecSceneValueDomain::Pose},solver,_tokens->preceding,&descendant.current,error))return false;
             commit.reads.push_back(descendant.current);
         }
         if(!program.Append("solverCommit:"+solver.GetString(),std::move(commit),error))return false;
@@ -283,7 +288,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     };
     for(const auto &[path,node]:scene.nodes)if(publishesWeights(node)) {
         RigExecScenePoseInterpolatorDescriptor descriptor;
-        if(!RigExecLowerScenePoseInterpolator(scene,path,&descriptor,error))return false;
+        if(!RigExecTranslateScenePoseInterpolator(scene,path,&descriptor,error))return false;
         auto &outputs=interpolatorOutputs[path];
         auto reserve=[&](const SdfPathVector &paths,std::vector<RigExecValueId> *ids) {
             for(const auto &attribute:paths) {
@@ -307,7 +312,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const bool connected=consumerFact!=scene.attributes.end() && consumerFact->second.fact.connections.size()==1;
         const bool expression=request.atDefault || connected;
         if(!expression || (!request.computation.empty() && request.computation!="computeRestFrame") || source>=program.layout.providers.valueKeys.size()){*output=source;return true;}
-        const auto phase=request.phase.IsEmpty()?TfToken("base"):request.phase;
+        const auto phase=request.phase.IsEmpty()?_tokens->base:request.phase;
         const auto key=request.consumer.GetString()+"|"+request.reader.GetString()+"|"+phase.GetString()+"|"+std::to_string(source)+(request.atDefault?"|default":"|current");
         const auto cached=contexts.find(key);if(cached!=contexts.end()){*output=cached->second;return true;}
         std::map<RigExecValueId,RigExecValueId> selected;
@@ -381,7 +386,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     }
     for(const auto &application:applications)if(application.source->domain==RigExecSceneDomain::SpaceSwitch) {
         const auto &a=*application.source;RigExecSceneSpaceSwitchDescriptor source;
-        if(!RigExecLowerSceneSpaceSwitch(scene,a.owner,&source,error))return false;
+        if(!RigExecTranslateSceneSpaceSwitch(scene,a.owner,&source,error))return false;
         const auto slot=switchProviderIndex.find(a.canonicalTarget);
         if(slot==switchProviderIndex.end())return Fail(error,"space switch target has no composed provider: "+a.canonicalTarget.GetString());
         switchApplications.push_back(&application);switchSlots.push_back(slot->second);switchSources.emplace_back();
@@ -494,18 +499,18 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     for(const auto &[path,node]:scene.nodes) {
         if(node.domain==RigExecSceneDomain::Solver) {
             RigExecSceneSolverDescriptor source;RigExecSolverGraphBinding bound;
-            if(!RigExecLowerSceneSolver(scene,path,rests,&source,error) ||
+            if(!RigExecTranslateSceneSolver(scene,path,rests,&source,error) ||
                !RigExecBindSolverGraph(source,context,program.layout.solverAggregates.at(path),&bound,error) ||
                !program.Append("solver:"+path.GetString(),std::move(bound),error))return false;
         } else if(node.domain==RigExecSceneDomain::Weight) {
             RigExecSceneWeightProgram source;RigExecWeightGraphBinding bound;
-            if(!RigExecLowerSceneWeight(scene,path,&source,error) ||
-               !RigExecBindWeightGraph(source,context,path,TfToken("base"),&bound,error))return false;
+            if(!RigExecTranslateSceneWeight(scene,path,&source,error) ||
+               !RigExecBindWeightGraph(source,context,path,_tokens->base,&bound,error))return false;
             RigExecSceneWeightOp op;op.object=bound.root;op.output=program.layout.weightPackets.at(path);op.binding=std::move(bound);
             if(!program.Append("weightPacket:"+path.GetString(),std::move(op),error))return false;
         } else if(publishesWeights(node)) {
             RigExecScenePoseInterpolatorDescriptor source;RigExecBoundPoseInterpolator bound;
-            if(!RigExecLowerScenePoseInterpolator(scene,path,&source,error))return false;
+            if(!RigExecTranslateScenePoseInterpolator(scene,path,&source,error))return false;
             const auto &weights=interpolatorOutputs.at(path).first;
             const auto &disabled=interpolatorOutputs.at(path).second;
             if(!RigExecBindScenePoseInterpolator(source,context,weights,disabled,&bound,error,
@@ -516,23 +521,23 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     auto bindField=[&](const SdfPath &consumer,const SdfPath &weightObject,const SdfPath &moverTarget,RigExecValueId points,const std::string &key,RigExecValueId *id) {
         RigExecSceneFieldOp op;op.points=points;op.output=program.layout.Allocate("field:"+key);
         RigExecSceneTypedRead weight;
-        if(!RigExecBindSceneTypedRead(scene,consumer.AppendProperty(TfToken("inputs:defaultWeight")),SdfValueTypeNames->Float,&weight,error) || !RigExecBindGraphTypedRead(weight,context,&op.defaultWeight,error))return false;
+        if(!RigExecBindSceneTypedRead(scene,consumer.AppendProperty(_tokens->inputsDefaultWeight),SdfValueTypeNames->Float,&weight,error) || !RigExecBindGraphTypedRead(weight,context,&op.defaultWeight,error))return false;
         if(!weightObject.IsEmpty()) {
             RigExecSceneWeightProgram source;
-            if(!RigExecLowerSceneWeight(scene,weightObject,&source,error))return false;
+            if(!RigExecTranslateSceneWeight(scene,weightObject,&source,error))return false;
             for(const auto &object:source.objects) {
-                const auto relation=scene.relationships.find(object.path.AppendProperty(TfToken("rigExec:weightTarget")));
+                const auto relation=scene.relationships.find(object.path.AppendProperty(_tokens->rigExecWeightTarget));
                 if(relation==scene.relationships.end() || relation->second.fact.targets.size()!=1)
                     return Fail(error,object.path.GetString()+": rigExec:weightTarget must have exactly one target");
                 auto declared=relation->second.fact.targets.front();
                 if(points!=UINT64_MAX && declared.IsPrimPath()) {
                     const auto node=scene.nodes.find(declared);
-                    if(node!=scene.nodes.end() && node->second.pointBased)declared=declared.AppendProperty(TfToken("points"));
+                    if(node!=scene.nodes.end() && node->second.pointBased)declared=declared.AppendProperty(_tokens->points);
                 }
                 if(declared!=moverTarget)return Fail(error,object.path.GetString()+": rigExec:weightTarget does not match mover target "+moverTarget.GetString());
             }
-            TfToken placement("base");RigExecSceneCompileInputs facts(scene);
-            if(const auto *relation=facts.Relationship(consumer.AppendProperty(TfToken("rigExec:weightObject"))))placement=relation->readPhase;
+            TfToken placement=_tokens->base;RigExecSceneCompileInputs facts(scene);
+            if(const auto *relation=facts.Relationship(consumer.AppendProperty(_tokens->rigExecWeightObject)))placement=relation->readPhase;
             if(placement!="base" && placement!="final")op.staticError="weight placement must read base or final";
             if(op.staticError.empty() && !RigExecBindWeightGraph(source,context,consumer,placement,&op.binding,error))return false;
         }
@@ -542,7 +547,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const auto &a=*application.source;const auto key="revision:"+a.owner.GetString()+":"+a.canonicalTarget.GetString();
         if(a.domain==RigExecSceneDomain::PropertyMover) {
             RigExecScenePropertyDescriptor source;RigExecPropertyGraphBinding bound;
-            if(!RigExecLowerSceneProperty(scene,a.owner,a.canonicalTarget,&source,error))return false;
+            if(!RigExecTranslateSceneProperty(scene,a.owner,a.canonicalTarget,&source,error))return false;
             RigExecValueId field;if(!bindField(a.owner,source.weightObject,a.canonicalTarget,UINT64_MAX,key,&field))return false;
             if(!RigExecBindPropertyGraph(source,context,application.incoming,application.output,field,&bound,error) ||
                !program.Append(key,std::move(bound),error))return false;
@@ -554,13 +559,16 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
             const auto pointsChain=program.layout.routes.chains.find({points,RigExecSceneValueDomain::Points});
             if(pointsChain==program.layout.routes.chains.end())return Fail(error,"geometry source points have no typed chain: "+points.GetString());
             op.pointsBase=pointsChain->second.base;
-            if(source.derived && !program.layout.routes.Resolve(scene,{points,RigExecSceneValueDomain::Points},a.owner,TfToken("final"),&op.pointsFinal,error))return false;
+            if(source.derived && !program.layout.routes.Resolve(scene,{points,RigExecSceneValueDomain::Points},a.owner,_tokens->final,&op.pointsFinal,error))return false;
             if(!source.derived && !bindField(a.owner,source.record.binding.weightObject,a.canonicalTarget,op.incoming,key,&op.field))return false;
-            op.fieldPacket.representation=TfToken("dense");op.fieldPacket.rangePolicy=TfToken("strict");
+            op.fieldPacket.representation=_tokens->dense;op.fieldPacket.rangePolicy=_tokens->strict;
+            // A windowed mover reads its own inputs over earlier frames.
+            if(const auto *handler=source.record.binding.handler;handler && handler->windowFramesScene)
+                op.windowFrames=handler->windowFramesScene(scene,a.owner);
             if(!program.Append(key,std::move(op),error))return false;
         } else if(a.domain==RigExecSceneDomain::SpaceSwitch) {
             RigExecSceneSpaceSwitchDescriptor source;RigExecSceneSwitchOp op;
-            if(!RigExecLowerSceneSpaceSwitch(scene,a.owner,&source,error) ||
+            if(!RigExecTranslateSceneSpaceSwitch(scene,a.owner,&source,error) ||
                !([&]() {
                    auto switchContext=context;
                    switchContext.resolve=[&](const RigExecSceneGraphReadRequest &request,RigExecValueId *id,std::string *why) {
@@ -583,17 +591,26 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 application.candidate,&op,error) || !program.Append(key,std::move(op),error))return false;
         } else if(a.domain==RigExecSceneDomain::Constraint) {
             RigExecSceneConstraintDescriptor source;RigExecConstraintGraphBinding bound;RigExecConstraintGraphTarget target;
-            if(!RigExecLowerSceneConstraint(scene,a.owner,{a.target},&source,error))return false;
+            if(!RigExecTranslateSceneConstraint(scene,a.owner,{a.target},&source,error))return false;
             if(source.record.kind==RigExecConstraintKind::IkFkMatch)
                 return Fail(error,"the scene program does not run an IK/FK match: "+a.owner.GetString());
-            if(source.record.kind==RigExecConstraintKind::Harmonics)
-                return Fail(error,"the scene program does not run a harmonics constraint: "+a.owner.GetString());
+            uint32_t windowFrames=0;
+            if(source.record.kind==RigExecConstraintKind::Harmonics) {
+                const auto targets=std::count_if(scene.applications.begin(),scene.applications.end(),
+                    [&](const auto &entry){return entry.owner==a.owner && entry.domain==RigExecSceneDomain::Constraint;});
+                if(targets!=1)return Fail(error,"harmonics constraint needs one pose-provider target: "+a.owner.GetString());
+                RigExecHarmonicsSettings settings;
+                settings.waves=source.harmonicsWaves;settings.waveLength=source.harmonicsWaveLength;
+                settings.frequency=source.harmonicsFrequency;settings.ignoreFirstFrame=source.harmonicsIgnoreFirstFrame;
+                if(!RigExecHarmonicsSettingsValid(settings))return Fail(error,"harmonics constraint window is invalid: "+a.owner.GetString());
+                windowFrames=uint32_t(RigExecHarmonicsWindowFrames(settings));
+            }
             target.incoming=application.incoming;target.output=application.candidate;
-            RigExecSceneCompileInputs facts(scene);const auto weightTargets=facts.Targets(a.owner.AppendProperty(TfToken("rigExec:weightObject")));
+            RigExecSceneCompileInputs facts(scene);const auto weightTargets=facts.Targets(a.owner.AppendProperty(_tokens->rigExecWeightObject));
             if(!weightTargets.empty() && !bindField(a.owner,weightTargets.front(),a.target,UINT64_MAX,key,&target.weight))return false;
             if(!source.space.IsEmpty()) {
                 RigExecSceneGraphReadRequest request;request.source=source.space;request.reader=a.owner;
-                request.domain=RigExecSceneValueDomain::Pose;request.phase=TfToken("preceding");
+                request.domain=RigExecSceneValueDomain::Pose;request.phase=_tokens->preceding;
                 if(!context.resolve(request,&target.carry,error))return false;
             }
             if(source.record.kind==RigExecConstraintKind::SingleChainIk) {
@@ -607,8 +624,9 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
                     if(match==applications.end())return Fail(error,"missing IK chain commit version");target.chainOutputs.push_back(match->candidate);
                 }
             }
-            if(!RigExecBindConstraintGraph(scene,source,context,target,&bound,error) ||
-               !program.Append(key,std::move(bound),error))return false;
+            if(!RigExecBindConstraintGraph(scene,source,context,target,&bound,error))return false;
+            bound.windowFrames=windowFrames;
+            if(!program.Append(key,std::move(bound),error))return false;
         } else return Fail(error,"unsupported scene application: "+a.owner.GetString());
     }
     for(auto &[owner,commit]:commits) {
@@ -644,7 +662,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     }
     for(const auto &[path,node]:scene.nodes)if(node.fact.type=="RigExecBlendInput") {
         RigExecSceneGeometryDescriptor descriptor;RigExecSceneBlendChannelOp op;
-        if(!RigExecLowerSceneBlendChannel(scene,path,&descriptor,error) ||
+        if(!RigExecTranslateSceneBlendChannel(scene,path,&descriptor,error) ||
            !RigExecBindGeometryGraph(descriptor,context,&op.binding,error))return false;
         const auto key=RigExecProviderValueKey(path,"computeBlendChannel");
         op.output=program.layout.Allocate(key);program.layout.providers.valueIds[key]=op.output;
@@ -661,7 +679,7 @@ static bool LowerSceneProgramOnce(const RigExecSceneDescriptors &captured,
     *destination=std::move(program);return true;
 }
 
-bool RigExecLowerSceneProgram(const RigExecSceneDescriptors &captured,
+bool RigExecTranslateSceneProgram(const RigExecSceneDescriptors &captured,
     RigExecSceneProgram *destination,std::string *error) {
     if(!destination)return Fail(error,"null scene compiler output");
     std::set<SdfPath> excludedPoseWriters,excludedSolverBodies;
@@ -675,7 +693,7 @@ bool RigExecLowerSceneProgram(const RigExecSceneDescriptors &captured,
     const size_t roleBudget=2*captured.nodes.size();
     for(size_t attempt=0;attempt<=roleBudget;++attempt) {
         RigExecSceneProgram candidate;
-        if(!LowerSceneProgramOnce(captured,excludedPoseWriters,excludedSolverBodies,proof,&candidate,error))return false;
+        if(!TranslateSceneProgramOnce(captured,excludedPoseWriters,excludedSolverBodies,proof,&candidate,error))return false;
         bool changed=false;
         const size_t first=candidate.layout.initialProviderOps+candidate.layout.baseSelections.size();
         for(size_t i=0;i<candidate.operations.size();++i) {
@@ -713,7 +731,7 @@ bool RigExecLowerSceneProgram(const RigExecSceneDescriptors &captured,
             }
         }
         // Capture ownership from the actual emitted role, never a substring
-        // match or a numeric slot that could belong to a replacement epoch.
+        // match or a numeric slot that could belong to a replacement compiled rig.
         for(size_t i=0;i<candidate.operations.size();++i) {
             const auto &operation=candidate.operations[i];
             const auto &key=candidate.layout.descriptors[first+i].key;

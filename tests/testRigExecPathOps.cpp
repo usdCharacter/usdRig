@@ -423,7 +423,7 @@ CheckFrozen(const char *what, RigExecRigEvaluator *evaluator, double time,
                                    &inputs, &error));
     RigExecBackgroundScheduler scheduler;
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.generation = scheduler.CurrentGeneration(kRig);
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();

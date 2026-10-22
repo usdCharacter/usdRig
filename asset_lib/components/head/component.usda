@@ -1,0 +1,307 @@
+#usda 1.0
+(
+    defaultPrim = "Component"
+    doc = "Reusable head rig definitions. Bind with component.json and character fit data."
+)
+
+def Scope "Component"
+{
+    def RigExecControl "Control_Neck" (
+        apiSchemas = ["RigExecControlAPI"]
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_Head" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The head (its ring floats above it), carrying the face."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Y"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_CheekR" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The cheek: ty raises it, tz puffs it."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_EarR" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The ear, turning about its root."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_BrowR" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow: ty raises it, rz tilts it."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Z"
+        uniform token guide:shape = "box"
+    }
+
+    def RigExecControl "Control_BrowInnerR" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow's inner end."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_BrowOuterR" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow's outer end."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_CheekL" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The cheek: ty raises it, tz puffs it."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_EarL" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The ear, turning about its root."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        uniform token guide:planeNormal = "X"
+        uniform token guide:shape = "circle"
+    }
+
+    def RigExecControl "Control_BrowL" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow: ty raises it, rz tilts it."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Z"
+        uniform token guide:shape = "box"
+    }
+
+    def RigExecControl "Control_BrowInnerL" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow's inner end."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_BrowOuterL" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The brow's outer end."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_Nose" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "The nose, turning about its root between the eyes."
+    )
+    {
+        double avars:rx = 0
+        double avars:ry = 0
+        double avars:rz = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:shape = "sphere"
+    }
+
+    def RigExecControl "Control_LookAt" (
+        apiSchemas = ["RigExecControlAPI"]
+        doc = "Where the eyes look (it rides the head). Its blink dial closes both eyes (0 to 1)."
+    )
+    {
+        custom float avars:blink = 0
+        double avars:tx = 0
+        double avars:ty = 0
+        double avars:tz = 0
+        uniform token guide:planeNormal = "Z"
+        uniform token guide:shape = "box"
+    }
+
+    def RigExecStaticWeight "Weight"
+    {
+        uniform float rigExec:defaultWeight = 0
+        uniform token rigExec:representation = "sparse"
+    }
+
+    def RigExecMatrixMover "Deform_Neck_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Head_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_CheekR_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_CheekL_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Nose_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowR_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowInnerR_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowOuterR_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowL_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowInnerL_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_BrowOuterL_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_EarR_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_EarL_Weighted" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+
+    def RigExecMatrixMover "Deform_Head_Absolute" (
+        apiSchemas = ["RigExecMoverAPI"]
+    )
+    {
+        uniform token rigExec:weightBlend = "radial"
+    }
+}
+

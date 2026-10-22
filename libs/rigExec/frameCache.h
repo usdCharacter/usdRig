@@ -1,7 +1,7 @@
 // RigExec per-frame cache: evaluated poses keyed by what they are a function
 // of, not by when they were asked for.
 // A cached pose is a pure function of its sampled inputs, so the key is the
-// pair (bindingEpochDigest, controlStateDigest): the epoch the program was
+// pair (compiledRigSignature, controlStateDigest): the compiled rig the program was
 // built for, and a hash over every source value the frame actually read,
 // including interactive overrides (which never reach the stage). Time is
 // carried on the entry as a warming hint and for stats, never as part of the
@@ -52,12 +52,12 @@ constexpr size_t kRigExecFrameCacheDefaultByteCap = size_t(1280) * 1024 * 1024;
 /// What a cached pose is a function of. Time is deliberately absent: see the
 /// file header.
 struct RigExecFrameCacheKey {
-    uint64_t epochDigest = 0;
+    uint64_t compiledRigSignature = 0;
     uint64_t controlDigest = 0;
 
     bool operator==(const RigExecFrameCacheKey &other) const
     {
-        return epochDigest == other.epochDigest &&
+        return compiledRigSignature == other.compiledRigSignature &&
                controlDigest == other.controlDigest;
     }
 
@@ -68,8 +68,8 @@ struct RigExecFrameCacheKey {
 
     bool operator<(const RigExecFrameCacheKey &other) const
     {
-        if (epochDigest != other.epochDigest) {
-            return epochDigest < other.epochDigest;
+        if (compiledRigSignature != other.compiledRigSignature) {
+            return compiledRigSignature < other.compiledRigSignature;
         }
         return controlDigest < other.controlDigest;
     }
@@ -82,7 +82,7 @@ struct RigExecFrameCacheKeyHash {
     {
         // 64-bit FNV-1a over the two digests.
         uint64_t hash = 1469598103934665603ull;
-        hash ^= key.epochDigest;
+        hash ^= key.compiledRigSignature;
         hash *= 1099511628211ull;
         hash ^= key.controlDigest;
         hash *= 1099511628211ull;
@@ -204,16 +204,16 @@ size_t RigExecFrameDigestOrderPathTextBytes(const RigExecFrameDigestOrder *order
 bool RigExecFrameDigestOrderHasPath(const RigExecFrameDigestOrder *order,
                                     const SdfPath &path);
 
-/// Folds an epoch-constant digest (plan D3: RigExecEpochConstantDigest, the
-/// value-sensitive avar-constant region the epoch digest no longer covers)
+/// Folds a compiled rig constant digest (plan D3: RigExecCompiledRigConstantDigest, the
+/// value-sensitive avar-constant region the compiled rig signature no longer covers)
 /// into a control digest, under its own domain tag. The fold is
 /// unconditional -- every production control digest for a baked program
 /// passes through it, so a constant patch opens a new key namespace while
-/// the epoch half stays standing. Within-process only, like the key hash.
+/// the compiled rig half stays standing. Within-process only, like the key hash.
 uint64_t RigExecFoldConstantDigest(uint64_t controlDigest,
                                   uint64_t constantDigest);
 
-/// The control half of the cache key with epoch-constant coverage: the
+/// The control half of the cache key with compiled rig constant coverage: the
 /// plain control digest folded with \p constantDigest. Lookup, memoization,
 /// proofs, and warming keys all derive through this for a baked program;
 /// the D7 refusal path (no program, no constants) does not. Two
@@ -270,8 +270,8 @@ bool RigExecControlStateDigestible(
 /// stale entries become unreachable (reclaimed by LRU) -- the D1 rule, with
 /// the serial standing in for re-sampling. No clearing is needed on any
 /// path, registry-managed or bare bridge. The domain tag keeps a refusal
-/// digest from ever equaling a sampled digest under the same epoch (a mode
-/// toggle crosses the two without moving the epoch). Overrides fold exactly
+/// digest from ever equaling a sampled digest under the same compiled rig (a mode
+/// toggle crosses the two without moving the compiled rig). Overrides fold exactly
 /// as in RigExecControlStateDigest, so a drag always digests apart from the
 /// authored frame it started from, and so do \p upstream values, which the
 /// dynamic walk reads authored-level.
@@ -305,7 +305,7 @@ struct RigExecFrameCacheEviction {
 
 /// Eviction reporting for the per-frame index. Invoked outside every shard
 /// lock with the entries one call dropped (Publish's cap pass, Evict,
-/// EvictEpoch, SetByteCap, Clear, and Lookup's corrupt drop) -- never empty,
+/// EvictCompiledRig, SetByteCap, Clear, and Lookup's corrupt drop) -- never empty,
 /// never under a cache lock, so the callback may take its own (leaf) locks.
 /// Null by default. Set before warming starts; synchronized, so late sets
 /// are safe but may miss drops that raced them.
@@ -336,7 +336,7 @@ struct RigExecEntryProvenance {
     /// the cap aliases stop recording; retirement iterates the 1.4
     /// completed-time set, never this list, so the cap costs nothing).
     std::vector<double> aliasTimes;
-    /// The entry's control digest BEFORE the epoch-constant fold
+    /// The entry's control digest BEFORE the compiled rig constant fold
     /// (RigExecControlStateDigest over the sampled vector and overrides).
     /// A constant patch moves the folded key but not the sampled values,
     /// so the 2.2 carry-over lane re-keys a clean entry as
@@ -356,7 +356,7 @@ constexpr size_t kRigExecProvenanceAliasCap = 1024;
 /// retained source snapshot beside it.
 size_t RigExecFrameCachePoseBytes(const RigExecRigPose &pose);
 
-/// The (epochDigest, controlDigest) store. See the file header for the key
+/// The (compiledRigSignature, controlDigest) store. See the file header for the key
 /// contract and the lock rule.
 class RigExecFrameCache {
 public:
@@ -430,10 +430,10 @@ public:
     /// Drops the entry under \p key, if any. Returns whether one was held.
     bool Evict(const RigExecFrameCacheKey &key);
 
-    /// Drops every entry of \p epochDigest -- the baked capture index hit
-    /// the epoch -- returning how many were held. Locks one shard at a
-    /// time, like eviction; entries of every other epoch are untouched.
-    size_t EvictEpoch(uint64_t epochDigest);
+    /// Drops every entry of \p compiledRigSignature -- the baked capture index hit
+    /// the compiled rig -- returning how many were held. Locks one shard at a
+    /// time, like eviction; entries of every other compiled rig are untouched.
+    size_t EvictCompiledRig(uint64_t compiledRigSignature);
 
     /// Drops every entry and zeroes the counters. The byte cap is unchanged.
     void Clear();
@@ -443,7 +443,7 @@ public:
     void SetEvictionCallback(RigExecFrameCacheEvictionCallback callback);
 
     /// The per-rig byte cap. Publish evicts down to it; an entry larger than
-    /// the whole cap is dropped rather than stored. Lowering the cap evicts
+    /// the whole cap is dropped rather than stored. Reducing the cap evicts
     /// down to it immediately.
     void SetByteCap(size_t bytes);
     size_t GetByteCap() const;

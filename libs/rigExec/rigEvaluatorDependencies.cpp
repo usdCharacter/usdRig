@@ -25,7 +25,7 @@ using namespace evaluatorDetail;
 
 namespace {
 
-// Namespace pre-order is part of the binding-epoch identity. Simple path
+// Namespace pre-order is part of the compiled rig identity. Simple path
 // discovery shares this traversal and retains the default USD predicate.
 template <class Predicate>
 std::vector<SdfPath>
@@ -127,7 +127,7 @@ namespace evaluatorDetail {
 // prim a mover -- and joints now follow the same rule: being a RigExecJoint
 // under the rig is what makes a prim a joint output. Returned in namespace
 // pre-order, which reproduces the parent-before-child ordering the authored
-// lists used and keeps the binding-epoch digest stable against unrelated edits.
+// lists used and keeps the compiled rig digest stable against unrelated edits.
 // Operator-declared joints are unioned in afterwards. Solver rigExec:joints
 // targets are validated to be RigExecJoint prims later in Compile, so in a
 // valid rig they are already a subset of the namespace walk; including them
@@ -201,7 +201,7 @@ _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 
 // Discovers the rig's controls the same implicit way (spec §4.1): being a
 // RigExecControl under the rig is what makes a prim a control. Returned in
-// namespace pre-order so the discovered order -- and with it the epoch
+// namespace pre-order so the discovered order -- and with it the compiled rig
 // digest -- is stable against unrelated edits.
 // No union pass over operator wiring, unlike the joints. A solver's
 // rigExec:controls names inputs it READS, and reading a control does not
@@ -246,7 +246,7 @@ _IsAggregateSolverType(const TfToken &typeName)
 // no membership lists). The scope a solver sits under is an authoring
 // convenience, not identity -- "Solvers" is the convention, not a
 // requirement. Returned in namespace pre-order so the discovered order,
-// and with it the epoch digest, is stable against unrelated edits.
+// and with it the compiled rig signature, is stable against unrelated edits.
 std::vector<UsdPrim>
 _DiscoverAggregateSolvers(
     const UsdStageRefPtr &stage, const SdfPath &rigPath)

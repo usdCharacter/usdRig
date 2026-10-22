@@ -12,8 +12,20 @@ and values to the runtime. There is no evaluator mode selector or fallback walk.
 
 ## Compilation and execution
 
+A **compiled rig** is the operation graph and bindings produced by rig
+compilation. Control changes and animation frames reuse that compiled rig.
+Structural edits, such as reconnecting a mover or changing mesh topology,
+require recompilation and produce a new **compiled rig version**. Topology
+and dependency bindings remain fixed for each compiled rig version.
+
+The **compiled rig signature** identifies its structural bindings for cache
+and validity checks. A worker snapshot holds the compiled rig version it was
+created from, so later structural edits cannot change the program it runs.
+C++ callers read the structural signature with `GetCompiledRigSignature()`;
+Python callers use `Rig.compiled_rig_signature()`.
+
 Each operation declares its input and output values. The shared compiler binds
-reads to exact producers, computes a canonical dependency order, and lowers
+reads to exact producers, computes a canonical dependency order, and translates
 clusters without introducing extra causal dependencies. Descriptor emission
 order does not require an input producer to be emitted before its consumer.
 Changed input values activate their downstream operations; unchanged outputs
@@ -148,7 +160,7 @@ no OpenExec header.
 
 `libs/rigExecStandalone/adapter.{h,cpp}` implements OpenExec's Esf scene
 interfaces over `RigExecSceneDb`, but nothing calls it. The
-[standalone runtime](../specs/standalone-runtime.md) lowers its scene into the
+[standalone runtime](../specs/standalone-runtime.md) translates its scene into the
 shared operation graph instead.
 
 ## Scene and binary playback
@@ -241,6 +253,6 @@ Paths are relative to the repository root.
 | | CTest registration | `CMakeLists.txt:559-561`, `:738-742`, `:752-763` |
 | Direct test references | Tap sets built by tests | `tests/testRigExecDefaultSpaces.cpp:56`, `tests/testRigExecArm.cpp:198`, `tests/testRigExecConstraints.cpp:2638`, `tests/testRigExecStandalone.cpp:542`, `tests/testRigExecStandalone.cpp:880`, `tests/testRigExecInteractive.cpp:161` |
 | Esf | Adapter with no callers | `libs/rigExecStandalone/adapter.h:7-8`, `libs/rigExecStandalone/adapter.cpp:182-186` |
-| | Standalone runtime lowering into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
+| | Standalone runtime translation into the shared graph | `libs/rigExecStandalone/sceneRuntime.cpp:4-18` |
 | Shared data types | `RigExecValueAddress`, `RigExecValueOverride` | `libs/rigExec/tapSet.h:41-57`, `libs/rigExec/tapSet.h:73-98` |
 | | Production uses of the override type | `libs/rigExec/bakedProgram.h:396`, `libs/rigExec/frameCache.h:158` |

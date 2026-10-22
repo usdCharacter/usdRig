@@ -1,15 +1,15 @@
-// RigExec task-list cache: the affected-cluster set per (control, epoch).
+// RigExec task-list cache: the affected-cluster set per (control, compiled rig).
 // The brief's task-list cache (pp. 9, 32): computing which clusters an edit
 // reaches means walking the output-affected index, and a drag re-edits ONE
 // control dozens of times. The first edit walks and memoizes; every repeat
 // re-runs the cached selection without rewalking. Multi-control edits union
 // one memoized set per control, so each control still walks at most once per
-// epoch.
-// Keyed by (epochDigest, control): a topology change is a new epoch, which
+// compiled rig.
+// Keyed by (compiledRigSignature, control): a topology change is a new compiled rig, which
 // makes every memoized set unreachable the way a control edit makes a cached
-// pose unreachable (plan D1). InvalidateEpoch drops an epoch's sets eagerly
-// so a dead epoch's memo does not hold memory until LRU pressure -- there is
-// no LRU here, the table is small (controls x live epochs) and explicit
+// pose unreachable (plan D1). InvalidateCompiledRig drops a compiled rig's sets eagerly
+// so a dead compiled rig's memo does not hold memory until LRU pressure -- there is
+// no LRU here, the table is small (controls x live compiled rig versions) and explicit
 // invalidation bounds it.
 #ifndef RIGEXEC_TASK_LIST_CACHE_H
 #define RIGEXEC_TASK_LIST_CACHE_H
@@ -25,7 +25,7 @@
 namespace rigExec {
 
 /// What one memoized selection is: the closed affected set of one control
-/// in one epoch, as a bit array over clusters.
+/// in one compiled rig, as a bit array over clusters.
 using RigExecTaskListKey = std::pair<uint64_t, RigExecControlId>;
 
 /// Lifetime counters. Every counter only moves forward except across Clear.
@@ -46,20 +46,20 @@ public:
     RigExecTaskListCache(const RigExecTaskListCache &) = delete;
     RigExecTaskListCache &operator=(const RigExecTaskListCache &) = delete;
 
-    /// Answers the memoized set for (\p epoch, \p control), or false having
+    /// Answers the memoized set for (\p compiledRig, \p control), or false having
     /// touched nothing but the miss counter. \p out must be non-null; a null
     /// out-param misses rather than faults.
-    bool Lookup(uint64_t epoch, const RigExecControlId &control,
+    bool Lookup(uint64_t compiledRig, const RigExecControlId &control,
                 RigExecBakedClusterSet *out);
 
-    /// Memoizes \p set for (\p epoch, \p control), replacing any set held.
+    /// Memoizes \p set for (\p compiledRig, \p control), replacing any set held.
     /// Counts one store either way.
-    void Store(uint64_t epoch, const RigExecControlId &control,
+    void Store(uint64_t compiledRig, const RigExecControlId &control,
                const RigExecBakedClusterSet &set);
 
-    /// Drops every set held for \p epoch -- the capture index hit it, or its
+    /// Drops every set held for \p compiledRig -- the capture index hit it, or its
     /// topology moved -- returning how many were held.
-    size_t InvalidateEpoch(uint64_t epoch);
+    size_t InvalidateCompiledRig(uint64_t compiledRig);
 
     /// Drops every set and zeroes the counters.
     void Clear();

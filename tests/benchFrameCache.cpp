@@ -22,7 +22,7 @@
 //   * Arena bytes walk the baked program's per-frame working state through
 //     GetStepGraph: SSA frame versions, avars, matrices, property results,
 //     solver outputs and scratch, geometry outputs and packets, weight
-//     packets, chain buffers, and the last-run comparison buffers. Epoch
+//     packets, chain buffers, and the last-run comparison buffers. Compiled rig
 //     structure (steps, clustering, cones, walk, ladder tables) is excluded.
 //     VtArray payloads are counted per holder; copy-on-write sharing between
 //     holders (lastAuxPoints, wire tables) overcounts shared buffers and is
@@ -279,7 +279,7 @@ VtArrayVec3fBytes(const VtVec3fArray &array)
 }
 
 // One geometry revision's per-frame state: outputs, packets, chunks, and the
-// last-run comparison copies. Epoch structure (bindings, topology handles,
+// last-run comparison copies. Compiled rig structure (bindings, topology handles,
 // blend channel stage handles) is excluded.
 size_t
 GeomRevisionBytes(
@@ -310,7 +310,7 @@ GeomRevisionBytes(
         for (const RigExecBakedProgramImpl::GeomBlendChannel::Sample &sample :
              channel.samples) {
             bytes += VecBytes(sample.lastPoints);
-            // The sparse layout is epoch-shared; only the handle is per-frame.
+            // The sparse layout is compiled rig-shared; only the handle is per-frame.
             bytes += sizeof(sample.layout);
         }
     }
@@ -318,7 +318,7 @@ GeomRevisionBytes(
 }
 
 // The program's per-frame working state through GetStepGraph, in payload
-// bytes. Prints the per-domain breakdown and returns the total. Epoch
+// bytes. Prints the per-domain breakdown and returns the total. Compiled rig
 // structure -- steps, clustering, cones, walk/commits, ladder tables,
 // invalidation index, topology and bind caches -- is excluded: it is the
 // program, not the arena a cached frame would retain.
@@ -375,7 +375,7 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
                        VecBytes(solver.ribbonPoints) +
                        VecBytes(solver.lastRibbonPoints);
         // The rest description is rebuilt per frame only for a solver whose
-        // rests can move within the epoch; otherwise it is epoch state.
+        // rests can move within the compiled rig; otherwise it is compiled rig state.
         if (solver.restsVary || solver.hasLiveRest) {
             solverBytes +=
                 VecBytes(solver.restSlots) + VecBytes(solver.restRefs) +
@@ -459,7 +459,7 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
     line("cone state",
          VecBytes(B.lastOverridden) + VecBytes(B.lastHaveBase));
     // The provider ladder: per-frame state only while a rest channel can
-    // move within the epoch, epoch-constant tables otherwise.
+    // move within the compiled rig, compiled rig constant tables otherwise.
     const size_t ladderBytes =
         VecBytes(B.restM) + VecBytes(B.restPts) + VecBytes(B.restFrames) +
         VecBytes(B.selfD) + VecBytes(B.parentDinv) + VecBytes(B.rotOrder) +
@@ -472,7 +472,7 @@ MeasureArenaBytes(const RigExecBakedProgramImpl &B, const char *rig)
     if (B.ladderVarying) {
         line("ladder tables", ladderBytes);
     } else {
-        std::printf("  %-22s %10zu bytes  (epoch-constant, excluded)\n",
+        std::printf("  %-22s %10zu bytes  (compiled rig constant, excluded)\n",
                     "ladder tables", ladderBytes);
     }
     std::printf("  (revision inputs unsized: counts unavailable)\n");
@@ -601,7 +601,7 @@ MeasureSampling(const RigExecBakedProgramImpl &B, UsdTimeCode time,
     }
     for (const RigExecBakedProgramImpl::AvarBinding &binding :
          B.avarConstantBindings) {
-        // Constants are epoch state, but a drag can promote one: count the
+        // Constants are compiled rig state, but a drag can promote one: count the
         // override registration, not a read.
         if (binding.input.overrideIndex >= 0) {
             ++overrides;

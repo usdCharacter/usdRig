@@ -37,7 +37,7 @@ _FormatDouble(double value, char *buffer, size_t size)
     return std::string(buffer);
 }
 
-// The plugin movers' half of the file: each plugin revision's epoch bytes
+// The plugin movers' half of the file: each plugin revision's compiled data bytes
 // and the frame bytes it encoded in the bake's run.
 class _ExternalExport {
 public:
@@ -82,20 +82,20 @@ public:
             const auto &revision =
                 program.chains[entry.chain].revisions[entry.revision];
             const RigExecMoverParameters &parameters = revision.parameters;
-            if(entry.handler->encodeExternalEpoch &&
-               !entry.handler->encodeExternalEpoch(revision.binding,&entry.epoch)) {
-                *error="external mover "+revision.moverPath.GetString()+" could not encode its immutable epoch";
+            if(entry.handler->encodeExternalCompiledData &&
+               !entry.handler->encodeExternalCompiledData(revision.binding,&entry.compiledRig)) {
+                *error="external mover "+revision.moverPath.GetString()+" could not encode its immutable compiled rig";
                 return false;
             }
             if (!parameters.valid || parameters.externalData.IsEmpty()) {
                 continue;
             }
             char number[32];
-            std::vector<uint8_t> sampledEpoch;
-            auto *epoch = entry.handler->encodeExternalEpoch ? &sampledEpoch : &entry.epoch;
+            std::vector<uint8_t> sampledCompiledRig;
+            auto *compiledRig = entry.handler->encodeExternalCompiledData ? &sampledCompiledRig : &entry.compiledRig;
             if (!entry.handler->encodeExternal(parameters.externalData,
                                                revision.binding,
-                                               epoch, &entry.frame)) {
+                                               compiledRig, &entry.frame)) {
                 *error = "external mover " + revision.moverPath.GetString() +
                          " could not encode its payload at time " +
                          _FormatDouble(time, number, sizeof(number));
@@ -107,7 +107,7 @@ public:
     }
 
     // The file's entries, in the same order: each plugin revision's type,
-    // its epoch, the frame bytes of the bake's run (none when its assembly
+    // its compiled rig, the frame bytes of the bake's run (none when its assembly
     // failed there), and per declared phase the points authored at
     // \p time, 0 when nothing is read.
     void Fill(const RigExecBakedProgramImpl &program, double time,
@@ -149,7 +149,7 @@ public:
                 }
             }
             mover.v2FrameValid = entry.valid;
-            mover.epoch = entry.epoch;
+            mover.epoch = entry.compiledRig;
             if (entry.valid) {
                 mover.v2Frame = entry.frame;
             }
@@ -180,7 +180,7 @@ private:
         uint32_t chain = 0;
         uint32_t revision = 0;
         const RigExecMoverHandler *handler = nullptr;
-        std::vector<uint8_t> epoch;
+        std::vector<uint8_t> compiledRig;
         std::vector<uint8_t> frame;
         bool valid = false;
     };
@@ -290,18 +290,18 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator,
         }
         return Fail(joined);
     }
-    // A bake is of the program: an epoch it cannot express fails HERE,
+    // A bake is of the program: a compiled rig it cannot express fails HERE,
     // naming the feature, rather than baking dynamic numbers into a file
     // whose reader promises program semantics.
     std::vector<std::string> reasons;
     if (!evaluator.IsBakeable(&reasons)) {
-        std::string joined = "epoch is not bakeable";
+        std::string joined = "compiled rig is not bakeable";
         for (const std::string &reason : reasons) {
             joined += "\n  " + reason;
         }
         return Fail(joined);
     }
-    // A bake is of the authored epoch: a held drag would print its value
+    // A bake is of the authored compiled rig: a held drag would print its value
     // into the defaults.
     if (evaluator.HasInteractiveOverrides()) {
         return Fail("cannot bake with interactive overrides standing");
@@ -336,7 +336,7 @@ RigExecBakeToBinary(RigExecRigEvaluator &evaluator,
         return Fail(why);
     }
     // The IsBakeable gate above is necessary but not sufficient: an
-    // in-epoch refusal the reasons do not name -- an override the program
+    // within the compiled rig refusal the reasons do not name -- an override the program
     // cannot place, or a Run that handed the generation back -- still
     // answers dynamically. The generation count is what catches those, the
     // same accounting rigExecPose --require-baked performs.

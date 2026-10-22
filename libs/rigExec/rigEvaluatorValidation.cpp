@@ -155,7 +155,7 @@ _ValidateWeightObjectDomain(
     if (typeName == "RigExecStaticWeight") {
         // Static means the complete descriptor and field are authored once.
         // A time sample or value-producing connection would make Exec consume
-        // a changing packet while the CPU oracle and binding epoch treated it
+        // a changing packet while the CPU oracle and compiled rig treated it
         // as frozen.
         static const TfToken staticFields[] = {
             TfToken("rigExec:values"), TfToken("rigExec:indices"),
@@ -191,7 +191,7 @@ _ValidateWeightObjectDomain(
         // Values and the sparse/constant fallback are value-generation state,
         // not descriptor shape.  Their finite/range policy is enforced while
         // building the current packet so a bad edit fails this application
-        // atomically without rebuilding (or invalidating) the whole epoch.
+        // atomically without rebuilding (or invalidating) the whole compiled rig.
         if (representation == "constant") {
             if (!values.empty() || !indices.empty()) {
                 *error = weightPath.GetString() +
@@ -800,7 +800,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                                     record.schemaType.GetString() + " " +
                                     prim.GetPath().GetString() +
                                     ": weighted point-domain cardinality "
-                                    "changes across the binding epoch at " +
+                                    "changes across the compiled rig at " +
                                     target.GetString(), {prim.GetPath()});
                             }
                         }
@@ -879,7 +879,7 @@ RigExecRigEvaluator::_DiscoverMovers(
             // there degrades to `base`. That is the wrong answer delivered
             // silently: the author asked for a specific revision and got the
             // authored value. The parse verdict belongs here, in Phase A,
-            // where it can reject the compile before any epoch state moves.
+            // where it can reject the compile before any compiled rig state moves.
             for (const TfToken &relName : _phasedInputs) {
                 RigExecReadPhase phase;
                 std::string phaseError;
@@ -908,8 +908,8 @@ RigExecRigEvaluator::_DiscoverMovers(
             // convention, not an enforcement: USD permits time samples on a
             // uniform attribute, and these tokens select the compiled
             // operation and read phase. Sampling them per-frame would let the
-            // op or binding change under a compiled epoch without changing
-            // the binding-epoch digest, so reject samples here rather than
+            // op or binding change under a compiled rig without changing
+            // the compiled rig digest, so reject samples here rather than
             // resolving them at evaluation time. The same rule
             // the aggregate cardinality attributes already follow.
             std::vector<const char *> structuralTokens = {

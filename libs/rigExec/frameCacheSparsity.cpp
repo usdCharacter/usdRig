@@ -324,14 +324,14 @@ _SameVaryingRevisionLeaves(const RigExecFrameInputs &a,
 bool
 RigExecCanReuseRetainedPose(const RigExecOutputAffectedIndex &index,
                            const RigExecRetainedFrameState &cached,
-                           uint64_t requestEpoch,
+                           uint64_t requestCompiledRig,
                            const RigExecFrameInputs &requested,
                            const std::vector<RigExecValueOverride> &overrides)
 {
     // The external inputs the control digest folds have no control id the
     // index routes, so any difference among them misses, like upstream.
-    if (index.Empty() || index.EpochDigest() != requestEpoch ||
-        cached.epochDigest != requestEpoch ||
+    if (index.Empty() || index.CompiledRigSignature() != requestCompiledRig ||
+        cached.compiledRigSignature != requestCompiledRig ||
         cached.clusterCount != index.ClusterCount() ||
         !RigExecSameUpstream(cached.inputs.upstream, requested.upstream) ||
         !_SameVaryingRevisionLeaves(cached.inputs, requested)) {
@@ -404,12 +404,12 @@ RigExecRetainedFrameState
 RigExecCaptureRetainedState(
     const RigExecFrameInputs &inputs,
     const std::vector<RigExecValueOverride> &overrides,
-    uint64_t epochDigest, size_t clusterCount, uint64_t constantDigest)
+    uint64_t compiledRigSignature, size_t clusterCount, uint64_t constantDigest)
 {
     RigExecRetainedFrameState state;
     state.inputs = inputs;
     state.overrides = overrides;
-    state.epochDigest = epochDigest;
+    state.compiledRigSignature = compiledRigSignature;
     state.clusterCount = clusterCount;
     state.constantDigest = constantDigest;
     return state;
@@ -417,21 +417,21 @@ RigExecCaptureRetainedState(
 
 void
 RigExecSparseCandidateIndex::NotePublished(
-    uint64_t epoch, UsdTimeCode time, const RigExecFrameCacheKey &key)
+    uint64_t compiledRig, UsdTimeCode time, const RigExecFrameCacheKey &key)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    _map[std::make_pair(epoch, time)] = key;
+    _map[std::make_pair(compiledRig, time)] = key;
 }
 
 bool
-RigExecSparseCandidateIndex::Find(uint64_t epoch, UsdTimeCode time,
+RigExecSparseCandidateIndex::Find(uint64_t compiledRig, UsdTimeCode time,
                                  RigExecFrameCacheKey *key) const
 {
     if (!key) {
         return false;
     }
     std::lock_guard<std::mutex> lock(_mutex);
-    const auto found = _map.find(std::make_pair(epoch, time));
+    const auto found = _map.find(std::make_pair(compiledRig, time));
     if (found == _map.end()) {
         return false;
     }
@@ -440,10 +440,10 @@ RigExecSparseCandidateIndex::Find(uint64_t epoch, UsdTimeCode time,
 }
 
 bool
-RigExecSparseCandidateIndex::Drop(uint64_t epoch, UsdTimeCode time)
+RigExecSparseCandidateIndex::Drop(uint64_t compiledRig, UsdTimeCode time)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return _map.erase(std::make_pair(epoch, time)) > 0;
+    return _map.erase(std::make_pair(compiledRig, time)) > 0;
 }
 
 void
@@ -461,23 +461,23 @@ RigExecSparseCandidateIndex::Size() const
 }
 
 size_t
-RigExecInvalidateEpoch(RigExecFrameCache &cache, RigExecTaskListCache &memo,
-                       uint64_t epochDigest)
+RigExecInvalidateCompiledRig(RigExecFrameCache &cache, RigExecTaskListCache &memo,
+                       uint64_t compiledRigSignature)
 {
-    memo.InvalidateEpoch(epochDigest);
-    return cache.EvictEpoch(epochDigest);
+    memo.InvalidateCompiledRig(compiledRigSignature);
+    return cache.EvictCompiledRig(compiledRigSignature);
 }
 
 bool
 RigExecNoteCaptureIndex(RigExecFrameCache &cache, RigExecTaskListCache &memo,
-                        uint64_t epochDigest,
+                        uint64_t compiledRigSignature,
                         const RigExecBakedProgram &program,
                         const UsdNotice::ObjectsChanged &notice)
 {
     if (!program.IsInvalidatedBy(notice)) {
         return false;
     }
-    RigExecInvalidateEpoch(cache, memo, epochDigest);
+    RigExecInvalidateCompiledRig(cache, memo, compiledRigSignature);
     return true;
 }
 

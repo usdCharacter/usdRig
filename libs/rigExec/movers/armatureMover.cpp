@@ -172,26 +172,26 @@ bool Apply(const VtValue &data, std::vector<GfVec3f> *points) {
     return true;
 }
 
-// .rigexec playback: the epoch is a format tag and the frame bytes are
+// .rigexec playback: the compiled rig is a format tag and the frame bytes are
 // empty. The kernel assembles and deforms through Payload and Apply from
 // the declared inputs and the provider values playback evaluated, so a
 // posed playback follows its influences.
-constexpr char kEpochTag[] = {'R', 'L', 'S', '1'};
+constexpr char kCompiledDataTag[] = {'R', 'L', 'S', '1'};
 
-bool EncodeEpoch(const RigExecRevisionBinding &, std::vector<uint8_t> *epoch) {
-    epoch->assign(kEpochTag, kEpochTag + sizeof(kEpochTag));
+bool EncodeCompiledData(const RigExecRevisionBinding &, std::vector<uint8_t> *compiledRig) {
+    compiledRig->assign(kCompiledDataTag, kCompiledDataTag + sizeof(kCompiledDataTag));
     return true;
 }
 
 bool Encode(const VtValue &, const RigExecRevisionBinding &binding,
-            std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame) {
+            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame) {
     frame->clear();
-    return EncodeEpoch(binding, epoch);
+    return EncodeCompiledData(binding, compiledRig);
 }
 
-std::shared_ptr<const void> Prepare(const uint8_t *epoch, size_t size, std::string *error) {
-    if (size != sizeof(kEpochTag) || std::memcmp(epoch, kEpochTag, size) != 0) {
-        if (error) *error = "not a layered skin epoch";
+std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size, std::string *error) {
+    if (size != sizeof(kCompiledDataTag) || std::memcmp(compiledRig, kCompiledDataTag, size) != 0) {
+        if (error) *error = "not a layered skin compiled rig";
         return nullptr;
     }
     return std::make_shared<int>(1);
@@ -242,7 +242,7 @@ RigExecMoverHandler Handler(const char *type) {
     handler.bind = &Bind; handler.validate = &Validate;
     handler.declareExternalInputs = &DeclareInputs; handler.compileScene = &CompileScene;
     handler.assembleExternal = &Assemble; handler.applyExternal = &Apply;
-    handler.encodeExternalEpoch = &EncodeEpoch; handler.encodeExternal = &Encode;
+    handler.encodeExternalCompiledData = &EncodeCompiledData; handler.encodeExternal = &Encode;
     handler.runtimeKernel.prepare = &Prepare; handler.runtimeKernel.applyWithProviders = &Play;
     handler.hasScalarOracle = false;
     handler.layoutAttributes = {TfToken("rigExec:jointIndices"),TfToken("rigExec:jointWeights"),

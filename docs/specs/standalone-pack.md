@@ -2,7 +2,7 @@
 
 A rigpack carries a resolved `RigExecSceneDb` that the
 [standalone scene runtime](standalone-runtime.md) evaluates without a
-`UsdStage`. The runtime lowers the captured scene into the shared operation
+`UsdStage`. The runtime translates the captured scene into the shared operation
 graph and does not run OpenExec; the Esf adapter in `libs/rigExecStandalone`
 has no callers. The runtime does not replace `RigExecRigEvaluator` and does
 not claim imaging or production-profile parity.
@@ -62,7 +62,7 @@ prepares the standalone scene program (`RigExecSceneDb::ValidateCapabilities`,
 instance proxies. Preparation rejects an active prim of an unknown RigExec
 type and any applied API outside the list in the
 [runtime guide](standalone-runtime.md). Movers, solver joint bindings and
-read phases lower into the same graph as the rest of the scene.
+read phases translate into the same graph as the rest of the scene.
 
 The version-3 manifest identifies the `scene` scope; the loader rejects any
 other version or scope. It is not a complete multi-profile deployment format:

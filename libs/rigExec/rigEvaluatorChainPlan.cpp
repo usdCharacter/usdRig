@@ -2,7 +2,7 @@
 
 #include "rigEvaluatorInternal.h"
 #include "rigEvaluatorDependencies.h"
-#include "rigExecScene/poseSceneLowering.h"
+#include "rigExecScene/poseSceneTranslation.h"
 #include "movers/moverRegistry.h"
 
 #include <algorithm>

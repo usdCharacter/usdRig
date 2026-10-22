@@ -60,7 +60,7 @@ radii.
   strength past one should see the field saturate, not invalidate the rig
   mid-drag.
 
-`Curve` is a lookup table baked once per binding epoch, from either a
+`Curve` is a lookup table baked once per compiled rig, from either a
 named `rigExec:falloffProfile` (`linear`, `smooth`, `easeIn`, `easeOut`,
 `constant`) or — when the profile is `curve` — the Ts spline authored on
 `rigExec:falloffCurve`. Both land in the same table, so the hot loop has
@@ -104,14 +104,14 @@ Both the weight-packet kernel (`libs/rigExec/weightPackets.cpp`) and the CPU
 reference (`libs/rigExec/weightReference.cpp`) call `RemoveScaleShear()` on
 the placement before inverting it, for exactly this reason.
 
-### 3. The falloff curve is epoch-structural
+### 3. The falloff curve is structural
 
 An input sampled per frame is a value at *one* time; a falloff curve is the
-whole function. So the curve is **epoch-structural**: resampled to a
+whole function. So the curve is **structural**: resampled to a
 `RigExecFalloffLut` at `Compile` and held as a compiled input of the weight
-packet until the next epoch. The consequence is that the curve's *shape* is
+packet until the next compiled rig. The consequence is that the curve's *shape* is
 a rig-authoring parameter rather than an animation channel — which is also
-what keeps the field epoch-shape-stable. The animatable knobs are
+what keeps the field fixed-shape. The animatable knobs are
 `falloffMin`/`falloffMax`, `invert`, and `strength`, all of which are
 ordinary per-frame inputs.
 
@@ -121,7 +121,7 @@ OpenExec registration's `computeFalloffLut` is a stub, and the
 [reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
 supplies the compiled table as a `RigExecValueOverride`.
 
-Editing the curve changes the structure digest and begins a new epoch;
+Editing the curve changes the structure digest and begins a new compiled rig;
 the knots are hashed, the animatable floats deliberately are not.
 
 ## The plane's two axes: the band along it, the extents across it
@@ -162,7 +162,7 @@ extension gives to every other "but softer" question.
 `unbounded` is the default because it is what a half-space falloff wants
 and what every plane weight authored before these properties existed
 had. It is also **structural** — it selects which field function runs, so
-it is hashed into the epoch digest next to `rigExec:planeAxis`, while the
+it is hashed into the compiled rig signature next to `rigExec:planeAxis`, while the
 extents are ordinary per-frame floats and deliberately are not.
 
 The extents size the drawn guide either way, so an unbounded plane still
@@ -246,7 +246,7 @@ missing tail.
 | OpenExec registrations, used only by the reference check | `libs/rigExec/moverKernels.cpp` (`_Build*WeightPacket`), `libs/rigExec/computations.cpp` (`RIGEXEC_REGISTER_XFORMABLE(RigExecVolumeWeight)`) |
 | LUT packet type | `libs/rigExec/types.h` (`RigExecFalloffLut`) |
 | CPU reference | `libs/rigExec/weightReference.cpp` |
-| Epoch and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp` |
+| Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp` |
 | Resolved field for tools | `RigExecRigPose::weightFields` |
 | Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py` |
 | Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlay`) |
@@ -398,18 +398,18 @@ Mutation-verified: restoring the property read fails that comparison
 `bin/test/run_testusdview_overlay.bat` and all nine ctest binaries still pass,
 which is exactly the blindness that let it ship.
 
-## What the epoch digest is and is not tested for
+## What the compiled rig signature is and is not tested for
 
 `TestPlaneBounded` asserts the bounded *field*, and it passes with
 `rigExec:planeBounds` removed from the structure digest entirely -- each
-`Resolve()` builds a fresh evaluator, so there is no stale epoch for an
+`Resolve()` builds a fresh evaluator, so there is no stale compiled rig for an
 unhashed token to strand. The digest therefore needs its own case, and
-`TestPlaneBoundsEpochSplit` is it: one evaluator, edited twice.
+`TestPlaneBoundsCompiledRigSplit` is it: one evaluator, edited twice.
 
 - `inputs:extentU/V` must change the field and **not** the digest. A
   digest that hashes an animatable float rebuilds the whole rig on every
   mouse-move of the scrub row that drives it.
-- `rigExec:planeBounds` must change **both**, and raise the `epoch
+- `rigExec:planeBounds` must change **both**, and raise the `compiled rig
   rebuilt` diagnostic.
 
 Mutation-verified in both directions: dropping the `planeBounds` hash

@@ -1,7 +1,7 @@
 // RigExec Hydra 2.0 filtering scene indices (spec §10.1):
 //   upstream (UsdImaging chain)
 //     -> RigExecInternalPrimPruningSceneIndex   (owned generated paths only)
-//     -> RigExecBindingResolvingSceneIndex      (immutable binding epoch)
+//     -> RigExecBindingResolvingSceneIndex      (immutable compiled rig)
 //     -> RigExecResultsSceneIndex               (cached snapshot overlays)
 //     -> downstream (merging scene index / renderer)
 // The public boundary contains only standard Hydra data (spec §10.2):
@@ -208,22 +208,22 @@ private:
     std::map<SdfPath, GfMatrix4d> _deltas;
 };
 
-/// Atomically receives the compiler-produced immutable binding epoch and
+/// Atomically receives the compiler-produced immutable compiled rig and
 /// carries the reverse output map (spec §10.1). With the USD backend the
 /// compiled output addresses are stage paths, so prim shells pass through
-/// unchanged; an epoch replacement resyncs the previously and newly
+/// unchanged; a compiled rig replacement resyncs the previously and newly
 /// published outputs. The scene index never inspects Hydra to reconstruct
 /// rig semantics.
 class RigExecBindingResolvingSceneIndex final
     : public HdSingleInputFilteringSceneIndexBase {
 public:
-    /// The immutable epoch payload: which Hydra prims receive published
+    /// The immutable compiled rig payload: which Hydra prims receive published
     /// results in this generation.
-    struct BindingEpoch {
+    struct CompiledRigBinding {
         uint64_t id = 0;
         std::set<SdfPath> publishedPrims;
     };
-    using BindingEpochConstPtr = std::shared_ptr<const BindingEpoch>;
+    using CompiledRigBindingConstPtr = std::shared_ptr<const CompiledRigBinding>;
 
     static RigExecBindingResolvingSceneIndexRefPtr New(
         const HdSceneIndexBaseRefPtr &inputSceneIndex) {
@@ -231,12 +231,12 @@ public:
             new RigExecBindingResolvingSceneIndex(inputSceneIndex));
     }
 
-    /// Atomically swaps the epoch and dirties the affected outputs
+    /// Atomically swaps the compiled rig and dirties the affected outputs
     /// (universal locator for output-set changes, spec §10.4).
-    void SetBindingEpoch(BindingEpochConstPtr epoch);
+    void SetCompiledRigBinding(CompiledRigBindingConstPtr compiledRig);
 
-    BindingEpochConstPtr GetBindingEpoch() const {
-        return std::atomic_load(&_epoch);
+    CompiledRigBindingConstPtr GetCompiledRigBinding() const {
+        return std::atomic_load(&_compiledRig);
     }
 
     HdSceneIndexPrim GetPrim(const SdfPath &primPath) const override;
@@ -257,7 +257,7 @@ private:
     explicit RigExecBindingResolvingSceneIndex(
         const HdSceneIndexBaseRefPtr &inputSceneIndex);
 
-    BindingEpochConstPtr _epoch;
+    CompiledRigBindingConstPtr _compiledRig;
 };
 
 /// Overlays cached xform, primvar, and extent leaves from the snapshot

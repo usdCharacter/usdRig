@@ -34,7 +34,7 @@
 using namespace rigExec;
 
 // A broken operation is set aside with a warning instead of failing the rig
-// (RigExecRigEvaluator::_CompileEpoch): the rest compiles and evaluates.
+// (RigExecRigEvaluator::_CompileRig): the rest compiles and evaluates.
 // True when the compile succeeded and set aside every one of `operations`.
 static bool
 SkipsOperations(RigExecRigEvaluator &evaluator,
@@ -925,7 +925,7 @@ TestReverseSiblingPostOrder()
          root.AppendPath(SdfPath("MoverParent/ChildAbove")),
          root.AppendChild(TfToken("MoverParent")),
          root.AppendChild(TfToken("SiblingAbove"))});
-    const size_t naturalDigest = evaluator.GetBindingEpochDigest();
+    const size_t naturalDigest = evaluator.GetCompiledRigSignature();
     const RigExecRigPose natural = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(natural.valid);
     CHECK(Near(natural.providerXforms.at(SdfPath("/Asset/Target"))
@@ -953,7 +953,7 @@ TestReverseSiblingPostOrder()
          root.AppendPath(SdfPath("MoverParent/ChildBelow")),
          root.AppendChild(TfToken("MoverParent")),
          root.AppendChild(TfToken("SiblingBelow"))});
-    CHECK(evaluator.GetBindingEpochDigest() != naturalDigest);
+    CHECK(evaluator.GetCompiledRigSignature() != naturalDigest);
     const RigExecRigPose reordered =
         evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(reordered.valid);
@@ -2507,7 +2507,7 @@ TestTwoBoneIkImpliedLengths(bool throughBlend)
     // goal controls remain fixed; only the chain's binding rest changes.
     // Both the new bend and the new segment lengths must be visible without
     // rebuilding the structural graph or requiring a time change.
-    const size_t restEpoch = evaluator.GetBindingEpochDigest();
+    const size_t restCompiledRig = evaluator.GetCompiledRigSignature();
     const UsdAttribute elbowRest = stage->GetAttributeAtPath(
         elbow.AppendProperty(TfToken("rest:tx")));
     const UsdAttribute wristRest = stage->GetAttributeAtPath(
@@ -2521,7 +2521,7 @@ TestTwoBoneIkImpliedLengths(bool throughBlend)
     CHECK(std::abs((edited[2] - edited[1]).GetLength() - 5.0) < 1e-4);
     CHECK(Near(edited[2], GfVec3d(7, 0, 0)));
     CHECK(!Near(edited[1], atRest[1]));
-    CHECK(evaluator.GetBindingEpochDigest() == restEpoch);
+    CHECK(evaluator.GetCompiledRigSignature() == restCompiledRig);
 
     // Rest samples also update when scrubbing in either direction. Editing
     // an already sampled time must invalidate the cached rest request too.
@@ -2543,7 +2543,7 @@ TestTwoBoneIkImpliedLengths(bool throughBlend)
     origins(UsdTimeCode(1), sampled);
     CHECK(Near(sampled[1], GfVec3d(3, 0, 0)));
     CHECK(Near(sampled[2], GfVec3d(7, 0, 0)));
-    CHECK(evaluator.GetBindingEpochDigest() == restEpoch);
+    CHECK(evaluator.GetCompiledRigSignature() == restCompiledRig);
     elbowRest.Clear();
     wristRest.Clear();
     elbowRest.Set(3.0);
@@ -2805,14 +2805,14 @@ TestDeepSolverDependencySchedule()
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
     CHECK(errors.empty());
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     const auto evaluate = [&](double sourceX) {
         source.GetAttribute(TfToken("avars:tx")).Set(sourceX);
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid);
         CHECK(SolveOpsRan(evaluator) == size_t(depth));
 
-        CHECK(evaluator.GetBindingEpochDigest() == epoch);
+        CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
         const auto joint = pose.jointFramesFinal.find(previousJoint);
         CHECK(joint != pose.jointFramesFinal.end());
         if (joint != pose.jointFramesFinal.end()) {
@@ -2837,7 +2837,7 @@ TestDeepSolverDependencySchedule()
     const RigExecRigPose tail = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(tail.valid);
     CHECK(SolveOpsRan(evaluator) == size_t(depth - 47));
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     const auto tailJoint = tail.jointFramesFinal.find(previousJoint);
     CHECK(tailJoint != tail.jointFramesFinal.end());
     if (tailJoint != tail.jointFramesFinal.end()) {
@@ -2858,7 +2858,7 @@ TestDeepSolverDependencySchedule()
         .SetTargets({source.GetPath()});
     const RigExecRigPose afterRewire = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(afterRewire.valid);
-    CHECK(evaluator.GetBindingEpochDigest() != epoch);
+    CHECK(evaluator.GetCompiledRigSignature() != compiledRig);
 
     const auto rewiredJoint = afterRewire.jointFramesFinal.find(
         SdfPath("/Asset/Rig/Joints/J47"));
@@ -2952,27 +2952,27 @@ TestSolverTransitiveConnectionInvalidation()
         return pose;
     };
     evaluate(4);
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     a.Set(1.0f);
     evaluate(8);
     a.Set(0.5f);
     CHECK((evaluate(6), SolveOpsRan(evaluator)) == 1);
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
     // Same-valued rewires must update the watch set even when the output
     // value itself stays unchanged. Exercise both an intermediate relay
     // and the solver's own input connection.
     relay.SetConnections({b.GetPath()});
     evaluate(6);
-    CHECK(evaluator.GetBindingEpochDigest() != epoch);
+    CHECK(evaluator.GetCompiledRigSignature() != compiledRig);
     a.Set(0.0f);
     CHECK((evaluate(6), SolveOpsRan(evaluator)) == 0);
     b.Set(0.25f);
     CHECK((evaluate(5), SolveOpsRan(evaluator)) == 1);
-    const size_t relayEpoch = evaluator.GetBindingEpochDigest();
+    const size_t relayCompiledRig = evaluator.GetCompiledRigSignature();
     stretch.SetConnections({c.GetPath()});
     evaluate(5);
-    CHECK(evaluator.GetBindingEpochDigest() != relayEpoch);
+    CHECK(evaluator.GetCompiledRigSignature() != relayCompiledRig);
     b.Set(0.0f);
     CHECK((evaluate(5), SolveOpsRan(evaluator)) == 0);
     c.Set(0.75f);
@@ -3058,7 +3058,7 @@ TestConstraintSolverDependencySchedule()
 
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto checkPose = [&](double expected, size_t solverCount) {
         const auto pose = evaluator.Evaluate(UsdTimeCode::Default());
         if (!pose.valid) {
@@ -3073,7 +3073,7 @@ TestConstraintSolverDependencySchedule()
                 CHECK(Near(frame->second.Origin(), GfVec3d(expected, 0, 0)));
             }
         }
-        CHECK(evaluator.GetBindingEpochDigest() == epoch);
+        CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     };
     checkPose(4, 4);
     checkPose(4, 0);
@@ -3297,7 +3297,7 @@ TestConnectedParentSpaceSolverInputs()
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     // `riderBase` is where Bridge's BASE phase leaves its inheriting
     // descendant, which is one unit past Bridge's own base frame and lags
     // the final phase whenever a constraint has revised Bridge's input.
@@ -3337,11 +3337,11 @@ TestConnectedParentSpaceSolverInputs()
     check(8, 1, 5);
     target.GetAttribute(TfToken("xformOp:transform")).Set(Matrix(GfVec3d(6, 0, 0)));
     check(9, 1, 5);
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     bridge.GetAttribute(TfToken("default:space"))
         .SetConnections({altRelay.GetPath().AppendProperty(TfToken("parent:space"))});
     check(5, 4, 3);
-    CHECK(evaluator.GetBindingEpochDigest() != epoch);
+    CHECK(evaluator.GetCompiledRigSignature() != compiledRig);
     target.GetAttribute(TfToken("xformOp:transform")).Set(Matrix(GfVec3d(7, 0, 0)));
     check(5, 0, 3);
     altDriver.GetAttribute(TfToken("avars:tx")).Set(1.0);
@@ -4293,12 +4293,12 @@ TestSplineIkEvaluatorBinding()
     }
 
     // A value edit on a control re-solves without a recompile.
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     SplineIkSet(s.end, "avars:tx", 0.0);
     SplineIkSet(s.mid, "avars:tx", 0.0);
     const RigExecRigPose atRest = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(atRest.valid);
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     const auto tip = atRest.jointFramesFinal.find(s.joints[6].GetPath());
     CHECK(tip != atRest.jointFramesFinal.end());
     if (tip != atRest.jointFramesFinal.end()) {
@@ -4555,7 +4555,7 @@ TestSingleChainIkComputedStretch()
             RigExecFrameInputs inputs;
             CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(1), {drag}, &inputs, &error));
             RigExecFrozenEvalContext context;
-            context.epochDigest = evaluator.GetBindingEpochDigest();
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
             context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
             context.varyingInputCount = inputs.values.size();
             context.frozen = frozen.get();
@@ -4568,7 +4568,7 @@ TestSingleChainIkComputedStretch()
 
 // An AUTHORED posed:space is the pose: exec returns its frame and reads
 // neither the avars nor the parent, so the baked program says the same and
-// the epoch bakes. An ANIMATED one bakes too, now that the provider ladder
+// the compiled rig bakes. An ANIMATED one bakes too, now that the provider ladder
 // is a per-frame input -- and it is the case that matters, because its
 // Default value is the schema identity: a bake that judged "is it authored"
 // once, at Default, would call it static and compose through the ladder
@@ -4590,7 +4590,7 @@ struct ConstraintsSourcePlayback {
         const bool frozen=RigExecFreezeProgram(evaluator,&snapshot,&error);
         CHECK(frozen);if(!frozen){std::printf("source freeze: %s\n",error.c_str());return false;}
         workspace=RigExecCreateFrozenWorkspace(snapshot);CHECK(workspace);if(!workspace)return false;
-        context.epochDigest=evaluator.GetBindingEpochDigest();context.programDigest=1;
+        context.compiledRigSignature=evaluator.GetCompiledRigSignature();context.programDigest=1;
         context.slotCount=evaluator.GetBakedProgram()->GetProviderCount();
         context.frozen=snapshot.get();context.workspace=workspace.get();
         if(evaluator.GetSolverGuidesEnabled())context.flags|=kRigExecFrozenSolverGuidesEnabled;
@@ -4689,8 +4689,8 @@ static void TestDirectStaticNumericSources()
     CHECK(playback.player.Sampler().GetWarnings().empty());
     // The bake ran in the export role mode; restoring Live makes the next
     // Evaluate rebuild the program once, and nothing after it rebuilds.
-    const size_t epoch=evaluator.GetBindingEpochDigest(),builds=evaluator.GetBakedProgramBuildCount()+1,staticRests=evaluator.GetEpochRestFrameCount();
-    const auto check=[&](double expected,bool edited){playback.Check(evaluator,stage,target.GetPath(),expected,edited);playback.Check(evaluator,stage,target.GetPath(),expected,false,true);CHECK(evaluator.GetBindingEpochDigest()==epoch);CHECK(evaluator.GetBakedProgramBuildCount()==builds);CHECK(evaluator.GetEpochRestFrameCount()==staticRests);};
+    const size_t compiledRig=evaluator.GetCompiledRigSignature(),builds=evaluator.GetBakedProgramBuildCount()+1,staticRests=evaluator.GetCompiledRigRestFrameCount();
+    const auto check=[&](double expected,bool edited){playback.Check(evaluator,stage,target.GetPath(),expected,edited);playback.Check(evaluator,stage,target.GetPath(),expected,false,true);CHECK(evaluator.GetCompiledRigSignature()==compiledRig);CHECK(evaluator.GetBakedProgramBuildCount()==builds);CHECK(evaluator.GetCompiledRigRestFrameCount()==staticRests);};
     check(3,false);
     const auto overrideVisit=[&](const std::vector<RigExecValueOverride> &drag,
         const std::vector<RigExecValueOverride> &upstream,double expected) {
@@ -4778,13 +4778,13 @@ static void TestDirectStaticRotationSignSource()
     CHECK(playback.player.Sampler().GetAnimatedCount()==0);
     // The bake ran in the export role mode; restoring Live makes the next
     // Evaluate rebuild the program once, and nothing after it rebuilds.
-    const size_t epoch=evaluator.GetBindingEpochDigest(),builds=evaluator.GetBakedProgramBuildCount()+1,rests=evaluator.GetEpochRestFrameCount();
+    const size_t compiledRig=evaluator.GetCompiledRigSignature(),builds=evaluator.GetBakedProgramBuildCount()+1,rests=evaluator.GetCompiledRigRestFrameCount();
     const auto check=[&](double expected,bool edited){
         playback.Check(evaluator,stage,target.GetPath(),expected,edited);
         playback.Check(evaluator,stage,target.GetPath(),expected,false,true);
-        CHECK(evaluator.GetBindingEpochDigest()==epoch);
+        CHECK(evaluator.GetCompiledRigSignature()==compiledRig);
         CHECK(evaluator.GetBakedProgramBuildCount()==builds);
-        CHECK(evaluator.GetEpochRestFrameCount()==rests);
+        CHECK(evaluator.GetCompiledRigRestFrameCount()==rests);
     };
     check(2,false);
     CHECK(sign.Set(GfVec3d(1)));check(-2,true);

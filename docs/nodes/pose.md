@@ -50,7 +50,7 @@ interpolator builds and inverts its RBF matrix once: `rigExec:rotation`
 (the driver's local rotation relative to its own rest, in the driver's
 parent frame), `rigExec:translation`, `rigExec:poseType`, the two radii,
 and `inputs:enabled` all feed that solve, and those same six are the
-pose's share of the epoch digest, so editing any of them recompiles the
+pose's share of the compiled rig signature, so editing any of them recompiles the
 interpolator. The other three — `rigExec:falloff`,
 `rigExec:poseControls` and `rigExec:poseControlValues` — are provenance
 that evaluation never reads, and the translation pair is dropped unless

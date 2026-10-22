@@ -231,7 +231,7 @@ struct _Lister {
             switch (Role(role)) {
             case Role::JointIndices:
             case Role::JointWeights:
-                // A layout the epoch does not fix is read per frame from
+                // A layout the compiled rig does not fix is read per frame from
                 // the bake's arrays.
                 break;
             case Role::CurveLive:

@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "component": "torso",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_World": {
+      "prim": "/Component/Control_World",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Rig",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_COG": {
+      "prim": "/Component/Control_COG",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_World",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Hips": {
+      "prim": "/Component/Control_Hips",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_COG",
+      "relationships": {},
+      "connections": {}
+    }
+  },
+  "templates": {
+    "Weight": {
+      "prim": "/Component/Weight",
+      "type": "RigExecStaticWeight",
+      "fit": [
+        {
+          "name": "rigExec:indices",
+          "type": "int[]"
+        },
+        {
+          "name": "rigExec:values",
+          "type": "float[]"
+        }
+      ],
+      "relationships": [
+        "rigExec:weightTarget"
+      ]
+    },
+    "Deform_COG_Absolute": {
+      "prim": "/Component/Deform_COG_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    },
+    "Deform_Hips_Weighted": {
+      "prim": "/Component/Deform_Hips_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    }
+  },
+  "ports": {
+    "Rig": {
+      "description": "External Rig prim; provide an absolute prim path."
+    }
+  }
+}

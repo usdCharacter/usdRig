@@ -1,8 +1,8 @@
-// Relationship lowering for cloth data. All stage reads happen while
+// Relationship translation for cloth data. All stage reads happen while
 // declaring and sampling leaves, on the owning thread; assembly below
 // consumes only captured typed values. ExpandUV, Samples, ReadMap and
 // Assemble run inside operation bodies (the window solve builds the
-// material model once per epoch, live and frozen): they take no lock and
+// material model once per rig compilation, live and frozen): they take no lock and
 // build no token from text, so they compare tokens with literal text,
 // which does not intern.
 #ifndef RIGEXEC_CLOTH_INPUTS_H
@@ -401,7 +401,7 @@ inline void Region(const std::vector<RigExecClothSample> &samples, size_t n,
 }
 
 inline bool Assemble(const std::vector<VtValue> &in, const Dictionary &layout,
-    const RigExecClothEpoch &epoch, RigExecClothModel *model, std::string *why)
+    const RigExecClothCompiledData &compiledRig, RigExecClothModel *model, std::string *why)
 {
     const auto valid = layout.find("valid");
     if (valid == layout.end() || !valid->second.IsHolding<bool>() || !valid->second.UncheckedGet<bool>()) {
@@ -409,8 +409,8 @@ inline bool Assemble(const std::vector<VtValue> &in, const Dictionary &layout,
         return false;
     }
     const auto *uv = Object(layout, "uv");
-    if (uv && !ExpandUV(in, *uv, epoch.counts, epoch.indices, epoch.pointCount,
-                        epoch.leftHanded, &model->triangleUV)) return false;
+    if (uv && !ExpandUV(in, *uv, compiledRig.counts, compiledRig.indices, compiledRig.pointCount,
+                        compiledRig.leftHanded, &model->triangleUV)) return false;
     const auto found = layout.find("profiles");
     if (found == layout.end() || !found->second.IsHolding<std::vector<VtValue>>()) return false;
     for (const auto &entry : found->second.UncheckedGet<std::vector<VtValue>>()) {
@@ -444,23 +444,23 @@ inline bool Assemble(const std::vector<VtValue> &in, const Dictionary &layout,
         const auto *target = Object(d, "target");
         if (!source || !target || !Samples(in, *source, &p.source, why) ||
             !Samples(in, *target, &p.target, why)) return false;
-        Region(p.source, epoch.pointCount, &p.sourceMask);
-        if (p.targetCollider < -1 || (p.targetCollider >= 0 && size_t(p.targetCollider) >= epoch.colliders.size())) return false;
-        Region(p.target, p.targetCollider < 0 ? epoch.pointCount : epoch.colliders[size_t(p.targetCollider)].pointCount,
+        Region(p.source, compiledRig.pointCount, &p.sourceMask);
+        if (p.targetCollider < -1 || (p.targetCollider >= 0 && size_t(p.targetCollider) >= compiledRig.colliders.size())) return false;
+        Region(p.target, p.targetCollider < 0 ? compiledRig.pointCount : compiledRig.colliders[size_t(p.targetCollider)].pointCount,
                &p.targetMask);
         const auto mapsIt = d.find("maps");
         if (mapsIt == d.end() || !mapsIt->second.IsHolding<std::vector<VtValue>>()) return false;
         const auto &maps = mapsIt->second.UncheckedGet<std::vector<VtValue>>();
         if (maps.size() != ClothMapChannelCount) return false;
         for (size_t j = 0; j < ClothMapChannelCount; ++j)
-            if (!ReadMap(in, maps[j].UncheckedGet<Dictionary>(), epoch.pointCount, &p.maps[j], why)) return false;
+            if (!ReadMap(in, maps[j].UncheckedGet<Dictionary>(), compiledRig.pointCount, &p.maps[j], why)) return false;
         model->profiles.push_back(p);
     }
     std::vector<size_t> colliderCounts;
-    for (const auto &c : epoch.colliders) colliderCounts.push_back(c.pointCount);
+    for (const auto &c : compiledRig.colliders) colliderCounts.push_back(c.pointCount);
     size_t triangles = 0;
-    for (int32_t count : epoch.counts) if (count >= 3) triangles += size_t(count - 2);
-    return RigExecClothValidateModel(*model, epoch.pointCount, triangles, colliderCounts, why);
+    for (int32_t count : compiledRig.counts) if (count >= 3) triangles += size_t(count - 2);
+    return RigExecClothValidateModel(*model, compiledRig.pointCount, triangles, colliderCounts, why);
 }
 
 }  // namespace cloth_inputs

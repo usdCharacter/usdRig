@@ -78,7 +78,7 @@ Compiled(const UsdStageRefPtr &stage)
 // on the stage as it now stands publishes. The mover-graph counters and the
 // line that reports them are left out: they count what a generation BUILT,
 // and a fresh evaluator's first generation builds every node the edited one
-// kept. So is the line a recompile adds (a sample's activation is epoch
+// kept. So is the line a recompile adds (a sample's activation is compiled rig
 // identity), which reports the edit rather than the pose.
 void
 CheckAgreesWithFresh(const std::string &what, const UsdStageRefPtr &stage,
@@ -570,11 +570,11 @@ SparseSamples(const RigExecRigEvaluator &evaluator)
     return out;
 }
 
-// A sparse layout is epoch data: a channel weight keyed over three frames
+// A sparse layout is compiled rig data: a channel weight keyed over three frames
 // re-runs the blend revision at every frame, and no frame builds a sample's
 // layout again -- it stays the same object.
 void
-TestASparseLayoutIsBuiltOncePerEpoch()
+TestASparseLayoutIsBuiltOncePerCompiledRig()
 {
     const UsdStageRefPtr stage = MakeBlendRig();
     const UsdAttribute weight =
@@ -622,7 +622,7 @@ main()
         TestAChainInputDefaultEditReachesTheChain();
         TestAnInputsMethodEditOnASkinMover();
         TestABlendSampleEdit();
-        TestASparseLayoutIsBuiltOncePerEpoch();
+        TestASparseLayoutIsBuiltOncePerCompiledRig();
     }
     if (failures) {
         std::printf("testRigExecScopedClears: %d failure(s)\n", failures);

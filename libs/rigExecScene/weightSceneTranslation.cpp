@@ -1,13 +1,36 @@
-#include "weightSceneLowering.h"
+#include "weightSceneTranslation.h"
 #include <algorithm>
+#include "pxr/base/tf/staticTokens.h"
 #include <set>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecValues,"rigExec:values")) ((rigExecIndices,"rigExec:indices"))
+    ((rigExecDefaultWeight,"rigExec:defaultWeight")) ((rigExecRepresentation,"rigExec:representation"))
+    ((rigExecRangePolicy,"rigExec:rangePolicy")) (points) (constant) (strict) (multiply) (y) (unbounded)
+    (base) (smooth) ((rigExecFalloffCurve,"rigExec:falloffCurve"))
+    ((rigExecCombineMode,"rigExec:combineMode")) ((rigExecPlaneAxis,"rigExec:planeAxis"))
+    ((rigExecPlaneBounds,"rigExec:planeBounds")) ((rigExecFalloffProfile,"rigExec:falloffProfile"))
+    ((rigExecOperation,"rigExec:operation")) ((rigExecBaseWeight,"rigExec:baseWeight"))
+    ((rigExecInputWeights,"rigExec:inputWeights"))
+);
+// allTokens order is the scalar member index.
+TF_DEFINE_PRIVATE_TOKENS(_scalarTokens,
+    ((rigExecDefaultWeight,"rigExec:defaultWeight")) ((inputsDriver,"inputs:driver"))
+    ((inputsScale,"inputs:scale")) ((inputsBias,"inputs:bias")) ((inputsStrength,"inputs:strength"))
+    ((inputsInvert,"inputs:invert")) ((inputsFalloffMin,"inputs:falloffMin"))
+    ((inputsFalloffMax,"inputs:falloffMax")) ((inputsScaleX,"inputs:scaleX")) ((inputsScaleY,"inputs:scaleY"))
+    ((inputsScaleZ,"inputs:scaleZ")) ((inputsScaleXPos,"inputs:scaleXPos"))
+    ((inputsScaleYPos,"inputs:scaleYPos")) ((inputsScaleZPos,"inputs:scaleZPos"))
+    ((inputsScaleXNeg,"inputs:scaleXNeg")) ((inputsScaleYNeg,"inputs:scaleYNeg"))
+    ((inputsScaleZNeg,"inputs:scaleZNeg")) ((inputsExtentU,"inputs:extentU"))
+    ((inputsExtentV,"inputs:extentV"))
+);
+// allTokens order is the point key index.
+TF_DEFINE_PRIVATE_TOKENS(_pointTokens,
+    ((rigExecSampleSource,"rigExec:sampleSource")) ((rigExecWeightTarget,"rigExec:weightTarget"))
+    ((rigExecCurve,"rigExec:curve"))
+);
 namespace {
-constexpr const char *ScalarNames[]={"rigExec:defaultWeight","inputs:driver","inputs:scale","inputs:bias",
-    "inputs:strength","inputs:invert","inputs:falloffMin","inputs:falloffMax","inputs:scaleX",
-    "inputs:scaleY","inputs:scaleZ","inputs:scaleXPos","inputs:scaleYPos","inputs:scaleZPos",
-    "inputs:scaleXNeg","inputs:scaleYNeg","inputs:scaleZNeg","inputs:extentU","inputs:extentV"};
-constexpr const char *PointNames[]={"rigExec:sampleSource","rigExec:weightTarget","rigExec:curve"};
 bool Fail(std::string *error,const std::string &text){if(error)*error=text;return false;}
 bool Used(int kind,int member) {
     return member==0 || (kind==1 && member>=1 && member<=3) ||
@@ -16,16 +39,16 @@ bool Used(int kind,int member) {
 }
 SdfPath Canonical(const RigExecSceneCompileInputs &source,const SdfPath &target) {
     const auto *node=target.IsPrimPath()?source.Node(target):nullptr;
-    return node && node->pointBased?target.AppendProperty(TfToken("points")):target;
+    return node && node->pointBased?target.AppendProperty(_tokens->points):target;
 }
 }
-bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath &path,
+bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath &path,
     RigExecSceneWeightProgram *output,std::string *error) {
     if(!output)return Fail(error,"null weight descriptor destination");
     if(error)error->clear();
     const RigExecSceneCompileInputs source(scene);
     RigExecSceneWeightProgram result;
-    auto lower=[&](const auto &self,const SdfPath &who)->int {
+    auto translate=[&](const auto &self,const SdfPath &who)->int {
         const auto seen=result.indices.find(who);
         if(seen!=result.indices.end())return seen->second;
         const auto *node=source.Node(who);
@@ -40,39 +63,39 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
         const int index=int(result.records.size());result.indices[who]=index;
         result.records.emplace_back();result.objects.emplace_back();
         bool captured=true;
-        auto raw=[&](const char *name,auto fallback) {
-            using T=decltype(fallback);const auto property=who.AppendProperty(TfToken(name));
+        auto raw=[&](const TfToken &name,auto fallback) {
+            using T=decltype(fallback);const auto property=who.AppendProperty(name);
             if(!source.Attribute(property))return fallback;
             RigExecSceneBoundInput binding;VtValue value;
             if(!source.Bind(property,RigExecSceneReadRoute::Raw,&binding,error) ||
                !source.Read(binding,UsdTimeCode::Default(),&value,nullptr,error)){captured=false;return fallback;}
             return value.IsHolding<T>()?value.UncheckedGet<T>():fallback;
         };
-        record.representationToken=raw("rigExec:representation",TfToken("constant"));
-        record.rangePolicy=raw("rigExec:rangePolicy",TfToken("strict"));
-        record.combineToken=raw("rigExec:combineMode",TfToken("multiply"));
+        record.representationToken=raw(_tokens->rigExecRepresentation,_tokens->constant);
+        record.rangePolicy=raw(_tokens->rigExecRangePolicy,_tokens->strict);
+        record.combineToken=raw(_tokens->rigExecCombineMode,_tokens->multiply);
         record.representation=record.representationToken=="constant"?0:record.representationToken=="dense"?1:
             record.representationToken=="sparse"?2:-1;
         record.clamp=record.rangePolicy=="clamp";
-        record.planeAxis=raw("rigExec:planeAxis",TfToken("y"));
-        record.planeBounds=raw("rigExec:planeBounds",TfToken("unbounded"));
+        record.planeAxis=raw(_tokens->rigExecPlaneAxis,_tokens->y);
+        record.planeBounds=raw(_tokens->rigExecPlaneBounds,_tokens->unbounded);
         const char *modes[]={"multiply","add","subtract","max","min","average","overlay"};
         for(int k=0;k<7;++k)if(record.combineToken==modes[k])record.combineMode=k;
-        const auto values=raw("rigExec:values",VtFloatArray{});
-        const auto indices=raw("rigExec:indices",VtIntArray{});
+        const auto values=raw(_tokens->rigExecValues,VtFloatArray{});
+        const auto indices=raw(_tokens->rigExecIndices,VtIntArray{});
         record.values.assign(values.begin(),values.end());record.indices.assign(indices.begin(),indices.end());
         if(record.kind==0) {
-            const auto valuePath=who.AppendProperty(TfToken("rigExec:values"));
-            const auto indexPath=who.AppendProperty(TfToken("rigExec:indices"));
+            const auto valuePath=who.AppendProperty(_tokens->rigExecValues);
+            const auto indexPath=who.AppendProperty(_tokens->rigExecIndices);
             if(source.Attribute(valuePath))object.paintedValues=valuePath;
             if(source.Attribute(indexPath))object.paintedIndices=indexPath;
         }
-        const auto relation=[&](const char *name,SdfPathVector *targets,std::vector<char> *exists) {
-            const auto *r=source.Relationship(who.AppendProperty(TfToken(name)));
+        const auto relation=[&](const TfToken &name,SdfPathVector *targets,std::vector<char> *exists) {
+            const auto *r=source.Relationship(who.AppendProperty(name));
             if(r){*targets=r->fact.targets;for(const auto &target:*targets)exists->push_back(source.Node(target)!=nullptr);}
         };
-        relation("rigExec:baseWeight",&object.baseTargets,&object.baseExists);
-        relation("rigExec:inputWeights",&object.inputTargets,&object.inputExists);
+        relation(_tokens->rigExecBaseWeight,&object.baseTargets,&object.baseExists);
+        relation(_tokens->rigExecInputWeights,&object.inputTargets,&object.inputExists);
         if(record.kind==1 && !object.baseTargets.empty()) {
             record.base=self(self,object.baseTargets.front());if(record.base<0)return -1;
         }
@@ -80,7 +103,7 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
             const int input=self(self,target);if(input<0)return -1;record.inputs.push_back(input);
         }
         for(int member=0;member<19;++member)if(Used(record.kind,member)) {
-            const auto attribute=who.AppendProperty(TfToken(ScalarNames[member]));
+            const auto attribute=who.AppendProperty(_scalarTokens->allTokens[size_t(member)]);
             if(!source.Attribute(attribute))continue;
             RigExecSceneBoundInput binding;
             if(!source.Bind(attribute,RigExecSceneReadRoute::ConnectionResolved,&binding,error))return -1;
@@ -90,9 +113,9 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
             object.scalarReads.emplace(member,std::move(typed));
         }
         for(int key=0;key<3;++key) {
-            auto &point=object.points[size_t(key)];point.reader=who.AppendProperty(TfToken(PointNames[key]));
+            auto &point=object.points[size_t(key)];point.reader=who.AppendProperty(_pointTokens->allTokens[size_t(key)]);
             const auto *r=source.Relationship(point.reader);
-            point.readPhase=r?r->readPhase:TfToken("base");
+            point.readPhase=r?r->readPhase:_tokens->base;
             if(!r)continue;
             point.targets=r->fact.targets;
             for(const auto &target:point.targets) {
@@ -112,15 +135,15 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
             }
         }
         record.samplesInFlight=object.points[1].readPhase=="preceding";
-        auto bindToken=[&](const char *name,RigExecSceneBoundInput *binding,bool *exists) {
-            const auto property=who.AppendProperty(TfToken(name));*exists=source.Attribute(property)!=nullptr;
+        auto bindToken=[&](const TfToken &name,RigExecSceneBoundInput *binding,bool *exists) {
+            const auto property=who.AppendProperty(name);*exists=source.Attribute(property)!=nullptr;
             return !*exists || source.Bind(property,RigExecSceneReadRoute::Raw,binding,error);
         };
-        if(!bindToken("rigExec:planeAxis",&object.axis,&object.axisAttribute) ||
-           !bindToken("rigExec:planeBounds",&object.bounds,&object.boundsAttribute))return -1;
+        if(!bindToken(_tokens->rigExecPlaneAxis,&object.axis,&object.axisAttribute) ||
+           !bindToken(_tokens->rigExecPlaneBounds,&object.bounds,&object.boundsAttribute))return -1;
         if(record.kind>=3) {
-            const auto profile=raw("rigExec:falloffProfile",TfToken("smooth"));
-            const auto *curve=source.Attribute(who.AppendProperty(TfToken("rigExec:falloffCurve")));
+            const auto profile=raw(_tokens->rigExecFalloffProfile,_tokens->smooth);
+            const auto *curve=source.Attribute(who.AppendProperty(_tokens->rigExecFalloffCurve));
             const TsSpline *spline=curve && curve->fact.spline.IsHolding<TsSpline>()?
                 &curve->fact.spline.UncheckedGet<TsSpline>():nullptr;
             record.falloffCurve=RigExecBakeWeightFalloff(profile,spline);
@@ -129,15 +152,15 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
             record.staticError=record.name+": unknown rigExec:combineMode "+record.combineToken.GetString();
         if(record.kind<=1 && record.rangePolicy!="strict" && record.rangePolicy!="clamp")
             record.staticError="unknown rangePolicy on "+record.name;
-        if(record.kind==0)for(const char *name:{"rigExec:values","rigExec:indices","rigExec:defaultWeight",
-            "rigExec:representation","rigExec:rangePolicy"}) {
-            const auto *a=source.Attribute(who.AppendProperty(TfToken(name)));
+        if(record.kind==0)for(const TfToken *name:{&_tokens->rigExecValues,&_tokens->rigExecIndices,&_tokens->rigExecDefaultWeight,
+            &_tokens->rigExecRepresentation,&_tokens->rigExecRangePolicy}) {
+            const auto *a=source.Attribute(who.AppendProperty(*name));
             if(a && (!a->fact.sampleTimes.empty() || a->fact.hasAuthoredConnections)) {
-                record.staticError=std::string("static weight field ")+name+" has time samples or connections on "+record.name;break;
+                record.staticError=std::string("static weight field ")+name->GetText()+" has time samples or connections on "+record.name;break;
             }
         }
         if(record.kind==1 && record.staticError.empty()) {
-            if(raw("rigExec:operation",TfToken("multiply"))!="multiply")
+            if(raw(_tokens->rigExecOperation,_tokens->multiply)!="multiply")
                 record.staticError="unknown dynamic-weight operation on "+record.name;
             else if(object.baseTargets.size()>1)
                 record.staticError="rigExec:baseWeight must have at most one target on "+record.name;
@@ -148,7 +171,7 @@ bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &scene,const SdfPath 
 
         result.records[size_t(index)]=std::move(record);result.objects[size_t(index)]=std::move(object);return index;
     };
-    result.root=lower(lower,path);if(result.root<0)return false;
+    result.root=translate(translate,path);if(result.root<0)return false;
     for(size_t id=0;id<result.records.size();++id) {
         auto &record=result.records[id];const auto &object=result.objects[id];
         if(record.kind!=1 || record.base<0 || !record.staticError.empty())continue;

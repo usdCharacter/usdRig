@@ -3,7 +3,7 @@
 What an interactive override is allowed to invalidate, and what it must not.
 
 A gizmo drag pushes a RigExecValueOverride per mouse sample. Before the
-override test was narrowed, every one of those calls cleared the epoch-scoped
+override test was narrowed, every one of those calls cleared the compiled rig-scoped
 skin LAYOUT cache -- the resolved rigExec:jointIndices / jointWeights /
 elementSize table -- so every sample re-read and re-validated the whole
 binding table.

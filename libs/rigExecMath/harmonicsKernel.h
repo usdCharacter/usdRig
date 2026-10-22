@@ -34,7 +34,7 @@ namespace rigExec {
 /// The longest window a harmonics step may ask for, in frames.
 constexpr size_t RigExecHarmonicsMaxWindowFrames = 4096;
 
-/// Epoch settings: they fix the window, so an edit recompiles.
+/// Compiled rig settings: they fix the window, so an edit recompiles.
 struct RigExecHarmonicsSettings {
     /// How many oscillations one impulse rings for.
     double waves = 5.0;

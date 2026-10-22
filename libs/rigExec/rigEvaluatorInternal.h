@@ -212,7 +212,7 @@ _ResolvedRead(const RigExecResolvedInputs &resolved, const UsdPrim &prim,
     return value;
 }
 
-// Read epoch structure at Default; generation overrides do not apply.
+// Read compiled rig structure at Default; generation overrides do not apply.
 template <class T>
 T
 _ReadAttribute(const UsdPrim &prim, const char *name, T fallback)
@@ -227,7 +227,7 @@ _ReadAttribute(const UsdPrim &prim, const char *name, T fallback)
     return value;
 }
 
-// The same epoch read through an already-interned name.
+// The same compiled rig read through an already-interned name.
 template <class T>
 T
 _ReadAttribute(const UsdPrim &prim, const TfToken &name, T fallback)
@@ -306,7 +306,7 @@ _ValidateWeightObjectDomain(
 // eighth input is the NamespaceAncestor's own computeRestFrame, which reads
 // these same seven on the ancestor, so the closure over a provider and its
 // RigExec ancestors is the closure over this list. Nothing else can move a
-// rest frame, which is what makes the epoch-constancy test and the override
+// rest frame, which is what makes the compiled rig-constancy test and the override
 // test exact rather than approximate. Built once per evaluator, in its
 // constructor (RigExecRigEvaluator::_restInputNames), because the
 // constancy test runs on a parallel compile and a function-local static or

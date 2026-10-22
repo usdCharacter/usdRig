@@ -41,7 +41,7 @@ MakeARig(Authored baked, bool connectedSpace = false)
         // The connection is to the control's own posed:space, which is the
         // identity the joint would have composed anyway: the rig still
         // evaluates to the pose a plain one does, and the only thing that
-        // changed is that an epoch constant became an exec answer.
+        // changed is that a compiled rig constant became an exec answer.
         joint.CreateAttribute(TfToken("posed:space"),
                               SdfValueTypeNames->Matrix4d)
             .AddConnection(control.GetPath().AppendProperty(

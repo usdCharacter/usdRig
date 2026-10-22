@@ -1,7 +1,14 @@
 #include "geometryGraphBinding.h"
 #include "rigExec/moverGraph.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (base)
+    (preceding)
+    (final)
+    (points)
+);
 bool RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
     const RigExecSceneGraphBindingContext &context,RigExecGeometryGraphBinding *out,std::string *error)
 {
@@ -32,16 +39,21 @@ bool RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
                 result.reads.push_back(*id);return true;
             };
             if(!RigExecBindGraphTypedRead(descriptor.typedLeaves[k],reader,&result.typedLeaves[k],error))return false;
+            // An effective read is produced by its own op, not resolved.
+            if(result.typedLeaves[k].effective!=UINT64_MAX)result.reads.push_back(result.typedLeaves[k].effective);
             continue;
         }
-        const auto domain=key.type==RigExecRevisionLeafType::Vec3fArray && key.path.GetNameToken()==TfToken("points")?
+        const auto domain=key.type==RigExecRevisionLeafType::Vec3fArray && key.path.GetNameToken()==_tokens->points?
             RigExecSceneValueDomain::Points:RigExecSceneValueDomain::Property;
         if(!resolve(input.consumer,input.source,input.readPhase,domain,
             key.time==RigExecRevisionLeafTime::AtDefault,key.flavour==RigExecRevisionLeafFlavour::Raw,
             &result.leaves[k]))return false;
     }
     const auto &binding=descriptor.record.binding;
-    const TfToken phase(binding.transformPhase.GetAsString());
+    const auto &readPhase=binding.transformPhase;
+    const TfToken phase=readPhase.kind==RigExecReadPhaseKind::Preceding?_tokens->preceding:
+        readPhase.kind==RigExecReadPhaseKind::Final?_tokens->final:
+        readPhase.kind==RigExecReadPhaseKind::AtPrim?readPhase.prim.GetAsToken():_tokens->base;
     if(!resolve(binding.transform,binding.transform,phase,RigExecSceneValueDomain::Pose,false,false,&result.transform) ||
        !resolve(binding.transformSpace,binding.transformSpace,phase,RigExecSceneValueDomain::Pose,false,false,&result.transformSpace) ||
        !resolve(binding.carrySpace,binding.carrySpace,phase,RigExecSceneValueDomain::Pose,false,false,&result.carry))return false;
@@ -69,8 +81,8 @@ bool RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
     if(RigExecIsDerivedMatrixOp(descriptor.record.op)) {
         const SdfPath providers[3]={binding.transform,binding.transformSpace,binding.carrySpace};
         for(int k=0;k<3;++k) {
-            if(!resolve(providers[k],providers[k],TfToken("base"),RigExecSceneValueDomain::Pose,false,false,&result.projectorBase[k]) ||
-               !resolve(providers[k],providers[k],TfToken("final"),RigExecSceneValueDomain::Pose,false,false,&result.projectorFinal[k]))return false;
+            if(!resolve(providers[k],providers[k],_tokens->base,RigExecSceneValueDomain::Pose,false,false,&result.projectorBase[k]) ||
+               !resolve(providers[k],providers[k],_tokens->final,RigExecSceneValueDomain::Pose,false,false,&result.projectorFinal[k]))return false;
         }
     }
     std::sort(result.reads.begin(),result.reads.end());result.reads.erase(std::unique(result.reads.begin(),result.reads.end()),result.reads.end());

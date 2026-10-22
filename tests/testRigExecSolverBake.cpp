@@ -92,7 +92,7 @@ CheckEvaluatorConsistency(const char *what, const MakeStage &make,
 
     // A headless consumer skips the guide request outright, and the program
     // has to skip its publication with it -- while still running the solvers
-    // it would have published, because the toggle can move without the epoch
+    // it would have published, because the toggle can move without the compiled rig
     // moving.
     baseline.SetSolverGuidesEnabled(guides);
     baked.SetSolverGuidesEnabled(guides);
@@ -865,8 +865,8 @@ AuthorDriverPoints(const UsdStageRefPtr &stage)
 /// The bake read no attribute and captured two empty curves, so nothing
 /// about that path is in the program's invalidation index -- and the day
 /// the attribute appears the dynamic path starts sampling it. What catches
-/// that is the epoch digest, not the index: creating a property is a
-/// structural edit, so the epoch recompiles and the program is rebuilt with
+/// that is the compiled rig signature, not the index: creating a property is a
+/// structural edit, so the compiled rig recompiles and the program is rebuilt with
 /// it. This is the fixture that says so; a program that answered the new
 /// curve with the empty aggregate it baked would fail here.
 void

@@ -70,7 +70,7 @@ MakePose(double tag)
 }
 
 // The bridge's _ComputeCacheKey, for tests that drive the cache directly:
-// sample, then the epoch half plus the control digest -- or the
+// sample, then the compiled rig half plus the control digest -- or the
 // stage-edit-serial refusal key when there is no baked program.
 bool
 ShadowKeyFor(RigExecRigEvaluator &evaluator, UsdTimeCode time,
@@ -84,7 +84,7 @@ ShadowKeyFor(RigExecRigEvaluator &evaluator, UsdTimeCode time,
         if (!RigExecRefusalControlDigestible(overrides)) {
             return false;
         }
-        key->epochDigest = RigExecFrameCacheEpochDigest(evaluator);
+        key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
         key->controlDigest = RigExecRefusalControlDigest(
             time, evaluator.GetStageEditSerial(), overrides);
         return true;
@@ -92,7 +92,7 @@ ShadowKeyFor(RigExecRigEvaluator &evaluator, UsdTimeCode time,
     if (!RigExecControlStateDigestible(*inputs, overrides)) {
         return false;
     }
-    key->epochDigest = RigExecFrameCacheEpochDigest(evaluator);
+    key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
     key->controlDigest = RigExecControlStateDigest(*inputs, overrides);
     return true;
 }

@@ -27,7 +27,7 @@ struct RigExecFrozenWorkspace::Impl {
     _FrozenWorker worker;
     std::atomic<bool> busy{false};
     bool bound = false;
-    uint64_t epochDigest = 0;
+    uint64_t compiledRigSignature = 0;
     uint64_t programDigest = 0;
 };
 
@@ -62,13 +62,13 @@ struct RigExecFrozenWorkspaceAccess {
         bool idle = false;
         if (!state.busy.compare_exchange_strong(idle, true)) return nullptr;
         if (state.snapshot.get() != context.frozen ||
-            (state.bound && (state.epochDigest != context.epochDigest ||
+            (state.bound && (state.compiledRigSignature != context.compiledRigSignature ||
                              state.programDigest != context.programDigest))) {
             state.busy.store(false);
             return nullptr;
         }
         state.bound = true;
-        state.epochDigest = context.epochDigest;
+        state.compiledRigSignature = context.compiledRigSignature;
         state.programDigest = context.programDigest;
         return &state.worker;
     }
@@ -389,7 +389,7 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
     // prologue publishes its stage reads -- the bases and the slots' FIRST
     // versions for xform slots, the ok/matrix pairs for delta bases, the
     // ok/frame pairs for native sources. The vectors parallel the program
-    // tables; a size mismatch is a vector from another epoch and declines.
+    // tables; a size mismatch is a vector from another compiled rig and declines.
     // The cone compares below are the shared ones, against the frozen
     // lasts, so a seed that moved since freeze dirties what live would
     // dirty against the run before -- possibly more, never less -- and the

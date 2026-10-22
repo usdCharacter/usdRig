@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_GEOMETRY_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_GEOMETRY_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_GEOMETRY_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_GEOMETRY_SCENE_TRANSLATION_H
 #include "sceneCompileInputs.h"
 #include "sceneTypedReads.h"
 #include "geometryProgram.h"
@@ -26,15 +26,15 @@ struct RigExecSceneGeometryDescriptor {
     std::vector<RigExecSceneTypedRead> typedLeaves;
     std::vector<RigExecSceneGeometryBlendChannel> blendChannels;
 };
-bool RigExecLowerSceneBlendChannel(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateSceneBlendChannel(const RigExecSceneDescriptors &,const SdfPath &,
     RigExecSceneGeometryDescriptor *,std::string *error=nullptr);
-bool RigExecLowerSceneGeometryVariants(const RigExecSceneDescriptors &,const SdfPath &mover,
+bool RigExecTranslateSceneGeometryVariants(const RigExecSceneDescriptors &,const SdfPath &mover,
     const SdfPath &pointsTarget,std::vector<RigExecSceneGeometryDescriptor> *,std::string *error=nullptr);
-bool RigExecLowerSceneDerivedGeometry(const RigExecSceneDescriptors &,const SdfPath &pointsTarget,
+bool RigExecTranslateSceneDerivedGeometry(const RigExecSceneDescriptors &,const SdfPath &pointsTarget,
     std::vector<RigExecSceneGeometryDescriptor> *,std::string *error=nullptr);
 /// Shared binding facts and read-site declarations for every builtin revision.
 /// normalized supplies compiler-owned derived/projector facts (not source handles).
-bool RigExecLowerSceneGeometry(const RigExecSceneDescriptors &,const SdfPath &mover,
+bool RigExecTranslateSceneGeometry(const RigExecSceneDescriptors &,const SdfPath &mover,
     const SdfPath &target,RigExecSceneGeometryDescriptor *,std::string *error=nullptr,
     const RigExecGeometryRecord *normalized=nullptr);
 bool RigExecGatherSceneGeometryBlendChannels(const RigExecSceneGeometryDescriptor &,

@@ -680,7 +680,7 @@ bool WatchEntry(const RigExecBakedProgramImpl &B,const RigExecBakedSourceLeafInd
 //  * Typed: a typed value moves only through RigExecBakedNoteLeafWrite,
 //    which lists it in its pool's changedList, and a Run writes them all in
 //    its prologue, after the first sample pass reset the lists. Exactly one
-//    flag epoch since the last visit means the lists name every write since
+//    flag compiled rig since the last visit means the lists name every write since
 //    it; any other distance compares every Typed entry.
 //  * Override: a slot empty now and at the last visit held the empty value.
 //  * AvarConstant: every writer of an avar binding's constant
@@ -749,7 +749,7 @@ bool WatchSourceLeaves(RigExecBakedProgramImpl *program,bool full)
             if(WatchEntry(B,*index,w,&watch,false))
                 for(uint32_t i=index->begin[w];i<index->begin[w+1];++i) mark(index->ops[i]);
         };
-        const bool listed=B.leafFlagEpoch==watch.flagEpoch+1;
+        const bool listed=B.leafFlagCompiledRig==watch.flagCompiledRig+1;
         size_t t=0;
         B.leaves.ForEach([&](auto &pool) {
             const auto &entries=index->typedEntry[t++];
@@ -775,7 +775,7 @@ bool WatchSourceLeaves(RigExecBakedProgramImpl *program,bool full)
         for(const uint32_t w:index->alwaysEntries) visit(w);
         std::sort(watch.dirtyList.begin(),watch.dirtyList.end());
     }
-    watch.flagEpoch=B.leafFlagEpoch;
+    watch.flagCompiledRig=B.leafFlagCompiledRig;
     watch.avarSerial=B.avarConstantSerial;
     watch.overrideSlotsHeld.swap(held);
     watch.publishWeightFields=B.publishWeightFields;
@@ -1396,7 +1396,7 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
     });
     state.retainedFirst.clear();
     // Pure preparation and admission outcomes completed, but a refused
-    // public generation does not accept the pending epoch/edit debt.
+    // public generation does not accept the pending compiled rig/edit debt.
     state.everRan=ok;
     if (B.requiredStageFramesAdmission.admitted) {
         B.lastTime=time; B.everRan=ok;
@@ -1408,7 +1408,7 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
     return ok;
 }
 
-bool RigExecBakedLowerOpGraph(RigExecBakedProgramImpl *B,std::string *error)
+bool RigExecBakedTranslateOpGraph(RigExecBakedProgramImpl *B,std::string *error)
 {
     std::vector<double> costs;
     costs.reserve(B->opGraph.ops.size());
@@ -1417,8 +1417,8 @@ bool RigExecBakedLowerOpGraph(RigExecBakedProgramImpl *B,std::string *error)
         const double cost=B->steps[op.originalIndex].cost;
         costs.push_back(cost); total+=cost;
     }
-    const double grain=RigExecBakedScheduleGrainUs(total,RigExecBakedLoweringConcurrency(*B));
-    if(!RigExecLowerOpClusters(&B->opGraph,costs,grain,error)) return false;
+    const double grain=RigExecBakedScheduleGrainUs(total,RigExecBakedTranslationConcurrency(*B));
+    if(!RigExecTranslateOpClusters(&B->opGraph,costs,grain,error)) return false;
     // Compatibility reports and cone views reflect the common artifact.
     auto &view=B->clustering;
     view={}; view.grainUs=grain; view.serialCost=total;

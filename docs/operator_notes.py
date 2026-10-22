@@ -65,7 +65,7 @@ descendants before their parent, and the *bottom* sibling branch in usdview
 first — to number ONE pose stack of joint-writing solvers and frame
 constraints, of which the mover order is a restriction; the walk uses the standard
 `UsdPrimRange` predicate, so a deactivated or unloaded branch is simply not
-part of the rig and changing that is a structural (epoch-rebuilding) edit
+part of the rig and changing that is a structural (rig-recompiling) edit
 rather than a value edit. A rig that finds no controls, joints, volume weights,
 and no movers at all is a compile error ("Rig publishes no outputs"), and every
 mover target is checked against the root's *parent* prim, which is the rig
@@ -1680,7 +1680,7 @@ differ. The compiler maintains the moved mesh's normals and extent
 afterwards.""",
         "wiring": [
             # libs/rigExec/moverKernels.cpp:816-821 (exec) and
-            # libs/rigExec/moverGraph.cpp:2262-2267 (lowered graph): empty frames,
+            # libs/rigExec/moverGraph.cpp:2262-2267 (translated graph): empty frames,
             # or rests that do not match the frame count, leave the parameters
             # invalid. Not a compile error: the revision passes through and the
             # chain sweep reports "MoverFailed <path>: execution rejected its
@@ -1699,7 +1699,7 @@ afterwards.""",
             ("`rigExec:moves`", "Exact native points property to write.", "yes"),
             # libs/rigExec/moverGraph.cpp:1489-1503 builds this mover's binding
             # from bindCoordinates and driverFrames only; rigEvaluator.cpp:2704
-            # merely hashes driverCurve into the epoch digest, and the only prim
+            # merely hashes driverCurve into the compiled rig signature, and the only prim
             # whose rigExec:driverCurve is resolved is RigExecRibbon
             # (rigEvaluator.cpp:3468-3479). No kernel reads it here.
             ("`rigExec:driverCurve`", "Unread on this node — the frames already "
@@ -2464,7 +2464,7 @@ interpolator builds and inverts its RBF matrix once: `rigExec:rotation`
 (the driver's local rotation relative to its own rest, in the driver's
 parent frame), `rigExec:translation`, `rigExec:poseType`, the two radii,
 and `inputs:enabled` all feed that solve, and those same six are the
-pose's share of the epoch digest, so editing any of them recompiles the
+pose's share of the compiled rig signature, so editing any of them recompiles the
 interpolator. The other three — `rigExec:falloff`,
 `rigExec:poseControls` and `rigExec:poseControlValues` — are provenance
 that evaluation never reads, and the translation pair is dropped unless
@@ -2608,7 +2608,7 @@ breathes with the stride. Same target contract as the field it wraps: it
 declares the same `rigExec:weightTarget` and is bound in the mover's
 place of the field it modulates.""",
         "how_it_works": """The compiler binds the mover's `rigExec:weightObject` to one
-`computeWeightPacket` for the whole epoch, and every generation
+`computeWeightPacket` for the whole compiled rig, and every generation
 re-evaluates that packet from `inputs:driver`, `inputs:scale`, and
 `inputs:bias` as ordinary dynamic inputs before the mover walk reads it
 at the consuming revision. The base field resolves first — the
@@ -2719,7 +2719,7 @@ points, so a point keeps the weight its bind pose earned and a mover's
 own output cannot feed back into its own weights; `preceding` re-measures
 the points as they stand at that position in the mover stack. The band, invert and strength
 are live per-frame inputs; `rigExec:falloffProfile` and `rigExec:falloffCurve` are
-structural and are baked to one lookup table per binding epoch.""",
+structural and are baked to one lookup table per compiled rig.""",
         "wiring": [
             # Exactly one target: libs/rigExec/rigEvaluator.cpp:872; and it must be
             # the same property the bound mover moves: rigEvaluator.cpp:882.
@@ -2863,7 +2863,7 @@ w = 0, red is w = 1, and the ramp between them is the fold.""",
             "inherits that volume's falloff.",
             "`rigExec:planeAxis` and `rigExec:planeBounds` are structural — they "
             "select which field function runs and are hashed into the binding "
-            "epoch — while `inputs:extentU`/`extentV` are ordinary per-frame "
+            "compiled rig — while `inputs:extentU`/`extentV` are ordinary per-frame "
             "floats you can animate without recompiling.",
         ],
         "see_also": [
@@ -3829,7 +3829,7 @@ and its sample in one call.""",
             "The rotation inputs are expressed in each driver's own rest frame. "
             "A network trained on another convention can be folded into its "
             "first layer: a fixed per-driver rotation of the quaternion is linear.",
-            "The network, its normalization and its output count are epoch "
+            "The network, its normalization and its output count are compiled rig "
             "identity: an edit recompiles. The mask and the numeric inputs are "
             "per-frame inputs.",
             "A network whose output count differs from its `RigExecMlOutput` "
@@ -3902,7 +3902,7 @@ stage.""",
         "tips": [
             "Rows on the same input should be consecutive and ordered: only the "
             "first interval that holds the input counts within such a run.",
-            "Rows, inputs and meshes are epoch identity; the inputs' values are "
+            "Rows, inputs and meshes are compiled rig identity; the inputs' values are "
             "per-frame inputs.",
             "Disabling the node publishes zero on every map and primvar.",
         ],

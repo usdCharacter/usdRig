@@ -3,6 +3,7 @@
 // sequential evaluation agreeing bit for bit, the drag reading the authored
 // history, the measuring space, the envelope, and the history memo.
 #include "rigExecRuntimeDrive.h"
+#include "rigExecSceneProgramDrive.h"
 #include "rigExec/frameCache.h"
 #include "rigExec/frozenContext.h"
 #include "rigExec/rigEvaluator.h"
@@ -294,6 +295,53 @@ TestSpaceAndEnvelope()
     }
 }
 
+// The scene program runs the same window: sequential play pushing each
+// frame, and jumps that rebuild the history, match the native evaluator.
+void
+TestSceneProgramMatchesNative()
+{
+    using rigExecSceneProgramDrive::SceneRun;
+    for (const char *body : {"",
+             "                rel rigExec:space = </Asset/Rig/Controls/Root>",
+             "                float inputs:defaultWeight = 0.5\n"
+             "                double inputs:amplitude = 2\n"
+             "                double3 inputs:axisAmplitude = (1, 0, 1)\n"}) {
+        UsdStageRefPtr stage = MakeStage(body);
+        RigExecRigEvaluator native(stage, kRig);
+        CHECK(native.Compile());
+        std::vector<GfVec3d> want(71);
+        for (int t = 1; t <= 70; ++t) want[size_t(t)] = TipAt(native.Evaluate(UsdTimeCode(t)));
+        SceneRun scene(stage, kRig, -40, 70);
+        CHECK(scene.ok);
+        if (!scene.ok) return;
+        CHECK(scene.program.windowedOps.size() == 1);
+        const auto tip = [&]() {
+            const VtValue frame = scene.Final(kTip, RigExecSceneValueDomain::Pose);
+            return frame.IsHolding<RigExecPointFrame>() ? frame.UncheckedGet<RigExecPointFrame>().Origin()
+                                                        : GfVec3d(std::nan(""));
+        };
+        for (int t = -40; t <= 70; ++t) {
+            CHECK(scene.Evaluate(t));
+            scene.runtime.PushHistory();
+            if (t >= 1 && !Same(tip(), want[size_t(t)])) {
+                const GfVec3d got = tip();
+                std::printf("t=%d scene (%g %g %g) native (%g %g %g)\n", t, got[0], got[1], got[2],
+                            want[size_t(t)][0], want[size_t(t)][1], want[size_t(t)][2]);
+                CHECK(false);
+                break;
+            }
+        }
+        SceneRun jumping(stage, kRig, -40, 70);
+        for (int t : {44, 12, 70, 33, 1, 34}) {
+            CHECK(jumping.Jump(t));
+            CHECK(Same(TipAt(native.Evaluate(UsdTimeCode(t))), want[size_t(t)]));
+            const VtValue frame = jumping.Final(kTip, RigExecSceneValueDomain::Pose);
+            CHECK(frame.IsHolding<RigExecPointFrame>() &&
+                  Same(frame.UncheckedGet<RigExecPointFrame>().Origin(), want[size_t(t)]));
+        }
+    }
+}
+
 void
 TestEditClearsHistory()
 {
@@ -335,10 +383,10 @@ TestFrozenJobsMatchLive()
     }
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.programDigest =
-        context.epochDigest ^
+        context.compiledRigSignature ^
         (uint64_t(program->GetBoundInputCount()) * 1099511628211ull) ^
         (uint64_t(program->GetVaryingInputCount()) * 16777619ull);
     context.frozen = frozen.get();
@@ -483,6 +531,7 @@ main()
     TestDragReadsAuthoredHistory();
     TestSpaceAndEnvelope();
     TestEditClearsHistory();
+    TestSceneProgramMatchesNative();
     TestFrozenJobsMatchLive();
     TestBinaryParity();
     TestValidation();

@@ -41,7 +41,7 @@ _ScopedClearShadowRequested()
 /// Destroys a program the evaluator has replaced, off this thread.
 ///
 /// A retiring program is several milliseconds of frees on the biped -- every
-/// step, table, query and geometry buffer of an epoch -- and nothing waits on
+/// step, table, query and geometry buffer of a compiled rig -- and nothing waits on
 /// them: once the replacement exists, no frame, notice or tool can reach the
 /// old one again. So the destroy is detached rather than paid on the thread
 /// that is recompiling.
@@ -255,11 +255,11 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         "Evaluate@"+TfStringPrintf("%g",time.GetValue()),"evaluate");
     RigExecRigPose pose;pose.time=time;
     // Preserve the observable rest-classification transition at this owner
-    // boundary. The standing program supplies the epoch's chain authority;
+    // boundary. The standing program supplies the compiled rig's chain authority;
     // the existing rebuild below remains the sole binding rebuild.
     const size_t buildsBeforeSettle = _bakedProgramBuilds;
     bool restBecameVarying = false;
-    if (_compiled && _epochRestsConstant && _bakedProgramStale &&
+    if (_compiled && _compiledRigRestsConstant && _bakedProgramStale &&
         !_restEditedProviders.empty()) {
         std::set<SdfPath> chainTargets;
         for (const auto &entry : _propertyChains) chainTargets.insert(entry.first);
@@ -273,20 +273,20 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     }
     {
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler,"Evaluate.Settle","evaluate");
-        if(!_SettleEpoch(&pose.diagnostics))return pose;
+        if(!_SettleCompiledRig(&pose.diagnostics))return pose;
     }
     if(_bakedProgramStale) {
-        // A full structural recompile already published its own epoch reason.
+        // A full structural recompile already published its own compiled rig reason.
         const bool restTransition = restBecameVarying &&
             _bakedProgramBuilds == buildsBeforeSettle;
         _bakedProgramStale=false;
         _RebuildBakedProgram(std::move(_bakedProgram));
         if (restTransition && _bakedProgram) {
             // ORIGINAL moves every rest channel to per-frame classification
-            // after this first successful varying epoch transition.
-            _epochRestsConstant = false;
+            // after this first successful varying compiled rig transition.
+            _compiledRigRestsConstant = false;
             pose.diagnostics.push_back(
-                "rest channel became time-varying: epoch rebuilt");
+                "rest channel became time-varying: compiled rig rebuilt");
         }
     }
     if(_compiled && !_bakedProgram && !_bakeRefused)_RebuildBakedProgram();
@@ -295,7 +295,7 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
         pose.diagnostics.insert(pose.diagnostics.end(),_upstreamDropLines.begin(),_upstreamDropLines.end());
     }
     const auto unavailable=[&]() {
-        pose.diagnostics.push_back("native program unavailable for compiled epoch");
+        pose.diagnostics.push_back("native program unavailable for compiled rig");
         pose.diagnostics.insert(pose.diagnostics.end(),_bakeRefusalReasons.begin(),_bakeRefusalReasons.end());
     };
     if(!_bakedProgram) {
@@ -408,7 +408,7 @@ RigExecRigEvaluator::_RebuildBakedProgram(
             _bakedProgram->AdoptGeometryStateFrom(*outgoing);
         }
     }
-    // Refusing is a property of the epoch, not of the moment: remember it so
+    // Refusing is a property of the compiled rig, not of the moment: remember it so
     // the lazy build in Evaluate asks once rather than once per frame. The
     // reasons ride with it. Evaluate reports them on each frame that has no
     // program; it does not run a second evaluator.

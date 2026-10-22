@@ -1,9 +1,9 @@
-// A point chain lowered to one per-vertex program: the layout a GPU kernel
+// A point chain translated to one per-vertex program: the layout a GPU kernel
 // and the CPU judge below both interpret, op by op, for one point at a time.
 //
 // Every op here reads only its own point (plus per-op tables), so the whole
-// chain runs as one pass with one thread per point. The layout holds what an
-// epoch fixes (weights, sparse offsets, wire bases, skin layouts) and is
+// chain runs as one pass with one thread per point. The layout holds what a
+// compiled rig fixes (weights, sparse offsets, wire bases, skin layouts) and is
 // uploaded once; a frame holds what moves (matrices, palettes, sample
 // scales, control-point deltas, enable flags), a few kilobytes.
 //
@@ -69,7 +69,7 @@ inline constexpr int RigExecGpuDualQuatFloats = 18;
 /// (3), along (1), pivot (3), smallAngle (1).
 inline constexpr int RigExecGpuRadialFloats = 27;
 
-/// What an epoch fixes for one chain.
+/// What a compiled rig fixes for one chain.
 ///
 /// Op entries, kind by kind (a, b, c, d):
 ///  - Matrix: frame = [enable, affine(12)].

@@ -4,10 +4,10 @@
 #include "rigExecScene/sceneDescriptors.h"
 namespace rigExec {
 /// Captures directly from compact source rows into the shared compiler input.
-/// Production lowering must bind typed kernels before this graph can execute.
+/// Production translation must bind typed kernels before this graph can execute.
 bool RigExecCompileStandaloneGraph(const RigExecSceneDb &database,
     const SdfPath &rigRoot, const std::vector<UsdTimeCode> &identities,
-    const RigExecSceneKernelLowering &lower, RigExecCyclePolicy policy,
+    const RigExecSceneKernelTranslation &translate, RigExecCyclePolicy policy,
     RigExecSceneDescriptors *descriptors, RigExecCompiledGraph *graph,
     std::string *error = nullptr);
 }

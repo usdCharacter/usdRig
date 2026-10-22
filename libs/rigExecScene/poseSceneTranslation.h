@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_POSE_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_POSE_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_POSE_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_POSE_SCENE_TRANSLATION_H
 #include "poseProgram.h"
 #include "sceneCompileInputs.h"
 #include "sceneTypedReads.h"
@@ -37,12 +37,12 @@ struct RigExecScenePoseInterpolatorDescriptor {
     RigExecPoseInterpolatorRecord record;
     std::vector<std::string> notes;
 };
-bool RigExecLowerSceneSpaceSwitch(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateSceneSpaceSwitch(const RigExecSceneDescriptors &,const SdfPath &,
     RigExecSceneSpaceSwitchDescriptor *,std::string *error=nullptr);
 bool RigExecResolveSceneSpaceSwitch(const RigExecSceneDescriptors &,
     const RigExecSceneSpaceSwitchDescriptor &,UsdTimeCode,
     const std::map<SdfPath,VtValue> &delivered,double *active,std::string *error=nullptr);
-bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateScenePoseInterpolator(const RigExecSceneDescriptors &,const SdfPath &,
     RigExecScenePoseInterpolatorDescriptor *,std::string *error=nullptr);
 bool RigExecResolveScenePoseInterpolator(const RigExecSceneDescriptors &,
     const RigExecScenePoseInterpolatorDescriptor &,UsdTimeCode,

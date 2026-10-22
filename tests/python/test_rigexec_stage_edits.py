@@ -203,7 +203,7 @@ def TestEditsTheDigestNeverReadSkipIt():
     The digest records the prims it read outside the rig -- mover target
     meshes, weight targets, the ancestors its chains walked -- and a notice
     that touches none of them, and nothing in or above the rig, leaves the
-    epoch alone without recomputing it. An edit on a prim it did read still
+    compiled rig alone without recomputing it. An edit on a prim it did read still
     recomputes it, and recompiles when the digest moved.
     """
     import _rigexec
@@ -254,7 +254,7 @@ def TestEditsTheDigestNeverReadSkipIt():
     _Check(pose.valid and digests > 0 and compiles == 1,
            "an edit on a read mesh recompiles: valid=%s digests=%d "
            "compiles=%d" % (pose.valid, digests, compiles))
-    _Check("structural edit: epoch rebuilt" in list(pose.diagnostics),
+    _Check("structural edit: compiled rig rebuilt" in list(pose.diagnostics),
            "the read mesh's edit says why: %r" % list(pose.diagnostics))
     pose, digests, compiles = Frame(1005.0)
     _Check(pose.valid and digests == 0 and compiles == 0,

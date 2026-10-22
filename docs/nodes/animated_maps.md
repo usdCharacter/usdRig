@@ -116,7 +116,7 @@ python docs/render_media.py --page animated_maps
 ## Tips
 
 - Rows on the same input should be consecutive and ordered: only the first interval that holds the input counts within such a run.
-- Rows, inputs and meshes are epoch identity; the inputs' values are per-frame inputs.
+- Rows, inputs and meshes are compiled rig identity; the inputs' values are per-frame inputs.
 - Disabling the node publishes zero on every map and primvar.
 
 ## See also

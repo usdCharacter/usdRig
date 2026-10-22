@@ -7,7 +7,7 @@ Two things the biped branch built on the dynamic path are steps of the
 program here: a RigExecPoseInterpolator is a PoseInterpolator step that reads
 its driver's final frame out of the slots and writes a range of PoseWeight
 slots, and a blend sample naming a UsdSkelBlendShape carries a layout the
-prologue resolves once per epoch. Neither has a fixture rig of its own at
+prologue resolves once per rig compilation. Neither has a fixture rig of its own at
 this scale, so this holds the real one:
 
   * the stacked character must BAKE (a refusal would be the two-system

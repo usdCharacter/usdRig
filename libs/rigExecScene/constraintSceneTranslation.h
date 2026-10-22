@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_CONSTRAINT_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_CONSTRAINT_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_CONSTRAINT_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_CONSTRAINT_SCENE_TRANSLATION_H
 #include "sceneCompileInputs.h"
 #include <functional>
 #include "sceneTypedReads.h"
@@ -15,11 +15,14 @@ struct RigExecSceneConstraintDescriptor {
     bool aimVectorAuthored=false,preserveInputUp=true,poleModeObject=false,useAnimatedTs=false;
     bool blendShear=false,worldUpRotationOnly=false,radialBlend=false;
     TfToken worldUpType;
+    /// RigExecHarmonicsConstraint's uniform window settings (harmonicsKernel.h).
+    double harmonicsWaves=5,harmonicsWaveLength=5,harmonicsFrequency=1;
+    bool harmonicsIgnoreFirstFrame=true,harmonicsMatchVelocity=true;
     GfVec3d aimAxisFallback{1,0,0},sceneUp{0,1,0};
 };
-/// Lowers schema reads into detached ordered relationship and typed input facts.
+/// Translates schema reads into detached ordered relationship and typed input facts.
 /// The graph compiler selects frame versions and target snapshots separately.
-bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &,const SdfPath &,
     const SdfPathVector &targets,RigExecSceneConstraintDescriptor *,std::string *error=nullptr);
 /// Resolves parameter/table values without source access. Source frames,
 /// effective weight and world-up/carry graph values are delivered by compiler.

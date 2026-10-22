@@ -1,14 +1,14 @@
-// Lowers one point chain's revision packets to a RigExecGpuDeformFrame:
+// Translates one point chain's revision packets to a RigExecGpuDeformFrame:
 // the per-vertex program a GPU kernel runs in place of the chain's CPU
 // kernels (rigExecMath/gpuDeformProgram.h).
 //
 // The packets are the ones the op graph assembled for the CPU kernels; the
-// lowering adds no reads of its own. What an epoch fixes is lowered once
+// translation adds no reads of its own. What a compiled rig fixes is translated once
 // into a shared layout and reused while every op's static key holds; each
 // frame then copies only matrices, palettes, sample scales and control-point
 // deltas.
-#ifndef RIGEXEC_GPU_DEFORM_LOWERING_H
-#define RIGEXEC_GPU_DEFORM_LOWERING_H
+#ifndef RIGEXEC_GPU_DEFORM_TRANSLATION_H
+#define RIGEXEC_GPU_DEFORM_TRANSLATION_H
 
 #include "rigExec/moverGraphTypes.h"
 #include "rigExec/types.h"
@@ -24,7 +24,7 @@
 
 namespace rigExec {
 
-/// One revision of a chain, as the lowering reads it.
+/// One revision of a chain, as the translation reads it.
 struct RigExecGpuRevisionInput {
     RigExecRevisionOp op = RigExecRevisionOp::Matrix;
     const RigExecMoverParameters *parameters = nullptr;
@@ -44,7 +44,7 @@ struct RigExecGpuRevisionInput {
 };
 
 /// Whether \p op with packet \p p has a GPU program op at all. A chain is
-/// lowered only when every revision answers true; anything else stays on
+/// translated only when every revision answers true; anything else stays on
 /// the CPU kernels.
 bool RigExecGpuDeformSupports(RigExecRevisionOp op,
                               const RigExecMoverParameters &p,
@@ -134,19 +134,19 @@ bool RigExecGpuDeformSampleBounds(const RigExecGpuDeformFrame &frame,
 /// outside it by less than the padding in practice.
 void RigExecGpuDeformPadExtent(GfVec3f *min, GfVec3f *max);
 
-/// Per-chain lowering state: the layout last built and the static keys it
-/// was built from. Owned by the one body that lowers the chain.
-class RigExecGpuDeformLowering {
+/// Per-chain translation state: the layout last built and the static keys it
+/// was built from. Owned by the one body that translates the chain.
+class RigExecGpuDeformTranslation {
 public:
-    RigExecGpuDeformLowering();
-    ~RigExecGpuDeformLowering();
-    RigExecGpuDeformLowering(const RigExecGpuDeformLowering &);
-    RigExecGpuDeformLowering &operator=(const RigExecGpuDeformLowering &);
+    RigExecGpuDeformTranslation();
+    ~RigExecGpuDeformTranslation();
+    RigExecGpuDeformTranslation(const RigExecGpuDeformTranslation &);
+    RigExecGpuDeformTranslation &operator=(const RigExecGpuDeformTranslation &);
 
     /// Fills \p frame for \p revisions over \p pointCount points, rebuilding
     /// the layout only when a static key moved. Returns false, leaving
     /// \p frame untouched, when a revision is unsupported.
-    bool Lower(const std::vector<RigExecGpuRevisionInput> &revisions,
+    bool Translate(const std::vector<RigExecGpuRevisionInput> &revisions,
                size_t pointCount, RigExecGpuDeformFrame *frame,
                std::string *why = nullptr);
 
@@ -166,4 +166,4 @@ private:
 
 }  // namespace rigExec
 
-#endif  // RIGEXEC_GPU_DEFORM_LOWERING_H
+#endif  // RIGEXEC_GPU_DEFORM_TRANSLATION_H

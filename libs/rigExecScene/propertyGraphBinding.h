@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_GRAPH_PROPERTY_GRAPH_BINDING_H
 #define RIGEXEC_GRAPH_PROPERTY_GRAPH_BINDING_H
-#include "propertySceneLowering.h"
+#include "propertySceneTranslation.h"
 #include "sceneGraphTypedRead.h"
 namespace rigExec {
 struct RigExecPropertyGraphBinding {

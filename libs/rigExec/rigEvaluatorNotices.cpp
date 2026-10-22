@@ -1,4 +1,4 @@
-// USD notice classification and epoch invalidation.
+// USD notice classification and compiled rig invalidation.
 
 #include "rigEvaluatorInternal.h"
 #include "projectorCaptureNotice.h"
@@ -25,7 +25,7 @@ using namespace evaluatorDetail;
 namespace {
 
 // RIGEXEC_VERIFY_DIGEST_GATE=1: every notice the digest gate calls neutral,
-// on an epoch nothing has dirtied since its last commit or settle, has the
+// on a compiled rig nothing has dirtied since its last commit or settle, has the
 // digest recomputed there and then, and moving it is fatal.
 bool
 _DigestGateVerifyRequested()
@@ -658,7 +658,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // numeric avar channels: an Avar Editor slider tick, a typed value, a
     // key moved, a released gizmo. The structure digest never reads an
     // avar's value (only rigExec:* attributes, and the time-sample COUNT of
-    // a handful of those), and the rest frames the epoch refresh on an edit
+    // a handful of those), and the rest frames the compiled rig refresh on an edit
     // are rest:*, not avars -- so re-deriving both answered "nothing
     // changed" at ~115 ms per slider tick on the biped. Anything else in the
     // notice -- a resync, a non-avar property, a field other than a value --
@@ -731,7 +731,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
             _VerifyNeutralNotice(notice);
         }
     }
-    // The epoch's rest frames answer to their own gate, not to the digest:
+    // The compiled rig's rest frames answer to their own gate, not to the digest:
     // the digest reads no rest:* value, so a rest:rx edit is not a
     // structural edit and never recompiles, and the rests it moved are still
     // owed to the dynamic walk.
@@ -743,7 +743,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // after any edit on the biped, for chains, layouts and shapes the edit
     // never touched.
     _ClearValueCaches(notice, avarValuesOnly);
-    // The baked program captured values, and the epoch digest is deliberately
+    // The baked program captured values, and the compiled rig signature is deliberately
     // blind to values, so the digest cannot say whether one of them moved.
     // The program's own index of what the bake read can: a notice that hits
     // it asks for a rebuild, and one that misses it -- a value on an input

@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_SOLVER_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_SOLVER_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_SOLVER_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_SOLVER_SCENE_TRANSLATION_H
 #include "sceneCompileInputs.h"
 #include <functional>
 #include "sceneTypedReads.h"
@@ -22,10 +22,10 @@ struct RigExecSceneSolverDescriptor {
     std::map<std::string,RigExecSceneTypedRead> typedReads;
     std::map<std::string,RigExecSceneSolverFrameBinding> frameBindings;
 };
-/// Lower structural solver facts using already compiled provider rest values.
+/// Translate structural solver facts using already compiled provider rest values.
 /// The caller binds frame versions and scalar producer IDs from these paths.
 /// Missing required providers yield the production empty aggregate guard.
-bool RigExecLowerSceneSolver(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &,const SdfPath &,
     const std::map<SdfPath,RigExecPointFrame> &providerRests,
     RigExecSceneSolverDescriptor *,std::string *error=nullptr);
 /// Resolve one solver's current typed graph values without source access.

@@ -1,7 +1,7 @@
 #ifndef RIGEXEC_STANDALONE_SCENE_RUNTIME_H
 #define RIGEXEC_STANDALONE_SCENE_RUNTIME_H
 #include "sceneAccess.h"
-#include "rigExecScene/sceneProgramLowering.h"
+#include "rigExecScene/sceneProgramTranslation.h"
 namespace rigExec {
 /// Direct SceneDb frontend for the shared production scene program. Preparation
 /// captures detached facts; evaluation samples owned rows and runs typed SSA.
@@ -17,6 +17,11 @@ public:
     bool ReadPhase(const SdfPath &,RigExecSceneValueDomain,const TfToken &,VtValue *,bool frameAsMatrix=false) const;
     bool Evaluate(size_t identity,const std::map<SdfPath,VtValue> &overlays={},
         std::string *error=nullptr);
+    /// History for windowed operations (RigExecSceneProgramRuntime).
+    size_t GetHistoryDepth() const{return _program.GetHistoryDepth();}
+    void PushHistory(){_runtime.PushHistory();}
+    void ClearHistory(){_runtime.ClearHistory();}
+    bool EvaluateHistory(size_t identity,std::string *error=nullptr);
     bool Read(const SdfPath &,RigExecSceneValueDomain,VtValue *,
         bool frameAsMatrix=false) const;
     const RigExecSceneProgram &GetProgram() const{return _program;}

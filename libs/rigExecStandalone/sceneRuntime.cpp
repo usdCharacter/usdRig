@@ -9,7 +9,7 @@ bool RigExecStandaloneSceneRuntime::Prepare(const RigExecSceneDb &database,
     RigExecSceneDbAccess access(database);RigExecSceneDescriptors scene;
     if(!RigExecCaptureSceneDescriptors(access,root,captureIdentities,&scene,error))return false;
     scene.compilerTargets=publicAttributes;
-    if(!RigExecLowerSceneProgram(scene,&_program,error))return false;
+    if(!RigExecTranslateSceneProgram(scene,&_program,error))return false;
     _publicValues=_program.publicValues;
     if(!_runtime.Prepare(_program,error))return false;
     for(const auto &[key,chain]:_program.layout.routes.chains)
@@ -73,6 +73,10 @@ bool RigExecStandaloneSceneRuntime::Evaluate(size_t identity,
     const std::map<SdfPath,VtValue> &overlays,std::string *error) {
     if(!_prepared){if(error)*error="standalone scene program is not prepared";return false;}
     return _runtime.Evaluate(_program,identity,overlays,error);
+}
+bool RigExecStandaloneSceneRuntime::EvaluateHistory(size_t identity,std::string *error) {
+    if(!_prepared){if(error)*error="standalone scene program is not prepared";return false;}
+    return _runtime.EvaluateHistory(_program,identity,error);
 }
 bool RigExecStandaloneSceneRuntime::Read(const SdfPath &path,RigExecSceneValueDomain domain,
     VtValue *out,bool frameAsMatrix) const {

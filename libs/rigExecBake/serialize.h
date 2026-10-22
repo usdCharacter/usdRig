@@ -1,5 +1,5 @@
 // .rigexec serialization: the live baked program as the file's object
-// tables. Converts RigExecBakedProgramImpl's epoch-stable state into the
+// tables. Converts RigExecBakedProgramImpl's compiled rig-stable state into the
 // RigExecWireFile a bake writes (rigExecBinary/format.h). Per-run state --
 // scratch buffers, last-run comparisons, counters, timestamps -- is
 // deliberately NOT converted here: a file carries what Build decided, the

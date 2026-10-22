@@ -1059,8 +1059,8 @@ RigExecRefusalControlDigest(
 {
     uint64_t hash = 1469598103934665603ull;
     // The domain tag: a refusal digest must never equal a sampled digest
-    // under the same epoch (a mode toggle crosses the two without moving
-    // the epoch, and entries outlive the proofs that scope them).
+    // under the same compiled rig (a mode toggle crosses the two without moving
+    // the compiled rig, and entries outlive the proofs that scope them).
     hash = _FoldBytes(hash, "refusal\x1f", 8);
     // The edit sensor: every stage notice advances the evaluator's serial,
     // so an edit moves this digest at every frame and stale entries become
@@ -1441,7 +1441,7 @@ RigExecFrameCache::Evict(const RigExecFrameCacheKey &key)
 }
 
 size_t
-RigExecFrameCache::EvictEpoch(uint64_t epochDigest)
+RigExecFrameCache::EvictCompiledRig(uint64_t compiledRigSignature)
 {
     // One shard at a time, like _EvictUntilUnderCap: no caller ever needs
     // the whole store locked at once.
@@ -1451,7 +1451,7 @@ RigExecFrameCache::EvictEpoch(uint64_t epochDigest)
     for (_Shard &shard : _shards) {
         std::lock_guard<std::mutex> lock(shard.mutex);
         for (auto it = shard.map.begin(); it != shard.map.end();) {
-            if (it->first.epochDigest != epochDigest) {
+            if (it->first.compiledRigSignature != compiledRigSignature) {
                 ++it;
                 continue;
             }

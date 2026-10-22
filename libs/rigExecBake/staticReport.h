@@ -39,7 +39,7 @@ struct RigExecBakeStaticEntry {
 /// (time samples, a spline, or a value that might vary) or connected.
 ///
 /// Compiles when no program stands; never evaluates. False with the reason
-/// when the rig does not compile, has no compiled program for the epoch,
+/// when the rig does not compile, has no compiled program for the compiled rig,
 /// or holds interactive overrides.
 bool RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
                              std::vector<RigExecBakeStaticEntry> *entries,

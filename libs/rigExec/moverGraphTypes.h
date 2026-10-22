@@ -266,7 +266,7 @@ struct RigExecProviderValues {
     /// Summed channel deltas. Mutable so a caller that lends them
     /// (`lendBlendDeltas`) gives them up through the const assembler input.
     mutable std::vector<GfVec3f> blendDeltas;
-    /// Cache for a skin mover's epoch-fixed per-point layout. Null re-reads
+    /// Cache for a skin mover's compiled rig per-point layout. Null re-reads
     /// and re-validates the arrays every call, which is what a layout that
     /// is animated, connected, or written by a property chain requires.
     RigExecSkinTopologyCache *skinTopologyCache = nullptr;

@@ -723,7 +723,7 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
     }
     // The built-in movers the runtime plays itself, so a file plays with no
     // host library; a host may still install its own kernel for the type.
-    // A revision whose epoch does not prepare passes its points through,
+    // A revision whose compiled rig does not prepare passes its points through,
     // and GetMissingExternalKernels names it.
     for (const RrProgram::ExternalRevision &state : program.externals) {
         if (state.type == RigExecClothMoverType) {
@@ -774,15 +774,15 @@ RigExecRuntimeReader::SetExternalKernel(const std::string &type,
             continue;
         }
         found = true;
-        const std::vector<uint8_t> &epoch =
+        const std::vector<uint8_t> &compiledRig =
             _program->file->externalMovers[k].epoch;
         std::string reason;
         state.kernel = kernel;
-        state.state = kernel.prepare(epoch.data(), epoch.size(), &reason);
+        state.state = kernel.prepare(compiledRig.data(), compiledRig.size(), &reason);
         if (!state.state) {
             state.kernel = RigExecExternalKernel();
             if (prepared) {
-                why = type + " could not prepare its epoch data" +
+                why = type + " could not prepare its compiled rig data" +
                       (reason.empty() ? std::string() : ": " + reason);
             }
             prepared = false;

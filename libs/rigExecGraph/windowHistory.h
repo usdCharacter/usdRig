@@ -78,7 +78,7 @@ RigExecWindowRingsEqual(const RigExecWindowRing &a, const RigExecWindowRing &b)
 /// What a windowed operation's body is handed for one run: the earlier
 /// ticks' packets, where its capture goes (written only by that body), and
 /// whether the run only captures (a history tick that needs no result from
-/// it). \p cache is a slot the body owns across runs for an epoch-fixed
+/// it). \p cache is a slot the body owns across runs for a compiled rig
 /// build its solve reuses; anything held there must be answer-preserving.
 struct RigExecWindowRun {
     const RigExecWindowRing *ring = nullptr;

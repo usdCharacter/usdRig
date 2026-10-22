@@ -17,8 +17,8 @@
 #include "rigEvaluator.h"
 #include "solverKernels.h"
 #include "rigExecScene/sceneCompileInputs.h"
-#include "rigExecScene/solverSceneLowering.h"
-#include "rigExecScene/constraintSceneLowering.h"
+#include "rigExecScene/solverSceneTranslation.h"
+#include "rigExecScene/constraintSceneTranslation.h"
 #include "sceneDispatch.h"
 #include "types.h"
 
@@ -544,9 +544,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 // the dynamic path would ignore that override.
                 // Inside the read, and deliberately so: a resolved path
                 // that names nothing on this stage was never read, and the
-                // day an attribute appears there it is the epoch digest
+                // day an attribute appears there it is the compiled rig signature
                 // that sees it -- creating a property is a structural edit,
-                // so the epoch recompiles and this program is rebuilt with
+                // so the compiled rig recompiles and this program is rebuilt with
                 // it before the next generation chooses a path. Registering
                 // a path the bake could not read would claim an
                 // invalidation this index does not owe. The fixture "the
@@ -558,13 +558,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 B.prims.insert(s.ribbonPointsPath.GetPrimPath());
             }
             // bind(), not fold(): a sampleCount edit is a value edit exec
-            // answers per frame, and the epoch digest already forces a
+            // answers per frame, and the compiled rig signature already forces a
             // recompile when the count changes the frame cardinality.
             s.ribbonSampleCount = bind(prim, "rigExec:sampleCount", 5);
             // rigExec:parameterization, frameTransport, startFrame,
             // endFrame and twistFrames are
             // deliberately NOT read: the computation does not read them
-            // either -- they shape batching and the epoch digest -- and
+            // either -- they shape batching and the compiled rig signature -- and
             // folding one would rebuild the program for an edit that cannot
             // change what it publishes.
         }
@@ -609,9 +609,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.restOverrides.end());
         }
         RigExecSceneSolverDescriptor descriptor;
-        std::string lowerError;
-        if(!RigExecDispatchLowerSceneSolver(*B.sceneDescriptors,solverPath,providerRests,&descriptor,&lowerError))
-            refuse(lowerError,solverPath);
+        std::string translationError;
+        if(!RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors,solverPath,providerRests,&descriptor,&translationError))
+            refuse(translationError,solverPath);
         else {
             // Native input binding selects live/rest SSA versions; the common
             // structural record owns the solver's schema interpretation.
@@ -673,16 +673,16 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         c.singleChainIk = fc.schemaType == "RigExecSingleChainIkConstraint";
         const UsdPrim prim = B.stage->GetPrimAtPath(fc.moverPath);
         RigExecSceneConstraintDescriptor sceneConstraint;
-        bool loweredConstraint=false;
+        bool translatedConstraint=false;
         const auto *constraintNode=compileInputs.Node(fc.moverPath);
         // Pose MatrixMover has its own matrix record and numerical body;
         // the shared constraint descriptor covers the six constraint schemas.
         if(fc.schemaType!="RigExecMatrixMover" && constraintNode &&
            constraintNode->fact.type==fc.schemaType) {
             std::string error;
-            loweredConstraint=RigExecDispatchLowerSceneConstraint(*B.sceneDescriptors,fc.moverPath,
+            translatedConstraint=RigExecDispatchTranslateSceneConstraint(*B.sceneDescriptors,fc.moverPath,
                 fc.targets,&sceneConstraint,&error);
-            if(!loweredConstraint) refuse(error,fc.moverPath);
+            if(!translatedConstraint) refuse(error,fc.moverPath);
             else c.kernelRecord=sceneConstraint.record;
         }
         // Every target, in compiled order, with the read-phase membership
@@ -739,7 +739,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         }
 
         // inputs:sourceWeights and the parent offsets are authored TABLES
-        // the operator reads raw at the frame's own time. They are epoch
+        // the operator reads raw at the frame's own time. They are compiled rig
         // state rather than captured: the prologue reads them again when
         // the program stamp or the stage edit serial moved, or when the time
         // moved and their read can move with it (ConstraintArrays), so an
@@ -1113,7 +1113,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 refuse("constraint space is not a pose provider", fc.space);
             }
         }
-        if(loweredConstraint) {
+        if(translatedConstraint) {
             c.order=sceneConstraint.order;
             c.preserveJointOrientation=sceneConstraint.record.singleChain.preserveJointOrientation;
             c.ikMode=sceneConstraint.record.singleChain.mode;
@@ -1283,7 +1283,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
 }
 
 
-// Lower authored pose checkpoints to typed operation reads and writes.
+// Translate authored pose checkpoints to typed operation reads and writes.
 // The common compiler assigns execution order after all domains are present.
 
 namespace {
@@ -2430,7 +2430,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     // counter: a solver that binds a joint or drives geometry is required
     // and therefore batched, so one of these poses nothing and the only
     // thing that reads it is the guide publication.
-    // Not gated on the guide toggle. The toggle can move without the epoch
+    // Not gated on the guide toggle. The toggle can move without the compiled rig
     // moving, so gating would be a runtime branch in a step body; running
     // and not publishing is the same published generation, because a
     // solver step only reads its sampled leaves and the epilogue consults
@@ -2790,7 +2790,7 @@ NoteConstraintInputs(const RigExecBakedProgramImpl::Constraint &constraint,
     }
     // The authored source-weight, offset and pole-weight tables are NOT
     // noted here: they are not inputs the step reads at all. The prologue
-    // reads them off the stage as epoch state (again whenever the stage edit
+    // reads them off the stage as compiled rig state (again whenever the stage edit
     // serial, the program stamp or a read that varies with the time moved;
     // ConstraintArrays) and compares them by value, and
     // `constraintArrayClusters` is what dirties this step when one moved
@@ -3425,7 +3425,7 @@ RigExecBakedSampleLeaves(RigExecBakedProgramImpl *program, UsdTimeCode time,
     // state, and the index built by the first stands for the second.
     const bool sparse = !all && B.sparseSampling && _SparseInputsReady(&B);
     if (first) {
-        ++B.leafFlagEpoch;
+        ++B.leafFlagCompiledRig;
         B.leaves.ForEach([sparse](auto &pool) {
             if (sparse) {
                 for (const uint32_t k : pool.changedList) {
@@ -5867,7 +5867,7 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
     // or the guide request never prepared, which this mirrors so a parity
     // check compares like with like. Read from the aggregates HERE, under the
     // runtime toggle, rather than cached in a step: either half of the toggle
-    // can move without the epoch moving.
+    // can move without the compiled rig moving.
     if (*B.solverGuidesEnabled) {
         for (const int index : B.solverPublishOrder) {
             const auto &[solverPath, si] = B.solverArrays[size_t(index)];

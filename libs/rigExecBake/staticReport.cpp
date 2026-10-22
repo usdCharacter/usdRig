@@ -213,14 +213,14 @@ RigExecBakeStaticReport(RigExecRigEvaluator &evaluator,
     }
     const RigExecBakedProgram *baked = evaluator.GetBakedProgram();
     if (!baked) {
-        return Fail("no compiled program stands for this epoch");
+        return Fail("no compiled program stands for this compiled rig");
     }
     const RigExecBakedProgramImpl &B = baked->GetStepGraph();
     const UsdStageRefPtr &stage = B.stage;
     const double probe = RigExecBakedProbeTime(stage).GetValue();
     _Entries found;
 
-    // The report is of the authored epoch, as a bake is.
+    // The report is of the authored compiled rig, as a bake is.
     if (evaluator.HasInteractiveOverrides()) {
         return Fail("cannot bake with interactive overrides standing");
     }

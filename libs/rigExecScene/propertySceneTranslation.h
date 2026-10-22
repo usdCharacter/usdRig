@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_PROPERTY_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_PROPERTY_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_PROPERTY_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_PROPERTY_SCENE_TRANSLATION_H
 #include "sceneCompileInputs.h"
 #include "sceneTypedReads.h"
 #include "propertyProgram.h"
@@ -13,7 +13,7 @@ struct RigExecScenePropertyDescriptor {
     std::map<std::string,RigExecSceneBoundInput> inputs;
     std::map<std::string,RigExecSceneTypedRead> typedReads;
 };
-bool RigExecLowerSceneProperty(const RigExecSceneDescriptors &,const SdfPath &mover,
+bool RigExecTranslateSceneProperty(const RigExecSceneDescriptors &,const SdfPath &mover,
     const SdfPath &target,RigExecScenePropertyDescriptor *,std::string *error=nullptr);
 /// Resolves graph-selected inputs into retained typed record storage. Weight
 /// field selection and envelope validation are domain operations before apply.

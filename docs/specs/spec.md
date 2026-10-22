@@ -48,7 +48,7 @@ requested stage, time, and generation.
 `libs/rigExecBake` captures supported rig data into the `.rigexec` format.
 `libs/rigExecBinary` defines its records, and `libs/rigExecRuntime` evaluates
 the exported program without a USD stage. This is distinct from the
-experimental stage-free scene runtime in `libs/rigExecStandalone`, which lowers
+experimental stage-free scene runtime in `libs/rigExecStandalone`, which translates
 a captured scene into the shared operation graph and has its own
 [rigpack contract](standalone-pack.md).
 

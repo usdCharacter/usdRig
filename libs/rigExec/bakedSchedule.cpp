@@ -632,7 +632,7 @@ RigExecBakedScheduleGrainUs(double totalCost, size_t concurrency)
 }
 
 size_t
-RigExecBakedLoweringConcurrency(const RigExecBakedProgramImpl &B)
+RigExecBakedTranslationConcurrency(const RigExecBakedProgramImpl &B)
 {
     // A file's clusters are part of its bytes, so they cannot follow the
     // machine that baked it; a live program schedules for this machine.
@@ -2809,7 +2809,7 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
                : "serial";
     out += " grain=" + Fixed(schedule.grainUs) + "us concurrency=" +
            std::to_string(WorkGetConcurrencyLimit()) + " reference=" +
-           std::to_string(RigExecBakedLoweringConcurrency(B)) + "\n";
+           std::to_string(RigExecBakedTranslationConcurrency(B)) + "\n";
     out += "  clusters=" + std::to_string(schedule.clusters.size()) + " (" +
            std::to_string(clusterEdges) + " edge(s)) serial=" +
            Fixed(schedule.serialCost) + "us criticalPath=" +

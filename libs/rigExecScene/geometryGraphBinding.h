@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_GRAPH_GEOMETRY_GRAPH_BINDING_H
 #define RIGEXEC_GRAPH_GEOMETRY_GRAPH_BINDING_H
-#include "geometrySceneLowering.h"
+#include "geometrySceneTranslation.h"
 #include "sceneGraphBinding.h"
 #include "sceneGraphTypedRead.h"
 namespace rigExec {

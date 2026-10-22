@@ -28,14 +28,14 @@ breathes with the stride. Same target contract as the field it wraps: it
 declares the same `rigExec:weightTarget` and is bound in the mover's
 place of the field it modulates.
 
-Epoch-shape-stable weight field recomputed from statically
+Fixed-shape weight field recomputed from statically
 declared inputs, optionally modulating a base weight object:
 r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i) (spec section 4.1).
 
 ## How it works
 
 The compiler binds the mover's `rigExec:weightObject` to one
-`computeWeightPacket` for the whole epoch, and every generation
+`computeWeightPacket` for the whole compiled rig, and every generation
 re-evaluates that packet from `inputs:driver`, `inputs:scale`, and
 `inputs:bias` as ordinary dynamic inputs before the mover walk reads it
 at the consuming revision. The base field resolves first — the

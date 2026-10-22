@@ -1,14 +1,14 @@
 # Evaluator implementation
 
-`RigExecRigEvaluator` owns the source binding epoch and compiled program.
+`RigExecRigEvaluator` owns the compiled rig's source bindings and program.
 Compilation resolves each consumer's read phase to a typed value version.
 The shared operation compiler derives dependencies from those producers,
 reports cycles, assigns canonical IDs and lowers safe linear clusters.
 
 | File | Responsibility |
 | --- | --- |
-| `rigEvaluator.cpp` | Lifecycle, epoch settlement, generation dispatch and publication |
-| `rigEvaluatorCompile.cpp` | Discovery, validation, candidate bindings and epoch replacement |
+| `rigEvaluator.cpp` | Lifecycle, compiled rig settlement, generation dispatch and publication |
+| `rigEvaluatorCompile.cpp` | Discovery, validation, candidate bindings and compiled rig replacement |
 | `rigEvaluatorNotices.cpp` | Source notice classification and invalidation |
 | `rigEvaluatorInputs.cpp` | Requested interactive/upstream inputs and admission |
 | `bakedProgram.cpp` | Typed input binding and compiled domain records |
@@ -16,7 +16,7 @@ reports cycles, assigns canonical IDs and lowers safe linear clusters.
 | `bakedOpGraph.cpp`, `bakedOpValues.cpp` | Native graph adapter, exact value keys and unavailable cycle outputs |
 | `bakedSchedule.cpp` | Operation dispatch, timing and graph reports |
 | `rigExecGraph/opGraph.cpp` | Common producer compiler, SCC reporting, clusters and readiness executor |
-| `rigExecScene/sceneProgramLowering.cpp` | Detached typed graph assembly from composed scene descriptors |
+| `rigExecScene/sceneProgramTranslation.cpp` | Detached typed graph assembly from composed scene descriptors |
 
 At each evaluation, the host samples source inputs before executing the
 common graph. Operations wait for their declared predecessors. Exact
@@ -40,7 +40,7 @@ Frozen evaluation separates source access from retained worker execution:
 | `frozenContext.cpp` | Public frame inputs, serial scopes and purity audit |
 | `frozenSampling.cpp`, `frozenPropertySampling.cpp` | Source-side input capture |
 | `frozenSnapshot.cpp` | Immutable program snapshots and constant patches |
-| `frozenDigest.cpp` | Input and epoch fingerprints |
+| `frozenDigest.cpp` | Input and compiled rig fingerprints |
 | `frozenWorker.cpp` | Typed input prologue, common executor and publication |
 
 `frozenContextInternal.h` defines worker state. Field visitors retain the

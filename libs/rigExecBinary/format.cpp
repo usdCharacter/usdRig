@@ -1305,7 +1305,7 @@ private:
     }
 
     /// Each array value a revision's layout holds names a main revision
-    /// whose layout the epoch fixes and the file stores.
+    /// whose layout the compiled rig fixes and the file stores.
     bool _LayoutValues()
     {
         const fb::RigExecWireDomainGeometry &g = *_f.geometry;
@@ -5307,7 +5307,7 @@ private:
     }
 
     /// A revision's layout slots: both or neither, only on a main skin
-    /// whose layout the epoch fixes, its mover's int[] rigExec:jointIndices
+    /// whose layout the compiled rig fixes, its mover's int[] rigExec:jointIndices
     /// and float[] rigExec:jointWeights, and with a stored layout defaulting
     /// to its expansion, otherwise to pool arrays.
     bool _LayoutSlots(const fb::RigExecWireRevision &r, bool derived,
@@ -5325,7 +5325,7 @@ private:
         if (derived || r.op != uint8_t(fb::RevisionOp::Skin) ||
             !r.skinTopologyFixed) {
             return _Bad(row + ": layout slots on a revision that is not a "
-                              "main skin whose layout the epoch fixes");
+                              "main skin whose layout the compiled rig fixes");
         }
         const bool stored = r.topologyResolved && r.topology;
         const std::tuple<int32_t, InputTag, fb::ArraySource, const char *,
@@ -5361,7 +5361,7 @@ private:
 
     /// A main revision's vertex partition, as the bake cuts one. Its point
     /// count is its index count in rows of its element size. A chunked
-    /// revision is a skin whose layout the epoch fixes, cut into at least
+    /// revision is a skin whose layout the compiled rig fixes, cut into at least
     /// two ranges that tile the partition's points in order, each keyed by
     /// ascending positions in influence_slots, which size the chunk's
     /// influence rows; its partition layout, when it has one, holds the
@@ -5467,7 +5467,7 @@ private:
         }
         if (r.op != uint8_t(fb::RevisionOp::Skin) || !r.skinTopologyFixed) {
             return _Bad(row + ": chunked, but not a skin whose layout the "
-                              "epoch fixes");
+                              "compiled rig fixes");
         }
         const size_t influences = r.influenceSlots.size();
         uint64_t at = 0;

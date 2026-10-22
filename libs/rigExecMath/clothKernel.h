@@ -61,7 +61,7 @@ constexpr int RigExecClothMaxIterations = 64;
 /// Constraint kinds in RigExecClothMesh::constraintKind.
 enum class RigExecClothConstraint : uint8_t { Stretch = 0, Bend = 1 };
 
-/// Epoch settings: they fix the window and the constraint set, so an edit
+/// Compiled rig settings: they fix the window and the constraint set, so an edit
 /// recompiles.
 struct RigExecClothSettings {
     /// Frames simulated before the current one.
@@ -134,7 +134,7 @@ struct RigExecClothParameters {
     }
 };
 
-/// What a cloth mesh fixes per epoch: triangles, colored constraints and
+/// What a cloth mesh fixes per compiled rig: triangles, colored constraints and
 /// their rest lengths, masses, pins and tethers. Built from the topology,
 /// the rest points and the pin weights.
 struct RigExecClothMesh {
@@ -316,7 +316,7 @@ inline void ClosestBarycentric(const float *p, const float *a, const float *b,
 
 }  // namespace cloth_detail
 
-/// Builds the cloth's epoch half. \p restPoints holds pointCount float3s;
+/// Builds the cloth's compiled rig half. \p restPoints holds pointCount float3s;
 /// \p pinWeights is null or pointCount floats. False with \p why on bad
 /// topology, a non-finite rest point or pin, or a degenerate edge.
 inline bool

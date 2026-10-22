@@ -7,7 +7,7 @@
 // layout, and that a refused packet passes its points through. Where a GPU
 // device is available the same frames run through the compute executor,
 // which must agree with the CPU judge to float rounding.
-#include "rigExec/gpuDeformLowering.h"
+#include "rigExec/gpuDeformTranslation.h"
 #include "rigExec/moverGraph.h"
 #include "rigExec/types.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
@@ -244,11 +244,11 @@ WirePacket(const RigExecWeightPacket &weights, bool sparseBinds)
     return p;
 }
 
-/// Runs \p revisions through the CPU kernels and through the lowered
+/// Runs \p revisions through the CPU kernels and through the translated
 /// program, and returns the worst coordinate difference (or a large number
 /// where either path refused).
 float
-Compare(const std::vector<Revision> &revisions, RigExecGpuDeformLowering *lowering,
+Compare(const std::vector<Revision> &revisions, RigExecGpuDeformTranslation *translation,
         bool expectApplies = true)
 {
     const std::vector<GfVec3f> mesh = Mesh();
@@ -269,8 +269,8 @@ Compare(const std::vector<Revision> &revisions, RigExecGpuDeformLowering *loweri
     }
     RigExecGpuDeformFrame frame;
     std::string why;
-    if (!lowering->Lower(inputs, kPoints, &frame, &why)) {
-        std::fprintf(stderr, "lowering refused: %s\n", why.c_str());
+    if (!translation->Translate(inputs, kPoints, &frame, &why)) {
+        std::fprintf(stderr, "translation refused: %s\n", why.c_str());
         return 1e9f;
     }
     std::vector<float> judge = Flat(mesh);
@@ -307,8 +307,8 @@ float
 CompareOne(RigExecRevisionOp op, const RigExecMoverParameters &packet,
            const std::vector<RigExecBlendChannel> &channels = {})
 {
-    RigExecGpuDeformLowering lowering;
-    return Compare({{op, packet, channels}}, &lowering);
+    RigExecGpuDeformTranslation translation;
+    return Compare({{op, packet, channels}}, &translation);
 }
 
 void
@@ -391,9 +391,9 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
         }
     add(RigExecRevisionOp::Skin, skin, nullptr);
 
-    RigExecGpuDeformLowering lowering;
+    RigExecGpuDeformTranslation translation;
     RigExecGpuDeformFrame frame;
-    CHECK(lowering.Lower(inputs, n, &frame));
+    CHECK(translation.Translate(inputs, n, &frame));
     std::vector<float> base(n * 3), out(n * 3);
     for (size_t i = 0; i < base.size(); ++i) base[i] = Uniform(-50, 50);
     std::vector<RigExecGpuDeformJob> jobs(1);
@@ -402,20 +402,20 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
     jobs[0].base = base.data();
     jobs[0].baseVersion = 1;
     jobs[0].out = out.data();
-    double best = 1e9, total = 0, lowerMs = 0;
+    double best = 1e9, total = 0, translateMs = 0;
     for (int run = 0; run < 20; ++run) {
         packets[1]->transform = RandomTransform(false);
         const auto t0 = std::chrono::steady_clock::now();
-        CHECK(lowering.Lower(inputs, n, &frame));
-        lowerMs = std::chrono::duration<double, std::milli>(
+        CHECK(translation.Translate(inputs, n, &frame));
+        translateMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
         CHECK(executor->Run(&jobs) && jobs[0].ok);
         const double ms = executor->LastRunMs();
         if (run > 0) { best = std::min(best, ms); total += ms; }
     }
-    std::printf("body-sized chain: lower %.3f ms, device run best %.3f ms, "
+    std::printf("body-sized chain: translate %.3f ms, device run best %.3f ms, "
                 "mean %.3f ms; %zu ops, %zu static floats\n",
-                lowerMs, best, total / 19.0, frame.layout->OpCount(),
+                translateMs, best, total / 19.0, frame.layout->OpCount(),
                 frame.layout->staticF.size());
     std::vector<float> judge = base;
     const auto t0 = std::chrono::steady_clock::now();
@@ -486,29 +486,29 @@ main()
             {RigExecRevisionOp::Wire, WirePacket(SparseWeights(), false), {}},
             {RigExecRevisionOp::Skin, SkinPacket("dualQuaternion", true, 13, 8), {}},
         };
-        RigExecGpuDeformLowering lowering;
-        Report("chain", Compare(chain, &lowering));
+        RigExecGpuDeformTranslation translation;
+        Report("chain", Compare(chain, &translation));
         // Next frame: only the moving values change.
         chain[1].packet.transform = RandomTransform(false);
         chain[2].packet.transform = RandomTransform(false);
         chain[4].packet.skinTransforms[2] = RandomTransform(true);
         chain[0].channels[0].weight = 0.37f;
         chain[0].packet = BlendPacket(chain[0].channels, FullStrength());
-        Report("chain next frame", Compare(chain, &lowering));
-        CHECK(lowering.LayoutBuilds() == 1);
+        Report("chain next frame", Compare(chain, &translation));
+        CHECK(translation.LayoutBuilds() == 1);
         // A new envelope is a static change.
         chain[2].packet.weights = DenseWeights();
-        Report("chain new envelope", Compare(chain, &lowering));
-        CHECK(lowering.LayoutBuilds() == 2);
+        Report("chain new envelope", Compare(chain, &translation));
+        CHECK(translation.LayoutBuilds() == 2);
     }
 
     // A refused packet passes its points through on both paths.
     {
         RigExecMoverParameters p = MatrixPacket(DenseWeights(), false);
         p.weights.values.pop_back();  // wrong cardinality
-        RigExecGpuDeformLowering lowering;
+        RigExecGpuDeformTranslation translation;
         Report("refused matrix",
-               Compare({{RigExecRevisionOp::Matrix, p, {}}}, &lowering, false));
+               Compare({{RigExecRevisionOp::Matrix, p, {}}}, &translation, false));
     }
 
     if (g_failures) {

@@ -589,7 +589,7 @@ _MakeHandler()
 
 // RigExecMlMover applies its morph targets as this mover does: its blend
 // inputs' weights connect to its own RigExecMlOutput children, which its
-// network publishes in the pose domain (poseSceneLowering.cpp), so the
+// network publishes in the pose domain (poseSceneTranslation.cpp), so the
 // revision is a blend-shape revision in every respect.
 rigExec::RigExecMoverHandler
 _MakeMlHandler()

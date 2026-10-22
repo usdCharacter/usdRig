@@ -41,7 +41,7 @@
 using namespace rigExec;
 
 // A broken operation is set aside with a warning instead of failing the rig
-// (RigExecRigEvaluator::_CompileEpoch): the rest compiles and evaluates.
+// (RigExecRigEvaluator::_CompileRig): the rest compiles and evaluates.
 // True when the compile succeeded and set aside every one of `operations`.
 static bool
 SkipsOperations(RigExecRigEvaluator &evaluator,
@@ -348,8 +348,8 @@ TestIkAndBlend(const std::string &examplesDir)
 }
 
 // View-free solver->joint binding validation is enforced in Phase A,
-// BEFORE any epoch teardown, so an invalid binding rejects the compile
-// without destroying a working epoch.
+// BEFORE any compiled rig teardown, so an invalid binding rejects the compile
+// without destroying a working compiled rig.
 static void
 TestViewFreeValidation(const std::string &examplesDir)
 {
@@ -719,7 +719,7 @@ TestGeometryMovers(const std::string &examplesDir)
     // NOTHING IS AUTHORED, anywhere (spec §7.2 revised).
     // This used to assert the opposite of the last two checks: that a
     // private derived stage existed and carried a __RigExecGenerated scope,
-    // because compilation authored lowered property applications there. The
+    // because compilation authored translated property applications there. The
     // engine has no compiler now -- solver->joint bindings, frame revisions,
     // point chains and the ribbon's driver points all reach exec as value
     // overrides or through the in-memory mover graph -- so there is nothing
@@ -804,10 +804,10 @@ TestGeometryMovers(const std::string &examplesDir)
         }
     }
 
-    // Structural-edit epoch rebuild (spec §4.2): retargeting a mover's
-    // moves relationship changes the binding-epoch digest, and the next
+    // Structural-edit compiled rig rebuild (spec §4.2): retargeting a mover's
+    // moves relationship changes the compiled rig digest, and the next
     // Evaluate recompiles.
-    const size_t epochBefore = evaluator.GetBindingEpochDigest();
+    const size_t compiledRigBefore = evaluator.GetCompiledRigSignature();
     stage->GetPrimAtPath(
              SdfPath("/ArmAsset/Rig/Movers/Geometry/VolumeCorrect/"
                      "RibbonWrap/ShoulderMatrix/ElbowMatrix/WristMatrix"))
@@ -815,10 +815,10 @@ TestGeometryMovers(const std::string &examplesDir)
         .SetTargets({SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow")});
     const RigExecRigPose pose2 = evaluator.Evaluate(UsdTimeCode::Default());
     CHECK(pose2.valid);
-    CHECK(evaluator.GetBindingEpochDigest() != epochBefore);
+    CHECK(evaluator.GetCompiledRigSignature() != compiledRigBefore);
     bool sawRebuild = false;
     for (const std::string &d : pose2.diagnostics) {
-        if (d.find("epoch rebuilt") != std::string::npos) {
+        if (d.find("compiled rig rebuilt") != std::string::npos) {
             sawRebuild = true;
         }
     }
@@ -2198,7 +2198,7 @@ TestImplicitJointDiscovery(const std::string &examplesDir)
     }
 
     // Every example publishes exactly the joints defined under its rig, and
-    // adding one changes the binding epoch the way editing the old manifest
+    // adding one changes the compiled rig the way editing the old manifest
     // relationship did.
     {
         UsdStageRefPtr stage =
@@ -2209,12 +2209,12 @@ TestImplicitJointDiscovery(const std::string &examplesDir)
         evaluator.cpuReference = true;
         std::vector<std::string> errors;
         CHECK(evaluator.Compile(&errors));
-        const size_t before = evaluator.GetBindingEpochDigest();
+        const size_t before = evaluator.GetCompiledRigSignature();
 
         stage->DefinePrim(SdfPath("/TailAsset/Rig/Joints/Extra"),
                           TfToken("RigExecJoint"));
         CHECK(evaluator.Compile(&errors));
-        CHECK(evaluator.GetBindingEpochDigest() != before);
+        CHECK(evaluator.GetCompiledRigSignature() != before);
     }
 }
 
@@ -3135,7 +3135,7 @@ def Xform "Asset"
 //    3  no chaining, last writer wins      (2 + 1)          <- no chain
 // Then the reorder is flipped through the SESSION layer and Evaluate is
 // called with no intervening Compile: the composed mover topology is part of
-// the binding-epoch digest, so the evaluator has to notice and rebuild. That
+// the compiled rig digest, so the evaluator has to notice and rebuild. That
 // is what "the order is dynamic" means operationally -- a caller never
 // recompiles by hand, and never gets a stale order.
 static void
@@ -3186,7 +3186,7 @@ TestMoverOrderIsComposedAndDynamic()
                     "was top-to-bottom\n", double(value));
     }
     CHECK(std::abs(value - 21.0f) < 1e-6f);
-    const size_t firstDigest = evaluator.GetBindingEpochDigest();
+    const size_t firstDigest = evaluator.GetCompiledRigSignature();
 
     // Flip the composed order in the session layer. Nothing else changes --
     // same movers, same operands, same targets.
@@ -3209,11 +3209,11 @@ TestMoverOrderIsComposedAndDynamic()
     }
     CHECK(std::abs(value - 30.0f) < 1e-6f);
 
-    // The epoch identity moved with it, and the rebuild was reported.
-    CHECK(evaluator.GetBindingEpochDigest() != firstDigest);
+    // The compiled rig identity moved with it, and the rebuild was reported.
+    CHECK(evaluator.GetCompiledRigSignature() != firstDigest);
     bool rebuilt = false;
     for (const std::string &d : second.diagnostics) {
-        rebuilt |= d.find("structural edit: epoch rebuilt") != std::string::npos;
+        rebuilt |= d.find("structural edit: compiled rig rebuilt") != std::string::npos;
     }
     CHECK(rebuilt);
 
@@ -3511,7 +3511,7 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
         }
         *out = worst;
 
-        const size_t epoch = evaluator.GetBindingEpochDigest();
+        const size_t compiledRig = evaluator.GetCompiledRigSignature();
         stage->GetAttributeAtPath(
             SdfPath("/ReadPhaseAsset/Rig/Controls/LiftCtl.avars:tz")).Set(3.0);
         const auto edited = evaluator.Evaluate(when);
@@ -3519,7 +3519,7 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
 
 
         CHECK(edited.referenceMismatches == 0);
-        CHECK(evaluator.GetBindingEpochDigest() == epoch);
+        CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
         const auto after = edited.movedProperties.at(slab).Get<VtVec3fArray>();
         CHECK(after.size() == moved.size());
         const GfVec3f delta = std::string(phase) == "base"
@@ -3556,7 +3556,7 @@ TestReadPhaseSelectsRevision(const std::string &examplesDir)
     CHECK(std::abs(atFinal - 2.5) < 1e-3);
 }
 
-// A phase is compiled wiring, so editing one begins a new epoch and the next
+// A phase is compiled wiring, so editing one begins a new compiled rig and the next
 // Evaluate rebuilds -- exactly like retargeting the relationship it sits on.
 static void
 TestReadPhaseIsStructural(const std::string &examplesDir)
@@ -3571,7 +3571,7 @@ TestReadPhaseIsStructural(const std::string &examplesDir)
     evaluator.cpuReference = true;
     CHECK(evaluator.Compile(nullptr));
     CHECK(evaluator.Evaluate(UsdTimeCode(1024)).valid);
-    const size_t before = evaluator.GetBindingEpochDigest();
+    const size_t before = evaluator.GetCompiledRigSignature();
 
     stage->SetEditTarget(stage->GetSessionLayer());
     const UsdRelationship rel = stage->GetRelationshipAtPath(SdfPath(
@@ -3584,11 +3584,11 @@ TestReadPhaseIsStructural(const std::string &examplesDir)
 
     const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1024));
     CHECK(pose.valid);
-    if (evaluator.GetBindingEpochDigest() == before) {
-        std::printf("  editing a read phase did not change the epoch "
+    if (evaluator.GetCompiledRigSignature() == before) {
+        std::printf("  editing a read phase did not change the compiled rig "
                     "digest; the compiled binding will go stale\n");
     }
-    CHECK(evaluator.GetBindingEpochDigest() != before);
+    CHECK(evaluator.GetCompiledRigSignature() != before);
 }
 
 // Phases that cannot be satisfied are rejected at compile rather than
@@ -3826,7 +3826,7 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
         }
     }
 
-    // Changing a connection's phase is structural: the epoch digest moves,
+    // Changing a connection's phase is structural: the compiled rig signature moves,
     // and the next evaluation reads at the new phase.
     {
         UsdStageRefPtr stage =
@@ -3839,13 +3839,13 @@ TestBadConnectionReadPhasesRejected(const std::string &examplesDir)
         evaluator.cpuReference = true;
         CHECK(evaluator.Compile(nullptr));
         CHECK(evaluator.Evaluate(UsdTimeCode(1024)).valid);
-        const size_t before = evaluator.GetBindingEpochDigest();
+        const size_t before = evaluator.GetCompiledRigSignature();
         stage->SetEditTarget(stage->GetSessionLayer());
         stage->GetAttributeAtPath(readerInput)
             .SetMetadata(phaseField, std::string("final"));
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(1024));
         CHECK(pose.valid);
-        CHECK(evaluator.GetBindingEpochDigest() != before);
+        CHECK(evaluator.GetCompiledRigSignature() != before);
         const auto it = pose.movedProperties.find(SdfPath(
             "/PhaseConnectAsset/Rig/Channels/Readouts.rigExec:base"));
         CHECK(it != pose.movedProperties.end() &&
@@ -5048,7 +5048,7 @@ TestConstraintRewireIsStructural(const std::string &examplesDir)
                    : GfVec3d(std::numeric_limits<double>::quiet_NaN());
     };
     const GfVec3d at20 = elbowAt();
-    const size_t unrevised = evaluator.GetBindingEpochDigest();
+    const size_t unrevised = evaluator.GetCompiledRigSignature();
     const auto recorded = [&]() {
         for (const RigExecPhasedConnection &connection :
              evaluator.GetPhasedConnections()) {
@@ -5062,13 +5062,13 @@ TestConstraintRewireIsStructural(const std::string &examplesDir)
 
     twist.SetConnections({degrees.GetPath()});
     CHECK(Near(elbowAt(), at20, 1e-9));
-    const size_t rewired = evaluator.GetBindingEpochDigest();
+    const size_t rewired = evaluator.GetCompiledRigSignature();
     CHECK(rewired != unrevised);
     CHECK(recorded() == 0);
 
     twist.SetMetadata(TfToken("rigExecReadPhase"), std::string("final"));
     const GfVec3d atFinal = elbowAt();
-    CHECK(evaluator.GetBindingEpochDigest() != rewired);
+    CHECK(evaluator.GetCompiledRigSignature() != rewired);
     CHECK(recorded() == -1);
     CHECK(!Near(atFinal, at20, 1e-3));
 
@@ -5501,7 +5501,7 @@ MakeConnectedMatrixWeightStage(bool dynamicWeight)
 }
 
 // Ordinary USD scalar connections are the same input authority as a property
-// mover override, and their provider identity is binding-epoch state.
+// mover override, and their provider identity is compiled rig state.
 static void
 TestConnectedWeightsRewireAndValidate()
 {
@@ -5524,14 +5524,14 @@ TestConnectedWeightsRewireAndValidate()
         if (moved.size() == 1) {
             CHECK(Near(GfVec3d(moved[0]), GfVec3d(2.5, 0, 0)));
         }
-        const size_t before = evaluator.GetBindingEpochDigest();
+        const size_t before = evaluator.GetCompiledRigSignature();
         stage->GetAttributeAtPath(inputPath).SetConnections(
             {SdfPath("/Asset/Inputs.b")});
         const RigExecRigPose rewired =
             evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(rewired.valid);
         CHECK(rewired.referenceMismatches == 0);
-        CHECK(evaluator.GetBindingEpochDigest() != before);
+        CHECK(evaluator.GetCompiledRigSignature() != before);
         moved = EnvelopePoints(rewired, SdfPath("/Asset/Geom/P.points"));
         CHECK(moved.size() == 1);
         if (moved.size() == 1) {
@@ -5562,10 +5562,10 @@ TestConnectedWeightsRewireAndValidate()
 }
 
 // Frozen weight descriptor mistakes skip their mover during compile, never a later mover
-// application. Dense array length is epoch identity so a valid-to-invalid edit
+// application. Dense array length is compiled rig identity so a valid-to-invalid edit
 // is caught without an explicit Compile call.
 static void
-TestWeightDescriptorValidationAndEpoch()
+TestWeightDescriptorValidationAndCompiledRig()
 {
     auto makeStage = [](const VtFloatArray &values, bool sampledPoints = false) {
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
@@ -5636,7 +5636,7 @@ TestWeightDescriptorValidationAndEpoch()
     }
     {
         // A points property authored only at a time sample is a valid domain;
-        // the epoch freezes its sampled cardinality instead of requiring a
+        // the compiled rig freezes its sampled cardinality instead of requiring a
         // default opinion.
         const UsdStageRefPtr sampled =
             makeStage(VtFloatArray{1, 1, 1}, true);
@@ -5869,7 +5869,7 @@ main(int argc, char **argv)
     TestPropertyMoverDrivesDynamicWeight();
     TestPropertyChainDependencyOrderAndExactEndpoint();
     TestConnectedWeightsRewireAndValidate();
-    TestWeightDescriptorValidationAndEpoch();
+    TestWeightDescriptorValidationAndCompiledRig();
     TestDerivedMaintenanceIgnoresOwnerLookalikes(examplesDir);
     TestDerivedMaintenanceDeferral();
 

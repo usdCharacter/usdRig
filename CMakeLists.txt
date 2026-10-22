@@ -56,7 +56,7 @@ endif()
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 
 # USD-free op scheduler. libs/rigExecGraph is only this archive.
-# USD scene lowering is rigExecScene, linked into the shared library below.
+# USD scene translation is rigExecScene, linked into the shared library below.
 add_library(rigExecGraph STATIC libs/rigExecGraph/opGraph.cpp)
 target_compile_features(rigExecGraph PUBLIC cxx_std_17)
 target_compile_definitions(rigExecGraph PUBLIC
@@ -95,19 +95,19 @@ target_link_libraries(rigExecInputValues PRIVATE vt sdf ts)
 target_compile_definitions(rigExecInputValues PRIVATE RIGEXEC_INPUT_VALUES_EXPORTS)
 set_target_properties(rigExecInputValues PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# USD scene lowering. A shared library: librigExec does not absorb it.
+# USD scene translation. A shared library: librigExec does not absorb it.
 # Frame-path program runners are sources of rigExec, below.
 add_library(rigExecScene SHARED
     libs/rigExecScene/autoClavicleGraph.cpp
     libs/rigExecScene/constraintGraphBinding.cpp
-    libs/rigExecScene/constraintSceneLowering.cpp
+    libs/rigExecScene/constraintSceneTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
-    libs/rigExecScene/geometrySceneLowering.cpp
+    libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
     libs/rigExecScene/poseGraphBinding.cpp
-    libs/rigExecScene/poseSceneLowering.cpp
+    libs/rigExecScene/poseSceneTranslation.cpp
     libs/rigExecScene/propertyGraphBinding.cpp
-    libs/rigExecScene/propertySceneLowering.cpp
+    libs/rigExecScene/propertySceneTranslation.cpp
     libs/rigExecScene/providerRecordExport.cpp
     libs/rigExecScene/registerScene.cpp
     libs/rigExecScene/sceneLinkAnchor.cpp
@@ -116,14 +116,14 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/sceneGraphTypedRead.cpp
     libs/rigExecScene/sceneProgram.cpp
     libs/rigExecScene/sceneProgramLayout.cpp
-    libs/rigExecScene/sceneProgramLowering.cpp
+    libs/rigExecScene/sceneProgramTranslation.cpp
     libs/rigExecScene/sceneTypedReads.cpp
     libs/rigExecScene/sceneVersionRoutes.cpp
     libs/rigExecScene/solverGraphBinding.cpp
-    libs/rigExecScene/solverSceneLowering.cpp
+    libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp
     libs/rigExecScene/weightGraphBinding.cpp
-    libs/rigExecScene/weightSceneLowering.cpp
+    libs/rigExecScene/weightSceneTranslation.cpp
 )
 target_compile_features(rigExecScene PUBLIC cxx_std_17)
 target_include_directories(rigExecScene PUBLIC
@@ -181,7 +181,7 @@ add_library(rigExec SHARED
     libs/rigExec/movers/mathMovers.cpp
     libs/rigExec/movers/pathOperation.cpp
     libs/rigExec/moverGraph.cpp
-    libs/rigExec/gpuDeformLowering.cpp
+    libs/rigExec/gpuDeformTranslation.cpp
     libs/rigExec/gpuCloth.cpp
     libs/rigExec/tapSet.cpp
     libs/rigExec/rigEvaluator.cpp
@@ -237,7 +237,7 @@ target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecInputValues ts)
 # On Windows the consumers of rigExec need those two archives as well.
 include(cmake/WindowsArchiveLinks.cmake)
-# Scene lowering calls back into the evaluator. The evaluator does not
+# Scene translation calls back into the evaluator. The evaluator does not
 # link the scene library; callers that compile a stage do.
 target_link_libraries(rigExecScene PUBLIC rigExec)
 
@@ -1619,7 +1619,7 @@ target_link_libraries(testRigExecMoverGraph PRIVATE rigExec)
 target_compile_definitions(testRigExecMoverGraph PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecMoverGraph COMMAND testRigExecMoverGraph)
 
-# The epoch-fixed skin layout: what has to invalidate it, and what Compile
+# The compiled rig skin layout: what has to invalidate it, and what Compile
 add_executable(testRigExecSkinTopology tests/testRigExecSkinTopology.cpp)
 target_link_libraries(testRigExecSkinTopology PRIVATE rigExec)
 target_compile_definitions(testRigExecSkinTopology PRIVATE
@@ -1644,15 +1644,15 @@ target_compile_definitions(testRigExecPoseInterpolator PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecPoseInterpolator COMMAND testRigExecPoseInterpolator)
 
-add_executable(testRigExecEpochRests tests/testRigExecEpochRests.cpp)
-target_link_libraries(testRigExecEpochRests PRIVATE rigExec)
-target_compile_definitions(testRigExecEpochRests PRIVATE
+add_executable(testRigExecCompiledRigRests tests/testRigExecCompiledRigRests.cpp)
+target_link_libraries(testRigExecCompiledRigRests PRIVATE rigExec)
+target_compile_definitions(testRigExecCompiledRigRests PRIVATE
     ${_rigexec_schema_resource_define})
-add_test(NAME testRigExecEpochRests COMMAND testRigExecEpochRests
+add_test(NAME testRigExecCompiledRigRests COMMAND testRigExecCompiledRigRests
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
-set_tests_properties(testRigExecEpochRests PROPERTIES
+set_tests_properties(testRigExecCompiledRigRests PROPERTIES
     ENVIRONMENT "RIGEXEC_ENABLE_PARALLEL_EVAL=0")
-rigexec_add_graph_test(testRigExecEpochRests CONE_VERIFY SEPARATE_PARALLEL
+rigexec_add_graph_test(testRigExecCompiledRigRests CONE_VERIFY SEPARATE_PARALLEL
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
 # Bit-identical results from the parallel per-point kernels, both ways round:
@@ -1964,7 +1964,7 @@ foreach(_suite testRigExecBakedMode testRigExecValueEdits)
     rigexec_add_scoped_clear_test(${_suite} ${_suite}
         "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 endforeach()
-foreach(_suite testRigExecEpochRests testRigExecNoAuthoring)
+foreach(_suite testRigExecCompiledRigRests testRigExecNoAuthoring)
     rigexec_add_digest_gate_test(${_suite} ${_suite}
         "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 endforeach()
@@ -2184,8 +2184,8 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME testInterveningXform COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_intervening_xform.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
-    add_test(NAME testRigExecEpochConstants COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_epoch_constants.py"
+    add_test(NAME testRigExecCompiledRigConstants COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_compiled_rig_constants.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecWireMover COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_wire_mover.py"
@@ -2326,7 +2326,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testRigExecSpaceSwitchVersions
                          testRigExecSpaceSwitchVersionsCones
                          testRestLocal testRestMigration
-                         testInterveningXform testRigExecEpochConstants
+                         testInterveningXform testRigExecCompiledRigConstants
                          testRigExecBakedAvarPatch testRigExecWireMover
                          testRigExecPxrHygiene
                          testRigExecMatrixSpace
@@ -2511,7 +2511,7 @@ endif()
 # library, so the hooks are loaded. Imaging, bake, and the standalone
 # adapter link it privately: playback, runtime, and imaging tests load
 # the library and are not scene tests. testRigExecStandalone calls the
-# lowering functions from the test itself.
+# translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
     benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
     rigExecPose rigExecBakeTool
@@ -2519,7 +2519,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
     testRigExecChainLevels testRigExecConstraints testRigExecCrossDomainInputs
     testRigExecDefaultSpaces testRigExecDeltaMush testRigExecEnvelopeVolumes
-    testRigExecEpochRests testRigExecExampleParity testRigExecExecCrossCheck
+    testRigExecCompiledRigRests testRigExecExampleParity testRigExecExecCrossCheck
     testRigExecExecCrossCheckRows testRigExecExternalMovers
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
@@ -2543,7 +2543,7 @@ foreach(_rigexec_oracle_exe IN ITEMS
     rigExecPose benchEditLatency
     testRigExecArm testRigExecBakedAttribute testRigExecBakedMode
     testRigExecBakedSchedule testRigExecConstraints testRigExecDeltaMush
-    testRigExecEpochRests testRigExecExampleParity
+    testRigExecCompiledRigRests testRigExecExampleParity
     testRigExecExecCrossCheck testRigExecExecCrossCheckRows
     testRigExecExternalMovers testRigExecFrozenContext
     testRigExecGeometryOpsBakedParity testRigExecGoldenPose

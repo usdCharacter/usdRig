@@ -27,7 +27,7 @@ process-global and is now per context:
 | rig sessions and the active `_stage` | the stage is held strongly while active |
 | stage-notice key (`_OnObjectsChanged`) | registered on the context's own stage |
 | noted rig roots, generated scopes, asset roots, read roots | |
-| `_lastTime`, generation, published epoch (id and pointer) | |
+| `_lastTime`, generation, published compiled rig (id and pointer) | |
 | preview slots, preview stage (weak), xform deltas | only this context's chains receive the deltas |
 | weight overlay selection | remembered before activation |
 | background scheduler | created on the first activation, stopped by every deactivation |
@@ -107,7 +107,7 @@ first populated:
    and again when a stage is replaced under the same engine. The directory
    records the key, and the context seeds the chain with its store (an atomic
    `SetStore` that announces the swap as a structural generation), its
-   generated scopes, its preview deltas and its binding epoch.
+   generated scopes, its preview deltas and its compiled rig.
 4. From then on the chain resolves its context through the key:
    - the time trigger (`_PrimsDirtied` calls `ForKey(key)->SetTime`);
    - eager activation (`IsNotedRigRoot` on the bound context);

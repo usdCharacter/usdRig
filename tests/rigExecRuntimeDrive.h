@@ -37,7 +37,7 @@
 #include <utility>
 #include <vector>
 
-/// Bakes \p evaluator's epoch at \p time (NaN: the probe time) into
+/// Bakes \p evaluator's compiled rig at \p time (NaN: the probe time) into
 /// \p bytes. False with the bake's reason.
 inline bool
 RigExecTestBakeAt(rigExec::RigExecRigEvaluator &evaluator, double time,
@@ -872,7 +872,7 @@ RigExecCompareRuntimeRun(const rigExec::RigExecRigPose &pose,
     }
     std::vector<std::string> want =
         pose.diagnostics;
-    if (!want.empty() && want.front() == "structural edit: epoch rebuilt") {
+    if (!want.empty() && want.front() == "structural edit: compiled rig rebuilt") {
         want.erase(want.begin());
     }
     const std::vector<std::string> got =

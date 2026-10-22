@@ -2051,7 +2051,7 @@ class RigExecDynamicWeight "RigExecDynamicWeight" (
         }
         string className = "DynamicWeight"
     }
-    doc = """Epoch-shape-stable weight field recomputed from statically
+    doc = """Fixed-shape weight field recomputed from statically
     declared inputs, optionally modulating a base weight object:
     r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i) (spec section 4.1)."""
 )
@@ -2125,7 +2125,7 @@ class "RigExecVolumeWeight" (
         Its rigExecReadPhase metadata chooses which points the distance
         function measures. `base`, the default, samples the STATIC
         authored points (or rigExec:sampleSource), so the field is
-        computed once per epoch and a point keeps the weight its bind pose
+        computed once per rig compilation and a point keeps the weight its bind pose
         earned -- the behaviour of a painted map, and what a matrix mover
         wants so that its own output cannot feed back into its own weights.
 
@@ -2197,10 +2197,10 @@ class "RigExecVolumeWeight" (
         the weight.
 
         This is a STRUCTURAL read, resampled to a lookup table once per
-        binding epoch, NOT a per-frame input: a per-frame input is a
+        compiled rig, NOT a per-frame input: a per-frame input is a
         value at one time, and a curve is the whole function. The animatable knobs are falloffMin/Max, invert, and
         strength; the curve is a rig-authoring parameter, which is also
-        what keeps the field epoch-shape-stable (spec section 4.1).
+        what keeps the field fixed-shape (spec section 4.1).
 
         Held extrapolation outside [0, 1] is the Ts default and is
         exactly right here, so a curve authored over a shorter span still
@@ -2329,7 +2329,7 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
         falloff that volume has.
 
         Structural rather than animatable: it selects which field
-        function runs, so it is hashed into the binding-epoch digest
+        function runs, so it is hashed into the compiled rig digest
         alongside rigExec:planeAxis. The extents themselves are ordinary
         per-frame floats."""
     )
@@ -3910,7 +3910,7 @@ class RigExecClothMap "RigExecClothMap" (
     doc = """Paintable scalar cloth data. With no binding, one value broadcasts
     or one value per cloth vertex is read. A binding supplies one sample per
     cloth vertex, transferring a field from sourceMesh in vertex, barycentric
-    or UV space. Values are finite and nonnegative; edits invalidate the epoch."""
+    or UV space. Values are finite and nonnegative; edits invalidate the compiled rig."""
 )
 {
     uniform float[] inputs:values = []
@@ -3934,7 +3934,7 @@ class RigExecClothConstraintSet "RigExecClothConstraintSet" (
     Force is the estimated reaction load in normalized cloth mass times scene
     units per second squared. The curve maps force to a blend between the
     painted minimum and maximum strengths. Warp/weft/normal multiply response
-    along the UV material directions. Profiles and maps are fixed per epoch;
+    along the UV material directions. Profiles and maps are fixed per compiled rig;
     animated entering geometry and collider motion remain per-frame inputs.
     Attachment profiles draw guide rods between paired source and target
     samples on the displayed meshes. The guides never author geometry."""

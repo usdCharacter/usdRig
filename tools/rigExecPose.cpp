@@ -1275,8 +1275,8 @@ RunGoldenProtocol(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                 std::printf("golden frozen sample: %s\n",error.c_str()); return false;
             }
             rigExec::RigExecFrozenEvalContext context;
-            context.epochDigest = source.GetBindingEpochDigest();
-            context.programDigest = context.epochDigest ^
+            context.compiledRigSignature = source.GetCompiledRigSignature();
+            context.programDigest = context.compiledRigSignature ^
                 (uint64_t(source.GetBakedProgram()->GetBoundInputCount()) << 32) ^
                 source.GetBakedProgram()->GetVaryingInputCount();
             context.slotCount = source.GetBakedProgram()->GetProviderCount();
@@ -1545,7 +1545,7 @@ main(int argc, char **argv)
         std::printf("  %s\n", error.c_str());
     }
     std::printf("  compile: %s (%zu mover applications, digest %zu)\n",
-        compiled?"ok":"FAILED",evaluator.GetMoverOrder().size(),evaluator.GetBindingEpochDigest());
+        compiled?"ok":"FAILED",evaluator.GetMoverOrder().size(),evaluator.GetCompiledRigSignature());
     if(!compiled)return 1;
     int status=0;
     if(execCrossCheck && evaluator.GetBakedProgram()) {

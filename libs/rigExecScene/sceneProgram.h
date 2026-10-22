@@ -9,6 +9,8 @@
 #include "poseGraphBinding.h"
 #include "poseCommit.h"
 #include "autoClavicleGraph.h"
+#include "rigExecGraph/windowHistory.h"
+#include <memory>
 #include <variant>
 namespace rigExec {
 struct RigExecSceneGeometryOp {
@@ -17,6 +19,8 @@ struct RigExecSceneGeometryOp {
     RigExecValueId pointsBase=UINT64_MAX,pointsFinal=UINT64_MAX;
     RigExecWeightPacket fieldPacket;
     bool posedPoints=false,useSimd=true;
+    /// Earlier frames a windowed mover reads; 0 for every other mover.
+    uint32_t windowFrames=0;
 };
 struct RigExecSceneBlendChannelOp { RigExecGeometryGraphBinding binding;RigExecValueId output=UINT64_MAX; };
 struct RigExecSceneWeightOp { RigExecWeightGraphBinding binding;int object=-1;RigExecValueId output=UINT64_MAX; };
@@ -42,6 +46,19 @@ public:
     /// Original compiler SCC authority retained across explicit recompiles.
     RigExecOpExclusionProof retainedExclusions;
     std::shared_ptr<const char> identity;
+    /// Windowed operations (rigExecGraph/windowHistory.h), settled by Compile
+    /// from the compiled predecessors, as every evaluator settles them.
+    struct WindowedOp {
+        size_t operation=0;
+        uint32_t frames=0,canonical=UINT32_MAX;
+        std::vector<uint32_t> inner;
+        bool feedsWindow=false;
+    };
+    std::vector<WindowedOp> windowedOps;
+    /// Per canonical op: 1 for the windowed ops and every op one depends on.
+    std::vector<char> historyMask;
+    /// How many earlier ticks a complete history reaches back.
+    size_t GetHistoryDepth() const;
     bool Append(const std::string &key,RigExecSceneOperation,std::string *error=nullptr);
     bool Compile(RigExecCyclePolicy,std::string *error=nullptr);
     bool Compile(RigExecCyclePolicy,const RigExecOpExclusionProof *,std::string *error);
@@ -65,7 +82,29 @@ public:
     bool Prepare(const RigExecSceneProgram &,std::string *error=nullptr);
     bool Evaluate(const RigExecSceneProgram &,size_t identity,
         const std::map<SdfPath,VtValue> &overlays={},std::string *error=nullptr);
+    /// History for windowed operations, kept as RigExecRuntimeReader keeps
+    /// it: a host playing in order calls PushHistory after each Evaluate that
+    /// advanced a frame; a host that jumps calls ClearHistory, then
+    /// EvaluateHistory at each of GetHistoryDepth earlier identities, oldest
+    /// first. A drag is an Evaluate with overlays and no push.
+    void PushHistory();
+    void ClearHistory();
+    /// Runs the windowed operations and what they depend on at \p identity,
+    /// without overlays, on a runtime of its own; their captures become the
+    /// newest history tick. Publishes nothing here.
+    bool EvaluateHistory(const RigExecSceneProgram &,size_t identity,std::string *error=nullptr);
 private:
+    struct Window {
+        RigExecWindowRing ring,read;
+        RigExecWindowPacketPtr capture;
+        std::shared_ptr<const void> cache;
+    };
+    std::vector<Window> _windows;
+    std::vector<int32_t> _windowOfOperation;
+    bool _historyTick=false;
+    std::unique_ptr<RigExecSceneProgramRuntime> _history;
+    bool Execute(const RigExecSceneProgram &,size_t identity,const std::map<SdfPath,VtValue> &overlays,
+        const std::vector<char> *active,std::string *error);
     std::vector<RigExecSceneOperation> _operations;
     std::vector<RigExecSceneOperationWorkspace> _workspaces;
     RigExecOpWorkspace _ready;

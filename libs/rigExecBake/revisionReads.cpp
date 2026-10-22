@@ -336,7 +336,7 @@ _RunOverlay(const RigExecBakedProgramImpl &program)
 // The assembly of one revision (moverGraph.cpp: RigExecAssembleMatrix-,
 // RigExecAssembleSkin- and RigExecAssembleParameters), every arm, past
 // every early return an input can take, over \p overlay. \p derived: a
-// derived target's revision, which keeps no epoch skin layout.
+// derived target's revision, which keeps no compiled rig skin layout.
 void
 _Revision(const RigExecBakedProgramImpl &program,
           const RigExecResolvedInputs &overlay, _Enumeration E,

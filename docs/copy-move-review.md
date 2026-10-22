@@ -36,7 +36,7 @@ Production callers run per revision per frame
 (`libs/rigExec/moverGraph.cpp:936-945`,
 `libs/rigExecRuntime/geometry.cpp:2592-2601`).
 
-Proposed change: precompute connectivity once per topology epoch,
+Proposed change: precompute connectivity once per topology compilation,
 cache it in revision/baked state, and pass it to the kernels by const
 reference. Preserve dynamic/baked parity: the live, baked, and runtime
 paths must share the cached representation. Constraints the cache must
@@ -287,7 +287,7 @@ assignment at `:34` is unreachable: the guard tests the validity of
 `libs/rigExec/frozenGeometry.cpp:1151`:
 `revision.parameters = inputs.revisionPackets[...];` copies the skin
 packet per skin revision per frame, with cached layouts included.
-Epoch-fixed layouts already avoid the layout arrays via the shared
+Compiled rig layouts already avoid the layout arrays via the shared
 `skinTopology` handle (`libs/rigExec/types.h:332-336`,
 `moverGraph.cpp:1871-1897`); what still copies every frame is the
 packet shell plus the transform table -- and that table is the FIXED
@@ -327,7 +327,7 @@ the existing convention (`libs/rigExec/moverGraph.cpp:2842-2846`;
   `frozenGeometry.cpp:1411` already does this locally).
 Related: `GetPrimAtPath` per blend input/sample per frame
 (`rigEvaluatorGeometryEvaluation.cpp:545,552`) could cache prims per
-epoch; counts are small, so this is the minor half of the finding.
+compiled rig; counts are small, so this is the minor half of the finding.
 
 ### M7. Derived publish converts vector to VtArray per execution
 
@@ -632,18 +632,18 @@ into the input, make the caller's packet non-const, compute the
 status before moving, and retain the existing equality/invalidation
 checks.
 
-### M27. Runtime rebuilds epoch-fixed blend layouts every frame
+### M27. Runtime rebuilds compiled rig blend layouts every frame
 
 `libs/rigExecRuntime/geometry.cpp:3581` constructs
 `RrGeoWireLayout(boundSample)` per sample per assembly, allocating a
 layout and copying every offset and index (`:2961-2966`) -- although
-the wire data is epoch-fixed. Zero-weight channels still pay this:
+the wire data stays fixed for the compiled rig. Zero-weight channels still pay this:
 the skip happens later in the summation (`:2228-2229`). The baked
 path instead shares the cached handle
 (`libs/rigExec/bakedGeometry.cpp:1780`, assigned at `:1629`).
 
 Proposed change: cache these immutable layouts per program/geometry
-epoch and share their handles. Preserve per-frame refused-layout
+compiled rig and share their handles. Preserve per-frame refused-layout
 precedence, missing/invalid layouts, and existing validation and
 accumulation order.
 
@@ -1059,7 +1059,7 @@ lazily for fractional weights, preserving endpoint branches and
 arithmetic; mirror the runtime implementation. M43's full-strength
 bypass does not address fractional weights.
 
-### M54. Static sparse weights re-sort epoch-fixed support every frame
+### M54. Static sparse weights re-sort compiled rig support every frame
 
 `libs/rigExec/weightPackets.cpp:68` sorts the sparse pairs on every
 build, reached through the per-frame rebuild at
@@ -1070,7 +1070,7 @@ same builder; the runtime repeats the sort at
 `libs/rigExecRuntime/weights.cpp:861`.
 
 Proposed change: cache canonical support and its validation result
-per structural epoch, while continuing to evaluate the changing
+per structural compiled rig, while continuing to evaluate the changing
 default weight and preserving invalid-packet contents and
 validation order. M50 removes intermediate copies but leaves this
 O(S log S) work.
@@ -1086,7 +1086,7 @@ resolve. Authored curves allocate a table and call
 `bakedGeometry.cpp:2151`; combined inputs repeat it.
 
 Proposed change: cache the table by profile/spline content or an
-appropriately invalidated epoch, preserving sampling and fallback
+appropriately invalidated compiled rig, preserving sampling and fallback
 arithmetic. Compile already builds these tables
 (`rigEvaluatorCompile.cpp:1655`).
 
@@ -1153,7 +1153,7 @@ evaluation (`rigEvaluatorGeometryEvaluation.cpp:475`,
 
 Proposed change: cache uniqueness metadata, including the first
 duplicate position, by exact authored indices or an appropriately
-invalidated epoch; preserve per-call cardinality checks, authored
+invalidated compiled rig; preserve per-call cardinality checks, authored
 scatter order, error precedence, and partial-output behavior.
 M54's builder-side sort cache does not eliminate this separate
 work.
@@ -1169,7 +1169,7 @@ baked evaluation (`rigEvaluatorGeometryEvaluation.cpp:475`,
 `bakedGeometry.cpp:2151`).
 
 Proposed change: cache the support-equivalence result by exact
-input arrays or an appropriately invalidated epoch. Preserve
+input arrays or an appropriately invalidated compiled rig. Preserve
 empty-support inheritance, order-insensitive and
 duplicate-insensitive comparison at this check, and its error
 precedence before recursive base validation (`:648`). Apply
@@ -1288,7 +1288,7 @@ re-raise them:
 - Frame cache: shared-handle design, pose copied outside shard locks.
 - Skin kernel: per-matrix tables hoisted once per array
   (`moverGraph.cpp:755-781`), chunked parallel ranges, SIMD path;
-  epoch-fixed layouts shared by handle (`types.h:332-336`).
+  compiled rig layouts shared by handle (`types.h:332-336`).
 - Skin oracle (`movers/skinMover.cpp:208-209,248,337-338`): works in
   `VtArray`s directly, no VtArray-to-vector conversion.
 - RBF matrix inversion: solver-construction time, not per frame.

@@ -102,7 +102,7 @@ trainers export.
 
 RigExec ships no trainer. Any MLP whose layers can be written out in this
 layout runs as authored. The network's arrays, normalization and output count
-are epoch identity, so an edit recompiles. A network whose output count
+are compiled rig identity, so an edit recompiles. A network whose output count
 differs from its `RigExecMlOutput` children is set aside at compile, with a
 diagnostic.
 

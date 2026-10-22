@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_WEIGHT_SCENE_LOWERING_H
-#define RIGEXEC_GRAPH_WEIGHT_SCENE_LOWERING_H
+#ifndef RIGEXEC_GRAPH_WEIGHT_SCENE_TRANSLATION_H
+#define RIGEXEC_GRAPH_WEIGHT_SCENE_TRANSLATION_H
 #include "sceneCompileInputs.h"
 #include "sceneTypedReads.h"
 #include "weightProgram.h"
@@ -39,7 +39,7 @@ struct RigExecSceneWeightInputs {
     /// Ordinary packets concatenate only exact authored property targets.
     std::vector<std::array<std::vector<GfVec3f>,3>> packetPoints;
 };
-bool RigExecLowerSceneWeight(const RigExecSceneDescriptors &,const SdfPath &,
+bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &,const SdfPath &,
     RigExecSceneWeightProgram *,std::string *error=nullptr);
 /// Sampling/capture boundary over detached identity rows. Current producer
 /// values are keyed by consuming attribute/relationship, including empty boxes

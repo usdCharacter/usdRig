@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "component": "leg",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_HipRoot": {
+      "prim": "/Component/Control_HipRoot",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Hips",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_FootIK": {
+      "prim": "/Component/Control_FootIK",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:offset",
+          "type": "double3"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:World",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_KneePole": {
+      "prim": "/Component/Control_KneePole",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:World",
+      "relationships": {},
+      "connections": {}
+    },
+    "Joint_LegUpper": {
+      "prim": "/Component/Joint_LegUpper",
+      "type": "RigExecJoint",
+      "fit": [
+        {
+          "name": "guide:radius",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Rig",
+      "relationships": {},
+      "connections": {}
+    },
+    "Joint_LegLower": {
+      "prim": "/Component/Joint_LegLower",
+      "type": "RigExecJoint",
+      "fit": [
+        {
+          "name": "guide:radius",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Joint_LegUpper",
+      "relationships": {},
+      "connections": {}
+    },
+    "Joint_Foot": {
+      "prim": "/Component/Joint_Foot",
+      "type": "RigExecJoint",
+      "fit": [
+        {
+          "name": "guide:radius",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Joint_LegLower",
+      "relationships": {},
+      "connections": {}
+    },
+    "Solver_LegIK": {
+      "prim": "/Component/Solver_LegIK",
+      "type": "RigExecTwoBoneIk",
+      "fit": [
+        {
+          "name": "guide:radius",
+          "type": "double"
+        }
+      ],
+      "relationships": {
+        "rigExec:effectorControl": {
+          "targets": [
+            "node:Control_FootIK"
+          ]
+        },
+        "rigExec:joints": {
+          "targets": [
+            "node:Joint_LegUpper",
+            "node:Joint_LegLower",
+            "node:Joint_Foot"
+          ]
+        },
+        "rigExec:poleControl": {
+          "targets": [
+            "node:Control_KneePole"
+          ]
+        },
+        "rigExec:rootControl": {
+          "targets": [
+            "node:Control_HipRoot"
+          ]
+        }
+      },
+      "connections": {}
+    }
+  },
+  "templates": {
+    "Weight": {
+      "prim": "/Component/Weight",
+      "type": "RigExecStaticWeight",
+      "fit": [
+        {
+          "name": "rigExec:indices",
+          "type": "int[]"
+        },
+        {
+          "name": "rigExec:values",
+          "type": "float[]"
+        }
+      ],
+      "relationships": [
+        "rigExec:weightTarget"
+      ]
+    },
+    "Deform_LegUpper_Weighted": {
+      "prim": "/Component/Deform_LegUpper_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_LegLower_Weighted": {
+      "prim": "/Component/Deform_LegLower_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Foot_Weighted": {
+      "prim": "/Component/Deform_Foot_Weighted",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform",
+        "rigExec:transformSpace",
+        "rigExec:weightObject"
+      ]
+    },
+    "Deform_Foot_Absolute": {
+      "prim": "/Component/Deform_Foot_Absolute",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": [
+        "rigExec:moves",
+        "rigExec:transform"
+      ]
+    }
+  },
+  "ports": {
+    "Hips": {
+      "description": "External Hips prim; provide an absolute prim path."
+    },
+    "World": {
+      "description": "External World prim; provide an absolute prim path."
+    },
+    "Rig": {
+      "description": "External Rig prim; provide an absolute prim path."
+    }
+  }
+}

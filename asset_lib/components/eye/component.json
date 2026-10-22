@@ -1,0 +1,674 @@
+{
+  "version": 1,
+  "component": "eye",
+  "asset": "component.usda",
+  "nodes": {
+    "Control_LookAt": {
+      "prim": "/Component/Control_LookAt",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:LookAt",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_EyeAim": {
+      "prim": "/Component/Control_EyeAim",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_Eye": {
+      "prim": "/Component/Control_Eye",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "node:Control_EyeAim",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_LidUpper": {
+      "prim": "/Component/Control_LidUpper",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "avars:rotationSign",
+          "type": "double3"
+        },
+        {
+          "name": "guide:curveVertexCounts",
+          "type": "int[]"
+        },
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:points",
+          "type": "point3f[]"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "guide:wireWidth",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Control_LidLower": {
+      "prim": "/Component/Control_LidLower",
+      "type": "RigExecControl",
+      "fit": [
+        {
+          "name": "avars:rotationSign",
+          "type": "double3"
+        },
+        {
+          "name": "guide:curveVertexCounts",
+          "type": "int[]"
+        },
+        {
+          "name": "guide:displayColor",
+          "type": "color3f"
+        },
+        {
+          "name": "guide:points",
+          "type": "point3f[]"
+        },
+        {
+          "name": "guide:scaleX",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleY",
+          "type": "double"
+        },
+        {
+          "name": "guide:scaleZ",
+          "type": "double"
+        },
+        {
+          "name": "guide:wireWidth",
+          "type": "double"
+        },
+        {
+          "name": "rest:space",
+          "type": "matrix4d"
+        }
+      ],
+      "parent": "port:Head",
+      "relationships": {},
+      "connections": {}
+    },
+    "Projector_EyeProjector": {
+      "prim": "/Component/Projector_EyeProjector",
+      "type": "RigExecSurfaceProjector",
+      "fit": [
+        {
+          "name": "rigExec:rayDirection",
+          "type": "double3"
+        },
+        {
+          "name": "rigExec:rayOrigin",
+          "type": "double3"
+        },
+        {
+          "name": "rigExec:shaderOffset",
+          "type": "matrix4d"
+        }
+      ],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:Eye.points"
+          ]
+        },
+        "rigExec:shaderDialSources": {
+          "targets": [
+            "node:Control_Eye.avars:pupilWidth",
+            "node:Control_Eye.avars:pupilHeight",
+            "node:Control_Eye.avars:irisWidth",
+            "node:Control_Eye.avars:irisHeight",
+            "node:Control_Eye.avars:pupilOffsetX",
+            "node:Control_Eye.avars:pupilOffsetY",
+            "node:Control_Eye.avars:pupilRadius",
+            "node:Control_Eye.avars:irisRadius"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_Eye_Turn": {
+      "prim": "/Component/Geometry_Eye_Turn",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:Eye.points"
+          ]
+        },
+        "rigExec:transform": {
+          "targets": [
+            "node:Control_Eye"
+          ],
+          "readPhase": "final"
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidUpper_Head": {
+      "prim": "/Component/Geometry_LidUpper_Head",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:LidUpper.points"
+          ]
+        },
+        "rigExec:transform": {
+          "targets": [
+            "port:Head"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidUpper_Lid": {
+      "prim": "/Component/Geometry_LidUpper_Lid",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:LidUpper.points"
+          ]
+        },
+        "rigExec:transform": {
+          "targets": [
+            "node:Control_LidUpper"
+          ]
+        },
+        "rigExec:transformSpace": {
+          "targets": [
+            "port:Head"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidUpper_Blink": {
+      "prim": "/Component/Geometry_LidUpper_Blink",
+      "type": "RigExecBlendShapeMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendInputs": {
+          "targets": [
+            "node:Input_BlinkUpper"
+          ]
+        },
+        "rigExec:moves": {
+          "targets": [
+            "port:LidUpper.points"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidLower_Head": {
+      "prim": "/Component/Geometry_LidLower_Head",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:LidLower.points"
+          ]
+        },
+        "rigExec:transform": {
+          "targets": [
+            "port:Head"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidLower_Lid": {
+      "prim": "/Component/Geometry_LidLower_Lid",
+      "type": "RigExecMatrixMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "port:LidLower.points"
+          ]
+        },
+        "rigExec:transform": {
+          "targets": [
+            "node:Control_LidLower"
+          ]
+        },
+        "rigExec:transformSpace": {
+          "targets": [
+            "port:Head"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Geometry_LidLower_Blink": {
+      "prim": "/Component/Geometry_LidLower_Blink",
+      "type": "RigExecBlendShapeMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendInputs": {
+          "targets": [
+            "node:Input_BlinkLower"
+          ]
+        },
+        "rigExec:moves": {
+          "targets": [
+            "port:LidLower.points"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Constraint_EyeAim": {
+      "prim": "/Component/Constraint_EyeAim",
+      "type": "RigExecAimConstraint",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Control_EyeAim"
+          ]
+        },
+        "rigExec:sources": {
+          "targets": [
+            "node:Control_LookAt"
+          ]
+        },
+        "rigExec:worldUpObject": {
+          "targets": [
+            "port:Head"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Channel_BlinkUpper_Clamp": {
+      "prim": "/Component/Channel_BlinkUpper_Clamp",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkUpper.inputs:weight"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Channel_BlinkUpper_AddBoth": {
+      "prim": "/Component/Channel_BlinkUpper_AddBoth",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkUpper.inputs:weight"
+          ]
+        }
+      },
+      "connections": {
+        "inputs:value": [
+          "port:LookAt.avars:blink"
+        ]
+      }
+    },
+    "Channel_BlinkUpper_AddEye": {
+      "prim": "/Component/Channel_BlinkUpper_AddEye",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkUpper.inputs:weight"
+          ]
+        }
+      },
+      "connections": {
+        "inputs:value": [
+          "node:Control_LidUpper.avars:blink"
+        ]
+      }
+    },
+    "Channel_BlinkLower_Clamp": {
+      "prim": "/Component/Channel_BlinkLower_Clamp",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkLower.inputs:weight"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Channel_BlinkLower_AddBoth": {
+      "prim": "/Component/Channel_BlinkLower_AddBoth",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkLower.inputs:weight"
+          ]
+        }
+      },
+      "connections": {
+        "inputs:value": [
+          "port:LookAt.avars:blink"
+        ]
+      }
+    },
+    "Channel_BlinkLower_AddEye": {
+      "prim": "/Component/Channel_BlinkLower_AddEye",
+      "type": "RigExecFloatMathMover",
+      "fit": [],
+      "relationships": {
+        "rigExec:moves": {
+          "targets": [
+            "node:Input_BlinkLower.inputs:weight"
+          ]
+        }
+      },
+      "connections": {
+        "inputs:value": [
+          "node:Control_LidUpper.avars:blink"
+        ]
+      }
+    },
+    "Input_BlinkUpper": {
+      "prim": "/Component/Input_BlinkUpper",
+      "type": "RigExecBlendInput",
+      "fit": [],
+      "relationships": {
+        "rigExec:samples": {
+          "targets": [
+            "node:Sample_BlinkUpper_S1",
+            "node:Sample_BlinkUpper_S2",
+            "node:Sample_BlinkUpper_S3"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkUpper_S1": {
+      "prim": "/Component/Sample_BlinkUpper_S1",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkUpper_1"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkUpper_S2": {
+      "prim": "/Component/Sample_BlinkUpper_S2",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkUpper_2"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkUpper_S3": {
+      "prim": "/Component/Sample_BlinkUpper_S3",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkUpper_3"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Input_BlinkLower": {
+      "prim": "/Component/Input_BlinkLower",
+      "type": "RigExecBlendInput",
+      "fit": [],
+      "relationships": {
+        "rigExec:samples": {
+          "targets": [
+            "node:Sample_BlinkLower_S1",
+            "node:Sample_BlinkLower_S2",
+            "node:Sample_BlinkLower_S3"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkLower_S1": {
+      "prim": "/Component/Sample_BlinkLower_S1",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkLower_1"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkLower_S2": {
+      "prim": "/Component/Sample_BlinkLower_S2",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkLower_2"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Sample_BlinkLower_S3": {
+      "prim": "/Component/Sample_BlinkLower_S3",
+      "type": "RigExecBlendSample",
+      "fit": [],
+      "relationships": {
+        "rigExec:blendShape": {
+          "targets": [
+            "node:Shape_BlinkLower_3"
+          ]
+        }
+      },
+      "connections": {}
+    },
+    "Shape_BlinkUpper_1": {
+      "prim": "/Component/Shape_BlinkUpper_1",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    },
+    "Shape_BlinkUpper_2": {
+      "prim": "/Component/Shape_BlinkUpper_2",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    },
+    "Shape_BlinkUpper_3": {
+      "prim": "/Component/Shape_BlinkUpper_3",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    },
+    "Shape_BlinkLower_1": {
+      "prim": "/Component/Shape_BlinkLower_1",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    },
+    "Shape_BlinkLower_2": {
+      "prim": "/Component/Shape_BlinkLower_2",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    },
+    "Shape_BlinkLower_3": {
+      "prim": "/Component/Shape_BlinkLower_3",
+      "type": "BlendShape",
+      "fit": [
+        {
+          "name": "offsets",
+          "type": "vector3f[]"
+        }
+      ],
+      "relationships": {},
+      "connections": {}
+    }
+  },
+  "templates": {},
+  "ports": {
+    "LookAt": {
+      "description": "External LookAt prim; provide an absolute prim path."
+    },
+    "Head": {
+      "description": "External Head prim; provide an absolute prim path."
+    },
+    "Eye": {
+      "description": "External Eye prim; provide an absolute prim path."
+    },
+    "LidUpper": {
+      "description": "External LidUpper prim; provide an absolute prim path."
+    },
+    "LidLower": {
+      "description": "External LidLower prim; provide an absolute prim path."
+    }
+  }
+}

@@ -6,10 +6,17 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include "pxr/usd/sdf/attributeSpec.h"
+#include "pxr/usd/sdf/schema.h"
+#include "pxr/usd/usdGeom/tokens.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 #include <cmath>
 #include <utility>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (held)
+    (linear)
+);
 namespace {
 VtDictionary Metadata(const UsdObject &object) {
     VtDictionary result;
@@ -73,9 +80,9 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     result->mightBeTimeVarying = attribute.ValueMightBeTimeVarying();
     attribute.GetTimeSamples(&result->sampleTimes);
     for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
-        if (!spec->HasInfo(TfToken("default"))) continue;
+        if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
         result->hasAuthoredDefault = true;
-        result->defaultBlocked = spec->GetInfo(TfToken("default")).IsHolding<SdfValueBlock>();
+        result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
         break;
     }
     return true;
@@ -112,7 +119,7 @@ bool RigExecUsdSceneAccess::ValueBlocked(const UsdAttribute &attribute, UsdTimeC
 }
 double RigExecUsdSceneAccess::TimeCodesPerSecond() const { return _stage ? _stage->GetTimeCodesPerSecond() : 24; }
 double RigExecUsdSceneAccess::FramesPerSecond() const { return _stage ? _stage->GetFramesPerSecond() : 24; }
-TfToken RigExecUsdSceneAccess::Interpolation() const { return TfToken(_stage && _stage->GetInterpolationType() == UsdInterpolationTypeHeld ? "held" : "linear"); }
-TfToken RigExecUsdSceneAccess::UpAxis() const { return _stage?UsdGeomGetStageUpAxis(_stage):TfToken("Y"); }
+TfToken RigExecUsdSceneAccess::Interpolation() const { return _stage && _stage->GetInterpolationType() == UsdInterpolationTypeHeld ? _tokens->held : _tokens->linear; }
+TfToken RigExecUsdSceneAccess::UpAxis() const { return _stage?UsdGeomGetStageUpAxis(_stage):UsdGeomTokens->y; }
 
 }

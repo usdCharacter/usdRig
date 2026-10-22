@@ -1,12 +1,85 @@
-#include "constraintSceneLowering.h"
+#include "constraintSceneTranslation.h"
 #include "pxr/base/vt/types.h"
-#include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/rotation.h"
 #include <type_traits>
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include "rigExec/frameExtraction.h"
+#include "pxr/base/tf/staticTokens.h"
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (XYZ)
+    (aimX)
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((inputsAffectRotationX, "inputs:affectRotationX"))
+    ((inputsAffectRotationY, "inputs:affectRotationY"))
+    ((inputsAffectRotationZ, "inputs:affectRotationZ"))
+    ((inputsAffectScaleX, "inputs:affectScaleX"))
+    ((inputsAffectScaleY, "inputs:affectScaleY"))
+    ((inputsAffectScaleZ, "inputs:affectScaleZ"))
+    ((inputsAffectTranslationX, "inputs:affectTranslationX"))
+    ((inputsAffectTranslationY, "inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ, "inputs:affectTranslationZ"))
+    ((inputsAimVector, "inputs:aimVector"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsLowerScale, "inputs:lowerScale"))
+    ((inputsPin, "inputs:pin"))
+    ((inputsPoleVector, "inputs:poleVector"))
+    ((inputsPoleVectorWeights, "inputs:poleVectorWeights"))
+    ((inputsRotationOffset, "inputs:rotationOffset"))
+    ((inputsRotationOffsets, "inputs:rotationOffsets"))
+    ((inputsScaleOffset, "inputs:scaleOffset"))
+    ((inputsSoftDistance, "inputs:softDistance"))
+    ((inputsSourceWeights, "inputs:sourceWeights"))
+    ((inputsStretch, "inputs:stretch"))
+    ((inputsSwitch, "inputs:switch"))
+    ((inputsTranslationOffset, "inputs:translationOffset"))
+    ((inputsTranslationOffsets, "inputs:translationOffsets"))
+    ((inputsTwist, "inputs:twist"))
+    ((inputsTwistDegrees, "inputs:twistDegrees"))
+    ((inputsUpVector, "inputs:upVector"))
+    ((inputsUpperScale, "inputs:upperScale"))
+    ((inputsWorldUpVector, "inputs:worldUpVector"))
+    (neverTS)
+    (none)
+    ((posedSpace, "posed:space"))
+    ((rigExecAimAxis, "rigExec:aimAxis"))
+    ((rigExecAimTarget, "rigExec:aimTarget"))
+    ((rigExecBlendShear, "rigExec:blendShear"))
+    ((rigExecEffector, "rigExec:effector"))
+    ((rigExecEndJoint, "rigExec:endJoint"))
+    ((rigExecEvaluationMode, "rigExec:evaluationMode"))
+    ((rigExecFirstJoint, "rigExec:firstJoint"))
+    ((rigExecOrientationMode, "rigExec:orientationMode"))
+    ((rigExecPoleVectorMode, "rigExec:poleVectorMode"))
+    ((rigExecPoleVectorObjects, "rigExec:poleVectorObjects"))
+    ((rigExecRotationOrder, "rigExec:rotationOrder"))
+    ((rigExecSolverMode, "rigExec:solverMode"))
+    ((rigExecSources, "rigExec:sources"))
+    ((rigExecSpace, "rigExec:space"))
+    ((rigExecWorldUpObject, "rigExec:worldUpObject"))
+    ((rigExecWorldUpRotationOnly, "rigExec:worldUpRotationOnly"))
+    ((rigExecWorldUpType, "rigExec:worldUpType"))
+    (rotatePlane)
+    ((rigExecWaves, "rigExec:waves"))
+    ((rigExecWaveLength, "rigExec:waveLength"))
+    ((rigExecFrequency, "rigExec:frequency"))
+    ((rigExecIgnoreFirstFrame, "rigExec:ignoreFirstFrame"))
+    ((rigExecMatchVelocity, "rigExec:matchVelocity"))
+    ((inputsAmplitude, "inputs:amplitude"))
+    ((inputsDecay, "inputs:decay"))
+    ((inputsTermination, "inputs:termination"))
+    ((inputsAxisAmplitude, "inputs:axisAmplitude"))
+    (vector)
+    (x)
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message;return false; }
 RigExecEulerOrder Order(const TfToken &token) {
@@ -18,7 +91,7 @@ RigExecEulerOrder Order(const TfToken &token) {
     return RigExecEulerOrder::XYZ;
 }
 }
-bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfPath &path,
+bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,const SdfPath &path,
     const SdfPathVector &targets,RigExecSceneConstraintDescriptor *output,std::string *error) {
     if(!output)return Fail(error,"null constraint descriptor destination");
     const RigExecSceneCompileInputs source(scene);const auto *node=source.Node(path);
@@ -35,10 +108,10 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
     else if(type=="RigExecIkFkMatchConstraint")result.record.kind=RigExecConstraintKind::IkFkMatch;
     else if(type=="RigExecHarmonicsConstraint")result.record.kind=RigExecConstraintKind::Harmonics;
     else return Fail(error,"unsupported constraint: "+type.GetString());
-    auto relation=[&](const char *name) { return source.Targets(path.AppendProperty(TfToken(name))); };
-    auto first=[&](const char *name) { const auto rows=relation(name);return rows.empty()?SdfPath{}:rows.front(); };
-    auto raw=[&](const char *name,auto fallback,auto *value) {
-        *value=fallback;const auto property=path.AppendProperty(TfToken(name));
+    auto relation=[&](const TfToken &name) { return source.Targets(path.AppendProperty(name)); };
+    auto first=[&](const TfToken &name) { const auto rows=relation(name);return rows.empty()?SdfPath{}:rows.front(); };
+    auto raw=[&](const TfToken &name,auto fallback,auto *value) {
+        *value=fallback;const auto property=path.AppendProperty(name);
         if(!source.Attribute(property))return true;
         RigExecSceneBoundInput bound;VtValue boxed;
         if(!source.Bind(property,RigExecSceneReadRoute::Raw,&bound,error) ||
@@ -46,46 +119,72 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
         using T=std::decay_t<decltype(*value)>;
         if(boxed.IsHolding<T>())*value=boxed.UncheckedGet<T>();return true;
     };
-    auto bind=[&](const char *name,RigExecSceneReadRoute route=RigExecSceneReadRoute::ConnectionResolved) {
-        const auto property=path.AppendProperty(TfToken(name));if(!source.Attribute(property))return true;
+    auto bind=[&](const TfToken &name,RigExecSceneReadRoute route=RigExecSceneReadRoute::ConnectionResolved,
+                  const SdfValueTypeName *requestedType=nullptr) {
+        const auto property=path.AppendProperty(name);if(!source.Attribute(property))return true;
         RigExecSceneBoundInput input;if(!source.Bind(property,route,&input,error))return false;
+        const std::string &field=name.GetString();
         if(route!=RigExecSceneReadRoute::Raw) {
-            const std::string field(name);
             const bool match=result.record.kind==RigExecConstraintKind::IkFkMatch;
-            const auto requested=field=="inputs:enabled" || field.rfind("inputs:affect",0)==0?SdfValueTypeNames->Bool:
+            const auto requested=requestedType?*requestedType:field=="inputs:enabled" || field.rfind("inputs:affect",0)==0?SdfValueTypeNames->Bool:
                 field=="inputs:defaultWeight" || (field=="inputs:stretch" && !match)?SdfValueTypeNames->Float:
                 field=="inputs:twistDegrees" || match?SdfValueTypeNames->Double:SdfValueTypeNames->Double3;
             RigExecSceneTypedRead typed;
             if(!RigExecBindSceneTypedRead(scene,property,requested,&typed,error))return false;
-            result.typedReads.emplace(name,std::move(typed));
+            result.typedReads.emplace(field,std::move(typed));
         }
-        result.inputs.emplace(name,std::move(input));return true;
+        result.inputs.emplace(field,std::move(input));return true;
     };
-    if(!bind("inputs:enabled") || !bind("inputs:defaultWeight") ||
-       !bind("inputs:sourceWeights",RigExecSceneReadRoute::Raw))return false;
-    result.sources=relation("rigExec:sources");result.space=first("rigExec:space");
-    TfToken token;if(!raw("rigExec:rotationOrder",TfToken("XYZ"),&token))return false;
-    result.order=Order(token);
-    if(!raw("rigExec:blendShear",false,&result.blendShear) ||
-       !raw("rigExec:worldUpRotationOnly",false,&result.worldUpRotationOnly))return false;
+    if(!bind(_tokens->inputsEnabled) || !bind(_tokens->inputsDefaultWeight))return false;
+    result.space=first(_tokens->rigExecSpace);
+    // Harmonics has no sources, weights, masks or offsets. Its uniform
+    // settings fix the history window; its scalars bind in the precision of
+    // the attribute their connection walk ends on.
     if(result.record.kind==RigExecConstraintKind::Harmonics) {
-        // No sources, masks or offsets: its scalars and settings are bound
-        // by the pose walk, which holds the history window.
-        result.space=first("rigExec:space");
-    } else if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
-        result.effector=first("rigExec:effector");result.space=first("rigExec:space");
-        for(const char *name:{"inputs:switch","inputs:stretch","inputs:softDistance","inputs:upperScale",
-                              "inputs:lowerScale","inputs:pin","inputs:twist"})
-            if(!bind(name))return false;
+        if(relation(_tokens->rigExecSpace).size()>1)
+            return Fail(error,"RigExecHarmonicsConstraint "+path.GetString()+" has more than one rigExec:space");
+        // A space that cannot supply a frame is dropped.
+        if(const auto *space=result.space.IsEmpty()?nullptr:source.Node(result.space);
+           !space || (space->fact.type!="RigExecControl" && space->fact.type!="RigExecJoint"))result.space=SdfPath();
+        if(!raw(_tokens->rigExecWaves,5.0,&result.harmonicsWaves) ||
+           !raw(_tokens->rigExecWaveLength,5.0,&result.harmonicsWaveLength) ||
+           !raw(_tokens->rigExecFrequency,1.0,&result.harmonicsFrequency) ||
+           !raw(_tokens->rigExecIgnoreFirstFrame,true,&result.harmonicsIgnoreFirstFrame) ||
+           !raw(_tokens->rigExecMatchVelocity,true,&result.harmonicsMatchVelocity))return false;
+        for(const TfToken *name:{&_tokens->inputsAmplitude,&_tokens->inputsDecay,&_tokens->inputsTermination}) {
+            SdfValueTypeName end;std::set<SdfPath> visited;
+            for(SdfPath at=path.AppendProperty(*name);visited.insert(at).second;) {
+                const auto *attribute=source.Attribute(at);if(!attribute)break;
+                end=attribute->fact.type;
+                if(attribute->fact.connections.size()!=1)break;
+                at=attribute->fact.connections.front();
+            }
+            const auto requested=end==SdfValueTypeNames->Float?SdfValueTypeNames->Float:SdfValueTypeNames->Double;
+            if(!bind(*name,RigExecSceneReadRoute::ConnectionResolved,&requested))return false;
+        }
+        if(!bind(_tokens->inputsAxisAmplitude))return false;
+        *output=std::move(result);return true;
+    }
+    if(!bind(_tokens->inputsSourceWeights,RigExecSceneReadRoute::Raw))return false;
+    result.sources=relation(_tokens->rigExecSources);
+    TfToken token;if(!raw(_tokens->rigExecRotationOrder,_tokens->XYZ,&token))return false;
+    result.order=Order(token);
+    if(!raw(_tokens->rigExecBlendShear,false,&result.blendShear) ||
+       !raw(_tokens->rigExecWorldUpRotationOnly,false,&result.worldUpRotationOnly))return false;
+    if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
+        result.effector=first(_tokens->rigExecEffector);
+        for(const TfToken *name:{&_tokens->inputsSwitch,&_tokens->inputsStretch,&_tokens->inputsSoftDistance,
+                                 &_tokens->inputsUpperScale,&_tokens->inputsLowerScale,&_tokens->inputsPin,&_tokens->inputsTwist})
+            if(!bind(*name))return false;
     } else if(result.record.kind==RigExecConstraintKind::SingleChainIk) {
-        result.effector=first("rigExec:effector");result.poleObjects=relation("rigExec:poleVectorObjects");
-        if(!raw("rigExec:solverMode",TfToken("rotatePlane"),&token))return false;
+        result.effector=first(_tokens->rigExecEffector);result.poleObjects=relation(_tokens->rigExecPoleVectorObjects);
+        if(!raw(_tokens->rigExecSolverMode,_tokens->rotatePlane,&token))return false;
         result.record.singleChain.mode=token=="singleChain"?RigExecSingleChainIkMode::SingleChain:RigExecSingleChainIkMode::RotatePlane;
-        if(!raw("rigExec:orientationMode",TfToken("aimX"),&token))return false;
+        if(!raw(_tokens->rigExecOrientationMode,_tokens->aimX,&token))return false;
         result.record.singleChain.preserveJointOrientation=token=="preserve";
-        if(!raw("rigExec:poleVectorMode",TfToken("vector"),&token))return false;
+        if(!raw(_tokens->rigExecPoleVectorMode,_tokens->vector,&token))return false;
         result.poleModeObject=token=="object";
-        const auto firstJoint=first("rigExec:firstJoint"),lastJoint=first("rigExec:endJoint");
+        const auto firstJoint=first(_tokens->rigExecFirstJoint),lastJoint=first(_tokens->rigExecEndJoint);
         for(SdfPath current=lastJoint;!current.IsEmpty() && current!=SdfPath::AbsoluteRootPath();current=current.GetParentPath()) {
             const auto *joint=source.Node(current);
             if(joint && joint->fact.type=="RigExecJoint")result.ikChain.push_back(current);
@@ -95,60 +194,50 @@ bool RigExecLowerSceneConstraint(const RigExecSceneDescriptors &scene,const SdfP
             return Fail(error,"single-chain IK endpoints do not form an inclusive joint chain: "+path.GetString());
         std::reverse(result.ikChain.begin(),result.ikChain.end());
         if(result.targets.empty())result.targets=result.ikChain;
-        if(!raw("rigExec:evaluationMode",TfToken("neverTS"),&token))return false;
+        if(!raw(_tokens->rigExecEvaluationMode,_tokens->neverTS,&token))return false;
         bool animated=false;
         if(token=="autoDetect")for(const auto &joint:result.ikChain) {
             for(const auto &binding:scene.jointBindings)if(binding.joint==joint)animated=true;
-            for(const char *name:{"posed:space","avars:tx","avars:ty","avars:tz","avars:sx","avars:sy","avars:sz"})
-                if(const auto *attribute=source.Attribute(joint.AppendProperty(TfToken(name))))
+            for(const TfToken *name:{&_tokens->posedSpace,&_tokens->avarsTx,&_tokens->avarsTy,&_tokens->avarsTz,
+                                     &_tokens->avarsSx,&_tokens->avarsSy,&_tokens->avarsSz})
+                if(const auto *attribute=source.Attribute(joint.AppendProperty(*name)))
                     animated=animated || !attribute->fact.sampleTimes.empty() ||
                         (attribute->fact.hasAuthoredConnections && !attribute->fact.connections.empty());
         }
         result.useAnimatedTs=token=="alwaysTS" || (token=="autoDetect" && animated);
-        if(!bind("inputs:stretch"))return false;
+        if(!bind(_tokens->inputsStretch))return false;
         if(result.record.singleChain.mode==RigExecSingleChainIkMode::RotatePlane) {
-            if(!bind("inputs:poleVector") || !bind("inputs:twistDegrees"))return false;
+            if(!bind(_tokens->inputsPoleVector) || !bind(_tokens->inputsTwistDegrees))return false;
             if(result.poleModeObject && !result.poleObjects.empty() &&
-               !bind("inputs:poleVectorWeights",RigExecSceneReadRoute::Raw))return false;
+               !bind(_tokens->inputsPoleVectorWeights,RigExecSceneReadRoute::Raw))return false;
         }
     } else {
         const bool parent=result.record.kind==RigExecConstraintKind::Parent;
-        const char *channel=result.record.kind==RigExecConstraintKind::Position?"Translation":
-            result.record.kind==RigExecConstraintKind::Scale?"Scale":"Rotation";
-        // A ternary of initializer_list temporaries dangles in a range-for:
-        // the list object is kept and the backing array is not, so the name
-        // pointer is null and building "inputs:affect…" calls strlen on it.
-        const char *channels[3];
-        int channelCount=1;
+        const int channel=result.record.kind==RigExecConstraintKind::Position?0:
+            result.record.kind==RigExecConstraintKind::Scale?2:1;
+        const TfToken *affect[3][3]={
+            {&_tokens->inputsAffectTranslationX,&_tokens->inputsAffectTranslationY,&_tokens->inputsAffectTranslationZ},
+            {&_tokens->inputsAffectRotationX,&_tokens->inputsAffectRotationY,&_tokens->inputsAffectRotationZ},
+            {&_tokens->inputsAffectScaleX,&_tokens->inputsAffectScaleY,&_tokens->inputsAffectScaleZ}};
+        for(int n=parent?0:channel;n<=(parent?2:channel);++n)
+            for(int a=0;a<3;++a)if(!bind(*affect[n][a]))return false;
         if(parent) {
-            channels[0]="Translation"; channels[1]="Rotation"; channels[2]="Scale";
-            channelCount=3;
+            if(!bind(_tokens->inputsTranslationOffsets,RigExecSceneReadRoute::Raw) ||
+               !bind(_tokens->inputsRotationOffsets,RigExecSceneReadRoute::Raw))return false;
         } else {
-            channels[0]=channel;
-        }
-        const char *axes[3]={"X","Y","Z"};
-        for(int n=0;n<channelCount;++n)
-            for(int a=0;a<3;++a) {
-                const std::string property=std::string("inputs:affect")+channels[n]+axes[a];
-                if(!bind(property.c_str()))return false;
-            }
-        if(parent) {
-            if(!bind("inputs:translationOffsets",RigExecSceneReadRoute::Raw) ||
-               !bind("inputs:rotationOffsets",RigExecSceneReadRoute::Raw))return false;
-        } else {
-            const char *offset=result.record.kind==RigExecConstraintKind::Position?"inputs:translationOffset":
-                result.record.kind==RigExecConstraintKind::Scale?"inputs:scaleOffset":"inputs:rotationOffset";
+            const TfToken &offset=result.record.kind==RigExecConstraintKind::Position?_tokens->inputsTranslationOffset:
+                result.record.kind==RigExecConstraintKind::Scale?_tokens->inputsScaleOffset:_tokens->inputsRotationOffset;
             if(!bind(offset))return false;
         }
         if(result.record.kind==RigExecConstraintKind::Aim) {
-            if(!bind("inputs:aimVector") || !bind("inputs:upVector") || !bind("inputs:worldUpVector"))return false;
-            const auto *aim=source.Attribute(path.AppendProperty(TfToken("inputs:aimVector")));
+            if(!bind(_tokens->inputsAimVector) || !bind(_tokens->inputsUpVector) || !bind(_tokens->inputsWorldUpVector))return false;
+            const auto *aim=source.Attribute(path.AppendProperty(_tokens->inputsAimVector));
             result.aimVectorAuthored=aim && aim->fact.hasAuthoredValue;
-            if(!raw("rigExec:aimAxis",TfToken("x"),&token))return false;
+            if(!raw(_tokens->rigExecAimAxis,_tokens->x,&token))return false;
             result.aimAxisFallback=token=="y"?GfVec3d(0,1,0):token=="z"?GfVec3d(0,0,1):GfVec3d(1,0,0);
-            if(!raw("rigExec:worldUpType",TfToken("none"),&result.worldUpType))return false;
-            result.worldUpObject=first("rigExec:worldUpObject");result.preserveInputUp=result.sources.empty();
-            if(result.sources.empty()) { const auto legacy=first("rigExec:aimTarget");if(!legacy.IsEmpty())result.sources.push_back(legacy); }
+            if(!raw(_tokens->rigExecWorldUpType,_tokens->none,&result.worldUpType))return false;
+            result.worldUpObject=first(_tokens->rigExecWorldUpObject);result.preserveInputUp=result.sources.empty();
+            if(result.sources.empty()) { const auto legacy=first(_tokens->rigExecAimTarget);if(!legacy.IsEmpty())result.sources.push_back(legacy); }
             result.sceneUp=scene.upAxis=="Z"?GfVec3d(0,0,1):GfVec3d(0,1,0);
 
         }

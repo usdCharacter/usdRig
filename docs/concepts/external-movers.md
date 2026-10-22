@@ -11,12 +11,12 @@ callback and a points computation; no changes to RigExec's built-in mover list
 are required.
 
 Use the same compiler, architecture, build configuration, OpenUSD installation,
-and RigExec SDK as the host. Plugin API version 6 combines declared external
+and RigExec SDK as the host. Plugin API version 7 combines declared external
 input leaves, explicit phased oracle lookup callbacks, the optional
 provider-aware playback kernel and optional windowed movers. Libraries built
 for API 1, 2 or 3 must be rebuilt and migrate their assembly callback;
-libraries built for API 4 or 5 must be rebuilt, since the handler and the
-playback kernel both grew.
+libraries built for API 4, 5 or 6 must be rebuilt, since the handler grew
+(and, before 6, the playback kernel).
 
 `declareExternalInputs` runs only at compilation and declares ordered typed
 `RigExecRevisionLeafKey` records. Each record specifies its canonical property
@@ -259,17 +259,17 @@ A `.rigexec` file is played by a runtime that has no stage, so it cannot call
 export and replay:
 
 - `encodeExternal` runs at export, once per baked frame, on the payload
-  `assembleExternal` produced. It splits the payload into epoch bytes, which
+  `assembleExternal` produced. It splits the payload into compiled data bytes, which
   must be identical on every frame and are written once, and frame bytes,
   which are written per frame (identical frames share storage).
 - `runtimeKernel` is the playback half, declared in
   `rigExecBinary/external.h` without any USD types. `prepare` decodes a
-  revision's epoch bytes once per opened file; `apply` revises the preceding
+  revision's compiled data bytes once per opened file; `apply` revises the preceding
   points in place from that state, the frame's bytes, and the points the
   binding reads at a declared phase.
 
 The bytes are the plugin's own format; RigExec stores them without reading
-them. Start the epoch bytes with a format tag so `prepare` can refuse bytes it
+them. Start the compiled data bytes with a format tag so `prepare` can refuse bytes it
 does not understand. Points named in `binding.phases` reach `apply` as playback
 evaluated them, so a playback posed through `SetAvar` moves them; frame bytes
 can still carry the value the export read, for a phase playback holds no value
@@ -298,21 +298,21 @@ Extending the offset mover above:
 #include <cstring>
 
 bool Encode(const VtValue &data, const RigExecRevisionBinding &,
-            std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame)
+            std::vector<uint8_t> *compiledData, std::vector<uint8_t> *frame)
 {
     if (!data.IsHolding<GfVec3f>()) return false;
-    epoch->assign({'O', 'F', 'F', '1'});
+    compiledData->assign({'O', 'F', 'F', '1'});
     frame->resize(sizeof(GfVec3f));
     std::memcpy(frame->data(), data.UncheckedGet<GfVec3f>().data(),
                 frame->size());
     return true;
 }
 
-std::shared_ptr<const void> Prepare(const uint8_t *epoch, size_t size,
+std::shared_ptr<const void> Prepare(const uint8_t *compiledData, size_t size,
                                     std::string *error)
 {
-    if (size != 4 || std::memcmp(epoch, "OFF1", 4) != 0) {
-        if (error) *error = "not an OFF1 epoch";
+    if (size != 4 || std::memcmp(compiledData, "OFF1", 4) != 0) {
+        if (error) *error = "not OFF1 compiled data";
         return nullptr;
     }
     return std::make_shared<int>(1);
@@ -340,7 +340,7 @@ bool Play(const void *, const uint8_t *frame, size_t frameSize,
 ```
 
 Export fails, naming the mover, when its plugin provides no `encodeExternal`
-or encodes different epoch bytes on two frames. A frame on which assembly
+or encodes different compiled data bytes on two frames. A frame on which assembly
 failed exports as a failed frame, and playback fails the mover there too.
 
 A host that opens a `.rigexec` file installs kernels with
@@ -357,14 +357,15 @@ links one in; RigExec itself ships none.
 
 A mover whose result at a frame depends on the frames before it -- a
 simulation, a lag -- is a windowed mover. It declares how many earlier frames
-it reads (`windowFrames`, at compile), the packet a frame captures from its
-payload and entering points (`captureWindow`), and the solve over the earlier
-frames' packets, oldest first, then the current one (`applyWindow`); all
-three or none. The earlier frames are generations of the same compiled graph
+it reads (`windowFrames`, at compile, and `windowFramesScene`, the same count
+from captured scene facts for the scene program), the packet a frame captures
+from its payload and entering points (`captureWindow`), and the solve over the
+earlier frames' packets, oldest first, then the current one (`applyWindow`);
+all four or none. The earlier frames are generations of the same compiled graph
 at those times, run only as far as the mover's inputs reach, so the history is
 produced by the one loop and the result is a pure function of the window:
 scrubbing, playback and background caching agree. `applyWindow` receives a
-cache slot the revision owns for an epoch-fixed build; anything held there
+cache slot the revision owns for a compiled rig build; anything held there
 must not change the answer. An optional `applyWindowDevice` runs the same solve
 on a device; the live program calls it at the publication boundary, never from
 an operation body, and falls back to `applyWindow`. For `.rigexec` playback,
@@ -384,7 +385,7 @@ Windows and colons on Linux/macOS. Keep the host's existing schema and imaging
 plugin paths as well.
 
 The generated `plugInfo.json` marks the library with
-`"Info": {"RigExecMoverPlugin": 5}`. RigExec loads discoverable mover libraries
+`"Info": {"RigExecMoverPlugin": 7}`. RigExec loads discoverable mover libraries
 on the first unknown handler lookup. Hosts can call
 `RigExecLoadMoverPlugins(&diagnostics)` explicitly to inspect version or load
 errors. After adding search locations with
@@ -393,7 +394,7 @@ discover those additional libraries.
 
 API4 external point callbacks execute from compiled immutable bindings and
 declared typed inputs in native and frozen jobs. Exported playback also needs
-the runtime callbacks. `encodeExternalEpoch` encodes immutable compile facts
+the runtime callbacks. `encodeExternalCompiledData` encodes immutable compile facts
 without requiring successful initial dynamic input sampling; unavailable inputs
 can recover on later frames. Property-mover plugin callbacks are outside this
 point-mover API.

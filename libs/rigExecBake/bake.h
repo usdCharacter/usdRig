@@ -1,11 +1,11 @@
 // .rigexec baking: a compiled rigExec character as a USD-independent binary.
 // BakeToBinary runs the evaluator's baked program once, in full, at one time
-// T and serializes the epoch: the static data that run read, the input slots
+// T and serializes the compiled rig: the static data that run read, the input slots
 // with their values at T as the defaults, the steps and schedule, into one
 // FlatBuffer (rigExecBinary/format.h). A binary holds no animation; a client
 // drives it by setting inputs.
 // A bake is of the PROGRAM, never of a fallback: the run must be answered by
-// the baked program, and an epoch the program cannot express fails naming
+// the baked program, and a compiled rig the program cannot express fails naming
 // the feature (RigExecBakedProgram::IsBakeable reasons), the same contract
 // --require-baked gives rigExecPose. There is no quiet dynamic bake, because
 // a binary whose numbers came from two different paths is a binary no
@@ -51,8 +51,8 @@ struct RigExecBakeResult {
     size_t pathReadsEnumerated = 0;
 };
 
-/// Bakes \p evaluator's epoch to a .rigexec binary, or returns false with
-/// the reason: a non-finite time, a compile failure, an epoch the program
+/// Bakes \p evaluator's compiled rig to a .rigexec binary, or returns false with
+/// the reason: a non-finite time, a compile failure, a compiled rig the program
 /// cannot express (with the IsBakeable reasons), interactive overrides
 /// standing, an invalid generation, a run that did not come from the
 /// program or rebuilt it, a plugin mover that cannot encode its payload, a

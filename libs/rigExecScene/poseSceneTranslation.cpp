@@ -1,11 +1,44 @@
-#include "poseSceneLowering.h"
+#include "poseSceneTranslation.h"
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/vt/types.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
 #include <type_traits>
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (all) (pose) (gaussian) (quaternion) (onlyAboveOne) (X) (swing)
+    ((rigExecTarget,"rigExec:target")) ((inputsSourceWeights,"inputs:sourceWeights"))
+    ((rigExecSources,"rigExec:sources")) ((rigExecSpaceLabels,"rigExec:spaceLabels"))
+    ((rigExecRotationFilters,"rigExec:rotationFilters")) ((rigExecTwistAxis,"rigExec:twistAxis"))
+    ((rigExecSpace,"rigExec:space")) ((rigExecActiveSpaceAttribute,"rigExec:activeSpaceAttribute"))
+    ((inputsActiveSpace,"inputs:activeSpace"))
+    ((inputsAffectTranslationX,"inputs:affectTranslationX")) ((inputsAffectTranslationY,"inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ,"inputs:affectTranslationZ")) ((inputsAffectRotationX,"inputs:affectRotationX"))
+    ((inputsAffectRotationY,"inputs:affectRotationY")) ((inputsAffectRotationZ,"inputs:affectRotationZ"))
+    ((inputsAffectScaleX,"inputs:affectScaleX")) ((inputsAffectScaleY,"inputs:affectScaleY"))
+    ((inputsAffectScaleZ,"inputs:affectScaleZ"))
+    ((rigExecDriver,"rigExec:driver")) ((inputsEnabled,"inputs:enabled")) ((inputsMask,"inputs:mask"))
+    ((rigExecLayerSizes,"rigExec:layerSizes")) ((rigExecLayerActivations,"rigExec:layerActivations"))
+    ((rigExecLayerAlphas,"rigExec:layerAlphas")) ((rigExecWeights,"rigExec:weights"))
+    ((rigExecBiases,"rigExec:biases")) ((rigExecInputMean,"rigExec:inputMean"))
+    ((rigExecInputScale,"rigExec:inputScale")) ((rigExecOutputDefaults,"rigExec:outputDefaults"))
+    ((outputsWeight,"outputs:weight")) ((outputsValue,"outputs:value")) ((rigExecMeshes,"rigExec:meshes"))
+    ((rigExecRowInputs,"rigExec:rowInputs")) ((rigExecRowFrom,"rigExec:rowFrom")) ((rigExecRowTo,"rigExec:rowTo"))
+    ((rigExecRowSlope,"rigExec:rowSlope")) ((rigExecRowCut,"rigExec:rowCut"))
+    ((rigExecPrimvarName,"rigExec:primvarName")) ((rigExecDriverAttributes,"rigExec:driverAttributes"))
+    ((rigExecSolver,"rigExec:solver")) ((rigExecAllowNegativeWeights,"rigExec:allowNegativeWeights"))
+    ((rigExecKernel,"rigExec:kernel")) ((rigExecDistanceMethod,"rigExec:distanceMethod"))
+    ((rigExecNormalizeMethod,"rigExec:normalizeMethod")) ((rigExecAutomaticRadius,"rigExec:automaticRadius"))
+    ((rigExecRadius,"rigExec:radius")) ((rigExecWeightThreshold,"rigExec:weightThreshold"))
+    ((rigExecRegularization,"rigExec:regularization")) ((rigExecNormalize,"rigExec:normalize"))
+    ((rigExecEnableRotation,"rigExec:enableRotation")) ((rigExecEnableTranslation,"rigExec:enableTranslation"))
+    ((rigExecRotation,"rigExec:rotation")) ((rigExecTranslation,"rigExec:translation"))
+    ((rigExecPoseType,"rigExec:poseType")) ((rigExecRotationRadius,"rigExec:rotationRadius"))
+    ((rigExecTranslationRadius,"rigExec:translationRadius")) ((rigExecRotations,"rigExec:rotations"))
+    ((rigExecScale,"rigExec:scale"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) {if(error)*error=message;return false;}
 bool Provider(const RigExecSceneCompileInputs &source,const SdfPath &path) {
@@ -27,55 +60,57 @@ template<class T> bool Raw(const RigExecSceneCompileInputs &source,const SdfPath
     if(boxed.IsHolding<T>())*value=boxed.UncheckedGet<T>();return true;
 }
 }
-bool RigExecLowerSceneSpaceSwitch(const RigExecSceneDescriptors &scene,const SdfPath &path,
+bool RigExecTranslateSceneSpaceSwitch(const RigExecSceneDescriptors &scene,const SdfPath &path,
     RigExecSceneSpaceSwitchDescriptor *output,std::string *error) {
     if(!output)return Fail(error,"null space switch descriptor");
     const RigExecSceneCompileInputs source(scene);const auto *node=source.Node(path);
     if(!node || !node->fact.active || node->fact.type!="RigExecSpaceSwitch")
         return Fail(error,"missing active space switch: "+path.GetString());
     RigExecSceneSpaceSwitchDescriptor result;result.path=path;
-    const auto property=[&](const char *name){return path.AppendProperty(TfToken(name));};
-    const auto targets=source.Targets(property("rigExec:target"));
+    const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
+    const auto targets=source.Targets(property(_tokens->rigExecTarget));
     if(targets.size()!=1 || !Provider(source,targets[0]))
         return Fail(error,"space switch requires exactly one frame provider target: "+path.GetString());
     result.target=targets[0];
-    VtFloatArray weights;if(!Raw(source,property("inputs:sourceWeights"),VtFloatArray{},&weights,error))return false;
+    VtFloatArray weights;if(!Raw(source,property(_tokens->inputsSourceWeights),VtFloatArray{},&weights,error))return false;
     if(!weights.empty())return Fail(error,"space switch does not read inputs:sourceWeights: "+path.GetString());
-    const auto sources=source.Targets(property("rigExec:sources"));
+    const auto sources=source.Targets(property(_tokens->rigExecSources));
     if(sources.empty())return Fail(error,"space switch needs at least one source: "+path.GetString());
     VtTokenArray labels,filters;
-    if(!Raw(source,property("rigExec:spaceLabels"),VtTokenArray{},&labels,error) ||
-       !Raw(source,property("rigExec:rotationFilters"),VtTokenArray{},&filters,error) ||
-       !Raw(source,property("rigExec:twistAxis"),GfVec3d(1,0,0),&result.record.twistAxis,error))return false;
+    if(!Raw(source,property(_tokens->rigExecSpaceLabels),VtTokenArray{},&labels,error) ||
+       !Raw(source,property(_tokens->rigExecRotationFilters),VtTokenArray{},&filters,error) ||
+       !Raw(source,property(_tokens->rigExecTwistAxis),GfVec3d(1,0,0),&result.record.twistAxis,error))return false;
     if((!labels.empty() && labels.size()!=sources.size()) ||
        (!filters.empty() && filters.size()!=sources.size()))
         return Fail(error,"space switch labels/filters must parallel its sources: "+path.GetString());
     for(size_t k=0;k<sources.size();++k) {
         result.sources.push_back(Provider(source,sources[k])?sources[k]:SdfPath{});
-        result.labels.push_back(labels.empty()?TfToken(sources[k].GetName()):labels[k]);
-        const TfToken filter=filters.empty()?TfToken("all"):filters[k];
+        result.labels.push_back(labels.empty()?sources[k].GetNameToken():labels[k]);
+        const TfToken filter=filters.empty()?_tokens->all:filters[k];
         if(!filter.IsEmpty() && filter!="all" && filter!="twist" && filter!="swing" && filter!="orient")
             return Fail(error,"unknown space switch rotation filter: "+filter.GetString());
         result.record.filters.push_back(filter=="twist"?1:filter=="swing"?2:filter=="orient"?3:0);
     }
-    const auto spaces=source.Targets(property("rigExec:space"));
+    const auto spaces=source.Targets(property(_tokens->rigExecSpace));
     if(spaces.size()>1)return Fail(error,"space switch has more than one rigExec:space: "+path.GetString());
     if(!spaces.empty() && Provider(source,spaces[0]))result.space=spaces[0];
-    const auto active=source.Targets(property("rigExec:activeSpaceAttribute"));
+    const auto active=source.Targets(property(_tokens->rigExecActiveSpaceAttribute));
     if(active.size()>1)return Fail(error,"space switch has more than one active attribute: "+path.GetString());
-    result.activeAttribute=active.empty()?property("inputs:activeSpace"):active[0];
+    result.activeAttribute=active.empty()?property(_tokens->inputsActiveSpace):active[0];
     if(!result.activeAttribute.IsPropertyPath())return Fail(error,"space switch active target is not a property");
-    if(!Raw(source,property("inputs:activeSpace"),0.0,&result.activeFallback,error))return false;
+    if(!Raw(source,property(_tokens->inputsActiveSpace),0.0,&result.activeFallback,error))return false;
     const auto *attribute=source.Attribute(result.activeAttribute);
     result.tokenIndex=attribute && attribute->fact.type==SdfValueTypeNames->Token;
     if(!RigExecBindSceneTypedRead(scene,result.activeAttribute,
         result.tokenIndex?SdfValueTypeNames->Token:SdfValueTypeNames->Double,&result.active,error))return false;
-    const char *channels[]={"Translation","Rotation","Scale"};
+    const TfToken affect[3][3]={
+        {_tokens->inputsAffectTranslationX,_tokens->inputsAffectTranslationY,_tokens->inputsAffectTranslationZ},
+        {_tokens->inputsAffectRotationX,_tokens->inputsAffectRotationY,_tokens->inputsAffectRotationZ},
+        {_tokens->inputsAffectScaleX,_tokens->inputsAffectScaleY,_tokens->inputsAffectScaleZ}};
     for(size_t channel=0;channel<3;++channel)for(size_t axis=0;axis<3;++axis) {
-        const std::string name=std::string("inputs:affect")+channels[channel]+"XYZ"[axis];
         auto &mask=channel==0?result.record.affectTranslation:
             channel==1?result.record.affectRotation:result.record.affectScale;
-        if(!Raw(source,path.AppendProperty(TfToken(name)),true,&mask[axis],error))return false;
+        if(!Raw(source,path.AppendProperty(affect[channel][axis]),true,&mask[axis],error))return false;
     }
     *output=std::move(result);return true;
 }
@@ -114,26 +149,26 @@ static bool ResolveDrivers(const RigExecSceneDescriptors &scene,const RigExecSce
 // A RigExecMlMover's network: frame drivers' rotations then numeric
 // drivers in, one weight per RigExecMlOutput child out. Its blend inputs
 // are the blend-shape revision's business, not the network's.
-static bool RigExecLowerSceneMlMover(const RigExecSceneDescriptors &scene,const RigExecSceneCompileInputs &source,
+static bool RigExecTranslateSceneMlMover(const RigExecSceneDescriptors &scene,const RigExecSceneCompileInputs &source,
     const RigExecSceneNodeDescriptor &node,RigExecScenePoseInterpolatorDescriptor *result,
     RigExecScenePoseInterpolatorDescriptor *output,std::string *error) {
     const SdfPath &path=result->path;
-    const auto property=[&](const char *name){return path.AppendProperty(TfToken(name));};
-    const auto drivers=source.Targets(property("rigExec:driver"));
+    const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
+    const auto drivers=source.Targets(property(_tokens->rigExecDriver));
     if(drivers.empty() && result->driverAttributes.empty())
         return Fail(error,"ML mover has no drivers: "+path.GetString());
     if(!ResolveDrivers(scene,source,drivers,"ML mover",result,error) ||
-       !RigExecBindSceneTypedRead(scene,property("inputs:enabled"),SdfValueTypeNames->Bool,&result->enabled,error) ||
-       !RigExecBindSceneTypedRead(scene,property("inputs:mask"),SdfValueTypeNames->Float,&result->mask,error))return false;
+       !RigExecBindSceneTypedRead(scene,property(_tokens->inputsEnabled),SdfValueTypeNames->Bool,&result->enabled,error) ||
+       !RigExecBindSceneTypedRead(scene,property(_tokens->inputsMask),SdfValueTypeNames->Float,&result->mask,error))return false;
     VtIntArray sizes,activations;VtFloatArray alphas,weights,biases,mean,scale,defaults;
-    if(!Raw(source,property("rigExec:layerSizes"),VtIntArray{},&sizes,error) ||
-       !Raw(source,property("rigExec:layerActivations"),VtIntArray{},&activations,error) ||
-       !Raw(source,property("rigExec:layerAlphas"),VtFloatArray{},&alphas,error) ||
-       !Raw(source,property("rigExec:weights"),VtFloatArray{},&weights,error) ||
-       !Raw(source,property("rigExec:biases"),VtFloatArray{},&biases,error) ||
-       !Raw(source,property("rigExec:inputMean"),VtFloatArray{},&mean,error) ||
-       !Raw(source,property("rigExec:inputScale"),VtFloatArray{},&scale,error) ||
-       !Raw(source,property("rigExec:outputDefaults"),VtFloatArray{},&defaults,error))return false;
+    if(!Raw(source,property(_tokens->rigExecLayerSizes),VtIntArray{},&sizes,error) ||
+       !Raw(source,property(_tokens->rigExecLayerActivations),VtIntArray{},&activations,error) ||
+       !Raw(source,property(_tokens->rigExecLayerAlphas),VtFloatArray{},&alphas,error) ||
+       !Raw(source,property(_tokens->rigExecWeights),VtFloatArray{},&weights,error) ||
+       !Raw(source,property(_tokens->rigExecBiases),VtFloatArray{},&biases,error) ||
+       !Raw(source,property(_tokens->rigExecInputMean),VtFloatArray{},&mean,error) ||
+       !Raw(source,property(_tokens->rigExecInputScale),VtFloatArray{},&scale,error) ||
+       !Raw(source,property(_tokens->rigExecOutputDefaults),VtFloatArray{},&defaults,error))return false;
     auto network=std::make_shared<RigExecMlNetwork>();std::string why;
     if(!RigExecMlBuildNetwork(4*drivers.size()+result->driverAttributes.size(),
         {sizes.begin(),sizes.end()},{activations.begin(),activations.end()},{alphas.begin(),alphas.end()},
@@ -146,7 +181,7 @@ static bool RigExecLowerSceneMlMover(const RigExecSceneDescriptors &scene,const 
     for(const auto &childPath:node.fact.children) {
         const auto *child=source.Node(childPath);
         if(!child || !child->fact.active || child->fact.type!="RigExecMlOutput")continue;
-        const auto weight=childPath.AppendProperty(TfToken("outputs:weight"));
+        const auto weight=childPath.AppendProperty(_tokens->outputsWeight);
         if(const auto *attribute=source.Attribute(weight))if(attribute->fact.hasAuthoredConnections)
             return Fail(error,"ML output carries authored connections: "+weight.GetString());
         result->poseWeights.push_back(weight);
@@ -161,30 +196,30 @@ static bool RigExecLowerSceneMlMover(const RigExecSceneDescriptors &scene,const 
 // A RigExecAnimatedMaps node: RigLogic's conditional table per
 // RigExecAnimatedMap child over the numeric inputs, each map also
 // republished as a constant float primvar on every bound mesh.
-static bool RigExecLowerSceneAnimatedMaps(const RigExecSceneDescriptors &scene,
+static bool RigExecTranslateSceneAnimatedMaps(const RigExecSceneDescriptors &scene,
     const RigExecSceneCompileInputs &source,const RigExecSceneNodeDescriptor &node,
     RigExecScenePoseInterpolatorDescriptor *result,RigExecScenePoseInterpolatorDescriptor *output,
     std::string *error) {
     const SdfPath &path=result->path;
-    const auto property=[&](const char *name){return path.AppendProperty(TfToken(name));};
-    if(!RigExecBindSceneTypedRead(scene,property("inputs:enabled"),SdfValueTypeNames->Bool,&result->enabled,error))
+    const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
+    if(!RigExecBindSceneTypedRead(scene,property(_tokens->inputsEnabled),SdfValueTypeNames->Bool,&result->enabled,error))
         return false;
     auto table=std::make_shared<RigExecAnimatedMapsTable>();
     table->inputCount=result->driverAttributes.size();
     SdfPathVector meshes;
-    for(const auto &mesh:source.Targets(property("rigExec:meshes")))meshes.push_back(mesh.GetPrimPath());
+    for(const auto &mesh:source.Targets(property(_tokens->rigExecMeshes)))meshes.push_back(mesh.GetPrimPath());
     std::set<SdfPath> primvars;
     for(const auto &childPath:node.fact.children) {
         const auto *child=source.Node(childPath);
         if(!child || !child->fact.active || child->fact.type!="RigExecAnimatedMap")continue;
-        const auto at=[&](const char *name){return childPath.AppendProperty(TfToken(name));};
+        const auto at=[&](const TfToken &name){return childPath.AppendProperty(name);};
         VtIntArray inputs;VtFloatArray from,to,slope,cut;TfToken name;
-        if(!Raw(source,at("rigExec:rowInputs"),VtIntArray{},&inputs,error) ||
-           !Raw(source,at("rigExec:rowFrom"),VtFloatArray{},&from,error) ||
-           !Raw(source,at("rigExec:rowTo"),VtFloatArray{},&to,error) ||
-           !Raw(source,at("rigExec:rowSlope"),VtFloatArray{},&slope,error) ||
-           !Raw(source,at("rigExec:rowCut"),VtFloatArray{},&cut,error) ||
-           !Raw(source,at("rigExec:primvarName"),TfToken(),&name,error))return false;
+        if(!Raw(source,at(_tokens->rigExecRowInputs),VtIntArray{},&inputs,error) ||
+           !Raw(source,at(_tokens->rigExecRowFrom),VtFloatArray{},&from,error) ||
+           !Raw(source,at(_tokens->rigExecRowTo),VtFloatArray{},&to,error) ||
+           !Raw(source,at(_tokens->rigExecRowSlope),VtFloatArray{},&slope,error) ||
+           !Raw(source,at(_tokens->rigExecRowCut),VtFloatArray{},&cut,error) ||
+           !Raw(source,at(_tokens->rigExecPrimvarName),TfToken(),&name,error))return false;
         if(from.size()!=inputs.size() || to.size()!=inputs.size() || slope.size()!=inputs.size() ||
            cut.size()!=inputs.size())
             return Fail(error,"animated map rows must be parallel: "+childPath.GetString());
@@ -196,7 +231,7 @@ static bool RigExecLowerSceneAnimatedMaps(const RigExecSceneDescriptors &scene,
         }
         if(!table->AddMap(std::move(rows)))
             return Fail(error,"animated map row names no input: "+childPath.GetString());
-        const auto value=childPath.AppendProperty(TfToken("outputs:value"));
+        const auto value=childPath.AppendProperty(_tokens->outputsValue);
         if(const auto *attribute=source.Attribute(value))if(attribute->fact.hasAuthoredConnections)
             return Fail(error,"animated map output carries authored connections: "+value.GetString());
         const size_t map=result->poseWeights.size();
@@ -204,8 +239,10 @@ static bool RigExecLowerSceneAnimatedMaps(const RigExecSceneDescriptors &scene,
         const std::string primvar="primvars:"+(name.IsEmpty()?childPath.GetName():name.GetString());
         if(!SdfPath::IsValidNamespacedIdentifier(primvar))
             return Fail(error,"animated map primvar name is not an identifier: "+childPath.GetString());
+        const TfToken *primvarName=RigExecFindScenePrimvarName(scene,primvar);
+        if(!primvarName)return Fail(error,"animated map primvar name was not captured: "+childPath.GetString());
         for(const auto &mesh:meshes) {
-            const SdfPath target=mesh.AppendProperty(TfToken(primvar));
+            const SdfPath target=mesh.AppendProperty(*primvarName);
             if(!primvars.insert(target).second)
                 return Fail(error,"two animated maps publish "+target.GetString());
             result->primvarPaths.push_back(target);result->primvarSources.push_back(map);
@@ -216,7 +253,7 @@ static bool RigExecLowerSceneAnimatedMaps(const RigExecSceneDescriptors &scene,
     result->record.mapsSolve=true;result->record.maps=std::move(table);
     *output=std::move(*result);return true;
 }
-bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,const SdfPath &path,
+bool RigExecTranslateScenePoseInterpolator(const RigExecSceneDescriptors &scene,const SdfPath &path,
     RigExecScenePoseInterpolatorDescriptor *output,std::string *error) {
     if(!output)return Fail(error,"null pose interpolator descriptor");
     const RigExecSceneCompileInputs source(scene);const auto *node=source.Node(path);
@@ -228,8 +265,8 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
     result.ml=node->fact.type=="RigExecMlMover";
     result.maps=node->fact.type=="RigExecAnimatedMaps";
     const bool typedInputs=result.ml || result.maps;
-    const auto property=[&](const char *name){return path.AppendProperty(TfToken(name));};
-    result.driverAttributes=source.Targets(property("rigExec:driverAttributes"));
+    const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
+    result.driverAttributes=source.Targets(property(_tokens->rigExecDriverAttributes));
     if(!typedInputs && result.driverAttributes.size()>3)
         return Fail(error,path.GetString()+": rigExec:driverAttributes has more than three numeric drivers");
     for(const auto &driver:result.driverAttributes) {
@@ -244,23 +281,23 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
         result.numericReads.push_back(std::move(read));
         result.numericIsFloat.push_back(isFloat?1:0);
     }
-    if(result.maps)return RigExecLowerSceneAnimatedMaps(scene,source,*node,&result,output,error);
-    if(result.ml)return RigExecLowerSceneMlMover(scene,source,*node,&result,output,error);
+    if(result.maps)return RigExecTranslateSceneAnimatedMaps(scene,source,*node,&result,output,error);
+    if(result.ml)return RigExecTranslateSceneMlMover(scene,source,*node,&result,output,error);
     TfToken solverToken;
-    if(!Raw(source,property("rigExec:solver"),TfToken("pose"),&solverToken,error))return false;
+    if(!Raw(source,property(_tokens->rigExecSolver),_tokens->pose,&solverToken,error))return false;
     if(solverToken!="pose" && solverToken!="additive" && solverToken!="interpolative")
         return Fail(error,"unknown pose interpolator solver "+solverToken.GetString()+": "+path.GetString());
     const bool rigLogic=solverToken!="pose";
-    const auto drivers=source.Targets(property("rigExec:driver"));
+    const auto drivers=source.Targets(property(_tokens->rigExecDriver));
     if(!rigLogic && drivers.size()!=1 && (result.driverAttributes.empty() || !drivers.empty()))
         return Fail(error,"pose interpolator requires exactly one frame driver");
     if(rigLogic && drivers.empty()==result.driverAttributes.empty())
         return Fail(error,"pose interpolator requires frame drivers or numeric drivers, not both: "+path.GetString());
     if(!ResolveDrivers(scene,source,drivers,"pose interpolator",&result,error))return false;
-    if(!RigExecBindSceneTypedRead(scene,property("inputs:enabled"),SdfValueTypeNames->Bool,&result.enabled,error))return false;
+    if(!RigExecBindSceneTypedRead(scene,property(_tokens->inputsEnabled),SdfValueTypeNames->Bool,&result.enabled,error))return false;
     RigExecRbfSolverDesc desc;TfToken token;
-    if(!Raw(source,property("rigExec:allowNegativeWeights"),true,&result.record.allowNegativeWeights,error) ||
-       !Raw(source,property("rigExec:kernel"),TfToken("gaussian"),&token,error))return false;
+    if(!Raw(source,property(_tokens->rigExecAllowNegativeWeights),true,&result.record.allowNegativeWeights,error) ||
+       !Raw(source,property(_tokens->rigExecKernel),_tokens->gaussian,&token,error))return false;
     desc.kernel=token=="linear"?RigExecRbfKernel::Linear:token=="exponential"?RigExecRbfKernel::Exponential:
         token=="cubic"?RigExecRbfKernel::Cubic:token=="quintic"?RigExecRbfKernel::Quintic:RigExecRbfKernel::Gaussian;
     RigExecRbfMethodDesc method;
@@ -271,11 +308,11 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
         desc.kernel==RigExecRbfKernel::Quintic?RigExecRbfWeightFunction::Quintic:RigExecRbfWeightFunction::Gaussian;
     if(rigLogic) {
         TfToken distance,normalizeMethod;float radius=0,threshold=0;
-        if(!Raw(source,property("rigExec:distanceMethod"),TfToken("quaternion"),&distance,error) ||
-           !Raw(source,property("rigExec:normalizeMethod"),TfToken("onlyAboveOne"),&normalizeMethod,error) ||
-           !Raw(source,property("rigExec:automaticRadius"),false,&method.automaticRadius,error) ||
-           !Raw(source,property("rigExec:radius"),0.0f,&radius,error) ||
-           !Raw(source,property("rigExec:weightThreshold"),0.0f,&threshold,error))return false;
+        if(!Raw(source,property(_tokens->rigExecDistanceMethod),_tokens->quaternion,&distance,error) ||
+           !Raw(source,property(_tokens->rigExecNormalizeMethod),_tokens->onlyAboveOne,&normalizeMethod,error) ||
+           !Raw(source,property(_tokens->rigExecAutomaticRadius),false,&method.automaticRadius,error) ||
+           !Raw(source,property(_tokens->rigExecRadius),0.0f,&radius,error) ||
+           !Raw(source,property(_tokens->rigExecWeightThreshold),0.0f,&threshold,error))return false;
         if(distance!="euclidean" && distance!="quaternion" && distance!="swingAngle" && distance!="twistAngle")
             return Fail(error,"unknown pose interpolator distance method "+distance.GetString()+": "+path.GetString());
         if(normalizeMethod!="onlyAboveOne" && normalizeMethod!="always")
@@ -293,11 +330,11 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
         method.rawCount=result.driverAttributes.empty()?4*drivers.size():result.driverAttributes.size();
     }
     float regularization=0;
-    if(!Raw(source,property("rigExec:regularization"),0.0f,&regularization,error) ||
-       !Raw(source,property("rigExec:normalize"),true,&desc.normalize,error) ||
-       !Raw(source,property("rigExec:enableRotation"),true,&desc.enableRotation,error) ||
-       !Raw(source,property("rigExec:enableTranslation"),false,&desc.enableTranslation,error) ||
-       !Raw(source,property("rigExec:twistAxis"),TfToken("X"),&token,error))return false;
+    if(!Raw(source,property(_tokens->rigExecRegularization),0.0f,&regularization,error) ||
+       !Raw(source,property(_tokens->rigExecNormalize),true,&desc.normalize,error) ||
+       !Raw(source,property(_tokens->rigExecEnableRotation),true,&desc.enableRotation,error) ||
+       !Raw(source,property(_tokens->rigExecEnableTranslation),false,&desc.enableTranslation,error) ||
+       !Raw(source,property(_tokens->rigExecTwistAxis),_tokens->X,&token,error))return false;
     desc.regularization=regularization;
     desc.twistAxis=token=="Y"?GfVec3d(0,1,0):token=="Z"?GfVec3d(0,0,1):GfVec3d(1,0,0);
     method.twistAxis=token=="Y"?1:token=="Z"?2:0;
@@ -307,26 +344,26 @@ bool RigExecLowerScenePoseInterpolator(const RigExecSceneDescriptors &scene,cons
     for(const auto &childPath:node->fact.children) {
         const auto *child=source.Node(childPath);if(!child || !child->fact.active)continue;
         if(child->fact.type!="RigExecPose")return Fail(error,"pose interpolator child is not a RigExecPose: "+childPath.GetString());
-        ++children;const auto weight=childPath.AppendProperty(TfToken("outputs:weight"));
+        ++children;const auto weight=childPath.AppendProperty(_tokens->outputsWeight);
         if(const auto *attribute=source.Attribute(weight))if(attribute->fact.hasAuthoredConnections)
             return Fail(error,"pose weight output carries authored connections: "+weight.GetString());
-        bool enabled=true;if(!Raw(source,childPath.AppendProperty(TfToken("inputs:enabled")),true,&enabled,error))return false;
+        bool enabled=true;if(!Raw(source,childPath.AppendProperty(_tokens->inputsEnabled),true,&enabled,error))return false;
         if(!enabled) {result.disabledPoseWeights.push_back(weight);continue;}
         GfQuatf rotation(1.0f);GfVec3f translation(0);TfToken kind;
         float radius=0,translationRadius=0;
-        if(!Raw(source,childPath.AppendProperty(TfToken("rigExec:rotation")),GfQuatf(1.0f),&rotation,error) ||
-           !Raw(source,childPath.AppendProperty(TfToken("rigExec:translation")),GfVec3f(0),&translation,error) ||
-           !Raw(source,childPath.AppendProperty(TfToken("rigExec:poseType")),TfToken("swing"),&kind,error) ||
-           !Raw(source,childPath.AppendProperty(TfToken("rigExec:rotationRadius")),0.0f,&radius,error) ||
-           !Raw(source,childPath.AppendProperty(TfToken("rigExec:translationRadius")),0.0f,&translationRadius,error))return false;
+        if(!Raw(source,childPath.AppendProperty(_tokens->rigExecRotation),GfQuatf(1.0f),&rotation,error) ||
+           !Raw(source,childPath.AppendProperty(_tokens->rigExecTranslation),GfVec3f(0),&translation,error) ||
+           !Raw(source,childPath.AppendProperty(_tokens->rigExecPoseType),_tokens->swing,&kind,error) ||
+           !Raw(source,childPath.AppendProperty(_tokens->rigExecRotationRadius),0.0f,&radius,error) ||
+           !Raw(source,childPath.AppendProperty(_tokens->rigExecTranslationRadius),0.0f,&translationRadius,error))return false;
         if(!std::isfinite(radius) || radius<0 || !std::isfinite(translationRadius) || translationRadius<0)
             return Fail(error,"pose radius is negative or not finite: "+childPath.GetString());
         if(rigLogic) {
             // The target row in the input's own layout: each driver's rotation
             // as (x, y, z, w) on the w >= 0 hemisphere, or the numeric values.
             VtQuatfArray rotations;float scale=1;
-            if(!Raw(source,childPath.AppendProperty(TfToken("rigExec:rotations")),VtQuatfArray{},&rotations,error) ||
-               !Raw(source,childPath.AppendProperty(TfToken("rigExec:scale")),1.0f,&scale,error))return false;
+            if(!Raw(source,childPath.AppendProperty(_tokens->rigExecRotations),VtQuatfArray{},&rotations,error) ||
+               !Raw(source,childPath.AppendProperty(_tokens->rigExecScale),1.0f,&scale,error))return false;
             if(!std::isfinite(scale))return Fail(error,"pose scale is not finite: "+childPath.GetString());
             if(!result.driverAttributes.empty()) {
                 for(size_t k=0;k<result.driverAttributes.size();++k)method.targets.push_back(translation[int(k)]);

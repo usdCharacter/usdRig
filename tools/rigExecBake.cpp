@@ -2,7 +2,7 @@
 //   rigExecBake <stage> [--rig <primPath>] [--time T]
 //               [--presentation <file.rexp>] [--report-static]
 //               -o <file.rigexec>
-// Where rigExecPose evaluates and prints, this compiles the epoch through
+// Where rigExecPose evaluates and prints, this compiles the compiled rig through
 // the baked program, runs it once at T (default: the stage's start time
 // code when it authors a range, else 0) and serializes the static graph
 // with every input's value at T as its default. --presentation embeds a

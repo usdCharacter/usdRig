@@ -15,7 +15,7 @@ struct RigExecBakedProgramImpl;
 struct RigExecBakedStep;
 struct RigExecOpValueState;
 enum class RigExecBakedSlotDomain : uint8_t;
-/// Checked source/value identity mapping from an outgoing epoch to its replacement.
+/// Checked source/value identity mapping from an outgoing compiled rig to its replacement.
 /// Used only to re-encode exact retained Skin memos; values are never rewritten.
 struct RigExecBakedOpIdentityRemap {
     std::vector<int> bindingLeaves, bindingRefIndices, headLeaves, overrides, readerWalks;

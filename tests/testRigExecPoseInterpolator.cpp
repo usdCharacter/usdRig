@@ -30,8 +30,8 @@
 //     that is off has to be off, not frozen), while a disabled POSE is left
 //     out of the solve entirely, because leaving it in would keep it in
 //     every other pose's matrix row and switching one off would quietly
-//     change all the others. The second of those needs a new binding epoch,
-//     so it is also the check that the epoch digest hashes a pose's enable.
+//     change all the others. The second of those needs a new compiled rig,
+//     so it is also the check that the compiled rig signature hashes a pose's enable.
 //   * parity with libs/rigExecMath/rbf.h driven directly. The solver is
 //     already pinned against the studio's Python at 3.41e-11
 //     (testRigExecRbf); what this adds is that the EVALUATOR hands it the
@@ -57,7 +57,7 @@
 using namespace rigExec;
 
 // A broken operation is set aside with a warning instead of failing the rig
-// (RigExecRigEvaluator::_CompileEpoch): the rest compiles and evaluates.
+// (RigExecRigEvaluator::_CompileRig): the rest compiles and evaluates.
 // True when the compile succeeded and set aside every one of `operations`.
 static bool
 SkipsOperations(RigExecRigEvaluator &evaluator,
@@ -414,7 +414,7 @@ TestADisabledInterpolatorPublishesZeros()
 }
 
 // A disabled POSE is left out of the solve, which changes what the others
-// read -- so it has to reach a recompile. The epoch digest hashes it for
+// read -- so it has to reach a recompile. The compiled rig signature hashes it for
 // exactly this reason; without that the solve keeps its stale inverse and
 // this test reads the three-pose answer forever.
 void

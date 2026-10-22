@@ -61,12 +61,12 @@ RigExecSparsityDecision RigExecStream0SparsityDecision();
 
 // Retained cross-frame state.
 
-/// Sampled sources and epoch metadata used to prove whole-pose cache reuse.
+/// Sampled sources and compiled rig metadata used to prove whole-pose cache reuse.
 struct RigExecRetainedFrameState {
     RigExecFrameInputs inputs;
     std::vector<RigExecValueOverride> overrides;
-    uint64_t epochDigest = 0;
-    /// The epoch-constant digest (RigExecEpochConstantDigest) the frame was
+    uint64_t compiledRigSignature = 0;
+    /// The compiled rig constant digest (RigExecCompiledRigConstantDigest) the frame was
     /// retained under. Sampled values exclude avar constants by design, so
     /// a value comparison alone cannot see a constant patch: reuse plans
     /// against this base only when the live program's constant digest
@@ -113,7 +113,7 @@ std::vector<RigExecControlId> RigExecChangedControls(
 /// names.
 bool RigExecCanReuseRetainedPose(
     const RigExecOutputAffectedIndex &index,
-    const RigExecRetainedFrameState &cached, uint64_t requestEpoch,
+    const RigExecRetainedFrameState &cached, uint64_t requestCompiledRig,
     const RigExecFrameInputs &requested,
     const std::vector<RigExecValueOverride> &requestedOverrides);
 
@@ -126,18 +126,18 @@ RigExecEntryProvenance RigExecFullEvalProvenance(
     const RigExecBakedProgramImpl &program, UsdTimeCode time);
 
 /// Captures the retained frame state for a just-evaluated frame: the sampled
-/// inputs and standing overrides by value, plus the epoch, the
-/// epoch-constant digest, and the cluster count the plan checks.
+/// inputs and standing overrides by value, plus the compiled rig, the
+/// compiled rig constant digest, and the cluster count the plan checks.
 /// Retains sampled inputs only; evaluation uses the normal frozen workspace.
 RigExecRetainedFrameState RigExecCaptureRetainedState(
     const RigExecFrameInputs &inputs,
     const std::vector<RigExecValueOverride> &overrides,
-    uint64_t epochDigest, size_t clusterCount,
+    uint64_t compiledRigSignature, size_t clusterCount,
     uint64_t constantDigest = 0);
 
 // Candidate lookup: which retained frame a request reuses.
 
-/// The (epoch, time) -> key sidecar. A re-warm targets a TIME; the stale
+/// The (compiled rig, time) -> key sidecar. A re-warm targets a TIME; the stale
 /// entry at that time is the ideal reuse base (same time-varying inputs,
 /// only the edited control moved). Entries evicted from the cache leave
 /// stale keys here, which read as Miss -- never as a wrong base -- when the
@@ -150,17 +150,17 @@ public:
     RigExecSparseCandidateIndex &operator=(
         const RigExecSparseCandidateIndex &) = delete;
 
-    /// Records that \p key was published for (\p epoch, \p time).
-    void NotePublished(uint64_t epoch, UsdTimeCode time,
+    /// Records that \p key was published for (\p compiledRig, \p time).
+    void NotePublished(uint64_t compiledRig, UsdTimeCode time,
                        const RigExecFrameCacheKey &key);
 
-    /// Answers the key published for (\p epoch, \p time), or false. A null
+    /// Answers the key published for (\p compiledRig, \p time), or false. A null
     /// out-param misses rather than faults.
-    bool Find(uint64_t epoch, UsdTimeCode time,
+    bool Find(uint64_t compiledRig, UsdTimeCode time,
               RigExecFrameCacheKey *key) const;
 
-    /// Drops the key for (\p epoch, \p time), if any.
-    bool Drop(uint64_t epoch, UsdTimeCode time);
+    /// Drops the key for (\p compiledRig, \p time), if any.
+    bool Drop(uint64_t compiledRig, UsdTimeCode time);
 
     void Clear();
     size_t Size() const;
@@ -170,22 +170,22 @@ private:
     std::map<std::pair<uint64_t, UsdTimeCode>, RigExecFrameCacheKey> _map;
 };
 
-// Epoch invalidation through the baked capture index.
+// Compiled rig invalidation through the baked capture index.
 
-/// Drops every cached frame and memoized selection of \p epochDigest,
+/// Drops every cached frame and memoized selection of \p compiledRigSignature,
 /// returning cached frames dropped (memo drops are counted on the memo).
-size_t RigExecInvalidateEpoch(RigExecFrameCache &cache,
+size_t RigExecInvalidateCompiledRig(RigExecFrameCache &cache,
                              RigExecTaskListCache &memo,
-                             uint64_t epochDigest);
+                             uint64_t compiledRigSignature);
 
 /// Routes \p notice through the baked capture index: a hit drops the
-/// epoch's frames and memo and answers true; a miss leaves every cached
+/// compiled rig's frames and memo and answers true; a miss leaves every cached
 /// frame standing (their digests decide reachability, plan D1) and answers
 /// false. The program's IsInvalidatedBy is the whole oracle -- no second
 /// derivation of what a notice touches.
 bool RigExecNoteCaptureIndex(RigExecFrameCache &cache,
                              RigExecTaskListCache &memo,
-                             uint64_t epochDigest,
+                             uint64_t compiledRigSignature,
                              const RigExecBakedProgram &program,
                              const UsdNotice::ObjectsChanged &notice);
 

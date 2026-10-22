@@ -212,7 +212,7 @@ def render(report, top):
             % (which, m["ms"]["best"], "", m["ms"]["p50"], "",
                m["ms"]["p90"], "", m["ms"]["mean"], "",
                m["threads"]["distinct_threads"]))
-    add("  (milliseconds. `author` includes recompiling the epoch, which is")
+    add("  (milliseconds. `author` includes recompiling the compiled rig, which is")
     add("   why it is usually an order of magnitude above `drag`.)")
 
     for which in ("drag", "author"):

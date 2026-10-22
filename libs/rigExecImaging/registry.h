@@ -8,7 +8,7 @@
 // used to be process-global -- the snapshot store, the bound chains, the
 // rig sessions and their stage, noted roots, generated scopes, asset and
 // read roots, the last time, preview slots and deltas, the weight overlay,
-// the generation and published epoch, the warming scheduler, warm index
+// the generation and published compiled rig, the warming scheduler, warm index
 // and budgets, and the stage-notice key -- belongs to exactly one UsdStage.
 // Several usdview sessions in one process therefore evaluate their own
 // rigs side by side, including two stages opened from the same file
@@ -38,7 +38,7 @@
 // a top-level prim and, when the key differs from the one it is bound to
 // (first population, or a stage replaced under the same engine), asks the
 // directory to (re)bind it (BindChain): the chain then reads the context's
-// store, pruned scopes, preview deltas and binding epoch, and only that
+// store, pruned scopes, preview deltas and compiled rig, and only that
 // context's publications reach it. Same mechanism as the time trigger: a
 // data-source leaf the stage scene index already builds, no side channel.
 // LEGACY SURFACE. GetInstance() and the stage-less C functions keep their
@@ -187,7 +187,7 @@ public:
 
     /// Registers a chain BOUND to this context (the legacy handle registers
     /// it unbound), seeding it with this context's store, scopes, deltas and
-    /// epoch. The scene-index plugin uses RegisterUnboundChain instead.
+    /// compiled rig. The scene-index plugin uses RegisterUnboundChain instead.
     void RegisterChain(
         const RigExecInternalPrimPruningSceneIndexRefPtr &pruning,
         const RigExecBindingResolvingSceneIndexRefPtr &binding,
@@ -264,7 +264,7 @@ public:
     ///
     /// \p burst, when usable and prepared for this rig's program, takes
     /// the cached route: no per-frame snapshot refresh, pin
-    /// re-verification, or epoch-constant table walks, and static reads
+    /// re-verification, or compiled rig constant table walks, and static reads
     /// and digests served from the burst maps. Anything else falls back
     /// to the plain per-frame route, which re-derives everything exactly
     /// as before -- including a null cache, which is what the direct
@@ -526,7 +526,7 @@ public:
 
     /// Whether \p path is an active rig root. The results index's
     /// _PrimsDirtied time trigger only fires for these, so output-prim
-    /// dirties (including the universal ones from epoch swaps) never
+    /// dirties (including the universal ones from compiled rig swaps) never
     /// re-enter evaluation.
     bool IsActiveRigRoot(const SdfPath &path);
 
@@ -659,7 +659,7 @@ private:
     std::vector<Chain> _BoundChains() const;
 
     /// Seeds a chain that just bound to this context with its store,
-    /// scopes, preview deltas and epoch. Takes _mutex briefly; the sends
+    /// scopes, preview deltas and compiled rig. Takes _mutex briefly; the sends
     /// run unlocked (they re-enter through the results index's trigger).
     void _AdoptChain(const Chain &chain);
 
@@ -675,17 +675,17 @@ private:
         /// Set when the rig plays a .rigexec instead of evaluating:
         /// exactly one of bridge/playback is ever set (see Activate).
         std::unique_ptr<RigExecBakedPlayback> playback;
-        RigExecBindingResolvingSceneIndex::BindingEpochConstPtr epoch;
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
         std::set<SdfPath> readRoots;
         bool readRootsDirty = true;
         bool dirty = true;
         size_t evaluationCount = 0;
         const RigExecBakedProgram *debugProgram = nullptr;
-        uint64_t debugEpoch = 0;
+        uint64_t debugCompiledRig = 0;
         size_t debugBuildCount = 0;
         std::string debugGraphKey;
         // The session's single-entry frozen snapshot cache, keyed by the
-        // program object, the binding epoch, and the patchable avar
+        // program object, the compiled rig, and the patchable avar
         // region's digest. Refreshed once per warming burst, in
         // _PrepareWarmBurst (the live state it pins is the last evaluated
         // frame's, so the pinned history is the frame's), and bound per
@@ -694,14 +694,14 @@ private:
         // validly empty: no program (D7), or a rig the freeze refuses --
         // production jobs decline and live serves.
         const RigExecBakedProgram *frozenProgram = nullptr;
-        uint64_t frozenEpoch = 0;
+        uint64_t frozenCompiledRig = 0;
         uint64_t frozenAvarDigest = 0;
         bool frozenValid = false;
         /// The stage-edit serial the standing snapshot was verified under.
         /// A still serial means no notice landed since, so the refresh
         /// skips its chain-currency walk and avar-region digest --
         /// bindings and avars move only under notices, and the program,
-        /// epoch, and override pins are compared cheaply regardless.
+        /// compiled rig, and override pins are compared cheaply regardless.
         /// Impossible until the first refresh verifies one.
         uint64_t frozenSerial = ~uint64_t(0);
         std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -714,7 +714,7 @@ private:
         /// swallowing it.
         std::string frozenError;
         /// The session's standing warm burst: rebuilt when its pins move --
-        /// the program object, the cache-epoch digest (binding epoch +
+        /// the program object, the cache-compiled rig signature (compiled rig +
         /// build count + avar region), the stage-edit serial, and the
         /// interactive overrides it
         /// was built under -- and served across ticks while current, so a
@@ -730,7 +730,7 @@ private:
         /// retries.
         RigExecBurstSampleCache standingBurst;
         const RigExecBakedProgram *burstProgram = nullptr;
-        uint64_t burstEpochDigest = 0;
+        uint64_t burstCompiledRigSignature = 0;
         uint64_t burstSerial = ~uint64_t(0);
         std::vector<RigExecValueOverride> burstOverrides;
         bool burstOverrun = false;
@@ -754,8 +754,8 @@ private:
         uint64_t fallbackSerial = ~uint64_t(0);
         std::set<double> fallbackDeclined;
         size_t fallbackAttempts = 0;
-        // The session's epoch-pinned chain bindings, refreshed with the
-        // snapshot and verified per burst (a constant edited mid-epoch
+        // The session's compiled rig chain bindings, refreshed with the
+        // snapshot and verified per burst (a constant edited mid-compiled rig
         // moves no digest, so the pins are re-read, not trusted -- once,
         // at prepare, since no notice can interleave a burst's frames).
         // UI thread only: the pins hold live stage handles.
@@ -815,11 +815,11 @@ private:
         const UsdStageRefPtr &stage,
         UsdTimeCode time,
         std::shared_ptr<RigExecImagingSnapshot> *snapshot,
-        RigExecBindingResolvingSceneIndex::BindingEpochConstPtr *epoch,
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr *compiledRig,
         std::vector<std::string> *errors);
 
     /// Brings one session's frozen snapshot cache current: re-freezes when
-    /// the program object or epoch moved, copy-on-write patches the avar
+    /// the program object or compiled rig moved, copy-on-write patches the avar
     /// region when only constants drifted, rebinds the chain pins when only
     /// they did, and leaves a current entry alone. A freeze refusal (or no
     /// program) parks a validly empty entry: production jobs decline and
@@ -827,7 +827,7 @@ private:
     void _RefreshFrozenSnapshot(RigSession *session);
 
     /// Returns the session's standing warm burst, rebuilding it when its
-    /// pins moved (program, cache-epoch digest, overrides) and serving it
+    /// pins moved (program, cache-compiled rig signature, overrides) and serving it
     /// across ticks while current. A rebuild past the prep slice parks the
     /// burst unusable and marks the overrun, so the tick takes the plain
     /// per-frame route; a shape decline parks it unusable without the mark,
@@ -850,7 +850,7 @@ private:
 
     /// Path-scoped retirement for one session's patch/stamp-bump edit
     /// (plan 2.1/2.2): maps the notice to dirty clusters through the
-    /// session's epoch index, partitions completions by entry provenance
+    /// session's compiled rig index, partitions completions by entry provenance
     /// (clean entries stand or carry, dirty ones retire), purges ONLY the
     /// affected/carried/queued times, retires intersecting proofs, and
     /// records lane-c frames for the next trigger. \p patchedPaths is the
@@ -904,7 +904,7 @@ private:
 
     RigExecImagingBridge::PublishResult _Publish(
         std::shared_ptr<RigExecImagingSnapshot> snapshot,
-        const RigExecBindingResolvingSceneIndex::BindingEpochConstPtr &epoch);
+        const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr &compiledRig);
 
     /// Broadcasts a publication to every chain. Call WITHOUT _mutex held:
     /// the sends re-enter this registry (the results index's time trigger),
@@ -1032,10 +1032,10 @@ private:
     SdfPath _weightOverlay;
     bool _legacyOverlaySet = false;
     uint64_t _generation = 0;
-    uint64_t _publishedEpochId = 0;
-    /// The binding epoch last announced to the bound chains, for seeding
+    uint64_t _publishedCompiledRigId = 0;
+    /// The compiled rig last announced to the bound chains, for seeding
     /// a chain that binds later (_AdoptChain).
-    RigExecBindingResolvingSceneIndex::BindingEpochConstPtr _publishedEpoch;
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr _publishedCompiledRig;
     /// The frame-warming pool: below-normal workers draining neighbor and
     /// sweep jobs sampled on the UI thread. Its mutex is a LEAF: triggers
     /// take _mutex first and scheduler state second, and workers never take

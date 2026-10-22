@@ -23,7 +23,7 @@ struct RigExecGpuClothJob {
     /// The caller's stable name for the cloth, which keys its buffers.
     uint64_t key = 0;
     /// Moves whenever the mesh or the colliders do (it keys their upload).
-    uint64_t epochSerial = 0;
+    uint64_t compiledRigSerial = 0;
     const RigExecClothMesh *mesh = nullptr;
     const RigExecClothColliders *colliders = nullptr;
     RigExecClothSettings settings;

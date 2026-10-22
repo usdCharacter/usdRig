@@ -13,7 +13,7 @@ that waits on it. `Rig._evaluate_holding_gil` is that host's entry point: it
 calls Evaluate with the GIL still held.
 
 The process starts cold on purpose. The first held call is the first thing
-this interpreter asks of rigExec, so the epoch's compile, its plugin loads
+this interpreter asks of rigExec, so the compiled rig's compile, its plugin loads
 and its first frame all happen under a caller holding the GIL. A second
 Python thread keeps asking for the GIL throughout, which is the shape of the
 deadlock, and a watchdog turns a hang into a traceback and a failure instead

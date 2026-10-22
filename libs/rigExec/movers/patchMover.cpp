@@ -756,7 +756,7 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     return RigExecOracleResult::Blend;
 }
 
-constexpr char kEpochTag[] = {'R', 'P', 'M', '3'};
+constexpr char kCompiledDataTag[] = {'R', 'P', 'M', '3'};
 
 // The phased paths each declared points input reads, so playback can hand a
 // phased revision to its input, and the layout of the weights.
@@ -802,58 +802,58 @@ bool ReadString(const uint8_t *data, size_t size, size_t *offset,
     return true;
 }
 
-bool EncodeEpoch(const RigExecRevisionBinding &binding,
-                 std::vector<uint8_t> *epoch)
+bool EncodeCompiledData(const RigExecRevisionBinding &binding,
+                 std::vector<uint8_t> *compiledRig)
 {
-    epoch->assign(kEpochTag, kEpochTag + sizeof(kEpochTag));
+    compiledRig->assign(kCompiledDataTag, kCompiledDataTag + sizeof(kCompiledDataTag));
     const auto &inputs = binding.externalInputs;
     const Layout layout = LayoutOf(inputs);
     if (inputs.size() != InputCount(layout)) {
         return false;
     }
-    AppendString(epoch, inputs[PatchPoints].path.GetString());
-    AppendString(epoch, inputs[UvPoints].path.GetString());
-    AppendCount(epoch, uint32_t(layout.shapes));
+    AppendString(compiledRig, inputs[PatchPoints].path.GetString());
+    AppendString(compiledRig, inputs[UvPoints].path.GetString());
+    AppendCount(compiledRig, uint32_t(layout.shapes));
     for (size_t k = 0; k < layout.shapes; ++k) {
-        AppendString(epoch, inputs[UvShapes + k].path.GetString());
+        AppendString(compiledRig, inputs[UvShapes + k].path.GetString());
     }
-    AppendCount(epoch, layout.connected ? 1u : 0u);
+    AppendCount(compiledRig, layout.connected ? 1u : 0u);
     return true;
 }
 
 bool Encode(const VtValue &, const RigExecRevisionBinding &binding,
-            std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame)
+            std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame)
 {
     frame->clear();
-    return EncodeEpoch(binding, epoch);
+    return EncodeCompiledData(binding, compiledRig);
 }
 
-std::shared_ptr<const void> Prepare(const uint8_t *epoch, size_t size,
+std::shared_ptr<const void> Prepare(const uint8_t *compiledRig, size_t size,
                                     std::string *error)
 {
-    if (size < sizeof(kEpochTag) ||
-        std::memcmp(epoch, kEpochTag, sizeof(kEpochTag)) != 0) {
+    if (size < sizeof(kCompiledDataTag) ||
+        std::memcmp(compiledRig, kCompiledDataTag, sizeof(kCompiledDataTag)) != 0) {
         if (error) {
-            *error = "not a patch mover epoch";
+            *error = "not a patch mover compiled rig";
         }
         return nullptr;
     }
-    size_t offset = sizeof(kEpochTag);
+    size_t offset = sizeof(kCompiledDataTag);
     auto state = std::make_shared<PreparedState>();
     uint32_t shapes = 0, connected = 0;
-    bool ok = ReadString(epoch, size, &offset, &state->patchPoints) &&
-              ReadString(epoch, size, &offset, &state->uvPoints) &&
-              ReadCount(epoch, size, &offset, &shapes);
+    bool ok = ReadString(compiledRig, size, &offset, &state->patchPoints) &&
+              ReadString(compiledRig, size, &offset, &state->uvPoints) &&
+              ReadCount(compiledRig, size, &offset, &shapes);
     if (ok) {
         state->shapes.resize(shapes);
         for (std::string &path : state->shapes) {
-            ok = ok && ReadString(epoch, size, &offset, &path);
+            ok = ok && ReadString(compiledRig, size, &offset, &path);
         }
     }
-    ok = ok && ReadCount(epoch, size, &offset, &connected) && connected <= 1;
+    ok = ok && ReadCount(compiledRig, size, &offset, &connected) && connected <= 1;
     if (!ok || offset != size) {
         if (error) {
-            *error = "corrupt patch mover epoch";
+            *error = "corrupt patch mover compiled rig";
         }
         return nullptr;
     }
@@ -1068,7 +1068,7 @@ RigExecMoverHandler Handler()
     h.assembleExternal = &Assemble;
     h.applyExternal = &Apply;
     h.oracle = &Oracle;
-    h.encodeExternalEpoch = &EncodeEpoch;
+    h.encodeExternalCompiledData = &EncodeCompiledData;
     h.encodeExternal = &Encode;
     h.runtimeKernel.prepare = &Prepare;
     h.runtimeKernel.applyWithProviders = &Play;

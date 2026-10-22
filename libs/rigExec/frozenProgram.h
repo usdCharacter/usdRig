@@ -30,15 +30,15 @@ struct RigExecFrozenAvarPatch {
     uint64_t valueEditSerial = 0, programStamp = 0;
 };
 
-/// An epoch-pinned, worker-safe snapshot of a baked program.
+/// A worker-safe snapshot of a baked program tied to its compiled rig.
 ///
 /// Built on the UI thread by RigExecFreezeProgram, which deep-copies the
-/// live program's epoch tables and per-frame state into `program`, nulls
+/// live program's compiled rig tables and per-frame state into `program`, nulls
 /// every pointer to live evaluator state (evaluator, stage, caches,
-/// evaluator-bound std::functions), and captures the small epoch values the
+/// evaluator-bound std::functions), and captures the small compiled rig values the
 /// frame path reads through those pointers (the joint/solver binding map,
 /// whether guide taps stand). Immutable after the freeze: shared across the
-/// jobs of its epoch, read-only on every thread. A workspace clones the
+/// jobs of its compiled rig, read-only on every thread. A workspace clones the
 /// snapshot once into private working state and executes sampled jobs through
 /// the shared graph. Concurrent jobs use distinct workspace lanes.
 ///
@@ -50,11 +50,11 @@ struct RigExecFrozenAvarPatch {
 /// RigExecFrozenEvalContext::frozen) declines the job; the frame evaluates
 /// live when asked.
 struct RigExecFrozenProgram {
-    /// The program clone: epoch tables plus the per-frame state as it stood
+    /// The program clone: compiled rig tables plus the per-frame state as it stood
     /// at freeze time (the history the frozen run branches from). Live
     /// pointers nulled; see RigExecFreezeProgram.
     RigExecBakedProgramImpl program;
-    /// Copy of the evaluator's joint/solver binding map (epoch data the
+    /// Copy of the evaluator's joint/solver binding map (compiled rig data the
     /// pose epilogue reads through a live pointer).
     std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> jointSolverBinding;
     /// Whether the live program had guide taps standing at freeze time.

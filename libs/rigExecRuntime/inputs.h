@@ -442,7 +442,7 @@ void RrInputsBindArrayDefault(RrProgram *program, uint32_t slot,
 
 /// Array slot \p slot carries topology: a skin's joint indices, a mesh's
 /// face counts or indices, a curve's order or knots, or a sparse blend
-/// shape's offsets or point indices. Topology is epoch state and the reader
+/// shape's offsets or point indices. Topology is compiled rig state and the reader
 /// never recompiles, so its element count stays the default's: a sampled
 /// set of another count is refused (RrInputsSetArray) as an authored one
 /// is. The geometry family marks its topology reads' slots at Open; a

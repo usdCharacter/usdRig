@@ -97,7 +97,7 @@ std::string
 RigExecRigEvaluator::_ComputeStructureDigest(
     unsigned segments, _DigestFootprint *footprint) const
 {
-    // The v0.1 binding-epoch identity: canonical mover paths, schema
+    // The v0.1 compiled rig identity: canonical mover paths, schema
     // types, targets, mover execution ordinals, and the structural dependency
     // wiring each operation declares — relationship identities, read
     // phases, weight-descriptor shape, and blend membership/activations
@@ -237,7 +237,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         return appendRelTargetsNamed(prim, TfToken(name), sorted);
     };
     // A read phase decides WHICH revision of an input a mover consumes, which
-    // is compiled wiring, not a value -- so editing one has to re-epoch
+    // is compiled wiring, not a value -- so editing one has to recompile
     // exactly the way retargeting the relationship does. Authored on the
     // property, so it is hashed alongside that property's targets rather than
     // as another prim-level token.
@@ -385,14 +385,14 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         appendFrameBindingIdentityNamed(prim, TfToken(name));
     };
 
-    // Weight-object descriptor shape is epoch identity (spec §4.1):
+    // Weight-object descriptor shape is compiled rig identity (spec §4.1):
     // target, representation, policy, and canonical sparse support.
     // Recursive, because a combine's field shape is its inputs' shapes:
-    // an edit inside a composed input has to re-epoch the combine that
+    // an edit inside a composed input has to recompile the combine that
     // folds it, or the baked falloff tables replay stale.
     // Cycle-TRACKED rather than depth-limited. A depth cap terminates,
     // but it terminates by silently dropping everything below it, so a
-    // legitimately deep composition stops contributing to the epoch
+    // legitimately deep composition stops contributing to the compiled rig
     // identity and edits down there stop triggering a recompile. Marking
     // the path being walked costs the same and is exact; a genuine cycle
     // is caught and reported by the compile-time walk instead.
@@ -481,16 +481,16 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
         appendRelTargets(w, "rigExec:sampleSource", true);
         // The falloff curve is structural: it is resampled to a table
-        // once per epoch, so an edit to it has to begin a new one.
+        // once per rig compilation, so an edit to it has to begin a new one.
         // What gets hashed is the BAKED TABLE, not the knots. Hashing
         // knot times and values misses everything else that changes the
         // curve's shape -- interpolation mode, tangent slopes and widths,
         // dual values, extrapolation, loops -- so flipping a knot from
-        // curve to held left the digest unchanged, the epoch unrebuilt,
+        // curve to held left the digest unchanged, the compiled rig unrebuilt,
         // and exec replaying a stale LUT while the CPU oracle rebaked the
         // live spline. Hashing the table is exact by construction: it is
         // precisely the bytes exec consumes, so anything that changes
-        // them re-epochs and nothing that does not, does.
+        // them recompiles and nothing that does not, does.
         // This also folds in rigExec:falloffProfile, which is why that
         // token is not hashed separately.
         if (_IsVolumeWeightType(w.GetTypeName())) {
@@ -534,10 +534,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     if (segments & _DigestOutputSets) {
         // Rig output set. Discovered rather than authored, so the digest hashes the
         // discovered paths -- adding, removing, or renaming a joint prim changes
-        // the epoch exactly as editing the old manifest relationship did.
+        // the compiled rig exactly as editing the old manifest relationship did.
         // Derived-property maintenance (spec §7.6 revised) is unconditional now, so
         // there is no policy token left to hash: what the compiler synthesizes depends
-        // only on which gprims author normals/extent, and that is already epoch
+        // only on which gprims author normals/extent, and that is already compiled rig
         // identity through the points-chain targets below.
         static const TfToken kJointType("RigExecJoint");
         static const TfToken kControlType("RigExecControl");
@@ -550,7 +550,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         digest += '|';
 
         // The discovered control set, for the same reason: it decides which
-        // computePointFrame taps the epoch's prepared request carries. A control
+        // computePointFrame taps the compiled rig's prepared request carries. A control
         // that no solver reads is otherwise invisible to this digest -- adding
         // one purely to draw a guide would leave the compiled tap set behind and
         // the guide would never appear.
@@ -563,7 +563,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
 
         // Standalone volume guides carry placement taps and baked falloff state
         // even when no mover consumes their field. Their discovered paths and
-        // structural properties therefore belong to the epoch just as standalone
+        // structural properties therefore belong to the compiled rig just as standalone
         // controls do; otherwise adding or repairing one would replay a tap set
         // that can never publish it.
         for (const SdfPath &volumePath :
@@ -580,7 +580,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
 
         // Pose interpolators. The RBF solve is a compile-time CONSTANT -- the
         // inverted matrix of every pose's kernel value at every other pose -- so
-        // everything that constant is a function of is epoch identity: the
+        // everything that constant is a function of is compiled rig identity: the
         // driver, every pose's rotation, translation, type and radii, the kernel,
         // the twist axis, the regularization and which channels are enabled.
         // Numeric though most of those are, an edit to one has to reach a solve
@@ -652,13 +652,13 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
         digest += '|';
 
-    // Space switches. Everything the compile resolves once is epoch
+    // Space switches. Everything the compile resolves once is compiled rig
     // identity: which prim is switched, the ordered source list, the labels
     // parallel to it, where the active index is read from, and the masks --
     // all of which decide the shape of the taps and the dependency order
     // between switches. inputs:activeSpace is deliberately NOT hashed: it is
     // the animated channel, read per frame like any avar, and an edit to it
-    // must not rebuild the epoch.
+    // must not rebuild the compiled rig.
     for (const UsdPrim &prim :
          UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
         if (prim.GetTypeName() != "RigExecSpaceSwitch") continue;
@@ -668,7 +668,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         appendRelTargets(prim, "rigExec:sources", false);
         appendRelTargets(prim, "rigExec:activeSpaceAttribute", false);
         // The space decides a tap pair and the dependency order between
-        // switches, so it is epoch identity like the sources it joins.
+        // switches, so it is compiled rig identity like the sources it joins.
         appendRelTargets(prim, "rigExec:space", false);
         for (const char *name : {"rigExec:spaceLabels",
                                  "rigExec:rotationFilters",
@@ -719,7 +719,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // single-source walk up to the first property-chain target -- the
     // chain targets themselves are the movers segment's -- so the walk is
     // written to its end, hop by hop with each hop's type, and editing a
-    // phase or rewiring any hop re-epochs the rig.
+    // phase or rewiring any hop recompiles the rig.
     _ForEachConnectedInput(
         _stage->GetPrimAtPath(_rigPath),
         [&](const UsdAttribute &input) {
@@ -770,7 +770,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     stampDigestRegion("Digest.OutputSets");
         stampDigestRegion("Digest.OutputSets");
     }
-    // Solver->joint wiring is epoch identity (view-free extraction,
+    // Solver->joint wiring is compiled rig identity (view-free extraction,
     // user-directed 2026-07-25, replaces RigExecPointFrameView): each
     // solver's ORDERED rigExec:joints list decides which joint
     // self-extracts which aggregate element, so adding, removing, or
@@ -1113,7 +1113,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // so any edit to it changes this token too. That is at least
                 // as strong an identity as the flattened set this replaced,
                 // and marginally stronger: a structural edit to another
-                // attribute of a connection-source prim now also re-epochs,
+                // attribute of a connection-source prim now also recompiles,
                 // which is a recompile, never a missed one.
                 const std::set<SdfPath> &depends = hop.depends;
                 if (!expanded) {
@@ -1461,7 +1461,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     if (rig) {
         // Recursive over the composed rig subtree (not GetChildren):
         // solvers live wherever the author put them, so every scope's
-        // wiring must contribute to epoch identity
+        // wiring must contribute to compiled rig identity
         // (consistent with mover discovery and compile Pass 0).
         // This walk's ORDER is now evaluation semantics, not only identity:
         // the solver stack ordinal is the reverse of exactly this composed
@@ -1469,7 +1469,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // this loop visits them, reversed. Each segment leads with the
         // solver's full path, so a sibling reorder (or a layer-strength
         // change that composes a different order) changes the concatenation
-        // and starts a new epoch -- which is the only reason a reordered
+        // and starts a new compiled rig -- which is the only reason a reordered
         // stack cannot keep a stale schedule. Do not "optimize" this into a
         // sorted set or a path-keyed map.
         static const TfToken kJointsRel("rigExec:joints");
@@ -1492,7 +1492,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // Emit for joint-bearing prims (their bindings) AND for every
             // aggregate solver even without joints: its cardinality feeds
             // Phase A element checks, possibly indirectly through a Blend
-            // input, so a cardinality edit must begin a new epoch.
+            // input, so a cardinality edit must begin a new compiled rig.
             const bool isAggregate =
                 _IsAggregateSolverType(solver.GetTypeName());
             if (joints.empty() && !isAggregate) {
@@ -1581,7 +1581,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     wa.Get(&w);
                 }
                 // Effective cardinality (weights wins, so an ignored count
-                // value does not churn the epoch) plus the
+                // value does not churn the compiled rig) plus the
                 // time-sample presence of BOTH attrs so that ADDING a
                 // sample without changing the default still changes the
                 // digest, forcing the recompile that re-runs the pre-pass
@@ -1666,7 +1666,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             moves.GetTargets(&targets);
             noteTargets(prim, _movesRel, targets, true);
             // Target-list order is non-semantic (spec §4.2): sort before
-            // hashing so a permutation does not change the epoch.
+            // hashing so a permutation does not change the compiled rig.
             std::sort(targets.begin(), targets.end());
             for (const SdfPath &t : targets) {
                 noteRead(t);
@@ -1682,7 +1682,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     const SdfPath owner = canonical.GetPrimPath();
                     // Point-domain cardinality is frozen descriptor shape.
                     // Hash every authored cardinality (not the point values)
-                    // so a 3 -> 2 target edit rebuilds the epoch and lets the
+                    // so a 3 -> 2 target edit rebuilds the compiled rig and lets the
                     // compile validator reject a now-mismatched dense field.
                     // A set avoids recompiling merely because another sample
                     // with the same frozen cardinality was authored.
@@ -1782,7 +1782,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // Declared dependency wiring and read phases.
             appendRelTargets(prim, "rigExec:transform", true);
             appendRelTargets(prim, "rigExec:transformSpace", true);
-            // The carry decides a tap and a slot, so it is epoch
+            // The carry decides a tap and a slot, so it is compiled rig
             // identity exactly as the measuring space is.
             appendRelTargets(prim, "rigExec:space", true);
             appendRelTargets(prim, "rigExec:referenceTransform", true);
@@ -1895,7 +1895,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     appendRelTargets(sample, "rigExec:targetPoints", true);
                     appendPhase(sample, "rigExec:targetPoints");
                     // WHICH blend shape a sparse sample names is structure,
-                    // so it belongs in the epoch digest. What the shape
+                    // so it belongs in the compiled rig signature. What the shape
                     // CONTAINS deliberately does not: offsets and
                     // pointIndices are uniform, so they cannot be time
                     // samples, and RigExecBlendSampleCache is cleared by

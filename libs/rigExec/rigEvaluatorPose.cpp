@@ -1,7 +1,7 @@
 // Constraint operators, pose interpolators, and rest-frame composition.
 
 #include "rigEvaluatorInternal.h"
-#include "rigExecScene/poseSceneLowering.h"
+#include "rigExecScene/poseSceneTranslation.h"
 #include "sceneDispatch.h"
 #include "rigEvaluatorDependencies.h"
 #include "rigEvaluatorConstraints.h"
@@ -281,13 +281,13 @@ RigExecRigEvaluator::_CompilePoseInterpolators(
     RigExecSceneDescriptors localScene;
     RigExecSceneDescriptors &scene = capturedScene ? *capturedScene : localScene;
     if(!RigExecDispatchCaptureSceneDescriptors(_stage,_rigPath,{UsdTimeCode::Default()},&scene,error))return false;
-    phases.Next("Compile.PoseInterpolators.Lowering");
+    phases.Next("Compile.PoseInterpolators.Translation");
     std::set<SdfPath> providers(joints.begin(),joints.end());
     providers.insert(controls.begin(),controls.end());
     for(const auto &path:paths) {
         *operation=path;
         auto descriptor=std::make_shared<RigExecScenePoseInterpolatorDescriptor>();
-        if(!RigExecDispatchLowerScenePoseInterpolator(scene,path,descriptor.get(),error))return false;
+        if(!RigExecDispatchTranslateScenePoseInterpolator(scene,path,descriptor.get(),error))return false;
         if(!descriptor->driver.IsEmpty() && !providers.count(descriptor->driver)) {
             *error="pose interpolator "+path.GetString()+" driver is not a provider of this rig";
             return false;
@@ -349,7 +349,7 @@ RigExecRigEvaluator::_ApplyDerivedStartFrames()
     // swallows the send while the ChangeBlock still batches the Sdf-side
     // work. Sound because the in-flight compile is the only reader of
     // these opinions: the structure digest runs after this returns, and
-    // every Compile rebuilds the epoch (fresh taps) rather than
+    // every Compile rebuilds the compiled rig (fresh taps) rather than
     // invalidating the old one, so no cached exec value can strand on the
     // swallowed send. Block is thread-scoped, and this runs
     // single-threaded, before the digest dispatch.
@@ -478,16 +478,16 @@ RigExecRigEvaluator::_ApplyDerivedStartFrames()
 }
 
 // Whether any of \p providers has a rest channel that can no longer be held
-// as an epoch constant.
+// as a compiled rig constant.
 // Asked only for the providers the rest gate saw a notice reach, never per
 // frame: the answer is a function of the provider's own seven rest
-// attributes and of the epoch's property chains, the chains change only with
+// attributes and of the compiled rig's property chains, the chains change only with
 // a recompile, and the attributes change only through a notice on one of the
 // paths the gate watches.
 void
 RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
 {
-    if (!_epochRestsConstant || _restEpochProviderPaths.empty()) {
+    if (!_compiledRigRestsConstant || _restCompiledRigProviderPaths.empty()) {
         return;
     }
     bool reached = false;
@@ -499,8 +499,8 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         const SdfPath prim = path.GetPrimPath();
         // A subtree is one contiguous run of the ordered map, starting at
         // the prim itself when the prim is a key.
-        const auto first = _restEpochProviderPaths.lower_bound(prim);
-        if (first == _restEpochProviderPaths.end() || !first->HasPrefix(prim)) {
+        const auto first = _restCompiledRigProviderPaths.lower_bound(prim);
+        if (first == _restCompiledRigProviderPaths.end() || !first->HasPrefix(prim)) {
             return;
         }
         if (*first == prim) {
@@ -515,8 +515,8 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         }
         // Every provider at or under the resynced prim. A subtree is one
         // contiguous run of the ordered map, starting at the prim itself.
-        for (auto provider = _restEpochProviderPaths.lower_bound(path);
-             provider != _restEpochProviderPaths.end() &&
+        for (auto provider = _restCompiledRigProviderPaths.lower_bound(path);
+             provider != _restCompiledRigProviderPaths.end() &&
              provider->HasPrefix(path); ++provider) {
             _restEditedProviders.insert(*provider);
             reached = true;
@@ -532,7 +532,7 @@ RigExecRigEvaluator::_NoteRestEdits(const UsdNotice::ObjectsChanged &notice)
         noteProperty(path);
     }
     if (reached) {
-        _epochRestFramesStale = true;
+        _compiledRigRestFramesStale = true;
     }
 }
 

@@ -247,16 +247,16 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         graph.longestPath = std::max(graph.longestPath, distance[i]);
     }
     for (auto &reader : graph.readers) Unique(&reader.second);
-    if (!RigExecLowerOpClusters(&graph, {}, 0, error)) return false;
+    if (!RigExecTranslateOpClusters(&graph, {}, 0, error)) return false;
     *out = std::move(graph); return true;
 }
 
-bool RigExecLowerOpClusters(RigExecCompiledGraph *graph,
+bool RigExecTranslateOpClusters(RigExecCompiledGraph *graph,
     const std::vector<double> &costs, double grain, std::string *error)
 {
     const auto fail = [&](const std::string &message) { if (error) *error = message; return false; };
     if (!graph || !std::isfinite(grain) || grain < 0)
-        return fail("invalid cluster lowering grain");
+        return fail("invalid cluster translation grain");
     const size_t count = graph->ops.size();
     if (count > UINT32_MAX || (!costs.empty() && costs.size() != count))
         return fail("cluster costs do not match canonical operations");
@@ -329,7 +329,7 @@ bool RigExecValidateOpClusters(const RigExecCompiledGraph &graph, std::string *e
         }
     }
     if (std::find(seen.begin(), seen.end(), char(0)) != seen.end())
-        return fail("operation missing from cluster lowering");
+        return fail("operation missing from cluster translation");
     std::vector<std::vector<uint32_t>> predecessors(groups), successors(groups);
     for (uint32_t op = 0; op < count; ++op) {
         for (uint32_t before : graph.ops[op].predecessors) {
@@ -418,7 +418,7 @@ bool RigExecExecuteOpGraph(const RigExecCompiledGraph &graph,
     if (bool(callbacks.dispatch) != bool(callbacks.wait)) return fail("dispatch requires a join");
     const size_t count = graph.ops.size(), clusterCount = graph.clusters.size();
     if (graph.opClusters.size() != count || (count && !clusterCount))
-        return fail("operation graph has no cluster lowering");
+        return fail("operation graph has no cluster translation");
     for (uint32_t seed : seedOps)
         if (seed >= count) return fail("operation seed out of range");
     if (candidateOps) for (uint32_t candidate : *candidateOps)

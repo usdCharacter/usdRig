@@ -1,6 +1,6 @@
 #include "rigExecGpu/gpuDeformExecutor.h"
 
-#include "rigExec/gpuDeformLowering.h"
+#include "rigExec/gpuDeformTranslation.h"
 #include "rigExecGpu/clothShader.h"
 #include "rigExecGpu/glContext.h"
 #include "rigExecGpu/gpuDeformShader.h"
@@ -91,9 +91,9 @@ struct _ChainBuffers {
 };
 
 /// One cloth's device buffers, kept between solves: the mesh while its
-/// epoch holds, and storage the per-solve uploads reuse.
+/// compiled rig holds, and storage the per-solve uploads reuse.
 struct _ClothBuffers {
-    uint64_t epochSerial = 0;
+    uint64_t compiledRigSerial = 0;
     GLuint meshI = 0, meshF = 0, tickP = 0, params = 0, grid = 0, head = 0,
            state = 0, out = 0;
     // The mesh layout's offsets and counts, as the kernel's uniforms.
@@ -332,7 +332,7 @@ struct RigExecGpuDeformExecutor::Impl {
         b->constraints = int(mesh.constraintRest.size());
         b->colors = int(mesh.ColorCount());
         b->triangles = int(colliders.triangles.size() / 3);
-        b->epochSerial = job.epochSerial;
+        b->compiledRigSerial = job.compiledRigSerial;
     }
 
     bool RunClothOnWorker(std::vector<RigExecGpuClothJob> *jobs)
@@ -365,7 +365,7 @@ struct RigExecGpuDeformExecutor::Impl {
             const RigExecClothColliders &colliders = *job.colliders;
             const size_t n = mesh.pointCount, m = colliders.pointCount;
             _ClothBuffers &b = cloths[job.key];
-            if (b.epochSerial != job.epochSerial || !b.meshI) UploadClothMesh(job, &b);
+            if (b.compiledRigSerial != job.compiledRigSerial || !b.meshI) UploadClothMesh(job, &b);
             // The window: entering then collider points per tick, and the
             // parameters.
             const size_t stride = 3 * n + 3 * m;

@@ -314,7 +314,7 @@ void TestCandidateEffectiveInputs()
             Op("B.consumer", {1, 2}, {3}), Op("C.child", {3}, {4}),
             Op("U.unrelated", {5}, {6})}, {0, 2, 5},
             RigExecCyclePolicy::Reject, &graph));
-        CHECK(RigExecLowerOpClusters(&graph, {}, grain));
+        CHECK(RigExecTranslateOpClusters(&graph, {}, grain));
         std::vector<int> values{11, 7, 22, 8, 9, 0, 1};
         std::vector<char> changed(7, 0);
         std::atomic<bool> producerDone{false}, readiness{true};
@@ -582,7 +582,7 @@ void TestClusterCompletionAndCounts()
     CHECK(RigExecCompileOpGraph({Op("A0",{0},{1}),Op("A1",{1},{2}),Op("A2",{2},{3}),
         Op("B0",{10},{11}),Op("B1",{11},{12}),Op("J",{3,12},{20}),Op("U",{30},{31})},
         {0,10,30},RigExecCyclePolicy::Reject,&graph));
-    CHECK(RigExecLowerOpClusters(&graph,{},100.0));
+    CHECK(RigExecTranslateOpClusters(&graph,{},100.0));
     CHECK(Keys(graph)==std::vector<std::string>({"A0","A1","A2","B0","B1","J","U"}));
     CHECK(graph.clusters.size()==4);
     CHECK(graph.opClusters==std::vector<uint32_t>({0,0,0,1,1,2,3}));
@@ -742,7 +742,7 @@ void TestChangeFlagsClearedFromGatheredList()
     CHECK(state.changedValues.empty());
 }
 
-/// Forty ops in four chains, C joining A and B, lowered three clusters a
+/// Forty ops in four chains, C joining A and B, translated three clusters a
 /// chain. One execution and workspace, reset through their own records,
 /// give a fresh pair's answer after every run, across whole-struct
 /// restores; an execution without a valid record is reset whole; a
@@ -763,7 +763,7 @@ void TestSparseResetMatchesFreshWorkspace()
     RigExecCompiledGraph graph;
     CHECK(RigExecCompileOpGraph(descriptors, {100, 200, 400},
         RigExecCyclePolicy::Reject, &graph));
-    CHECK(RigExecLowerOpClusters(&graph, {}, 4.0));
+    CHECK(RigExecTranslateOpClusters(&graph, {}, 4.0));
     // Canonical order A0..A9, B0..B9, C0..C9, D0..D9; clusters of 4, 4, 2.
     CHECK(graph.ops.size() == 40 && graph.clusters.size() == 12);
     if (graph.ops.size() != 40 || graph.clusters.size() != 12) return;

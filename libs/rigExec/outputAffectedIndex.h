@@ -62,7 +62,7 @@ RigExecBakedClusterSet RigExecIntersectClusterSets(
     const RigExecBakedClusterSet &dirty,
     const RigExecBakedClusterSet &affecting);
 
-/// The downstream closure of every control, for one epoch.
+/// The downstream closure of every control, for one compiled rig.
 ///
 /// Immutable after Build except for MapControl (build phase) and the walk
 /// counter: queries are const and thread-safe, so a UI thread planning reuse
@@ -75,7 +75,7 @@ public:
     RigExecOutputAffectedIndex &operator=(
         const RigExecOutputAffectedIndex &) = delete;
 
-    /// Snapshots \p program's closures for \p epochDigest: the forward cone
+    /// Snapshots \p program's closures for \p compiledRigSignature: the forward cone
     /// of every cluster, the always-dirty set, the varying/override cluster
     /// closures, and the control->seed map for every cone-source family --
     /// provider slots (path -> its compose cluster), patchable and varying
@@ -83,13 +83,13 @@ public:
     /// delta bases, and constraint arrays -- plus the control universe the
     /// family walk yields. Replaces any previous build, including explicit
     /// MapControl entries, and zeroes the walk counter.
-    void Build(const RigExecBakedProgramImpl &program, uint64_t epochDigest);
+    void Build(const RigExecBakedProgramImpl &program, uint64_t compiledRigSignature);
 
     void Clear();
 
     bool Empty() const { return _clusterCount == 0; }
     size_t ClusterCount() const { return _clusterCount; }
-    uint64_t EpochDigest() const { return _epochDigest; }
+    uint64_t CompiledRigSignature() const { return _compiledRigSignature; }
 
     /// Registers \p seeds as the clusters \p control reaches directly, before
     /// closure. Replaces any entry Build derived or an earlier call set.
@@ -165,7 +165,7 @@ public:
 
 private:
     size_t _clusterCount = 0;
-    uint64_t _epochDigest = 0;
+    uint64_t _compiledRigSignature = 0;
     /// Non-null exactly when _clusterCount is not 0; its size is then
     /// _clusterCount.
     std::shared_ptr<const std::vector<RigExecBakedClusterSet>> _cones;

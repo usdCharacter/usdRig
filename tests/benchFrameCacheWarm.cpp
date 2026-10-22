@@ -226,7 +226,7 @@ struct BenchRig {
     UsdStageRefPtr stage;
     SdfPath rig;
     std::unique_ptr<RigExecRigEvaluator> evaluator;
-    uint64_t epoch = 0;
+    uint64_t compiledRig = 0;
     size_t clusters = 0;
     bool sampleable = false;
     std::string sampleError;
@@ -255,7 +255,7 @@ PrepareRig(const char *name, const UsdStageRefPtr &stage, BenchRig *out)
         std::printf("FATAL: %s built no program\n", name);
         return false;
     }
-    out->epoch = uint64_t(out->evaluator->GetBindingEpochDigest());
+    out->compiledRig = uint64_t(out->evaluator->GetCompiledRigSignature());
     out->clusters = program->GetClusterCount();
     const std::vector<RigExecValueOverride> noOverrides;
     RigExecFrameInputs probe;
@@ -275,11 +275,11 @@ PrepareRig(const char *name, const UsdStageRefPtr &stage, BenchRig *out)
 }
 
 RigExecFrameCacheKey
-KeyFor(uint64_t epoch, const RigExecFrameInputs &inputs,
+KeyFor(uint64_t compiledRig, const RigExecFrameInputs &inputs,
        const std::vector<RigExecValueOverride> &overrides)
 {
     RigExecFrameCacheKey key;
-    key.epochDigest = epoch;
+    key.compiledRigSignature = compiledRig;
     key.controlDigest = RigExecControlStateDigest(inputs, overrides);
     return key;
 }
@@ -325,7 +325,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
             &error);
         const bool hit =
             sampled &&
-            cache->Lookup(KeyFor(rig->epoch, inputs, noOverrides), &served);
+            cache->Lookup(KeyFor(rig->compiledRig, inputs, noOverrides), &served);
         keyHit.push_back(NowUs() - start);
         if (!sampled) {
             return fail("key hit", t, error);
@@ -375,7 +375,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         if (!program ||
             !RigExecBuildBurstSampleCache(
                 *program, bindings, noOverrides,
-                RigExecFrameCacheEpochDigest(evaluator), &burst, &error)) {
+                RigExecFrameCacheCompiledRigSignature(evaluator), &burst, &error)) {
             std::printf("  sample burst skipped: build declined (%s)\n",
                         error.c_str());
         } else {
@@ -402,7 +402,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
     for (size_t rep = 0; rep < reps; ++rep) {
         const size_t i = rep % frames.size();
         const double start = NowUs();
-        keys[i] = KeyFor(rig->epoch, vectors[i], noOverrides);
+        keys[i] = KeyFor(rig->compiledRig, vectors[i], noOverrides);
         digestOnly.push_back(NowUs() - start);
     }
     PrintDistribution("digest only", digestOnly, "us/frame");
@@ -538,7 +538,7 @@ BenchScrub(BenchRig *rig, const char *name,
         if (sampled && pose.valid &&
             RigExecControlStateDigestible(inputs)) {
             published +=
-                cache.Publish(KeyFor(rig->epoch, inputs, noOverrides),
+                cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(t), pose)
                     ? 1
                     : 0;
@@ -571,7 +571,7 @@ BenchScrub(BenchRig *rig, const char *name,
                                                &inputs, &error);
             RigExecRigPose served;
             if (ok) {
-                key = KeyFor(rig->epoch, inputs, noOverrides);
+                key = KeyFor(rig->compiledRig, inputs, noOverrides);
                 ok = cache.Lookup(key, &served);
             }
             warm.push_back(NowUs() - start);
@@ -609,7 +609,7 @@ BenchScrub(BenchRig *rig, const char *name,
             const double digestStart = NowUs();
             RigExecRigPose served;
             const bool hit =
-                cache.Lookup(KeyFor(rig->epoch, inputs, noOverrides),
+                cache.Lookup(KeyFor(rig->compiledRig, inputs, noOverrides),
                              &served);
             digestLookup.push_back(NowUs() - digestStart);
             if (!hit || !served.valid) {
@@ -683,7 +683,7 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
             return false;
         }
         digests[i] = RigExecControlStateDigest(warmed[i], noOverrides);
-        cache.Publish(KeyFor(rig->epoch, warmed[i], noOverrides),
+        cache.Publish(KeyFor(rig->compiledRig, warmed[i], noOverrides),
                       UsdTimeCode(frames[i]), pose);
     }
 
@@ -723,15 +723,15 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
                 frames.size());
 
     RigExecOutputAffectedIndex index;
-    index.Build(rig->evaluator->GetBakedProgram()->GetStepGraph(), rig->epoch);
+    index.Build(rig->evaluator->GetBakedProgram()->GetStepGraph(), rig->compiledRig);
     RigExecRetainedFrameState retained;
     retained.inputs = warmed[affectedIndex];
-    retained.epochDigest = rig->epoch;
+    retained.compiledRigSignature = rig->compiledRig;
     retained.clusterCount = rig->clusters;
     bool reusable = false;
     const double proofStart = NowUs();
     for (int rep = 0; rep < 200; ++rep) {
-        reusable = RigExecCanReuseRetainedPose(index, retained, rig->epoch,
+        reusable = RigExecCanReuseRetainedPose(index, retained, rig->compiledRig,
                                                edited[affectedIndex], noOverrides);
     }
     std::printf("  whole-pose reuse proof: %.1f us/check; reusable=%s\n",
@@ -766,7 +766,7 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
         }
     }
     const bool dragReusable = RigExecCanReuseRetainedPose(
-        index, retained, rig->epoch, dragInputs, dragged);
+        index, retained, rig->compiledRig, dragInputs, dragged);
     std::printf("  override drag: %zu of %zu frames affected; whole pose reusable=%s\n",
                 dragAffected, frames.size(), dragReusable ? "yes" : "no");
     return true;
@@ -973,7 +973,7 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
                 return false;
             }
             poseBytes = RigExecFrameCachePoseBytes(pose);
-            cache.Publish(KeyFor(rig->epoch, inputs, overrides),
+            cache.Publish(KeyFor(rig->compiledRig, inputs, overrides),
                           UsdTimeCode(t), pose);
         }
     }
@@ -1007,7 +1007,7 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
                             error.c_str());
                 return false;
             }
-            cache.Publish(KeyFor(rig->epoch, inputs, overrides),
+            cache.Publish(KeyFor(rig->compiledRig, inputs, overrides),
                           UsdTimeCode(t), pose);
         }
     }
@@ -1090,7 +1090,7 @@ BenchStress(BenchRig *rig, const std::vector<double> &frames, double seconds)
                                          UsdTimeCode(t), noOverrides,
                                          &inputs, nullptr) &&
                 RigExecControlStateDigestible(inputs)) {
-                cache.Publish(KeyFor(rig->epoch, inputs, noOverrides),
+                cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(t), pose);
                 ++uiPublishes;
             }
@@ -1165,7 +1165,7 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
                 RigExecSampleFrameInputs(*rig->evaluator,
                                          UsdTimeCode(frames[i]),
                                          noOverrides, &inputs, nullptr)) {
-                cache.Publish(KeyFor(rig->epoch, inputs, noOverrides),
+                cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(frames[i]), pose);
             }
         }
@@ -1180,7 +1180,7 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
                 &inputs, nullptr);
             const bool hit =
                 sampled &&
-                cache.Lookup(KeyFor(rig->epoch, inputs, noOverrides),
+                cache.Lookup(KeyFor(rig->compiledRig, inputs, noOverrides),
                              &served) &&
                 served.valid;
             profiler.RecordCacheLookup(hit, frames[i]);

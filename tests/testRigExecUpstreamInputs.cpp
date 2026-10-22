@@ -352,7 +352,7 @@ RunSampled(const RigExecRigEvaluator &evaluator,
         return job;
     }
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = job.inputs.values.size();
     if (evaluator.GetPublishWeightFields()) {
@@ -595,7 +595,7 @@ TestAChainMoverInput()
             {{value, VtValue(GfVec3f(0, 7, 0)), {}}});
 }
 
-// A rest channel of the epoch-rest rig: the dynamic walk re-pulls its
+// A rest channel of the compiled rig-rest rig: the dynamic walk re-pulls its
 // rests while the value stands, the program recomposes the ladder.
 void
 TestARestChannel()
@@ -895,7 +895,7 @@ CheckBurst(const Burst &burst)
         RigExecBurstSampleCache cache;
         CHECK(RigExecBuildBurstSampleCache(
             *program, pinned, none, upstream,
-            RigExecFrameCacheEpochDigest(*evaluator), &cache, &error));
+            RigExecFrameCacheCompiledRigSignature(*evaluator), &cache, &error));
         CHECK(cache.usable);
         CHECK(cache.upstreamAdmitted == upstream);
         if (!cache.usable) {
@@ -1777,7 +1777,7 @@ TestABurstRefusesAnArrayOverAVaryingStage()
         CHECK(!RigExecBuildBurstSampleCache(
             *program, pinned, {},
             RigExecUpstreamValuesOf({Up(cage, VtValue(value))}),
-            RigExecFrameCacheEpochDigest(*evaluator), &cache, &error));
+            RigExecFrameCacheCompiledRigSignature(*evaluator), &cache, &error));
         CHECK(!cache.usable);
         CHECK(error.find("time-varying") != std::string::npos);
     }
@@ -2025,7 +2025,7 @@ DropLines(const RigExecRigPose &pose)
     return lines;
 }
 
-// \p evaluator's authored epoch baked at \p t and written as \p name.
+// \p evaluator's authored compiled rig baked at \p t and written as \p name.
 std::string
 WriteBake(RigExecRigEvaluator &evaluator, double t, const std::string &name)
 {

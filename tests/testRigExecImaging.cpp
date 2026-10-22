@@ -445,7 +445,7 @@ TestNarrowLocators()
         CHECK(observer.dirtiedLocators[0].Contains(HdDataSourceLocator()));
     }
 
-    // Points-only value change: the exact points leaf, the epoch-owned
+    // Points-only value change: the exact points leaf, the compiled rig-owned
     // derivative block entries, and the rebuilt container sentinels —
     // nothing for extent or xform.
     publish(makeSnapshot(2, identity, movedPoints, GfVec3d(1)));
@@ -896,7 +896,7 @@ TestBridgeOverShotStage(const std::string &examplesDir)
     CHECK(restPoints.size() == 4);
 
     // Frame 1024: full IK toward the animated goal moves the published
-    // points; the epoch swap and value notices both arrived.
+    // points; the compiled rig swap and value notices both arrived.
     observer.dirtied.clear();
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1024)));
     const VtVec3fArray posedPoints =
@@ -3852,7 +3852,7 @@ TestExternalReadEditsRepublish()
 // exactly like a static prop in the viewer.
 // A rig with no joints publishes through the bridge like any other.
 // The evaluator gate is only half of it: the bridge's guide fills all iterate
-// joint frames, the binding epoch is built from the published prim set, and a
+// joint frames, the compiled rig is built from the published prim set, and a
 // rig whose entire output is one driven Xform exercises every one of those
 // with an empty joint set.
 // Disconnecting a constraint's target must un-drive the subtree.
@@ -3972,7 +3972,7 @@ TestJointFreeRigPublishes(const std::string &examplesDir)
 // They share movedProperties with the point chains, and the publish loop used
 // to index snapshot->prims before deciding whether it had anything to store —
 // so a float dial on a Scope MINTED an empty published prim for that Scope,
-// which then entered the binding epoch and made the scene index resolve a
+// which then entered the compiled rig and made the scene index resolve a
 // prim RigExec publishes nothing for.
 static void
 TestPropertyResultsDoNotPublishPrims(const std::string &examplesDir)
@@ -6300,7 +6300,7 @@ _CheckUpstreamFrozen(const _UpstreamImaging &imaging,
     CHECK(!inputs.HasChainResolvedInputs());
     CHECK(inputs.upstream.size() == upstream.size());
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     if (evaluator->GetPublishWeightFields()) {

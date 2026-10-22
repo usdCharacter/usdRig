@@ -8,7 +8,7 @@
 namespace rigExec {
 
 // Bound property inputs and cached chain results. Notices mark affected chains
-// stale; a new binding epoch drops the bindings wholesale.
+// stale; a new compiled rig drops the bindings wholesale.
 struct RigExecPropertyChainBindings
 {
     /// One input the revision loop reads by value.

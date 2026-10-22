@@ -378,7 +378,7 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         RigExecWeightPacketInputs packet;packet.volume=std::move(inputs);
         return RigExecRunWeightPacket(record,packet);
     }
-    // Every weight object type the epoch can hold has an arm above.
+    // Every weight object type the compiled rig can hold has an arm above.
     // IsBakeable refuses any other by name, so nothing reaches this -- and
     // an unknown type is an invalid packet, which is a MoverFailed
     // pass-through rather than a plausible wrong deformation.

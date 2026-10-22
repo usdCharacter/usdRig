@@ -66,7 +66,7 @@ struct RigExecWarmWorkspacePool {
 namespace {
 
 uint64_t
-_HashEpochPart(uint64_t hash, const void *data, size_t size)
+_HashCompiledRigPart(uint64_t hash, const void *data, size_t size)
 {
     const unsigned char *bytes = static_cast<const unsigned char *>(data);
     for (size_t i = 0; i < size; ++i) {
@@ -77,9 +77,9 @@ _HashEpochPart(uint64_t hash, const void *data, size_t size)
 }
 
 uint64_t
-_HashEpochPart(uint64_t hash, const std::string &value)
+_HashCompiledRigPart(uint64_t hash, const std::string &value)
 {
-    return _HashEpochPart(hash, value.data(), value.size());
+    return _HashCompiledRigPart(hash, value.data(), value.size());
 }
 
 // The entries of \p table at or under \p roots (prim paths): a session's
@@ -706,7 +706,7 @@ RigExecImagingRegistry::BindChain(const RigExecResultsSceneIndex *results,
             chain.xforms->SetWorldDeltas({});
         }
         if (chain.binding) {
-            chain.binding->SetBindingEpoch(nullptr);
+            chain.binding->SetCompiledRigBinding(nullptr);
         }
         if (chain.results) {
             chain.results->SetStore(std::make_shared<RigExecSnapshotStore>());
@@ -751,12 +751,12 @@ RigExecImagingRegistry::_AdoptChain(const Chain &chain)
     }
     std::set<SdfPath> scopes;
     std::map<SdfPath, GfMatrix4d> deltas;
-    RigExecBindingResolvingSceneIndex::BindingEpochConstPtr epoch;
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         scopes = _generatedScopes;
         deltas = _previewXformDeltas;
-        epoch = _publishedEpoch;
+        compiledRig = _publishedCompiledRig;
     }
     // Unlocked: every one of these sends scene index notices, and the
     // results index's time trigger re-enters this context on them.
@@ -767,7 +767,7 @@ RigExecImagingRegistry::_AdoptChain(const Chain &chain)
         chain.xforms->SetWorldDeltas(deltas);
     }
     if (chain.binding) {
-        chain.binding->SetBindingEpoch(epoch);
+        chain.binding->SetCompiledRigBinding(compiledRig);
     }
     if (chain.results) {
         chain.results->SetStore(_store);
@@ -854,16 +854,16 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
     }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    const uint64_t epoch = evaluator.GetBindingEpochDigest();
+    const uint64_t compiledRig = evaluator.GetCompiledRigSignature();
     const uint64_t serial = evaluator.GetStageEditSerial();
     // The pins: the bridge's, which its notice tracking keeps current (a
-    // constant edited mid-epoch moves no digest, but its notice drops them).
+    // constant edited mid-compiled rig moves no digest, but its notice drops them).
     // Re-verifying a private copy after every edit re-probed every chain
     // mover -- MEASURED at 60 ms on the full biped stack, on every commit.
     const auto refreshPins = [&]() { _AdoptBridgeChainBindings(session); };
     if (session->frozenValid && session->frozenProgram == program &&
-        session->frozenEpoch == epoch) {
-        // Still serial, same program and epoch, valid pins: no notice
+        session->frozenCompiledRig == compiledRig) {
+        // Still serial, same program and compiled rig, valid pins: no notice
         // moved the bindings or the avar region since the standing
         // snapshot verified, so there is nothing to re-walk or
         // re-digest. (The burst pins, including overrides, compare
@@ -884,7 +884,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
             session->frozenSerial = serial;
             return;
         }
-        // Same program, same epoch: what may have moved is the avar region
+        // Same program, same compiled rig: what may have moved is the avar region
         // (ApplyAvarValueEdits), the inputs a routed value edit marked
         // (ApplyValueEdits), and the program stamp. Capture those values;
         // each worker materializes its copy under its lane lease. The last
@@ -913,13 +913,13 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
             }
         }
     }
-    // A new program, a new epoch, or a patch that refused: re-freeze from
+    // A new program, a new compiled rig, or a patch that refused: re-freeze from
     // the live state. A refusal parks a validly empty entry -- production
     // jobs decline and the frame evaluates live when asked.
     session->frozen.reset();
     session->frozenPatch.reset();
     session->frozenProgram = program;
-    session->frozenEpoch = epoch;
+    session->frozenCompiledRig = compiledRig;
     session->frozenAvarDigest = 0;
     session->frozenValid = true;
     session->frozenSerial = serial;
@@ -953,7 +953,7 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
     if (!program) {
         session->standingBurst.Clear();
         session->burstProgram = nullptr;
-        session->burstEpochDigest = 0;
+        session->burstCompiledRigSignature = 0;
         session->burstSerial = ~uint64_t(0);
         session->burstOverrides.clear();
         session->burstOverrun = false;
@@ -983,18 +983,18 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
     if (session->upstream) {
         session->upstream->ValuesAt(session->upstream->t0, &upstream);
     }
-    const uint64_t epochDigest = RigExecFrameCacheEpochDigest(evaluator);
+    const uint64_t compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
     const uint64_t serial = evaluator.GetStageEditSerial();
     const std::vector<RigExecValueOverride> overrides =
         session->bridge->GetInteractiveOverrides();
     // Pins current and the standing burst usable: serve it, with no
     // rebuild. The burst embeds its own pins copy, built from the bindings
     // generation it records, so a rebind moves it. Include the stage serial:
-    // routed value edits can leave the epoch unchanged while invalidating
+    // routed value edits can leave the compiled rig unchanged while invalidating
     // the burst's memoized static input values and attribute queries.
     const bool pinsCurrent =
         session->burstProgram == program &&
-        session->burstEpochDigest == epochDigest &&
+        session->burstCompiledRigSignature == compiledRigSignature &&
         session->burstSerial == serial &&
         session->burstOverrides == overrides &&
         session->burstUpstreamSerial == session->upstreamSerial &&
@@ -1030,12 +1030,12 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
     std::string buildError;
     const uint64_t buildStartUs = RigExecProfiler::NowUs();
     const bool built = RigExecBuildBurstSampleCache(
-        *program, session->chainBindings, overrides, upstream, epochDigest,
+        *program, session->chainBindings, overrides, upstream, compiledRigSignature,
         &rebuilt, &buildError);
     const double buildMs =
         double(RigExecProfiler::NowUs() - buildStartUs) / 1000.0;
     session->burstProgram = program;
-    session->burstEpochDigest = epochDigest;
+    session->burstCompiledRigSignature = compiledRigSignature;
     session->burstSerial = serial;
     session->burstOverrides = overrides;
     session->burstUpstreamSerial = session->upstreamSerial;
@@ -1181,7 +1181,7 @@ RigExecImagingRegistry::_EvaluateSessions(
     const UsdStageRefPtr &stage,
     UsdTimeCode time,
     std::shared_ptr<RigExecImagingSnapshot> *snapshot,
-    RigExecBindingResolvingSceneIndex::BindingEpochConstPtr *epoch,
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr *compiledRig,
     std::vector<std::string> *errors)
 {
     auto combined = std::make_shared<RigExecImagingSnapshot>();
@@ -1189,9 +1189,9 @@ RigExecImagingRegistry::_EvaluateSessions(
     combined->sampleTimeIsDefault = time.IsDefault();
     combined->sampleTime = time.IsDefault() ? 0.0 : time.GetValue();
 
-    auto combinedEpoch = std::make_shared<
-        RigExecBindingResolvingSceneIndex::BindingEpoch>();
-    uint64_t epochId = 1469598103934665603ULL;
+    auto combinedCompiledRig = std::make_shared<
+        RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
+    uint64_t compiledRigId = 1469598103934665603ULL;
     SdfPath commonAssetRoot;
     bool firstRoot = true;
 
@@ -1215,7 +1215,7 @@ RigExecImagingRegistry::_EvaluateSessions(
                 }
                 return false;
             }
-            if (result.epoch) session.epoch = result.epoch;
+            if (result.compiledRig) session.compiledRig = result.compiledRig;
             session.dirty = false;
             // Usually the last reference to the replaced generation.
             WorkMoveDestroyAsync(rigSnapshot);
@@ -1236,28 +1236,28 @@ RigExecImagingRegistry::_EvaluateSessions(
             return false;
         }
 
-        // A zero digest is legal.  The bridge normally supplies the epoch on
+        // A zero digest is legal.  The bridge normally supplies the compiled rig on
         // its first publication; construct the same payload defensively so a
-        // legal zero cannot leave a stage without a binding epoch.
-        if (!session.epoch) {
-            auto rigEpoch = std::make_shared<
-                RigExecBindingResolvingSceneIndex::BindingEpoch>();
-            rigEpoch->id =
+        // legal zero cannot leave a stage without a compiled rig.
+        if (!session.compiledRig) {
+            auto rigCompiledRig = std::make_shared<
+                RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
+            rigCompiledRig->id =
                 session.playback
-                    ? session.playback->GetBindingEpochDigest()
-                    : session.bridge->GetBindingEpochDigest();
+                    ? session.playback->GetCompiledRigSignature()
+                    : session.bridge->GetCompiledRigSignature();
             for (const auto &[path, published] : rigSnapshot->prims) {
-                rigEpoch->publishedPrims.insert(path);
+                rigCompiledRig->publishedPrims.insert(path);
             }
-            session.epoch = std::move(rigEpoch);
+            session.compiledRig = std::move(rigCompiledRig);
         }
 
-        epochId = _HashEpochPart(epochId, session.rigPath.GetString());
-        const uint64_t rigEpochId = session.epoch->id;
-        epochId = _HashEpochPart(epochId, &rigEpochId, sizeof(rigEpochId));
-        combinedEpoch->publishedPrims.insert(
-            session.epoch->publishedPrims.begin(),
-            session.epoch->publishedPrims.end());
+        compiledRigId = _HashCompiledRigPart(compiledRigId, session.rigPath.GetString());
+        const uint64_t rigCompiledRigId = session.compiledRig->id;
+        compiledRigId = _HashCompiledRigPart(compiledRigId, &rigCompiledRigId, sizeof(rigCompiledRigId));
+        combinedCompiledRig->publishedPrims.insert(
+            session.compiledRig->publishedPrims.begin(),
+            session.compiledRig->publishedPrims.end());
         combined->xformResetPaths.insert(rigSnapshot->xformResetPaths.begin(),
                                         rigSnapshot->xformResetPaths.end());
 
@@ -1299,11 +1299,11 @@ RigExecImagingRegistry::_EvaluateSessions(
         }
     }
 
-    // Reserve zero for the registry's no-published-epoch state.
-    combinedEpoch->id = epochId ? epochId : 1;
+    // Reserve zero for the registry's no-published-compiled rig state.
+    combinedCompiledRig->id = compiledRigId ? compiledRigId : 1;
     combined->assetRoot = commonAssetRoot;
     *snapshot = std::move(combined);
-    *epoch = std::move(combinedEpoch);
+    *compiledRig = std::move(combinedCompiledRig);
     return true;
 }
 
@@ -1311,7 +1311,7 @@ RigExecImagingRegistry::_EvaluateSessions(
 RigExecImagingBridge::PublishResult
 RigExecImagingRegistry::_Publish(
     std::shared_ptr<RigExecImagingSnapshot> snapshot,
-    const RigExecBindingResolvingSceneIndex::BindingEpochConstPtr &epoch)
+    const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr &compiledRig)
 {
     RigExecImagingBridge::PublishResult result;
     snapshot->generation = ++_generation;
@@ -1320,10 +1320,10 @@ RigExecImagingRegistry::_Publish(
     RigExecImagingSnapshotConstPtr replaced = _store->Get();
     result.dirtied = _store->Publish(std::move(snapshot));
     WorkMoveDestroyAsync(replaced);
-    if (epoch && epoch->id != _publishedEpochId) {
-        result.epoch = epoch;
-        _publishedEpochId = epoch->id;
-        _publishedEpoch = epoch;
+    if (compiledRig && compiledRig->id != _publishedCompiledRigId) {
+        result.compiledRig = compiledRig;
+        _publishedCompiledRigId = compiledRig->id;
+        _publishedCompiledRig = compiledRig;
     }
     result.ok = true;
     return result;
@@ -1557,9 +1557,9 @@ RigExecImagingRegistry::_Activate(
         }
     }
     std::shared_ptr<RigExecImagingSnapshot> initialSnapshot;
-    RigExecBindingResolvingSceneIndex::BindingEpochConstPtr initialEpoch;
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr initialCompiledRig;
     if (!_EvaluateSessions(&candidate, stage, initialTime,
-                           &initialSnapshot, &initialEpoch, errors)) {
+                           &initialSnapshot, &initialCompiledRig, errors)) {
         abandon();
         return false;
     }
@@ -1615,7 +1615,7 @@ RigExecImagingRegistry::_Activate(
     }
     _lastTime = initialTime;
     RigExecImagingBridge::PublishResult published =
-        _Publish(std::move(initialSnapshot), initialEpoch);
+        _Publish(std::move(initialSnapshot), initialCompiledRig);
     // Unlocked: the commit above is complete, and _Broadcast sends scene
     // index notices whose observers call back into this registry.
     lock.unlock();
@@ -1983,7 +1983,7 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     // plus the same stage/time already published means there is nothing to
     // say. Headless, generation advanced by exactly 1 per SetTime, so this
     // guard is what closes the gap the usdview session showed.
-    if (!_readRootsDirty && _publishedEpochId != 0) {
+    if (!_readRootsDirty && _publishedCompiledRigId != 0) {
         bool anyDirty = false;
         for (const RigSession &session : _sessions) {
             anyDirty = anyDirty || session.dirty || session.readRootsDirty;
@@ -2007,9 +2007,9 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         }
     }
     std::shared_ptr<RigExecImagingSnapshot> snapshot;
-    RigExecBindingResolvingSceneIndex::BindingEpochConstPtr epoch;
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
     if (!_EvaluateSessions(
-            &_sessions, _stage, time, &snapshot, &epoch, nullptr)) {
+            &_sessions, _stage, time, &snapshot, &compiledRig, nullptr)) {
         // A rig that can no longer evaluate stops driving the scene.
         // The per-session bridge already cleared its own store on the way
         // out, but this COMBINED generation is the one the scene indices
@@ -2024,10 +2024,10 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         RigExecImagingBridge::PublishResult cleared;
         cleared.ok = true;
         cleared.dirtied = _store->Publish(nullptr);
-        // The next good generation must re-announce its epoch; the one the
+        // The next good generation must re-announce its compiled rig; the one the
         // binding index holds names prims this clear just removed.
-        _publishedEpochId = 0;
-        _publishedEpoch.reset();
+        _publishedCompiledRigId = 0;
+        _publishedCompiledRig.reset();
         lock.unlock();
         _Broadcast(cleared);
         return false;
@@ -2062,7 +2062,7 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     {
         RigExecProfileScope scope(profiler, "Imaging.CombinedPublish",
                                   "imaging");
-        published = _Publish(std::move(snapshot), epoch);
+        published = _Publish(std::move(snapshot), compiledRig);
     }
     lock.unlock();
     {
@@ -2154,7 +2154,7 @@ RigExecImagingRegistry::BuildWarmWork(
     }
     const RigExecRigEvaluator &evaluator = session->bridge->GetEvaluator();
     // The cached route, when the burst prepared one for this rig's
-    // program: prepared pins, visit sets, and epoch digest, with static
+    // program: prepared pins, visit sets, and compiled rig signature, with static
     // reads and digests served from the burst maps. Anything else takes
     // the plain per-frame route below, which re-derives everything
     // exactly as before.
@@ -2189,8 +2189,8 @@ RigExecImagingRegistry::BuildWarmWork(
         // sees the same history it did under the eager refresh, including
         // after cache hits, which evaluate nothing on either path.
         _RefreshFrozenSnapshot(session);
-        // The session's epoch-pinned chain bindings, verified at use and
-        // rebound when a mid-epoch edit moved them. A rig that cannot bind
+        // The session's compiled rig chain bindings, verified at use and
+        // rebound when a mid-compiled rig edit moved them. A rig that cannot bind
         // takes no job: the sampler would mark its chains stale and decline
         // anyway, but declining here skips the doomed sample.
         if (!_AdoptBridgeChainBindings(session)) {
@@ -2247,11 +2247,11 @@ RigExecImagingRegistry::BuildWarmWork(
         return skip(RigExecWarmSkipReason::Unsampleable, "undigestible");
     }
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.generation = generation;
     context.slotCount = program->GetProviderCount();
     context.programDigest =
-        context.epochDigest ^
+        context.compiledRigSignature ^
         (uint64_t(program->GetBoundInputCount()) * 1099511628211ull) ^
         (uint64_t(program->GetVaryingInputCount()) * 16777619ull);
     context.varyingInputCount = inputs.values.size();
@@ -2271,26 +2271,26 @@ RigExecImagingRegistry::BuildWarmWork(
         session->warmWorkspaces = std::make_shared<RigExecWarmWorkspacePool>();
     auto workspaces = session->warmWorkspaces;
     RigExecFrameCacheKey key;
-    // The same epoch half the bridge's lookup computes (epoch structure +
+    // The same compiled rig half the bridge's lookup computes (compiled rig structure +
     // build count), so a completion lands where the UI thread will look.
-    // The context keeps the bare binding epoch: that is what the frozen
+    // The context keeps the bare compiled rig: that is what the frozen
     // snapshot pins and cross-checks against. The cached route reads the
     // prepared halves; the digests agree by construction (the same level-1s
     // over the same served values). The constant digest folds beside the
     // sampled one on both routes (plan D3): the session's frozen avar
-    // digest IS the epoch-constant digest, refreshed by
+    // digest IS the compiled rig constant digest, refreshed by
     // _RefreshFrozenSnapshot above, so a value patch opens a new key
-    // namespace while the epoch half stands.
+    // namespace while the compiled rig half stands.
     const uint64_t constantDigest = session->frozenAvarDigest;
     uint64_t unfoldedDigest = 0;
     if (cached) {
-        key.epochDigest = burst->epochDigest;
+        key.compiledRigSignature = burst->compiledRigSignature;
         unfoldedDigest = RigExecControlStateDigestWithBurstCache(
             inputs, overrides, burst);
         key.controlDigest =
             RigExecFoldConstantDigest(unfoldedDigest, constantDigest);
     } else {
-        key.epochDigest = RigExecFrameCacheEpochDigest(evaluator);
+        key.compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
         unfoldedDigest =
             RigExecControlStateDigest(inputs, overrides);
         key.controlDigest =
@@ -2305,7 +2305,7 @@ RigExecImagingRegistry::BuildWarmWork(
     session->bridge->NoteWarmingEnqueued(time, key.controlDigest,
                                         unfoldedDigest, inputs);
     // Dynamic-override bootstrapping (plan 2.1): an override identity the
-    // epoch index never learned would answer every plan as foreign (all
+    // compiled rig index never learned would answer every plan as foreign (all
     // clusters). Admission is exact -- the seeds mirror SetOverrides'
     // placement -- and a no-op for identities already known.
     session->bridge->AdmitOverrideControls(overrides);
@@ -2314,7 +2314,7 @@ RigExecImagingRegistry::BuildWarmWork(
     RigExecBackgroundScheduler *scheduler = _scheduler.get();
     std::shared_ptr<RigExecWarmFrameIndex> warmIndex = _warmIndex;
     const auto progressPublication = warmIndex->RequestPublicationFor(
-        rig, time.GetValue(), generation, key.epochDigest);
+        rig, time.GetValue(), generation, key.compiledRigSignature);
     // Null unless explicitly opted in; no worker registry access or lock.
     const WarmPublishObserver publishObserver = production
         ? _warmPublishObserver : WarmPublishObserver();
@@ -2329,7 +2329,7 @@ RigExecImagingRegistry::BuildWarmWork(
     const auto frozenPatch = session->frozenPatch;
     // The source snapshot and dependency record travel with the pose.
     RigExecRetainedFrameState retainedState = RigExecCaptureRetainedState(
-        inputs, overrides, key.epochDigest,
+        inputs, overrides, key.compiledRigSignature,
         program->GetStepGraph().clustering.clusters.size(),
         constantDigest);
     warmPhase("Warm.EnqueueProofRetained");
@@ -2462,8 +2462,8 @@ RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
     }
     const RigExecFrameGeneration generation =
         _scheduler->CurrentGeneration(session.rigPath);
-    const uint64_t epoch =
-        RigExecFrameCacheEpochDigest(session.bridge->GetEvaluator());
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(session.bridge->GetEvaluator());
     const double center = playhead.GetValue();
     std::vector<std::pair<double, double>> scored;
     for (const double time : session.warmRange) {
@@ -2473,7 +2473,7 @@ RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
             continue;
         }
         if (!_warmIndex->IsCursorVisitable(session.rigPath, time, generation,
-                                     epoch)) {
+                                     compiledRig)) {
             continue;
         }
         scored.emplace_back(std::abs(time - center), time);
@@ -2618,7 +2618,7 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(
     const auto states = _warmIndex->States(
         session->rigPath, session->warmRange,
         _scheduler->CurrentGeneration(session->rigPath),
-        RigExecFrameCacheEpochDigest(session->bridge->GetEvaluator()));
+        RigExecFrameCacheCompiledRigSignature(session->bridge->GetEvaluator()));
     double nearest = std::numeric_limits<double>::infinity();
     double candidate = 0.0;
     bool found = false;
@@ -2626,7 +2626,7 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(
         const double time = session->warmRange[i];
         if (_warmIndex->HasRequestPublished(session->rigPath, time,
                 _scheduler->CurrentGeneration(session->rigPath),
-                RigExecFrameCacheEpochDigest(session->bridge->GetEvaluator())))
+                RigExecFrameCacheCompiledRigSignature(session->bridge->GetEvaluator())))
             continue;
         if (states[i] == RigExecWarmFrameState::Cached ||
             states[i] == RigExecWarmFrameState::Warming ||
@@ -2651,10 +2651,10 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(
     } else {
         RigExecFrameCacheKey key;
         const auto generation = _scheduler->CurrentGeneration(session->rigPath);
-        const uint64_t epoch = RigExecFrameCacheEpochDigest(
+        const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(
             session->bridge->GetEvaluator());
         if (_warmIndex->FindCachedKey(session->rigPath, candidate,
-                generation, epoch, &key))
+                generation, compiledRig, &key))
             _warmIndex->NoteRequestPublished(session->rigPath, candidate,
                 key, generation, token);
     }
@@ -2892,10 +2892,10 @@ RigExecImagingRegistry::_PrependPendingRewarm(
     // One batched read, no sampling on the query path.
     const RigExecFrameGeneration generation =
         _scheduler->CurrentGeneration(session->rigPath);
-    const uint64_t epoch =
-        RigExecFrameCacheEpochDigest(session->bridge->GetEvaluator());
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(session->bridge->GetEvaluator());
     const std::vector<RigExecWarmFrameState> states = _warmIndex->States(
-        session->rigPath, session->pendingRewarm, generation, epoch);
+        session->rigPath, session->pendingRewarm, generation, compiledRig);
     std::vector<std::pair<double, double>> scored;
     std::vector<double> keep;
     for (size_t i = 0; i < session->pendingRewarm.size(); ++i) {
@@ -3036,7 +3036,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
     const uint64_t newConstants = [&]() {
         RigExecProfileScope scope(bridge->MutableProfiler(),
                                   "Notice.ConstantDigest", "notice");
-        return RigExecEpochConstantDigest(*program);
+        return RigExecCompiledRigConstantDigest(*program);
     }();
     const std::shared_ptr<RigExecFrameCache> cache =
         bridge->GetFrameCache();
@@ -3237,7 +3237,7 @@ RigExecImagingRegistry::ClearFrameCache(const SdfPath &rig)
             if (session.rigPath == rig && session.warmRangeActive && session.bridge)
                 _warmIndex->SetRequest(rig, session.warmRange,
                     _scheduler ? _scheduler->CurrentGeneration(rig) : 0,
-                    RigExecFrameCacheEpochDigest(session.bridge->GetEvaluator()));
+                    RigExecFrameCacheCompiledRigSignature(session.bridge->GetEvaluator()));
         }
         for (RigSession &session : _sessions) {
             if (session.rigPath == rig) {
@@ -3289,7 +3289,7 @@ RigExecImagingRegistry::SetWarmRange(const SdfPath &rig,
                 session.warmRangeActive = true;
                 _warmIndex->SetRequest(rig, session.warmRange,
                     _scheduler ? _scheduler->CurrentGeneration(rig) : 0,
-                    RigExecFrameCacheEpochDigest(session.bridge->GetEvaluator()));
+                    RigExecFrameCacheCompiledRigSignature(session.bridge->GetEvaluator()));
                 session.fallbackDeclined.clear();
                 found = true;
                 break;
@@ -3339,9 +3339,9 @@ RigExecImagingRegistry::GetFrameStates(const SdfPath &rig,
     }
     const RigExecFrameGeneration generation =
         _scheduler->CurrentGeneration(rig);
-    const uint64_t epoch =
-        RigExecFrameCacheEpochDigest(session->bridge->GetEvaluator());
-    return _warmIndex->States(rig, frames, generation, epoch);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(session->bridge->GetEvaluator());
+    return _warmIndex->States(rig, frames, generation, compiledRig);
 }
 
 RigExecImagingBridge *
@@ -4070,7 +4070,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     // Any edit touching the asset or its transitive reads can factor into
     // the final frame (solvers, joints, movers, controls, weights, driver geometry,
     // guide styling): re-evaluate at the current time. The evaluator's
-    // epoch digest turns structural edits into recompiles; value edits
+    // compiled rig signature turns structural edits into recompiles; value edits
     // flow through exec invalidation on the shared layers.
     auto touchesInput = [&readRoots](const SdfPath &path) {
         const SdfPath primPath = path.GetPrimPath();
@@ -4114,7 +4114,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
             std::lock_guard<std::mutex> lock(_mutex);
             // A value-only edit keeps the cached dependency regions. Resyncs
             // and connection/relationship edits may introduce a new external
-            // input even when the evaluator's binding epoch stays unchanged.
+            // input even when the evaluator's compiled rig stays unchanged.
             // A property resync that names only a value (a spec created by
             // its first authored value, stating `custom` and `variability`
             // with it, or removed by the undo of it) is a value edit here
@@ -4203,7 +4203,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
                     session.bridge->NoteGuideEdits(notice);
                     // The live sampler's pinned chain bindings, on the
                     // same footing: an edit under a chain mover moves a
-                    // chain without moving the epoch digest.
+                    // chain without moving the compiled rig signature.
                     session.bridge->NoteChainEdits(notice);
                     // Outcome-driven retirement (plan 2.1/2.2): the
                     // evaluator classifies this notice (patched plus
@@ -4217,7 +4217,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
                     // generation, so other times' queued and running jobs
                     // still publish; a stale program (or no program)
                     // keeps the global cancel plus the capture-index
-                    // epoch retirement.
+                    // compiled rig retirement.
                     std::vector<SdfPath> patchedPaths;
                     const RigExecNoticeDisposition disposition =
                         session.bridge->GetEvaluator()
@@ -4251,7 +4251,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
                         // token.
                         _CancelGenerationLocked(session.rigPath);
                         // The baked capture index retires cached frames
-                        // eagerly: a notice that hits it drops the epoch
+                        // eagerly: a notice that hits it drops the compiled rig
                         // now, while its half still names it (the
                         // evaluator rebuilds lazily); a miss drops
                         // nothing and D1 reachability decides.
@@ -4343,8 +4343,8 @@ RigExecImagingRegistry::_Deactivate(bool byHost)
         std::lock_guard<std::mutex> notedLock(_notedMutex);
         _notedRigRoots.clear();
     }
-    _publishedEpochId = 0;
-    _publishedEpoch.reset();
+    _publishedCompiledRigId = 0;
+    _publishedCompiledRig.reset();
     for (const Chain &chain : _BoundChains()) {
         if (chain.pruning) {
             chain.pruning->SetOwnedScopes({});
@@ -4389,8 +4389,8 @@ RigExecImagingRegistry::_Broadcast(
     // lock (which also prunes chains whose graphs were destroyed).
     const std::vector<Chain> chains = _BoundChains();
     for (const Chain &chain : chains) {
-        if (result.epoch && chain.binding) {
-            chain.binding->SetBindingEpoch(result.epoch);
+        if (result.compiledRig && chain.binding) {
+            chain.binding->SetCompiledRigBinding(result.compiledRig);
         }
         if (chain.results) {
             chain.results->NotifyGenerationPublished(result.dirtied);

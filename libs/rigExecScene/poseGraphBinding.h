@@ -1,6 +1,6 @@
 #ifndef RIGEXEC_GRAPH_POSE_GRAPH_BINDING_H
 #define RIGEXEC_GRAPH_POSE_GRAPH_BINDING_H
-#include "poseSceneLowering.h"
+#include "poseSceneTranslation.h"
 #include "sceneGraphTypedRead.h"
 #include <array>
 namespace rigExec {

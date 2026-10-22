@@ -4,7 +4,7 @@
 namespace rigExec {
 
 bool
-RigExecTaskListCache::Lookup(uint64_t epoch,
+RigExecTaskListCache::Lookup(uint64_t compiledRig,
                              const RigExecControlId &control,
                              RigExecBakedClusterSet *out)
 {
@@ -16,7 +16,7 @@ RigExecTaskListCache::Lookup(uint64_t epoch,
     // The set crosses the lock by copy; it is one or two words on any rig
     // that bakes today, so the copy is not the critical section's cost.
     std::lock_guard<std::mutex> lock(_mutex);
-    const auto found = _map.find(RigExecTaskListKey(epoch, control));
+    const auto found = _map.find(RigExecTaskListKey(compiledRig, control));
     if (found == _map.end()) {
         ++_misses;
         return false;
@@ -27,22 +27,22 @@ RigExecTaskListCache::Lookup(uint64_t epoch,
 }
 
 void
-RigExecTaskListCache::Store(uint64_t epoch,
+RigExecTaskListCache::Store(uint64_t compiledRig,
                            const RigExecControlId &control,
                            const RigExecBakedClusterSet &set)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    _map[RigExecTaskListKey(epoch, control)] = set;
+    _map[RigExecTaskListKey(compiledRig, control)] = set;
     ++_stores;
 }
 
 size_t
-RigExecTaskListCache::InvalidateEpoch(uint64_t epoch)
+RigExecTaskListCache::InvalidateCompiledRig(uint64_t compiledRig)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     size_t dropped = 0;
     for (auto it = _map.begin(); it != _map.end();) {
-        if (it->first.first == epoch) {
+        if (it->first.first == compiledRig) {
             it = _map.erase(it);
             ++dropped;
         } else {

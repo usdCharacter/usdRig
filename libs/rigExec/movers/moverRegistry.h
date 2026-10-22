@@ -186,7 +186,7 @@ struct RigExecMoverHandler {
     /// otherwise compose as a custom attribute and be ignored
     /// silently). Null for movers with no such predecessor.
     const char *legacyEnvelopeAttribute = nullptr;
-    /// Mover attributes the epoch layout is assembled from (skin only):
+    /// Mover attributes the compiled rig layout is assembled from (skin only):
     /// override tracking re-reads exactly these on a notice.
     std::vector<TfToken> layoutAttributes;
     /// False when the mover has no scalar oracle: parity reports that
@@ -227,7 +227,7 @@ struct RigExecMoverHandler {
 
     /// .rigexec export, optional: a rig holding a mover without it does not
     /// export. Splits a payload assembleExternal produced into the bytes
-    /// runtimeKernel reads back (see rigExecBinary/external.h). \p epoch
+    /// runtimeKernel reads back (see rigExecBinary/external.h). \p compiledRig
     /// must come out identical on every baked frame -- the export fails
     /// otherwise -- and is written once; \p frame is written per frame.
     /// Points the binding reads at a declared phase (binding.phases) reach
@@ -236,24 +236,29 @@ struct RigExecMoverHandler {
     /// phase playback holds no value at.
     /// Immutable runtime schema/state encoded from compiled facts even when a
     /// declared dynamic sample is missing. No sampled payload is required.
-    bool (*encodeExternalEpoch)(const RigExecRevisionBinding &binding,
-        std::vector<uint8_t> *epoch) = nullptr;
+    bool (*encodeExternalCompiledData)(const RigExecRevisionBinding &binding,
+        std::vector<uint8_t> *compiledRig) = nullptr;
     bool (*encodeExternal)(
         const VtValue &data, const RigExecRevisionBinding &binding,
-        std::vector<uint8_t> *epoch, std::vector<uint8_t> *frame) = nullptr;
+        std::vector<uint8_t> *compiledRig, std::vector<uint8_t> *frame) = nullptr;
     /// The playback half of encodeExternal, USD-free. A host that opens a
     /// .rigexec file installs it into the runtime; a runtime without it
     /// passes this mover's points through with a warning.
     RigExecExternalKernel runtimeKernel;
 
-    /// Windowed external movers (rigExecGraph/windowHistory.h), all three or
+    /// Windowed external movers (rigExecGraph/windowHistory.h), all of
+    /// windowFrames, windowFramesScene, captureWindow and applyWindow or
     /// none: how many earlier frames the solve reads (compile time; 0 makes
     /// this revision an ordinary one), the packet a tick captures from the
     /// payload and the preceding points, and the solve over the earlier
     /// ticks' packets, oldest first, then this tick's, into the
-    /// full-strength candidate. \p cache is the revision's own slot for an
-    /// epoch-fixed build, compared on every use and rebuilt on a miss.
+    /// full-strength candidate. \p cache is the revision's own slot for a
+    /// compiled rig build, compared on every use and rebuilt on a miss.
     uint32_t (*windowFrames)(const UsdPrim &mover) = nullptr;
+    /// windowFrames from captured scene facts, for the scene program, which
+    /// has no stage. Required with windowFrames; the two must agree.
+    uint32_t (*windowFramesScene)(const RigExecSceneDescriptors &,
+                                  const SdfPath &mover) = nullptr;
     bool (*captureWindow)(const VtValue &data,
                           const std::vector<GfVec3f> &entering,
                           RigExecWindowPacket *packet) = nullptr;
@@ -285,7 +290,8 @@ struct RigExecMoverHandler {
 /// applyWindow and applyWindowDevice, and RigExecExternalKernel::
 /// captureWindow and applyWindow. Both structs grew, so a plugin built for 5
 /// is rebuilt.
-inline constexpr int RigExecMoverPluginApiVersion = 6;
+/// Version 7 adds windowFramesScene, required of a windowed mover.
+inline constexpr int RigExecMoverPluginApiVersion = 7;
 
 /// Registers one mover, retaining an immutable copy and its schema name.
 /// Duplicate schema names and incomplete external callbacks are rejected.
@@ -417,11 +423,11 @@ bool RigExecValidateMoverTargets(
 
 /// Resolves a UsdSkelBlendShape's offsets into a sample layout for a
 /// pointCount-point target. Returns false to REFUSE the cache (a
-/// connected shape, whose value can move within the epoch); the layout
+/// connected shape, whose value can move within the compiled rig); the layout
 /// itself is still filled in, because a refusal means "read this every
 /// frame", not "this is unusable". Shared by the packet assembly and the
 /// oracle, which deliberately reads through this rather than the
-/// epoch cache.
+/// compiled rig cache.
 bool RigExecResolveBlendSampleLayout(
     const UsdStageRefPtr &stage,
     const SdfPath &blendShapePath,

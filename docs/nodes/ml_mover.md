@@ -245,7 +245,7 @@ python docs/render_media.py --page ml_mover
 
 - Layer weights are row-major with one row per output unit, every layer's weights first and then every layer's biases, as RigLogic stores them.
 - The rotation inputs are expressed in each driver's own rest frame. A network trained on another convention can be folded into its first layer: a fixed per-driver rotation of the quaternion is linear.
-- The network, its normalization and its output count are epoch identity: an edit recompiles. The mask and the numeric inputs are per-frame inputs.
+- The network, its normalization and its output count are compiled rig identity: an edit recompiles. The mask and the numeric inputs are per-frame inputs.
 - A network whose output count differs from its `RigExecMlOutput` children is set aside at compile.
 
 ## See also

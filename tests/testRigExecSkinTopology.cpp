@@ -1,11 +1,11 @@
-// The skin layout is resolved once per binding epoch and shared, so these
-// are the cases where "once per epoch" must not mean "once, ever":
+// The skin layout is resolved once per compiled rig and shared, so these
+// are the cases where "once per rig compilation" must not mean "once, ever":
 //  - a weight-paint edit is a VALUE edit. It does not change the structure
-//    digest, so no new epoch begins and nothing recompiles; the only thing
+//    digest, so no new compiled rig begins and nothing recompiles; the only thing
 //    standing between the artist's new weights and a stale deformation is
 //    the change notice dropping the cached layout.
 //  - a layout that is time-varying, connected, or written by a property
-//    chain is not epoch state at all. Compile has to refuse to cache it,
+//    chain is not compiled rig state at all. Compile has to refuse to cache it,
 //    and the rig has to keep deforming correctly frame by frame.
 //  - an interactive override is a value the static reads must prefer over
 //    the stage, and the layout is read through exactly that route.
@@ -153,7 +153,7 @@ CompileOrReport(RigExecRigEvaluator *evaluator)
     }
 }
 
-// A weight-paint edit between two evaluations. The epoch does not change --
+// A weight-paint edit between two evaluations. The compiled rig does not change --
 // asserted, because that is exactly what makes this the interesting case --
 // so only the notice can invalidate the cached layout.
 void
@@ -168,14 +168,14 @@ TestWeightPaintEditAfterFirstEvaluate()
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     CheckSkinned(evaluator.Evaluate(UsdTimeCode::Default()), 1.0f, 0.0f,
                  "painted weights before the edit");
 
     weights.Set(Weights(0.0f, 1.0f));
     const RigExecRigPose repainted = evaluator.Evaluate(UsdTimeCode::Default());
     CheckSkinned(repainted, 0.0f, 1.0f, "painted weights after the edit");
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
     // A partial repaint, to catch a cache that happens to hold the right
     // answer for the two extremes.
@@ -197,7 +197,7 @@ TestWeightPaintEditAfterFirstEvaluate()
                  "swapped joint indices");
 }
 
-// A time-sampled layout is not epoch state, so Compile must refuse to cache
+// A time-sampled layout is not compiled rig state, so Compile must refuse to cache
 // it and every frame must read its own samples.
 void
 TestTimeSampledWeightsRefuseTheCache()
@@ -322,7 +322,7 @@ TestBasePointEdits()
     }
 }
 
-// The one check the epoch cannot make: whether the points that arrive are
+// The one check the compiled rig cannot make: whether the points that arrive are
 // the points the layout describes. A cached layout is validated once, so the
 // per-frame guard is reduced to a length comparison -- and a base that
 // changes cardinality between frames is what that guard is for. Compile
@@ -400,7 +400,7 @@ TestAPartialConstantEnvelopeIsApplied()
                  "a zero-strength constant envelope");
 }
 
-// The same refusal, taken AFTER the epoch was compiled.
+// The same refusal, taken AFTER the compiled rig was compiled.
 // Authoring the first time sample on a layout attribute -- or connecting it --
 // moves no structure digest, so nothing recompiles and Compile's decision is
 // never re-taken. It does send a notice, and a notice drops the cache, so the
@@ -419,7 +419,7 @@ TestWeightsBecomeTimeSampledAfterCompile()
 
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CompileOrReport(&evaluator);
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     // The frame that fills the cache, before the layout is animated at all.
     CheckSkinned(evaluator.Evaluate(1.0), 1.0f, 0.0f, "constant weights");
 
@@ -433,11 +433,11 @@ TestWeightsBecomeTimeSampledAfterCompile()
     CheckSkinned(evaluator.Evaluate(2.0), 0.0f, 1.0f, "sample 2 after compile");
     CheckSkinned(evaluator.Evaluate(3.0), 0.5f, 0.5f, "sample 3 after compile");
     CheckSkinned(evaluator.Evaluate(1.0), 1.0f, 0.0f, "sample 1 after compile");
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 }
 
 // And the connected half of the same after-Compile case: an attribute that
-// gains a connection after the epoch was compiled.
+// gains a connection after the compiled rig was compiled.
 // The layout read itself does not FOLLOW the connection (see _Array in
 // moverGraph.cpp: the attribute's own value is what a layout is), so the
 // values below are the attribute's throughout. What is being tested is that
@@ -487,7 +487,7 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
     CompileOrReport(&evaluator);
     CHECK(evaluator.GetBakedProgram());
     if (!evaluator.GetBakedProgram()) return;
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     // The first generation builds the graph and runs the kernel; the second,
     // identical, must run nothing. That is the baseline the case below is
     // measured against.
@@ -495,14 +495,14 @@ TestAnUnrelatedEditDoesNotRerunTheKernel()
     CHECK(evaluator.Evaluate(1.0).executedOpCount == 0);
 
     // A prim the rig has never heard of, between two identical frames.
-    // Neutral routing preserves the stamp as well as the binding epoch.
+    // Neutral routing preserves the stamp as well as the compiled rig.
     const size_t stamp=evaluator.GetBakedProgram()->GetStepGraph().programStamp;
     stage->DefinePrim(SdfPath("/Scratch"), TfToken("Scope"));
     CHECK(evaluator.GetLastNoticeDisposition()==RigExecNoticeDisposition::Edited);
     CHECK(evaluator.GetBakedProgram()->GetStepGraph().programStamp==stamp);
     const RigExecRigPose after = evaluator.Evaluate(1.0);
     CheckSkinned(after, 1.0f, 0.0f, "after an unrelated edit");
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     CHECK(after.executedOpCount == 0);
 
     // And the cache is still a cache, not a freeze: a real weight edit after
@@ -874,7 +874,7 @@ TestBakedLayoutFollowsEdits()
 
     CHECK(evaluator->GetBakedProgramBuildCount() == rebuilt);
 
-    // Two time samples on the weights: the layout is no longer epoch state.
+    // Two time samples on the weights: the layout is no longer compiled rig state.
     // Retain a program across the new animation. Its declared SkinTopology
     // producer adopts every sampled layout and preserves equal held values.
     RigExecRigEvaluator rig(stage, SdfPath("/Asset/Rig"));
@@ -1440,7 +1440,7 @@ TestTheLayoutHandleSurvivesUnrelatedNotices()
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     unrelated("after the mover's envelope, set to its value");
 
-    // A new control is a new epoch: the program is rebuilt over the standing
+    // A new control is a new compiled rig: the program is rebuilt over the standing
     // one's geometry state, and its first build of the same layout hands
     // back the same object, so the kept packet still compares equal.
     const size_t builds = evaluator->GetBakedProgramBuildCount();
@@ -1515,7 +1515,7 @@ void TestRetainedSkinRebuildInvalidation()
         stage->DefinePrim(SdfPath("/Asset/Rig/A0Changed"),TfToken("RigExecControl"));
         const auto changed=evaluator->Evaluate(UsdTimeCode(1));
         CheckSkinned(changed,mode==0?0.5f:0.0f,mode==0?0.0f:1.0f,"changed retained inputs");
-        CHECK(changed.diagnostics==(std::vector<std::string>{"structural edit: epoch rebuilt"}));
+        CHECK(changed.diagnostics==(std::vector<std::string>{"structural edit: compiled rig rebuilt"}));
         CHECK(evaluator->GetBakedProgramBuildCount()>builds);
         const auto &B=evaluator->GetBakedProgram()->GetStepGraph();size_t kernels=0;
         for(size_t i=0;i<B.steps.size();++i)
@@ -1530,7 +1530,7 @@ void TestRetainedSkinRebuildInvalidation()
     }
 }
 
-// Topology is epoch state: an authored edit of the skin's indices or element
+// Topology is compiled rig state: an authored edit of the skin's indices or element
 // size is not a value the standing program re-reads but a rebuild, decided
 // by the program's own index (Stale) before the next generation, and the
 // rebuilt program agrees with a fresh one -- for a layout of another count
@@ -1658,8 +1658,8 @@ TestAnimatedWeightsOverFixedIndices()
     const auto flag = [](const std::vector<char> &flags, int k) {
         return k >= 0 && size_t(k) < flags.size() && flags[size_t(k)] != 0;
     };
-    CHECK(flag(leaves.epoch, indices) && flag(leaves.epoch, size));
-    CHECK(!flag(leaves.epoch, painted));
+    CHECK(flag(leaves.compiledRig, indices) && flag(leaves.compiledRig, size));
+    CHECK(!flag(leaves.compiledRig, painted));
     CHECK(flag(leaves.varying, painted));
     CHECK(!flag(leaves.varying, indices) && !flag(leaves.varying, size));
     const std::vector<std::pair<double, std::pair<float, float>>> frames = {

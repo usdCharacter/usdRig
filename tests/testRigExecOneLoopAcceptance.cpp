@@ -1,5 +1,5 @@
 // Canonical one-loop acceptance over actual native operations, production
-// lowering and backend runners. Fixtures are the supported oneloop_* scenes.
+// translation and backend runners. Fixtures are the supported oneloop_* scenes.
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/bakedSchedule.h"
@@ -557,7 +557,7 @@ TestBackendKernelsAndBinaryCycle(const std::string &fixturesDir)
     CHECK(RigExecSampleFrameInputs(E,UsdTimeCode(6),{},&inputs,&error));
     if(frozen) {
         RigExecFrozenEvalContext context;
-        context.epochDigest=E.GetBindingEpochDigest();
+        context.compiledRigSignature=E.GetCompiledRigSignature();
         context.slotCount=E.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount=inputs.values.size();
         context.flags=(E.GetPublishWeightFields()?kRigExecFrozenPublishWeightFields:0)

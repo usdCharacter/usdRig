@@ -721,7 +721,7 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
         op.originalIndex = uint32_t(i);
         graph.canonicalIndex[i] = int32_t(i);
     }
-    if (!RigExecLowerOpClusters(&graph, {}, 0.0, error)) return false;
+    if (!RigExecTranslateOpClusters(&graph, {}, 0.0, error)) return false;
     file->commonGraph = std::make_unique<fb::RigExecWireCommonGraph>();
     auto &common = *file->commonGraph;
     for (const auto &value : values.values) {
@@ -2492,7 +2492,7 @@ _TestS9VolumeEnvelope()
     }
 }
 
-// Original native lowering supplies the SCC/exclusion artifact; runtime never
+// Original native translation supplies the SCC/exclusion artifact; runtime never
 // receives a manually edited graph or a manufactured invalid publication.
 static void
 _TestS9ExportedPlacementCycle(const std::string &fixture)

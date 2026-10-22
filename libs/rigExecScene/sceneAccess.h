@@ -34,7 +34,7 @@ struct RigExecSceneAttribute {
     bool defaultBlocked = false;
     std::vector<double> sampleTimes;
     SdfVariability variability = SdfVariabilityVarying;
-    /// Owned composed spline for compile-time LUT lowering, empty when absent.
+    /// Owned composed spline for compile-time LUT translation, empty when absent.
     VtValue spline;
 };
 struct RigExecSceneRelationship {
@@ -44,7 +44,7 @@ struct RigExecSceneRelationship {
 };
 
 /// Composed compiler input. Enumeration is lexical and includes inactive
-/// objects; lowering chooses active objects and its own canonical graph order.
+/// objects; translation chooses active objects and its own canonical graph order.
 /// Values are resolved at an exact identity. A successful empty value means
 /// an explicit block/no-value state; false means the identity is unavailable.
 /// No stage, schema handle, or source query belongs in compiled descriptors.

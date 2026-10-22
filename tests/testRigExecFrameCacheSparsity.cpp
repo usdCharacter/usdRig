@@ -1,6 +1,6 @@
 // RigExec sparse cross-frame reuse, Stream D: the output-affected index, the
 // task-list cache, retained-frame planning, candidate lookup, capture-index
-// epoch invalidation, and executed-cluster counts.
+// compiled rig invalidation, and executed-cluster counts.
 // Style follows testRigExecFrameCache.cpp: plain C++ with main + CHECK over
 // synthetic programs and in-memory stages. The synthetic programs below are
 // hand-built clusterings closed by the REAL RigExecBakedBuildCones -- the
@@ -134,12 +134,12 @@ SetIs(const RigExecBakedClusterSet &set, std::initializer_list<int> members)
 }
 
 RigExecRetainedFrameState
-MakeRetained(uint64_t epoch, size_t clusters, UsdTimeCode time,
+MakeRetained(uint64_t compiledRig, size_t clusters, UsdTimeCode time,
              std::initializer_list<std::pair<const char *, double>> samples)
 {
     RigExecRetainedFrameState state;
     state.inputs = MakeInputs(time, samples);
-    state.epochDigest = epoch;
+    state.compiledRigSignature = compiledRig;
     state.clusterCount = clusters;
     return state;
 }
@@ -227,7 +227,7 @@ TestOutputAffectedIndex()
     index.Build(program, 7);
     CHECK(!index.Empty());
     CHECK(index.ClusterCount() == 6);
-    CHECK(index.EpochDigest() == 7);
+    CHECK(index.CompiledRigSignature() == 7);
     CHECK(SetIs(index.ConeOf(0), {0, 1, 2, 3, 4}));
     CHECK(SetIs(index.ConeOf(1), {1, 3, 4}));
     CHECK(SetIs(index.ConeOf(2), {2, 3, 4}));
@@ -282,7 +282,7 @@ TestOutputAffectedIndex()
     index.MapControl("/Ctl/A", {1, 99, -2});
     CHECK(index.SeedsForControl("/Ctl/A") == std::vector<int>{1});
     index.Build(program, 9);
-    CHECK(index.EpochDigest() == 9);
+    CHECK(index.CompiledRigSignature() == 9);
     CHECK(index.SeedsForControl("/Ctl/A").empty());
     CHECK(index.Walks() == 0);
     index.Clear();
@@ -366,8 +366,8 @@ TestLadderLeafUsesUnifiedCone()
     CHECK(index.SeedsForControl(path.GetString()) == std::vector<int>{1});
 }
 
-// The task list memoizes one closed set per (control, epoch): repeats hit,
-// epochs are isolated, and invalidation drops exactly one epoch.
+// The task list memoizes one closed set per (control, compiled rig): repeats hit,
+// compiled rig versions are isolated, and invalidation drops exactly one compiled rig.
 void
 TestTaskListCache()
 {
@@ -383,7 +383,7 @@ TestTaskListCache()
     memo.Store(7, "/Ctl/A", set);
     CHECK(memo.Lookup(7, "/Ctl/A", &out));
     CHECK(SetIs(out, {1, 3}));
-    // Another epoch is another table.
+    // Another compiled rig is another table.
     CHECK(!memo.Lookup(8, "/Ctl/A", &out));
     memo.Store(8, "/Ctl/A", set);
     CHECK(memo.Size() == 2);
@@ -394,11 +394,11 @@ TestTaskListCache()
     CHECK(stats.stores == 2);
     CHECK(stats.entries == 2);
 
-    CHECK(memo.InvalidateEpoch(7) == 1);
+    CHECK(memo.InvalidateCompiledRig(7) == 1);
     CHECK(memo.Size() == 1);
     CHECK(!memo.Lookup(7, "/Ctl/A", &out));
     CHECK(memo.Lookup(8, "/Ctl/A", &out));
-    CHECK(memo.InvalidateEpoch(7) == 0);
+    CHECK(memo.InvalidateCompiledRig(7) == 0);
     memo.Clear();
     CHECK(memo.Size() == 0);
     stats = memo.Stats();
@@ -501,7 +501,7 @@ TestChangedControls()
 
 // Planning: an empty cone is a hit with zero work, one moved control
 // re-runs a strict subset, repeats reuse the memoized selection without
-// rewalking, and epoch or topology drift is a miss.
+// rewalking, and compiled rig or topology drift is a miss.
 void
 TestPlanSparseReuse()
 {
@@ -519,9 +519,9 @@ TestPlanSparseReuse()
     CHECK(SetIs(index.AffectedByControls(RigExecChangedControls(cached, moved, {})),
                 {1, 3, 4}));
     CHECK(!RigExecCanReuseRetainedPose(index, cached, 8, cached.inputs, {}));
-    auto otherEpoch = cached;
-    otherEpoch.epochDigest = 8;
-    CHECK(!RigExecCanReuseRetainedPose(index, otherEpoch, 7, cached.inputs, {}));
+    auto otherCompiledRig = cached;
+    otherCompiledRig.compiledRigSignature = 8;
+    CHECK(!RigExecCanReuseRetainedPose(index, otherCompiledRig, 7, cached.inputs, {}));
     auto otherShape = cached;
     ++otherShape.clusterCount;
     CHECK(!RigExecCanReuseRetainedPose(index, otherShape, 7, cached.inputs, {}));
@@ -824,9 +824,9 @@ TestPlanTimeRule()
 
 // The cache's sparsity hooks: retained handles publish and serve beside the
 // pose with accounted bytes, pose-only entries serve a null handle, and
-// EvictEpoch drops exactly one epoch.
+// EvictCompiledRig drops exactly one compiled rig.
 void
-TestRetainedPublishAndEpochEviction()
+TestRetainedPublishAndCompiledRigEviction()
 {
     RigExecFrameCache cache;
     const RigExecRigPose pose = MakePose(1.0, 4);
@@ -880,22 +880,22 @@ TestRetainedPublishAndEpochEviction()
     CHECK(cache.Stats().entryCount == 1);
     CHECK(!cache.Lookup(key, &served, &handle));
 
-    // EvictEpoch drops exactly the named epoch.
+    // EvictCompiledRig drops exactly the named compiled rig.
     cache.Clear();
     cache.SetByteCap(kRigExecFrameCacheDefaultByteCap);
     CHECK(cache.Publish({7, 1}, UsdTimeCode(1.0), pose));
     CHECK(cache.Publish({7, 2}, UsdTimeCode(2.0), pose, retainedBytes,
                         retained));
     CHECK(cache.Publish({8, 1}, UsdTimeCode(1.0), pose));
-    CHECK(cache.EvictEpoch(7) == 2);
+    CHECK(cache.EvictCompiledRig(7) == 2);
     CHECK(!cache.Lookup({7, 1}, &served));
     CHECK(!cache.Lookup({7, 2}, &served, &handle));
     CHECK(cache.Lookup({8, 1}, &served));
-    CHECK(cache.EvictEpoch(7) == 0);
+    CHECK(cache.EvictCompiledRig(7) == 0);
     CHECK(cache.Stats().entryCount == 1);
 }
 
-// The candidate sidecar maps (epoch, time) to the key a re-warm reuses.
+// The candidate sidecar maps (compiled rig, time) to the key a re-warm reuses.
 void
 TestCandidateIndex()
 {
@@ -982,7 +982,7 @@ MakeSingleMeshRig()
 struct CaptureListener : public TfWeakBase {
     RigExecFrameCache *cache = nullptr;
     RigExecTaskListCache *memo = nullptr;
-    uint64_t epoch = 0;
+    uint64_t compiledRig = 0;
     const RigExecBakedProgram *program = nullptr;
     // Per edit under test: what the oracle said and what the routing did.
     bool oracleHit = false;
@@ -993,7 +993,7 @@ struct CaptureListener : public TfWeakBase {
     {
         ++notices;
         oracleHit = program->IsInvalidatedBy(notice);
-        routedHit = RigExecNoteCaptureIndex(*cache, *memo, epoch, *program,
+        routedHit = RigExecNoteCaptureIndex(*cache, *memo, compiledRig, *program,
                                             notice);
     }
 };
@@ -1051,12 +1051,12 @@ TestUnionToleratesMismatchedWidths()
     CHECK(a.Count() == 2);
 }
 
-// Capture-index epoch invalidation, end to end on a real baked program: a
-// value edit on a captured constant hits the index and drops the epoch's
+// Capture-index compiled rig invalidation, end to end on a real baked program: a
+// value edit on a captured constant hits the index and drops the compiled rig's
 // frames and memo; an edit the bake never read misses and leaves every
 // cached frame standing.
 void
-TestCaptureIndexEpochInvalidation()
+TestCaptureIndexCompiledRigInvalidation()
 {
     UsdStageRefPtr stage = MakeSingleMeshRig();
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
@@ -1078,25 +1078,25 @@ TestCaptureIndexEpochInvalidation()
         CHECK(false);
         return;
     }
-    const uint64_t epoch =
-        uint64_t(evaluator.GetBindingEpochDigest());
+    const uint64_t compiledRig =
+        uint64_t(evaluator.GetCompiledRigSignature());
 
     RigExecFrameCache cache;
     RigExecTaskListCache memo;
     const RigExecRigPose pose = MakePose(3.0, 2);
-    CHECK(cache.Publish({epoch, 1}, UsdTimeCode(1.0), pose));
-    CHECK(cache.Publish({epoch, 2}, UsdTimeCode(2.0), pose));
-    CHECK(cache.Publish({epoch + 1, 1}, UsdTimeCode(1.0), pose));
+    CHECK(cache.Publish({compiledRig, 1}, UsdTimeCode(1.0), pose));
+    CHECK(cache.Publish({compiledRig, 2}, UsdTimeCode(2.0), pose));
+    CHECK(cache.Publish({compiledRig + 1, 1}, UsdTimeCode(1.0), pose));
     RigExecBakedClusterSet selected;
     selected.Resize(6);
     selected.Set(1);
-    memo.Store(epoch, "/Ctl/A", selected);
-    memo.Store(epoch + 1, "/Ctl/A", selected);
+    memo.Store(compiledRig, "/Ctl/A", selected);
+    memo.Store(compiledRig + 1, "/Ctl/A", selected);
 
     CaptureListener listener;
     listener.cache = &cache;
     listener.memo = &memo;
-    listener.epoch = epoch;
+    listener.compiledRig = compiledRig;
     listener.program = program.get();
     TfNotice::Key key = TfNotice::Register(TfCreateWeakPtr(&listener),
                                               &CaptureListener::Handle);
@@ -1112,14 +1112,14 @@ TestCaptureIndexEpochInvalidation()
     CHECK(!listener.oracleHit);
     CHECK(!listener.routedHit);
     RigExecRigPose served;
-    CHECK(cache.Lookup({epoch, 1}, &served));
-    CHECK(cache.Lookup({epoch, 2}, &served));
+    CHECK(cache.Lookup({compiledRig, 1}, &served));
+    CHECK(cache.Lookup({compiledRig, 2}, &served));
     CHECK(cache.Stats().entryCount == 3);
     CHECK(memo.Size() == 2);
 
     // A value edit on a captured constant: the control's default avar has
     // no samples and no connections, so the bake captured it and the edit
-    // hits the rebuild index. Drops the epoch, keeps the other.
+    // hits the rebuild index. Drops the compiled rig, keeps the other.
     listener.notices = 0;
     stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
         .GetAttribute(TfToken("avars:tx"))
@@ -1127,14 +1127,14 @@ TestCaptureIndexEpochInvalidation()
     CHECK(listener.notices > 0);
     CHECK(listener.oracleHit);
     CHECK(listener.routedHit);
-    CHECK(!cache.Lookup({epoch, 1}, &served));
-    CHECK(!cache.Lookup({epoch, 2}, &served));
-    CHECK(cache.Lookup({epoch + 1, 1}, &served));
+    CHECK(!cache.Lookup({compiledRig, 1}, &served));
+    CHECK(!cache.Lookup({compiledRig, 2}, &served));
+    CHECK(cache.Lookup({compiledRig + 1, 1}, &served));
     CHECK(cache.Stats().entryCount == 1);
     CHECK(memo.Size() == 1);
     RigExecBakedClusterSet out;
-    CHECK(!memo.Lookup(epoch, "/Ctl/A", &out));
-    CHECK(memo.Lookup(epoch + 1, "/Ctl/A", &out));
+    CHECK(!memo.Lookup(compiledRig, "/Ctl/A", &out));
+    CHECK(memo.Lookup(compiledRig + 1, "/Ctl/A", &out));
 
     TfNotice::Revoke(key);
 }
@@ -1401,7 +1401,7 @@ TestRecomposedVersionSeedsSparseReuse()
     RigExecFrozenEvalContext context;
     context.frozen = frozen.get();
     context.workspace = workspace.get();
-    context.epochDigest = uint64_t(evaluator.GetBindingEpochDigest());
+    context.compiledRigSignature = uint64_t(evaluator.GetCompiledRigSignature());
     context.slotCount = frozen->program.paths.size();
     const auto run = [&](const std::vector<RigExecValueOverride> &overrides) {
         evaluator.SetInteractiveOverrides(overrides);
@@ -1429,13 +1429,13 @@ TestRecomposedVersionSeedsSparseReuse()
     CHECK(run({drag}) == 0);
     CHECK(run({}) > 0);
     CHECK(run({}) == 0);
-    // A workspace cannot be silently reused for a different source epoch.
+    // A workspace cannot be silently reused for a different source compiled rig.
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(evaluator, time, {}, &inputs, &error));
     context.varyingInputCount = inputs.values.size();
-    ++context.epochDigest;
+    ++context.compiledRigSignature;
     CHECK(!RigExecEvaluateFrozen(context, inputs, RigExecMakeProductionStepRunner()).valid);
-    --context.epochDigest;
+    --context.compiledRigSignature;
     CHECK(run({}) == 0);
 }
 
@@ -1457,10 +1457,10 @@ main()
     TestPlanTimeRule();
     TestUpstreamMissesSparseReuse();
     TestVaryingRevisionLeavesMissSparseReuse();
-    TestRetainedPublishAndEpochEviction();
+    TestRetainedPublishAndCompiledRigEviction();
     TestCandidateIndex();
     TestUnionToleratesMismatchedWidths();
-    TestCaptureIndexEpochInvalidation();
+    TestCaptureIndexCompiledRigInvalidation();
     TestKnownEmptyVsUnknown();
     TestNoticeAdapterPaths();
     TestNoticeAdapterRealNotice();

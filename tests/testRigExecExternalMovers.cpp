@@ -11,7 +11,7 @@
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecScene/usdSceneAccess.h"
-#include "rigExecScene/sceneProgramLowering.h"
+#include "rigExecScene/sceneProgramTranslation.h"
 
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
@@ -287,7 +287,7 @@ void TestEvaluation()
     CHECK(RigExecBakeToBinary(baked, options, &output, &error));
     CHECK(!output.bytes.empty());
     // The plugin's own reads stay inside its payload: the file holds its
-    // one entry, with the epoch and the frame bytes of the bake's run.
+    // one entry, with the compiled rig and the frame bytes of the bake's run.
     {
         std::unique_ptr<fb::RigExecWireFile> file;
         CHECK(RigExecFormatOpen(output.bytes.data(), output.bytes.size(),
@@ -367,7 +367,7 @@ void TestTimeVaryingInputsKeyFramesApart()
             CHECK(evaluator.GetBakedProgram() &&
                   RigExecBuildBurstSampleCache(
                       *evaluator.GetBakedProgram(), pinned, none,
-                      RigExecFrameCacheEpochDigest(evaluator), &burst,
+                      RigExecFrameCacheCompiledRigSignature(evaluator), &burst,
                       &error));
             std::vector<uint64_t> digests;
             for (int frame : {1, 2, 3}) {
@@ -469,14 +469,14 @@ void TestDetachedExternalProgram()
     auto stage=MakeExportRig("ExternalQuadraticMover");
     RigExecUsdSceneAccess source(stage);RigExecSceneDescriptors scene;std::string error;
     CHECK(RigExecCaptureSceneDescriptors(source,kRig,{UsdTimeCode::Default(),UsdTimeCode(1),UsdTimeCode(3)},&scene,&error));
-    RigExecSceneProgram program;CHECK(RigExecLowerSceneProgram(scene,&program,&error));
+    RigExecSceneProgram program;CHECK(RigExecTranslateSceneProgram(scene,&program,&error));
     CHECK(program.Compile(RigExecCyclePolicy::SetAside,&error));
     const auto preservedIdentity=program.identity;
     const auto preservedPublic=program.publicValues;
     const auto preservedMembers=program.graph.cycleMembers;
     auto invalidScene=scene;invalidScene.identities.clear();
     error.clear();
-    CHECK(!RigExecLowerSceneProgram(invalidScene,&program,&error));
+    CHECK(!RigExecTranslateSceneProgram(invalidScene,&program,&error));
     CHECK(!error.empty());
     CHECK(program.identity==preservedIdentity && program.publicValues==preservedPublic &&
           program.graph.cycleMembers==preservedMembers);
@@ -572,7 +572,7 @@ void TestExport()
     if (!RigExecBakeToBinary(baked, options, &result, &error)) {
         throw std::runtime_error("export failed: " + error);
     }
-    // The file holds the plugin mover's entry: its type, its epoch and the
+    // The file holds the plugin mover's entry: its type, its compiled rig and the
     // frame bytes of the bake's run. The plugin's own reads stay inside
     // its payload; no path read stands for them.
     {
@@ -657,7 +657,7 @@ void TestExport()
                   .Get<VtVec3fArray>(),
               "reference beside a missing kernel");
 
-    // A kernel that cannot read the epoch bytes leaves it passing through.
+    // A kernel that cannot read the compiled data bytes leaves it passing through.
     RigExecExternalKernel refusing = handler->runtimeKernel;
     refusing.prepare = [](const uint8_t *, size_t, std::string *why)
         -> std::shared_ptr<const void> {
@@ -792,13 +792,13 @@ void TestTheExternalPayloadIsTheAssemblersAnswer()
                                          ": the packet's payload is not the "
                                          "assembler's answer");
             }
-            std::vector<uint8_t> epochA, frameA, epochB, frameB;
+            std::vector<uint8_t> compiledRigA, frameA, compiledRigB, frameB;
             CHECK(handler->encodeExternal(packet.externalData,
-                                          revision->binding, &epochA,
+                                          revision->binding, &compiledRigA,
                                           &frameA));
             CHECK(handler->encodeExternal(fresh.data, revision->binding,
-                                          &epochB, &frameB));
-            CHECK(epochA == epochB && frameA == frameB);
+                                          &compiledRigB, &frameB));
+            CHECK(compiledRigA == compiledRigB && frameA == frameB);
             return frameA;
         };
         for (const double frame : {1.0, 3.0}) {

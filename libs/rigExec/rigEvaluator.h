@@ -170,7 +170,7 @@ struct RigExecRigPose {
 
     /// Volumetric weight object path -> the ASSET-SPACE placement matrix
     /// this generation resolved for it, for every volume reachable in
-    /// the current epoch.
+    /// the current compiled rig.
     ///
     /// The companion to weightFields, and published for the same
     /// consumer: an authoring tool that paints the influence overlay
@@ -326,7 +326,7 @@ enum class RigExecNoticeDisposition {
     /// nothing.
     Edited,
     /// The notice hit the capture index: the program is stale and will be
-    /// rebuilt, the epoch moves, and epoch-half eviction plus generation
+    /// rebuilt, the compiled rig moves, and compiled rig eviction plus generation
     /// cancel stand.
     Stale,
 };
@@ -348,7 +348,7 @@ public:
     /// Evaluates one complete generation at an explicit time.
     RigExecRigPose Evaluate(UsdTimeCode time);
 
-    /// Whether the compiled epoch can be baked, appending one reason per
+    /// Whether the compiled rig can be baked, appending one reason per
     /// feature that stops it.
     ///
     /// Refused export admission names the unsupported source feature.
@@ -389,7 +389,7 @@ public:
     /// The pair with the count above: a rig the program cannot express
     /// answers "no program" every time it is asked, and asking once per
     /// frame would charge every frame for the refusal. A test holds this to
-    /// one attempt per epoch, which the build count alone cannot say
+    /// one attempt per compiled rig, which the build count alone cannot say
     /// because it never moves for such a rig at all.
     size_t GetBakedProgramBuildAttemptCount() const {
         return _bakedProgramBuildAttempts;
@@ -421,7 +421,7 @@ public:
     std::vector<RigExecOpTraceEntry> GetLastOpTrace() const;
     std::vector<RigExecOpGraphNode> GetOpGraph() const;
 
-    /// How many skin layouts the epoch's topology cache is holding answers
+    /// How many skin layouts the compiled rig's topology cache is holding answers
     /// for. The cache is the dynamic walk's; a baked program builds its
     /// layouts in its SkinTopology ops and never fills it.
     ///
@@ -537,10 +537,10 @@ public:
     /// The rig prim this evaluator was constructed with, for tools that
     /// report on the bake (a .rigexec file's rig field names it).
     const SdfPath &GetRigPath() const { return _rigPath; }
-    /// Target-local spatial matrix primvars in this compiled epoch.
+    /// Target-local spatial matrix primvars in this compiled rig.
     std::vector<SdfPath> GetSurfaceProjectorTargets() const;
     /// The float `primvars:` properties animated maps publish on meshes in
-    /// this compiled epoch, sorted: the only moved floats imaging hands to
+    /// this compiled rig, sorted: the only moved floats imaging hands to
     /// Hydra as primvars.
     std::vector<SdfPath> GetAnimatedMapPrimvars() const;
 
@@ -582,17 +582,17 @@ public:
     }
 
     /// Structural digest of the compiled mover topology: the v0.1
-    /// binding-epoch identity. Structural edits change it and trigger
+    /// compiled rig identity. Structural edits change it and trigger
     /// recompilation on the next Evaluate (spec §4.2, §6.3).
-    size_t GetBindingEpochDigest() const { return _structureDigest; }
+    size_t GetCompiledRigSignature() const { return _structureDigest; }
 
     /// Number of actual retained, valid provider rest frames whose complete
-    /// selected source closure is constant in the current compiled epoch.
+    /// selected source closure is constant in the current compiled rig.
     /// Build captures and composes these frames before the first Evaluate.
     /// Animated and produced rest inputs remain supported and run through
     /// the graph; they exclude only the affected providers and descendants
     /// from this count. Constant authored connections can remain static.
-    size_t GetEpochRestFrameCount() const;
+    size_t GetCompiledRigRestFrameCount() const;
 
     /// Transform provider -> the pose steps that write it, in the order the
     /// pose walk runs them: the aggregate solvers that name it on
@@ -603,14 +603,14 @@ public:
     ///
     /// Diagnostic access only -- evaluation order itself comes from the
     /// interleaved pose steps, and this is read back from them.
-    /// The compiled epoch as one operation graph: every solver batch and
+    /// The compiled rig as one operation graph: every solver batch and
     /// solver, frame constraint, geometry chain and revision, property
     /// chain and revision, exec tap, provider value, space switch and
     /// pose interpolator, with every dependency the compile derived.
     ///
     /// Diagnostic access for the graph visualizer and the compile-accounting
     /// suite; evaluation itself never reads it. Ids are stable within the
-    /// epoch (see liveOperationGraph.h) and each node names the profiler
+    /// compiled rig (see liveOperationGraph.h) and each node names the profiler
     /// scope that fires it, so a generation's profile events attribute
     /// straight onto the structure. Empty before the first Compile.
     RigExecLiveOperationGraph DescribeLiveOperations() const;
@@ -751,7 +751,7 @@ public:
     /// The stage the rig evaluates against.
     ///
     /// This IS the source stage. It used to be a private derived stage
-    /// carrying a generated sublayer, because compilation authored lowered
+    /// carrying a generated sublayer, because compilation authored translated
     /// property applications; nothing is authored any more, so there is
     /// nothing for a derived stage to hold.
     const UsdStageRefPtr &GetEvaluationStage() const { return _stage; }
@@ -766,17 +766,17 @@ private:
         UsdTimeCode time, std::vector<GfVec3f> *points) const;
 
     /// Compiles if this rig never has, recompiles if a structural edit moved
-    /// the epoch digest, and clears the structure-dirty flag. False when the
+    /// the compiled rig signature, and clears the structure-dirty flag. False when the
     /// compile failed, with \p diagnostics saying why.
     ///
     /// Settle source notices and compile admission before dispatching the
     /// operation graph. Repeated settled calls do nothing.
-    bool _SettleEpoch(std::vector<std::string> *diagnostics);
+    bool _SettleCompiledRig(std::vector<std::string> *diagnostics);
 
     /// The whole of Compile but for forgetting the failure memo: what the
     /// settle path runs, so that its own compiles can be memoized. One
-    /// broken operation does not fail it: see _CompileEpochAttempt.
-    bool _CompileEpoch(std::vector<std::string> *errors);
+    /// broken operation does not fail it: see _CompileRigAttempt.
+    bool _CompileRig(std::vector<std::string> *errors);
 
     struct _CompileFailure {
         std::string message;
@@ -785,7 +785,7 @@ private:
 
     /// One compile with _skippedOperations left out. Failure metadata is
     /// local to the attempt and names the operations to set aside.
-    bool _CompileEpochAttempt(std::vector<std::string> *errors,
+    bool _CompileRigAttempt(std::vector<std::string> *errors,
                               _CompileFailure *failure);
 
     /// RigExecSurfaceProjector prims and the points property each rides.
@@ -796,7 +796,7 @@ private:
         SdfPath target;   ///< the points property it rides
     };
 
-    /// Discover and validate movers without changing the active epoch.
+    /// Discover and validate movers without changing the active compiled rig.
     /// \p inertMovers receives each mover prim with an empty rigExec:moves.
     bool _DiscoverMovers(std::vector<RigExecMoverRecord> &movers,
                          std::vector<_SurfaceProjectorRecord> &projectors,
@@ -850,7 +850,7 @@ private:
     /// _upstreamAdmitted merged with _interactiveOverrides into _valueInputs.
     void _RebuildValueInputs();
 
-    /// Builds the compiled program for the settled epoch, or drops it on
+    /// Builds the compiled program for the settled compiled rig, or drops it on
     /// failed admission.
     /// Rebuilds the baked program, handing the outgoing one's persistent
     /// geometry state to its replacement (RigExecBakedProgram::
@@ -1028,7 +1028,7 @@ private:
     /// RIGEXEC_VERIFY_DIGEST_GATE=1: recomputes the digest after a notice
     /// the gate called neutral and fails fatally if it moved.
     void _VerifyNeutralNotice(const UsdNotice::ObjectsChanged &notice) const;
-    /// Hashes the three segment texts, concatenated, into the epoch digest.
+    /// Hashes the three segment texts, concatenated, into the compiled rig signature.
     /// Under RIGEXEC_VERIFY_DIGEST_SPLIT=1 it first recomputes the whole
     /// digest serially on this thread and fails fatally unless that text
     /// equals the concatenation. Under RIGEXEC_VERIFY_DIGEST_MEMO=1 it
@@ -1119,37 +1119,37 @@ private:
     std::map<SdfPath, std::set<SdfPath>> _nativePoseDependencies;
     std::map<SdfPath,int> _nativePoseOrdinals;
     std::set<SdfPath> _nativeProviderPaths;
-    /// Original rest-epoch classification footprint, independent of extra
+    /// Original rest-compiled rig classification footprint, independent of extra
     /// native geometry frame sources. Owner-only observable transition facts.
-    std::set<SdfPath> _restEpochProviderPaths;
-    bool _epochRestsConstant = true;
-    std::map<SdfPath,RigExecPointFrame> _epochRestFrames;
-    /// The rest gate (_NoteRestEdits). The epoch's rest paths are every
+    std::set<SdfPath> _restCompiledRigProviderPaths;
+    bool _compiledRigRestsConstant = true;
+    std::map<SdfPath,RigExecPointFrame> _compiledRigRestFrames;
+    /// The rest gate (_NoteRestEdits). The compiled rig's rest paths are every
     /// _restInputNames property of every key of _restTapIds, which is
     /// every provider and every provider ancestor the rests read, so the
     /// set is kept as that map and the name list rather than spelled out.
     /// A notice that resyncs or changes one of those paths, or resyncs a
     /// prim at or above a provider, adds the providers it reached here and
-    /// marks the epoch's rest frames stale. A rest name changed on a prim
+    /// marks the compiled rig's rest frames stale. A rest name changed on a prim
     /// that is not a key but has keys under it -- an inherited rest-frame
     /// publisher the type list does not name -- marks them stale and adds
     /// nothing. Nothing else does either. The commit clears both.
     ///
-    /// The providers whose rest channels _SettleEpoch has to re-classify
-    /// (_EpochRestsMightVary), consumed by the next settle.
+    /// The providers whose rest channels _SettleCompiledRig has to re-classify
+    /// (_CompiledRigRestsMightVary), consumed by the next settle.
     std::set<SdfPath> _restEditedProviders;
-    /// _epochRestFrames no longer holds what the stage says. Consumed by
-    /// the owning-thread epoch settle before the graph reads captured rest
+    /// _compiledRigRestFrames no longer holds what the stage says. Consumed by
+    /// the owning-thread compiled rig settle before the graph reads captured rest
     /// facts. A failed refresh leaves it set.
-    bool _epochRestFramesStale = false;
-    /// The time the epoch's rests were pulled at, and the time the first-frame-pose
+    bool _compiledRigRestFramesStale = false;
+    /// The time the compiled rig's rests were pulled at, and the time the first-frame-pose
     /// request is warmed at: the stage's start time code, always a real
     /// frame rather than Default (see Compile).
     UsdTimeCode _restTime = UsdTimeCode(0.0);
     /// The frame each pose provider is anchored to -- its nearest RigExec
     /// ancestor, or an empty path for the asset root -- and the providers
     /// that have a plain Xformable standing between the two. Namespace
-    /// topology, so it is settled once per epoch rather than per frame.
+    /// topology, so it is settled once per rig compilation rather than per frame.
     std::map<SdfPath, SdfPath> _poseProviderAnchors;
     std::vector<SdfPath> _interveningXformProviders;
     /// Direct posed providers read by transform expressions, including
@@ -1157,21 +1157,21 @@ private:
     std::map<SdfPath, std::set<SdfPath>> _poseProviderInputs;
     /// Namespace-pose predicate answers that are stage-constant: parent:space
     /// has no time samples, so the answer does not vary with evaluation time.
-    /// Populated lazily on cache miss; cleared on epoch change with
+    /// Populated lazily on cache miss; cleared on compiled rig change with
     /// _connectedPoseCache. A time-sampled parent:space stays out of this
     /// cache and is re-read every frame.
     std::unordered_map<SdfPath, bool, SdfPath::Hash> _namespaceInheritsCache;
     /// Nearest pose-owning ancestor-or-self per provider path. The owner
-    /// mapping depends only on epoch-static structure (_jointSolverBinding,
+    /// mapping depends only on compiled rig static structure (_jointSolverBinding,
     /// _hierarchicalProviderSet, stage-constant namespace-pose answers), so
-    /// it is valid across every evaluation until the epoch rebuilds.
-    /// Cleared on epoch change with _namespaceInheritsCache.
+    /// it is valid across every evaluation until the compiled rig rebuilds.
+    /// Cleared on compiled rig change with _namespaceInheritsCache.
     std::unordered_map<SdfPath, SdfPath, SdfPath::Hash> _nearestBlockingCache;
-    /// Hierarchical (first-frame-pose) providers, compiled once per epoch.
+    /// Hierarchical (first-frame-pose) providers, compiled once per rig compilation.
     /// Reused by the owning-thread source sampler across evaluations.
     std::unordered_set<SdfPath, SdfPath::Hash> _hierarchicalProviderSet;
     /// Dense provider index: SdfPath → index into _providerPaths.
-    /// Built once per epoch from the union of all paths the frame-domain
+    /// Built once per rig compilation from the union of all paths the frame-domain
     /// maps can hold. _providerPaths is in SdfPath-sorted order so that
     /// iterating live indices reproduces std::map key order.
     std::vector<SdfPath> _providerPaths;
@@ -1255,7 +1255,7 @@ private:
         /// there was before. See RigExecClusterInPointFrame.
         bool transformPosedPoints = false;
         /// Skin only: none of rigExec:jointIndices, jointWeights or
-        /// elementSize can change within this epoch, so the layout may be
+        /// elementSize can change within this compiled rig, so the layout may be
         /// resolved once and shared rather than re-read per frame. False
         /// whenever one of them is time-varying, carries an authored
         /// connection, or is written by a property chain.
@@ -1308,12 +1308,12 @@ private:
         const std::vector<RigExecMoverRecord> &movers,
         std::map<SdfPath,std::set<SdfPath>> *checkpoints, _CompileFailure *failure);
 
-    /// Per-epoch skin layouts, keyed by mover path.
+    /// Per-compiled rig skin layouts, keyed by mover path.
     ///
-    /// This is epoch state, not a value, and must not outlive the evaluator
+    /// This is compiled rig state, not a value, and must not outlive the evaluator
     /// that read the stage it came from. Cleared by a change notice that reaches a
     /// layout input (_ClearValueCaches), by an interactive-override change
-    /// that can reach one, and by the commit of a new epoch.
+    /// that can reach one, and by the commit of a new compiled rig.
     RigExecSkinTopologyCache _skinTopologies;
     /// Every property whose value can reach a cached skin layout: each skin
     /// mover's layout attributes, plus every attribute upstream of one of
@@ -1322,7 +1322,7 @@ private:
     /// An interactive override drops the layouts only when it names one of
     /// these (SetInteractiveOverrides). Rebuilt lazily and invalidated
     /// exactly where the cache itself is, so the two can never disagree
-    /// about which epoch's connections they describe.
+    /// about which compiled rig's connections they describe.
     mutable std::set<SdfPath> _skinLayoutInputs;
     mutable bool _skinLayoutInputsValid = false;
     bool _skinTopologyObservationPending = false;
@@ -1336,7 +1336,7 @@ private:
     /// re-read; the cost of a wrong no is a stale deformation.
     bool _OverridesReachSkinLayout(
         const std::vector<RigExecValueOverride> &overrides) const;
-    /// Per-epoch blend sample shapes, keyed by the RigExecBlendSample prim.
+    /// Per-compiled rig blend sample shapes, keyed by the RigExecBlendSample prim.
     /// Same lifetime as _skinTopologies above; a notice drops a shape only
     /// where it reaches the sample, its blend shape or the points its
     /// layout was checked against (_BlendSampleSources).
@@ -1535,16 +1535,16 @@ private:
     /// translations and scales are authored once has no animated Ts for the
     /// solver to preserve, and rebuilding its layout from rest is then the
     /// better-conditioned question. Structural -- a solver binding, a time
-    /// sample or a connection -- so it is settled for the epoch.
+    /// sample or a connection -- so it is settled for the compiled rig.
     bool _IkUsesAnimatedTs(const std::vector<SdfPath> &chain) const;
 
-    /// Re-pulls the epoch's rest frames after a stage edit no recompile
-    /// covered, and clears _epochRestFramesStale. Returns false when the
+    /// Re-pulls the compiled rig's rest frames after a stage edit no recompile
+    /// covered, and clears _compiledRigRestFramesStale. Returns false when the
     /// request could not produce them, which is what an incomplete per-frame
     /// rest tap used to mean, and leaves the flag set.
     /// Whether any of \p providers has a rest channel that can no longer be
-    /// held as an epoch constant.
-    /// The rest gate: records which epoch rest paths \p notice reached (see
+    /// held as a compiled rig constant.
+    /// The rest gate: records which compiled rig rest paths \p notice reached (see
     /// _restEditedProviders).
     void _NoteRestEdits(const UsdNotice::ObjectsChanged &notice);
 
@@ -1595,14 +1595,14 @@ private:
 
 
     /// Baked falloff remaps for every volumetric weight object reachable
-    /// in this epoch, ready to hand to RigExecTapSet::Evaluate as value
+    /// in this compiled rig, ready to hand to RigExecTapSet::Evaluate as value
     /// overrides on each volume's computeFalloffLut stub.
     ///
     /// They live here rather than being rebuilt per frame because a
-    /// falloff curve is epoch-structural: exec has no accessor for an
+    /// falloff curve is structural: exec has no accessor for an
     /// attribute's spline (see RigExecFalloffLut in types.h), so the
     /// curve is resampled once at Compile and replayed unchanged until
-    /// the next epoch.
+    /// the next compiled rig.
     std::vector<RigExecValueOverride> _falloffLutOverrides;
 
     /// Volume weight objects whose rigExec:weightTarget reads `preceding`,
@@ -1611,22 +1611,22 @@ private:
     std::set<SdfPath> _currentPhaseWeights;
 
     /// computeMatrix taps for every volumetric weight object reachable
-    /// in this epoch, and the matrices the current generation resolved
+    /// in this compiled rig, and the matrices the current generation resolved
     /// them to. The CPU oracle reads the resolved matrix rather than
     /// recomputing the xformable frame chain a second time.
     std::set<SdfPath> _nativeVolumeProviders;
 
     bool _publishWeightFields = true;
     bool _acceptsGpuDeformPublications = false;
-    /// The compiled epoch flattened into an exec-free op list, built at the
+    /// The compiled rig flattened into an exec-free op list, built at the
     /// end of Compile when the mode asks for one.
     ///
-    /// The program holds VALUES, not just structure, so the epoch digest
+    /// The program holds VALUES, not just structure, so the compiled rig signature
     /// cannot speak for it: the digest is unchanged by exactly the edits that
     /// make a captured constant wrong. The program therefore carries its own
     /// index of what the bake read, and a notice that hits it sets the flag
     /// below; the rebuild happens at the next Evaluate, once the dynamic
-    /// generation has settled whether the epoch itself moved. A notice that
+    /// generation has settled whether the compiled rig itself moved. A notice that
     /// misses the index leaves the program standing.
     std::unique_ptr<RigExecGoldenSuiteObserver> _goldenSuiteObserver;
     std::unique_ptr<RigExecInputReplayObserver> _inputReplayObserver;
@@ -1654,16 +1654,16 @@ private:
     /// for the bake, which holds Export with its keep-set.
     RigExecBakedRoleMode _bakedRoleMode = RigExecBakedRoleMode::Live;
     std::set<SdfPath> _bakedExportKeep;
-    /// This epoch already asked for a program and was refused.
+    /// This compiled rig already asked for a program and was refused.
     ///
-    /// The refusal is a property of the compiled epoch, so re-asking inside
+    /// The refusal is a property of the compiled rig, so re-asking inside
     /// it costs a bakeability pass per frame to be told the same thing.
     /// Reset wherever the answer can have changed: Compile, and a notice
     /// that hit the program's capture index.
     bool _bakeRefused = false;
     /// Why it refused, when anyone asked to be told.
     ///
-    /// Concrete admission reasons retained for the failed epoch.
+    /// Concrete admission reasons retained for the failed compiled rig.
     std::vector<std::string> _bakeRefusalReasons;
     size_t _bakedProgramBuilds = 0;
     size_t _bakedProgramBuildAttempts = 0;
@@ -1740,7 +1740,7 @@ private:
     RigExecProfiler _profiler;
     bool _opTimingEnabled = false;
 
-    /// The program is built from the compiled epoch tables above, which are
+    /// The program is built from the compiled rig tables above, which are
     /// private because they are not a published surface -- not because the
     /// one class whose whole job is to flatten them should re-derive them.
     friend class RigExecBakedProgram;

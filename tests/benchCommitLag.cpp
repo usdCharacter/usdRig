@@ -5,7 +5,7 @@
 // the native handler plus the SetTime re-evaluation) followed by
 // OnEditCommitted (the release flush's warming burst). Reports the two
 // halves separately, plus a standalone breakdown of the per-frame
-// BuildWarmWork ingredients (sampling, epoch digest, control digest) and
+// BuildWarmWork ingredients (sampling, compiled rig signature, control digest) and
 // the rig's scale, so a lag report can be attributed rather than guessed
 // at. Prints human-readable numbers; asserts nothing, so it is built but
 // deliberately NOT registered with ctest (like benchFrameCacheWarm).
@@ -261,16 +261,16 @@ main(int argc, char **argv)
                     sampleable ? "" : (error + ")").c_str());
     }
     {
-        std::vector<double> epoch;
+        std::vector<double> compiledRig;
         for (size_t i = 0; i < 200; ++i) {
             const double start = NowUs();
             volatile uint64_t digest =
-                RigExecFrameCacheEpochDigest(evaluator);
+                RigExecFrameCacheCompiledRigSignature(evaluator);
             (void)digest;
-            epoch.push_back(NowUs() - start);
+            compiledRig.push_back(NowUs() - start);
         }
-        std::printf("  %-28s %10.1f us (median of %zu)\n", "epoch digest",
-                    Median(epoch), epoch.size());
+        std::printf("  %-28s %10.1f us (median of %zu)\n", "compiled rig signature",
+                    Median(compiledRig), compiledRig.size());
     }
     RigExecFrameInputs sampled;
     {

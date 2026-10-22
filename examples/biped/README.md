@@ -162,7 +162,7 @@ avars directly, if you would rather drag than type.
 
 ## Why it is fast
 
-The rig compiles once per binding epoch into the shared operation graph:
+Rig compilation produces the shared operation graph, reused until a structural edit:
 typed steps over dense slots, each bound to the exact producers of its
 inputs. A frame reruns only the steps whose inputs changed. usdview,
 `rigExecPose`, frame-cache workers and the `.rigexec` runtime all evaluate

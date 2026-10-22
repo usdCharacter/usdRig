@@ -1,6 +1,6 @@
-// RigExec baked program: the compiled epoch as a flat op list over dense
+// RigExec baked program: the compiled rig as a flat op list over dense
 // slots, with no exec round trip on the per-frame path.
-// On a rig whose shape is fixed for the epoch, the provider hierarchy, the
+// On a rig whose shape is fixed for the compiled rig, the provider hierarchy, the
 // default-space ladder, the solver rest descriptions, the constraint wiring
 // and the descendant propagation pairs are decided once. This class decides
 // them once -- at Compile -- and leaves a per-frame program that reads only
@@ -115,7 +115,7 @@ struct RigExecUpstreamArrayRow {
 
 class RigExecRigEvaluator;
 
-/// Every array attribute of \p evaluator's compiled epoch an upstream value
+/// Every array attribute of \p evaluator's compiled rig an upstream value
 /// may stand on, sorted by path, one row per attribute: each chain's base
 /// points; every array read a revision or derived target declares
 /// (RigExecDeclareRevisionLeaves: topology, widths, surface points, bind
@@ -213,7 +213,7 @@ enum class RigExecBakedBail { None, StageFrames, Step, Publish, RoleFlip };
 /// ungated.
 enum class RigExecBakedRoleMode : uint8_t { Live, Export };
 
-/// One compiled epoch, flattened.
+/// One compiled rig, flattened.
 class RigExecBakedProgram {
 public:
     ~RigExecBakedProgram();
@@ -221,7 +221,7 @@ public:
     RigExecBakedProgram(const RigExecBakedProgram &) = delete;
     RigExecBakedProgram &operator=(const RigExecBakedProgram &) = delete;
 
-    /// Whether \p evaluator's compiled epoch can be expressed as a program,
+    /// Whether \p evaluator's compiled rig can be expressed as a program,
     /// appending one reason per feature that cannot.
     ///
     /// The reasons are the point: a rig that will not bake should say which
@@ -230,11 +230,11 @@ public:
     static bool IsBakeable(const RigExecRigEvaluator &evaluator,
                            std::vector<std::string> *reasons);
 
-    /// Builds the program from \p evaluator's compiled epoch, or returns
-    /// null with the reasons when the epoch is not bakeable.
+    /// Builds the program from \p evaluator's compiled rig, or returns
+    /// null with the reasons when the compiled rig is not bakeable.
     ///
     /// \p evaluator must outlive the program; the evaluator owns it and drops
-    /// it whenever the epoch or the scene changes underneath.
+    /// it whenever the compiled rig or the scene changes underneath.
     static std::unique_ptr<RigExecBakedProgram> Build(
         RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons);
 
@@ -314,7 +314,7 @@ public:
 
     /// Whether \p notice can have moved anything the bake captured.
     ///
-    /// The epoch digest is deliberately blind to values, so it cannot answer
+    /// The compiled rig signature is deliberately blind to values, so it cannot answer
     /// this: it is unchanged by exactly the edits that make a captured
     /// constant wrong. The bake therefore records WHICH properties it read
     /// and which prims it read them from, and this asks that index. An edit
@@ -489,12 +489,12 @@ public:
     size_t GetProviderCount() const;
     /// Input channels the program reads from USD at all.
     size_t GetBoundInputCount() const;
-    /// Of those, the ones re-read every frame; the rest are epoch constants.
+    /// Of those, the ones re-read every frame; the rest are compiled rig constants.
     size_t GetVaryingInputCount() const;
 
     /// Takes over \p previous's persistent geometry state.
     ///
-    /// Retains compatible native geometry revision state across an epoch rebuild.
+    /// Retains compatible native geometry revision state across a compiled rig rebuild.
     void AdoptGeometryStateFrom(RigExecBakedProgram &previous);
 
     /// Drops every reference the program holds that keeps the stage alive:

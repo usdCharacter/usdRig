@@ -865,7 +865,7 @@ bool RigExecBakedPathLeaves::Select(const std::vector<char> &keep)
     _KeepRows(&attributes,keep);
     _KeepRows(&hops,keep);
     _KeepRows(&varying,keep);
-    _KeepRows(&epoch,keep);
+    _KeepRows(&compiledRig,keep);
     _KeepRows(&overrideReached,keep);
     _KeepRows(&walks,keep);
     _KeepRows(&exactVersions,keep);

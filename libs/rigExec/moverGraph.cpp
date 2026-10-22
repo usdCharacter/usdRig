@@ -804,7 +804,7 @@ RigExecSkinLayoutIsUsable(const RigExecMoverParameters &p, size_t pointCount)
 {
     const size_t transformCount = p.skinTransforms.size();
     if (const RigExecSkinTopology *const topology = p.skinTopology.get()) {
-        // O(1). The epoch checked the element shape, the index range and the
+        // O(1). The compiled rig checked the element shape, the index range and the
         // weights; the assembler checked THIS frame's matrices and would have
         // failed the packet otherwise, so the only question left is whether
         // the points that arrived are the points the layout describes --
@@ -1062,7 +1062,7 @@ RigExecApplyBlendShapeKernel(const RigExecMoverParameters &p,
     // split -- about 2 ms against the skin's 0.5 -- and splitting this loop
     // moved it 1.07x. So the loop is not where that time goes: it is in
     // assembling the channels (bakedGeometry.cpp, the per-sample
-    // GetAttribute reads), which is an epoch-caching problem and not a
+    // GetAttribute reads), which is a compiled rig caching problem and not a
     // parallelism one. The split is kept because it is correct, free and
     // matches every other point kernel, not because it paid here.
     GfVec3f *const points = pts->data();
@@ -2656,7 +2656,7 @@ RigExecResolveSkinTopology(
         primPath.AppendProperty(_attrTokens->jointIndices);
     const SdfPath weightsPath =
         primPath.AppendProperty(_attrTokens->jointWeights);
-    // The layout is epoch state, so everything about it that does not involve
+    // The layout is compiled rig state, so everything about it that does not involve
     // the influence MATRICES is settled once and shared: the two array reads,
     // the copy into the packet, and the per-element range and weight checks.
     // What is left per frame is the matrix table -- which is the only part of
@@ -2664,10 +2664,10 @@ RigExecResolveSkinTopology(
     return cache->Resolve(
         primPath,
         [&](RigExecSkinTopology *topology) {
-            // Whether the layout is epoch state is re-asked HERE, where the
+            // Whether the layout is compiled rig state is re-asked HERE, where the
             // cache is filled, and not only where the graph was compiled.
             // Authoring a time sample on jointWeights (or connecting it)
-            // moves no epoch digest, so it does not recompile; it does send a
+            // moves no compiled rig signature, so it does not recompile; it does send a
             // notice, and a notice clears this cache -- so this is the one
             // place that sees the stage as it is now. Refusing puts the
             // packet back on the per-frame arrays, which is what Compile
@@ -2676,8 +2676,8 @@ RigExecResolveSkinTopology(
             if (!RigExecSkinLayoutIsFixed(moverPrim)) {
                 return false;
             }
-            // This build fills the epoch cache (a varying layout is
-            // refused above), so these reads are epoch state the file's
+            // This build fills the compiled rig cache (a varying layout is
+            // refused above), so these reads are compiled rig state the file's
             // skin topology carries.
             const std::vector<int> indices =
                 _Array<int>(moverPrim, indicesPath, time, resolved);
@@ -2758,7 +2758,7 @@ RigExecBuildSkinTopology(TfSpan<const int> indices,
     topology->pointCount =
         topology->indices.size() / size_t(topology->elementSize);
     // Exactly RigExecSkinLayout::Validate's shape, range and weight rules,
-    // against a table whose SIZE is epoch state. The matrices themselves are
+    // against a table whose SIZE is compiled rig state. The matrices themselves are
     // checked every frame by the caller.
     if (topology->influenceCount == 0) {
         return;
@@ -2838,7 +2838,7 @@ RigExecAssembleSkinParameters(
             topologyCache);
     }
     // Null means the cache refused this mover -- the layout can move within
-    // the epoch after all -- so the packet falls through to the per-frame
+    // the compiled rig after all -- so the packet falls through to the per-frame
     // arrays below.
     if (params.skinTopology) {
         params.skinElementSize = params.skinTopology->elementSize;
@@ -2954,7 +2954,7 @@ RigExecSumBlendChannels(
         for (size_t k = 0; k < channel.samples.size(); ++k) {
             const RigExecBlendSampleData &sample = channel.samples[k];
             // A sample carries its shape one of two ways, and exactly one:
-            // dense moved points, or an epoch-resolved sparse layout. Both
+            // dense moved points, or a compiled sparse layout. Both
             // have to describe THIS mesh.
             const bool shapeOk =
                 sample.layout

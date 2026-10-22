@@ -132,7 +132,7 @@ _Targets(const UsdPrim &prim, const char *name)
 }
 
 // The constraint operators the program expresses. A type outside this set
-// makes the epoch unbakeable rather than silently passing through.
+// makes the compiled rig unbakeable rather than silently passing through.
 bool
 _IsBakedConstraintType(const TfToken &type)
 {
@@ -763,7 +763,7 @@ void RigExecBakedProgram::AdoptGeometryStateFrom(
     RigExecBakedAdoptSkinOpState(&B,P);
     // One revision's run state, moved from the node the outgoing program
     // held. Everything here is a CACHE of the last run; the compiled
-    // description around it comes from the epoch the new program was built
+    // description around it comes from the compiled rig the new program was built
     // from and is left alone.
     // \p keepRun says whether the cached RESULT may be kept as well as the
     // node: a revision spliced into or out of a chain changes the point
@@ -3435,7 +3435,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     {
         std::string error;
         if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial)) {
-            refuse("provider expressions could not lower: "+error,E._rigPath);
+            refuse("provider expressions could not translate: "+error,E._rigPath);
             return nullptr;
         }
     }
@@ -3808,7 +3808,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         const UsdPrim prim = B.stage->GetPrimAtPath(record.prim);
         // The interpolator's structure -- its driver, its poses, their
-        // rotations and radii -- is epoch identity and recompiles; what a
+        // rotations and radii -- is compiled rig identity and recompiles; what a
         // frame reads is the one enable, bound like any other input so an
         // animated or dragged one is honoured and a value edit needs no
         // rebuild.
@@ -4034,7 +4034,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.prims.insert(target.GetPrimPath());
         B.resolvedRoutedPrims.insert(target.GetPrimPath());
         // Named: the head tier binds the target's existence and type, which
-        // the epoch digest does not hash, so a resync or a type edit of it
+        // the compiled rig signature does not hash, so a resync or a type edit of it
         // rebuilds. Its value edits still route through the routed prim.
         B.named.insert(target);
         for (const RigExecRigEvaluator::_PropertyRevision &revision :
@@ -4392,7 +4392,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // Every read is declared: the chains that run as one GPU program.
     RigExecBakedSelectGpuChains(&B);
     // Canonical graph order is the stored and exported order. Clusters and
-    // cones are lowered once from that result at the production grain.
+    // cones are translated once from that result at the production grain.
     {
         std::string invalid;
         if (!RigExecBakedCompileOpGraph(&B, &invalid)) {
@@ -4406,8 +4406,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             B.steps[i].level = level;
         }
         RigExecBakedAssignStepCosts(&B);
-        if(!RigExecBakedLowerOpGraph(&B,&invalid)) {
-            refuse("native operation clusters could not lower: "+invalid,E._rigPath);
+        if(!RigExecBakedTranslateOpGraph(&B,&invalid)) {
+            refuse("native operation clusters could not translate: "+invalid,E._rigPath);
             return nullptr;
         }
         RigExecBakedBuildCones(&B);

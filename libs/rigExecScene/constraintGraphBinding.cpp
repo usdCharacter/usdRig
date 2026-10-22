@@ -3,7 +3,17 @@
 #include <algorithm>
 #include <cmath>
 #include "pxr/base/vt/types.h"
+#include "pxr/base/tf/staticTokens.h"
+#include "rigExecGraph/windowHistory.h"
+#include "rigExecMath/harmonicsKernel.h"
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecAimTarget, "rigExec:aimTarget"))
+    ((rigExecSources, "rigExec:sources"))
+    ((rigExecPoleVectorObjects, "rigExec:poleVectorObjects"))
+    ((rigExecEffector, "rigExec:effector"))
+    ((rigExecWorldUpObject, "rigExec:worldUpObject"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) {if(error)*error=message;return false;}
 void Add(std::vector<RigExecValueId> *reads,RigExecValueId id) {if(id!=UINT64_MAX)reads->push_back(id);}
@@ -25,28 +35,28 @@ bool RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
     Add(&bound.reads,target.incoming);Add(&bound.reads,target.carry);Add(&bound.reads,target.weight);
     for(auto id:bound.target.chainRests)Add(&bound.reads,id);
     const RigExecSceneCompileInputs facts(scene);
-    const auto bind=[&](const SdfPath &path,const char *name,RigExecValueId *id) {
+    const auto bind=[&](const SdfPath &path,const TfToken &name,RigExecValueId *id) {
         if(path.IsEmpty())return true;
         RigExecSceneGraphReadRequest request;
-        request.consumer=source.path.AppendProperty(TfToken(name));request.source=path;request.reader=source.path;
+        request.consumer=source.path.AppendProperty(name);request.source=path;request.reader=source.path;
         request.domain=RigExecSceneValueDomain::Pose;
         const auto *relation=facts.Relationship(request.consumer);
-        request.phase=relation?relation->readPhase:TfToken("base");
+        request.phase=relation?relation->readPhase:RigExecSceneBasePhase;
         if(!context.resolve(request,id,error))return false;
         if(*id==UINT64_MAX)return Fail(error,"constraint resolver returned no value ID");
         Add(&bound.reads,*id);return true;
     };
-    const auto many=[&](const SdfPathVector &paths,const char *name,std::vector<RigExecValueId> *ids) {
+    const auto many=[&](const SdfPathVector &paths,const TfToken &name,std::vector<RigExecValueId> *ids) {
         for(const auto &path:paths) {ids->push_back(UINT64_MAX);if(!bind(path,name,&ids->back()))return false;}return true;
     };
-    if(!many(source.sources,source.record.kind==RigExecConstraintKind::Aim && source.preserveInputUp?"rigExec:aimTarget":"rigExec:sources",&bound.sources) ||
-       !many(source.poleObjects,"rigExec:poleVectorObjects",&bound.poles) ||
-       !bind(source.effector,"rigExec:effector",&bound.effector) ||
-       !bind(source.worldUpObject,"rigExec:worldUpObject",&bound.worldUp))return false;
+    if(!many(source.sources,source.record.kind==RigExecConstraintKind::Aim && source.preserveInputUp?_tokens->rigExecAimTarget:_tokens->rigExecSources,&bound.sources) ||
+       !many(source.poleObjects,_tokens->rigExecPoleVectorObjects,&bound.poles) ||
+       !bind(source.effector,_tokens->rigExecEffector,&bound.effector) ||
+       !bind(source.worldUpObject,_tokens->rigExecWorldUpObject,&bound.worldUp))return false;
     for(const auto &joint:source.ikChain) {
         RigExecSceneGraphReadRequest request;
         request.consumer=source.path;request.source=joint;request.reader=source.path;
-        request.domain=RigExecSceneValueDomain::Pose;request.phase=TfToken("preceding");
+        request.domain=RigExecSceneValueDomain::Pose;request.phase=RigExecScenePrecedingPhase;
         bound.chain.push_back(UINT64_MAX);
         if(!context.resolve(request,&bound.chain.back(),error))return false;
         if(bound.chain.back()==UINT64_MAX)return Fail(error,"constraint chain resolver returned no value ID");
@@ -64,8 +74,108 @@ bool RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
     std::sort(bound.reads.begin(),bound.reads.end());bound.reads.erase(std::unique(bound.reads.begin(),bound.reads.end()),bound.reads.end());
     *destination=std::move(bound);return true;
 }
-bool RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,RigExecTypedValueStore *store,std::string *error) {
+namespace {
+// RigExecHarmonicsConstraint: the bakedHarmonics.cpp body over typed values.
+// The capture is the incoming origin in rigExec:space and is taken before any
+// gate; an unusable input captures nothing, which ends the history before it.
+bool RunHarmonics(const RigExecConstraintGraphBinding &bound,RigExecTypedValueStore *store,
+    RigExecWindowRun *window,std::string *error) {
+    const auto &descriptor=bound.structural;
+    const auto publish=[&](const RigExecPointFrame &frame,bool blocked,const std::string &reason) {
+        store->Publish(bound.target.output,frame,blocked,false,1,reason);
+    };
+    const auto capture=[&](RigExecWindowPacketPtr packet) {
+        if(window && window->capture && !RigExecWindowPacketsEqual(*window->capture,packet))*window->capture=std::move(packet);
+    };
+    RigExecPointFrame input;
+    if(!Frame(*store,bound.target.incoming,&input)) {
+        capture(nullptr);
+        RigExecPointFrame invalid;invalid.flags=0;publish(invalid,true,"constraint incoming producer unavailable");
+        return Fail(error,"constraint incoming producer unavailable");
+    }
+    const auto passThrough=[&](const std::string &reason) {publish(input,false,reason);return reason.empty() || Fail(error,reason);};
+    GfMatrix4d space(1.0),toSpace(1.0);bool spaceUsable=true;
+    const bool hasSpace=bound.target.carry!=UINT64_MAX;
+    if(hasSpace) {
+        VtValue matrix;
+        spaceUsable=RigExecReadSceneGraphValue(*store,bound.target.carry,&matrix,true) && matrix.IsHolding<GfMatrix4d>();
+        if(spaceUsable) {
+            space=matrix.UncheckedGet<GfMatrix4d>();const double det=space.GetDeterminant();
+            spaceUsable=std::isfinite(det) && det!=0.0;
+            if(spaceUsable)toSpace=space.GetInverse();
+        }
+    }
+    RigExecWindowPacketPtr captured;
+    if(spaceUsable && RigExecConstraintFrameUsable(input)) {
+        const GfVec3d p=hasSpace?toSpace.Transform(input.Origin()):input.Origin();
+        if(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
+            auto packet=std::make_shared<RigExecWindowPacket>();packet->scalars={p[0],p[1],p[2]};captured=std::move(packet);
+        }
+    }
+    capture(captured);
+    // A history tick that no windowed op reads the result of only captures.
+    if(window && window->captureOnly)return passThrough({});
+    const auto read=[&](const char *name,VtValue *value) {return RigExecReadBoundGraphInput(bound.inputs,name,*store,value,error);};
+    VtValue enabled;
+    if(!read("inputs:enabled",&enabled))return passThrough(error?*error:"constraint enabled input unavailable");
+    if(enabled.IsHolding<bool>() && !enabled.UncheckedGet<bool>())return passThrough({});
+    double weight=1.0;
+    if(bound.target.weight!=UINT64_MAX) {
+        VtValue field;
+        if(!RigExecReadSceneGraphValue(*store,bound.target.weight,&field) ||
+           !field.IsHolding<VtFloatArray>() || field.UncheckedGet<VtFloatArray>().size()!=1)
+            return passThrough("constraint weight field producer unavailable");
+        weight=field.UncheckedGet<VtFloatArray>()[0];
+    } else {
+        VtValue value;
+        if(!read("inputs:defaultWeight",&value))return passThrough(error?*error:"constraint weight unavailable");
+        if(value.IsHolding<float>())weight=value.UncheckedGet<float>();
+        if(!std::isfinite(weight) || weight<0.0 || weight>1.0)return passThrough("constraint weight outside finite [0,1]");
+    }
+    if(weight<=0.0)return passThrough({});
+    if(!captured)return passThrough(spaceUsable?"harmonics constraint could not measure its target":
+        "harmonics constraint could not measure its target in a degenerate rigExec:space");
+    // The usable tail of the ring, then this tick, as one position array.
+    const RigExecWindowRing none;
+    const RigExecWindowRing &ring=window && window->ring?*window->ring:none;
+    size_t begin=ring.size();
+    while(begin>0 && ring[begin-1] && ring[begin-1]->scalars.size()==3)--begin;
+    std::vector<double> positions;positions.reserve(3*(ring.size()-begin+1));
+    for(size_t k=begin;k<ring.size();++k)positions.insert(positions.end(),ring[k]->scalars.begin(),ring[k]->scalars.end());
+    positions.insert(positions.end(),captured->scalars.begin(),captured->scalars.end());
+    const auto scalar=[&](const char *name,double fallback) {
+        VtValue value;if(!read(name,&value))return fallback;
+        if(value.IsHolding<float>())return double(value.UncheckedGet<float>());
+        return value.IsHolding<double>()?value.UncheckedGet<double>():fallback;
+    };
+    RigExecHarmonicsSettings settings;
+    settings.waves=descriptor.harmonicsWaves;settings.waveLength=descriptor.harmonicsWaveLength;
+    settings.frequency=descriptor.harmonicsFrequency;settings.ignoreFirstFrame=descriptor.harmonicsIgnoreFirstFrame;
+    RigExecHarmonicsParameters params;
+    params.amplitude=scalar("inputs:amplitude",1.0);params.decay=scalar("inputs:decay",3.0);
+    params.termination=scalar("inputs:termination",0.0);params.matchVelocity=descriptor.harmonicsMatchVelocity;
+    GfVec3d axis(1.0);
+    {VtValue value;if(read("inputs:axisAmplitude",&value) && value.IsHolding<GfVec3d>())axis=value.UncheckedGet<GfVec3d>();}
+    for(size_t a=0;a<3;++a)params.axisAmplitude[a]=axis[a];
+    if(!std::isfinite(params.amplitude) || !std::isfinite(params.decay) || !std::isfinite(params.termination) ||
+       !std::isfinite(axis[0]) || !std::isfinite(axis[1]) || !std::isfinite(axis[2]))
+        return passThrough("harmonics constraint has a non-finite input");
+    double ring3[3];
+    // Fewer than two samples: no history yet, nothing rings.
+    if(!RigExecHarmonicsOffset(settings,params,reinterpret_cast<const double(*)[3]>(positions.data()),positions.size()/3,ring3))
+        return passThrough({});
+    GfVec3d offset(ring3[0],ring3[1],ring3[2]);
+    if(hasSpace)offset=space.TransformDir(offset);
+    offset*=weight;
+    RigExecPointFrame candidate=input;
+    for(auto &q:candidate.points)q+=offset;
+    if(!RigExecConstraintFrameUsable(candidate))return passThrough("harmonics constraint produced an invalid or degenerate frame");
+    publish(candidate,false,{});return true;
+}
+}
+bool RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,RigExecTypedValueStore *store,std::string *error,RigExecWindowRun *window) {
     if(!store || bound.target.output>=store->values.size())return Fail(error,"invalid constraint graph storage");
+    if(bound.structural.record.kind==RigExecConstraintKind::Harmonics)return RunHarmonics(bound,store,window,error);
     auto descriptor=bound.structural;RigExecConstraintInputs input;
     std::vector<char> chainAvailable;
     const auto publish=[&](const RigExecPointFrame &frame,bool blocked,const std::string &reason) {

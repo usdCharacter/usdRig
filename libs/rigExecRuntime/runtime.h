@@ -322,7 +322,7 @@ public:
     std::vector<std::string> GetExternalMoverTypes() const;
     // Installs \p kernel for \p type and prepares each of its revisions.
     // False with the reason when the file holds no such type or a
-    // revision's epoch bytes do not prepare; those revisions keep passing
+    // revision's compiled data bytes do not prepare; those revisions keep passing
     // their points through.
     bool SetExternalKernel(const std::string &type,
                            const RigExecExternalKernel &kernel,

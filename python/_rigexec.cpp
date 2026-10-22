@@ -892,7 +892,7 @@ PYBIND11_MODULE(_rigexec, m) {
         .def_property_readonly("skin_topology_cache_size", [](const _Rig &r) {
                 return r.evaluator->GetSkinTopologyCacheSize();
             },
-            "How many skin layouts the epoch's topology cache holds answers\n"
+            "How many skin layouts the compiled rig's topology cache holds answers\n"
             "for. Dropping and re-reading a layout publishes the same\n"
             "deformation as keeping it, so only the cache's occupancy says\n"
             "whether an interactive override paid for the re-read. The\n"
@@ -1029,8 +1029,8 @@ PYBIND11_MODULE(_rigexec, m) {
         .def_property_readonly("has_interactive_overrides", [](const _Rig &r) {
                  return r.evaluator->HasInteractiveOverrides();
              })
-        .def("binding_epoch_digest", [](const _Rig &r) {
-            return r.evaluator->GetBindingEpochDigest();
+        .def("compiled_rig_signature", [](const _Rig &r) {
+            return r.evaluator->GetCompiledRigSignature();
         })
         .def("mover_order", [](const _Rig &r) {
             std::vector<py::dict> out;

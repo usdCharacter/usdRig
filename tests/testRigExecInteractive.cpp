@@ -57,7 +57,7 @@ static void TestPersistentChains()
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
     for (const auto &error : errors) std::printf("compile: %s\n", error.c_str());
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto checkPose = [&](const RigExecRigPose &pose, float expectedX) {
         CHECK(pose.valid);
         const auto found = pose.movedProperties.find(target);
@@ -95,13 +95,13 @@ static void TestPersistentChains()
     checkPose(pose, float(count) - 0.5f);
     CHECK(!evaluator.GetLastOpTrace().empty());
 
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
     stage->GetAttributeAtPath(target).Set(VtVec3fArray{GfVec3f(10, 0, 0)});
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     checkPose(pose, float(count) + 9.5f);
 
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
     const auto enabled = stage->GetPrimAtPath(last)
         .GetAttribute(TfToken("inputs:enabled"));
@@ -113,7 +113,7 @@ static void TestPersistentChains()
     pose = evaluator.Evaluate(UsdTimeCode::Default());
     checkPose(pose, float(count) + 9.5f);
 
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
 
     evaluator.cpuReference = true;
     pose = evaluator.Evaluate(UsdTimeCode::Default());
@@ -157,7 +157,7 @@ static void TestStructuralSplices()
         return p.movedProperties.at(target).Get<VtVec3fArray>()[0][0]; };
     auto pose = pull();
     CHECK(x(pose) == count);
-    // Stable tap systems share compiler nodes across requests and epochs.
+    // Stable tap systems share compiler nodes across requests and compiled rig versions.
     RigExecTapSet first(stage), second(stage);
     CHECK(first.GetSystem() == second.GetSystem());
     ExecUsdSystem *system = first.GetSystem();
@@ -439,14 +439,14 @@ static void TestAnimatedPointCounts()
     }
     RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
     CHECK(evaluator.Compile());
-    const size_t epoch = evaluator.GetBindingEpochDigest();
+    const size_t compiledRig = evaluator.GetCompiledRigSignature();
     auto pose = evaluator.Evaluate(UsdTimeCode(1));
 
     for (double time : {2.0, 1.0, 2.0}) {
         pose = evaluator.Evaluate(UsdTimeCode(time));
         CHECK(pose.valid);
 
-        CHECK(evaluator.GetBindingEpochDigest() == epoch);
+        CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
         const auto result = pose.movedProperties.at(SdfPath("/Asset/Changing.points"))
             .Get<VtVec3fArray>();
         CHECK(result.size() == (time == 1.0 ? 1 : 2));
@@ -1026,7 +1026,7 @@ _RunFrozenJob(const RigExecRigEvaluator &evaluator,
               const RigExecFrameInputs &inputs)
 {
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     if (evaluator.GetPublishWeightFields()) {

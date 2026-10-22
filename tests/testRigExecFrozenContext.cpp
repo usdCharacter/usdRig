@@ -1,5 +1,5 @@
 // RigExec frozen contexts, Stream B: the sampled input vector, the
-// epoch-pinned context, the UI-thread sampler, and the fail-closed frozen
+// compiled rig context, the UI-thread sampler, and the fail-closed frozen
 // worker entry.
 // FrameInputs is the type the UI thread samples at enqueue time and the
 // worker reads from, so its container semantics are asserted here: values
@@ -15,7 +15,7 @@
 // The frozen worker entry (RigExecEvaluateFrozen with a runner) is asserted
 // through an injected serial kernel: bit-identical across runs, equivalent
 // to the same kernel run directly, refusing every inconsistent request
-// (wrong epoch, truncated vector, stale generation, refusal flag), and safe
+// (wrong compiled rig, truncated vector, stale generation, refusal flag), and safe
 // under concurrent runs. What the runner CAN be is bounded too: the
 // context's "no live pointers" rule is held structurally -- the type is
 // trivially copyable, which a member holding a stage, an evaluator, or a
@@ -146,29 +146,29 @@ TestClearEmptiesTheVectorAndResetsTime()
     CHECK(inputs.stageSeeds.deltaBase.empty());
 }
 
-// The context pins an epoch and a generation and sizes an arena, and nothing
+// The context pins a compiled rig and a generation and sizes an arena, and nothing
 // else: trivially copyable, so no member can hold the stage, the evaluator,
 // or a USD handle.
 void
-TestTheContextPinsAnEpochAndSizesAnArena()
+TestTheContextPinsACompiledRigAndSizesAnArena()
 {
     static_assert(std::is_trivially_copyable<RigExecFrozenEvalContext>::value,
                   "a frozen context must be plain digests and counts");
     RigExecFrozenEvalContext context;
-    CHECK(context.epochDigest == 0);
+    CHECK(context.compiledRigSignature == 0);
     CHECK(context.generation == 0);
     CHECK(context.slotCount == 0);
     CHECK(context.programDigest == 0);
     CHECK(context.varyingInputCount == 0);
     CHECK(context.flags == 0);
-    context.epochDigest = 0x1234;
+    context.compiledRigSignature = 0x1234;
     context.generation = 7;
     context.slotCount = 128;
     context.programDigest = 0xabcd;
     context.varyingInputCount = 11;
     context.flags = kRigExecFrozenPublishWeightFields;
     const RigExecFrozenEvalContext copy = context;
-    CHECK(copy.epochDigest == 0x1234);
+    CHECK(copy.compiledRigSignature == 0x1234);
     CHECK(copy.generation == 7);
     CHECK(copy.slotCount == 128);
     CHECK(copy.programDigest == 0xabcd);
@@ -183,7 +183,7 @@ void
 TestTheStubEvaluatorAnswersInvalidAtTheRequestedTime()
 {
     RigExecFrozenEvalContext context;
-    context.epochDigest = 42;
+    context.compiledRigSignature = 42;
     RigExecFrameInputs inputs;
     inputs.time = UsdTimeCode(9.0);
     inputs.Add(SdfPath("/Rig/Ctl.avars:tx"), VtValue(1.0));
@@ -211,7 +211,7 @@ TinyTy(double t)
 // One skinned mesh over two animated controls: the bench's
 // MakeAnimatedMultiMeshRig at one mesh and eight points. The two control
 // avars carry time samples at 1..4, so consecutive frames genuinely differ
-// instead of hashing alike. Everything else is epoch-constant, so the
+// instead of hashing alike. Everything else is compiled rig constant, so the
 // sampled vector is exactly the two varying avars plus the one chain base.
 struct _TinyRigOptions {
     // With a static tx, the avar binds as a patchable constant instead of
@@ -561,12 +561,12 @@ RunWarmingJob(RigExecRigEvaluator *evaluator, const SdfPath &rig,
               RigExecBackgroundScheduler *scheduler, bool *ran)
 {
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.generation = scheduler->CurrentGeneration(rig);
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     // programDigest is unchecked by the runner (it has no standing program
     // to compare against); the generation fence is what retires a job whose
-    // epoch moved under it.
+    // compiled rig moved under it.
     context.programDigest = 0;
     context.varyingInputCount = inputs.values.size();
     context.flags = 0;
@@ -2126,7 +2126,7 @@ TestBurstCacheMatchesPinnedSampling()
             std::string error;
             CHECK(RigExecBuildBurstSampleCache(
                 *evaluator.GetBakedProgram(), pinned, overrides,
-                RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+                RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
             CHECK(cache.usable);
             for (int frame = 1; frame <= 4; ++frame) {
                 const UsdTimeCode time = UsdTimeCode(double(frame));
@@ -2204,7 +2204,7 @@ TestVolumeWeightsBurstMatchesPlain(const std::string &examplesDir)
     std::vector<RigExecValueOverride> noOverrides;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, noOverrides,
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     CHECK(cache.usable);
     for (double frame : {1012.0, 1048.0}) {
         const UsdTimeCode time(frame);
@@ -2299,7 +2299,7 @@ CheckFrozenWeightFramesMatchLive(RigExecRigEvaluator *evaluator,
     CHECK(RigExecSampleFrameInputs(*evaluator,time,{},&inputs,&error));
     if (!frozen) return {};
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator->GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator->GetCompiledRigSignature();
     context.slotCount = evaluator->GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     context.frozen = frozen.get();
@@ -2517,7 +2517,7 @@ def Xform "Asset"
         RigExecFrozenEvalContext completedContext;
         completedContext.frozen=frozen.get();
         completedContext.workspace=completedWorkspace.get();
-        completedContext.epochDigest=evaluator.GetBindingEpochDigest();
+        completedContext.compiledRigSignature=evaluator.GetCompiledRigSignature();
         completedContext.slotCount=program->GetProviderCount();
         completedContext.varyingInputCount=held.values.size();
         RigExecFrozenRunReport completedReport;
@@ -2552,7 +2552,7 @@ def Xform "Asset"
     RigExecFrozenEvalContext context;
     context.frozen = poisoned.get();
     context.workspace = workspace.get();
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.varyingInputCount = held.values.size();
     RigExecFrozenRunReport coldReport;
@@ -2653,7 +2653,7 @@ TestBurstCacheWarmsBitIdentical()
     RigExecBurstSampleCache cache;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, noOverrides,
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     RigExecFrameInputs at3;
     CHECK(RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(3.0), noOverrides, &cache, &at3, &error));
@@ -2683,7 +2683,7 @@ TestBurstCacheWarmsBitIdentical()
     RigExecBurstSampleCache dragged;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, {drag},
-        RigExecFrameCacheEpochDigest(evaluator), &dragged, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &dragged, &error));
     RigExecFrameInputs dragged3;
     CHECK(RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(3.0), {drag}, &dragged, &dragged3, &error));
@@ -2718,7 +2718,7 @@ TestBurstCacheRejectsForeignProgram()
     std::string error;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluatorA.GetBakedProgram(), pinned, {},
-        RigExecFrameCacheEpochDigest(evaluatorA), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluatorA), &cache, &error));
     CHECK(cache.usable);
 
     RigExecFrameInputs out;
@@ -2755,7 +2755,7 @@ TestSamplerNullOutDeclines()
     RigExecBurstSampleCache cache;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, {},
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     CHECK(cache.usable);
     CHECK(!RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(1.0), {}, &cache, nullptr, &error));
@@ -2813,7 +2813,7 @@ TestBurstBuildIntoNullDeclines()
     CHECK(RigExecBindChainSampleInputs(evaluator, &pinned, &error));
     CHECK(!RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, {},
-        RigExecFrameCacheEpochDigest(evaluator), nullptr, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), nullptr, &error));
     CHECK(error.find("no burst cache") != std::string::npos);
 }
 
@@ -2894,7 +2894,7 @@ TestUnavailableTargetSamplesLocalInvalidRoles(const std::string &examplesDir)
     RigExecFrozenEvalContext context;
     context.frozen = frozen.get();
     context.workspace = workspace.get();
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = before.values.size();
     const auto valid = RigExecEvaluateFrozen(context, before,
@@ -3001,12 +3001,12 @@ TestBurstCacheRejectsChangedOverrides()
     drag.prim = SdfPath("/Asset/Rig/AlongX");
     drag.attribute = TfToken("avars:tx");
     drag.value = VtValue(3.25);
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(evaluator);
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(evaluator);
     std::string error;
 
     RigExecBurstSampleCache clean;
     CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), pinned,
-                                       {}, epoch, &clean, &error));
+                                       {}, compiledRig, &clean, &error));
     RigExecFrameInputs out;
     CHECK(!RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(3.0), {drag}, &clean, &out, &error));
@@ -3015,7 +3015,7 @@ TestBurstCacheRejectsChangedOverrides()
 
     RigExecBurstSampleCache dragged;
     CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), pinned,
-                                       {drag}, epoch, &dragged, &error));
+                                       {drag}, compiledRig, &dragged, &error));
     CHECK(!RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(3.0), {}, &dragged, &out, &error));
     CHECK(!error.empty());
@@ -3041,7 +3041,7 @@ TestBurstDigestOrderFallback()
     std::string error;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, {},
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     RigExecFrameInputs at1;
     CHECK(RigExecSampleFrameInputsWithBurstCache(
         evaluator, UsdTimeCode(1.0), {}, &cache, &at1, &error));
@@ -3087,7 +3087,7 @@ TestBurstBuildDeclinesUnplaceable()
     std::string error;
     CHECK(!RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, {computation},
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     CHECK(!cache.usable);
     CHECK(!error.empty());
     RigExecFrameInputs out;
@@ -3096,8 +3096,8 @@ TestBurstBuildDeclinesUnplaceable()
     CHECK(!error.empty());
 }
 
-// A constant edited mid-epoch moves no epoch digest -- the program object
-// and epoch stand -- but the pins go stale by value and rebind to current,
+// A constant edited mid-compiled rig moves no compiled rig signature -- the program object
+// and compiled rig stand -- but the pins go stale by value and rebind to current,
 // and the rebound pins warm bit-identically.
 void
 TestStillCurrentDetectsConstantEdit()
@@ -3112,13 +3112,13 @@ TestStillCurrentDetectsConstantEdit()
     CHECK(RigExecBindChainSampleInputs(evaluator, &bound));
     CHECK(RigExecChainSampleBindingsStillCurrent(bound, evaluator));
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-    const uint64_t epoch = evaluator.GetBindingEpochDigest();
+    const uint64_t compiledRig = evaluator.GetCompiledRigSignature();
 
     stage->GetAttributeAtPath(
             SdfPath("/Asset/Rig/Movers/TxGain.inputs:defaultWeight"))
         .Set(0.5f);
     CHECK(evaluator.GetBakedProgram() == program);
-    CHECK(evaluator.GetBindingEpochDigest() == epoch);
+    CHECK(evaluator.GetCompiledRigSignature() == compiledRig);
     CHECK(!RigExecChainSampleBindingsStillCurrent(bound, evaluator));
     CHECK(RigExecBindChainSampleInputs(evaluator, &bound));
     CHECK(RigExecChainSampleBindingsStillCurrent(bound, evaluator));
@@ -3491,7 +3491,7 @@ TestStaticLeavesFollowEdits()
     CHECK(RigExecBindChainSampleInputs(evaluator, &bindings, &error));
     RigExecBurstSampleCache cache;
     CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), bindings,
-                                       {}, RigExecFrameCacheEpochDigest(evaluator),
+                                       {}, RigExecFrameCacheCompiledRigSignature(evaluator),
                                        &cache, &error));
     for (const double t : {3.0, 4.0, 3.0}) {
         RigExecFrameInputs burst;
@@ -3917,7 +3917,7 @@ TestABurstRereadsAConnectedAnimatedWeight(const std::string &examplesDir)
     CHECK(bindings.chains.empty());
     RigExecBurstSampleCache cache;
     CHECK(RigExecBuildBurstSampleCache(*program, bindings, {},
-                                       RigExecFrameCacheEpochDigest(evaluator),
+                                       RigExecFrameCacheCompiledRigSignature(evaluator),
                                        &cache, &error));
     CHECK(cache.usable);
     const auto weightAt = [&weightPath](const RigExecFrameInputs &inputs) {
@@ -3987,7 +3987,7 @@ TestOverridePathsTravelWithTheJob()
 }
 
 // Increment C at the API level: an avar default edit patches the live
-// program in place (same program object, same epoch, moved region digest),
+// program in place (same program object, same compiled rig, moved region digest),
 // and carrying the region onto a copy of the snapshot warms
 // bit-identically -- while the unpatched snapshot provably does not, which
 // is what makes the copy load-bearing rather than ceremonial.
@@ -4076,7 +4076,7 @@ TestPatchFrozenAvarConstants()
     RigExecFrozenEvalContext context;
     context.frozen = frozen.get();
     context.workspace = workspace.get();
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = liveProgram->GetProviderCount();
     context.varyingInputCount = at3.values.size();
     if (evaluator.GetSolverGuidesEnabled()) context.flags |= kRigExecFrozenSolverGuidesEnabled;
@@ -4118,7 +4118,7 @@ TestProductionRunnerDeclinesWithoutProof()
     // No program: decline.
     {
         RigExecFrozenEvalContext context;
-        context.epochDigest = evaluator.GetBindingEpochDigest();
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
         context.generation = scheduler.CurrentGeneration(rig);
         context.slotCount =
             evaluator.GetBakedProgram()->GetProviderCount();
@@ -4131,7 +4131,7 @@ TestProductionRunnerDeclinesWithoutProof()
     // Refusal flag: decline even with a program.
     {
         RigExecFrozenEvalContext context;
-        context.epochDigest = evaluator.GetBindingEpochDigest();
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
         context.generation = scheduler.CurrentGeneration(rig);
         context.slotCount =
             evaluator.GetBakedProgram()->GetProviderCount();
@@ -4217,7 +4217,7 @@ RigExecFrozenEvalContext
 TestContext(const RigExecFrameInputs &inputs)
 {
     RigExecFrozenEvalContext context;
-    context.epochDigest = 0x1234;
+    context.compiledRigSignature = 0x1234;
     context.generation = 0;
     context.slotCount = 8;
     context.programDigest = 0xabcd;
@@ -4297,7 +4297,7 @@ TestFrozenRunIsBitIdentical()
                       rerunOut->size() * sizeof(double)) != 0);
 }
 
-// Every inconsistency declines: a wrong epoch, a truncated vector, a null
+// Every inconsistency declines: a wrong compiled rig, a truncated vector, a null
 // or refusing runner, and a runner that leaves valid down. All decline at
 // the requested time, sending the caller down the live path.
 void
@@ -4305,21 +4305,21 @@ TestInconsistentRequestsDecline()
 {
     const RigExecFrameInputs inputs = TestInputs();
 
-    RigExecFrozenEvalContext wrongEpoch = TestContext(inputs);
-    wrongEpoch.epochDigest = 0xdead;
-    // The epoch pin is checked by the caller against the standing epoch;
+    RigExecFrozenEvalContext wrongCompiledRig = TestContext(inputs);
+    wrongCompiledRig.compiledRigSignature = 0xdead;
+    // The compiled rig pin is checked by the caller against the standing compiled rig;
     // here the mismatch is simulated by a runner that refuses it, which
     // must still decline rather than run.
-    auto epochChecked = [](const RigExecFrozenEvalContext &context,
+    auto compiledRigChecked = [](const RigExecFrozenEvalContext &context,
                            const RigExecFrameInputs &in,
                            RigExecFrozenArena &arena,
                            RigExecRigPose *pose) {
-        if (context.epochDigest != 0x1234) {
+        if (context.compiledRigSignature != 0x1234) {
             return false;
         }
         return TestKernel(context, in, arena, pose);
     };
-    CHECK(!RigExecEvaluateFrozen(wrongEpoch, inputs, epochChecked).valid);
+    CHECK(!RigExecEvaluateFrozen(wrongCompiledRig, inputs, compiledRigChecked).valid);
 
     RigExecFrozenEvalContext truncated = TestContext(inputs);
     truncated.varyingInputCount = inputs.values.size() + 1;
@@ -4561,7 +4561,7 @@ TestPurityAuditNamesEveryUnit()
         CHECK(finding.note[0] != '\0');
         switch (finding.verdict) {
         case RigExecFrozenPurity::Pure: ++pure; break;
-        case RigExecFrozenPurity::EpochPinned: ++pinned; break;
+        case RigExecFrozenPurity::CompiledRigPinned: ++pinned; break;
         case RigExecFrozenPurity::LiveOnly: ++liveOnly; break;
         }
         const bool isLive = finding.verdict == RigExecFrozenPurity::LiveOnly;
@@ -4944,7 +4944,7 @@ static void TestSparseRawDefaultFrozenLifecycle()
  const auto restored=evaluator.Evaluate(UsdTimeCode(1));CHECK(restored.valid);
  CHECK(evaluator.GetBakedProgramBuildCount()==buildsBeforeRestore+1);
  CHECK(points(restored)==VtVec3fArray({{2,0,0},{1,0,0},{1,1,1},{0,1,0}}));
- CHECK(restored.diagnostics==std::vector<std::string>{"structural edit: epoch rebuilt"});
+ CHECK(restored.diagnostics==std::vector<std::string>{"structural edit: compiled rig rebuilt"});
  check(VtVec3fArray{{2,0,0},{1,0,0},{1,1,1},{0,1,0}});
  CHECK(stage->GetRootLayer()->ExportToString(&after));CHECK(before==after);
 }
@@ -5381,7 +5381,7 @@ TestIterativeMoversWarmBitIdentical()
         CHECK(RigExecBindChainSampleInputs(evaluator, &bindings, &error));
         RigExecBurstSampleCache cache;
         CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(),
-            bindings, {}, RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+            bindings, {}, RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
         RigExecBackgroundScheduler scheduler;
         uint64_t previousDigest = 0;
         VtVec3fArray previousPoints;
@@ -5675,7 +5675,7 @@ TestSurfaceSnapWarmsBitIdentical()
         CHECK(RigExecBindChainSampleInputs(evaluator, &pinned, &error));
         RigExecBurstSampleCache cache;
         CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), pinned,
-            noOverrides, RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+            noOverrides, RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
         RigExecFrameInputs plain, burst;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), noOverrides, &plain, &error));
         CHECK(RigExecSampleFrameInputsWithBurstCache(evaluator, UsdTimeCode(time),
@@ -5751,7 +5751,7 @@ TestRegularLatticeWarmsBitIdentical()
         CHECK(RigExecBindChainSampleInputs(evaluator, &pinned, &error));
         RigExecBurstSampleCache cache;
         CHECK(RigExecBuildBurstSampleCache(*evaluator.GetBakedProgram(), pinned,
-            {}, RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+            {}, RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
         RigExecFrameInputs plain, burst;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(time), {}, &plain, &error));
         CHECK(RigExecSampleFrameInputsWithBurstCache(evaluator, UsdTimeCode(time),
@@ -5819,7 +5819,7 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
     std::vector<std::string> errors;
     CHECK(evaluator.Compile(&errors));
     CHECK(evaluator.Evaluate(UsdTimeCode(1001)).valid);
-    const auto epoch=evaluator.GetBindingEpochDigest();
+    const auto compiledRig=evaluator.GetCompiledRigSignature();
     std::shared_ptr<const RigExecFrozenProgram> frozen;
     std::string error;
     CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));
@@ -5829,7 +5829,7 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
     const std::string fallback="diag /ReadPhaseAsset/Rig/Movers/Geometry/SlabLattice: read phase 'final' for "+cage.GetString()+" resolved to nothing; read the authored base";
     RigExecFrozenEvalContext context;
     context.frozen=frozen.get();context.workspace=workspace.get();
-    context.epochDigest=epoch;
+    context.compiledRigSignature=compiledRig;
     const RigExecBakedProgram *program=evaluator.GetBakedProgram();
     CHECK(program!=nullptr);if(!program)return;
     context.slotCount=program->GetProviderCount();
@@ -5849,7 +5849,7 @@ TestPointFinalAvailabilitySurvivesRetainedJobs(const std::string &examplesDir)
         CHECK(sourceRows==1);
         context.varyingInputCount=inputs.values.size();
         const auto live=evaluator.Evaluate(UsdTimeCode(frame));
-        CHECK(live.valid && evaluator.GetBindingEpochDigest()==epoch);
+        CHECK(live.valid && evaluator.GetCompiledRigSignature()==compiledRig);
         RigExecFrozenRunReport report;
         const auto pose=RigExecEvaluateFrozen(context,inputs,
             RigExecMakeProductionStepRunner(),nullptr,rig,&report);
@@ -5949,7 +5949,7 @@ CheckConstraintStageWarmsBitIdentical(
     std::vector<RigExecValueOverride> noOverrides;
     CHECK(RigExecBuildBurstSampleCache(
         *evaluator.GetBakedProgram(), pinned, noOverrides,
-        RigExecFrameCacheEpochDigest(evaluator), &cache, &error));
+        RigExecFrameCacheCompiledRigSignature(evaluator), &cache, &error));
     CHECK(cache.usable);
 
     std::shared_ptr<const RigExecFrozenProgram> frozen;
@@ -6403,7 +6403,7 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
     inputs.values.insert(inputs.values.begin(),{SdfPath(),VtValue(VtFloatArray{7.0f,9.0f}),true});
     auto workspace=RigExecCreateFrozenWorkspace(frozen);CHECK(workspace);
     RigExecFrozenEvalContext context;context.frozen=frozen.get();context.workspace=workspace.get();
-    context.epochDigest=evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature=evaluator.GetCompiledRigSignature();
     context.slotCount=evaluator.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount=inputs.values.size();
     const auto run=[&](const char *label,bool expectConstraint) {
@@ -7152,7 +7152,7 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
         return;
     }
     RigExecFrozenEvalContext context;
-    context.epochDigest = coned.GetBindingEpochDigest();
+    context.compiledRigSignature = coned.GetCompiledRigSignature();
     context.slotCount = coned.GetBakedProgram()->GetProviderCount();
     context.varyingInputCount = liftedInputs.values.size();
     context.frozen = frozen.get();
@@ -7696,7 +7696,7 @@ CheckRecomposingLadderFreezes(const _RecomposingLadderCase &c)
     evaluator.SetInteractiveOverrides({});
 }
 
-// The tail (examples/01_FkChainTail.usda) with testRigExecEpochRests'
+// The tail (examples/01_FkChainTail.usda) with testRigExecCompiledRigRests'
 // animated rests on Seg2 -- a time-sampled rest:tx, a rest:space connected
 // to an animated driver, a property chain writing rest:space -- plus the
 // unedited tail, whose static ladder recomposes only under the drag. Each
@@ -7913,7 +7913,7 @@ TestFrozenPropertySkinLayoutRecovery()
     auto workspace=RigExecCreateFrozenWorkspace(frozen);CHECK(workspace);
     RigExecFrozenEvalContext context;
     context.frozen=frozen.get();context.workspace=workspace.get();
-    context.epochDigest=evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature=evaluator.GetCompiledRigSignature();
     context.slotCount=evaluator.GetBakedProgram()->GetProviderCount();
     const auto checkRuntime=[&](const RigExecRigPose &pose) {
         bool sawPoints=false,sawExtent=false;
@@ -7994,7 +7994,7 @@ TestFrozenEnvelopeVolumesRecovery(const std::string &examples)
     CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));if(!frozen)return;
     auto workspace=RigExecCreateFrozenWorkspace(frozen);
     RigExecFrozenEvalContext context;context.frozen=frozen.get();context.workspace=workspace.get();
-    context.epochDigest=evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature=evaluator.GetCompiledRigSignature();
     context.slotCount=evaluator.GetBakedProgram()->GetProviderCount();
     for(int frame=1;frame<=6;++frame) {
         RigExecFrameInputs inputs;
@@ -8278,7 +8278,7 @@ TestAWorkspaceInheritsTheVerdict()
         RigExecFrozenEvalContext context;
         context.frozen = frozen.get();
         context.workspace = workspace.get();
-        context.epochDigest = evaluator.GetBindingEpochDigest();
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
         context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount = at3.values.size();
         laned3 = RigExecEvaluateFrozen(
@@ -8519,7 +8519,7 @@ main(int argc, char **argv)
     TestAValuelessSourceIsStillRecorded();
     TestTheFirstSampleAtAPathWins();
     TestClearEmptiesTheVectorAndResetsTime();
-    TestTheContextPinsAnEpochAndSizesAnArena();
+    TestTheContextPinsACompiledRigAndSizesAnArena();
     TestTheStubEvaluatorAnswersInvalidAtTheRequestedTime();
     TestSamplerMatchesLiveReads();
     TestDigestMovesWithControls();

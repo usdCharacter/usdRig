@@ -176,10 +176,10 @@ RigExecRigEvaluator::GetWindowRings(UsdTimeCode time,
     };
 
     RigExecFrozenEvalContext context;
-    context.epochDigest = GetBindingEpochDigest();
+    context.compiledRigSignature = GetCompiledRigSignature();
     context.slotCount = live->GetProviderCount();
     context.programDigest =
-        context.epochDigest ^
+        context.compiledRigSignature ^
         (uint64_t(live->GetBoundInputCount()) * 1099511628211ull) ^
         (uint64_t(live->GetVaryingInputCount()) * 16777619ull);
     context.flags = flags;

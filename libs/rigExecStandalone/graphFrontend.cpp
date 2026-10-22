@@ -3,7 +3,7 @@
 namespace rigExec {
 bool RigExecCompileStandaloneGraph(const RigExecSceneDb &database,
     const SdfPath &root, const std::vector<UsdTimeCode> &identities,
-    const RigExecSceneKernelLowering &lower, RigExecCyclePolicy policy,
+    const RigExecSceneKernelTranslation &translate, RigExecCyclePolicy policy,
     RigExecSceneDescriptors *descriptors, RigExecCompiledGraph *graph,
     std::string *error) {
     if (!descriptors || !graph) {
@@ -15,7 +15,7 @@ bool RigExecCompileStandaloneGraph(const RigExecSceneDb &database,
     RigExecSceneDescriptors captured;
     if (!RigExecCaptureSceneDescriptors(access,root,identities,&captured,error)) return false;
     RigExecCompiledGraph compiled;
-    if (!RigExecCompileSceneDescriptors(captured,lower,policy,&compiled,error)) return false;
+    if (!RigExecCompileSceneDescriptors(captured,translate,policy,&compiled,error)) return false;
     *descriptors = std::move(captured);
     *graph = std::move(compiled);
     return true;

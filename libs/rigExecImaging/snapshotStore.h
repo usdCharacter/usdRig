@@ -6,7 +6,7 @@
 #ifndef RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 #define RIGEXEC_IMAGING_SNAPSHOT_STORE_H
 
-#include "rigExec/gpuDeformLowering.h"
+#include "rigExec/gpuDeformTranslation.h"
 
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"

@@ -702,7 +702,7 @@ TestTheClusteringIsSound(const BuiltProgram &built, const char *name)
     for (const auto &op : B.opGraph.ops) costs.push_back(B.steps[op.originalIndex].cost);
     for (double grain : {0.0, B.clustering.grainUs, 200.0}) {
         auto graph = B.opGraph;
-        CHECK(RigExecLowerOpClusters(&graph, costs, grain, &error));
+        CHECK(RigExecTranslateOpClusters(&graph, costs, grain, &error));
         CHECK(RigExecValidateOpClusters(graph, &error));
         CHECK(graph.opClusters.size() == graph.ops.size());
         std::vector<size_t> seen(graph.ops.size());
@@ -1464,7 +1464,7 @@ TestARecompiledRigStillAgreesWithTheDynamicPath(const std::string &stagePath,
     CHECK(warm.valid);
     CHECK(warm.comparisonMismatches == 0);
 
-    // A recompile of the same stage: a new epoch, the same shape, and an
+    // A recompile of the same stage: a new compiled rig, the same shape, and an
     // outgoing program for the replacement to adopt.
     CHECK(evaluator.Compile(&errors));
     const RigExecRigPose after = evaluator.Evaluate(UsdTimeCode::Default());
@@ -1696,7 +1696,7 @@ TestAStalePartitionRunsTheRevisionWhole(const std::string &stagePath)
         return;
     }
     // One element more than the layout the keys were cut from, which is what
-    // a weight-paint edit the epoch let through would look like from here.
+    // a weight-paint edit the compiled rig let through would look like from here.
     ++stale->partitionIndexCount;
     // And something for the revision to execute for, since a revision that
     // does not execute never reaches the fuse's decision at all.
@@ -1893,7 +1893,7 @@ TestARecutLayoutCannotReadAnUndeclaredJoint()
             return;
         }
         RigExecFrozenEvalContext context;
-        context.epochDigest = evaluator.GetBindingEpochDigest();
+        context.compiledRigSignature = evaluator.GetCompiledRigSignature();
         context.slotCount = evaluator.GetBakedProgram()->GetProviderCount();
         context.varyingInputCount = inputs.values.size();
         context.flags = 0;
@@ -2122,7 +2122,7 @@ TestAStaleFuseKeepsTheChunkKeys()
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(evaluator, time, next, &inputs, &error));
     RigExecFrozenEvalContext context;
-    context.epochDigest = evaluator.GetBindingEpochDigest();
+    context.compiledRigSignature = evaluator.GetCompiledRigSignature();
     context.slotCount = program->GetProviderCount();
     context.varyingInputCount = inputs.values.size();
     context.flags = 0;
@@ -3035,7 +3035,7 @@ ScheduleByHand(RigExecBakedProgramImpl *B,std::string *compileError=nullptr)
         return false;
     }
     std::vector<double> costs(B->steps.size(),1.0);
-    CHECK(RigExecLowerOpClusters(&B->opGraph,costs,0.0,&error));
+    CHECK(RigExecTranslateOpClusters(&B->opGraph,costs,0.0,&error));
     CHECK(RigExecValidateOpClusters(B->opGraph,&error));
     auto &view=B->clustering;
     view={};
@@ -3781,7 +3781,7 @@ TestTheValidatorRejectsAMalformedGraph()
         graph.clusters.pop_back();
         std::string error;
         CHECK(!RigExecValidateOpClusters(graph,&error));
-        CHECK(error.find("operation missing from cluster lowering")!=std::string::npos);
+        CHECK(error.find("operation missing from cluster translation")!=std::string::npos);
     }
     {
         RigExecBakedProgramImpl B; chain(&B);
@@ -5754,7 +5754,7 @@ TestTheEpilogueVisitsTheStepsHoldingLines()
                 return pose;
             }
             RigExecFrozenEvalContext context;
-            context.epochDigest = evaluator.GetBindingEpochDigest();
+            context.compiledRigSignature = evaluator.GetCompiledRigSignature();
             context.slotCount = program->GetProviderCount();
             context.varyingInputCount = inputs.values.size();
             context.flags = 0;
@@ -6903,7 +6903,7 @@ BuildStageInMode(const UsdStageRefPtr &stage, RigExecBakedRoleMode mode)
     return built;
 }
 
-/// A live program is lowered for this machine's work limit and an export
+/// A live program is translated for this machine's work limit and an export
 /// program for the reference concurrency, each by the
 /// grain formula over its own serial cost.
 void
@@ -6927,7 +6927,7 @@ TestTheLiveGrainFollowsTheMachine(const std::string &stagePath)
     }
     const RigExecBakedProgramImpl &live = program->GetStepGraph();
     CHECK(live.roleMode == RigExecBakedRoleMode::Live);
-    CHECK(RigExecBakedLoweringConcurrency(live) == machine);
+    CHECK(RigExecBakedTranslationConcurrency(live) == machine);
     CHECK(live.clustering.grainUs ==
           RigExecBakedScheduleGrainUs(live.clustering.serialCost, machine));
     // Copied out: the rebuild below drops the live program.
@@ -6942,7 +6942,7 @@ TestTheLiveGrainFollowsTheMachine(const std::string &stagePath)
     }
     const RigExecBakedProgramImpl &exported = rebuilt->GetStepGraph();
     CHECK(exported.roleMode == RigExecBakedRoleMode::Export);
-    CHECK(RigExecBakedLoweringConcurrency(exported) ==
+    CHECK(RigExecBakedTranslationConcurrency(exported) ==
           kRigExecBakedReferenceConcurrency);
     CHECK(exported.clustering.grainUs ==
           RigExecBakedScheduleGrainUs(exported.clustering.serialCost,
@@ -8275,7 +8275,7 @@ GroupStepParts(const RigExecBakedProgramImpl &B, int id)
 /// the group bounds with no merge and no degenerate fallback; the Whole skin
 /// runs ten speculative keyed chunks and its fuse publishes the ten groups
 /// past them. The pins are the ones each role rests on, the methods and the
-/// space are epoch keys, and the validator accepts the program.
+/// space are compiled rig keys, and the validator accepts the program.
 void
 TestARangeChainGetsItsRolesAndGates()
 {
@@ -8435,7 +8435,7 @@ TestARangeChainGetsItsRolesAndGates()
     }
     CHECK(HasPin(revisions[size_t(bt)], Pin::LeafToken, "target") &&
           !revisions[size_t(bt)].chunked);
-    // The methods and the space are epoch keys.
+    // The methods and the space are compiled rig keys.
     for (const char *path :
          {"/Asset/Rig/Movers/L1.rigExec:skinningMethod",
           "/Asset/Rig/Movers/L2.rigExec:skinningMethod",
@@ -9480,12 +9480,12 @@ TestAnEditOnAPrunedAttributeStillRebuilds()
             out.sampled = out.sampled || leaf.attribute == restTx;
         }
         const size_t builds = rig.GetBakedProgramBuildCount();
-        const size_t digest = rig.GetBindingEpochDigest();
+        const size_t digest = rig.GetCompiledRigSignature();
         CHECK(rest.SetConnections({source.GetPath()}));
         out.pose = rig.Evaluate(UsdTimeCode(1.0));
         CHECK(out.pose.valid);
         out.builds = rig.GetBakedProgramBuildCount() - builds;
-        out.digestMoved = rig.GetBindingEpochDigest() != digest;
+        out.digestMoved = rig.GetCompiledRigSignature() != digest;
         return out;
     };
     const Outcome off = run(false);

@@ -1,4 +1,4 @@
-// Installs the lowering entry points the evaluator calls. Linked into
+// Installs the translation entry points the evaluator calls. Linked into
 // librigExecScene, not librigExec.
 #include "rigExec/sceneDispatch.h"
 #include "rigExecScene/usdSceneAccess.h"
@@ -20,11 +20,11 @@ struct Install {
         RigExecSceneHooks hooks;
         hooks.capture = &CaptureStage;
         hooks.select = &RigExecSelectSceneDescriptorIdentities;
-        hooks.lowerPoseInterpolator = &RigExecLowerScenePoseInterpolator;
-        hooks.lowerSpaceSwitch = &RigExecLowerSceneSpaceSwitch;
-        hooks.lowerGeometry = &RigExecLowerSceneGeometry;
-        hooks.lowerSolver = &RigExecLowerSceneSolver;
-        hooks.lowerConstraint = &RigExecLowerSceneConstraint;
+        hooks.translatePoseInterpolator = &RigExecTranslateScenePoseInterpolator;
+        hooks.translateSpaceSwitch = &RigExecTranslateSceneSpaceSwitch;
+        hooks.translateGeometry = &RigExecTranslateSceneGeometry;
+        hooks.translateSolver = &RigExecTranslateSceneSolver;
+        hooks.translateConstraint = &RigExecTranslateSceneConstraint;
         hooks.bindAutoClavicle = &RigExecBindAutoClavicle;
         hooks.runAutoClavicle = &RigExecRunAutoClavicle;
         RigExecInstallSceneHooks(hooks);

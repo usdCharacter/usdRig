@@ -136,8 +136,8 @@ public:
     struct PublishResult {
         bool ok = false;
         RigExecPublishedDirtyVector dirtied;
-        /// Non-null when the binding epoch changed this generation.
-        RigExecBindingResolvingSceneIndex::BindingEpochConstPtr epoch;
+        /// Non-null when the compiled rig changed this generation.
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
         /// True when the published generation came from the frame cache
         /// without running the evaluator: no evaluator pull happened. False
         /// on the live path (including a shadow-verified hit, which DID
@@ -200,11 +200,11 @@ public:
     /// The reserved generated scope this rig owns (for pruning).
     SdfPath GetGeneratedScope() const;
 
-    size_t GetBindingEpochDigest() const {
-        return _evaluator->GetBindingEpochDigest();
+    size_t GetCompiledRigSignature() const {
+        return _evaluator->GetCompiledRigSignature();
     }
 
-    /// Wires the filters that receive epoch swaps and generation notices.
+    /// Wires the filters that receive compiled rig swaps and generation notices.
     void SetSceneIndices(
         const RigExecBindingResolvingSceneIndexRefPtr &binding,
         const RigExecResultsSceneIndexRefPtr &results) {
@@ -251,7 +251,7 @@ public:
         return _interactiveOverrides;
     }
 
-    /// This rig's frame cache: the (epochDigest, controlDigest) store the
+    /// This rig's frame cache: the (compiledRigSignature, controlDigest) store the
     /// UI thread memoizes live results into and background completions warm
     /// behind the generation fence. Shared (not unique) so worker closures
     /// can hold it past the session that sampled them.
@@ -293,7 +293,7 @@ public:
     /// at no entry, which reads as a miss, never as a wrong pose.
     ///
     /// No-op when the frame cache is off (nothing is served, so nothing is
-    /// proven). Applies the same epoch scope discipline as the live
+    /// proven). Applies the same compiled rig scope discipline as the live
     /// memoization: a moved scope clears every proof, this one included.
     /// \p unfoldedDigest is the pre-constant-fold digest and \p inputs the
     /// sampled vector, recorded into the proof's dependency set (plan 2.3).
@@ -301,15 +301,15 @@ public:
                              uint64_t unfoldedDigest,
                              const RigExecFrameInputs &inputs);
 
-    /// The epoch's output-affected index (plan 2.1), synced to the current
-    /// program and epoch: control IDs to dirty-cluster closures, the
+    /// The compiled rig's output-affected index (plan 2.1), synced to the current
+    /// program and compiled rig: control IDs to dirty-cluster closures, the
     /// notice adapter's oracle for path-scoped retirement. Null with no
     /// baked program; empty when the program's cones were never built (a
     /// caller that finds it empty retires conservatively, as before).
     /// UI thread only, like the bridge itself: no worker consults it.
     const RigExecOutputAffectedIndex *GetAffectedIndex();
 
-    /// Admits \p overrides' identities to the epoch index (plan 2.1
+    /// Admits \p overrides' identities to the compiled rig index (plan 2.1
     /// MapControl production caller): the dynamic-override bootstrapping
     /// path, so a changed override maps to its clusters instead of
     /// collapsing to foreign (all clusters). Seeds mirror
@@ -356,9 +356,9 @@ public:
                     uint64_t newConstants);
 
     /// Routes a stage notice through the baked capture index: a hit drops
-    /// this rig's cached frames (and memoized task lists) for the epoch
+    /// this rig's cached frames (and memoized task lists) for the compiled rig
     /// while its half still names it -- the evaluator rebuilds lazily, and
-    /// between the notice and the rebuild the old epoch still keys lookups.
+    /// between the notice and the rebuild the old compiled rig still keys lookups.
     /// A miss drops nothing (D1 reachability decides). With no baked
     /// program (D7) nothing is dropped: refusal entries key on the
     /// stage-edit serial, which already retires them. Answers whether the
@@ -367,7 +367,7 @@ public:
     bool NoteCaptureIndex(const UsdNotice::ObjectsChanged &notice);
     /// Every stage notice that reaches the rig: drops the live sampler's
     /// pinned chain bindings when the notice could move a chain without
-    /// moving the epoch digest. The registry calls it for EVERY affected
+    /// moving the compiled rig signature. The registry calls it for EVERY affected
     /// notice, whatever its disposition -- NoteCaptureIndex runs for only
     /// some of them.
     void NoteChainEdits(const UsdNotice::ObjectsChanged &notice)
@@ -375,7 +375,7 @@ public:
         _NoteChainBindings(notice);
     }
 
-    /// The rig's chain bindings, pinned for the current binding epoch and
+    /// The rig's chain bindings, pinned for the current compiled rig and
     /// kept current by NoteChainEdits -- the ones the live sampler uses --
     /// rebound first when a notice or a recompile dropped them. Null when
     /// the chains cannot be bound. \p generation, when given, receives a
@@ -433,7 +433,7 @@ private:
     /// its posed frame (spec §10.3 extension).
     /// Records the stage identity and sample time on a generation.
     /// A complete conservative key for operations without a sampled input
-    /// contract: time, stage-edit serial, epoch, standing overrides and
+    /// contract: time, stage-edit serial, compiled rig, standing overrides and
     /// upstream values.
     bool _ComputePoseOnlyCacheKey(
         UsdTimeCode time, RigExecFrameCacheKey *key) const;
@@ -443,7 +443,7 @@ private:
     bool _CanSampleCacheInputs();
 
     /// Samples one frame's input vector for the live lookup and memoize
-    /// paths: through chain bindings pinned for the current epoch and kept
+    /// paths: through chain bindings pinned for the current compiled rig and kept
     /// current by stage notices (NoteCaptureIndex drops them), falling back
     /// to the self-binding sampler whenever the pinned route declines. The
     /// vector is the plain sampler's, element for element; only the cost
@@ -456,13 +456,13 @@ private:
     bool _EnsureChainBindings() const;
 
     /// Drops the pinned chain bindings when \p notice could move a chain
-    /// without moving the epoch digest: any resync, or an edit under a
+    /// without moving the compiled rig signature: any resync, or an edit under a
     /// chain mover, one of its weight objects, or its target's prim.
     void _NoteChainBindings(const UsdNotice::ObjectsChanged &notice);
 
     /// Publishes \p pose -- live or cached, already stamped for \p time --
     /// as one complete immutable generation: geometry, guides, the binding
-    /// epoch when it moved, and the atomic snapshot swap. Shared by the hit
+    /// compiled rig when it moved, and the atomic snapshot swap. Shared by the hit
     /// path and the live path so the two cannot publish differently.
     void _PublishPoseSnapshot(
         UsdTimeCode time, const RigExecRigPose &pose,
@@ -661,7 +661,7 @@ private:
         VtFloatArray previous;
     };
     std::map<SdfPath, _GpuDeformLast> _gpuDeformLast;
-    size_t _publishedEpochDigest = 0;
+    size_t _publishedCompiledRigSignature = 0;
     /// This rig's frame cache, held shared so background completions can
     /// publish into it after the session that sampled them is gone.
     std::shared_ptr<RigExecFrameCache> _frameCache;
@@ -669,16 +669,16 @@ private:
     std::shared_ptr<RigExecWarmFrameIndex> _warmIndex;
     bool _publishesDirtied = true;
     /// The memoized affected-set table for sparse planning (Stream D): the
-    /// capture index retires its epochs here, beside the frames.
+    /// capture index retires its compiled rig versions here, beside the frames.
     RigExecTaskListCache _taskListMemo;
     /// The live sampler's pinned chain bindings (see _SampleLive): bound
-    /// once per BINDING epoch (the compiled mover topology -- the chains
+    /// once per Compiled rig (the compiled mover topology -- the chains
     /// are a function of nothing else) and dropped by _NoteChainBindings.
-    /// Not the frame-cache epoch: that also counts baked-program rebuilds,
+    /// Not the frame-cache compiled rig: that also counts baked-program rebuilds,
     /// which a release triggers and which move no chain. Mutable because
     /// _ComputeCacheKey, a const query, samples through them.
     mutable RigExecChainSampleBindings _liveChainBindings;
-    mutable size_t _liveChainEpoch = 0;
+    mutable size_t _liveChainCompiledRig = 0;
     mutable bool _liveChainValid = false;
     /// Moves on every rebind: what a holder of a copy compares.
     mutable uint64_t _liveChainGeneration = 0;
@@ -695,12 +695,12 @@ private:
     /// The weight objects the chains read, matched with their subtrees: a
     /// weight's answer can come from geometry parented under it.
     mutable std::vector<SdfPath> _liveChainWeights;
-    /// The epoch half of the last memoized key. Atomic for bare bridges,
+    /// The compiled rig half of the last memoized key. Atomic for bare bridges,
     /// which serialize on no lock (registry callers hold its mutex on both
     /// the memoizing and the notice paths). A notice that finds it drifted
-    /// from the current epoch evicts the old half eagerly -- its frames are
+    /// from the current compiled rig evicts the old half eagerly -- its frames are
     /// unreachable by construction (D1) -- instead of waiting for LRU.
-    std::atomic<uint64_t> _lastPublishedEpoch{0};
+    std::atomic<uint64_t> _lastPublishedCompiledRig{0};
     /// The standing overrides, as handed to SetInteractiveOverrides: the
     /// digest folds them explicitly (a drag must never hit a pre-drag pose)
     /// and warming jobs sample them at enqueue time.
@@ -716,25 +716,25 @@ private:
     /// chain inputs sampled for a time the evaluator has not run come from
     /// the standing (stale) resolved state, and without the proof a scrub
     /// forth and back over animated chains could alias one frame's pose
-    /// onto another's. Scoped by _freshEpoch:
+    /// onto another's. Scoped by _freshCompiledRig:
     /// either moving clears the map (entries stay in the cache,
     /// unreachable, for LRU). Bounded: past _kFreshDigestCap entries the
     /// map clears wholesale, which only costs misses, never correctness.
     /// Path-scoped retirement (plan 2.3) drops intersecting proofs via
     /// RetireProofsForControls instead of clearing wholesale.
     std::map<std::pair<bool, double>, RigExecFreshProof> _freshDigests;
-    /// The epoch's output-affected index (plan 2.1), built for
-    /// _affectedEpoch by _SyncAffectedIndex and re-admitted per epoch.
+    /// The compiled rig's output-affected index (plan 2.1), built for
+    /// _affectedCompiledRig by _SyncAffectedIndex and re-admitted per compiled rig.
     /// UI thread only: no worker consults it, so no lock guards it.
     std::unique_ptr<RigExecOutputAffectedIndex> _affectedIndex;
     const RigExecBakedProgram *_affectedProgram = nullptr;
-    uint64_t _affectedEpoch = 0;
+    uint64_t _affectedCompiledRig = 0;
     bool _affectedValid = false;
-    /// Rebuilds the epoch index when the program or epoch moved.
+    /// Rebuilds the compiled rig index when the program or compiled rig moved.
     /// Answers the synced index, or null with no baked program.
     const RigExecOutputAffectedIndex *_SyncAffectedIndex();
-    uint64_t _freshEpoch = 0;
-    bool _freshEpochValid = false;
+    uint64_t _freshCompiledRig = 0;
+    bool _freshCompiledRigValid = false;
     uint64_t _cacheEditSerial = 0;
     /// The time and stage edit serial of the last publication: the same
     /// time under a newer serial is the frame an edit was just made at.
@@ -742,7 +742,7 @@ private:
     uint64_t _publishedSerial = 0;
     bool _publishedTimeValid = false;
     const RigExecBakedProgram *_sampleSupportProgram = nullptr;
-    uint64_t _sampleSupportEpoch = 0;
+    uint64_t _sampleSupportCompiledRig = 0;
     uint64_t _sampleSupportSerial = 0;
     bool _sampleSupportValid = false;
     bool _sampleSupport = false;

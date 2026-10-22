@@ -1302,9 +1302,9 @@ const std::map<SdfPath, std::vector<SdfPath>> &
 RigExecImagingBridge::_JointChildren(const RigExecRigPose &pose) const
 {
     // Namespace nesting is joint hierarchy, which only a recompile can
-    // change -- so the map is rebuilt when the binding epoch or the joint
+    // change -- so the map is rebuilt when the compiled rig or the joint
     // count moves, not on every generation.
-    const size_t key = _evaluator->GetBindingEpochDigest() ^
+    const size_t key = _evaluator->GetCompiledRigSignature() ^
                        (pose.jointFramesFinal.size() * 0x9E3779B97F4A7C15ull);
     if (_jointChildrenValid && key == _jointChildrenKey) {
         return _jointChildren;
@@ -1466,7 +1466,7 @@ RigExecImagingBridge::_FillGuides(
     // Namespace nesting is joint hierarchy. Map every joint to its nearest
     // joint ancestor; scopes or other grouping prims between them do not
     // interrupt the same NamespaceAncestor relationship evaluation uses.
-    // Cached per binding epoch (see _JointChildren).
+    // Cached per compiled rig (see _JointChildren).
     const std::map<SdfPath, std::vector<SdfPath>> &jointChildren =
         _JointChildren(pose);
 
@@ -2111,9 +2111,9 @@ RigExecImagingBridge::ClearFrameCache()
         _frameCache->Clear();
     }
     _taskListMemo.Clear();
-    _lastPublishedEpoch.store(0, std::memory_order_relaxed);
+    _lastPublishedCompiledRig.store(0, std::memory_order_relaxed);
     _freshDigests.clear();
-    _freshEpochValid = false;
+    _freshCompiledRigValid = false;
 
     _sampleSupportValid = false;
 }
@@ -2197,12 +2197,12 @@ RigExecImagingBridge::NoteWarmingEnqueued(
         return;
     }
     // Scope check, as on the lookup and memoization paths: the evaluation
-    // epoch may have moved since the last proof was recorded.
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
-    if (!_freshEpochValid || _freshEpoch != epoch) {
+    // compiled rig may have moved since the last proof was recorded.
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
-        _freshEpoch = epoch;
-        _freshEpochValid = true;
+        _freshCompiledRig = compiledRig;
+        _freshCompiledRigValid = true;
     }
     if (_freshDigests.size() >= _kFreshDigestCap) {
         _freshDigests.clear();
@@ -2222,19 +2222,19 @@ RigExecImagingBridge::_SyncAffectedIndex()
         return nullptr;
     }
     const RigExecBakedProgramImpl &impl = program->GetStepGraph();
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
-    // The program object test matters as much as the epoch: a rebuild can
-    // answer a colliding epoch for wholly new clustering, and an index
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    // The program object test matters as much as the compiled rig: a rebuild can
+    // answer a colliding compiled rig for wholly new clustering, and an index
     // built for the old shape would retire against the wrong cones.
-    // (The epoch digest folds the build count, so a rebuild moves it in
+    // (The compiled rig signature folds the build count, so a rebuild moves it in
     // practice; the pointer pins the shape regardless.)
-    if (_affectedValid && _affectedIndex && _affectedEpoch == epoch &&
+    if (_affectedValid && _affectedIndex && _affectedCompiledRig == compiledRig &&
         _affectedProgram == program) {
         return _affectedIndex.get();
     }
     _affectedIndex.reset(new RigExecOutputAffectedIndex());
-    _affectedIndex->Build(impl, epoch);
-    _affectedEpoch = epoch;
+    _affectedIndex->Build(impl, compiledRig);
+    _affectedCompiledRig = compiledRig;
     _affectedProgram = program;
     _affectedValid = true;
     // A rebuild drops every admission with the old index: the standing
@@ -2373,23 +2373,23 @@ RigExecImagingBridge::NoteCaptureIndex(
     if (!program || !_frameCache) {
         return false;
     }
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
     const bool hit = RigExecNoteCaptureIndex(*_frameCache, _taskListMemo,
-                                             epoch, *program, notice);
-    if (hit && _freshEpochValid && _freshEpoch == epoch) {
+                                             compiledRig, *program, notice);
+    if (hit && _freshCompiledRigValid && _freshCompiledRig == compiledRig) {
         // The proofs name evicted entries: drop them so the next visit
         // misses without paying a sample for the proof check.
         _freshDigests.clear();
     }
-    // Epoch drift since the last memoization (an in-place avar patch, a
+    // Compiled rig drift since the last memoization (an in-place avar patch, a
     // rebuild, a structural edit): the old half's frames are unreachable by
     // construction, so evict them eagerly rather than waiting for LRU.
     const uint64_t last =
-        _lastPublishedEpoch.load(std::memory_order_relaxed);
-    if (last != epoch) {
-        _frameCache->EvictEpoch(last);
-        _taskListMemo.InvalidateEpoch(last);
-        if (_freshEpochValid && _freshEpoch == last) {
+        _lastPublishedCompiledRig.load(std::memory_order_relaxed);
+    if (last != compiledRig) {
+        _frameCache->EvictCompiledRig(last);
+        _taskListMemo.InvalidateCompiledRig(last);
+        if (_freshCompiledRigValid && _freshCompiledRig == last) {
             _freshDigests.clear();
         }
     }
@@ -2439,7 +2439,7 @@ RigExecImagingBridge::_NoteChainBindings(
     };
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         // A PRIM resync can add, remove or retype a mover or a target before
-        // the epoch digest has been recomputed: rebind on the next sample. A
+        // the compiled rig signature has been recomputed: rebind on the next sample. A
         // PROPERTY resync is a spec created or removed -- the first time an
         // avar is authored in a session is one -- and is judged like a value
         // edit, by its prim.
@@ -2450,7 +2450,7 @@ RigExecImagingBridge::_NoteChainBindings(
     }
     // A value or connection edit on a chain-relevant prim can change a
     // folded constant, a connection, or a weight object's answer -- none of
-    // which moves the epoch digest. Anything else (an avar on a control, a
+    // which moves the compiled rig signature. Anything else (an avar on a control, a
     // pose edit) leaves every bound chain exactly as it was.
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
         if (touchesChain(path)) {
@@ -2463,8 +2463,8 @@ RigExecImagingBridge::_NoteChainBindings(
 bool
 RigExecImagingBridge::_EnsureChainBindings() const
 {
-    const size_t epoch = _evaluator->GetBindingEpochDigest();
-    if (_liveChainValid && _liveChainEpoch == epoch) {
+    const size_t compiledRig = _evaluator->GetCompiledRigSignature();
+    if (_liveChainValid && _liveChainCompiledRig == compiledRig) {
         return true;
     }
     _liveChainValid = false;
@@ -2493,7 +2493,7 @@ RigExecImagingBridge::_EnsureChainBindings() const
         list->erase(std::unique(list->begin(), list->end()), list->end());
     }
     _liveChainBindings = std::move(bound);
-    _liveChainEpoch = epoch;
+    _liveChainCompiledRig = compiledRig;
     _liveChainValid = true;
     ++_liveChainGeneration;
     return true;
@@ -2553,15 +2553,15 @@ RigExecImagingBridge::_CanSampleCacheInputs()
     if (!program || _evaluator->cpuReference) {
         return false;
     }
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
     // Whether the program freezes is a question about connections and
     // prims, which no value edit moves.
     const uint64_t serial = _evaluator->GetStageStructureSerial();
     if (!_sampleSupportValid || _sampleSupportProgram != program ||
-        _sampleSupportEpoch != epoch || _sampleSupportSerial != serial) {
+        _sampleSupportCompiledRig != compiledRig || _sampleSupportSerial != serial) {
         _sampleSupport = RigExecCanFreezeProgram(*_evaluator);
         _sampleSupportProgram = program;
-        _sampleSupportEpoch = epoch;
+        _sampleSupportCompiledRig = compiledRig;
         _sampleSupportSerial = serial;
         _sampleSupportValid = true;
     }
@@ -2580,7 +2580,7 @@ RigExecImagingBridge::_ComputePoseOnlyCacheKey(
     // Complete live results remain cacheable when an operation has no
     // frozen input contract. Every stage edit moves this namespace; no
     // per-operation input list or partial retained-state proof is needed.
-    key->epochDigest = RigExecFrameCacheEpochDigest(*_evaluator);
+    key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
     key->controlDigest = RigExecRefusalControlDigest(
         time, _evaluator->GetStageEditSerial(), _interactiveOverrides,
         _upstreamInputs);
@@ -2648,7 +2648,7 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
         return false;
     }
     RigExecFrameCacheKey newKey;
-    newKey.epochDigest = oldKey.epochDigest;
+    newKey.compiledRigSignature = oldKey.compiledRigSignature;
     newKey.controlDigest = RigExecFoldConstantDigest(
         provenance.unfoldedControlDigest, newConstants);
     if (newKey.controlDigest == oldKey.controlDigest) {
@@ -2664,7 +2664,7 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
     }
     // The D5 rewrite sequence: publish under the new key, evict the old,
     // re-record the completion -- which REPLACES the row, so no Drop (a
-    // Drop erases by (epoch, time) and would eat the new row). The old key
+    // Drop erases by (compiled rig, time) and would eat the new row). The old key
     // is unreachable by construction past the namespace move (no fresh
     // sample folds the old constants), so the evict frees without robbing
     // aliases: a frame whose values match serves the carried entry.
@@ -2748,8 +2748,8 @@ RigExecImagingBridge::_TrySparseServe(
     // so a value comparison alone cannot see a constant patch. A moved
     // namespace plans nothing here -- the eager carry covers clean
     // entries, and anything else re-warms.
-    if (retained->epochDigest != key.epochDigest ||
-        retained->constantDigest != RigExecEpochConstantDigest(*program)) {
+    if (retained->compiledRigSignature != key.compiledRigSignature ||
+        retained->constantDigest != RigExecCompiledRigConstantDigest(*program)) {
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
@@ -2760,7 +2760,7 @@ RigExecImagingBridge::_TrySparseServe(
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
-    if (!RigExecCanReuseRetainedPose(*index, *retained, key.epochDigest,
+    if (!RigExecCanReuseRetainedPose(*index, *retained, key.compiledRigSignature,
                                     inputs, _interactiveOverrides)) {
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
@@ -2797,19 +2797,19 @@ RigExecImagingBridge::_TryPublishCachedResult(
     if (!result || !_frameCache || _evaluator->cpuReference) {
         return false;
     }
-    // Scope check: a new epoch retires every
+    // Scope check: a new compiled rig retires every
     // freshness proof. Cached entries stay for LRU (their digests decide
     // reachability); proofs name the old scope's inputs and must not be
     // consulted. No proof can exist yet, so this is a miss either way.
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
-    if (!_freshEpochValid || _freshEpoch != epoch) {
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
-        _freshEpoch = epoch;
-        _freshEpochValid = true;
+        _freshCompiledRig = compiledRig;
+        _freshCompiledRigValid = true;
         return false;
     }
     // Servable completions skip sampling entirely: the index row names the
-    // exact key, and the retirement paths (generation tags, epoch tags,
+    // exact key, and the retirement paths (generation tags, compiled rig tags,
     // path-scoped dirt, eviction) keep a clean row exact, so a store hit
     // under it IS the proof compare. Sampling first here cost every hit
     // the full vector (~49 ms on the stack for a ~10 ms evaluation --
@@ -2844,7 +2844,7 @@ RigExecImagingBridge::_TryPublishCachedResult(
         RigExecFrameCacheKey cachedKey{0, 0};
         if (_warmIndex->FindCachedKey(_rigPath, stamped,
                                       _warmIndex->CurrentGeneration(_rigPath),
-                                      epoch, &cachedKey)) {
+                                      compiledRig, &cachedKey)) {
             RigExecRigPose cached;
             std::shared_ptr<const void> retained;
             RigExecFrameCacheKey poseOnlyKey;
@@ -2903,9 +2903,9 @@ RigExecImagingBridge::_TryPublishCachedResult(
         unfolded = RigExecControlStateDigest(inputs, _interactiveOverrides);
     }
     RigExecFrameCacheKey key;
-    key.epochDigest = epoch;
+    key.compiledRigSignature = compiledRig;
     key.controlDigest = RigExecFoldConstantDigest(
-        unfolded, RigExecEpochConstantDigest(*program));
+        unfolded, RigExecCompiledRigConstantDigest(*program));
     if (haveProof && proof->second.digest == key.controlDigest) {
         // The frameCache lane records actual store consultations only: a
         // lookup that never reaches the store (no proof, unsampleable,
@@ -2945,12 +2945,12 @@ RigExecImagingBridge::_MemoizeLiveResult(
         return false;
     }
     // Scope check, as on the lookup path: the evaluation above may have
-    // settled a new epoch.
-    const uint64_t epoch = RigExecFrameCacheEpochDigest(*_evaluator);
-    if (!_freshEpochValid || _freshEpoch != epoch) {
+    // settled a new compiled rig.
+    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
-        _freshEpoch = epoch;
-        _freshEpochValid = true;
+        _freshCompiledRig = compiledRig;
+        _freshCompiledRigValid = true;
     }
     // Sampled AFTER the evaluation, so the resolved state is fresh at exactly
     // this time: the digest below is the TRUE digest, and recording it as
@@ -2968,13 +2968,13 @@ RigExecImagingBridge::_MemoizeLiveResult(
             !memoInputs.HasChainResolvedInputs() &&
             RigExecControlStateDigestible(memoInputs,
                                           _interactiveOverrides)) {
-            key.epochDigest = RigExecFrameCacheEpochDigest(*_evaluator);
+            key.compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
             const uint64_t unfolded =
                 RigExecControlStateDigest(memoInputs,
                                           _interactiveOverrides);
             key.controlDigest = RigExecFoldConstantDigest(
                 unfolded,
-                RigExecEpochConstantDigest(
+                RigExecCompiledRigConstantDigest(
                     *_evaluator->GetBakedProgram()));
             memoUnfolded = unfolded;
             haveInputs = true;
@@ -2994,9 +2994,9 @@ RigExecImagingBridge::_MemoizeLiveResult(
                 _evaluator->GetBakedProgram()->GetStepGraph();
             RigExecRetainedFrameState retainedState =
                 RigExecCaptureRetainedState(memoInputs, _interactiveOverrides,
-                                            key.epochDigest,
+                                            key.compiledRigSignature,
                                             impl.clustering.clusters.size(),
-                                            RigExecEpochConstantDigest(
+                                            RigExecCompiledRigConstantDigest(
                                                 *_evaluator->GetBakedProgram()));
             auto retained =
                 std::make_shared<RigExecRetainedFrameState>(
@@ -3019,10 +3019,10 @@ RigExecImagingBridge::_MemoizeLiveResult(
             _rigPath, time.GetValue(), key,
             _warmIndex->CurrentGeneration(_rigPath));
     }
-    // The epoch half frames were last stored under, for the notice path's
+    // The compiled rig half frames were last stored under, for the notice path's
     // drift check -- kept even when the publish declines, so a later notice
     // evicts the half it would have named.
-    _lastPublishedEpoch.store(key.epochDigest, std::memory_order_relaxed);
+    _lastPublishedCompiledRig.store(key.compiledRigSignature, std::memory_order_relaxed);
     if (_freshDigests.size() >= _kFreshDigestCap) {
         _freshDigests.clear();
     }
@@ -3147,7 +3147,7 @@ RigExecImagingBridge::_PublishPoseSnapshot(
         // the property-domain math mover results (a float dial, a vector
         // offset, a matrix), which have no Hydra representation -- and
         // indexing snapshot->prims for one of those would MINT an empty
-        // published prim for its owner, which then enters the binding epoch
+        // published prim for its owner, which then enters the compiled rig
         // below and makes the scene index resolve a prim RigExec publishes
         // nothing for. Look the entry up only once there is something to
         // put in it.
@@ -3210,18 +3210,18 @@ RigExecImagingBridge::_PublishPoseSnapshot(
         _FillWeightOverlay(pose, snapshot.get());
     }
 
-    // A structural recompile publishes a replacement binding epoch
+    // A structural recompile publishes a replacement compiled rig
     // before value notices (spec §10.4).
-    const size_t epochDigest = _evaluator->GetBindingEpochDigest();
-    if (epochDigest != _publishedEpochDigest) {
-        auto epoch = std::make_shared<
-            RigExecBindingResolvingSceneIndex::BindingEpoch>();
-        epoch->id = epochDigest;
+    const size_t compiledRigSignature = _evaluator->GetCompiledRigSignature();
+    if (compiledRigSignature != _publishedCompiledRigSignature) {
+        auto compiledRig = std::make_shared<
+            RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
+        compiledRig->id = compiledRigSignature;
         for (const auto &[primPath, published] : snapshot->prims) {
-            epoch->publishedPrims.insert(primPath);
+            compiledRig->publishedPrims.insert(primPath);
         }
-        result->epoch = std::move(epoch);
-        _publishedEpochDigest = epochDigest;
+        result->compiledRig = std::move(compiledRig);
+        _publishedCompiledRigSignature = compiledRigSignature;
     }
 
     // Atomic snapshot swap; the caller sends the coalesced precise
@@ -3268,8 +3268,8 @@ RigExecImagingBridge::EvaluateAndPublish(UsdTimeCode time)
     // anything if it reaches the observers -- returning early here was the
     // second half of the stale-pose bug: the store had been corrected and
     // nobody was told.
-    if (_binding && result.epoch) {
-        _binding->SetBindingEpoch(result.epoch);
+    if (_binding && result.compiledRig) {
+        _binding->SetCompiledRigBinding(result.compiledRig);
     }
     if (_results && !result.dirtied.empty()) {
         _results->NotifyGenerationPublished(result.dirtied);
@@ -3341,10 +3341,10 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
         // authors, which reads as "the rig is not running" instead of being
         // invisibly stale.
         result.dirtied = _store->Publish(nullptr);
-        // The next good generation has to re-announce its epoch: the binding
+        // The next good generation has to re-announce its compiled rig: the binding
         // index is still holding one whose published prim set no longer
         // exists, and an unchanged digest would suppress the replacement.
-        _publishedEpochDigest = 0;
+        _publishedCompiledRigSignature = 0;
         return result;
     }
 
@@ -3512,16 +3512,16 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
     // consumer asks about, and the offsets are relative to it.
     _StampGeneration(baseTime, snapshot.get());
 
-    const size_t epochDigest = _evaluator->GetBindingEpochDigest();
-    if (epochDigest != _publishedEpochDigest) {
-        auto epoch = std::make_shared<
-            RigExecBindingResolvingSceneIndex::BindingEpoch>();
-        epoch->id = epochDigest;
+    const size_t compiledRigSignature = _evaluator->GetCompiledRigSignature();
+    if (compiledRigSignature != _publishedCompiledRigSignature) {
+        auto compiledRig = std::make_shared<
+            RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
+        compiledRig->id = compiledRigSignature;
         for (const auto &[primPath, published] : snapshot->prims) {
-            epoch->publishedPrims.insert(primPath);
+            compiledRig->publishedPrims.insert(primPath);
         }
-        result.epoch = std::move(epoch);
-        _publishedEpochDigest = epochDigest;
+        result.compiledRig = std::move(compiledRig);
+        _publishedCompiledRigSignature = compiledRigSignature;
     }
     result.dirtied = _store->Publish(std::move(snapshot));
     result.ok = true;

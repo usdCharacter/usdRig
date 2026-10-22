@@ -57,11 +57,11 @@ bool RigExecResolveReadPhase(
     RigExecReadPhase *phase,
     std::string *error);
 
-/// The epoch-fixed skin layout of \p moverPrim, through \p cache.
+/// The compiled rig skin layout of \p moverPrim, through \p cache.
 ///
 /// The one call a dynamic frame makes that takes a lock
 /// (RigExecSkinTopologyCache's, held across the build). A null return is the
-/// cache's remembered REFUSAL: the layout can move within the epoch, so the
+/// cache's remembered REFUSAL: the layout can move within the compiled rig, so the
 /// packet must read the arrays per frame. The baked program and its frozen
 /// jobs never call it: their SkinTopology head op builds the same layout
 /// from sampled leaves through RigExecBuildSkinTopology.
@@ -72,7 +72,7 @@ std::shared_ptr<const RigExecSkinTopology> RigExecResolveSkinTopology(
     const RigExecResolvedInputs *resolved,
     RigExecSkinTopologyCache *cache);
 
-/// Whether \p moverPrim's skin layout is epoch state: none of
+/// Whether \p moverPrim's skin layout is compiled rig state: none of
 /// rigExec:jointIndices, rigExec:jointWeights and rigExec:elementSize might
 /// vary with time or has an authored connection. The question
 /// RigExecResolveSkinTopology asks wherever the cache is refilled. Reads the
@@ -139,9 +139,9 @@ RigExecMoverParameters RigExecAssembleMatrixParameters(
 /// application. The per-point layout (rigExec:jointIndices, jointWeights,
 /// elementSize) and the method token are static reads off the mover prim at
 /// \p time -- unless \p topologyCache is given, in which case the layout is
-/// resolved through it once per epoch and carried in the packet by handle.
+/// resolved through it once per rig compilation and carried in the packet by handle.
 /// The caller passes a cache only when Compile established that the layout
-/// cannot change within the epoch. The packet is valid only when the layout
+/// cannot change within the compiled rig. The packet is valid only when the layout
 /// indexes the influence table in range with finite non-negative weights, so
 /// the kernel never has to guard an element; the point-count half of the
 /// check happens in the kernel, which is the first place the count is known.
@@ -605,8 +605,8 @@ RigExecSkinTransformsView RigExecSkinTransformsOf(
 /// The layout \p p and \p transforms describe over \p pointCount points.
 ///
 /// One definition of "where are the indices, the weights and the element
-/// size", because the answer depends on whether the packet carries an
-/// epoch-fixed layout by handle, and a second copy of that rule is a second
+/// size", because the answer depends on whether the packet carries a
+/// compiled rig layout by handle, and a second copy of that rule is a second
 /// chance to read the wrong array.
 RigExecSkinLayout RigExecSkinLayoutForPacket(
     const RigExecMoverParameters &p,
@@ -1010,7 +1010,7 @@ void RigExecAssembleExternalPayload(const UsdPrim &moverPrim,
                                     RigExecExternalPayload *payload);
 
 
-/// Whether \p role reads topology, which is epoch state: a skin's
+/// Whether \p role reads topology, which is compiled rig state: a skin's
 /// jointIndices and elementSize, a mesh's face counts and indices, a
 /// lattice's divisions, a wire curve's order and knots, a delta mush's
 /// explicit edges and a surface snap's explicit triangles. An authored edit to

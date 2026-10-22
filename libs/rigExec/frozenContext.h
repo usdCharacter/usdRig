@@ -5,7 +5,7 @@
 // varying attribute queries, chain-resolved inputs, interactive overrides --
 // for each enqueued time at enqueue time (RigExecSampleFrameInputs), packs
 // the values into a RigExecFrameInputs, and hands the worker that plus a
-// RigExecFrozenEvalContext pinning the epoch. The worker evaluates from the
+// RigExecFrozenEvalContext pinning the compiled rig. The worker evaluates from the
 // vector only, into a private slot arena it owns (RigExecFrozenArena),
 // running the baked serial executor end to end (never Work/TBB: a
 // kernel-level parallel call would leak the work back onto the shared arena
@@ -14,7 +14,7 @@
 // UsdAttribute, no UsdAttributeQuery, no evaluator pointer. Anything that
 // cannot be named without one of those is sampled into the input vector
 // instead. The worker-side entry point (RigExecEvaluateFrozen with a runner)
-// checks the epoch pin and the generation fence, forces the serial kernel
+// checks the compiled rig pin and the generation fence, forces the serial kernel
 // variants for the calling thread, and runs the supplied serial step runner
 // against the private arena; anything it cannot prove bit-identical --
 // unimplemented, inconsistent, stale, or cancelled -- answers with an invalid
@@ -62,7 +62,7 @@ namespace rigExec {
 class RigExecBackgroundScheduler;
 using RigExecFrameGeneration = uint64_t;
 
-/// An epoch-pinned, worker-safe snapshot of a baked program, built on the UI
+/// A worker-safe snapshot tied to a compiled rig, built on the UI
 /// thread by RigExecFreezeProgram. See that function for the contract;
 /// frozenProgram.h defines it.
 struct RigExecFrozenProgram;
@@ -318,9 +318,9 @@ constexpr uint32_t kRigExecFrozenSolverGuidesEnabled = 1u << 1;
 /// carrying this flag: it has no admitted compiled program to execute.
 constexpr uint32_t kRigExecFrozenBakeRefused = 1u << 2;
 
-/// Freezes \p evaluator's current baked program into an epoch-pinned
-/// snapshot for background warming. UI thread only: it reads the live
-/// program and the stage.
+/// Freezes \p evaluator's current baked program into a snapshot tied to its
+/// compiled rig version for background warming. UI thread only: it reads
+/// the live program and the stage.
 ///
 /// Answers false, leaving \p frozen untouched, when the program is absent
 /// or has a descriptor the detached execution contract cannot reproduce.
@@ -328,7 +328,7 @@ constexpr uint32_t kRigExecFrozenBakeRefused = 1u << 2;
 /// layouts, and geometry use their admitted operations in the same graph.
 /// Optional scalar reference checks carry fresh source facts with each job.
 ///
-/// A snapshot pins the program OBJECT it was cloned from plus the epoch it
+/// A snapshot pins the program OBJECT it was cloned from plus the compiled rig it
 /// was cloned in. Re-freeze after any change that rebuilds the program; a
 /// change that only patches its avar constants
 /// (RigExecBakedProgram::ApplyAvarValueEdits) needs only
@@ -356,17 +356,17 @@ bool RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
 /// table. RigExecBakedProgram::ApplyAvarValueEdits moves exactly this
 /// region, so two digests that agree mean no patch landed between them --
 /// which is what lets a session cache keep its snapshot without re-cloning
-/// the epoch every frame. The frozen-snapshot refresh compares this to
-/// decide patch-vs-keep; the epoch digest no longer folds it (plan D3).
+/// the compiled rig every frame. The frozen-snapshot refresh compares this to
+/// decide patch-vs-keep; the compiled rig signature no longer folds it (plan D3).
 uint64_t RigExecFrozenAvarRegionDigest(const RigExecBakedProgram &program);
 
-/// The epoch-constant digest (plan D3): the value-sensitive constant region
-/// the epoch digest no longer covers, captured at epoch build and at every
+/// The compiled rig constant digest (plan D3): the value-sensitive constant region
+/// the compiled rig signature no longer covers, captured at compiled rig build and at every
 /// value patch. Folds into control-digest derivation (see
 /// RigExecControlStateDigestWithConstants), so a constant patch opens a
-/// new key namespace while the epoch half stays standing. Same value as
+/// new key namespace while the compiled rig half stays standing. Same value as
 /// RigExecFrozenAvarRegionDigest: one sampler, two consumers.
-uint64_t RigExecEpochConstantDigest(const RigExecBakedProgram &program);
+uint64_t RigExecCompiledRigConstantDigest(const RigExecBakedProgram &program);
 
 /// Bindings per constant region (plan 2.0): the avar-constant bindings are
 /// partitioned into regions of this many consecutive bindings, and each
@@ -388,14 +388,14 @@ std::vector<uint64_t> RigExecConstantRegionsForPaths(
     const RigExecBakedProgram &program,
     const std::vector<SdfPath> &paths);
 
-/// The epoch half of a frame-cache key for \p evaluator's current program
-/// state: structure only (plan D3) -- the binding epoch digest, the
+/// The compiled rig half of a frame-cache key for \p evaluator's current program
+/// state: structure only (plan D3) -- the compiled rig digest, the
 /// program's build count, and the avar binding-table shapes. Avar constant
 /// VALUES are not folded here: a value patch must not evict the world, so
-/// they ride the control digest instead (see RigExecEpochConstantDigest).
-/// A rig with no program keys on the epoch alone (its refusal digest
+/// they ride the control digest instead (see RigExecCompiledRigConstantDigest).
+/// A rig with no program keys on the compiled rig alone (its refusal digest
 /// carries the stage-edit serial instead).
-uint64_t RigExecFrameCacheEpochDigest(const RigExecRigEvaluator &evaluator);
+uint64_t RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator);
 
 /// True when \p live has routed a stage value edit to an input, or bumped
 /// its program stamp, since \p base was frozen from it or last patched.
@@ -409,7 +409,7 @@ bool RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
 /// Carries \p live's patched avar region onto a copy of \p base, for a
 /// session whose snapshot still pins the program it was cloned from.
 /// Copy-on-write: \p base is never mutated, so jobs already holding it run
-/// on, and \p out pins the same epoch and history with the new constants.
+/// on, and \p out pins the same compiled rig and history with the new constants.
 /// The copy also owes every value edit and stamp bump \p live has taken
 /// since \p base (RigExecFrozenSnapshotOwesLiveEdits): its first run
 /// re-runs the steps those edits reached, or everything after a bump.
@@ -443,22 +443,22 @@ private:
 std::unique_ptr<RigExecFrozenWorkspace> RigExecCreateFrozenWorkspace(
     std::shared_ptr<const RigExecFrozenProgram> snapshot);
 
-/// The epoch a background job is pinned to: digests and counts only, plus
+/// The compiled rig a background job is pinned to: digests and counts only, plus
 /// the frozen program reference. No member can name the stage, the
 /// evaluator, or any USD object, which is what makes it safe to share with
 /// a worker.
 struct RigExecFrozenEvalContext {
-    /// RigExecRigEvaluator::GetBindingEpochDigest at enqueue time: the epoch
+    /// RigExecRigEvaluator::GetCompiledRigSignature at enqueue time: the compiled rig
     /// the job was sampled for. Enforcement is the generation fence (any
-    /// edit bumps it) plus the epoch-keyed cache. A retained workspace also
-    /// requires every job to carry its initially bound epoch.
-    uint64_t epochDigest = 0;
+    /// edit bumps it) plus the compiled rig cache. A retained workspace also
+    /// requires every job to carry its initially bound compiled rig.
+    uint64_t compiledRigSignature = 0;
     /// The scheduler generation the job was enqueued under. Rechecked before
     /// publish; a mismatch drops the result.
     uint64_t generation = 0;
     /// Provider slots the worker sizes its private arena for.
     size_t slotCount = 0;
-    /// Identity of the baked program the job was sampled for: the epoch
+    /// Identity of the baked program the job was sampled for: the compiled rig
     /// digest mixed with the program's bound/varying input counts. Retained
     /// workspaces reject jobs carrying a different program digest.
     uint64_t programDigest = 0;
@@ -470,9 +470,9 @@ struct RigExecFrozenEvalContext {
     /// kRigExecFrozen* bits: the per-run toggles the live path reads off the
     /// evaluator (weight-field publication, solver guides) plus the D7
     /// refusal flag. Sampled at enqueue because the live toggles can move
-    /// without the epoch moving.
+    /// without the compiled rig moving.
     uint32_t flags = 0;
-    /// The epoch-pinned program snapshot the job runs, or null when the rig
+    /// The compiled rig program snapshot the job runs, or null when the rig
     /// was not frozen. A raw pointer, so the context stays trivially
     /// copyable: the JOB OWNS the snapshot (its closure holds the
     /// shared_ptr) and this names it for the worker, which only ever reads
@@ -482,7 +482,7 @@ struct RigExecFrozenEvalContext {
     /// Optional detached edit values relative to frozen. The job owns this
     /// payload; source placement applies it to the worker's private arena.
     const RigExecFrozenAvarPatch *avarPatch = nullptr;
-    /// Optional caller-owned execution lane. Snapshot identity, epoch, and
+    /// Optional caller-owned execution lane. Snapshot identity, compiled rig, and
     /// program digest must match every job on this workspace. Null gives a
     /// fresh independent job without retained value or readiness state.
     RigExecFrozenWorkspace *workspace = nullptr;
@@ -658,7 +658,7 @@ bool RigExecRunFrozenHistoryTick(const RigExecFrozenEvalContext &context,
                                  std::vector<RigExecWindowPacketPtr> *captures,
                                  std::string *error = nullptr);
 
-/// One chain input as the epoch currency check pins it, the way the live
+/// One chain input as the compiled rig currency check pins it, the way the live
 /// path pins it on its first run: the attribute and a query over it,
 /// whether it carries authored connections (read as a walk then, never as
 /// a value), and, for an input that cannot change until the stage does,
@@ -701,14 +701,14 @@ struct RigExecChainSampleChain {
     std::vector<RigExecPhasedConnection> phased;
 };
 
-/// The epoch-pinned chain bindings one sampling call evaluates through.
+/// The compiled rig chain bindings one sampling call evaluates through.
 /// Discovered from the evaluator's public mover order plus the stage, in
 /// the chains' dependency order, so a chain that revises an input of
 /// another runs first. UI thread only: every entry holds live stage
 /// handles, which is why these never travel with a job -- only the values
 /// evaluated through them do.
 ///
-/// Pinned per epoch, not per frame: constant inputs are folded at bind
+/// Pinned per compiled rig, not per frame: constant inputs are folded at bind
 /// time exactly as the live path folds them on its first run, and a
 /// constant is the same value at every time code, so the pins read
 /// identically whatever frame the live path ran first. A stage edit moves
@@ -732,7 +732,7 @@ bool RigExecBindChainSampleInputs(
     const RigExecRigEvaluator &evaluator, RigExecChainSampleBindings *out,
     std::string *error = nullptr);
 
-/// Whether \p bindings still name \p evaluator's epoch: the same math
+/// Whether \p bindings still name \p evaluator's compiled rig: the same math
 /// movers over the same targets of the same types, the same phased reads
 /// over the same hops, and every folded constant still reading the value
 /// it was pinned with. A stage edit that moves any of those answers false,
@@ -797,9 +797,9 @@ bool RigExecSampleHistoryTickInputs(
     std::string *error = nullptr);
 
 /// Samples exactly as RigExecSampleFrameInputs, but checks the caller's
-/// epoch-pinned \p bindings instead of binding fresh.
+/// compiled rig \p bindings instead of binding fresh.
 /// Answers false, having left \p out untouched, when \p bindings no longer
-/// name the evaluator's epoch (see
+/// name the evaluator's compiled rig (see
 /// RigExecChainSampleBindingsStillCurrent) -- the caller rebinds and
 /// retries -- or for any reason the plain sampler answers false. UI
 /// thread only.
@@ -819,8 +819,8 @@ bool RigExecSampleFrameInputsWithChainBindings(
 /// per-call currency check (RigExecChainSampleBindingsStillCurrent).
 ///
 /// For a caller that proves its bindings current another way: bound for
-/// the evaluator's present epoch digest, and dropped on every stage notice
-/// that could move a chain without moving the epoch -- an edit under a
+/// the evaluator's present compiled rig signature, and dropped on every stage notice
+/// that could move a chain without moving the compiled rig -- an edit under a
 /// chain mover, its weight objects or its target, or any resync. The check
 /// is the price of trusting nothing, and on the full biped stack it
 /// re-probes every chain mover's inputs: MEASURED at 60.6 ms per call,
@@ -844,20 +844,20 @@ bool RigExecSampleFrameInputsWithTrustedChainBindings(
 /// A burst (one OnEditCommitted/OnIdle trigger's neighbor-plus-sweep run)
 /// is a synchronous UI-thread span: no notice, evaluation, or rebind can
 /// interleave its frames, so the verified bindings, the override
-/// placement, the per-table visit sets, the epoch digest, and every
+/// placement, the per-table visit sets, the compiled rig signature, and every
 /// time-invariant read are identical for all of them. Preparing them once
 /// turns the per-frame currency re-verification, the binding-table walks
-/// over epoch constants, and the static array re-reads into map lookups.
+/// over compiled rig constants, and the static array re-reads into map lookups.
 ///
 /// LIFETIME. Standing, UI thread only: the registry keeps one cache
 /// per rig and re-serves it across triggers while its pins (program,
-/// cache-epoch digest, overrides) are current, rebuilding only when they
+/// cache-compiled rig signature, overrides) are current, rebuilding only when they
 /// move; pins-determined unusable outcomes (prep overrun, shape decline)
 /// latch the same way. The cached sampler validates the program pointer
 /// and the override list per frame and fails loud on any mismatch, so a
 /// reused or foreign cache fails instead of serving; anything subtler is
-/// contained by the epoch half of the key (a drifted cache computes
-/// under a stale epoch, whose entries no lookup can reach).
+/// contained by the compiled rig half of the key (a drifted cache computes
+/// under a stale compiled rig, whose entries no lookup can reach).
 struct RigExecBurstStaticSample {
     RigExecSampledInput sample;
     uint64_t digest = 0;
@@ -866,7 +866,7 @@ struct RigExecBurstStaticSample {
 
 struct RigExecBurstSampleCache {
     const RigExecBakedProgram *program = nullptr;
-    uint64_t epochDigest = 0;
+    uint64_t compiledRigSignature = 0;
     RigExecChainSampleBindings bindings;
     std::vector<RigExecValueOverride> overrides;
     std::vector<char> overrideFlags;
@@ -913,14 +913,14 @@ struct RigExecBurstSampleCache {
 
 /// Prepares \p cache for one burst over \p program: the prologue-decline
 /// checks, the override placement, and the per-table visit sets. Pure in
-/// \p program and \p overrides: verification (pins, epoch) is the
+/// \p program and \p overrides: verification (pins, compiled rig) is the
 /// caller's, passed in ready. Answers false, having left \p cache
 /// unusable, when no frame of the burst could sample: a prologue decline
 /// or unplaceable overrides. \p error, when given, says which.
 bool RigExecBuildBurstSampleCache(
     const RigExecBakedProgram &program,
     const RigExecChainSampleBindings &bindings,
-    const std::vector<RigExecValueOverride> &overrides, uint64_t epochDigest,
+    const std::vector<RigExecValueOverride> &overrides, uint64_t compiledRigSignature,
     RigExecBurstSampleCache *cache, std::string *error = nullptr);
 /// The same, pinned to the burst's \p upstream values as well, which every
 /// frame of the burst is then sampled under (RigExecSampleFrameInputs).
@@ -928,7 +928,7 @@ bool RigExecBuildBurstSampleCache(
     const RigExecBakedProgram &program,
     const RigExecChainSampleBindings &bindings,
     const std::vector<RigExecValueOverride> &overrides,
-    const std::vector<RigExecUpstreamValue> &upstream, uint64_t epochDigest,
+    const std::vector<RigExecUpstreamValue> &upstream, uint64_t compiledRigSignature,
     RigExecBurstSampleCache *cache, std::string *error = nullptr);
 
 /// Samples exactly as RigExecSampleFrameInputsWithChainBindings, but
@@ -988,9 +988,9 @@ enum class RigExecFrozenPurity {
     /// A pure function of its inputs: no static, thread-local, or member
     /// state survives a call, so a worker may run it freely.
     Pure,
-    /// Immutable within the epoch: safe for a worker only as a copy taken
+    /// Immutable within the compiled rig: safe for a worker only as a copy taken
     /// at enqueue, never as a live read.
-    EpochPinned,
+    CompiledRigPinned,
     /// Must never be reached from a worker: live evaluator state, the stage,
     /// a lock, or shared mutable state. The frozen path bypasses it by
     /// construction (sampled inputs, private arenas, program-held bindings),
@@ -1013,7 +1013,7 @@ struct RigExecPurityFinding {
 /// holder the frozen path was checked against. The worker's input surface
 /// (RigExecFrozenStepRunner's parameter list) plus this table is the proof
 /// no path from a worker reaches the stage: every row is either safe to run
-/// (Pure), safe as an enqueue-time copy (EpochPinned), or bypassed by
+/// (Pure), safe as an enqueue-time copy (CompiledRigPinned), or bypassed by
 /// construction with the bypass named (LiveOnly).
 const std::vector<RigExecPurityFinding> &RigExecFrozenPurityAudit();
 

@@ -545,11 +545,11 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// Older files hold neither.
 ///
 /// Format 26 changes the cloth mover's external revision
-/// (rigExecBinary/clothPlayback.h): its epoch is RCL3, which adds
+/// (rigExecBinary/clothPlayback.h): its compiled rig is RCL3, which adds
 /// rigExec:maxWindowFrames and the material model (constraint profiles,
 /// resolved bindings, painted maps, UVs), and its declared inputs add
 /// rigExec:maxWindowFrames after rigExec:windowFrames, then the model's
-/// reads after the colliders. A format-25 file's cloth epoch is RCL1 and
+/// reads after the colliders. A format-25 file's cloth compiled rig is RCL1 and
 /// plays as exported: its inputs at their format-25 slots, no reach-back
 /// window and no material model. The tables are unchanged.
 inline constexpr uint32_t RigExecFormatVersion = 26;

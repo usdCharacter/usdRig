@@ -4,10 +4,28 @@
 #include "rigExecMath/pointFrame.h"
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/vt/types.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 #include <cmath>
 
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (preceding) (base) (gaussian)
+    ((rigExecTarget,"rigExec:target")) ((rigExecPivot,"rigExec:pivot"))
+    ((rigExecAnchor,"rigExec:anchor")) ((rigExecIkTarget,"rigExec:ikTarget"))
+    ((rigExecPoleControl,"rigExec:poleControl")) ((rigExecIkBlendAttribute,"rigExec:ikBlendAttribute"))
+    ((rigExecAmountAttribute,"rigExec:amountAttribute")) ((rigExecFkControls,"rigExec:fkControls"))
+    ((rigExecIkValue,"rigExec:ikValue")) ((inputsGain,"inputs:gain")) ((rigExecBasis,"rigExec:basis"))
+    ((rigExecPoseRotations,"rigExec:poseRotations")) ((rigExecPoseFalloffs,"rigExec:poseFalloffs"))
+    ((rigExecPoseGains,"rigExec:poseGains")) ((rigExecKernel,"rigExec:kernel"))
+    ((rigExecRegularization,"rigExec:regularization")) ((rigExecEffectorControl,"rigExec:effectorControl"))
+    ((rigExecStretchPolicy,"rigExec:stretchPolicy")) ((rigExecJoints,"rigExec:joints"))
+    ((inputsStretch,"inputs:stretch")) ((inputsPin,"inputs:pin"))
+    ((inputsUpperScale,"inputs:upperScale")) ((inputsLowerScale,"inputs:lowerScale"))
+    ((inputsSoftDistance,"inputs:softDistance")) ((rigExecScaleCalibration,"rigExec:scaleCalibration"))
+    ((inputsTwist,"inputs:twist")) ((rigExecUpperLengthOffset,"rigExec:upperLengthOffset"))
+    ((rigExecLowerLengthOffset,"rigExec:lowerLengthOffset"))
+);
 namespace {
 bool Fail(std::string *error,const std::string &message) {
     if(error)*error=message;
@@ -32,18 +50,18 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
     RigExecSceneCompileInputs source(scene);RigExecBoundAutoClavicle result;
     result.output=output;result.frames[0]=incoming;result.reads.push_back(incoming);
     result.unavailable=path.GetString()+" has no usable frame for its limb; the clavicle is not carried";
-    const auto property=[&](const char *name){return path.AppendProperty(TfToken(name));};
-    const auto one=[&](const char *name,bool required,SdfPath *out) {
+    const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
+    const auto one=[&](const TfToken &name,bool required,SdfPath *out) {
         const auto targets=source.Targets(property(name));
-        if(targets.size()>1 || (required && targets.empty()))return Fail(error,path.GetString()+" requires "+name);
+        if(targets.size()>1 || (required && targets.empty()))return Fail(error,path.GetString()+" requires "+name.GetText());
         if(!targets.empty())*out=targets.front();return true;
     };
     SdfPath target,pivot,anchor,ik,pole,blend,amount;
-    if(!one("rigExec:target",true,&target) || !one("rigExec:pivot",true,&pivot) ||
-       !one("rigExec:anchor",true,&anchor) || !one("rigExec:ikTarget",false,&ik) ||
-       !one("rigExec:poleControl",false,&pole) || !one("rigExec:ikBlendAttribute",false,&blend) ||
-       !one("rigExec:amountAttribute",false,&amount))return false;
-    const auto fk=source.Targets(property("rigExec:fkControls"));
+    if(!one(_tokens->rigExecTarget,true,&target) || !one(_tokens->rigExecPivot,true,&pivot) ||
+       !one(_tokens->rigExecAnchor,true,&anchor) || !one(_tokens->rigExecIkTarget,false,&ik) ||
+       !one(_tokens->rigExecPoleControl,false,&pole) || !one(_tokens->rigExecIkBlendAttribute,false,&blend) ||
+       !one(_tokens->rigExecAmountAttribute,false,&amount))return false;
+    const auto fk=source.Targets(property(_tokens->rigExecFkControls));
     if(fk.size()!=3)return Fail(error,path.GetString()+" requires three FK controls");
     const auto frame=[&](const SdfPath &provider,const char *computation,size_t index) {
         if(provider.IsEmpty())return true;
@@ -56,7 +74,7 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
         // self-feedback. Independent providers are read as their channels
         // put them, as the solvers read them, not as a constraint revises
         // them later.
-        request.phase=TfToken(provider.HasPrefix(target)?"preceding":"base");
+        request.phase=provider.HasPrefix(target)?_tokens->preceding:_tokens->base;
         if(computation)request.computation=computation;
         if(!context.resolve(request,&result.frames[index],error))return false;
         result.reads.push_back(result.frames[index]);return true;
@@ -66,15 +84,15 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
        !frame(fk[0],"computeDefaultFrame",5) || !frame(fk[1],"computeDefaultFrame",6) ||
        !frame(fk[2],"computeDefaultFrame",7) || !frame(ik,nullptr,8) || !frame(pole,nullptr,9))return false;
     auto &c=result.constants;GfMatrix4d basis(1.0);VtQuatfArray rotations;
-    VtFloatArray falloffs;VtDoubleArray gains;TfToken kernel("gaussian");float regularization=0;
-    if(!Constant(source,property("rigExec:ikValue"),&c.ikValue,error) ||
-       !Constant(source,property("inputs:gain"),&c.gain,error) ||
-       !Constant(source,property("rigExec:basis"),&basis,error) ||
-       !Constant(source,property("rigExec:poseRotations"),&rotations,error) ||
-       !Constant(source,property("rigExec:poseFalloffs"),&falloffs,error) ||
-       !Constant(source,property("rigExec:poseGains"),&gains,error) ||
-       !Constant(source,property("rigExec:kernel"),&kernel,error) ||
-       !Constant(source,property("rigExec:regularization"),&regularization,error))return false;
+    VtFloatArray falloffs;VtDoubleArray gains;TfToken kernel=_tokens->gaussian;float regularization=0;
+    if(!Constant(source,property(_tokens->rigExecIkValue),&c.ikValue,error) ||
+       !Constant(source,property(_tokens->inputsGain),&c.gain,error) ||
+       !Constant(source,property(_tokens->rigExecBasis),&basis,error) ||
+       !Constant(source,property(_tokens->rigExecPoseRotations),&rotations,error) ||
+       !Constant(source,property(_tokens->rigExecPoseFalloffs),&falloffs,error) ||
+       !Constant(source,property(_tokens->rigExecPoseGains),&gains,error) ||
+       !Constant(source,property(_tokens->rigExecKernel),&kernel,error) ||
+       !Constant(source,property(_tokens->rigExecRegularization),&regularization,error))return false;
     for(int r=0;r<3;++r)for(int k=0;k<3;++k)c.basis[r*3+k]=basis[r][k];
     if(falloffs.size()!=rotations.size() || gains.size()!=rotations.size())
         return Fail(error,path.GetString()+" pose rotations, falloffs and gains must have equal counts");
@@ -113,16 +131,17 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
     if(!scalar(blend,0) || !scalar(amount,1))return false;
     if(!ik.IsEmpty() && !pole.IsEmpty())for(const auto &[owner,node]:scene.nodes) {
         if(!node.fact.active || node.fact.type!="RigExecTwoBoneIk")continue;
-        const auto prop=[&](const char *name){return owner.AppendProperty(TfToken(name));};
-        if(source.Targets(prop("rigExec:effectorControl"))!=SdfPathVector{ik} ||
-           source.Targets(prop("rigExec:poleControl"))!=SdfPathVector{pole})continue;
-        TfToken policy;if(!Constant(source,prop("rigExec:stretchPolicy"),&policy,error))return false;
-        const auto joints=source.Targets(prop("rigExec:joints"));
+        const auto prop=[&](const TfToken &name){return owner.AppendProperty(name);};
+        if(source.Targets(prop(_tokens->rigExecEffectorControl))!=SdfPathVector{ik} ||
+           source.Targets(prop(_tokens->rigExecPoleControl))!=SdfPathVector{pole})continue;
+        TfToken policy;if(!Constant(source,prop(_tokens->rigExecStretchPolicy),&policy,error))return false;
+        const auto joints=source.Targets(prop(_tokens->rigExecJoints));
         if(policy!="softDistance" || joints.size()!=3)continue;
         result.hasLimb=true;
         for(size_t i=0;i<3;++i)if(!frame(joints[i],"computeRestFrame",10+i))return false;
-        const char *names[]={"inputs:stretch","inputs:pin","inputs:upperScale","inputs:lowerScale","inputs:softDistance",
-            "rigExec:scaleCalibration","inputs:twist","rigExec:upperLengthOffset","rigExec:lowerLengthOffset"};
+        const TfToken names[]={_tokens->inputsStretch,_tokens->inputsPin,_tokens->inputsUpperScale,
+            _tokens->inputsLowerScale,_tokens->inputsSoftDistance,_tokens->rigExecScaleCalibration,_tokens->inputsTwist,
+            _tokens->rigExecUpperLengthOffset,_tokens->rigExecLowerLengthOffset};
         for(size_t i=0;i<9;++i)if(!scalar(prop(names[i]),i+2))return false;
         break;
     }

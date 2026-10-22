@@ -98,7 +98,7 @@ domain.
 Its rigExecReadPhase metadata chooses which points the distance
 function measures. `base`, the default, samples the STATIC
 authored points (or rigExec:sampleSource), so the field is
-computed once per epoch and a point keeps the weight its bind pose
+computed once per rig compilation and a point keeps the weight its bind pose
 earned -- the behaviour of a painted map, and what a matrix mover
 wants so that its own output cannot feed back into its own weights.
 
@@ -195,10 +195,10 @@ parameter -- 1 at falloffMin, 0 at falloffMax -- and the value is
 the weight.
 
 This is a STRUCTURAL read, resampled to a lookup table once per
-binding epoch, NOT a per-frame input: a per-frame input is a
+compiled rig, NOT a per-frame input: a per-frame input is a
 value at one time, and a curve is the whole function. The animatable knobs are falloffMin/Max, invert, and
 strength; the curve is a rig-authoring parameter, which is also
-what keeps the field epoch-shape-stable (spec section 4.1).
+what keeps the field fixed-shape (spec section 4.1).
 
 Held extrapolation outside [0, 1] is the Ts default and is
 exactly right here, so a curve authored over a shorter span still
@@ -459,7 +459,7 @@ plane by a sphere or a second plane and the edge gets whatever
 falloff that volume has.
 
 Structural rather than animatable: it selects which field
-function runs, so it is hashed into the binding-epoch digest
+function runs, so it is hashed into the compiled rig digest
 alongside rigExec:planeAxis. The extents themselves are ordinary
 per-frame floats.
 
@@ -529,7 +529,7 @@ python docs/render_media.py --page plane_weight
 
 - The band and the extents are different directions: `inputs:falloffMin`/`falloffMax` are distances ALONG `rigExec:planeAxis`, `inputs:extentU`/`extentV` are half-sizes ACROSS it (U = axis+1, V = axis+2, so Z and X for the default `y`). Scrubbing the band slides the two drawn rectangles apart without resizing them; only the extents resize them.
 - `bounded` is hard — a point one epsilon outside the rectangle gets zero, not a ramped-down weight. Soften the border by multiplying the bounded plane with a sphere in a RigExecCombineWeight; the edge then inherits that volume's falloff.
-- `rigExec:planeAxis` and `rigExec:planeBounds` are structural — they select which field function runs and are hashed into the binding epoch — while `inputs:extentU`/`extentV` are ordinary per-frame floats you can animate without recompiling.
+- `rigExec:planeAxis` and `rigExec:planeBounds` are structural — they select which field function runs and are hashed into the binding compiled rig — while `inputs:extentU`/`extentV` are ordinary per-frame floats you can animate without recompiling.
 
 ## See also
 

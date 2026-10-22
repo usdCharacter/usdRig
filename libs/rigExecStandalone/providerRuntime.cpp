@@ -13,12 +13,12 @@ bool RigExecStandaloneProviderRuntime::Prepare(const RigExecSceneDb &database,
         if(!node.fact.active || !path.HasPrefix(root))continue;
         if(node.domain==RigExecSceneDomain::Provider)providers.insert(path);
         else if(node.domain!=RigExecSceneDomain::Data) {
-            if(error)*error="standalone provider graph needs production domain lowering: "+path.GetString();
+            if(error)*error="standalone provider graph needs production domain translation: "+path.GetString();
             return false;
         }
     }
     if(!scene.applications.empty() || !scene.jointBindings.empty()) {
-        if(error)*error="standalone provider graph needs mover/solver revision lowering";
+        if(error)*error="standalone provider graph needs mover/solver revision translation";
         return false;
     }
     RigExecProviderProgram program;
