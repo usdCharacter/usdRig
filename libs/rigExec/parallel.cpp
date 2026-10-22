@@ -94,20 +94,30 @@ RigExecParallelForInCallerEnvironment(size_t n, size_t grain,
     }, grain);
 }
 
+namespace {
+
+void
+_RunGeometryRanges(size_t count, size_t grain, const RigExecRangeBody &body)
+{
+    if (RigExecParallelEvaluationEnabled() &&
+        !RigExecFrozenSerialActive() &&
+        count >= RigExecGeometryParallelThreshold && count > grain) {
+        RigExecParallelForInCallerEnvironment(count, grain, body);
+    } else {
+        body(0, count);
+    }
+}
+
+// Built at load, not on first use: step bodies ask for it, and a
+// function-local static would run its initialization guard on every call.
+const RigExecRangeRunner _geometryRanges(&_RunGeometryRanges);
+
+}  // namespace
+
 const RigExecRangeRunner *
 RigExecGeometryRanges()
 {
-    static const RigExecRangeRunner runner =
-        [](size_t count, size_t grain, const RigExecRangeBody &body) {
-            if (RigExecParallelEvaluationEnabled() &&
-                !RigExecFrozenSerialActive() &&
-                count >= RigExecGeometryParallelThreshold && count > grain) {
-                RigExecParallelForInCallerEnvironment(count, grain, body);
-            } else {
-                body(0, count);
-            }
-        };
-    return &runner;
+    return &_geometryRanges;
 }
 
 }  // namespace rigExec

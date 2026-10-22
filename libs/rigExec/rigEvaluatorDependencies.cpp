@@ -104,15 +104,11 @@ _PoseInfoVerifyRequested()
 // A PoseInfoPrefetch round (_PoseInputGraph::Extend) is spread across the
 // pool only when it holds at least this many attribute reads, counting a
 // prim listed whole as _kPoseInfoReadsPerListedPrim of them (a RigExec joint
-// or control carries 30 to 45 attributes). MEASURED, rounds by task count,
-// the first one listing prims whole and the rest reading named attributes:
-//   puppetA  84, 12, 22, 10, 20, 10, 12, 2, 2
-//   biped    312, 24, 42, 18, 28, 10, 12, 2, 2
-// Every round used to be forked, and all but the first hold a few
-// microseconds of reads each. With this floor, cold compiles, medians of 8:
-// puppetA 3.91 -> 3.66 ms, biped 5.46 -> 5.28 ms. Keeping the first round on
-// one thread too is worse (4.96 / 8.19 ms): beside the digest and the exec
-// lane a lone reader runs at about half its unshared speed.
+// or control carries 30 to 45 attributes). The first round lists prims whole
+// and is large; the later rounds read named attributes and hold only a few
+// microseconds of reads each, so forking them costs more than it spreads.
+// The first round stays parallel: beside the digest and the exec lane a lone
+// reader runs at about half its unshared speed.
 constexpr size_t _kPoseInfoReadsPerListedPrim = 32;
 
 constexpr size_t _kPoseInfoParallelMinReads = 256;
@@ -121,7 +117,7 @@ constexpr size_t _kPoseInfoParallelMinReads = 256;
 
 namespace evaluatorDetail {
 
-// Discovers the rig's joint output set implicitly (spec §4.1: the rig is a
+// Discovers the rig's joint output set implicitly (the rig is a
 // namespace root, not a manifest). Movers are already found this way -- a
 // reverse-sibling post-order walk where carrying rigExec:moves is what makes a
 // prim a mover -- and joints now follow the same rule: being a RigExecJoint
@@ -199,7 +195,7 @@ _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
     });
 }
 
-// Discovers the rig's controls the same implicit way (spec §4.1): being a
+// Discovers the rig's controls the same implicit way: being a
 // RigExecControl under the rig is what makes a prim a control. Returned in
 // namespace pre-order so the discovered order -- and with it the compiled rig
 // digest -- is stable against unrelated edits.
@@ -242,8 +238,8 @@ _IsAggregateSolverType(const TfToken &typeName)
     return kAggregateSolverTypes.count(typeName) > 0;
 }
 
-// Discovers aggregate solvers by TYPE anywhere beneath the rig (spec §4.1:
-// no membership lists). The scope a solver sits under is an authoring
+// Discovers aggregate solvers by TYPE anywhere beneath the rig (no
+// membership lists). The scope a solver sits under is an authoring
 // convenience, not identity -- "Solvers" is the convention, not a
 // requirement. Returned in namespace pre-order so the discovered order,
 // and with it the compiled rig signature, is stable against unrelated edits.

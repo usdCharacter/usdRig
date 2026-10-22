@@ -63,7 +63,7 @@ _BuildStaticWeightPacket(
     RigExecWeightPacket packet;
     packet.representation = representation;
     packet.rangePolicy = rangePolicy;
-    // Unknown structural tokens are rejected, never coerced (spec §4.1);
+    // Unknown structural tokens are rejected, never coerced;
     // allowedTokens metadata alone is not validation.
     if (packet.representation != "constant" &&
         packet.representation != "dense" &&
@@ -96,7 +96,7 @@ _BuildStaticWeightPacket(
         }
     }
     // Canonical sorted sparse support; authored pair order is
-    // non-semantic and duplicates are rejected (spec §4.1).
+    // non-semantic and duplicates are rejected.
     if (packet.representation == "sparse") {
         const bool sameSupport=workspace.support.size()==indicesSize &&
             (indicesSize==0 || std::equal(workspace.support.begin(),workspace.support.end(),indices));
@@ -188,7 +188,7 @@ RigExecBuildDynamicWeightPacket(
     const float a = inputs.bias;
 
     if (!base) {
-        // Without a base only constant is legal and b_i = 1 (spec §4.1).
+        // Without a base only constant is legal and b_i = 1.
         if (packet.representation != "constant") {
             return packet;
         }
@@ -205,7 +205,7 @@ RigExecBuildDynamicWeightPacket(
     }
 
     // r_i = (b_i d) s + a over the base field; dense keeps canonical
-    // packet default zero (spec §4.1).
+    // packet default zero.
     packet.indices = base->indices;
     packet.values.reserve(base->values.size());
     for (float b : base->values) {
@@ -228,7 +228,7 @@ RigExecBuildDynamicWeightPacket(
     return packet;
 }
 
-// Volumetric weight objects (spec §4.1 volumetric extension).
+// Volumetric weight objects.
 // One shared body: read the placement and the band, pick a distance
 // function, remap, and publish a dense packet. Only the distance function
 // and the extra inputs it needs differ between sphere, plane, and curve.

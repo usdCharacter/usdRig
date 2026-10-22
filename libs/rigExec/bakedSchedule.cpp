@@ -45,6 +45,8 @@ namespace rigExec {
 namespace {
 std::string StepLabel(const RigExecBakedProgramImpl &, const RigExecBakedStep &,
                       RigExecPathText &);
+// Interned at load: Build runs on parallel lanes.
+const TfToken _elementSizeToken("rigExec:elementSize");
 }
 
 const char *
@@ -137,26 +139,20 @@ RigExecBakedStepKindName(RigExecBakedStepKind kind)
 RigExecBakedScheduleMode
 RigExecBakedScheduleModeFromEnvironment()
 {
-    // Read once. A mode that could change between two frames of one session
-    // would make "the same program produced two different traces" a question
-    // about when the variable was read rather than about the schedule.
-    static const RigExecBakedScheduleMode mode = [] {
-        if (!RigExecParallelEvaluationEnabled()) {
-            return RigExecBakedScheduleMode::Serial;
-        }
-        return TfGetenv("RIGEXEC_BAKED_SCHEDULE", "parallel") == "parallel"
-                   ? RigExecBakedScheduleMode::Parallel
-                   : RigExecBakedScheduleMode::Serial;
-    }();
-    return mode;
+    // Read at Build or Open, never per frame: a program keeps the answer in
+    // its schedule settings (RigExecBakedReadScheduleSettings).
+    if (!RigExecParallelEvaluationEnabled()) {
+        return RigExecBakedScheduleMode::Serial;
+    }
+    return TfGetenv("RIGEXEC_BAKED_SCHEDULE", "parallel") == "parallel"
+               ? RigExecBakedScheduleMode::Parallel
+               : RigExecBakedScheduleMode::Serial;
 }
 
 bool
 RigExecBakedScheduleReportRequested()
 {
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_BAKED_SCHEDULE_REPORT", false);
-    return requested;
+    return TfGetenvBool("RIGEXEC_BAKED_SCHEDULE_REPORT", false);
 }
 
 // The cost model.
@@ -362,10 +358,9 @@ ElementSizeOf(const RigExecBakedProgramImpl::GeomRevision &revision)
     if (revision.op != RigExecRevisionOp::Skin || !revision.moverPrim) {
         return 1;
     }
-    static const TfToken elementSize("rigExec:elementSize");
     int size = 1;
     if (const UsdAttribute attribute =
-            revision.moverPrim.GetAttribute(elementSize)) {
+            revision.moverPrim.GetAttribute(_elementSizeToken)) {
         attribute.Get(&size, UsdTimeCode::EarliestTime());
     }
     return size < 1 ? 1 : double(size);
@@ -609,10 +604,8 @@ RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program,
 double
 RigExecBakedScheduleGrainUs(double totalCost, size_t concurrency)
 {
-    // Read once: a grain that could move between two frames of one session
-    // would make "the program produced two schedules" a question about when
-    // the variable was read.
-    static const double override = [] {
+    // Read at Build, where clustering runs, never per frame.
+    const double override = [] {
         const std::string text = TfGetenv("RIGEXEC_BAKED_GRAIN_US", "");
         if (text.empty()) {
             return -1.0;
@@ -1809,9 +1802,8 @@ RigExecBakedValidateStepGraph(const RigExecBakedProgramImpl &program,
 // Common execution follows operation successors when values change. The
 // retained cluster closure serves output queries and sparse cache planning;
 // clusters containing clean operations do not make those operations dirty.
-// There used to be a second, the restore closure: "run c and all of THIS had
-// to have run first, because c reads a slot version the end of a run does not
-// hold". Versioned pose storage (§3.1) retired it. Every writer writes its
+// There is no restore closure. Versioned pose storage makes it unnecessary:
+// every writer writes its
 // own entry, so the version a clean reader wants is exactly where its writer
 // left it however often the SLOT was revised afterwards, and nothing ever has
 // to be re-run to put a value back.
@@ -1903,7 +1895,7 @@ RigExecBakedBuildCones(RigExecBakedProgramImpl *program)
     }
 
     // An edit on a per-frame input is routed like the run after a drag is
-    // lifted (unified-program spec rule S2), so it is only as good as the
+    // lifted, so it is only as good as the
     // reader it reaches. Three readers qualify: a step that declares the
     // input (the closure's override rule re-runs it), the avar table (the
     // prologue re-reads every varying binding and compares the table by
@@ -2406,17 +2398,13 @@ RigExecBakedRunSteps(RigExecBakedProgramImpl *program, UsdTimeCode time, bool fo
 bool
 RigExecBakedStepTimingRequested()
 {
-    static const bool requested =
-        TfGetenvInt("RIGEXEC_BAKED_STEP_TIMING", 0) > 0;
-    return requested;
+    return TfGetenvInt("RIGEXEC_BAKED_STEP_TIMING", 0) > 0;
 }
 
 bool
 RigExecBakedScheduleCalibrationRequested()
 {
-    static const bool requested =
-        TfGetenvInt("RIGEXEC_BAKED_SCHEDULE_CALIBRATE", 0) > 0;
-    return requested;
+    return TfGetenvInt("RIGEXEC_BAKED_SCHEDULE_CALIBRATE", 0) > 0;
 }
 
 namespace {
@@ -2431,11 +2419,8 @@ namespace {
 int
 CalibrationFrames()
 {
-    static const int frames = [] {
-        const int value = TfGetenvInt("RIGEXEC_BAKED_SCHEDULE_CALIBRATE", 0);
-        return value > 1 ? value : 8;
-    }();
-    return frames;
+    const int value = TfGetenvInt("RIGEXEC_BAKED_SCHEDULE_CALIBRATE", 0);
+    return value > 1 ? value : 8;
 }
 
 /// Least squares of t = a + b x size over one kind's steps.
@@ -2483,11 +2468,11 @@ void
 RigExecBakedScheduleCalibrate(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
-    static int framesSeen = 0;
-    if (framesSeen >= CalibrationFrames()) {
+    int &framesSeen = B.calibrationFramesSeen;
+    if (framesSeen >= B.calibrationFrames) {
         return;
     }
-    if (++framesSeen < CalibrationFrames()) {
+    if (++framesSeen < B.calibrationFrames) {
         return;
     }
     std::array<std::vector<std::pair<double, double>>, kStepKindCount>
@@ -2501,7 +2486,7 @@ RigExecBakedScheduleCalibrate(RigExecBakedProgramImpl *program)
     }
     std::string table =
         "rigExec baked schedule: cost table fitted over " +
-        std::to_string(CalibrationFrames()) +
+        std::to_string(B.calibrationFrames) +
         " frame(s); paste over kStepCosts in bakedSchedule.cpp\n"
         "constexpr StepCostConstants kStepCosts[] = {\n";
     char line[256];
@@ -2527,11 +2512,8 @@ namespace {
 int
 StepTimingFrames()
 {
-    static const int frames = [] {
-        const int value = TfGetenvInt("RIGEXEC_BAKED_STEP_TIMING", 0);
-        return value > 1 ? value : 8;
-    }();
-    return frames;
+    const int value = TfGetenvInt("RIGEXEC_BAKED_STEP_TIMING", 0);
+    return value > 1 ? value : 8;
 }
 
 }  // namespace
@@ -2539,11 +2521,11 @@ StepTimingFrames()
 void
 RigExecBakedStepTimingReport(RigExecBakedProgramImpl *program)
 {
-    static int framesSeen = 0;
-    if (framesSeen >= StepTimingFrames()) {
+    int &framesSeen = program->stepTimingFramesSeen;
+    if (framesSeen >= program->stepTimingFrames) {
         return;
     }
-    if (++framesSeen < StepTimingFrames()) {
+    if (++framesSeen < program->stepTimingFrames) {
         return;
     }
     const std::string out = RigExecBakedStepTimingTable(*program);
@@ -2803,10 +2785,7 @@ RigExecBakedScheduleReport(const RigExecBakedProgramImpl &B)
                       std::to_string(edges) + " edge(s), " +
                       std::to_string(B.paths.size()) + " provider slot(s)\n";
     out += "  mode=";
-    out += RigExecBakedScheduleModeFromEnvironment() ==
-                   RigExecBakedScheduleMode::Parallel
-               ? "parallel"
-               : "serial";
+    out += B.scheduleParallel ? "parallel" : "serial";
     out += " grain=" + Fixed(schedule.grainUs) + "us concurrency=" +
            std::to_string(WorkGetConcurrencyLimit()) + " reference=" +
            std::to_string(RigExecBakedTranslationConcurrency(B)) + "\n";
@@ -2904,19 +2883,21 @@ RigExecBakedScheduleRunReport(const RigExecBakedProgramImpl &B)
 
 // Profiling.
 
-namespace {
-
-/// Whether RIGEXEC_TRACE_ALL_STEPS asks the replay to keep steps shorter
-/// than a microsecond. Read once, on the replaying thread.
-bool
-TraceAllStepsRequested()
+void
+RigExecBakedReadScheduleSettings(RigExecBakedProgramImpl *program)
 {
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_TRACE_ALL_STEPS", false);
-    return requested;
+    RigExecBakedProgramImpl &B = *program;
+    B.scheduleParallel = RigExecBakedScheduleModeFromEnvironment() ==
+                         RigExecBakedScheduleMode::Parallel;
+    B.scheduleReport = RigExecBakedScheduleReportRequested();
+    B.scheduleCalibrate = RigExecBakedScheduleCalibrationRequested();
+    B.scheduleStepTiming = RigExecBakedStepTimingRequested();
+    B.calibrationFrames = CalibrationFrames();
+    B.stepTimingFrames = StepTimingFrames();
+    // RIGEXEC_TRACE_ALL_STEPS: the replay keeps steps shorter than a
+    // microsecond.
+    B.traceAllSteps = TfGetenvBool("RIGEXEC_TRACE_ALL_STEPS", false);
 }
-
-}  // namespace
 
 void
 RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
@@ -2925,7 +2906,7 @@ RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &B)
         return;
     }
     const std::vector<RigExecBakedCluster> &clusters = B.clustering.clusters;
-    const bool traceAll = TraceAllStepsRequested();
+    const bool traceAll = B.traceAllSteps;
     // Only a listed step or cluster holds an interval, so the lists, sorted
     // and each entry once, give the records and order of an ascending sweep.
     std::vector<uint32_t> stamped(B.stampedSteps);

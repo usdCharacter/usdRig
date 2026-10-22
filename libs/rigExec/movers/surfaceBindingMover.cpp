@@ -3,16 +3,44 @@
 #include "externalPlayback.h"
 #include "../parallel.h"
 #include "rigExecScene/sceneDescriptors.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/base/work/loops.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((surface, "rigExec:surface"))
+    ((frames, "rigExec:frames")));
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_bindingTokens,
+    (polygon)
+    (geometric)
+    ((surface, "rigExec:surface"))
+    (points)
+    (faceVertexCounts)
+    (faceVertexIndices)
+    ((offsets, "rigExec:offsets"))
+    ((surfaceMode, "rigExec:surfaceMode"))
+    ((normalMode, "rigExec:normalMode"))
+    ((strength, "rigExec:strength"))
+    ((deltaMultiplier, "rigExec:deltaMultiplier"))
+    ((surfaceRestMatrix, "rigExec:surfaceRestMatrix"))
+    ((targetRestMatrix, "rigExec:targetRestMatrix"))
+    ((surfaceToBinding, "rigExec:surfaceToBinding"))
+    ((frames, "rigExec:frames")));
+
 namespace {
 // The binding's own arrays and settings, then the bound surface's points and
 // topology, in this order: assembly reads them by position.
@@ -22,6 +50,14 @@ const char *const _floatArrays[]={"barycentricWeights","bindingWeights","mask","
                                   "limitDuWeights","limitDvWeights"};
 constexpr size_t _intCount = sizeof(_intArrays)/sizeof(_intArrays[0]);
 constexpr size_t _floatCount = sizeof(_floatArrays)/sizeof(_floatArrays[0]);
+// The arrays' attribute names, interned once at load in the same order.
+template<size_t N> std::array<TfToken,N> _OwnNames(const char *const (&names)[N]) {
+    std::array<TfToken,N> out;
+    for (size_t i = 0; i < N; ++i) out[i] = TfToken(std::string("rigExec:") + names[i]);
+    return out;
+}
+const std::array<TfToken,_intCount> _intArrayNames = _OwnNames(_intArrays);
+const std::array<TfToken,_floatCount> _floatArrayNames = _OwnNames(_floatArrays);
 enum Input : size_t {
     FirstInt = 0,
     FirstFloat = FirstInt + _intCount,
@@ -41,26 +77,26 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &surface)
         return RigExecRevisionLeafKey{path, type, RigExecRevisionLeafTime::AtTime,
             RigExecRevisionLeafFlavour::Resolved, std::move(fallback)};
     };
-    const auto own = [&](const char *name) {
-        return mover.AppendProperty(TfToken(std::string("rigExec:")+name));
+    const auto own = [&](const TfToken &name) {
+        return mover.AppendProperty(name);
     };
     std::vector<RigExecRevisionLeafKey> inputs;
-    for (const char *name : _intArrays)
+    for (const TfToken &name : _intArrayNames)
         inputs.push_back(key(own(name), Type::IntArray, VtValue(VtIntArray())));
-    for (const char *name : _floatArrays)
+    for (const TfToken &name : _floatArrayNames)
         inputs.push_back(key(own(name), Type::FloatArray, VtValue(VtFloatArray())));
-    inputs.push_back(key(own("offsets"), Type::Vec3fArray, VtValue(VtVec3fArray())));
-    inputs.push_back(key(own("surfaceMode"), Type::Token, VtValue(TfToken("polygon"))));
-    inputs.push_back(key(own("normalMode"), Type::Token, VtValue(TfToken("geometric"))));
-    inputs.push_back(key(own("strength"), Type::Float, VtValue(1.0f)));
-    inputs.push_back(key(own("deltaMultiplier"), Type::Float, VtValue(1.0f)));
-    inputs.push_back(key(own("surfaceRestMatrix"), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
-    inputs.push_back(key(own("targetRestMatrix"), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
-    inputs.push_back(key(own("surfaceToBinding"), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
+    inputs.push_back(key(own(_bindingTokens->offsets), Type::Vec3fArray, VtValue(VtVec3fArray())));
+    inputs.push_back(key(own(_bindingTokens->surfaceMode), Type::Token, VtValue(_bindingTokens->polygon)));
+    inputs.push_back(key(own(_bindingTokens->normalMode), Type::Token, VtValue(_bindingTokens->geometric)));
+    inputs.push_back(key(own(_bindingTokens->strength), Type::Float, VtValue(1.0f)));
+    inputs.push_back(key(own(_bindingTokens->deltaMultiplier), Type::Float, VtValue(1.0f)));
+    inputs.push_back(key(own(_bindingTokens->surfaceRestMatrix), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
+    inputs.push_back(key(own(_bindingTokens->targetRestMatrix), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
+    inputs.push_back(key(own(_bindingTokens->surfaceToBinding), Type::Matrix4d, VtValue(GfMatrix4d(1.0))));
     if (surface.IsEmpty()) {
         // No single surface: a raw read of the relationship, where no
         // attribute stands, answers empty and the assembly refuses it.
-        const SdfPath unbound = mover.AppendProperty(TfToken("rigExec:surface"));
+        const SdfPath unbound = mover.AppendProperty(_bindingTokens->surface);
         for (Type type : {Type::Vec3fArray, Type::IntArray, Type::IntArray}) {
             inputs.push_back({unbound, type, RigExecRevisionLeafTime::AtTime,
                               RigExecRevisionLeafFlavour::Raw, VtValue()});
@@ -68,11 +104,11 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &surface)
         return inputs;
     }
     const SdfPath prim = surface.GetPrimPath();
-    inputs.push_back(key(prim.AppendProperty(TfToken("points")),
+    inputs.push_back(key(prim.AppendProperty(_bindingTokens->points),
                          Type::Vec3fArray, VtValue(VtVec3fArray())));
-    inputs.push_back(key(prim.AppendProperty(TfToken("faceVertexCounts")),
+    inputs.push_back(key(prim.AppendProperty(_bindingTokens->faceVertexCounts),
                          Type::IntArray, VtValue(VtIntArray())));
-    inputs.push_back(key(prim.AppendProperty(TfToken("faceVertexIndices")),
+    inputs.push_back(key(prim.AppendProperty(_bindingTokens->faceVertexIndices),
                          Type::IntArray, VtValue(VtIntArray())));
     return inputs;
 }
@@ -118,13 +154,13 @@ template<class Pred> bool AllOf(size_t n,const Pred &pred) {
 }
 void Bind(const RigExecMoverBindContext &ctx) {
     auto &b=*ctx.binding;
-    const auto surfaces=RigExecRelationshipTargets(ctx.moverPrim,"rigExec:surface");
+    const auto surfaces=RigExecRelationshipTargets(ctx.moverPrim,_relTokens->surface);
     if(surfaces.size()==1) {
-        b.surfacePoints=surfaces[0].GetPrimPath().AppendProperty(TfToken("points"));
-        b.phases[b.surfacePoints]=RigExecPhaseForInput(ctx.moverPrim,"rigExec:surface");
+        b.surfacePoints=surfaces[0].GetPrimPath().AppendProperty(_bindingTokens->points);
+        b.phases[b.surfacePoints]=RigExecPhaseForInput(ctx.moverPrim,_relTokens->surface);
     }
-    b.influences=RigExecRelationshipTargets(ctx.moverPrim,"rigExec:frames");
-    b.transformPhase=RigExecPhaseForInput(ctx.moverPrim,"rigExec:frames");
+    b.influences=RigExecRelationshipTargets(ctx.moverPrim,_relTokens->frames);
+    b.transformPhase=RigExecPhaseForInput(ctx.moverPrim,_relTokens->frames);
     if(b.transformPhase.kind==RigExecReadPhaseKind::Final)
         for(auto &p:b.influences) {
             auto it=ctx.frameChainHeads.find(p);if(it!=ctx.frameChainHeads.end())p=it->second;
@@ -132,25 +168,25 @@ void Bind(const RigExecMoverBindContext &ctx) {
 }
 void DeclareInputs(const RigExecMoverBindContext &ctx,
                    std::vector<RigExecRevisionLeafKey> *inputs) {
-    const auto surfaces=RigExecRelationshipTargets(ctx.moverPrim,"rigExec:surface");
+    const auto surfaces=RigExecRelationshipTargets(ctx.moverPrim,_relTokens->surface);
     *inputs = DeclaredInputs(ctx.moverPrim.GetPath(), surfaces.size()==1 ? surfaces[0] : SdfPath());
 }
 bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                   const SdfPath &, RigExecRevisionBinding *binding, std::string *error) {
     if (!binding) return false;
-    const auto relationship = [&](const char *name) {
-        const auto found = scene.relationships.find(mover.AppendProperty(TfToken(name)));
+    const auto relationship = [&](const TfToken &name) {
+        const auto found = scene.relationships.find(mover.AppendProperty(name));
         return found == scene.relationships.end() ? nullptr : &found->second;
     };
     SdfPath surface;
-    if (const auto *rel = relationship("rigExec:surface"); rel && rel->fact.targets.size() == 1) {
+    if (const auto *rel = relationship(_bindingTokens->surface); rel && rel->fact.targets.size() == 1) {
         surface = rel->fact.targets[0];
-        binding->surfacePoints = surface.GetPrimPath().AppendProperty(TfToken("points"));
+        binding->surfacePoints = surface.GetPrimPath().AppendProperty(_bindingTokens->points);
         RigExecReadPhase phase;
         if (!RigExecParseReadPhase(rel->readPhase.GetString(), &phase, error)) return false;
         binding->phases[binding->surfacePoints] = phase;
     }
-    if (const auto *rel = relationship("rigExec:frames")) {
+    if (const auto *rel = relationship(_bindingTokens->frames)) {
         binding->influences = rel->fact.targets;
         if (!RigExecParseReadPhase(rel->readPhase.GetString(), &binding->transformPhase, error)) return false;
     }
@@ -382,9 +418,9 @@ bool Play(const void *state,const uint8_t *,size_t,const RigExecExternalPhasedPo
 bool Validate(const RigExecMoverValidateContext &ctx,std::string *error) {
     VtVec3fArray p;
     if(ctx.targets.size()!=1 || !ctx.stage->GetAttributeAtPath(ctx.targets[0]).Get(&p))return false;
-    const auto frames=RigExecRelationshipTargets(ctx.prim,"rigExec:frames");
+    const auto frames=RigExecRelationshipTargets(ctx.prim,_relTokens->frames);
     if(!frames.empty() && frames.size()!=2) {*error="surface binding requires zero or two frame providers";return false;}
-    const auto surfaces=RigExecRelationshipTargets(ctx.prim,"rigExec:surface");
+    const auto surfaces=RigExecRelationshipTargets(ctx.prim,_relTokens->surface);
     // The authored arrays against identity frames, the authored points and
     // the surface's Default shape.
     std::vector<VtValue> inputs;

@@ -406,12 +406,10 @@ struct RigExecRbfFitReport {
 /// shape of the pose space is fixed by the ratio between the two widths and
 /// only its overall size is free.
 ///
-/// Calibration, for the reader who wants the numbers: measured on the biped,
-/// summing how far past 0..1 the weights reach between every pair of poses,
-/// a fixed scale of 0.5 gives 0.81, 0.7 gives 2.88 and 1.0 gives 5.10
-///. It falls all the way down, so there is no
-/// interior best -- which is exactly why the converter stopped using a fixed
-/// scale and calls this instead. A painted pose falloff other than the
+/// Calibration: summing how far past 0..1 the weights reach between every
+/// pair of poses, the overshoot falls monotonically as a fixed scale shrinks,
+/// so there is no interior best fixed scale -- which is why the converter
+/// calls this instead of using one. A painted pose falloff other than the
 /// default 0.3 is applied on top of the fitted width, as falloff/0.3, by
 /// RigExecRbfSolver::ScaleWidths.
 ///

@@ -6,6 +6,9 @@
 #include "pxr/base/tf/staticTokens.h"
 #include "rigExecGraph/windowHistory.h"
 #include "rigExecMath/harmonicsKernel.h"
+#include "rigExecMath/ikFkMatchKernel.h"
+#include "rigExec/frameExtraction.h"
+#include "pxr/base/gf/matrix4d.h"
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecAimTarget, "rigExec:aimTarget"))
@@ -172,10 +175,219 @@ bool RunHarmonics(const RigExecConstraintGraphBinding &bound,RigExecTypedValueSt
     if(!RigExecConstraintFrameUsable(candidate))return passThrough("harmonics constraint produced an invalid or degenerate frame");
     publish(candidate,false,{});return true;
 }
+bool MatrixOf(const RigExecTypedValueStore &store,RigExecValueId id,GfMatrix4d *out) {
+    const auto *frame=store.Read<RigExecPointFrame>(id);
+    return frame && RigExecConstraintFrameUsable(*frame) &&
+        RigExecPointsToMatrix(RigExecIdentityLandmarks(),frame->points,out);
+}
+// RigExecBakedMatchChannelsOf over the avar values the control composes from.
+RigExecIkFkMatchChannels ChannelsOf(const RigExecTypedValueStore &store,
+    const std::array<RigExecValueId,13> &ids,bool scaleAvars) {
+    const auto scalar=[&](size_t k,double fallback) {const auto *v=store.Read<double>(ids[k]);return v?*v:fallback;};
+    RigExecIkFkMatchChannels channels;
+    for(int k=0;k<3;++k) {
+        channels.t[k]=scalar(size_t(1+k),0);
+        channels.s[k]=scaleAvars?scalar(size_t(4+k),1):1.0;
+        channels.r[k]=scalar(size_t(7+k),0);
+    }
+    channels.spin=scalar(10,0);channels.units=scalar(0,1);
+    if(const auto *sign=store.Read<GfVec3d>(ids[12]))
+        for(int k=0;k<3;++k)channels.sign[k]=RigExecNormalizeRotationSign((*sign)[k]);
+    if(const auto *order=store.Read<TfToken>(ids[11]);order && order->size()==3)
+        std::copy(order->GetText(),order->GetText()+3,channels.order);
+    return channels;
+}
+// The pole switch's inputs as RigExecRunBoundSpaceSwitch gathers them.
+bool PoleSwitchInputs(const RigExecBoundSpaceSwitch &packet,const RigExecTypedValueStore &values,
+    RigExecSpaceSwitchInputs *input) {
+    const auto matrix=[&](RigExecValueId id,GfMatrix4d *out) {
+        if(id==UINT64_MAX){*out=GfMatrix4d(1.0);return true;}
+        VtValue value;if(!RigExecReadSceneGraphValue(values,id,&value,true) || !value.IsHolding<GfMatrix4d>())return false;
+        *out=value.UncheckedGet<GfMatrix4d>();return true;
+    };
+    *input=packet.inputs;VtValue active;
+    input->active=packet.tokenIndex?0.0:packet.activeFallback;
+    if(RigExecReadGraphTypedRead(packet.active,values,&active,nullptr)) {
+        if(packet.tokenIndex && active.IsHolding<TfToken>()) {
+            const auto found=std::find(packet.labels.begin(),packet.labels.end(),active.UncheckedGet<TfToken>());
+            if(found!=packet.labels.end())input->active=double(found-packet.labels.begin());
+        } else if(active.IsHolding<double>())input->active=active.UncheckedGet<double>();
+    }
+    GfMatrix4d parentExpression(1.0);
+    bool usable=matrix(packet.avars,&input->avars) && matrix(packet.posedDefault,&input->posedDefault) &&
+        matrix(packet.parentExpression,&parentExpression) && matrix(packet.parentPosed,&input->parentPosed) &&
+        matrix(packet.parentDefault,&input->parentDefault);
+    input->parentDefaultInverse=parentExpression.GetInverse();
+    input->parentDefault=RigExecPoseRoundTrip(input->parentDefault);
+    if(input->hasCarry) {
+        usable=usable && matrix(packet.spaceDefault,&input->spaceDefault) && matrix(packet.spacePosed,&input->spacePosed);
+        input->spaceDefault=RigExecPoseRoundTrip(input->spaceDefault);
+    }
+    for(size_t k=0;k<input->sources.size();++k)if(!input->sources[k].world) {
+        usable=usable && matrix(packet.sourceDefault[k],&input->sources[k].defaultSpace) &&
+            matrix(packet.sourcePosed[k],&input->sources[k].posedSpace);
+        input->sources[k].defaultSpace=RigExecPoseRoundTrip(input->sources[k].defaultSpace);
+    }
+    return usable;
+}
+// RigExecIkFkMatchConstraint: RigExecBakedRunIkFkMatch's arithmetic, then
+// RigExecBakedPresentIkFkMatches' presentation of the five controls and their
+// riders. Every output is published on every run.
+bool RunIkFkMatch(const RigExecConstraintGraphBinding &bound,RigExecTypedValueStore *store,std::string *error) {
+    const auto &m=*bound.match;
+    std::array<double,11> ikValues{};std::array<double,20> fkValues{};
+    std::array<RigExecPointFrame,5> shown;
+    bool valuesValid=false;unsigned shownMask=0;
+    const std::string *diagnostic=nullptr;const std::string none;
+    // Values the match could not solve are not published, as natively.
+    const auto finish=[&]() {
+        if(valuesValid) {
+            store->Publish(m.ikValues,VtValue(VtDoubleArray(ikValues.begin(),ikValues.end())));
+            store->Publish(m.fkValues,VtValue(VtDoubleArray(fkValues.begin(),fkValues.end())));
+        } else {
+            const std::string &reason=diagnostic?*diagnostic:none;
+            store->Publish(m.ikValues,VtValue(),true,false,0,reason);
+            store->Publish(m.fkValues,VtValue(),true,false,0,reason);
+        }
+        GfMatrix4d delta[5];bool deltaOk[5]={false,false,false,false,false};
+        for(size_t k=0;k<5;++k) {
+            if(!(shownMask&(1u<<k))) {store->Copy(m.presented[k],m.published[k],false);continue;}
+            GfMatrix4d before,after;
+            const auto *published=store->Read<RigExecPointFrame>(m.published[k]);
+            deltaOk[k]=published &&
+                RigExecPointsToMatrix(RigExecIdentityLandmarks(),published->points,&before) &&
+                RigExecPointsToMatrix(RigExecIdentityLandmarks(),shown[k].points,&after);
+            if(deltaOk[k])delta[k]=before.GetInverse()*after;
+            store->Publish(m.presented[k],shown[k]);
+        }
+        for(const auto &rider:m.riders) {
+            const auto *published=store->Read<RigExecPointFrame>(rider.published);GfMatrix4d frame;
+            if(deltaOk[size_t(rider.rides)] && published &&
+               RigExecPointsToMatrix(RigExecIdentityLandmarks(),published->points,&frame))
+                store->Publish(rider.presented,RigExecFrameFromMatrix(frame*delta[size_t(rider.rides)]));
+            else store->Copy(rider.presented,rider.published,false);
+        }
+        return !diagnostic || Fail(error,*diagnostic);
+    };
+    // An unreadable input answers its fallback, as the baked binding does.
+    std::string unavailable;
+    const auto read=[&](const char *name,VtValue *value) {return RigExecReadBoundGraphInput(bound.inputs,name,*store,value,&unavailable);};
+    VtValue value;
+    if(read("inputs:enabled",&value) && value.IsHolding<bool>() && !value.UncheckedGet<bool>())return finish();
+    double weight=1.0;
+    if(read("inputs:defaultWeight",&value) && value.IsHolding<float>())weight=double(value.UncheckedGet<float>());
+    if(!std::isfinite(weight))weight=0.0;
+    const char *const scalarNames[7]={"inputs:switch","inputs:stretch","inputs:softDistance",
+        "inputs:upperScale","inputs:lowerScale","inputs:pin","inputs:twist"};
+    const double fallbacks[7]={0,1,0,1,1,0,0};
+    double scalars[7];
+    for(size_t k=0;k<7;++k) {
+        scalars[k]=fallbacks[k];
+        if(!read(scalarNames[k],&value))continue;
+        if(value.IsHolding<float>())scalars[k]=double(value.UncheckedGet<float>());
+        else if(value.IsHolding<double>())scalars[k]=value.UncheckedGet<double>();
+    }
+    // Sources: joints 0-2, IK root 3, effector 4, IK control 5, pole 6, FK
+    // controls 7-9. Rests: joints 0-2, then the controls' at 3-7.
+    GfMatrix4d input[10],rest[8];
+    bool usable=true;
+    for(size_t i=0;usable && i<10;++i)usable=MatrixOf(*store,m.sources[i],&input[i]);
+    for(size_t i=0;usable && i<8;++i)usable=MatrixOf(*store,m.rests[i],&rest[i]);
+    if(!usable){diagnostic=&m.unreadable;return finish();}
+    const GfMatrix4d *control=input+5;
+    RigExecIkFkMatchChannels channels[5];
+    for(size_t i=0;i<5;++i)channels[i]=ChannelsOf(*store,m.channels[i],m.scaleAvars[i]!=0);
+    RigExecLimbStretch limb;
+    limb.stretch=scalars[1];limb.softDistance=scalars[2];limb.upperScale=scalars[3];
+    limb.lowerScale=scalars[4];limb.pin=scalars[5];limb.scaleCalibration=m.scaleCalibration;
+    // The IK solve's space carries its rest lengths and soft distance.
+    double space[16];const double *spaceMatrix=nullptr;
+    if(bound.target.carry!=UINT64_MAX) {
+        GfMatrix4d spaceRest(1.0);VtValue posed;
+        if(MatrixOf(*store,m.spaceRest,&spaceRest) &&
+           RigExecReadSceneGraphValue(*store,bound.target.carry,&posed,true) && posed.IsHolding<GfMatrix4d>() &&
+           std::isfinite(posed.UncheckedGet<GfMatrix4d>()[3][0])) {
+            const GfMatrix4d carry=spaceRest.GetInverse()*posed.UncheckedGet<GfMatrix4d>();
+            std::copy(carry.data(),carry.data()+16,space);spaceMatrix=space;
+        }
+    }
+    double restOrigins[3][3],restUpper=0,restLower=0,spaceFactor=1;
+    for(size_t i=0;i<3;++i)for(int k=0;k<3;++k)restOrigins[i][k]=rest[i][3][k];
+    RigExecIkFkMatchRestLengths(restOrigins,spaceMatrix,m.upperLengthOffset,m.lowerLengthOffset,
+        &restUpper,&restLower,&spaceFactor);
+    limb.softDistance*=spaceFactor;
+    RigExecIkFkMatchIkInputs ikIn;
+    for(size_t i=0;i<3;++i)ikIn.joints[i]=input[i].data();
+    ikIn.root=input[3].data();ikIn.effectorPosed=input[4].data();ikIn.ikPosed=control[0].data();
+    ikIn.ik=channels[0];
+    ikIn.twistRadians=scalars[6]*std::acos(-1.0)/180.0;
+    ikIn.poleDistance=(rest[4].ExtractTranslation()-rest[1].ExtractTranslation()).GetLength()*spaceFactor;
+    ikIn.polePosed=control[1].data();
+    ikIn.hasStretch=m.stretchLimb;ikIn.limb=limb;ikIn.restUpper=restUpper;ikIn.restLower=restLower;
+    RigExecIkFkMatchIkResult ik;
+    RigExecIkFkMatchIk(ikIn,&ik);
+    // The pole's parent once the IK control has moved: its own space switch
+    // re-run with every source that rides the IK control carried by the
+    // move, or its namespace parent carried the same way.
+    RigExecIkFkMatchChannels pole=channels[1];
+    double poleFrame[16];bool poleOk=false;
+    if(ik.ok) {
+        GfMatrix4d ikNew;std::copy(ik.ikFrame,ik.ikFrame+16,ikNew.data());
+        const GfMatrix4d moved=control[0].GetInverse()*ikNew;
+        const auto composed=ikFkMatchKernel::Compose(channels[1]);
+        GfMatrix4d avars;std::copy(composed.begin(),composed.end(),avars.data());
+        GfMatrix4d parent=avars.GetInverse()*control[1];
+        // An authored posed:space is the pole's pose: no switch composes it.
+        const auto *posedSpace=store->Read<GfMatrix4d>(m.polePosedSpace);
+        const bool posedAuthored=posedSpace && (store->values[size_t(m.polePosedSpace)].authoritative ||
+            *posedSpace!=GfMatrix4d(1.0));
+        if(m.poleSwitch && !posedAuthored) {
+            RigExecSpaceSwitchInputs inputs;
+            if(PoleSwitchInputs(m.poleSwitchBinding,*store,&inputs)) {
+                inputs.avars=GfMatrix4d(1.0);
+                for(size_t k=0;k<inputs.sources.size() && k<m.poleSourceRides.size();++k)
+                    if(m.poleSourceRides[k] && !inputs.sources[k].world)
+                        inputs.sources[k].posedSpace=inputs.sources[k].posedSpace*moved;
+                RigExecPointFrame frame;GfMatrix4d switched(1.0);
+                if(RigExecRunSpaceSwitch(m.poleSwitchBinding.record,inputs,&frame) &&
+                   RigExecConstraintFrameUsable(frame) &&
+                   RigExecPointsToMatrix(RigExecIdentityLandmarks(),frame.points,&switched))parent=switched;
+            }
+        } else if(m.poleParentRides)parent=parent*moved;
+        poleOk=RigExecIkFkMatchPole(ik.poleTarget,parent.data(),&pole,poleFrame);
+    }
+    RigExecIkFkMatchFkInputs fkIn;GfMatrix4d offsets[3];
+    for(size_t i=0;i<3;++i) {
+        fkIn.joints[i]=input[i].data();fkIn.fkPosed[i]=control[2+i].data();fkIn.fk[i]=channels[2+i];
+        offsets[i]=rest[5+i]*rest[i].GetInverse();fkIn.offsets[i]=offsets[i].data();
+    }
+    fkIn.hasStretch=m.stretchLimb;fkIn.upperScale=limb.upperScale;fkIn.lowerScale=limb.lowerScale;
+    fkIn.restUpper=restUpper;fkIn.restLower=restLower;
+    RigExecIkFkMatchFkResult fk;
+    RigExecIkFkMatchFk(fkIn,&fk);
+    if(ik.ok && poleOk && fk.ok) {
+        RigExecIkFkMatchPack(ik,pole,fk,ikValues.data(),fkValues.data());valuesValid=true;
+    } else diagnostic=&m.unmatched;
+    const auto show=[&](size_t k,const double *frame) {
+        GfMatrix4d matrix;std::copy(frame,frame+16,matrix.data());
+        shown[k]=RigExecFrameFromMatrix(matrix);shownMask|=1u<<k;
+    };
+    switch(RigExecIkFkMatchShownSide(scalars[0],m.ikValue,weight)) {
+    case RigExecIkFkMatchShown::IkSide:
+        if(ik.ok && poleOk){show(0,ik.ikFrame);show(1,poleFrame);}
+        break;
+    case RigExecIkFkMatchShown::FkSide:
+        if(fk.ok)for(size_t i=0;i<3;++i)show(2+i,fk.frames[i]);
+        break;
+    case RigExecIkFkMatchShown::None:break;
+    }
+    return finish();
+}
 }
 bool RigExecRunConstraintGraph(const RigExecConstraintGraphBinding &bound,RigExecTypedValueStore *store,std::string *error,RigExecWindowRun *window) {
     if(!store || bound.target.output>=store->values.size())return Fail(error,"invalid constraint graph storage");
     if(bound.structural.record.kind==RigExecConstraintKind::Harmonics)return RunHarmonics(bound,store,window,error);
+    if(bound.match)return RunIkFkMatch(bound,store,error);
     auto descriptor=bound.structural;RigExecConstraintInputs input;
     std::vector<char> chainAvailable;
     const auto publish=[&](const RigExecPointFrame &frame,bool blocked,const std::string &reason) {

@@ -43,7 +43,7 @@ public:
                 const double x=std::min(std::max(double(binds[i][1])/dropoff,0.0),1.0);
                 f=1.0-x*x*(3.0-2.0*x);
             }
-            if(f<=0.0) continue; // Preserve the old skip before curve evaluation.
+            if(f<=0.0) continue; // Zero falloff skips curve evaluation.
             built->evaluated[i]=curve.Evaluate(double(binds[i][0]));
         }
         entry=built; return &entry->evaluated;

@@ -30,7 +30,8 @@ affiliation, endorsement, or ownership of the underlying techniques.
 | Arc length by Gauss–Legendre quadrature | NIST *Digital Library of Mathematical Functions*, [§3.5(v) Gauss quadrature](https://dlmf.nist.gov/3.5#v) | `libs/rigExecMath/pathCurveKernel.h` |
 | NURBS patch evaluation | Piegl and Tiller, *The NURBS Book* (1997), [DOI](https://doi.org/10.1007/978-3-642-59223-2) | `libs/rigExecMath/geometryKernels.h` (`RigExecNurbsPatch`), `libs/rigExecMath/geometryKernels.cpp` (`RigExecNurbsPatch::EvaluateNormalized`, `RigExecApplyPatchMover`); [Patch Mover](nodes/patch_mover.md) |
 | RigLogic radial-basis solvers, machine-learned behavior and animated maps | Epic Games, [OpenRigLogic](https://github.com/EpicGames/OpenRigLogic) (MIT), RigLogic 13.5.0 at commit [`9ca65ac`](https://github.com/EpicGames/OpenRigLogic/commit/9ca65ac08b64a1ea5f0d79466e64706b3ac524ba): `src/riglogic/rbf/cpu`, `src/riglogic/ml/cpu`, `src/riglogic/conditionaltable` and `src/riglogic/animatedmaps`; [RigLogic whitepaper](https://cdn2.unrealengine.com/rig-logic-whitepaper-v2-5c9f23f7e210.pdf). What was ported and what was added is listed in [RigLogic behaviours](concepts/riglogic.md#provenance) | `libs/rigExecMath/rbfMethodKernel.h` (RigExecPoseInterpolator `rigExec:solver` additive and interpolative), `libs/rigExecMath/mlpKernel.h` (RigExecMlMover), `libs/rigExecMath/conditionalTableKernel.h` (RigExecAnimatedMaps); reference values from RigLogic itself in `tests/fixtures/rigLogicReference.inc` |
-| Swing-twist decomposition | Dobrowolski, *Swing-twist decomposition in Clifford algebra* (2015), [arXiv:1506.05481](https://arxiv.org/abs/1506.05481) | `libs/rigExec/solverKernels.cpp` (space switch rotation filters), `libs/rigExecMath/rbf.cpp` |
+| Swing-twist decomposition | Dobrowolski, *Swing-twist decomposition in Clifford algebra* (2015), [arXiv:1506.05481](https://arxiv.org/abs/1506.05481) | `libs/rigExec/solverKernels.cpp` (space switch rotation filters), `libs/rigExecMath/solvers.cpp` (`_SwingTwist`), `libs/rigExecMath/rbf.cpp` |
+| Forward and backward reaching IK | Aristidou and Lasenby, *FABRIK: A fast, iterative solver for the Inverse Kinematics problem*, Graphical Models 73(5):243–260 (2011), [DOI](https://doi.org/10.1016/j.gmod.2011.05.003) | `libs/rigExecMath/singleChainIk.cpp` (RigExecSingleChainIkConstraint) |
 
 Implementation details and limitations are documented with each operator.
 The cloth mover combines the sources above in one solver of its own: a
@@ -90,7 +91,7 @@ The stage-free `libs/rigExecMath/affineFrameKernels.cpp` implements joint
 inheritance, affine frame copying/mapping, weighted rest-to-pose parenting,
 constraint space conversion, tracking, stretch and location remapping.
 Production evaluation runs these kernels as provider-program operations
-(`libs/rigExecGraph/providerProgram.cpp`). The OpenExec expressions in
+(`libs/rigExecScene/providerProgram.cpp`). The OpenExec expressions in
 `libs/rigExec/affineFrameComputations.cpp` read declared inputs and call the
 same kernels, but nothing requests them. Source behavior references
 include Blender's [constraint evaluator](https://github.com/blender/blender/blob/main/source/blender/blenkernel/intern/constraint.cc),

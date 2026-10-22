@@ -26,6 +26,10 @@ public:
     /// device can be created (no platform context, no Hgi backend).
     static RigExecGpuDeformExecutor *Get();
 
+    /// Frees the buffers a RigExecGpuDeviceKey named, on the device's
+    /// thread, without waiting. Does nothing when no device started.
+    static void ReleaseKey(uint64_t key);
+
     /// Runs every job and waits for the points. Returns false when the
     /// device failed; each job's `ok` says how that chain fared.
     bool Run(std::vector<RigExecGpuDeformJob> *jobs);

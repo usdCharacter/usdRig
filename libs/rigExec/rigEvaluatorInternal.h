@@ -246,7 +246,7 @@ inline const TfToken _computePointFrame("computePointFrame");
 inline const TfToken _computePointFrameArray("computePointFrameArray");
 
 // The joint rest a solver measures from. Overridden per solver batch when an
-// earlier pose step wrote the joint (spec §4.2, "the incoming frame is the
+// earlier pose step wrote the joint ("the incoming frame is the
 // solver's rest reference").
 inline const TfToken _computeRestFrame("computeRestFrame");
 inline const TfToken _movesRel("rigExec:moves");

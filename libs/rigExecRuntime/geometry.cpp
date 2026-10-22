@@ -1,5 +1,5 @@
 #include "rigExecGraph/blendLayout.h"
-// rigExecRuntime geometry family (M2): RevisionStatic, InfluenceFold,
+// rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
 // A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
 // driven by the movers in libs/rigExec/moverGraph.cpp and the kernels in
@@ -25,8 +25,8 @@
 #include "rigExecMath/wrinkleKernel.h"
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/surfaceSnapKernel.h"
+#include "rigExecMath/rangeRunner.h"
 #include "poseInternal.h"
-#include "rigExec/parallel.h"
 
 #include <algorithm>
 #include <array>
@@ -39,9 +39,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
-#include <condition_variable>
 #include <functional>
-#include <mutex>
 #include <thread>
 #include <iterator>
 #include <limits>
@@ -533,6 +531,19 @@ struct RrGeoWeightPacket {
     }
 };
 
+// Numbers layout handles. Taken once per handle built (Open, a layout
+// change); a lock-free counter, never a cache.
+std::atomic<uint64_t> gRrGeoLayoutIdentities{0};
+
+uint64_t
+RrGeoNewLayoutIdentity()
+{
+    return gRrGeoLayoutIdentities.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+// One immutable skin layout. Built and validated once per layout; packets
+// share the handle, and keys and compares read `identity`, which no two
+// handles share. operator== compares content (identity excluded).
 struct RrGeoSkinTopology {
     std::vector<int> indices;
     std::vector<float> weights;
@@ -540,6 +551,7 @@ struct RrGeoSkinTopology {
     size_t pointCount = 0;
     size_t influenceCount = 0;
     bool validated = false;
+    uint64_t identity = 0;
 
     bool operator==(const RrGeoSkinTopology &o) const
     {
@@ -586,6 +598,11 @@ struct RrGeoExternalInput {
     }
 };
 
+// rigExec:skinningMethod as the skin kernels dispatch on it
+// (RigExecSkinMethodOf), resolved from its token when the packet is
+// assembled; Unknown for any other text.
+enum class RrGeoSkinMethod : uint8_t { Unknown, ClassicLinear, DualQuaternion };
+
 struct RrGeoMoverParameters {
     std::string kind;
     bool enabled = true;
@@ -629,11 +646,14 @@ struct RrGeoMoverParameters {
     double dropoffDistance = 0.0;
     std::vector<float> widths;
     std::vector<RrMat4d> skinTransforms;
-    std::vector<int> skinIndices;
-    std::vector<float> skinWeights;
     int skinElementSize = 0;
-    std::string skinningMethod;
+    RrGeoSkinMethod skinMethod = RrGeoSkinMethod::Unknown;
+    // The skin's layout: one immutable handle per layout, compared by
+    // pointer and keyed by its identity. skinLayoutRead: the layout came
+    // from the joint arrays of a skin whose layout the compiled rig does not
+    // fix, so the applied transforms are checked as they were for it.
     std::shared_ptr<const RrGeoSkinTopology> skinTopology;
+    bool skinLayoutRead = false;
     // A plugin mover: its playback state, this frame's bytes (null when the
     // export's assembly failed on the frame), and the points its binding
     // reads at a declared phase, as this run evaluated them.
@@ -696,11 +716,10 @@ struct RrGeoMoverParameters {
                dropoffDistance == o.dropoffDistance &&
                widths == o.widths &&
                skinTransforms == o.skinTransforms &&
-               skinIndices == o.skinIndices &&
-               skinWeights == o.skinWeights &&
                skinTopology == o.skinTopology &&
+               skinLayoutRead == o.skinLayoutRead &&
                skinElementSize == o.skinElementSize &&
-               skinningMethod == o.skinningMethod &&
+               skinMethod == o.skinMethod &&
                external == o.external &&
                externalState == o.externalState &&
                externalFrame == o.externalFrame &&
@@ -2428,56 +2447,31 @@ RrGeoSkinLayoutForPacket(const RrGeoMoverParameters &p,
     RrGeoSkinLayout layout;
     layout.transforms = transforms.transforms;
     layout.transformCount = transforms.transformCount;
-    const RrGeoSkinTopology *const topology = p.skinTopology.get();
-    if (topology) {
+    if (const RrGeoSkinTopology *const topology = p.skinTopology.get()) {
         layout.indices = topology->indices.data();
         layout.weights = topology->weights.data();
         layout.indexCount = topology->indices.size();
         layout.elementSize =
             topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
-    } else {
-        layout.indices = p.skinIndices.data();
-        layout.weights = p.skinWeights.data();
-        layout.indexCount = p.skinIndices.size();
-        layout.elementSize =
-            p.skinElementSize < 1 ? 0 : size_t(p.skinElementSize);
     }
     layout.pointCount = pointCount;
     return layout;
 }
 
+// The layout's entries were validated once, when its handle was built;
+// here only its shape is held to this run's point and influence counts.
 bool
 RrGeoSkinLayoutIsUsable(const RrGeoMoverParameters &p, size_t pointCount)
 {
-    const size_t transformCount = p.skinTransforms.size();
-    if (const RrGeoSkinTopology *const topology = p.skinTopology.get()) {
-        const size_t elementSize =
-            topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
-        return topology->validated &&
-               topology->influenceCount == transformCount &&
-               topology->indices.size() == pointCount * elementSize;
-    }
-    if (p.skinWeights.size() != p.skinIndices.size()) {
-        return false;  // cardinality mismatch fails atomically
+    const RrGeoSkinTopology *const topology = p.skinTopology.get();
+    if (!topology) {
+        return false;
     }
     const size_t elementSize =
-        p.skinElementSize < 1 ? 0 : size_t(p.skinElementSize);
-    if (elementSize < 1 || transformCount == 0) {
-        return false;
-    }
-    if (p.skinIndices.size() != pointCount * elementSize) {
-        return false;
-    }
-    for (size_t i = 0; i < p.skinIndices.size(); ++i) {
-        if (p.skinIndices[i] < 0 ||
-            size_t(p.skinIndices[i]) >= transformCount) {
-            return false;
-        }
-        if (!std::isfinite(p.skinWeights[i]) || p.skinWeights[i] < 0.0f) {
-            return false;
-        }
-    }
-    return true;
+        topology->elementSize < 1 ? 0 : size_t(topology->elementSize);
+    return topology->validated &&
+           topology->influenceCount == p.skinTransforms.size() &&
+           topology->indices.size() == pointCount * elementSize;
 }
 
 bool
@@ -2502,19 +2496,10 @@ RrGeoSkinTransformsAreUsable(const RrMat4d *transforms, size_t count)
     return true;
 }
 
-// RigExecSkinMethodOf: the arithmetic the range kernel dispatches on.
-enum class RrGeoSkinMethod : uint8_t { Unknown, ClassicLinear, DualQuaternion };
-
 RrGeoSkinMethod
 RrGeoSkinMethodOf(const RrGeoMoverParameters &p)
 {
-    if (p.skinningMethod == "classicLinear") {
-        return RrGeoSkinMethod::ClassicLinear;
-    }
-    if (p.skinningMethod == "dualQuaternion") {
-        return RrGeoSkinMethod::DualQuaternion;
-    }
-    return RrGeoSkinMethod::Unknown;
+    return p.skinMethod;
 }
 
 bool
@@ -2558,163 +2543,154 @@ RrGeoApplySkinKernelRange(const RrGeoMoverParameters &p,
     return false;
 }
 
+// The host's task dispatcher (RrStore::dispatch).
+using RrGeoDispatch = std::function<void(std::function<void()>)>;
+
 bool
 RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
                      const RrGeoSkinTransformsView &transforms, size_t begin,
                      size_t end, std::vector<RrVec3f> *pts, bool useSimd,
-                     bool parallel);
+                     const RrGeoDispatch *parallel);
 
 bool
 RrGeoApplySkinKernelWithTransforms(
     const RrGeoMoverParameters &p,
     const RrGeoSkinTransformsView &transforms, std::vector<RrVec3f> *pts,
-    bool useSimd, bool parallel = false)
+    bool useSimd, const RrGeoDispatch *parallel = nullptr)
 {
     const size_t count = pts->size();
     if (!RrGeoSkinLayoutIsUsable(p, count)) {
         return false;
     }
-    if (!p.skinTopology &&
+    if (p.skinLayoutRead &&
         !RrGeoSkinTransformsAreUsable(transforms.transforms,
                                       transforms.transformCount)) {
         return false;
     }
 
     // Same cut as the baked kernel: a point range is independent under either
-    // method, and the per-matrix tables are derived once. \p parallel is set
-    // only when the caller installed RrStore::dispatch and the program is
-    // parallel-safe. The ranges join on their own threads. They do not call
-    // that dispatcher: a cluster body is already running on it, and waiting
-    // for it from inside the body deadlocks.
+    // method, and the per-matrix tables are derived once. \p parallel is the
+    // host's dispatcher while the op graph runs on it (RrStore::rangeDispatch)
+    // and the program is parallel-safe; null runs here.
     return RrGeoApplySkinRanges(p, transforms, 0, count, pts, useSimd,
                                 parallel);
 }
 
-bool
+// The dispatcher a skin body may split its points over: the host's while
+// Execute's op graph runs on it, else null.
+const RrGeoDispatch *
 RrGeoSkinMaySplit(const RrProgram *program)
 {
-    return program->parallelSafe &&
-           static_cast<bool>(program->store.dispatch) &&
-           static_cast<bool>(program->store.wait);
+    return program->parallelSafe ? program->store.rangeDispatch : nullptr;
 }
 
-// Threads stay up for the process. Spawning a std::thread per skin costs
-// more than a linear blend of a few tens of thousands of points. The caller
-// drains ranges too, so the pool is hardware_concurrency()-1 workers.
-struct RrGeoPointPool {
-    std::mutex runMu;
-    std::mutex mu;
-    std::condition_variable workCv;
-    std::condition_variable doneCv;
-    std::vector<std::thread> threads;
-    std::function<void(size_t, size_t)> body;
-    std::atomic<size_t> cursor{0};
+// Ranges of one split, shared by the calling body and the helper tasks it
+// hands the host. Each claimer takes the next grain from `next` and adds
+// the points it finished to `done`; nothing blocks. A helper the host
+// starts after the last claim finds no range and returns without touching
+// `body`, which lives on the caller's stack, so the share alone is kept
+// alive by the helpers (shared_ptr).
+struct RrGeoRangeShare {
+    std::atomic<size_t> next{0};
+    std::atomic<size_t> done{0};
+    std::atomic<bool> threw{false};
     size_t end = 0;
     size_t grain = RigExecGeometryGrainSize;
-    unsigned inflight = 0;
-    unsigned generation = 0;
-    bool stop = false;
-
-    RrGeoPointPool()
-    {
-        unsigned workers = std::thread::hardware_concurrency();
-        if (workers > 1) {
-            --workers;
-        } else {
-            workers = 0;
-        }
-        threads.reserve(workers);
-        for (unsigned i = 0; i < workers; ++i) {
-            threads.emplace_back([this] { Loop(); });
-        }
-    }
-
-    ~RrGeoPointPool()
-    {
-        {
-            std::lock_guard<std::mutex> lock(mu);
-            stop = true;
-        }
-        workCv.notify_all();
-        for (std::thread &worker : threads) {
-            worker.join();
-        }
-    }
+    const std::function<void(size_t, size_t)> *body = nullptr;
+#if RIGEXEC_RUNTIME_HAS_SSE2
+    // The caller's MXCSR: each range rounds as it would on the caller.
+    unsigned int csr = 0;
+#endif
 
     void Drain()
     {
         for (;;) {
-            const size_t b = cursor.fetch_add(grain, std::memory_order_relaxed);
+            const size_t b = next.fetch_add(grain, std::memory_order_relaxed);
             if (b >= end) {
                 return;
             }
-            body(b, std::min(end, b + grain));
-        }
-    }
-
-    void Loop()
-    {
-        unsigned seen = 0;
-        for (;;) {
-            std::unique_lock<std::mutex> lock(mu);
-            workCv.wait(lock, [&] { return stop || generation != seen; });
-            if (stop) {
-                return;
+            const size_t e = std::min(end, b + grain);
+            try {
+                (*body)(b, e);
+            } catch (...) {
+                threw.store(true, std::memory_order_relaxed);
             }
-            seen = generation;
-            lock.unlock();
-            Drain();
-            lock.lock();
-            if (--inflight == 0) {
-                doneCv.notify_one();
-            }
+            // Release: the caller's acquire of the total sees these points.
+            done.fetch_add(e - b, std::memory_order_release);
         }
-    }
-
-    void Run(size_t rangeBegin, size_t rangeEnd,
-             const std::function<void(size_t, size_t)> &fn)
-    {
-        std::lock_guard<std::mutex> runLock(runMu);
-        if (threads.empty() || rangeEnd <= rangeBegin) {
-            fn(rangeBegin, rangeEnd);
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(mu);
-            body = fn;
-            cursor.store(rangeBegin, std::memory_order_relaxed);
-            end = rangeEnd;
-            grain = RigExecGeometryGrainSize;
-            inflight = static_cast<unsigned>(threads.size());
-            ++generation;
-        }
-        workCv.notify_all();
-        Drain();
-        std::unique_lock<std::mutex> lock(mu);
-        doneCv.wait(lock, [&] { return inflight == 0; });
-        body = nullptr;
     }
 };
 
-void
-RrGeoParallelPointRanges(size_t begin, size_t end,
+// At most this many helper tasks per split; a late one costs a claim.
+constexpr size_t kRrGeoMaxRangeHelpers = 63;
+
+// \p body over [begin, end) in grains of RigExecGeometryGrainSize: the
+// calling body drains ranges itself while helper tasks it hands \p dispatch
+// claim from the same counter. The caller never waits on the dispatcher: it
+// spins only on the ranges other threads already claimed, so a busy or
+// single-threaded host still finishes (the caller drains everything).
+// False when a range threw.
+bool
+RrGeoParallelPointRanges(const RrGeoDispatch &dispatch, size_t begin,
+                         size_t end,
                          const std::function<void(size_t, size_t)> &body)
 {
-    static RrGeoPointPool pool;
-    pool.Run(begin, end, body);
+    const size_t count = end > begin ? end - begin : 0;
+    const size_t grain = RigExecGeometryGrainSize;
+    const size_t ranges = (count + grain - 1) / grain;
+    if (ranges < 2) {
+        body(begin, end);
+        return true;
+    }
+    auto share = std::make_shared<RrGeoRangeShare>();
+    share->next.store(begin, std::memory_order_relaxed);
+    share->end = end;
+    share->grain = grain;
+    share->body = &body;
+#if RIGEXEC_RUNTIME_HAS_SSE2
+    share->csr = _mm_getcsr();
+#endif
+    const size_t helpers = std::min(ranges - 1, kRrGeoMaxRangeHelpers);
+    // A dispatch that throws stops the handing out; the caller still drains
+    // and joins before \p body goes out of scope.
+    try {
+        for (size_t h = 0; h < helpers; ++h) {
+            dispatch([share] {
+#if RIGEXEC_RUNTIME_HAS_SSE2
+                const unsigned int own = _mm_getcsr();
+                const bool differs = (own & ~0x3Fu) != (share->csr & ~0x3Fu);
+                if (differs) {
+                    _mm_setcsr((share->csr & ~0x3Fu) | (own & 0x3Fu));
+                }
+                share->Drain();
+                if (differs) {
+                    _mm_setcsr(own);
+                }
+#else
+                share->Drain();
+#endif
+            });
+        }
+    } catch (...) {
+    }
+    share->Drain();
+    while (share->done.load(std::memory_order_acquire) != count) {
+        std::this_thread::yield();
+    }
+    return !share->threw.load(std::memory_order_relaxed);
 }
 
 bool
 RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
                      const RrGeoSkinTransformsView &transforms, size_t begin,
                      size_t end, std::vector<RrVec3f> *pts, bool useSimd,
-                     bool parallel)
+                     const RrGeoDispatch *parallel)
 {
     const size_t count = end - begin;
+    const RrGeoSkinMethod method = RrGeoSkinMethodOf(p);
     const bool splittable =
-        parallel && count >= RigExecGeometryParallelThreshold &&
-        (p.skinningMethod == "classicLinear" ||
-         p.skinningMethod == "dualQuaternion");
+        parallel && *parallel && count >= RigExecGeometryParallelThreshold &&
+        method != RrGeoSkinMethod::Unknown;
     if (!splittable) {
         return RrGeoApplySkinKernelRange(p, transforms, begin, end, pts,
                                          useSimd);
@@ -2725,7 +2701,7 @@ RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
         RrGeoSkinLayoutForPacket(p, transforms, pts->size());
     std::vector<float> rows;
     std::vector<RrGeoScaledDualQuat> palette;
-    if (p.skinningMethod == "classicLinear" && useSimd && !shared.rows &&
+    if (method == RrGeoSkinMethod::ClassicLinear && useSimd && !shared.rows &&
         layout.transforms) {
         rows.resize(layout.transformCount * RrGeoSkinRowStride);
         for (size_t t = 0; t < layout.transformCount; ++t) {
@@ -2733,20 +2709,22 @@ RrGeoApplySkinRanges(const RrGeoMoverParameters &p,
                                 &rows[t * RrGeoSkinRowStride]);
         }
         shared.rows = rows.data();
-    } else if (p.skinningMethod == "dualQuaternion" && !shared.palette) {
+    } else if (method == RrGeoSkinMethod::DualQuaternion && !shared.palette) {
         palette = RrGeoSkinDualQuatPalette(layout);
         shared.palette = palette.data();
         shared.paletteSize = palette.size();
     }
 
     std::atomic<bool> ok(true);
-    RrGeoParallelPointRanges(begin, end, [&](size_t rangeBegin, size_t rangeEnd) {
-        if (!RrGeoApplySkinKernelRange(p, shared, rangeBegin, rangeEnd, pts,
-                                      useSimd)) {
-            ok.store(false, std::memory_order_relaxed);
-        }
-    });
-    return ok.load(std::memory_order_relaxed);
+    const std::function<void(size_t, size_t)> range =
+        [&](size_t rangeBegin, size_t rangeEnd) {
+            if (!RrGeoApplySkinKernelRange(p, shared, rangeBegin, rangeEnd,
+                                           pts, useSimd)) {
+                ok.store(false, std::memory_order_relaxed);
+            }
+        };
+    const bool ran = RrGeoParallelPointRanges(*parallel, begin, end, range);
+    return ran && ok.load(std::memory_order_relaxed);
 }
 
 // One sample as the gather consumes it. `points` (the dense points, empty
@@ -3418,7 +3396,7 @@ RrGeoApplyRevisionKernel(
     bool useSimd, RigExecSurfaceKernelCache<RrVec3f,RrVec3d> *surfaceCache = nullptr,
     RigExecWireRestCache<RrVec3f,RrVec2f> *wireRestCache = nullptr,
     std::shared_ptr<const RrGeoWireBasisEntry> *lastWireBasis = nullptr,
-    bool parallelSkin = false)
+    const RrGeoDispatch *parallelSkin = nullptr)
 {
     switch (op) {
     case RrGeoOpExternal:
@@ -3577,7 +3555,7 @@ RrGeoRunRevisionKernel(
     std::shared_ptr<const RrGeoWireBasisEntry> *lastWireBasis = nullptr,
     const std::vector<float> *envelope = nullptr,
     const RrVec3f *source = nullptr, size_t sourceCount = 0,
-    bool parallelSkin = false)
+    const RrGeoDispatch *parallelSkin = nullptr)
 {
     if (!RrGeoPacketMatches(op, p)) {
         return false;
@@ -4036,6 +4014,25 @@ struct RrGeometryScratch {
         bool rangeSetAside = false;
         std::shared_ptr<const RrGeoSkinTopology> topology;
         bool topologyResolved = false;
+        // A skin whose layout the compiled rig does not fix: the handle
+        // RevisionStatic built from its joint arrays, and what it was built
+        // from -- the arrays' storage, the element size, the influence
+        // count and the content version of each input slot those reads walk
+        // (readLayoutSlots, Open state). Rebuilt and validated only when one
+        // of them moves; written only by this revision's RevisionStatic.
+        std::shared_ptr<const RrGeoSkinTopology> readLayout;
+        const void *readLayoutIndices = nullptr;
+        const void *readLayoutWeights = nullptr;
+        int readLayoutElementSize = 0;
+        size_t readLayoutInfluences = 0;
+        std::vector<uint32_t> readLayoutSlots;
+        std::vector<uint64_t> readLayoutVersions;
+        // rigExec:skinningMethod's token as last resolved, and its method;
+        // written only by this revision's RevisionStatic.
+        bool skinMethodResolved = false;
+        bool skinMethodHave = false;
+        uint32_t skinMethodToken = 0;
+        RrGeoSkinMethod skinMethod = RrGeoSkinMethod::Unknown;
         // A fixed revision's layout as its layout slots describe it (the
         // live SkinTopology op's handle): the Open layout while they stand
         // at their defaults, else one built from them, kept until they
@@ -4669,6 +4666,7 @@ RrGeoWireTopology(const RigExecWireSkinTopology *wire)
     topology->pointCount = size_t(wire->pointCount);
     topology->influenceCount = size_t(wire->influenceCount);
     topology->validated = wire->validated;
+    topology->identity = RrGeoNewLayoutIdentity();
     return topology;
 }
 
@@ -4729,35 +4727,38 @@ RrGeoReadToken(const RrProgram *program,
     return fallback;
 }
 
-// An array site's read of row \p at this run (RrPathArray: a static value,
-// or the elements its input slots answer at the site's time), copied into
-// \p out; empty when the row holds no array of the site's type.
+// The storage an array site's read of row \p at answers this run
+// (RrPathArray: a static value, or the elements its input slots answer at
+// the site's time); null when the row holds no array of the site's type.
+template <class T>
+const std::vector<T> *
+RrGeoArraySource(const RrProgram *program, const RrGeometryScratch *scratch,
+                 const RrGeoRead &at)
+{
+    if (at.owner) {
+        const auto site=at.owner->leafSites.find({at.path,at.rest,uint8_t(RrArrayTag<T>::value)});
+        if (site!=at.owner->leafSites.end()) {
+            if (site->second->read->tag!=RrArrayTag<T>::value) return nullptr;
+            // The same sampled slot can serve current and Default reads. Its
+            // bake-time default is not the raw Default property's snapshot.
+            // The retained path row applies authored-vs-sampled selection exactly.
+            if(at.rest && site->second->flavour==fb::ExternalInputFlavour::Raw && at.row>=0)
+                return RrPathArray<T>(program,(*scratch->pathReads)[size_t(at.row)]);
+            return static_cast<const std::vector<T> *>(RrReadExternalArray(program,*site->second));
+        }
+    }
+    return at.row < 0
+               ? nullptr
+               : RrPathArray<T>(program, (*scratch->pathReads)[size_t(at.row)]);
+}
+
+// RrGeoArraySource's elements copied into \p out; empty when it answers none.
 template <class T>
 void
 RrGeoReadArray(const RrProgram *program, const RrGeometryScratch *scratch,
                const RrGeoRead &at, std::vector<T> *out)
 {
-    const std::vector<T> *owned = nullptr;
-    if (at.owner) {
-        const auto site=at.owner->leafSites.find({at.path,at.rest,uint8_t(RrArrayTag<T>::value)});
-        if (site!=at.owner->leafSites.end() && site->second->read->tag==RrArrayTag<T>::value) {
-            // The same sampled slot can serve current and Default reads. Its
-            // bake-time default is not the raw Default property's snapshot.
-            // The retained path row applies authored-vs-sampled selection exactly.
-            if(at.rest && site->second->flavour==fb::ExternalInputFlavour::Raw && at.row>=0)
-                owned=RrPathArray<T>(program,(*scratch->pathReads)[size_t(at.row)]);
-            else owned=static_cast<const std::vector<T> *>(RrReadExternalArray(program,*site->second));
-        }
-        if (site!=at.owner->leafSites.end()) {
-            if (owned) out->assign(owned->begin(),owned->end()); else out->clear();
-            return;
-        }
-    }
-    const std::vector<T> *read =
-        at.row < 0
-            ? nullptr
-            : RrPathArray<T>(program, (*scratch->pathReads)[size_t(at.row)]);
-    if (read) {
+    if (const std::vector<T> *read = RrGeoArraySource<T>(program, scratch, at)) {
         out->assign(read->begin(), read->end());
         return;
     }
@@ -4991,6 +4992,27 @@ RrGeoMarkTopologySlots(RrProgram *program, const RigExecWireRevision &wire,
     }
     for (const uint32_t slot : slots) {
         RrInputsMarkTopology(program, slot);
+    }
+}
+
+// The input slots a skin's live joint-array reads walk: RevisionStatic keys
+// the layout handle it builds from those arrays (a layout the compiled rig
+// does not fix, or a fixed one a cycle set aside) on their content
+// versions. Open state.
+void
+RrGeoCollectReadLayoutSlots(const RrProgram *program,
+                            const RigExecWireRevision &wire,
+                            RrGeometryScratch::Revision *rev)
+{
+    rev->readLayoutSlots.clear();
+    if (wire.op != uint8_t(RrGeoOpSkin)) {
+        return;
+    }
+    for (const RrGeoAttr attr : {RrGeoAttrJointIndices, RrGeoAttrJointWeights}) {
+        RrGeoArrayReadSlots(program->pathReads, *rev,
+                            rev->attrPath[size_t(attr)],
+                            rev->attrRead[0][size_t(attr)],
+                            &rev->readLayoutSlots);
     }
 }
 
@@ -5373,6 +5395,7 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
             rev.phasedPoints.assign(wire.pointBindings.size(), nullptr);
             RrGeoResolveReads(program->pathReads, properties, wire, &rev);
             RrGeoMarkTopologySlots(program, wire, rev);
+            RrGeoCollectReadLayoutSlots(program, wire, &rev);
         }
     }
     scratch->derived.resize(geo.derivedIndex.size());
@@ -5394,6 +5417,7 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                           &scratch->derived[d].revision);
         auto &revision = scratch->derived[d].revision;
         RrGeoMarkTopologySlots(program, wire, revision);
+        RrGeoCollectReadLayoutSlots(program, wire, &revision);
         const size_t layout = geo.revisionIndex.size() + d;
         if (wire.topologyResolved)
             scratch->compiledRigTopologies[layout] = RrGeoWireTopology(wire.topology.get());
@@ -5958,10 +5982,107 @@ RrGeoAssembleMatrix(const RrGeoAssembleInputs &in,
     params->valid = true;
 }
 
-bool
-RrGeoSkinMethodToken(const std::string &method)
+// rigExec:skinningMethod (fallback classicLinear) as a method: the token
+// read every assembly, its text compared only when the token differs from
+// the one this revision last resolved.
+RrGeoSkinMethod
+RrGeoAssembleSkinMethod(const RrGeoAssembleInputs &in)
 {
-    return method == "classicLinear" || method == "dualQuaternion";
+    RrGeometryScratch::Revision &rev = *in.rev;
+    const auto read =
+        RrGeoPathRead(in.scratch, RrGeoAttrRead(in, RrGeoAttrSkinningMethod),
+                      int(RigExecWireInputTag::Token));
+    const bool have = read && read->tag == RrPathValue::Tag::Token;
+    const uint32_t token = have ? read->token : 0;
+    if (!rev.skinMethodResolved || rev.skinMethodHave != have ||
+        rev.skinMethodToken != token) {
+        const std::string text =
+            have ? in.program->TextOrEmpty(token) : std::string("classicLinear");
+        rev.skinMethod = text == "classicLinear"
+                             ? RrGeoSkinMethod::ClassicLinear
+                         : text == "dualQuaternion"
+                             ? RrGeoSkinMethod::DualQuaternion
+                             : RrGeoSkinMethod::Unknown;
+        rev.skinMethodResolved = true;
+        rev.skinMethodHave = have;
+        rev.skinMethodToken = token;
+    }
+    return rev.skinMethod;
+}
+
+// The layout of a skin the compiled rig does not fix, from its joint arrays
+// and element size as this run reads them. The handle is built and
+// validated (RigExecFormatSkinLayoutValidates, the evaluator's rule) only
+// when what it reads from moved: the arrays' storage, a walked slot's
+// content version, the element size or the influence count. A rebuild of
+// equal bytes keeps the handle, so its identity moves only with the bytes.
+std::shared_ptr<const RrGeoSkinTopology>
+RrGeoAssembleReadLayout(const RrGeoAssembleInputs &in, size_t influenceCount)
+{
+    RrGeometryScratch::Revision &rev = *in.rev;
+    const std::vector<int> *indices = RrGeoArraySource<int>(
+        in.program, in.scratch, RrGeoAttrRead(in, RrGeoAttrJointIndices));
+    const std::vector<float> *weights = RrGeoArraySource<float>(
+        in.program, in.scratch, RrGeoAttrRead(in, RrGeoAttrJointWeights));
+    const int elementSize =
+        RrGeoReadInt(in.scratch, RrGeoAttrRead(in, RrGeoAttrElementSize), 1);
+    bool same = rev.readLayout && rev.readLayoutIndices == indices &&
+                rev.readLayoutWeights == weights &&
+                rev.readLayoutElementSize == elementSize &&
+                rev.readLayoutInfluences == influenceCount &&
+                rev.readLayoutVersions.size() == rev.readLayoutSlots.size();
+    for (size_t k = 0; same && k < rev.readLayoutSlots.size(); ++k) {
+        same = RrInputArrayVersion(in.program, rev.readLayoutSlots[k]) ==
+               rev.readLayoutVersions[k];
+    }
+    if (same) {
+        return rev.readLayout;
+    }
+    auto built = std::make_shared<RrGeoSkinTopology>();
+    if (indices) built->indices.assign(indices->begin(), indices->end());
+    if (weights) built->weights.assign(weights->begin(), weights->end());
+    built->elementSize = elementSize;
+    built->influenceCount = influenceCount;
+    if (elementSize >= 1 && built->indices.size() == built->weights.size() &&
+        built->indices.size() % size_t(elementSize) == 0) {
+        built->pointCount = built->indices.size() / size_t(elementSize);
+    }
+    built->validated = RigExecFormatSkinLayoutValidates(
+        built->indices.data(), built->indices.size(), built->weights.data(),
+        built->weights.size(), elementSize, influenceCount);
+    if (!rev.readLayout || !(*rev.readLayout == *built)) {
+        built->identity = RrGeoNewLayoutIdentity();
+        rev.readLayout = std::move(built);
+    }
+    rev.readLayoutIndices = indices;
+    rev.readLayoutWeights = weights;
+    rev.readLayoutElementSize = elementSize;
+    rev.readLayoutInfluences = influenceCount;
+    rev.readLayoutVersions.resize(rev.readLayoutSlots.size());
+    for (size_t k = 0; k < rev.readLayoutSlots.size(); ++k) {
+        rev.readLayoutVersions[k] =
+            RrInputArrayVersion(in.program, rev.readLayoutSlots[k]);
+    }
+    return rev.readLayout;
+}
+
+// Each influence is finite and affine (the skin's transform rule).
+bool
+RrGeoSkinTableIsUsable(const std::vector<RrMat4d> &table)
+{
+    for (const RrMat4d &m : table) {
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                if (!std::isfinite(m[r][c])) {
+                    return false;
+                }
+            }
+        }
+        if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 || m[3][3] != 1) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void
@@ -5986,86 +6107,22 @@ RrGeoAssembleSkin(const RrGeoAssembleInputs &in,
         return;
     }
     params->skinTransforms = table;
-    params->skinningMethod = RrGeoReadToken(
-        in.program, in.scratch, RrGeoAttrRead(in, RrGeoAttrSkinningMethod),
-        "classicLinear");
+    params->skinMethod = RrGeoAssembleSkinMethod(in);
     if (in.rev->topologyResolved && in.rev->topology) {
         params->skinTopology = in.rev->topology;
-        params->skinElementSize = in.rev->topology->elementSize;
-        if (!in.rev->topology->validated ||
-            params->skinTransforms.size() !=
-                in.rev->topology->influenceCount) {
-            return;
-        }
-        for (const RrMat4d &m : params->skinTransforms) {
-            for (int r = 0; r < 4; ++r) {
-                for (int c = 0; c < 4; ++c) {
-                    if (!std::isfinite(m[r][c])) {
-                        return;
-                    }
-                }
-            }
-            if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 ||
-                m[3][3] != 1) {
-                return;
-            }
-        }
-        if (!RrGeoSkinMethodToken(params->skinningMethod)) {
-            return;
-        }
-        params->valid = true;
-        return;
+    } else {
+        // The compiled rig does not fix this layout (or a cycle set the
+        // fixed one aside): the handle its joint arrays describe.
+        params->skinTopology =
+            RrGeoAssembleReadLayout(in, params->skinTransforms.size());
+        params->skinLayoutRead = true;
     }
-    // The cache refused this mover: the layout reads per frame.
-    RrGeoReadIntArray(in.program, in.scratch,
-                      RrGeoAttrRead(in, RrGeoAttrJointIndices),
-                      &params->skinIndices);
-    RrGeoReadFloatArray(in.program, in.scratch,
-                        RrGeoAttrRead(in, RrGeoAttrJointWeights),
-                        &params->skinWeights);
-    params->skinElementSize = RrGeoReadInt(
-        in.scratch, RrGeoAttrRead(in, RrGeoAttrElementSize), 1);
-    if (params->skinElementSize < 1 ||
-        params->skinWeights.size() != params->skinIndices.size() ||
-        params->skinIndices.size() % size_t(params->skinElementSize) != 0) {
-        return;
-    }
-    // RigExecSkinLayout::Validate over the packet's own arrays: the point
-    // count is not known here, so against its own length.
-    {
-        const size_t elementSize = size_t(params->skinElementSize);
-        const size_t pointCount =
-            params->skinIndices.size() / elementSize;
-        if (params->skinIndices.size() != pointCount * elementSize ||
-            params->skinTransforms.empty()) {
-            return;
-        }
-        for (const RrMat4d &m : params->skinTransforms) {
-            for (int r = 0; r < 4; ++r) {
-                for (int c = 0; c < 4; ++c) {
-                    if (!std::isfinite(m[r][c])) {
-                        return;
-                    }
-                }
-            }
-            if (m[0][3] != 0 || m[1][3] != 0 || m[2][3] != 0 ||
-                m[3][3] != 1) {
-                return;
-            }
-        }
-        for (size_t i = 0; i < params->skinIndices.size(); ++i) {
-            if (params->skinIndices[i] < 0 ||
-                size_t(params->skinIndices[i]) >=
-                    params->skinTransforms.size()) {
-                return;
-            }
-            if (!std::isfinite(params->skinWeights[i]) ||
-                params->skinWeights[i] < 0.0f) {
-                return;
-            }
-        }
-    }
-    if (!RrGeoSkinMethodToken(params->skinningMethod)) {
+    params->skinElementSize = params->skinTopology->elementSize;
+    if (!params->skinTopology->validated ||
+        params->skinTransforms.size() !=
+            params->skinTopology->influenceCount ||
+        !RrGeoSkinTableIsUsable(params->skinTransforms) ||
+        params->skinMethod == RrGeoSkinMethod::Unknown) {
         return;
     }
     params->valid = true;
@@ -6979,7 +7036,7 @@ void
 RrGeoFoldTransformForms(RrGeometryScratch::Revision *rev, bool useSimd)
 {
     const size_t count = rev->influences.size();
-    if (rev->parameters.skinningMethod == "dualQuaternion") {
+    if (rev->parameters.skinMethod == RrGeoSkinMethod::DualQuaternion) {
         rev->rows.clear();
         rev->palette.resize(count + 1);
         for (size_t t = 0; t < count; ++t) {
@@ -7042,7 +7099,7 @@ RrGeoGatherChunkTransforms(RrProgram *program,
 {
     const RrStore &store = program->store;
     const bool dualQuat =
-        rev.parameters.skinningMethod == "dualQuaternion";
+        rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion;
     const size_t count = chunk->transforms.size();
     const bool splitAlready = chunk->palette.size() == count + 1;
     for (const int32_t position : chunk->key) {
@@ -7129,7 +7186,8 @@ bool
 RrGeoSkinRange(RrGeometryScratch::Revision *rev, const RrVec3f *preceding,
                const RrGeoSkinTransformsView &view, size_t begin,
                size_t end, bool whole, bool useSimd,
-               std::vector<RrVec3f> *target, bool parallel = false)
+               std::vector<RrVec3f> *target,
+               const RrGeoDispatch *parallel = nullptr)
 {
     std::vector<RrVec3f> &out = *target;
     if (end > begin && preceding) {
@@ -7163,7 +7221,7 @@ bool
 RrGeoFuseWholeRevision(const RrGeometryScratch::Chain &chain,
                        RrGeometryScratch::Revision *rev, size_t revisionIndex,
                        bool useSimd, std::vector<RrVec3f> *fused,
-                       bool parallel = false)
+                       const RrGeoDispatch *parallel = nullptr)
 {
     const RrVec3f *points = nullptr;
     size_t count = 0;
@@ -7237,9 +7295,14 @@ RrGeoChainBase(const RrProgram *program,
     return chain.staticBase;
 }
 
-// The owning layout operation consumes its captured typed leaf routes and
-// publishes an exact current topology, including missing-at-bake recovery.
-// Equal topology bits retain the existing immutable handle.
+// The owning layout operation of a skin whose layout the compiled rig
+// fixes: it reruns only when one of its layout leaves is written. Those
+// leaves are never Animated (the compiler fixes a layout only when none of
+// jointIndices, jointWeights and elementSize is time-varying, connected or
+// written by a property chain, and the file holds layout slots only on such
+// a skin); a host's set is an explicit layout edit, validated here once.
+// Missing-at-bake recovery: a layout the bake could not store is built from
+// the leaves' fallbacks. Equal topology bits retain the existing handle.
 void
 RrGeoRunLayoutOp(const RrProgram *program, const RrGeometryScratch &scratch,
                  const RigExecWireRevision &wire, size_t id,
@@ -7278,6 +7341,7 @@ RrGeoRunLayoutOp(const RrProgram *program, const RrGeometryScratch &scratch,
     if (rev->layoutHandle && *rev->layoutHandle == *built) {
         return;
     }
+    built->identity = RrGeoNewLayoutIdentity();
     rev->layoutHandle = std::move(built);
 }
 
@@ -8111,10 +8175,8 @@ RrGeoRunRevisionStaticStep(RrProgram *program, RrGeometryScratch *scratch,
     if (rev.chunked) {
         const RrGeoSkinTopology *const topology =
             rev.parameters.skinTopology.get();
-        const size_t indexCount = topology ? topology->indices.size()
-                                           : rev.parameters.skinIndices.size();
-        const int elementSize = topology ? topology->elementSize
-                                         : rev.parameters.skinElementSize;
+        const size_t indexCount = topology ? topology->indices.size() : 0;
+        const int elementSize = topology ? topology->elementSize : 0;
         rev.partitionStale =
             !rev.parameters.skinTopology ||
             rev.parameters.skinTopology != rev.partitionTopology ||
@@ -8279,7 +8341,7 @@ void
 RrGeoRunWholeFuse(const RrGeometryScratch::Chain &chain,
                   RrGeometryScratch::Revision *rev, size_t revisionIndex,
                   bool skin, bool packetValid, bool useSimd,
-                  bool parallel = false)
+                  const RrGeoDispatch *parallel = nullptr)
 {
     const size_t groups = chain.groupBounds.size() - 1;
     const size_t count = rev->precedingCount;
@@ -8941,7 +9003,10 @@ template <class T> void RrOpBytes(std::string *key, const std::vector<T> &v)
         RigExecOpKeyAppendRun(key, v.data(), v.size());
     else for (const auto &x : v) RrOpBytes(key, x);
 }
-void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p)
+// With \p content, a skin layout keys by its bytes; else by its handle's
+// identity, which moves exactly when a layout of other bytes is adopted.
+void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p,
+                       bool content)
 {
     RrOpBytes(key, p.kind);
     RrOpBytes(key, p.enabled);
@@ -8970,10 +9035,9 @@ void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p)
     RrOpBytes(key, p.dropoffDistance);
     RrOpBytes(key, p.widths);
     RrOpBytes(key, p.skinTransforms);
-    RrOpBytes(key, p.skinIndices);
-    RrOpBytes(key, p.skinWeights);
+    RrOpBytes(key, p.skinLayoutRead);
     RrOpBytes(key, p.skinElementSize);
-    RrOpBytes(key, p.skinningMethod);
+    RrOpBytes(key, p.skinMethod);
     RrOpBytes(key, p.externalState);
     RrOpBytes(key,p.externalInputs.size());
     for(const auto &input:p.externalInputs) {
@@ -9030,7 +9094,8 @@ void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p)
     RrOpBytes(key,p.cageToLattice);
 
     const bool topology = bool(p.skinTopology); RrOpBytes(key, topology);
-    if (topology) { RrOpBytes(key,p.skinTopology->indices); RrOpBytes(key,p.skinTopology->weights);
+    if (topology && !content) RrOpBytes(key, p.skinTopology->identity);
+    if (topology && content) { RrOpBytes(key,p.skinTopology->indices); RrOpBytes(key,p.skinTopology->weights);
         RrOpBytes(key,p.skinTopology->elementSize); RrOpBytes(key,p.skinTopology->pointCount);
         RrOpBytes(key,p.skinTopology->influenceCount); RrOpBytes(key,p.skinTopology->validated); }
     const bool frame = bool(p.externalFrame); RrOpBytes(key, frame);
@@ -9040,7 +9105,7 @@ void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p)
 // bytes in place of their content versions.
 void RrOpPacketKey(std::string *key, const RrGeometryScratch::Revision &rev, bool content)
 {
-    RrOpParametersKey(key,rev.parameters); RrOpBytes(key,rev.status.state);
+    RrOpParametersKey(key,rev.parameters,content); RrOpBytes(key,rev.status.state);
     RrOpBytes(key,rev.status.firstBadAddress);
     RrOpBytes(key,rev.layoutUsable); RrOpBytes(key,rev.envelopeOk);
     if (content) RrOpBytes(key,rev.envelope); else RrOpBytes(key,rev.envelopeVersion);
@@ -9420,7 +9485,10 @@ RrGeoCompareSkinSplitForTesting(std::string *error,
     };
     auto build = [&](size_t count, const char *method, bool nanWeight) {
         Built built;
-        built.parameters.skinningMethod = method;
+        built.parameters.skinMethod =
+            std::string(method) == "dualQuaternion"
+                ? RrGeoSkinMethod::DualQuaternion
+                : RrGeoSkinMethod::ClassicLinear;
         built.parameters.skinTransforms.resize(8);
         for (size_t t = 0; t < built.parameters.skinTransforms.size(); ++t) {
             built.parameters.skinTransforms[t] = RrMat4d(1.0);
@@ -9462,11 +9530,30 @@ RrGeoCompareSkinSplitForTesting(std::string *error,
                      bool nanWeight, bool useSimd, double *serialUs,
                      double *parallelUs) {
         const Built built = build(count, method, nanWeight);
+        // A test host: the first tasks each get a thread, later ones run
+        // after the skin returns (a late helper claims nothing).
         auto run = [&](bool parallel) {
             std::vector<RrVec3f> out = built.points;
+            const unsigned hardware = std::thread::hardware_concurrency();
+            const size_t workers = hardware > 1 ? size_t(hardware - 1) : 1;
+            std::vector<std::thread> threads;
+            std::vector<std::function<void()>> late;
+            const RrGeoDispatch dispatch = [&](std::function<void()> task) {
+                if (threads.size() < workers) {
+                    threads.emplace_back(std::move(task));
+                } else {
+                    late.push_back(std::move(task));
+                }
+            };
             const bool ok = RrGeoApplySkinKernelWithTransforms(
                 built.parameters, RrGeoSkinTransformsOf(built.parameters),
-                &out, useSimd, parallel);
+                &out, useSimd, parallel ? &dispatch : nullptr);
+            for (std::thread &thread : threads) {
+                thread.join();
+            }
+            for (const std::function<void()> &task : late) {
+                task();
+            }
             return std::make_pair(ok, std::move(out));
         };
         const auto serial = run(false);

@@ -1,4 +1,4 @@
-// RigExecCurveMover: everything about the curve mover (spec §4.1).
+// RigExecCurveMover: everything about the curve mover.
 // A curve mover deforms points from a driver curve in one of three
 // modes: ribbon (rotation-minimizing frame transport), wire (NURBS
 // displacement at the bind parameter), or emitGuidePoints. This TU owns
@@ -25,6 +25,26 @@ using rigExec::RigExecMoverExecTokens;
 using rigExec::RigExecPointFrameArray;
 
 PXR_NAMESPACE_USING_DIRECTIVE
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((bindCoordinates, "rigExec:bindCoordinates"))
+    ((driverCurve, "rigExec:driverCurve"))
+    ((driverTransforms, "rigExec:driverTransforms"))
+    ((driverTransformSpaces, "rigExec:driverTransformSpaces"))
+    ((driverBaseTransforms, "rigExec:driverBaseTransforms"))
+    ((driverBaseTransformSpaces, "rigExec:driverBaseTransformSpaces"))
+    ((space, "rigExec:space"))
+    ((driverFrames, "rigExec:driverFrames")));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_curveTokens,
+    (points)
+    (order)
+    (knots)
+    ((space, "rigExec:space")));
 
 namespace {
 const TfToken _oracleLocalFrame("local");
@@ -56,10 +76,9 @@ RigExecMoverParameters
 _BuildCurveMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    static const TfToken ribbon("ribbon");
     const TfToken *mode =
         ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->modeAttr);
-    params.kind = mode ? *mode : ribbon;
+    params.kind = mode ? *mode : _oracleToken20;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
@@ -108,24 +127,24 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
     const UsdPrim &moverPrim = ctx.moverPrim;
     const std::map<SdfPath, SdfPath> &frameChainHeads = ctx.frameChainHeads;
     const SdfPathVector binds = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:bindCoordinates");
+        moverPrim, _relTokens->bindCoordinates);
     if (!binds.empty()) {
         binding.bindCoords = binds[0];
     }
     // The wire's driver: a NURBS curve prim, read at its declared phase
     // (a curve deformed by its own chain reads "final").
     const SdfPathVector curves = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:driverCurve");
+        moverPrim, _relTokens->driverCurve);
     if (!curves.empty()) {
         const SdfPath curvePrim = curves[0].GetPrimPath();
         binding.driverCurvePoints =
-            curvePrim.AppendProperty(TfToken("points"));
+            curvePrim.AppendProperty(_curveTokens->points);
         binding.driverCurveOrder =
-            curvePrim.AppendProperty(TfToken("order"));
+            curvePrim.AppendProperty(_curveTokens->order);
         binding.driverCurveKnots =
-            curvePrim.AppendProperty(TfToken("knots"));
+            curvePrim.AppendProperty(_curveTokens->knots);
         const rigExec::RigExecReadPhase phase =
-            rigExec::RigExecPhaseForInput(moverPrim, "rigExec:driverCurve");
+            rigExec::RigExecPhaseForInput(moverPrim, _relTokens->driverCurve);
         if (!phase.IsBase()) {
             binding.phases[binding.driverCurvePoints] = phase;
         }
@@ -136,10 +155,10 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
     // spaces -- so every path delivers them the way it delivers a skin's.
     const SdfPathVector driverTransforms =
         rigExec::RigExecRelationshipTargets(
-            moverPrim, "rigExec:driverTransforms");
+            moverPrim, _relTokens->driverTransforms);
     if (!driverTransforms.empty()) {
         binding.transformPhase = rigExec::RigExecPhaseForInput(
-            moverPrim, "rigExec:driverTransforms");
+            moverPrim, _relTokens->driverTransforms);
         const auto provider = [&](SdfPath path) {
             if (binding.transformPhase.kind ==
                 rigExec::RigExecReadPhaseKind::Final) {
@@ -154,19 +173,19 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
             binding.influences.push_back(provider(t));
         }
         const SdfPathVector spaces = rigExec::RigExecRelationshipTargets(
-            moverPrim, "rigExec:driverTransformSpaces");
+            moverPrim, _relTokens->driverTransformSpaces);
         for (const SdfPath &s : spaces) {
             binding.influences.push_back(provider(s));
         }
         const SdfPathVector baseTransforms =
             rigExec::RigExecRelationshipTargets(
-                moverPrim, "rigExec:driverBaseTransforms");
+                moverPrim, _relTokens->driverBaseTransforms);
         for (const SdfPath &b : baseTransforms) {
             binding.influences.push_back(provider(b));
         }
         for (const SdfPath &b :
              rigExec::RigExecRelationshipTargets(
-                 moverPrim, "rigExec:driverBaseTransformSpaces")) {
+                 moverPrim, _relTokens->driverBaseTransformSpaces)) {
             binding.influences.push_back(provider(b));
         }
         binding.driverTransformCount = int(driverTransforms.size());
@@ -175,20 +194,20 @@ _BindCurveMover(const rigExec::RigExecMoverBindContext &ctx)
         // rigExec:space, the rig's carry, read at the drivers' phase. Only
         // a wire whose points are posed applies it (RigExecCarryWireCurves).
         const SdfPathVector carries =
-            rigExec::RigExecRelationshipTargets(moverPrim, "rigExec:space");
+            rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->space);
         if (!carries.empty()) {
             binding.carrySpace = provider(carries[0]);
         }
     }
     const SdfPathVector frames = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:driverFrames");
+        moverPrim, _relTokens->driverFrames);
     if (!frames.empty()) {
         binding.driverFrames = frames[0];
     }
     if (!binding.bindCoords.IsEmpty()) {
         const rigExec::RigExecReadPhase phase =
             rigExec::RigExecPhaseForInput(
-                moverPrim, "rigExec:bindCoordinates");
+                moverPrim, _relTokens->bindCoordinates);
         if (!phase.IsBase()) {
             binding.phases[binding.bindCoords] = phase;
         }
@@ -267,10 +286,10 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
         if (!driverTransforms.empty()) {
             // Independently of the assembler: the providers' own
             // matrices, measured and weighted per control point.
-            const auto phase = rigExec::RigExecPhaseForInput(prim, "rigExec:driverTransforms");
+            const auto phase = rigExec::RigExecPhaseForInput(prim, _relTokens->driverTransforms);
             std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
-            for (const char *name : {"rigExec:driverTransforms", "rigExec:driverTransformSpaces", "rigExec:driverBaseTransforms", "rigExec:driverBaseTransformSpaces", "rigExec:space"}) {
-                for (const auto &path : rigExec::RigExecRelationshipTargets(prim,name)) {
+            for (const TfToken *name : {&_relTokens->driverTransforms, &_relTokens->driverTransformSpaces, &_relTokens->driverBaseTransforms, &_relTokens->driverBaseTransformSpaces, &_relTokens->space}) {
+                for (const auto &path : rigExec::RigExecRelationshipTargets(prim,*name)) {
                     const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(path,phase,moverPath) : nullptr;
                     if (value) matrices[path] = *value;
                 }
@@ -545,7 +564,7 @@ _OracleCurveMover(const rigExec::RigExecMoverOracleContext &ctx)
     }
     if (!frameTargets.empty()) {
         const auto ribbon = stage->GetPrimAtPath(frameTargets[0]);
-        const auto phase = rigExec::RigExecPhaseForInput(ribbon,"rigExec:driverCurve");
+        const auto phase = rigExec::RigExecPhaseForInput(ribbon,_relTokens->driverCurve);
         if (!phase.IsBase() && ctx.phasedPoints) {
             const auto *value = ctx.phasedPoints(curvePoints,phase,moverPath);
             if (value && value->IsHolding<VtVec3fArray>()) posedCvs = value->UncheckedGet<VtVec3fArray>();
@@ -600,7 +619,7 @@ _ValidateCurveMover(
 {
     SdfPathVector carries;
     if (UsdRelationship rel =
-            ctx.prim.GetRelationship(TfToken("rigExec:space"))) {
+            ctx.prim.GetRelationship(_curveTokens->space)) {
         rel.GetTargets(&carries);
     }
     const std::string who = "CurveMover " + ctx.prim.GetPath().GetString();

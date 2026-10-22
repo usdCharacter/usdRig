@@ -32,7 +32,7 @@ struct RigExecWeightPacketWorkspace {
 };
 
 /// Applies the range policy to a candidate weight; returns false on a
-/// strict violation or non-finite input (spec §4.1 RangePolicy).
+/// strict violation or non-finite input.
 bool RigExecApplyWeightRangePolicy(const TfToken &policy, float *w);
 
 /// The resolved inputs of a RigExecStaticWeight.
@@ -91,7 +91,7 @@ struct RigExecDynamicWeightInputs {
 
 /// Remaps \p base by r_i = (b_i d) s + a. \p base is null when
 /// rigExec:baseWeight targets nothing, which is legal only for a constant
-/// packet (spec §4.1).
+/// packet.
 RigExecWeightPacket RigExecBuildDynamicWeightPacket(
     const RigExecDynamicWeightInputs &inputs,
     const RigExecWeightPacket *base);

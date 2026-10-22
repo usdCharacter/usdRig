@@ -495,8 +495,7 @@ class RigExecJoint "RigExecJoint" (
 ################################################################
 # Solvers
 #
-# View-free extraction (user-directed 2026-07-25, RigExecPointFrameView
-# DELETED): every solver owns an ordered rigExec:joints list; the compiler
+# View-free extraction: every solver owns an ordered rigExec:joints list; the compiler
 # binds each listed joint to one aggregate element in the
 # derived layer (list position = aggregate element index; length = sample
 # count). The joint self-extracts its posed frame from the solver's
@@ -626,19 +625,17 @@ class RigExecFkChain "RigExecFkChain" (
         unchanged: the chain must still execute after the provider's
         writer, and the compiler warns when it does not.
 
-        Mechanics: the inference is compiled, not evaluated. Each
-        compile writes the derived target into the stage session layer
-        (never the asset), where the ordinary relationship machinery
-        picks it up -- scheduling and the compiled program both see it
-        as authored. Session-layer opinions on
-        rigExec:startFrame for a `parent` chain are therefore
-        compiler-managed: hand-authoring targets there while the policy
-        is active may be replaced on recompile. Author them in an
-        asset layer instead, which always wins cleanly."""
+        Mechanics: the inference is compiled, not evaluated, and it
+        authors nothing. Each compile resolves the provider into the
+        compiled chain as its start-frame input, through one rule that
+        native, frozen, and `.rigexec` evaluation share, so scheduling
+        and every compiled program see it exactly as an authored target.
+        The relationship itself stays empty on the stage; a recompile
+        (a reparented joint, a policy edit) re-derives it."""
     )
     rel rigExec:joints (
         doc = """Ordered output joints this solver poses (view-free
-        extraction, user-directed 2026-07-25). List position is the
+        extraction). List position is the
         aggregate element index; length is the effective sample count.
         The compiler binds each joint to one aggregate element
         in the compiled program."""
@@ -2707,11 +2704,10 @@ class RigExecBlendSample "RigExecBlendSample" (
 
         This exists because the dense form's cost does not depend on the weight.
         A dense sample's full points array is read and copied off the stage once
-        per sample per frame whether its channel sits at 0 or at 1, measured at
-        0.37-0.38 ms per target per frame on a 26,276-point body -- so 169
-        correctives cost ~65 ms/frame with the rig standing at rest.
-        The real correctives move 4.87% of
-        the mesh, 1,279 points on average, so the sparse form is not an
+        per sample per frame whether its channel sits at 0 or at 1, so a full
+        set of correctives pays that copy every frame even with the rig at
+        rest. Correctives move a small fraction of the mesh, so the sparse
+        form is not an
         optimization of the dense one; it is the difference between a rig that
         runs and a rig that does not.
 
@@ -4369,11 +4365,10 @@ class RigExecTouchRegions "RigExecTouchRegions" (
     nothing and keeps the door open for anything drawable parented under
     it later.
 
-    THE HIGHLIGHT OVERLAY IS NOT HERE, and that is measured rather than
-    chosen. It is a real rprim, and a prim inside the asset is inside the
-    rig's read roots: authoring the hover array there cost 184.89 ms per
-    region crossing against 3.99 ms at the stage root, with a 16.7 ms
-    frame. It also cannot carry its own schema type -- a concrete type
+    THE HIGHLIGHT OVERLAY IS NOT HERE. It is a real rprim, and a prim inside
+    the asset is inside the rig's read roots: authoring the hover array there
+    invalidates the rig on every region crossing, which a prim at the stage
+    root does not. It also cannot carry its own schema type -- a concrete type
     with no UsdImaging adapter never becomes an rprim at all. So the
     overlay is a plain Mesh at the stage root, named for its asset so a
     shot full of characters does not share one.

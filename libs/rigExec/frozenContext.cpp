@@ -6,6 +6,7 @@
 #include "generation.h"
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <set>
 
 namespace rigExec {
@@ -177,7 +178,11 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                       const RigExecBackgroundScheduler *scheduler,
                       const SdfPath &rig, RigExecFrozenRunReport *report)
 {
-    RigExecInputReplayComparisonScope replayComparison("RigExecEvaluateFrozen");
+    // Background lanes record nothing; see RigExecFrozenProgram.
+    std::optional<RigExecInputReplayComparisonScope> replayComparison;
+    if (context.frozen && context.frozen->RecordsInputReplay()) {
+        replayComparison.emplace("RigExecEvaluateFrozen");
+    }
     if (report) {
         report->Clear();
     }
@@ -185,7 +190,7 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
     declined.time = inputs.time;
     declined.valid = false;
 
-    // D7: a refusal rig has no program a worker could run. The context
+    // A refusal rig has no program a worker could run. The context
     // carries the flag so that even a job enqueued by mistake -- a caller
     // that never asked RigExecShouldEnqueueBackgroundJob -- declines here
     // rather than evaluating against a vector sampled for nothing.
@@ -210,7 +215,7 @@ RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
     if (!arena.ResizeFor(context)) {
         return declined;
     }
-    // The serial scope is the D4 boundary: every kernel variant the runner
+    // The serial scope is the serial-variant boundary: every kernel variant the runner
     // reaches takes its serial form on this thread, whatever the
     // process-wide switch says, so no work leaks back onto the shared arena
     // at normal priority. The runner must also never hop threads: the scope
@@ -251,8 +256,11 @@ RigExecRigPose
 RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                       const RigExecFrameInputs &inputs)
 {
-    RigExecInputReplayComparisonScope replayComparison("RigExecEvaluateFrozen");
-    // Stream 0 stub, retained: without a step runner no request can prove
+    std::optional<RigExecInputReplayComparisonScope> replayComparison;
+    if (context.frozen && context.frozen->RecordsInputReplay()) {
+        replayComparison.emplace("RigExecEvaluateFrozen");
+    }
+    // Fail-closed stub: without a step runner no request can prove
     // bit-identity, so every request answers invalid -- the fail-closed
     // answer -- while still carrying the requested time on that pose.
     (void)context;

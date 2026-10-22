@@ -823,7 +823,7 @@ enum class RigExecBakedSlotKind {
 // straight line. PROGRAM ORDER -- the order the straight line used -- is still
 // the reference: a step's index is its position in it, every edge points
 // forward, and the serial executor runs the steps in index order. That is what
-// makes "byte-identical to the old Run" a property any topological order of
+// makes "byte-identical to the serial run" a property any topological order of
 // this graph has, because floating-point results depend only on operand values
 // and each step's arithmetic is fixed.
 // A step declares the slot RANGES it reads and writes; the edges are computed
@@ -1013,7 +1013,7 @@ struct RigExecBakedWalkHop {
     /// where the walk never falls back to it.
     int leaf = -1;
     int poseWeight = -1; ///< same-generation Float publication, revision oracle only
-    int crossDomain = -1; ///< explicit S9 pose/geometry version read
+    int crossDomain = -1; ///< explicit cross-domain pose/geometry version read
 };
 
 /// One input of a property revision as _EvaluatePropertyChains reads it
@@ -1247,7 +1247,7 @@ RigExecBakedIsSourceDomain(RigExecBakedSlotDomain domain)
            domain == RigExecBakedSlotDomain::RequiredStageFramesAdmission;
 }
 
-/// Whether \p domain's storage is SSA, one entry per writer (§3.1).
+/// Whether \p domain's storage is SSA, one entry per writer.
 ///
 /// The two pose frame domains are. Everything else has one writer per slot
 /// per run, or is scratch a single step owns, so there is no version to
@@ -1383,11 +1383,8 @@ struct RigExecBakedStep {
     std::vector<RigExecBakedSlotRange> reads, writes;
     /// Program indices, sorted; every entry of preds is < this step's index.
     ///
-    /// There is no second list beside this one. A step used to also carry
-    /// its RESTORE predecessors -- the writers whose version the end of a
-    /// run no longer held, because a later step had overwritten the slot --
-    /// and cone re-execution had to close over them. Versioned storage
-    /// (§3.1) makes that list empty by construction: no version is ever
+    /// There is no second list of RESTORE predecessors beside this one.
+    /// Versioned storage makes such a list empty by construction: no version is ever
     /// overwritten, so re-running a reader never means re-running a writer
     /// to put a slot back.
     std::vector<int> preds, succs;
@@ -1397,7 +1394,7 @@ struct RigExecBakedStep {
 
     // A step is a pure function of its declared reads with three exceptions,
     // and every one of them is recorded here so that the dirty set can name
-    // it rather than the executor having to guess (§7).
+    // it rather than the executor having to guess.
     /// The step reads source slots or completed head outputs, so it can be
     /// run before the dirty set is computed, every run, and compared by
     /// VALUE. Heads themselves never participate in this source pass.
@@ -1433,7 +1430,7 @@ struct RigExecBakedStep {
 
     /// Filled by the clustering pass; the serial executor ignores all four.
     /// `level` is the longest-path level the packing groups by, `sizeUnits`
-    /// the size term of the cost model (§5.1) and `cost` the microseconds
+    /// the size term of the cost model and `cost` the microseconds
     /// that model predicts.
     int cluster = -1;
     int level = 0;
@@ -1487,12 +1484,12 @@ struct RigExecBakedStep {
         counters.Clear();
     }
 
-    /// Records that this run skipped the step (§7).
+    /// Records that this run skipped the step.
     ///
     /// The diagnostics stay, and so do the two counters that are PROGRAM
     /// CONSTANTS: a skipped step's lines describe state nothing changed, and
     /// how many chains and revisions the program holds is a property of the
-    /// program rather than of a run (§4.2). What does not stay is the three
+    /// program rather than of a run. What does not stay is the three
     /// counters that are OBSERVATIONS of this run -- a revision the frame
     /// did not execute did not execute, a node it did not report did not
     /// report its creation, a schedule it did not build did not build one.
@@ -1517,7 +1514,7 @@ enum : uint8_t {
 /// scope, so reading it takes no initialization guard.
 inline const std::vector<RigExecBakedClusterSet> kRigExecBakedNoCones{};
 
-/// What Build knows about re-running part of a program (§7).
+/// What Build knows about re-running part of a program.
 ///
 /// Both families are closures computed once, over clusters rather than over
 /// steps, because a cluster is what the executor can skip: `cone[c]` is
@@ -1530,9 +1527,8 @@ struct RigExecBakedCones {
     /// RigExecBakedBuildCones and immutable after; program copies and the
     /// imaging bridge's affected index share it. Null before BuildCones.
     ///
-    /// The only closure there is. The restore closure that used to sit
-    /// beside it -- "run this cluster and all of THIS had to have run first"
-    /// -- is gone with the storage that made it necessary (§3.1).
+    /// The only closure there is: versioned storage needs no restore
+    /// closure.
     std::shared_ptr<const std::vector<RigExecBakedClusterSet>> cone;
     /// *cone, or kRigExecBakedNoCones when null.
     const std::vector<RigExecBakedClusterSet> &Cone() const
@@ -1544,7 +1540,7 @@ struct RigExecBakedCones {
     RigExecBakedClusterSet always;
     /// Clusters holding any step that is not a geometry step. The FIRST run
     /// of a program is dirty here and in the geometry clusters of the
-    /// revisions a rebuild did not carry, rather than everywhere (§7 [S28]).
+    /// revisions a rebuild did not carry, rather than everywhere.
     RigExecBakedClusterSet poseClusters;
     /// Provider slot -> the cluster of the compose step that reads its
     /// avars, or -1. What an avar that moved makes dirty.
@@ -1584,13 +1580,13 @@ struct RigExecBakedCones {
     /// (kEditRouteAvar), or the rest and ladder ops (kEditRouteHead). Zero
     /// where nothing does -- a value read into the prologue and handed to a
     /// step no dirty set can name -- and an edit there bumps the program
-    /// stamp instead of being routed (unified-program spec rules S2, S3).
+    /// stamp instead of being routed.
     std::vector<uint8_t> editRoute;
 
     // What a live run decides with. A cluster is the unit a task runs, not
     // the unit that moved: one dirty step does not make its cluster-mates
     // dirty, because they read exactly what they read last run and versioned
-    // storage (§3.1) left it where it was. So the live closure is taken over
+    // storage left it where it was. So the live closure is taken over
     // `step.succs` and a run skips every step outside it, including the clean
     // members of a cluster it does dispatch.
     // The per-cluster tables above are KEPT beside these rather than derived
@@ -1887,7 +1883,7 @@ struct RigExecBakedProgramImpl {
     /// the rig prim's parent (rigEvaluator.cpp's `assetRoot`).
     UsdPrim assetRoot;
     /// Per entry of `xformSlots`: the relative transform this run read, and
-    /// the one the run before it read. The seed is a SOURCE (docs §7) -- it
+    /// the one the run before it read. The seed is a SOURCE -- it
     /// reads outside the program and always runs -- so what makes its
     /// readers dirty is the two compared by VALUE, never "the time moved".
     /// It is also what `providerBaseXforms` publishes.
@@ -2016,7 +2012,7 @@ struct RigExecBakedProgramImpl {
     // animated, connected or chain-written rest bake and what lets a drag
     // on one be placed; when nothing varies and nothing is dragged the
     // Build-time answer stands and the frame path never looks at any of
-    // them, which is the fast path the whole rig shape used to be.
+    // them.
     struct Ladder {
         RigExecBakedInput<GfMatrix4d> restSpace, defaultSpace, posedSpace;
         RigExecBakedInput<GfMatrix4d> parentSpace, parentDefaultSpace,
@@ -2274,7 +2270,7 @@ struct RigExecBakedProgramImpl {
 
     std::vector<double> avars;
     std::vector<GfMatrix4d> posedM;
-    /// The pose frames, in SSA form (§3.1).
+    /// The pose frames, in SSA form.
     ///
     /// Slot i's FIRST version is entry i -- what the compose writes, and for
     /// an xform-derived slot what the seed leaves -- and every later writer
@@ -2496,8 +2492,8 @@ struct RigExecBakedProgramImpl {
         std::vector<int> fallbackSlots;
         /// FkChain's element table, so the solve allocates nothing.
         /// The `fin` versions this solve reads: one per control, then the
-        /// four named controls. Decided at Build like every other read
-        /// (§3.1); -1 controls are bound to their own slot's seed and never
+        /// four named controls. Decided at Build like every other read;
+        /// -1 controls are bound to their own slot's seed and never
         /// read.
         std::vector<uint32_t> controlReads;
         uint32_t rootRead = 0, midRead = 0, endRead = 0, poleRead = 0;
@@ -2887,6 +2883,18 @@ struct RigExecBakedProgramImpl {
     // that no body reads the environment or a function-local static.
     /// RIGEXEC_BAKED_CHUNK_VERTS: vertices one chunk covers before the cap.
     size_t chunkVertexTarget = RigExecGeometryParallelThreshold;
+    /// RIGEXEC_GPU_DEFORM_STATS: the owning thread prints device-chain
+    /// timings at the GPU boundary. Never printed on a frozen worker.
+    bool gpuDeformStats = false;
+    /// Schedule diagnostics, read once at Build by
+    /// RigExecBakedReadScheduleSettings (bakedSchedule.h).
+    bool scheduleParallel = false;
+    bool scheduleReport = false;
+    bool scheduleCalibrate = false;
+    bool scheduleStepTiming = false;
+    bool traceAllSteps = false;
+    int calibrationFrames = 8;
+    int stepTimingFrames = 8;
     /// RIGEXEC_BAKED_MAX_CHUNKS: the most chunks one revision is cut into.
     size_t chunkCap = 32;
     /// RIGEXEC_BAKED_RANGE_CHAINS (default on), read at Build: whether a chain
@@ -2963,7 +2971,7 @@ struct RigExecBakedProgramImpl {
     // deciding whether a source ran: sources always run and their outputs are
     // compared, which is what makes an override on a routed prim, a released
     // drag, a rebuilt skin layout and a moved keyframe all reach the graph
-    // through one test (§7).
+    // through one test.
     RigExecBakedCones cones;
     /// The steps this run decided to run. Every step outside it keeps its
     /// slots, its diagnostics and its structural counters, whether or not
@@ -3005,7 +3013,7 @@ struct RigExecBakedProgramImpl {
     /// program -- a value edit on an input the frame path re-reads, which is
     /// IsInvalidatedBy's documented gap. One run of everything answers it.
     /// Set/ClearInteractiveOverrides do NOT bump it: an override is a source
-    /// value like any other and is compared like one (§7).
+    /// value like any other and is compared like one.
     uint64_t programStamp = 0;
     uint64_t lastProgramStamp = 0;
     /// Whether the closure this run computed trusts nothing it holds (a
@@ -3029,15 +3037,12 @@ struct RigExecBakedProgramImpl {
     /// The order to fill the published maps in: the publication list's
     /// indices, sorted by path.
     ///
-    /// A biped frame publishes about 850 keys into five ordered maps and
-    /// every one of them used to be a search from the root. Filled in path
-    /// order instead, each key belongs immediately past the one before it,
+    /// A frame publishes its keys into five ordered maps. Filled in path
+    /// order, each key belongs immediately past the one before it,
     /// so a hint at the map's end makes the insertion one comparison. The
     /// order is a PERMUTATION and not the list itself, because the lists
-    /// arrive from the evaluator in binding order -- measured on the biped,
-    /// neither the joints nor the controls come out in path order, so the
-    /// obvious "just walk the list" is wrong on the one rig this was written
-    /// for. Everything the walk ORDER is observable through (the degenerate
+    /// arrive from the evaluator in binding order, which is not path order
+    /// in general. Everything the walk ORDER is observable through (the degenerate
     /// frame diagnostics) stays in the list's own order; only the map
     /// filling moves.
     std::vector<int> jointPublishOrder;
@@ -3045,11 +3050,10 @@ struct RigExecBakedProgramImpl {
     std::vector<int> solverPublishOrder;
     /// Whether the sorted orders above are STRICTLY ascending -- which they
     /// are unless a list names one path twice. A repeated path would make an
-    /// emplace keep the first value where the assignment it replaces kept
-    /// the last, so such a list is published the old way -- and the sort
+    /// emplace keep the first value where an assignment keeps the last, so
+    /// such a list is published by assignment in list order -- and the sort
     /// that built the permutation is stable, so "the last" is still the last
-    /// of the two in the publication list, as it was before the permutation
-    /// existed.
+    /// of the two in the publication list.
     bool jointPathsAscending = false;
     bool controlPathsAscending = false;
     bool solverArraysAscending = false;
@@ -3060,6 +3064,10 @@ struct RigExecBakedProgramImpl {
     double timedRegionUs = 0;
     double timedEpilogueUs = 0;
     size_t timedFrames = 0;
+    /// Frames the calibration and the step timing have watched on this
+    /// program, counted by the Run epilogue on the owning thread.
+    int calibrationFramesSeen = 0;
+    int stepTimingFramesSeen = 0;
     /// The same sums for the cold runs a measurement leaves out
     /// (`coldRunExcluded`), which the table reports on a line of their own.
     double coldPrologueUs = 0, coldRegionUs = 0, coldEpilogueUs = 0;
@@ -3462,7 +3470,7 @@ struct RigExecBakedProgramImpl {
         /// stage, for the one diagnostic it can emit. A source reads it
         /// instead, and compares it, so that the fuse is a pure function of
         /// its declared slots and a run that skips the fuse is a run in
-        /// which this did not move either (§7).
+        /// which this did not move either.
         float defaultWeight = 0, lastDefaultWeight = 0;
         /// The partition no longer describes the layout the packet carries,
         /// so the keys cannot be trusted and the fuse runs the revision
@@ -3758,6 +3766,9 @@ struct RigExecBakedProgramImpl {
         uint64_t gpuLastSerial = 0;
         uint64_t gpuLastBaseVersion = ~uint64_t(0);
         std::vector<GfVec3f> gpuScratch;
+        /// Names this chain's device buffers; a copy (a frozen clone's
+        /// chain) gets its own, and destruction frees them.
+        RigExecGpuDeviceKey gpuDeviceKey;
         /// The Derived steps that read this chain, in program order.
         std::vector<int> gpuDerivedSteps;
         /// For a chain whose last revision solves on a device: its Derived
@@ -5173,9 +5184,9 @@ struct RigExecBakedWalkEntry {
 
 /// The Build-time scratch every per-domain bake function shares.
 ///
-/// The lambdas Build used to close over -- refuse, fold, readToken, targets,
-/// bind, slotOf -- became these members when the bake split across files, so
-/// that every domain records the same invalidation facts for the same read.
+/// Members shared by every per-domain bake function -- refuse, fold,
+/// readToken, targets, bind, slotOf -- so that every domain records the
+/// same invalidation facts for the same read.
 /// Dropping one of them is how a captured constant stops being invalidated,
 /// which is silent until an edit produces a wrong answer.
 struct RigExecBakedBuildContext {
@@ -5530,7 +5541,7 @@ void RigExecBakedNoteWeightInputs(
     RigExecBakedDependencySink *sink);
 
 /// Resets the per-run DELTAS a geometry step would have written, for a run
-/// that skipped it (§7).
+/// that skipped it.
 ///
 /// A revision's state is two kinds of thing: values that outlive a run it
 /// sat out -- the influence table, the packet, the points, the status -- and
@@ -5609,7 +5620,7 @@ RigExecBakedAvarBindingRange(const std::vector<uint32_t> &begin,
 /// The solver half of the prologue: every ribbon's live driver-curve points,
 /// read off the stage and compared with the last run's.
 ///
-/// A source in the sense of §7 -- it reads outside the program and its
+/// A source in the re-execution sense -- it reads outside the program and its
 /// comparison is what dirties the solvers that read it -- but a prologue
 /// pass rather than a step, for the same reason the bound inputs are one:
 /// it takes the stage's locks, and a step body may not.
@@ -6279,7 +6290,7 @@ struct RigExecBakedRunShadow {
     bool avarsDisturbed = false;
 };
 
-/// The run statistics of the generation that produced the pose (§8.3).
+/// The run statistics of the generation that produced the pose.
 ///
 /// RIGEXEC_BAKED_VERIFY_CONES runs the frame a second time, forced, and that
 /// pass writes the same bookkeeping the first one did: how many clusters the

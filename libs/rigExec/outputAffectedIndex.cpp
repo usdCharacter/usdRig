@@ -66,7 +66,7 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
     _override.Resize(_clusterCount);
     // The executor's time/override rule as sets: varying steps close over
     // their clusters for a moved time, override steps for a standing
-    // override (plan 2.1 planner parity).
+    // override, matching the planner.
     for (const int step : program.cones.varyingSteps) {
         if (step >= 0 &&
             size_t(step) < program.clustering.clusterOf.size()) {
@@ -126,7 +126,7 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
     };
     // Every provider slot the compose pass reads: the path the sampler names
     // a source by, mapped to the cluster whose cone a moved avar dirties
-    // (§7 steady state). Slots with no compose cluster (-1) join the
+    // in the steady state. Slots with no compose cluster (-1) join the
     // universe seedless instead of answering conservatively.
     const size_t slots =
         std::min(program.paths.size(), program.cones.avarCluster.size());
@@ -214,7 +214,7 @@ RigExecOutputAffectedIndex::Build(const RigExecBakedProgramImpl &program,
               tableAt(program.cones.constraintArrayClusters, i));
     }
     // Overridable inputs: every property an input's walk reads, the path a
-    // stage value edit on it names (unified-program spec rule S7). An edit
+    // stage value edit on it names. An edit
     // there re-runs exactly what an override on it would -- the steps that
     // declare the input, the provider compose its avar lands in, or the
     // readers of what the rest and ladder ops reading it can move -- so it

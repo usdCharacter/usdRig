@@ -40,6 +40,10 @@ public:
     RigExecSceneProgramLayout layout;
     std::vector<RigExecSceneOperation> operations;
     std::map<SdfPath,RigExecValueId> publicValues;
+    /// A control's published frame when presentation revises it after its
+    /// last version (RigExecIkFkMatchConstraint). No operation reads these;
+    /// a control absent here publishes its final pose version.
+    std::map<SdfPath,RigExecValueId> presentedPoses;
     // Compile-only owner admission, independent of the serialized value graph.
     std::map<SdfPath,std::string> skippedOperations;
     RigExecCompiledGraph graph;

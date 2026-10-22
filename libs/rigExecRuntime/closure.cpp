@@ -1091,7 +1091,9 @@ bool RrExecuteOpGraph(RrProgram *p,bool force,std::string *error)
         callbacks.wait=[&]{s.wait();};
     }
     std::string graphError;
+    s.rangeDispatch=callbacks.dispatch ? &s.dispatch : nullptr;
     const bool ok=RigExecExecuteOpGraph(p->opGraph,state.changedLeaves,state.seeds,force,callbacks,&s.opExecution,&graphError,&s.opWorkspace,&state.candidateOps);
+    s.rangeDispatch=nullptr;
     // The ops that ran, by op index, in completion order: completion numbers
     // every candidate (pending) once from 1, a cluster's members
     // consecutively, and a serial run's bodies in the order they ran.

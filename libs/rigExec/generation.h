@@ -6,9 +6,9 @@
 // simply evaluates live when asked. The token source itself lives in the
 // background scheduler (backgroundScheduler.h); what lives here is the
 // checking discipline -- which call sites ask, and what each answer means --
-// plus the D7 admission policy, so that every producer and consumer of a
+// plus the no-baked-program admission policy, so that every producer and consumer of a
 // token answers those questions the same way.
-// The bump contract (Stream E wires it; the calls already exist): every
+// The bump contract: every
 // rig-affecting edit calls RigExecBackgroundScheduler::CancelGeneration for
 // the rig, and the edit-commit trigger enqueues fresh jobs under the new
 // token. Entering a rig at generation 0 and bumping on every edit is what
@@ -63,7 +63,7 @@ RigExecGenerationCheckBeforePublish(
 }
 
 /// Whether a background warming job may be created for a rig whose bake
-/// state is \p bakeRefused (plan D7).
+/// state is \p bakeRefused.
 ///
 /// False for a refusal rig: the dynamic path drives OpenExec against the
 /// live stage and cannot run on a worker, so there is nothing a background
@@ -78,7 +78,7 @@ RigExecShouldEnqueueBackgroundJob(bool bakeRefused)
 }
 
 /// Whether the UI thread's own live result for a rig may be memoized into
-/// the frame cache. Always true, including for bake refusals: D7 memoizes
+/// the frame cache. Always true, including for bake refusals: a refusal rig memoizes
 /// UI-thread evaluations on the same key with no background fill, so a
 /// refusal rig still hits on a repeated frame -- it just never warms one it
 /// has not visited.

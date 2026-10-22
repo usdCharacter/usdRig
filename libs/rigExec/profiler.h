@@ -64,7 +64,7 @@ struct RigExecProfileSummaryRow {
     uint64_t maxUs = 0;
 };
 
-/// Trace categories for the per-frame cache lanes (Stream F). Lookup hits
+/// Trace categories for the per-frame cache lanes. Lookup hits
 /// and misses record on "frameCache"; scheduler queue depth, running jobs,
 /// and cancels on "scheduler". Perfetto groups by category, so each renders
 /// as its own lane.

@@ -75,8 +75,7 @@ _PhasedTypesAgree(const SdfValueTypeName &consumer,
 }
 
 /// Binds one input of \p prim, or leaves the binding empty when there is
-/// none -- which is what `prim.GetAttribute(...)` returning invalid used to
-/// mean at the call site.
+/// none -- the equivalent of `prim.GetAttribute(...)` returning invalid.
 RigExecPropertyChainBindings::Input
 _BindInput(const UsdPrim &prim, const char *name, UsdTimeCode time)
 {

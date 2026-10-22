@@ -1,11 +1,8 @@
-// RigExec exec computations for solvers and mover operands
-// (spec §7.2, §12.1).
+// RigExec exec computations for solvers and mover operands.
 // Weight objects publish computeWeightPacket, blend samples/inputs publish
 // their descriptors, and the aggregate solvers publish
-// computePointFrameArray. The geometry writer callbacks that used to live
-// here belonged to compiler-authored hidden application prims; those, the
-// compiler, and its derived stage are all gone -- point chains evaluate
-// through the shared typed operation graph.
+// computePointFrameArray. Point chains evaluate through the shared typed
+// operation graph, not through callbacks here.
 #include "types.h"
 #include "moverGraph.h"
 #include "frameExtraction.h"
@@ -121,7 +118,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (moverPath)
     ((outputsExpression, "outputs:expression"))
 
-    // Volumetric weight objects (spec §4.1 volumetric extension).
+    // Volumetric weight objects.
     (computeFalloffLut)
     (falloffLut)
     (weightTargetPoints)
@@ -167,7 +164,7 @@ const TfToken _workerCurveType("RigExecCurveWeight");
 const TfToken _workerMultiply("multiply");
 
 
-// Weight objects (spec §4.1).
+// Weight objects.
 // The packet arithmetic lives in weightPackets.h, not here: the baked
 // evaluation program has to publish the identical packet from the values
 // it bound at compile time, and the only way to guarantee that is one
@@ -254,7 +251,7 @@ _BuildDynamicWeightPacket(const VdfContext &ctx)
         inputs, ctx.GetInputValuePtr<RigExecWeightPacket>(_tokens->basePacket));
 }
 
-// Volumetric weight objects (spec §4.1 volumetric extension).
+// Volumetric weight objects.
 // The three shapes share a prologue (placement, band, sampled points) and
 // differ only in the extra inputs their distance function needs, so the
 // common half is read once here and each callback adds its own.
@@ -444,9 +441,9 @@ _BuildBlendChannel(const VdfContext &ctx)
     return channel;
 }
 
-// Mover-owned parameter packets (spec §4.1: every concrete mover schema
+// Mover-owned parameter packets (every concrete mover schema
 // owns a statically registered computeMoverParameters). The compiler's
-// compiler helpers (RigExecResolvedMatrix and friends, spec §12.1) author
+// compiler helpers (RigExecResolvedMatrix and friends) author
 // the rigExec:resolved* relationships in the generated session layer,
 // binding each declared dependency to exactly one catalogued provider.
 
@@ -456,15 +453,15 @@ _BuildBlendChannel(const VdfContext &ctx)
 // The blend-shape mover builder and registration live in
 // movers/blendShapeMover.cpp with the rest of the blend-shape mover.
 
-// The stock v26.08 callback form for a point3f[] application (spec §12.1):
+// The stock v26.08 callback form for a point3f[] application:
 // reads the preceding vector with VdfReadIterator, allocates/writes the
 // result with stock VDF vector APIs, and references the prior input
 // directly for disabled/failure pass-through. Each host's kernel is fixed
 // by its application schema — there is no runtime operation dispatch
-// (spec §4.1: no universal array host).
+// (no universal array host).
 
 // Gate shared by both hosts: the scalar computeMoverStatus decides
-// whether the kernel may apply (spec §7.1).
+// whether the kernel may apply.
 bool
 _StatusAllowsApply(const VdfContext &ctx)
 {
@@ -572,7 +569,7 @@ _EvaluateBlendPointArrayExpression(const VdfContext &ctx)
 // movers/curveMover.cpp with the rest of the curve mover.
 
 // Shared scratch-collect / kernel / write-back body for point3f[] hosts
-// (spec §6.5: transient scratch is released before the callback returns).
+// (transient scratch is released before the callback returns).
 template <typename Kernel>
 void
 _EvaluateScratchKernel(const VdfContext &ctx, const TfToken &expectedKind,
@@ -620,11 +617,11 @@ _EvaluateScratchKernel(const VdfContext &ctx, const TfToken &expectedKind,
 }
 
 // normal3f[] host: recomputed vertex normals from final same-generation
-// points and standard topology (spec §7.6).
+// points and standard topology.
 // float3[] host: recomputed two-element extent from final points and the
-// authoritative winning widths (spec §7.6).
+// authoritative winning widths.
 // RigExecRibbon solver: rotation-minimizing frame samples along the
-// driver curve, published with paired rest frames (spec §7.5). The rest
+// driver curve, published with paired rest frames. The rest
 // driver points are the compiler-captured bind-time curve value.
 // The sampling itself is RigExecSampleRibbonFrames, which the baked program
 // calls as well; only the reads below are exec's.
@@ -663,7 +660,7 @@ _ComputeRibbonFrames(const VdfContext &ctx)
 
 }  // namespace
 
-// Weight objects publish computeWeightPacket (spec §12.1).
+// Weight objects publish computeWeightPacket.
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecStaticWeight)
 {
@@ -693,7 +690,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecDynamicWeight)
                 .InputName(_tokens->basePacket));
 }
 
-// Volumetric weight objects (spec §4.1 volumetric extension).
+// Volumetric weight objects.
 // computeFalloffLut is a STUB that returns an empty (linear) table. The
 // real bake -- a named analytic profile, or the resampled spline authored
 // on rigExec:falloffCurve -- arrives as a RigExecValueOverride supplied
@@ -809,7 +806,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCombineWeight)
                 .InputName(_tokens->weightTargetPoints));
 }
 
-// Blend descriptors (spec §12.1).
+// Blend descriptors.
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendSample)
 {
@@ -837,14 +834,14 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecBlendInput)
                 .Required());
 }
 
-// Operation/type-specific property applications (spec §4.1, §7.2): each
+// Operation/type-specific property applications: each
 // host's frozen signature consumes the preceding exact-typed vector, the
 // realizing mover's computeMoverParameters, and computeMoverStatus.
 
 // RigExecPointFrameMoverApplication: one writer revision of a transform
-// provider's point frame (spec §4.2), publishing paired views.
+// provider's point frame, publishing paired views.
 
-// RigExecRibbon solver (spec §7.5): frame samples from the driver curve.
+// RigExecRibbon solver: frame samples from the driver curve.
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecRibbon)
 {
@@ -888,7 +885,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecRibbon)
                 .InputName(_tokens->driverPoints));
 }
 
-// Operation/type-specific Phase 3 property applications (spec §4.1, §7.2):
+// Operation/type-specific Phase 3 property applications:
 // each host's frozen signature consumes the preceding exact-typed vector,
 // the realizing mover's computeMoverParameters, and computeMoverStatus.
 
@@ -913,7 +910,7 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecRibbon)
                     .Required());                                            \
     }
 
-// Synthesized derived-maintenance hosts (spec §7.6 revised): the host is
+// Synthesized derived-maintenance hosts: the host is
 // self-realized — the compiler points rigExec:mover at the host itself,
 // so the standard rel wiring resolves the host-owned parameter/status
 // computations declared here.

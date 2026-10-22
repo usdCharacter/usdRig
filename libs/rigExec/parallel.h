@@ -29,16 +29,8 @@ bool RigExecParallelEvaluationEnabled();
 /// frozen-context TU; declared here because the kernels gate on it.
 bool RigExecFrozenSerialActive();
 
-/// Points per task in the per-point geometry kernels.
-///
-/// Large enough that a task is worth its dispatch, small enough that the
-/// tail task does not decide the wall time on a wide machine.
-inline constexpr size_t RigExecGeometryGrainSize = 512;
-
-/// Below this many points a per-point geometry kernel stays serial: the
-/// dispatch and the join cost more than the work they would spread, and a
-/// rig is far more likely to hold many small meshes than one large one.
-inline constexpr size_t RigExecGeometryParallelThreshold = 4096;
+// RigExecGeometryGrainSize and RigExecGeometryParallelThreshold live in
+// rigExecMath/rangeRunner.h, which the USD-free runtime shares.
 
 /// Whether this thread's floating-point environment is the IEEE default:
 /// round to nearest, no flush-to-zero, no denormals-are-zero. A shortcut that

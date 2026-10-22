@@ -1,4 +1,4 @@
-// RigExec Hydra snapshot store (spec §8.2, §10.3).
+// RigExec Hydra snapshot store.
 // Evaluation always completes before Hydra pulls: the evaluator publishes
 // complete immutable generations here, and the results scene index's
 // GetPrim() only ever reads the current atomic snapshot. It never
@@ -92,7 +92,7 @@ struct RigExecVolumeGuideElement {
 };
 
 /// The published results for one Hydra prim in one generation. Only
-/// standard data crosses this boundary (spec §10.2): local xforms,
+/// standard data crosses this boundary: local xforms,
 /// points/normals as flat primvars, and the two-element extent.
 struct RigExecPublishedPrim {
     /// Asset-space anchor for guide frames on this prim.  Stored per prim so
@@ -192,7 +192,7 @@ struct RigExecPublishedPrim {
     /// would let a guide draw in one bucket and bound in another.
     TfToken guidePurpose;
 
-    /// Control guide payload (spec §10.3 extension): a control draws ONE
+    /// Control guide payload: a control draws ONE
     /// synthesized shape at its posed frame, chosen and sized by the
     /// authored guide attributes.
     ///
@@ -269,7 +269,7 @@ struct RigExecPublishedPrim {
     std::vector<RigExecVolumeGuideElement> volumeGuides;
 };
 
-/// One complete immutable generation (spec §8.2: consumers see complete
+/// One complete immutable generation (consumers see complete
 /// RigExecSnapshot generations only).
 struct RigExecImagingSnapshot {
     uint64_t generation = 0;
@@ -287,8 +287,7 @@ struct RigExecImagingSnapshot {
     /// But a TOOL wants them. The Shape Editor exists to show which
     /// pose-space correctives are firing, and without this it has to run
     /// a SECOND evaluation of the whole rig to recover numbers this
-    /// generation already computed -- measured at 9-15 ms per refresh
-    /// against ~0 for a map lookup. So they are carried here: read-only,
+    /// generation already computed. So they are carried here: read-only,
     /// alongside the generation that produced them, and never touched by
     /// the scene index.
     std::map<SdfPath, float> movedFloats;
@@ -367,7 +366,7 @@ using RigExecImagingSnapshotConstPtr =
     std::shared_ptr<const RigExecImagingSnapshot>;
 
 /// Which published leaves changed for one prim between the previous and
-/// the newly published generation (spec §10.4: value changes start from
+/// the newly published generation (value changes start from
 /// the narrowest logical leaves; structural/output-set changes use
 /// universal dirtiness).
 enum RigExecPublishedChange : uint16_t {
@@ -436,7 +435,7 @@ class RigExecSnapshotStore {
 public:
     /// Atomically publishes a complete generation, returning per-prim
     /// changed-leaf sets diffed against the previous generation (the
-    /// authoritative input for precise dirtying, spec §10.4). Prims whose
+    /// authoritative input for precise dirtying). Prims whose
     /// published values are identical produce no entry.
     RigExecPublishedDirtyVector Publish(
         std::shared_ptr<RigExecImagingSnapshot> snapshot) {
@@ -550,7 +549,7 @@ private:
     /// Leaf-exact diff of one prim's published values. A prim absent from
     /// the previous generation, or whose owned leaf set changed
     /// (ownership begins/ends: the derivative blocks appear/disappear
-    /// with points ownership, spec §10.3.1), is structural.
+    /// with points ownership), is structural.
     static uint16_t _Diff(
         const RigExecPublishedPrim *before,
         const RigExecPublishedPrim &after) {

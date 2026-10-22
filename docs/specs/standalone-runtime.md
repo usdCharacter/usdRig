@@ -15,9 +15,11 @@ prim, property, relationship and attribute-query interfaces over
 `RigExecSceneDb`. Nothing calls it. See
 [OpenExec reference checks](../concepts/baked-vs-dynamic.md#openexec-reference-checks).
 
-Translation covers providers, solvers and their joint bindings, constraints,
-space switches, auto-clavicles, weights, pose interpolators, and geometry
-and property movers. An active
+Translation covers providers, solvers and their joint bindings, constraints
+(the IK/FK match included: its values are public values and its presented
+control frames are `RigExecSceneProgram::presentedPoses`), space switches,
+auto-clavicles, weights, pose interpolators, and geometry and property movers.
+An active
 prim of an unknown RigExec type fails preparation
 (`libs/rigExecGraph/sceneProgramTranslation.cpp:71-72`). Native USD attributes
 are source values. The runtime and [pack exporter/loader](standalone-pack.md)
@@ -60,11 +62,11 @@ Joint skip this source check: `default:space`, `avars:defaultSpace`,
 through their connection or computed fallback, as described in
 [default spaces](xformable-default-spaces.md).
 
-Applied APIs are an explicit capability list
-(`libs/rigExecGraph/sceneProgramTranslation.cpp:73`): `RigExecMoverAPI`,
-`RigExecControlAPI`, `NodeGraphNodeAPI` and the data-only CollectionAPI,
-GeomModelAPI, MotionAPI, VisibilityAPI, MaterialBindingAPI and
-SkelBindingAPI. Any other applied API fails preparation.
+Of the RigExec applied APIs, `RigExecMoverAPI` and `RigExecControlAPI` are
+lowered; any other RigExec API fails preparation
+(`libs/rigExecScene/sceneProgramTranslation.cpp`). Applied APIs from outside
+RigExec, such as physics, pipeline or material schemas, are ignored, as the
+native evaluator ignores them.
 
 Only explicitly exported Default, exact numeric and PreTime identities are
 accepted. There is no fallback to a nearby row and no custom interpolation or

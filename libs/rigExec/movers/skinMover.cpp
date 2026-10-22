@@ -1,4 +1,4 @@
-// RigExecSkinMover: everything about the skin mover (spec §4.1).
+// RigExecSkinMover: everything about the skin mover.
 // A skin mover deforms points by a weighted blend of influence-provider
 // matrices, classic-linear or dual-quaternion. The skin mover has no
 // exec-side computation: its packet is assembled directly by
@@ -10,12 +10,29 @@
 
 #include "rigExecMath/dualQuat.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/gf/dualQuatd.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 
 #include <cmath>
 
 PXR_NAMESPACE_USING_DIRECTIVE
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((influences, "rigExec:influences")));
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_skinTokens,
+    ((influences, "rigExec:influences"))
+    (RigExecControl)
+    (RigExecJoint)
+    ((skinningMethod, "rigExec:skinningMethod"))
+    ((elementSize, "rigExec:elementSize"))
+    ((jointIndices, "rigExec:jointIndices"))
+    ((jointWeights, "rigExec:jointWeights")));
 
 namespace {
 const TfToken _oracleToken0("rigExec:influences");
@@ -36,9 +53,9 @@ _BindSkinMover(const rigExec::RigExecMoverBindContext &ctx)
     // and "final" binds each provider's frame-chain head exactly as the
     // matrix mover does for its one.
     binding.influences = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:influences");
+        moverPrim, _relTokens->influences);
     binding.transformPhase =
-        rigExec::RigExecPhaseForInput(moverPrim, "rigExec:influences");
+        rigExec::RigExecPhaseForInput(moverPrim, _relTokens->influences);
     if (binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
         for (SdfPath &provider : binding.influences) {
             const auto it = frameChainHeads.find(provider);
@@ -86,7 +103,7 @@ _ValidateSkinMover(
 
     SdfPathVector influences;
     if (UsdRelationship rel =
-            prim.GetRelationship(TfToken("rigExec:influences"))) {
+            prim.GetRelationship(_skinTokens->influences)) {
         rel.GetTargets(&influences);
     }
     if (influences.empty()) {
@@ -94,11 +111,13 @@ _ValidateSkinMover(
                        "provider";
         return false;
     }
-    static const std::set<TfToken> frameProviderTypes = {
-        TfToken("RigExecControl"), TfToken("RigExecJoint")};
+    const auto isFrameProvider = [](const TfToken &type) {
+        return type == _skinTokens->RigExecControl ||
+               type == _skinTokens->RigExecJoint;
+    };
     for (const SdfPath &influence : influences) {
         const UsdPrim provider = stage->GetPrimAtPath(influence);
-        if (!provider || !frameProviderTypes.count(provider.GetTypeName())) {
+        if (!provider || !isFrameProvider(provider.GetTypeName())) {
             *error = who + ": rigExec:influences target " +
                      influence.GetString() +
                      " is not a catalogued matrix provider";
@@ -109,7 +128,7 @@ _ValidateSkinMover(
     // Strict about the method: a declared token the kernel cannot honour is
     // a compile error, never a silent fallback to different maths.
     TfToken method("classicLinear");
-    if (UsdAttribute a = prim.GetAttribute(TfToken("rigExec:skinningMethod"))) {
+    if (UsdAttribute a = prim.GetAttribute(_skinTokens->skinningMethod)) {
         a.Get(&method);
     }
     if (method != "classicLinear" && method != "dualQuaternion") {
@@ -123,7 +142,7 @@ _ValidateSkinMover(
     // mis-sized export into a compile diagnostic instead of a silently
     // passed-through mesh.
     int elementSize = 1;
-    if (UsdAttribute a = prim.GetAttribute(TfToken("rigExec:elementSize"))) {
+    if (UsdAttribute a = prim.GetAttribute(_skinTokens->elementSize)) {
         a.Get(&elementSize);
     }
     if (elementSize < 1) {
@@ -132,10 +151,10 @@ _ValidateSkinMover(
     }
     VtIntArray indices;
     VtFloatArray weights;
-    if (UsdAttribute a = prim.GetAttribute(TfToken("rigExec:jointIndices"))) {
+    if (UsdAttribute a = prim.GetAttribute(_skinTokens->jointIndices)) {
         a.Get(&indices);
     }
-    if (UsdAttribute a = prim.GetAttribute(TfToken("rigExec:jointWeights"))) {
+    if (UsdAttribute a = prim.GetAttribute(_skinTokens->jointWeights)) {
         a.Get(&weights);
     }
     if (indices.size() != weights.size()) {
@@ -191,9 +210,9 @@ _OracleSkinMover(const rigExec::RigExecMoverOracleContext &ctx)
         rel.GetTargets(&influences);
     }
     const bool final =
-        rigExec::RigExecPhaseForInput(prim, "rigExec:influences").kind ==
+        rigExec::RigExecPhaseForInput(prim, _relTokens->influences).kind ==
         rigExec::RigExecReadPhaseKind::Final;
-    const auto phase = rigExec::RigExecPhaseForInput(prim,"rigExec:influences");
+    const auto phase = rigExec::RigExecPhaseForInput(prim,_relTokens->influences);
     std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
     for (const auto &provider : influences) {
         const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(provider,phase,moverPath) : nullptr;
@@ -396,8 +415,8 @@ _MakeHandler()
     // read per frame, never cached, so an override on one reaches the
     // next generation without anything being dropped.
     handler.layoutAttributes = {
-        TfToken("rigExec:jointIndices"), TfToken("rigExec:jointWeights"),
-        TfToken("rigExec:elementSize"), TfToken("rigExec:skinningMethod")};
+        _skinTokens->jointIndices, _skinTokens->jointWeights,
+        _skinTokens->elementSize, _skinTokens->skinningMethod};
     handler.bind = &_BindSkinMover;
     handler.validate = &_ValidateSkinMover;
     handler.oracle = &_OracleSkinMover;

@@ -423,7 +423,7 @@ ResolveWeight(
             return false;
         }
 
-        // Base field first, then r_i = (b_i * d) * s + a (spec §4.1).
+        // Base field first, then r_i = (b_i * d) * s + a.
         std::vector<float> base(count, 1.0f);
         SdfPathVector baseTargets;
         if (RigExecWeightReferenceRelationship rel =
@@ -437,7 +437,7 @@ ResolveWeight(
         }
         if (baseTargets.empty()) {
             // Without a base, only constant representation is legal and
-            // b_i = 1 everywhere (spec §4.1).
+            // b_i = 1 everywhere.
             if (representation != _kGeoConstant) {
                 *error = "no-base dynamic weight must be constant on " +
                          weightPrimPath.GetString();
@@ -452,7 +452,7 @@ ResolveWeight(
             }
             // The base descriptor must exactly match the dynamic
             // descriptor: canonical target, representation, and sparse
-            // support (spec §4.1).
+            // support.
             auto canonicalWeightTarget =
                 [&context, &time](const RigExecWeightReferencePrim &p) -> SdfPath {
                 SdfPathVector t;
@@ -483,7 +483,7 @@ ResolveWeight(
             if (representation == _kGeoSparse) {
                 // The dynamic descriptor's sparse support is inherited
                 // from the base; a dynamic prim that authors its own
-                // support must match the base exactly (spec §4.1).
+                // support must match the base exactly.
                 VtIntArray mine;
                 if (RigExecWeightReferenceAttribute a =
                         prim.GetAttribute(_kGeoIndices)) {
@@ -542,7 +542,7 @@ ResolveWeight(
     }
 
     // Static weights are time-invariant by contract: reject time samples
-    // and value connections on every field (spec §4.1).
+    // and value connections on every field.
     const TfToken *const staticFields[] = {
         &_kGeoValues, &_kGeoIndices,
         &_kGeoDefaultWeight, &_kGeoRepresentation,
@@ -573,7 +573,7 @@ ResolveWeight(
                      weightPrimPath.GetString();
             return false;
         }
-        // Canonical encoding requires dense defaultWeight = 0 (spec §4.1).
+        // Canonical encoding requires dense defaultWeight = 0.
         if (defaultWeight != 0.0f) {
             *error = "dense weight requires canonical defaultWeight 0 on " +
                      weightPrimPath.GetString();
@@ -599,7 +599,7 @@ ResolveWeight(
                 return false;
             }
             // Indices are unique logical element indices; authored pair
-            // order is non-semantic (spec §4.1).
+            // order is non-semantic.
             if (!seen.insert(indices[i]).second) {
                 *error = "duplicate sparse index on " +
                          weightPrimPath.GetString();

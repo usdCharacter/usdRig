@@ -761,14 +761,10 @@ RigExecRbfSolver::Solve()
     // interpolator had one. Per-pose widths make it asymmetric --
     // phi_far(near) is not phi_near(far) -- and inverting the UNTRANSPOSED
     // matrix then produces weights that are wrong AT THE POSES, which is the
-    // one place an interpolator is supposed to be exact. Measured on a three
-    // pose chain at 0, 25 and 120 degrees with per-pose widths: the far pose
-    // read 1.716 of itself and -0.582 of its neighbour. On the shipped biped
-    // it cost the head, the neck, both elbows, both wrists, both ankles and
-    // both toes between 0.001 and 0.130 at their own poses -- small enough
-    // to read as a soft corrective rather than as a bug.
-    // 33 of the biped's 67 interpolators fit to per-pose widths, so this is
-    // the common case here, not the exotic one.
+    // one place an interpolator is supposed to be exact. The error can be
+    // small enough to read as a soft corrective rather than as a bug.
+    // Fitted interpolators commonly carry per-pose widths, so this is the
+    // common case, not the exotic one.
     const std::vector<std::vector<double>> rows = Matrix();
     const size_t size = rows.size();
     std::vector<std::vector<double>> built(size,

@@ -1,6 +1,6 @@
 // Method reference: Sederberg and Parry (1986), https://doi.org/10.1145/15886.15903
 //
-// Tensor-product Bernstein lattice kernel (RigExecLatticeMover, spec §7.5),
+// Tensor-product Bernstein lattice kernel (RigExecLatticeMover),
 // and the regular-grid cubic displacement lattice (rigExec:evaluation
 // "regularGrid"; basis and edge references: docs/references.md).
 // Header-only and USD-free: the USD evaluators (GfVec3f) and the zero-USD

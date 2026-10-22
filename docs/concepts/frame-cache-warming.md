@@ -75,6 +75,10 @@ reason. It does not select a different evaluator.
 | `RIGEXEC_ENABLE_PARALLEL_EVAL=0` | unset | Cache reads are still served; background fill is disabled. |
 | `RIGEXEC_FRAME_CACHE_VERIFY=1` | off | Shadow mode: every cache hit is also live-evaluated and compared, and mismatches are reported as diagnostics. For debugging, not for production. |
 
+Each rig reads `RIGEXEC_FRAME_CACHE` and `RIGEXEC_FRAME_CACHE_VERIFY` when it
+activates. To apply a change to rigs that are already active, call
+`RigExecImagingRegistry::RefreshFrameCacheSettings()`.
+
 ## Limits worth knowing
 
 - **Incomplete frozen inputs** prevent worker-thread warming; the host can

@@ -101,7 +101,7 @@ using namespace frozenDetail;
 
 namespace {
 
-// The sampler below mirrors the binding walk the Stream 0 bench measures
+// The sampler below mirrors the binding walk the frame-cache bench measures
 // (tests/benchFrameCache.cpp MeasureSampling): the same tables, in the same
 // order, through the same read route the baked frame path takes. The bench
 // is the timing; this is the values.

@@ -29,7 +29,9 @@ The relationship can also be DERIVED instead of authored. With
 `rigExec:startFramePolicy = "parent"` and no authored targets, the
 compile walks the joint hierarchy -- nearest namespace ancestor of the
 chain's joints that is a joint or control -- and hangs the chain from
-it exactly as if the relationship named it:
+it exactly as if the relationship named it. The derived provider is a
+compiled input; evaluation authors nothing, so the relationship stays
+empty and the session layer untouched:
 
   6. derived is bit-identical to authored, in every mode, scenario and
      start pose, in reference, baked and parity evaluation;
@@ -389,12 +391,14 @@ def main():
                     (mode, cname, sname)
                 assert authored["solver"] == derived["solver"], \
                     (mode, cname, sname)
-    # The mechanism, not just the behaviour: the compile materialized
-    # the hierarchy walk as a session-layer target on the relationship.
+    # Evaluation is non-authoring: the derived provider lives in the
+    # compiled chain, not on the stage. The relationship stays empty and
+    # the session layer holds no opinion.
     prim = derived["stage"].GetPrimAtPath(derived["fk"].path)
-    assert [str(t) for t in
-            prim.GetRelationship("rigExec:startFrame").GetTargets()] == \
-        ["/Rig/Joints/J0"]
+    assert not prim.GetRelationship("rigExec:startFrame").GetTargets(), \
+        prim.GetRelationship("rigExec:startFrame").GetTargets()
+    session = derived["stage"].GetSessionLayer()
+    assert session.empty, session.ExportToString()
     print("  policy=parent, no relationship: identical to authored")
 
     # -- 6b. ... in baked and parity evaluation too ------------------------
@@ -443,9 +447,9 @@ def main():
     assert not rel.GetTargets(), rel.GetTargets()
 
     # -- 9. The read is positional -----------------------------------------
-    # Chain ordered BEFORE its provider's writer: inference still wires
-    # the relationship, but the chain reads the pre-write frame and the
-    # compile warns naming the reorder.
+    # Chain ordered BEFORE its provider's writer: inference still derives
+    # the provider (without authoring it), but the chain reads the
+    # pre-write frame and the compile warns naming the reorder.
     stale = _build_stacked(False, 90.0)
     assert _close_vec(_origin(stale["b"]), (10, 0, 0)), _origin(stale["b"])
     assert _close_vec(_origin(stale["c"]), (20, 0, 0)), _origin(stale["c"])
@@ -453,8 +457,8 @@ def main():
         stale["diagnostics"]
     rel = stale["stage"].GetPrimAtPath(
         "/Rig/Solvers/FkBC").GetRelationship("rigExec:startFrame")
-    assert [str(t) for t in rel.GetTargets()] == ["/Rig/Joints/J0"], \
-        rel.GetTargets()
+    assert not rel.GetTargets(), rel.GetTargets()
+    assert stale["stage"].GetSessionLayer().empty
     print("  misordered chain: frozen at rest, warns naming the reorder")
     # Same rig, hanging chain first in the file (executes after the
     # writer): follows, with no warning.

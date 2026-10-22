@@ -1,4 +1,4 @@
-// RigExec Hydra scene-index filters implementation (spec §10).
+// RigExec Hydra scene-index filters implementation.
 #include "sceneIndices.h"
 
 #include "registry.h"
@@ -218,8 +218,7 @@ RigExecInternalPrimPruningSceneIndex::_PrimsAdded(
     if (!_IsObserved()) {
         return;
     }
-    // Filter owned entries while preserving the order of unrelated ones
-    // (spec §10.1).
+    // Filter owned entries while preserving the order of unrelated ones.
     HdSceneIndexObserver::AddedPrimEntries filtered;
     filtered.reserve(entries.size());
     for (const auto &entry : entries) {
@@ -290,7 +289,7 @@ RigExecBindingResolvingSceneIndex::SetCompiledRigBinding(CompiledRigBindingConst
         return;
     }
     // An output-set/binding change uses universal dirtiness on every
-    // affected output prim (spec §10.4).
+    // affected output prim.
     HdSceneIndexObserver::DirtiedPrimEntries dirtied;
     CompiledRigBindingConstPtr current = std::atomic_load(&_compiledRig);
     if (previous) {
@@ -467,7 +466,7 @@ _Token(const TfToken &token)
     return HdRetainedTypedSampledDataSource<TfToken>::New(token);
 }
 
-// Synthesized guide children (spec §10.3 extension): joints draw a sphere at
+// Synthesized guide children: joints draw a sphere at
 // each posed origin plus a cone to every nested child, while aggregate
 // solvers draw a sphere/cone pair along each frame's +X aim axis. Both use
 // purpose guide and constant displayColor/displayOpacity primvars.
@@ -754,7 +753,7 @@ _BuildGuidePrim(
         names.size(), names.data(), values.data());
 }
 
-// Synthesized control guides (spec §10.3 extension): a RigExecControl draws
+// Synthesized control guides: a RigExecControl draws
 // ONE shape at its posed frame, chosen by guide:shape and guide:drawMode and
 // sized by the evaluated frame-axis magnitudes times guide:scaleX/Y/Z. Same
 // synthesis, announcement, and dirtying machinery as the joint sphere/cone
@@ -781,6 +780,17 @@ TF_DEFINE_PRIVATE_TOKENS(
     (rxFrame)
     (rxPrevFrame)
     (rxVelocityScale)
+);
+
+// Control-guide shape and plane names compared on the GetPrim path.
+TF_DEFINE_PRIVATE_TOKENS(
+    _controlGuideTokens,
+    (custom)
+    (wire)
+    (circle)
+    (box)
+    (X)
+    (Z)
 );
 
 bool
@@ -1183,6 +1193,18 @@ _BuildControlGuideShapes()
     return shapes;
 }
 
+// Built once at load: GetPrim and GetChildPrimPaths may run on parallel
+// Hydra threads, so the lookup takes no initialization guard.
+const _ControlGuideShape _customControlGuideShape = [] {
+    _ControlGuideShape result;
+    result.shape = _controlGuideTokens->custom;
+    result.drawMode = _controlGuideTokens->wire;
+    result.primType = HdPrimTypeTokens->basisCurves;
+    return result;
+}();
+const std::vector<_ControlGuideShape> _controlGuideShapes =
+    _BuildControlGuideShapes();
+
 // The unit shape for one published shape/drawMode pair, or nothing when the
 // pair names no shape this version draws.
 // allowedTokens is documentation, not enforcement -- USD will happily
@@ -1194,19 +1216,11 @@ _BuildControlGuideShapes()
 const _ControlGuideShape *
 _FindControlGuideShape(const TfToken &shape, const TfToken &drawMode)
 {
-    if (shape == TfToken("custom") && drawMode == TfToken("wire")) {
-        static const _ControlGuideShape custom = [] {
-            _ControlGuideShape result;
-            result.shape = TfToken("custom");
-            result.drawMode = TfToken("wire");
-            result.primType = HdPrimTypeTokens->basisCurves;
-            return result;
-        }();
-        return &custom;
+    if (shape == _controlGuideTokens->custom &&
+        drawMode == _controlGuideTokens->wire) {
+        return &_customControlGuideShape;
     }
-    static const std::vector<_ControlGuideShape> shapes =
-        _BuildControlGuideShapes();
-    for (const _ControlGuideShape &entry : shapes) {
+    for (const _ControlGuideShape &entry : _controlGuideShapes) {
         if (entry.shape == shape && entry.drawMode == drawMode) {
             return &entry;
         }
@@ -1221,7 +1235,7 @@ _BuildControlGuidePrim(
     const GfMatrix4d &assetRootWorld)
 {
     _ControlGuideShape custom;
-    if (published.controlGuideShape == TfToken("custom")) {
+    if (published.controlGuideShape == _controlGuideTokens->custom) {
         custom = templateShape;
         custom.points = published.controlGuidePoints;
         custom.counts = published.controlGuideCounts;
@@ -1233,7 +1247,7 @@ _BuildControlGuidePrim(
             }
         }
     }
-    const _ControlGuideShape &shape = published.controlGuideShape == TfToken("custom") ? custom : templateShape;
+    const _ControlGuideShape &shape = published.controlGuideShape == _controlGuideTokens->custom ? custom : templateShape;
     // S(effectiveScale) * rigid frame * asset root placement.
     // USD is row-vector, so the leftmost factor applies first: the effective
     // per-axis scale sizes the unit shape in ITS own axes, and only
@@ -1251,10 +1265,9 @@ _BuildControlGuidePrim(
     scale.SetScale(published.controlGuideScale);
 
     // THE PLANAR GUIDES ARE BUILT IN THE XZ PLANE AND NOWHERE ELSE, and a
-    // rig's control curves lie in whichever plane the rigger drew them in.
-    // Measured on the biped: 37 of its planar control curves lie in the
-    // local YZ plane, 26 in XY and 7 in XZ, so most were drawn edge-on as
-    // slivers -- right sizes, wrong plane. guide:planeNormal turns the
+    // rig's control curves lie in whichever plane the rigger drew them in,
+    // and a curve in another plane would draw edge-on as a sliver -- right
+    // size, wrong plane. guide:planeNormal turns the
     // unit shape so its normal points along the axis the control names.
     //
     // BEFORE the scale, and that ordering is the point: the authored
@@ -1267,11 +1280,11 @@ _BuildControlGuidePrim(
     // handedness; the rings are symmetric enough that it does not show,
     // but a reflection is a thing to leave out of a transform chain.
     GfMatrix4d plane(1.0);
-    if (published.controlGuideShape == TfToken("circle") ||
-        published.controlGuideShape == TfToken("box")) {
-        if (published.controlGuidePlaneNormal == TfToken("X")) {
+    if (published.controlGuideShape == _controlGuideTokens->circle ||
+        published.controlGuideShape == _controlGuideTokens->box) {
+        if (published.controlGuidePlaneNormal == _controlGuideTokens->X) {
             plane.SetRotate(GfRotation(GfVec3d(0, 0, 1), -90.0));
-        } else if (published.controlGuidePlaneNormal == TfToken("Z")) {
+        } else if (published.controlGuidePlaneNormal == _controlGuideTokens->Z) {
             plane.SetRotate(GfRotation(GfVec3d(1, 0, 0), 90.0));
         }
     }
@@ -1402,7 +1415,7 @@ _BuildControlGuidePrim(
         names.size(), names.data(), values.data());
 }
 
-// Synthesized volume weight guides (spec §4.1 volumetric extension, drawn
+// Synthesized volume weight guides (drawn
 // side): one child per published iso-surface, announced and dirtied by the
 // same protocol as the joint and control guides above. Only the geometry
 // and the child naming differ — the payload arrives fully built from the
@@ -1708,8 +1721,8 @@ _ShaderMatrixXformLocators(const RigExecImagingSnapshot &snapshot,
     return result;
 }
 
-// Builds the sparse stronger root container for one published prim
-// (spec §10.3.1): standard schemas only.
+// Builds the sparse stronger root container for one published prim:
+// standard schemas only.
 HdContainerDataSourceHandle
 _BuildStrongRoot(const RigExecPublishedPrim &published,
                  const HdContainerDataSourceHandle &resolvedTarget,
@@ -1729,7 +1742,7 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
     std::vector<HdDataSourceBaseHandle> primvarValues;
     if (published.hasPoints) {
         // points maps to the flat primvars/points/primvarValue leaf; a
-        // stock built-in is always flat (spec §10.3.1).
+        // stock built-in is always flat.
         primvarNames.push_back(HdTokens->points);
         const HdSampledDataSourceHandle pointsSource = _MotionValue(
             published.points, published.sampleOffsets, published.pointsSamples);
@@ -1741,7 +1754,7 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
                 .Build());
         // Whenever the compiled rig owns/publishes final points, the overlay
         // blocks the complete upstream velocities and accelerations
-        // entries: ownership, not value comparison (spec §10.5).
+        // entries: ownership, not value comparison.
         primvarNames.push_back(HdTokens->velocities);
         primvarValues.push_back(HdBlockDataSource::New());
         primvarNames.push_back(HdTokens->accelerations);
@@ -1983,7 +1996,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
 {
     TRACE_FUNCTION();
     // Synthesized guide children exist only in this index: pulls read the
-    // current atomic snapshot and never compute (spec §10.3). Authored
+    // current atomic snapshot and never compute. Authored
     // prims win the name — only paths absent upstream are served as
     // guides, and only beneath a parent that still exists upstream.
     bool guideIsCone = false;
@@ -2115,7 +2128,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
 
     HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
     // A null upstream root means no prim and therefore no RigExec
-    // publication (spec §10.3.1).
+    // publication.
     if (!prim.dataSource) {
         return prim;
     }
@@ -2193,7 +2206,7 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
             _BuildStrongRoot(it->second, prim.dataSource, primPath)) {
         // Container-on-container overlap composes recursively: owned
         // value leaves win while topology, descriptors, and unrelated
-        // schemas continue to come from upstream (spec §10.3.1).
+        // schemas continue to come from upstream.
         prim.dataSource =
             HdOverlayContainerDataSource::OverlayedContainerDataSources(
                 strongRoot, prim.dataSource);
@@ -2711,10 +2724,10 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
         }
         return;
     }
-    // Value changes start from the narrowest logical leaves (spec §10.4
+    // Value changes start from the narrowest logical leaves
     // locator table), then expand through every rebuilt ancestor with
     // ComputeDirtyLocators() because v0.1 rebuilds the retained container
-    // handles per accepted snapshot (spec §10.3). Structural/output-set
+    // handles per accepted snapshot. Structural/output-set
     // changes use universal dirtiness.
     HdSceneIndexObserver::DirtiedPrimEntries entries;
     HdSceneIndexObserver::AddedPrimEntries addedGuides;
@@ -3085,7 +3098,7 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->points,
                 HdPrimvarSchemaTokens->primvarValue));
             // The compiled rig-owned structural blocks ride with owned points
-            // (spec §10.4 locator table): the complete entries.
+            // (the locator table): the complete entries.
             leaves.insert(HdDataSourceLocator(
                 HdPrimvarsSchemaTokens->primvars, HdTokens->velocities));
             leaves.insert(HdDataSourceLocator(
@@ -3157,12 +3170,11 @@ RigExecResultsSceneIndex::NotifyGenerationPublished(
             HdContainerDataSourceEditor::ComputeDirtyLocators(leaves));
     }
     // THE DRIVEN-TRANSFORM SUBTREES, topmost roots only, once each.
-    // Walking each driven Xform's subtree as it was met re-walked every
+    // Walking each driven Xform's subtree as it is met would re-walk every
     // nested one again for every driven ancestor above it -- a rig whose
-    // whole control and joint hierarchy moves with its root (dragging the
-    // hips) dirtied the same prims over and over and asked the upstream
-    // scene index for their children each time: 33 ms of every hips drag
-    // sample on the biped. A root nested under another root in this batch
+    // whole control and joint hierarchy moves with its root would dirty the
+    // same prims over and over and ask the upstream scene index for their
+    // children each time. A root nested under another root in this batch
     // is already inside that walk, and it dirties exactly the same locator
     // set, so it is skipped. Every prim still gets the same locators.
     if (!xformRoots.empty()) {

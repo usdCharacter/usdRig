@@ -1,4 +1,4 @@
-// RigExec — point-native transform system (spec §5).
+// RigExec — point-native transform system.
 // The canonical pose value is a point frame: four points [O, X, Y, Z]
 // representing an affine origin and the transformed X, Y, and Z basis
 // endpoints. It round-trips exactly to a nonsingular affine matrix,
@@ -19,7 +19,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-/// Flags describing the state of a RigExecPointFrame (spec §5.1).
+/// Flags describing the state of a RigExecPointFrame.
 enum RigExecPointFrameFlags : uint32_t {
     RigExecPointFrameValid      = 1u << 0,  ///< frame carries usable points
     RigExecPointFrameDegenerate = 1u << 1,  ///< posed frame is singular/collapsed
@@ -35,7 +35,7 @@ enum RigExecPointFrameFlags : uint32_t {
     RigExecPointFrameLiveRest   = 1u << 4,
 };
 
-/// The runtime scalar transform value (spec §5.1).
+/// The runtime scalar transform value.
 ///
 /// points[0] = O (origin), points[1] = X/tip, points[2] = Y/up,
 /// points[3] = Z/side.
@@ -58,7 +58,7 @@ struct RigExecPointFrame {
     bool IsDegenerate() const { return flags & RigExecPointFrameDegenerate; }
 };
 
-/// Frame reconstruction policies (spec §5.2).
+/// Frame reconstruction policies.
 enum class RigExecFramePolicy {
     Affine,      ///< use all four points directly; keeps scale/shear/reflection
     Orthogonal,  ///< aim/up orthonormalization; removes shear; 3 scales
@@ -74,8 +74,7 @@ RigExecFramePolicy RigExecParseFramePolicy(const TfToken &token);
 enum class RigExecAxis { X, Y, Z };
 RigExecAxis RigExecParseAxis(const TfToken &token, RigExecAxis fallback);
 
-/// The affine map from reference (rest) points Q to posed points P
-/// (spec §5.1):
+/// The affine map from reference (rest) points Q to posed points P:
 ///   B_Q = [qx-qo qy-qo qz-qo], B_P = [px-po py-po pz-po] (column matrices)
 ///   L = B_P B_Q^-1, t = po - L qo, f(q) = L q + t.
 ///
@@ -105,7 +104,7 @@ bool RigExecPointsToMatrix(
     GfMatrix4d *matrix);
 
 /// Applies matrix to the four rest landmarks to produce posed points
-/// (spec §5.4 MatrixToPoints).
+/// (MatrixToPoints).
 RigExecPointFrame RigExecMatrixToPoints(
     const std::array<GfVec3d, 4> &restPoints,
     const GfMatrix4d &matrix);
@@ -119,17 +118,17 @@ struct RigExecFrameReconstructionArgs {
     RigExecAxis reflectionAxis = RigExecAxis::Z;  ///< pinned reflection axis
     /// Handedness assigned when the side landmark lies in the aim/up plane
     /// (zero side determinant): the authored reflection policy supplies the
-    /// sign deterministically (spec §5.2 "zero follows the authored
-    /// reflection policy").
+    /// sign deterministically (zero follows the authored reflection
+    /// policy).
     double zeroSideSign = 1.0;
-    /// Deterministic degeneracy fallbacks (spec §5.3), in order:
+    /// Deterministic degeneracy fallbacks, in order:
     /// parent computed up axis, authored rest up axis, world axis least
     /// parallel to the aim direction. Optional parent up direction:
     bool hasParentUp = false;
     GfVec3d parentUp{0, 1, 0};
 };
 
-/// Reconstructs a frame from posed landmarks under a policy (spec §5.2).
+/// Reconstructs a frame from posed landmarks under a policy.
 ///
 /// For the orthogonal family:
 ///   a = px - po, ex = a/|a|
@@ -141,7 +140,7 @@ struct RigExecFrameReconstructionArgs {
 /// po + lz sigma_z sz ez_theta. Rigid forces all scales to one; axial
 /// forces sy = sz = 1.
 ///
-/// Degeneracy (spec §5.3): eps = 1e-10 * max(1, lx, ly, lz). |a| < eps
+/// Degeneracy: eps = 1e-10 * max(1, lx, ly, lz). |a| < eps
 /// invalidates orientation (frame returned with Degenerate flag and raw
 /// points). |u| < eps means twist underdetermined: fall back to parent up,
 /// then rest up, then the world basis axis least parallel to ex.
@@ -150,7 +149,7 @@ RigExecPointFrame RigExecReconstructFrame(
     const std::array<GfVec3d, 4> &posePoints,
     const RigExecFrameReconstructionArgs &args);
 
-/// SRT parameter tuple (spec §5.4). Decomposition is via SVD:
+/// SRT parameter tuple. Decomposition is via SVD:
 /// L = U S V^T, delta = det(U V^T); reflection selected on the pinned
 /// reflectionAxis; R = U D V^T proper rotation; H = R^T L with
 /// diag(H) = scale and normalized off-diagonals = shear.
@@ -174,7 +173,7 @@ bool RigExecPointsToParams(
 /// landmarks obtained by applying it to restPoints.
 GfMatrix4d RigExecParamsToMatrix(const RigExecTransformParams &params);
 
-/// Character-scale-relative degeneracy tolerance (spec §5.3):
+/// Character-scale-relative degeneracy tolerance:
 /// eps = 1e-10 * max(1, lx, ly, lz).
 double RigExecFrameEpsilon(const std::array<GfVec3d, 4> &restPoints);
 

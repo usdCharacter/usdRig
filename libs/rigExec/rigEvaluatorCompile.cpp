@@ -5,6 +5,7 @@
 #include "inputReplay.h"
 #include "moverGraph.h"
 #include "rigExecScene/poseSceneTranslation.h"
+#include "rigExecScene/startFrameDerivation.h"
 #include "sceneDispatch.h"
 #include "rigEvaluatorDependencies.h"
 #include "rigEvaluatorPropertyBindings.h"
@@ -181,11 +182,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // so RAII scopes cannot span its phases; each stamp closes the
     // previous region and opens the next. One branch when disabled.
     // The clock starts on the FIRST line of the body rather than beside the
-    // first stamped phase, where it used to start. Everything above that
-    // point could only ever measure as zero, and the trace had 6.1 ms sitting
-    // between the Compile scope opening and DiscoverValidate.Validate
-    // starting that no row claimed. Starting here hands that gap to
-    // Compile.Prologue below instead of losing it in the parent scope.
+    // first stamped phase, so the time between the Compile scope opening and
+    // DiscoverValidate.Validate starting goes to Compile.Prologue below
+    // instead of being lost in the parent scope.
     const bool profileCompile = _profiler.IsEnabled();
     uint64_t compileRegionStart =
         profileCompile ? RigExecProfiler::NowUs() : 0;
@@ -215,22 +214,23 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
 
     // The committed footprint answers for the committed digest, and this
     // call is about to replace both: until its own digest is joined, every
-    // notice is suspect, including the ones its derived start frames raise.
+    // notice is suspect.
     // The candidates noted against it go with it: this compile reads the
     // stage they describe.
     _digestGate = _DigestGate();
     _certainCandidates.clear();
     _certainCandidatesOverflowed = false;
     stampCompileRegion("Compile.Prologue");
-    // Derived start-frame targets first, single-threaded, before the digest
-    // dispatch and every parallel stage read below: the inference is a pure
-    // function of the asset state, so the digest then covers it like any
-    // other composed opinion, and the scheduler, exec, and the bake all see
-    // it as authored. Returned warnings are emitted here, past the
-    // derivation's notice block: both channels on purpose, like the
-    // transform-authority pass -- TF_WARN is what a host surfaces to the
+    // rigExec:startFramePolicy, resolved once per compile into chain ->
+    // provider. Every solver-input walk below reads a chain's start frame
+    // through this map when it has no authored target; the baked program
+    // and scene translation apply the same rule to the captured scene. The
+    // stage is never written. The digest covers the rule's inputs (policy,
+    // joints, their namespace ancestry). Warnings go to both channels, like
+    // the transform-authority pass: TF_WARN is what a host surfaces to the
     // author, the errors vector is what a test can read.
-    for (const std::string &message : _ApplyDerivedStartFrames()) {
+    std::map<SdfPath, SdfPath> derivedStartFrames;
+    for (const std::string &message : _DeriveStartFrames(&derivedStartFrames)) {
         if (errors) {
             errors->push_back("warning: " + message);
         }
@@ -241,24 +241,19 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // The structure digest is a pure read of the composed stage that boils it
     // down to one number, and that number is not consulted until the compiled rig is
     // committed far below: nothing in between reads it, and compile authors
-    // nothing to the stage for it to miss past the derived opinions above
-    // (which the digest reads, deterministically, as composed targets). So
-    // it runs beside the WHOLE of
-    // compile rather than beside only its tail.
-    // MEASURED (biped_stack_anim, 201.3 ms compile): dispatched at the old
-    // site -- after DiscoverValidate, at t=35.7 ms -- the digest's 107 ms
-    // landed at t=143.1 ms, while the main thread reached the join below at
-    // t=122.3 ms and then sat idle for 23.4 ms. Compile was paying for the
-    // digest after all, in waiting rather than in work. Dispatched here it
-    // lands around t=107 ms, comfortably ahead of the join.
-    // Safe to hoist past DiscoverValidate because that phase AUTHORS NOTHING:
+    // nothing to the stage for it to miss. So it runs beside the WHOLE of
+    // compile rather than beside only its tail: dispatched after
+    // DiscoverValidate it can land after the main thread reaches the join
+    // below, and compile then pays for the digest in waiting.
+    // Safe to dispatch before DiscoverValidate because that phase AUTHORS NOTHING:
     // it reads the composed stage and reports, so there is no edit for the
     // digest to race. And a rig malformed enough for DiscoverValidate to
     // reject is still one _ComputeStructureDigest reads without complaint --
     // every lookup in it goes through GetPrimAtPath/GetAttribute/Get, which
     // hand back invalid objects that the code already tests for, rather than
     // throwing. The single precondition it cannot survive is a null _stage,
-    // which the old site sat downstream of; hence the guard in the lambda.
+    // which a dispatch after DiscoverValidate never sees; hence the guard in
+    // the lambda.
     // The 0 that guard leaves behind is never read -- Compile returns false
     // on a null stage long before the commit below.
     // It runs as three tasks, one per segment (_DigestSegment), each
@@ -312,8 +307,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Zero-width when the digest is dispatched, which is the point: it marks
     // WHERE the digest was launched so the trace can be read against the
     // worker row. With RIGEXEC_ENABLE_PARALLEL_EVAL=0 the call above ran
-    // inline and this stamp measures the whole of it, exactly as it did at
-    // the old site.
+    // inline and this stamp measures the whole of it.
     stampCompileRegion("Compile.StructureDigest");
 
     // The parts WITHIN those regions, for the same reason and on the same
@@ -346,7 +340,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     if (!rig) {
         return fail("Rig prim not found: " + _rigPath.GetString());
     }
-    // Prototype-hosted rigs fail validation (spec §4.1: a rig in a
+    // Prototype-hosted rigs fail validation (a rig in a
     // prototype or otherwise unable to deinstance is rejected).
     if (rig.IsInstanceProxy() || rig.IsInPrototype()) {
         return fail("Rig is instance-proxy/prototype hosted: " +
@@ -354,21 +348,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
     // Phase A: validation into locals. Nothing below mutates evaluator
     // state until every check passes, so a failed structural edit keeps
-    // the previous compiled rig publishable (spec §4.1 atomic transactions).
+    // the previous compiled rig publishable.
     std::vector<SdfPath> newJointPaths =
         _DiscoverJointOutputs(_stage, _rigPath, _skippedOperations);
-    // A rig with no joints is legal.
-    // It used to be rejected here, on the reading that a joint is what a rig
-    // publishes. That was never true of the evaluator, only of this check: a
-    // mover writes an exact target, and a target is a points array, a plain
-    // UsdGeomXformable's transform, or a scalar property just as readily as
-    // it is a joint frame -- three output domains that all reach a consumer
-    // through RigExecRigPose. Requiring a joint forced authors to add a
-    // vestigial one to rigs that pose none (10_AimXformTurret says so in a
-    // comment), and rejected outright the simplest rig there is: a constraint
-    // aiming one Xform at another.
+    // A rig with no joints is legal: a mover writes an exact target, and a
+    // target is a points array, a plain UsdGeomXformable's transform, or a
+    // scalar property just as readily as it is a joint frame -- three output
+    // domains that all reach a consumer through RigExecRigPose. The simplest
+    // rig there is, a constraint aiming one Xform at another, has none.
     // What the rig DOES need is at least one output, and that cannot be known
-    // until the mover walk below has run. The check moved there.
+    // until the mover walk below has run, so the check is there.
     // Controls and placed volumes are discovered alongside the joints. Zero
     // of either kind is ordinary; the combined output gate below decides
     // whether the whole rig is genuinely empty.
@@ -402,8 +391,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // lane task is compile's critical path in both kinds of compiled rig -- the
     // warm-up and the solver-request preparations behind it in an eager
     // one, the guides in a deferred one -- so every millisecond it starts
-    // earlier is one off the compile. MEASURED on puppetA: those two passes
-    // are ~1.9 ms that used to sit in front of the dispatch.
+    // earlier is one off the compile.
     // Warm the shared exec network, off the critical path, in a compiled rig that
     // prepares its requests here.
     // Every request an eager compiled rig prepares -- the solver batches, the
@@ -504,7 +492,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             if (!prim) {
                 continue;
             }
-            // xformOps arrive on every provider now that RigExecXformable
+            // xformOps arrive on every provider because RigExecXformable
             // inherits UsdGeomBoundable, but they are NOT a transform
             // authority: rest:space plus the avars are the only one (the
             // Ir alignment). An authored op is a second one that nothing
@@ -521,16 +509,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                          "and are not in the computed extent");
                 }
             }
-            // An Xformable BETWEEN the asset root and the provider used to
-            // warn here, because its transform was dropped. It is now
-            // composed at evaluation, by _ComposeInterveningXforms, so there
-            // is nothing left to report: placing a rig -- or one leg of an
+            // An Xformable BETWEEN the asset root and the provider is not
+            // reported: it is composed at evaluation, by
+            // _ComposeInterveningXforms, so placing a rig -- or one leg of an
             // assembly -- under an Xform inside the asset is a supported
             // shape, and warning ten times per compile about a configuration
             // that works is noise nobody can act on.
-            // The check above it stays. An op authored on the PROVIDER is
-            // still not a transform authority, which is a different claim
-            // and still true.
+            // The check above is a different claim: an op authored on the
+            // PROVIDER is not a transform authority.
 
             // Hoisted out of the walk: the provider's own purpose is the
             // same for every one of its descendants.
@@ -658,7 +644,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // reorder opinion.
 
     // final transform reads are legal only when every writer of that
-    // provider precedes the reader in logical order (spec §4.2): a
+    // provider precedes the reader in logical order: a
     // frame mover with a later ordinal than a consuming matrix mover is
     // an unsatisfied final read.
     {
@@ -742,10 +728,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // resolves and bounds-checks exactly this pair; keeping it is what lets
     // Evaluate extract each bound joint's frame from its solver's aggregate
     // and supply it as a value override, so the binding never has to be
-    // authored anywhere (it used to become rigExec:frameSource /
-    // rigExec:frameElement on the joint, in the derived layer).
-    // rigExec:joints is an ordered WRITE, not an exclusive claim (spec §4.2,
-    // "Solvers stack"), so the value is the ordered stack of writers rather
+    // authored anywhere.
+    // rigExec:joints is an ordered WRITE, not an exclusive claim (solvers
+    // stack), so the value is the ordered stack of writers rather
     // than one owner. Index 0 writes first; the last entry supplies the
     // joint's base frame. The order is settled below, once the POSE graph is
     // complete -- which is later than the solver DAG, because a pair of
@@ -757,8 +742,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // stack ordinal -- and it is a full UsdPrimRange over the rig each time
     // (critique: "_DiscoverAggregateSolvers is already walked three times").
     // It is now walked once, with the providers, ahead of the exec lane's
-    // dispatch; nothing compile does authors to the stage after the derived
-    // start frames, so that walk is still the stage's answer here.
+    // dispatch; compile authors nothing to the stage, so that walk is still
+    // the stage's answer here.
     const std::vector<UsdPrim> &orderedSolvers = aggregateSolvers;
     // Solver -> its position in the SOLVER STACK ORDINAL: the reverse of the
     // composed pre-order of the whole rig, which is _GetMoverExecutionOrder's
@@ -1162,11 +1147,23 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.SolverDag");
+    // A chain's rigExec:startFrame with no composed targets reads the
+    // provider its policy derived, exactly where an authored target would.
+    const auto appendDerivedStart = [&derivedStartFrames](
+        const UsdRelationship &rel, SdfPathVector *targets) {
+        if (!targets->empty() || rel.GetName() != RigExecStartFrameRelName) {
+            return;
+        }
+        const auto derived = derivedStartFrames.find(rel.GetPrimPath());
+        if (derived != derivedStartFrames.end()) {
+            targets->push_back(derived->second);
+        }
+    };
     // Compile the solver DAG, including frame inputs carried by a posed
     // namespace ancestor. Rest inputs are independent of posed outputs and
     // therefore never introduce a feedback edge (IK -> blend is legal).
-    // PRODUCERS: the solvers with no position in the pose stack at all
-    // (spec §4.2). Two kinds, and both are scheduled by DATA FLOW alone:
+    // PRODUCERS: the solvers with no position in the pose stack at all.
+    // Two kinds, and both are scheduled by DATA FLOW alone:
     //   * a solver whose AGGREGATE another solver reads. It is already
     //     special -- the consumed-solver relaxation makes its rigExec:joints
     //     a rest reference wherever the consumer claims the same joint -- and
@@ -1232,7 +1229,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         return ia->second < ib->second;
     };
     // "A writer waits on an EARLIER READER." The new edge class the unified
-    // pose stack needs (spec §4.2): a step that reads a provider from BELOW
+    // pose stack needs: a step that reads a provider from BELOW
     // its writer reads the version standing before that write, and without an
     // edge saying so Kahn may schedule the two either way round within a level
     // and the version the reader sees becomes undefined -- a nondeterministic
@@ -1259,6 +1256,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 }
                 SdfPathVector targets;
                 rel.GetTargets(&targets);
+                appendDerivedStart(rel, &targets);
                 for (const SdfPath &target : targets) {
                     const SdfPath targetPrim = target.GetPrimPath();
                     if (solverPaths.count(targetPrim)) {
@@ -1324,7 +1322,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     invalidateCompiledRig = [&]() { _compiled = false; };
 
     compileBlocks.Next("SolverSchedule.VolumeWeights");
-    // Volumetric weight compiled rig state (spec §4.1 volumetric extension).
+    // Volumetric weight compiled rig state.
     std::vector<RigExecValueOverride> newFalloffLutOverrides;
     std::set<SdfPath> newCurrentPhaseWeights;
     std::set<SdfPath> newVolumeWeightProviders;
@@ -2010,7 +2008,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
         newFrameConstraints.push_back(std::move(constraint));
     }
-    // One order over two kinds of step that used to live in two phases:
+    // One order over two kinds of step:
     //   * an aggregate solver that WRITES at least one joint, and
     //   * a pose-domain frame constraint (one that moves a transform provider
     //     rather than points).
@@ -2048,20 +2046,21 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         const auto it = poseStackOrdinal.find(path);
         return it == poseStackOrdinal.end() ? -1 : it->second;
     };
-    // A startFrame read is positional (spec §4.2): a chain ordered before
+    // A startFrame read is positional: a chain ordered before
     // its provider's writer reads the pre-write frame, and for a rest
     // provider that is the rest pose -- the chain then hangs from nothing
-    // and stays frozen with no other diagnostic. Measured on the biped
-    // hand: finger chains below the arm blend read the rest wrist (0.0000
-    // on every joint). Authored and derived targets alike -- the read
-    // does not know which -- so this runs over composed targets.
+    // and stays frozen with no other diagnostic (for example, finger chains
+    // ordered before the arm blend read the rest wrist). Authored and derived
+    // starts alike -- the read does not know which.
     for (const UsdPrim &solver : orderedSolvers) {
         if (solver.GetTypeName() != "RigExecFkChain") {
             continue;
         }
-        static const TfToken startFrameRelTok("rigExec:startFrame");
+        const UsdRelationship startRel =
+            solver.GetRelationship(RigExecStartFrameRelName);
         SdfPathVector starts;
-        solver.GetRelationship(startFrameRelTok).GetTargets(&starts);
+        startRel.GetTargets(&starts);
+        appendDerivedStart(startRel, &starts);
         if (starts.empty()) {
             continue;
         }
@@ -2268,7 +2267,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("SolverSchedule.DerivedMaintenance");
-    // Derived maintenance (spec §7.6 revised), mirroring Pass 3: for every
+    // Derived maintenance, mirroring Pass 3: for every
     // moved points target whose gprim authors normals or extent, synthesize
     // the recompute revision. There is no authored mover, so the gprim itself
     // stands in as the parameter source -- it supplies the stage for the
@@ -2293,9 +2292,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
             // Vertex-normal recomputation is mesh-only. Silently leaving
             // authored normals stale on a moved Points/BasisCurves target
-            // would break the automatic-maintenance contract (spec §7.6
-            // revised), so reject the configuration rather than skip it. This
-            // check used to live in the compiler's Pass 3.
+            // would break the automatic-maintenance contract, so reject the
+            // configuration rather than skip it.
             if (isNormals && !UsdGeomMesh(owner)) {
                 return fail(
                     "authored normals on non-mesh points target " +
@@ -2553,9 +2551,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 // at most once (this branch is the find() miss), so nothing
                 // reads the prefetch entry again, and leaving the sets
                 // behind would hold every closure's inputs on the heap
-                // TWICE for the rest of compile -- which measured as ~13 ms
-                // added to the batch pass that runs after it, purely in
-                // allocator and locality cost.
+                // TWICE for the rest of compile, and the batch pass that runs
+                // after it would pay for that in allocator and locality cost.
                 // A prim the prefetch did not ask about is asked about now,
                 // through the same graph, so every closure of this compile
                 // materializes its attributes the same way.
@@ -2594,7 +2591,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     std::map<SdfPath, std::set<SdfPath>> solverFrameInputs;
     // The read phase a solver declares on an input relationship, through the
     // same optional rigExecReadPhase metadata a mover input uses. Without
-    // one the hierarchy decides (spec §4.2): a constraint ABOVE the solver
+    // one the hierarchy decides: a constraint ABOVE the solver
     // revises what the solver already read. "final", or a prim path at or
     // after that constraint, asks for the frame as the constraint left it,
     // and the solver then waits on it (the frame-inheritance walk below).
@@ -2630,6 +2627,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 phase.kind == RigExecReadPhaseKind::AtPrim;
             SdfPathVector targets;
             rel.GetTargets(&targets);
+            appendDerivedStart(rel, &targets);
             for (const SdfPath &target : targets) {
                 // Ribbon driverCurve is a geometry value, not a frame
                 // relationship. Its exact Base/Preceding/AtPrim/Final points
@@ -2669,10 +2667,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
     }
-    // MEASURED (biped_stack_anim): the pose closure was the largest single
-    // cost left on this thread -- 13.0 ms inside the constraint pass and
-    // 21.9 ms again in PrepareRequests.ProviderClosure, both of them one
-    // prim's _CollectPoseInputInfo at a time. The walk that spends it is
+    // The pose closure is otherwise computed one prim's _CollectPoseInputInfo
+    // at a time, in the constraint pass and again in
+    // PrepareRequests.ProviderClosure. The walk that spends it is
     // inherently serial (each prim's answer says which prim to ask about
     // next), but the ASKING is not: a level of the frontier is a set of
     // independent stage reads.
@@ -2793,15 +2790,10 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             requiredSolvers.insert(solver);
         }
     }
-    // What used to be one SolverSchedule.AggregateConsumers block, and the
-    // largest single region left on the main thread. Split five ways because
-    // a guess about which of its passes held the time was already wrong once:
-    // the cross product the walk below replaces was predicted to be 20 of
-    // those milliseconds and measured, after inversion, to be worth none of
-    // them. The passes are quite different work -- set closure, constraint
+    // The solver schedule's aggregate-consumer work, profiled as five blocks
+    // because the passes are quite different work -- set closure, constraint
     // reads through the pose closure, an ancestor walk, a counting pass, and
-    // the batch BFS that talks to exec -- so they are timed apart before
-    // anything else here is touched.
+    // the batch BFS that talks to exec.
     compileBlocks.Next("SolverSchedule.RequiredSolvers");
     // Geometry aggregate consumers are authoritative even without joints.
     for (const auto &[target, revisions] : newGraphChains) {
@@ -2890,8 +2882,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         // frame-inheritance walk. Mover order adds no edge of its own, so
         // constraints that share no frame share a Kahn level and may run
         // concurrently.
-        // Every writer of the frame, not just the last one, DIRECTIONALLY
-        // (spec §4.2). A frame read is POSITIONAL: the
+        // Every writer of the frame, not just the last one, DIRECTIONALLY.
+        // A frame read is POSITIONAL: the
         // constraint reads the version standing at its own place in the
         // unified pose stack. A writer BELOW it must therefore run first, and
         // a writer ABOVE it must wait, or which version was read is undefined
@@ -2954,8 +2946,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         // so two on one points target need no edge between them.
         // A geometry-domain constraint revises points, not the frame a solver
         // reads, so no solver can inherit one: this `continue` is the same
-        // exclusion the cross product below used to get from skipping the
-        // block it guarded, and it has to stay exactly that strict.
+        // exclusion the ancestor walk below relies on, and it has to stay
+        // exactly that strict.
         if (!constraint.pointsTarget.IsEmpty()) {
             continue;
         }
@@ -2966,41 +2958,29 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     compileBlocks.Next("SolverSchedule.FrameInheritance");
     // Which solvers must wait on which frame constraints. Asked the other way
     // round: for every pose a solver reads, walk UP to the rig root and pick
-    // up the constraints that target each ancestor on the way.
-    // This used to be the cross product -- constraints x requiredSolvers x
-    // that solver's pose reads x that constraint's targets, with a call to an
-    // `inheritsFrame` predicate per tuple, each call re-walking an ancestor
-    // chain. That shape was PREDICTED to be 20 of the 23.4 ms this region
-    // cost, and the prediction was wrong: inverted, the region measured
-    // 25.7 -> 26.4 ms across four runs a side, which is inside the noise.
-    // The time is somewhere else in the five blocks this one is now split
-    // into. The inversion is kept because it is the better code -- linear in
-    // the ancestor chain rather than quartic in the cross product, so it
-    // cannot become the problem later -- not because it bought anything.
-    // Inverted, each (solver, input) chain
-    // is walked ONCE for all constraints instead of once per constraint,
-    // because the map lookup answers "which constraints target this ancestor"
-    // in one step. The predicate is gone with its only caller.
-    // The walk reproduces that predicate exactly, half-open range included.
-    // inheritsFrame(input, target) was `input.HasPrefix(target)` AND no
-    // newJointBinding entry on any path in [input, target) -- its loop ran
-    // `for (path = input; path != target; ...)`, so the TARGET ITSELF was
-    // never tested for a binding, and input == target was vacuously true with
-    // no test at all. Hence the binding check below comes AFTER recording p's
+    // up the constraints that target each ancestor on the way. Each
+    // (solver, input) chain is walked ONCE for all constraints, linear in the
+    // ancestor chain rather than a cross product of constraints, solvers,
+    // pose reads and targets, because the map lookup answers "which
+    // constraints target this ancestor" in one step.
+    // The rule, half-open range included: input inherits target's frame when
+    // `input.HasPrefix(target)` AND no newJointBinding entry sits on any path
+    // in [input, target). The TARGET ITSELF is never tested for a binding,
+    // and input == target inherits with no test at all. Hence the binding
+    // check below comes AFTER recording p's
     // own constraints and not before: a joint binding sitting ON a constraint
     // target does not disqualify that target, only bindings strictly below
     // it do. Reversing those two statements silently drops dependencies and
     // the schedule runs a solver before the constraint it reads.
     // Targets are prim paths (see _FrameConstraint::targets), so "ancestor
     // chain" and HasPrefix agree; a target that is somehow not on the chain
-    // is simply never found, which is what the predicate answered for it too.
+    // is simply never found, so it inherits nothing.
     // poseDependencies[solver] is a std::set, so the different insertion
     // ORDER this produces cannot change its contents, and the contents are
     // all pendingPose/poseConsumers below are built from -- same sets, same
-    // schedule. The `empty()` guard keeps even the default-insertion
-    // behaviour of solverPoseReads[solver] identical to the old code, which
-    // only reached that operator[] when at least one constraint survived the
-    // pointsTarget test.
+    // schedule. The `empty()` guard reaches solverPoseReads[solver]'s
+    // operator[] only when at least one constraint survived the pointsTarget
+    // test, so the map gains no empty entries.
     // The last stack ordinal at or beneath a prim: the moment an AtPrim read
     // phase names, since the stack runs a scope's contents before the scope.
     // -1 when nothing in the stack is there, which no constraint precedes.
@@ -3108,7 +3088,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // poseDependencies is complete here and nowhere earlier: the solver DAG
     // was finished above, but the constraint pass and the frame-inheritance
     // walk just added the solver <-> constraint edges.
-    // The rule (spec §4.2) is now the NAMESPACE and nothing else. Every step
+    // The rule is now the NAMESPACE and nothing else. Every step
     // of the pose phase -- a solver that writes a joint, a constraint that
     // moves one -- carries a poseStackOrdinal taken from the reverse composed
     // pre-order of the whole rig, and that ordinal IS the order. Data flow no
@@ -3394,7 +3374,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         const size_t index=newSolverBatches.size();
         batch.solvers.insert(path);
-        // D4 concerns the blend's numerical aggregate inputs. A guide-only
+        // This concerns the blend's numerical aggregate inputs. A guide-only
         // relationship naming a solver is not an aggregate read, and an
         // unpositioned producer (-1) cannot have run in a later stack batch.
         const auto consumerPrim=_stage->GetPrimAtPath(path);
@@ -3636,8 +3616,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     _compiled = true;
 
     // Build the dense provider universe once per compile compiled rig. _providerPaths
-    // is SdfPath-sorted, so ascending live-index iteration reproduces the
-    // std::map key order the frame-domain publish loops previously relied on.
+    // is SdfPath-sorted, so ascending live-index iteration is SdfPath key
+    // order, which the frame-domain publish loops rely on.
     {
         std::set<SdfPath> universe;
         auto addU = [&](const SdfPath &p) { if (!p.IsEmpty()) universe.insert(p); };
@@ -3692,10 +3672,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     _restEditedProviders.clear();
     {
         // Join the digest task: from here on its result is read. Last, and
-        // after the bake rather than ahead of the commit where it used to
-        // sit: _ComputeStructureDigest reads only the stage and the
-        // profiler, nothing this compile commits, so nothing in between
-        // needs its answer -- and joined here the bake no longer queues
+        // after the bake: _ComputeStructureDigest reads only the stage and
+        // the profiler, nothing this compile commits, so nothing in between
+        // needs its answer -- and joined here the bake does not queue
         // behind it on the rigs where the digest is the longer lane.
         RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "Compile.DigestJoin", "compile");
         digestDispatcher.Wait();
@@ -3774,7 +3753,7 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
         return false;
     }
     // Structural edits begin a new compiled rig: recompile when the composed
-    // mover topology digest changed (spec §4.2, §6.3).
+    // mover topology digest changed.
     // A standing failure memo answers ahead of the digest. It can only match
     // here when the failure it holds was this same structural recompile:
     // no notice has arrived since (the serial is the key), so the digest
@@ -3784,7 +3763,7 @@ RigExecRigEvaluator::_SettleCompiledRig(std::vector<std::string> *diagnostics)
     // A digest that comes out equal commits the footprint it recorded: the
     // stage it read is the one the next notice will be judged against. One
     // that differs leaves that to the compile it leads to.
-    // An edit that is CERTAINLY structural skips the digest here (rule T-e):
+    // An edit that is CERTAINLY structural skips the digest here:
     // a prim the committed digest listed for its type, or a list it wrote,
     // has changed, so the digest has moved and would only be computed to
     // say so -- the compile computes it again anyway, off its critical path.

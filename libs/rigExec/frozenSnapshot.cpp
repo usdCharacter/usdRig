@@ -259,6 +259,14 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     // kernels are the live program's choices, and its bodies count into
     // their own audit counter.
     D.chunkVertexTarget = src.chunkVertexTarget;
+    D.gpuDeformStats = src.gpuDeformStats;
+    D.scheduleParallel = src.scheduleParallel;
+    D.scheduleReport = src.scheduleReport;
+    D.scheduleCalibrate = src.scheduleCalibrate;
+    D.scheduleStepTiming = src.scheduleStepTiming;
+    D.traceAllSteps = src.traceAllSteps;
+    D.calibrationFrames = src.calibrationFrames;
+    D.stepTimingFrames = src.stepTimingFrames;
     D.chunkCap = src.chunkCap;
     D.rangeChains = src.rangeChains;
     D.groupVertexTarget = src.groupVertexTarget;
@@ -306,6 +314,8 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.timedRegionUs = 0;
     D.timedEpilogueUs = 0;
     D.timedFrames = 0;
+    D.calibrationFramesSeen = 0;
+    D.stepTimingFramesSeen = 0;
     D.coldPrologueUs = D.coldRegionUs = D.coldEpilogueUs = 0;
     D.coldFrames = 0;
     D.measureColdRuns = src.measureColdRuns;
@@ -654,6 +664,8 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
     const RigExecBakedProgramImpl &B =
         evaluator.GetBakedProgram()->GetStepGraph();
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
+    snapshot->inputReplayCapture = RigExecInputReplayCaptureRequested();
+    snapshot->inputReplayOwner = std::this_thread::get_id();
     // Settled below, after the snapshot's own edits; its lanes inherit it.
     _CloneImpl(B, &snapshot->program, _CloneVerdict::Defer);
     snapshot->program.verifyCloneKeys =

@@ -95,8 +95,8 @@ struct RigExecFrameCacheKeyHash {
 struct RigExecFrameCacheEntry {
     UsdTimeCode time = UsdTimeCode::Default();
     RigExecRigPose pose;
-    /// Accounted payload bytes of this entry (pose maps plus, when Stream D
-    /// retains it, the slot arena). Counted at Publish; eviction compares
+    /// Accounted payload bytes of this entry (pose maps plus, when sparse
+    /// reuse retains it, the slot arena). Counted at Publish; eviction compares
     /// against the byte cap.
     size_t bytes = 0;
 };
@@ -204,8 +204,8 @@ size_t RigExecFrameDigestOrderPathTextBytes(const RigExecFrameDigestOrder *order
 bool RigExecFrameDigestOrderHasPath(const RigExecFrameDigestOrder *order,
                                     const SdfPath &path);
 
-/// Folds a compiled rig constant digest (plan D3: RigExecCompiledRigConstantDigest, the
-/// value-sensitive avar-constant region the compiled rig signature no longer covers)
+/// Folds a compiled rig constant digest (RigExecCompiledRigConstantDigest, the
+/// value-sensitive avar-constant region the compiled rig signature does not cover)
 /// into a control digest, under its own domain tag. The fold is
 /// unconditional -- every production control digest for a baked program
 /// passes through it, so a constant patch opens a new key namespace while
@@ -216,7 +216,7 @@ uint64_t RigExecFoldConstantDigest(uint64_t controlDigest,
 /// The control half of the cache key with compiled rig constant coverage: the
 /// plain control digest folded with \p constantDigest. Lookup, memoization,
 /// proofs, and warming keys all derive through this for a baked program;
-/// the D7 refusal path (no program, no constants) does not. Two
+/// the refusal path (no program, no constants) does not. Two
 /// constant-states never share a key, so a patch aliases nothing.
 uint64_t RigExecControlStateDigestWithConstants(
     const RigExecFrameInputs &inputs,
@@ -259,16 +259,16 @@ bool RigExecControlStateDigestible(
     const RigExecFrameInputs &inputs,
     const std::vector<RigExecValueOverride> &overrides);
 
-/// The control half of the cache key for a rig with no baked program (plan
-/// D7: a bake refusal, or an explicitly dynamic rig), which cannot sample a
+/// The control half of the cache key for a rig with no baked program (a
+/// bake refusal, or an explicitly dynamic rig), which cannot sample a
 /// RigExecFrameInputs: a hash over the requested time, the evaluator's
 /// stage-edit serial, and the standing overrides, which never reach the
 /// stage and so must be folded explicitly.
 ///
 /// The serial is what makes a time key correct: it advances on every stage
 /// notice, so an edit moves the digest at every frame by construction and
-/// stale entries become unreachable (reclaimed by LRU) -- the D1 rule, with
-/// the serial standing in for re-sampling. No clearing is needed on any
+/// stale entries become unreachable (reclaimed by LRU) -- the reachability
+/// rule, with the serial standing in for re-sampling. No clearing is needed on any
 /// path, registry-managed or bare bridge. The domain tag keeps a refusal
 /// digest from ever equaling a sampled digest under the same compiled rig (a mode
 /// toggle crosses the two without moving the compiled rig). Overrides fold exactly
@@ -312,7 +312,7 @@ struct RigExecFrameCacheEviction {
 using RigExecFrameCacheEvictionCallback =
     std::function<void(const std::vector<RigExecFrameCacheEviction> &)>;
 
-/// Per-entry provenance (plan 2.0): what an entry's computation depended
+/// Per-entry provenance: what an entry's computation depended
 /// on, recorded at publish so a later edit retires and re-runs only the
 /// entries that touched what moved. A full evaluation depends on every
 /// cluster, every weight object, and every constant region of its program
@@ -326,7 +326,7 @@ struct RigExecEntryProvenance {
     /// step.object, outside the avar-only affected index, so this set is
     /// what maps a weight-prim edit to its entries.
     std::vector<std::string> weightReads;
-    /// Constant regions the computation read (plan D3: region ids from
+    /// Constant regions the computation read (region ids from
     /// RigExecConstantRegionForBinding), sorted and unique. Carry-over
     /// across a constant-namespace change is sound only for entries that
     /// read no patched region.
@@ -350,10 +350,9 @@ struct RigExecEntryProvenance {
 constexpr size_t kRigExecProvenanceAliasCap = 1024;
 
 /// Accounted payload bytes of one pose: the struct shell plus every published
-/// map, by the same counting reports/frame-cache-measurements.md measures
-/// (SdfPath keys at sizeof(SdfPath), path strings interned and excluded, map
-/// node overhead excluded). Publish counts this per entry; Stream D adds the
-/// retained source snapshot beside it.
+/// map (SdfPath keys at sizeof(SdfPath), path strings interned and excluded, map
+/// node overhead excluded). Publish counts this per entry; sparse reuse adds
+/// the retained source snapshot beside it.
 size_t RigExecFrameCachePoseBytes(const RigExecRigPose &pose);
 
 /// The (compiledRigSignature, controlDigest) store. See the file header for the key
@@ -380,11 +379,11 @@ public:
     /// Publishing under a held key replaces the pose and refreshes its LRU
     /// position; counts one publish either way.
     /// \p provenance, when given, is recorded as the entry's dependency
-    /// record (plan 2.0); a null records an empty one.
+    /// record; a null records an empty one.
     bool Publish(const RigExecFrameCacheKey &key, UsdTimeCode time,
                  const RigExecRigPose &pose,
                  const RigExecEntryProvenance *provenance = nullptr);
-    /// The sparse-reuse (Stream D) Publish: stores \p pose plus the retained
+    /// The sparse-reuse Publish: stores \p pose plus the retained
     /// source snapshot, accounted at \p retainedBytes beside the
     /// pose's own bytes. \p retained is opaque here (a
     /// RigExecRetainedFrameState to frameCacheSparsity.h); a null handle
@@ -406,7 +405,7 @@ public:
 
     /// The sparse-reuse Lookup with accounted bytes: as above, plus the
     /// entry's accounted payload bytes (pose plus retained) in \p bytesOut.
-    /// The carry-over path (plan 2.2) re-publishes under a new key, which
+    /// The carry-over path re-publishes under a new key, which
     /// needs the bytes the plain Lookup never returned. \p bytesOut may be
     /// null to take the pose and handle alone.
     bool Lookup(const RigExecFrameCacheKey &key, RigExecRigPose *pose,
@@ -462,7 +461,7 @@ private:
         // null for a pose-only entry. Accounted inside `bytes`, which is
         // the pose's bytes plus the retained bytes.
         std::shared_ptr<const void> retained;
-        // The entry's dependency record (plan 2.0), empty when Publish
+        // The entry's dependency record, empty when Publish
         // recorded none. Copied out under the shard lock by
         // LookupProvenance; appended to (aliases only) by
         // NoteProvenanceAlias.

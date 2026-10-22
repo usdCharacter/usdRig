@@ -7,7 +7,7 @@
 // compiled rig.
 // Keyed by (compiledRigSignature, control): a topology change is a new compiled rig, which
 // makes every memoized set unreachable the way a control edit makes a cached
-// pose unreachable (plan D1). InvalidateCompiledRig drops a compiled rig's sets eagerly
+// pose unreachable. InvalidateCompiledRig drops a compiled rig's sets eagerly
 // so a dead compiled rig's memo does not hold memory until LRU pressure -- there is
 // no LRU here, the table is small (controls x live compiled rig versions) and explicit
 // invalidation bounds it.

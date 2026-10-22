@@ -460,6 +460,9 @@ TestScrubWarmsThenHits()
     if (readsOn && !verify) {
         SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "1");
         CHECK(RigExecFrameCacheVerifyRequested());
+        // Bridges read the switch when built; a mid-session change
+        // reaches them only through the refresh.
+        registry.RefreshFrameCacheSettings();
         const size_t shadowPullsBefore =
             registry.GetSessionEvaluationCount(rig);
         const size_t shadowHitsBefore =
@@ -477,6 +480,7 @@ TestScrubWarmsThenHits()
               shadowPullsBefore + 4);
         CHECK(registry.GetFrameCacheStats(rig).hits == shadowHitsBefore + 4);
         SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+        registry.RefreshFrameCacheSettings();
     }
     registry.Deactivate();
 }

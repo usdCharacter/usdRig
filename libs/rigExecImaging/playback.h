@@ -53,7 +53,9 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rigExec {
@@ -164,6 +166,21 @@ private:
     // that frame's captures; any other rebuilds the history from the stage.
     bool _PrepareHistory(UsdTimeCode time, std::string *error);
 
+    // One runtime output path, parsed once per Open. \p ok is false for
+    // text that is not an absolute SdfPath.
+    struct _OutputPath {
+        bool ok = false;
+        bool isPrim = false;
+        bool isProperty = false;
+        SdfPath path;
+        SdfPath primPath;
+        TfToken name;
+    };
+    // The parsed form of \p text, from the memo. The reader's outputs are
+    // a fixed set per file, so each text is parsed the first frame it
+    // appears and read from the memo after. Owner thread only.
+    const _OutputPath &_ResolveOutputPath(const std::string &text);
+
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
     SdfPath _assetRoot;
@@ -192,6 +209,14 @@ private:
     // change).
     UsdTimeCode _historyTime = UsdTimeCode::Default();
     bool _historyHave = false;
+    // Runtime output path text to its parsed path, cleared at Open.
+    std::unordered_map<std::string, _OutputPath> _outputPaths;
+    // Authored resetXformStack prims under the driven provider roots in
+    // _xformResetRoots. Walked again only when the provider set changes,
+    // the stage changes (NoteStageChanged) or a file opens.
+    std::vector<SdfPath> _xformResetRoots;
+    std::set<SdfPath> _xformResetPaths;
+    bool _xformResetsValid = false;
 };
 
 /// Resolves the playback file a rig names, if any. True with the playable

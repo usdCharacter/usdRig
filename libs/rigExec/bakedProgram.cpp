@@ -486,9 +486,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
                 say("solver type not baked (" + type.GetString() + ")",
                     solverPath);
             }
-            // A TwoBoneIk that does not bind three joint rests used to be
-            // refused here, resolved a second time by a copy of bakeSolver's
-            // rule. It is not a rig the program cannot express: the
+            // A TwoBoneIk that does not bind three joint rests is not refused
+            // here: it is not a rig the program cannot express. The
             // computation warns and publishes an empty aggregate, and
             // bakeSolver reproduces that through Solver::degenerate. One
             // expression of the rule, in the place that needs its answer.
@@ -2831,8 +2830,8 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
                 step.kind == K::CommitDelta || step.kind == K::PropagateChunk ||
                 step.kind == K::CommitApply;
             if (withdrawn) {
-                // A later discovered unavailable driver may withdraw a
-                // previously retained optional geometry role explicitly.
+                // A later discovered unavailable driver may explicitly
+                // withdraw an optional geometry role retained earlier.
                 auto &retained = exclusionProof.keys;
                 retained.erase(std::remove(retained.begin(), retained.end(),
                     step.descriptorKey), retained.end());
@@ -2884,7 +2883,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // order at the join. `ctx.reasons` is what `refuse()` appends to, and the
     // dense slots refuse; sharing one vector with the walk would interleave
     // the two lists and race. On a refusal the walk's reasons alone are
-    // handed back, which is what running it first used to return.
+    // handed back.
     // Inline where a task is not allowed or not worth it: with parallel
     // evaluation off, inside a frozen run, and on an evaluator that has not
     // compiled, whose tables the slots below have no business reading.
@@ -2916,6 +2915,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // What the bodies would otherwise read from the environment or a
     // function-local static, read once here (bodyPurity.h).
     B.chunkVertexTarget = RigExecBakedChunkVertexTargetFromEnvironment();
+    B.gpuDeformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+    RigExecBakedReadScheduleSettings(&B);
     B.chunkCap = RigExecBakedChunkCapFromEnvironment();
     B.rangeChains = RigExecBakedRangeChainsFromEnvironment();
     B.groupVertexTarget = RigExecBakedGroupVertexTargetFromEnvironment();
@@ -3732,9 +3733,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             return paths[size_t(a)] < paths[size_t(b)];
         });
         // Strictly ascending, not merely sorted: a repeated path would make
-        // an emplace keep the first value where the assignment it replaces
-        // kept the last, so a list that names one twice is published the
-        // old way.
+        // an emplace keep the first value where an assignment keeps the last,
+        // so a list that names one twice is published by assignment.
         for (size_t k = 1; k < order->size(); ++k) {
             if (!(paths[size_t((*order)[k - 1])] <
                   paths[size_t((*order)[k])])) {
@@ -4417,7 +4417,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
     }
 
-    if (RigExecBakedScheduleReportRequested()) {
+    if (B.scheduleReport) {
         const std::string report = RigExecBakedScheduleReport(B);
         std::fwrite(report.data(), 1, report.size(), stderr);
     }
@@ -4471,8 +4471,8 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     // take three mutexes apiece and cost more than the prologue they would
     // be measuring, which is why the phase a frame spends its time in was
     // never readable without the tracer distorting it. See
-    // RigExecBakedStepTimingRequested.
-    const bool measuring = RigExecBakedStepTimingRequested();
+    // RigExecBakedStepTimingRequested, read at Build.
+    const bool measuring = B.scheduleStepTiming;
     const auto now = [] {
         return std::chrono::duration<double, std::micro>(
                    std::chrono::steady_clock::now().time_since_epoch())
@@ -4605,8 +4605,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         // are slots: what a skipped constraint step left is what it would
         // have measured again, and clearing them would make a cone that
         // skips one deform as though no constraint had ever measured a
-        // delta. That was the hazard §7 named; keeping them across runs the
-        // way a slot is kept is the answer it offered.
+        // delta. Keeping them across runs the way a slot is kept avoids that.
         B.resolvedInputs->Clear();
 
         // Upstream values: what moved since the last run marks the leaves
@@ -4684,7 +4683,7 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     }
 
     // A run executes the CLOSURE of what the sources say moved, not the whole
-    // program (§7). Under RIGEXEC_BAKED_VERIFY_CONES it does both: the cone
+    // program. Under RIGEXEC_BAKED_VERIFY_CONES it does both: the cone
     // run's whole answer is shadowed, the state the prologue left is put
     // back, every step runs, and the two are compared. A difference is
     // reported rather than fatal, so a test can assert on the count.
@@ -4761,10 +4760,10 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
         RIGEXEC_PROFILE_SCOPE_CAT(*B.profiler, "BakedReplayTimings", "baked");
         RigExecBakedReplayStepTimings(B);
     }
-    if (RigExecBakedScheduleCalibrationRequested()) {
+    if (B.scheduleCalibrate) {
         RigExecBakedScheduleCalibrate(&B);
     }
-    if (RigExecBakedScheduleReportRequested()) {
+    if (B.scheduleReport) {
         // What the schedule DID, as against what Build predicted it would:
         // the structural half was printed once, at Build, and this is the
         // only half that needs a frame to have happened.
@@ -4947,8 +4946,7 @@ RigExecBakedProgramTesting::CapturePointReads(
     RigExecBakedProgramImpl &B = *program._impl;
     B.pointCaptures.assign(size_t(B.pointBindingCount),
                            RigExecBakedPointCapture());
-    B.capturePointReads = RigExecBakedScheduleModeFromEnvironment() ==
-                          RigExecBakedScheduleMode::Serial;
+    B.capturePointReads = !B.scheduleParallel;
     return B.capturePointReads;
 }
 

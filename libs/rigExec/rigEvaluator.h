@@ -40,7 +40,7 @@ struct RigExecSceneDescriptors;
 struct RigExecScenePoseInterpolatorDescriptor;
 struct RigExecSceneSpaceSwitchDescriptor;
 
-/// One discovered mover application (spec §4.2): the reverse-sibling
+/// One discovered mover application: the reverse-sibling
 /// post-order ordinal plus canonicalized targets.
 struct RigExecMoverHandler;
 struct RigExecMoverRecord {
@@ -105,7 +105,7 @@ struct RigExecRigPose {
     /// If a pose constraint explicitly names a control in rigExec:moves, the
     /// revised frame is published instead, matching FBX's ability to
     /// constrain any transform object. Consumed by the imaging bridge to
-    /// place synthesized control guides (spec §10.3 extension).
+    /// place synthesized control guides.
     std::map<SdfPath, RigExecPointFrame> controlFrames;
 
     /// Transform provider -> revised ASSET-SPACE matrix for the prim.
@@ -142,7 +142,7 @@ struct RigExecRigPose {
     /// Two kinds of chain land here, and a consumer tells them apart by the
     /// held type rather than by a flag:
     ///   - point chains (points/normals/extent) as VtVec3fArray, computed by
-    ///     the compiled mover graph (spec §7.2);
+    ///     the compiled mover graph;
     ///   - property chains (float, GfVec3f, GfMatrix4d) from the statically
     ///     typed math movers, computed off the authored stage and also
     ///     supplied to exec as value overrides so consumers see them.
@@ -154,7 +154,7 @@ struct RigExecRigPose {
 
     /// CPU reference-kernel results for the same chains, filled only when
     /// RigExecRigEvaluator::cpuReference is set (scalar-reference
-    /// parity, spec §7.4).
+    /// parity).
     std::map<SdfPath, VtValue> movedPropertiesCpu;
 
     /// Resolved weight field of every weight object a mover consumed this
@@ -185,7 +185,7 @@ struct RigExecRigPose {
     std::map<SdfPath, GfMatrix4d> weightFrames;
 
     /// Pass-through, failure, and unimplemented-operation reports
-    /// (spec §6.6: disabled/failed movers pass through with diagnostics).
+    /// (disabled/failed movers pass through with diagnostics).
     std::vector<std::string> diagnostics;
 
     /// Independent scalar-reference comparisons, when cpuReference is on.
@@ -300,7 +300,7 @@ struct RigExecPropertyChainBindings;
 class RigExecGoldenSuiteObserver;
 class RigExecInputReplayObserver;
 
-/// What one stage notice did to the baked program (plan 2.1): the
+/// What one stage notice did to the baked program: the
 /// evaluator's per-notice disposition, classifying the three branches of
 /// its notice handler so the registry's notice adapter can retire and
 /// re-resolve at the granularity the branch allows instead of cancelling
@@ -437,8 +437,7 @@ public:
     size_t GetBlendSampleCacheSize() const;
 
     /// Values that stand in for authored attributes while they are set,
-    /// with NOTHING authored: the manipulation path (spec: docs/superpowers/
-    /// specs/2026-09-10-hydra-preview-manipulation-design.md).
+    /// with NOTHING authored: the manipulation path.
     ///
     /// An interactive drag asks "what would the rig look like if this avar
     /// were 3.2", once per mouse sample. Authoring the answer to ask it
@@ -546,7 +545,7 @@ public:
 
     /// Composed mover-stack applications: descendants before their mover
     /// parent, sibling branches in reverse composed child order (the bottom
-    /// usdview row executes first; spec §4.2).
+    /// usdview row executes first).
     const std::vector<RigExecMoverRecord> &GetMoverOrder() const {
         return _movers;
     }
@@ -583,7 +582,7 @@ public:
 
     /// Structural digest of the compiled mover topology: the v0.1
     /// compiled rig identity. Structural edits change it and trigger
-    /// recompilation on the next Evaluate (spec §4.2, §6.3).
+    /// recompilation on the next Evaluate.
     size_t GetCompiledRigSignature() const { return _structureDigest; }
 
     /// Number of actual retained, valid provider rest frames whose complete
@@ -597,7 +596,7 @@ public:
     /// Transform provider -> the pose steps that write it, in the order the
     /// pose walk runs them: the aggregate solvers that name it on
     /// rigExec:joints and the frame constraints that move it, INTERLEAVED in
-    /// one hierarchical stack (spec §4.2). The last entry is the step whose
+    /// one hierarchical stack. The last entry is the step whose
     /// frame the pose publishes; a solver entry is also what an AtPrim read
     /// phase naming that solver resolves against.
     ///
@@ -750,10 +749,8 @@ public:
 
     /// The stage the rig evaluates against.
     ///
-    /// This IS the source stage. It used to be a private derived stage
-    /// carrying a generated sublayer, because compilation authored translated
-    /// property applications; nothing is authored any more, so there is
-    /// nothing for a derived stage to hold.
+    /// This IS the source stage: evaluation authors nothing, so there is no
+    /// derived stage.
     const UsdStageRefPtr &GetEvaluationStage() const { return _stage; }
 
 private:
@@ -892,8 +889,8 @@ private:
         _DigestBesideCompile = 1u << 4,
     };
     static constexpr size_t _DigestSegmentCount = 3;
-    /// The prims one digest read outside the rig's namespace (unified-program
-    /// spec §4.1, the prim-granular gate): relationship and connection
+    /// The prims one digest read outside the rig's namespace (the
+    /// prim-granular gate): relationship and connection
     /// targets, missing ones included, the prims read through them -- mover
     /// target gprims, weight objects, blend inputs and samples, pose-input
     /// providers -- and the ancestors walked above a prim.
@@ -908,7 +905,7 @@ private:
     /// out of the gate.
     /// What one digest provably hashed, recorded so that an edit which
     /// changes one of these things can be known to move the digest without
-    /// recomputing it (unified-program spec §7 EP2a, rule T-e). Each entry
+    /// recomputing it. Each entry
     /// is recorded where the digest writes it, so a change to it changes
     /// the digest's text at that place.
     struct _CertainFootprint {
@@ -1022,7 +1019,7 @@ private:
     /// footprint or when the candidates overflowed.
     bool _EditIsCertainlyStructural() const;
     /// Whether \p notice could move the structure digest: the prim-granular
-    /// gate of spec §4.1, read against _digestGate. Without a committed
+    /// gate, read against _digestGate. Without a committed
     /// footprint every notice is suspect.
     bool _NoticeIsDigestSuspect(const UsdNotice::ObjectsChanged &notice) const;
     /// RIGEXEC_VERIFY_DIGEST_GATE=1: recomputes the digest after a notice
@@ -1043,20 +1040,15 @@ private:
     size_t _SettleStructureDigest(_DigestGate *gate = nullptr) const;
     void _OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
                            const UsdStageWeakPtr &sender);
-    /// Derives rigExec:startFrame targets from the joint hierarchy for
-    /// every RigExecFkChain with rigExec:startFramePolicy = "parent" and
-    /// no authored targets, and authors them into the stage session
-    /// layer (never the asset), retracting this evaluator's previous
-    /// opinions first. Runs at the head of Compile, single-threaded,
-    /// before the digest dispatch and every parallel stage read: the
-    /// one exception to "compile authors nothing", so that scheduling,
-    /// exec reachability, and the baked program all see the derived
-    /// targets as authored. Fires no notices (TfNotice::Block): the
-    /// imaging registry holds a non-recursive mutex across Compile and
-    /// a notice here would re-enter it. Returns warnings (spanning
+    /// Resolves rigExec:startFramePolicy for every RigExecFkChain under the
+    /// rig with RigExecDeriveStartFrame, the rule scene translation applies
+    /// to the captured scene. Fills \p derived with chain -> provider for
+    /// each chain the policy hangs from a provider. Reads the composed
+    /// stage and authors nothing. Returns warnings (unknown policy, spanning
     /// providers, missing ancestors) for the caller to emit; they never
     /// fail the compile.
-    std::vector<std::string> _ApplyDerivedStartFrames();
+    std::vector<std::string> _DeriveStartFrames(
+        std::map<SdfPath, SdfPath> *derived) const;
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
@@ -1067,7 +1059,7 @@ private:
 
     std::vector<SdfPath> _jointPaths;
     /// Every RigExecControl beneath the rig, discovered exactly the way the
-    /// joint outputs are (spec §4.1: the rig is a namespace root, not a
+    /// joint outputs are (the rig is a namespace root, not a
     /// manifest). Unlike the joints an empty set is legal -- a rig driven
     /// entirely by avars on its joints has no control prims at all -- so it
     /// never fails Compile.
@@ -1077,8 +1069,7 @@ private:
     /// element of that solver's aggregate the joint takes. Held in memory
     /// rather than authored.
     ///
-    /// This is what Pass 0 used to write onto each joint as
-    /// rigExec:frameSource / rigExec:frameElement. It is a compile-time
+    /// Held in memory, never authored onto the joint. It is a compile-time
     /// choice -- which solvers write this joint, in what order, and which
     /// element of each one's aggregate frame array is this joint's -- so it
     /// belongs to the compiled graph, not to the scene. Compile() derives it
@@ -1087,8 +1078,8 @@ private:
     /// array with it directly instead of going through the joint's
     /// computePointFrame.
     ///
-    /// rigExec:joints is a WRITE, not an exclusive claim (spec §4.2,
-    /// "Solvers stack"): any number of aggregate solvers may name one
+    /// rigExec:joints is a WRITE, not an exclusive claim (solvers
+    /// stack): any number of aggregate solvers may name one
     /// joint. The vector is in POSE-WALK order, so its LAST entry is the
     /// writer that supplies the joint's base frame and every earlier entry
     /// is a version a reader can still name. Almost every rig has exactly
@@ -1226,9 +1217,8 @@ private:
 
     /// Compiled mover-graph input bindings.
     ///
-    /// The revision bindings are pure path resolution off the authored stage
-    /// (they replace the rigExec:resolved* relationships the compiler used to
-    /// author), so they are compile-time state. The taps supply the two
+    /// The revision bindings are pure path resolution off the authored stage,
+    /// so they are compile-time state. The taps supply the two
     /// dynamic values a revision needs that only evaluation can produce.
     struct _GraphRevision {
         SdfPath moverPath;
@@ -1357,20 +1347,20 @@ private:
     /// Drops what \p notice could have made stale in the value caches that
     /// outlive a generation -- the static inputs, the property chain
     /// bindings, the skin layouts, the blend sample shapes and the live
-    /// graphs' pushed base points -- and nothing else (spec rule S5).
+    /// graphs' pushed base points -- and nothing else.
     void _ClearValueCaches(const UsdNotice::ObjectsChanged &notice,
                            bool avarValuesOnly);
     /// Records \p notice in the value-edit log (GetValueEditsSince), or
     /// floors the log where the notice is not a covered value edit.
     void _LogValueEdit(const UsdNotice::ObjectsChanged &notice);
-    /// The same caches dropped whole, as every notice used to drop them.
+    /// The same caches dropped whole.
     /// What a shadow evaluator runs (RIGEXEC_VERIFY_SCOPED_CLEARS), and what
     /// a notice at the root, on a resolved asset or inside a prototype runs.
     void _ClearValueCachesWholesale(bool avarValuesOnly);
     /// Set on the shadow evaluator RIGEXEC_VERIFY_SCOPED_CLEARS builds: its
     /// notices take _ClearValueCachesWholesale, never the scoped path.
     bool _wholesaleValueClears = false;
-    /// The shadow itself (spec rule S6): an evaluator of the same rig on the
+    /// The shadow itself: an evaluator of the same rig on the
     /// same stage, told everything a caller tells this one, evaluated at
     /// every time this one is and compared with it pose for pose. Null
     /// unless the variable is set, and always null on the shadow.
@@ -1406,8 +1396,8 @@ private:
         std::vector<_FrameSourceBinding> sources;
         _FrameSourceBinding worldUpObject;
         /// rigExec:space on a Rotation or Parent constraint -- the provider
-        /// whose own rest->pose map carries the whole rig (the TRS masters
-        /// on the biped). A partial axis mask needs it: picking Euler axes
+        /// whose own rest->pose map carries the whole rig (typically a TRS
+        /// master). A partial axis mask needs it: picking Euler axes
         /// out of a rotation is not equivariant under an outer rotation, so
         /// under a turned master the mask throws part of the carry away
         /// with the axes it was told to drop. The same pair of taps the
@@ -1430,7 +1420,7 @@ private:
         std::vector<SdfPath> ikChain;
         /// Parallel to ikChain: 1 where a pose step BELOW this constraint
         /// wrote that joint, so the chain's rest reference for it is the
-        /// frame that step left rather than its authored rest (spec §4.2).
+        /// frame that step left rather than its authored rest.
         /// All zero on every rig with no step below the constraint, and the
         /// rest-derived IK preparation is then what it always was.
         std::vector<char> ikRestLive;
@@ -1540,8 +1530,7 @@ private:
 
     /// Re-pulls the compiled rig's rest frames after a stage edit no recompile
     /// covered, and clears _compiledRigRestFramesStale. Returns false when the
-    /// request could not produce them, which is what an incomplete per-frame
-    /// rest tap used to mean, and leaves the flag set.
+    /// request could not produce them, and leaves the flag set.
     /// Whether any of \p providers has a rest channel that can no longer be
     /// held as a compiled rig constant.
     /// The rest gate: records which compiled rig rest paths \p notice reached (see
@@ -1571,7 +1560,7 @@ private:
 
     /// Points target -> the derived normals/extent revisions it feeds.
     ///
-    /// Derived maintenance has no authored mover (spec §7.6 revised): it is
+    /// Derived maintenance has no authored mover: it is
     /// synthesized for any gprim that authors normals or extent alongside a
     /// moved points chain. Its input is that chain's FINAL points, so these
     /// are keyed by the points target and evaluated after it -- the reason
@@ -1726,15 +1715,6 @@ private:
     TfNotice::Key _noticeKey;
     bool _structureDirty = true;
     bool _compiled = false;
-    /// Solver -> the start provider this compile derived for it from the
-    /// joint hierarchy (rigExec:startFramePolicy = "parent"), as authored
-    /// into the stage session layer. The map is what makes retraction
-    /// exact: a recompile removes precisely these opinions before
-    /// re-deriving, so a removed policy or a reparented chain leaves no
-    /// stale target behind and a hand-authored session opinion is never
-    /// touched.
-    std::map<SdfPath, SdfPath> _derivedStartFrames;
-
     /// Scoped phase timings for Compile and Evaluate. Off unless profiling
     /// is enabled; see SetProfilingEnabled.
     RigExecProfiler _profiler;

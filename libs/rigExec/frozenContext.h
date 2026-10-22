@@ -357,18 +357,18 @@ bool RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
 /// region, so two digests that agree mean no patch landed between them --
 /// which is what lets a session cache keep its snapshot without re-cloning
 /// the compiled rig every frame. The frozen-snapshot refresh compares this to
-/// decide patch-vs-keep; the compiled rig signature no longer folds it (plan D3).
+/// decide patch-vs-keep; the compiled rig signature does not fold it.
 uint64_t RigExecFrozenAvarRegionDigest(const RigExecBakedProgram &program);
 
-/// The compiled rig constant digest (plan D3): the value-sensitive constant region
-/// the compiled rig signature no longer covers, captured at compiled rig build and at every
+/// The compiled rig constant digest: the value-sensitive constant region
+/// the compiled rig signature does not cover, captured at compiled rig build and at every
 /// value patch. Folds into control-digest derivation (see
 /// RigExecControlStateDigestWithConstants), so a constant patch opens a
 /// new key namespace while the compiled rig half stays standing. Same value as
 /// RigExecFrozenAvarRegionDigest: one sampler, two consumers.
 uint64_t RigExecCompiledRigConstantDigest(const RigExecBakedProgram &program);
 
-/// Bindings per constant region (plan 2.0): the avar-constant bindings are
+/// Bindings per constant region: the avar-constant bindings are
 /// partitioned into regions of this many consecutive bindings, and each
 /// entry's provenance records the regions its computation read.
 constexpr size_t kRigExecConstantRegionStride = 64;
@@ -389,7 +389,7 @@ std::vector<uint64_t> RigExecConstantRegionsForPaths(
     const std::vector<SdfPath> &paths);
 
 /// The compiled rig half of a frame-cache key for \p evaluator's current program
-/// state: structure only (plan D3) -- the compiled rig digest, the
+/// state: structure only -- the compiled rig digest, the
 /// program's build count, and the avar binding-table shapes. Avar constant
 /// VALUES are not folded here: a value patch must not evict the world, so
 /// they ride the control digest instead (see RigExecCompiledRigConstantDigest).
@@ -468,8 +468,8 @@ struct RigExecFrozenEvalContext {
     /// job is dropped rather than run against a truncated input set.
     size_t varyingInputCount = 0;
     /// kRigExecFrozen* bits: the per-run toggles the live path reads off the
-    /// evaluator (weight-field publication, solver guides) plus the D7
-    /// refusal flag. Sampled at enqueue because the live toggles can move
+    /// evaluator (weight-field publication, solver guides) plus the
+    /// no-baked-program refusal flag. Sampled at enqueue because the live toggles can move
     /// without the compiled rig moving.
     uint32_t flags = 0;
     /// The compiled rig program snapshot the job runs, or null when the rig
@@ -635,10 +635,9 @@ RigExecRigPose RigExecEvaluateFrozen(
 /// invalid and the caller evaluates live instead.
 ///
 /// Without a step runner this overload cannot prove bit-identity, so it
-/// always answers invalid at the requested time: the fail-closed stub. It
-/// is retained so callers written against the Stream 0 skeleton keep their
-/// meaning -- every request declines, the caller evaluates live -- while
-/// production call sites move to the runner overload above.
+/// always answers invalid at the requested time: the fail-closed stub.
+/// Every request declines and the caller evaluates live; production call
+/// sites use the runner overload above.
 RigExecRigPose RigExecEvaluateFrozen(const RigExecFrozenEvalContext &context,
                                      const RigExecFrameInputs &inputs);
 
@@ -822,9 +821,8 @@ bool RigExecSampleFrameInputsWithChainBindings(
 /// the evaluator's present compiled rig signature, and dropped on every stage notice
 /// that could move a chain without moving the compiled rig -- an edit under a
 /// chain mover, its weight objects or its target, or any resync. The check
-/// is the price of trusting nothing, and on the full biped stack it
-/// re-probes every chain mover's inputs: MEASURED at 60.6 ms per call,
-/// paid twice on every viewport release. A caller that cannot make that
+/// is the price of trusting nothing: it re-probes every chain mover's
+/// inputs, on every call. A caller that cannot make that
 /// promise uses the verifying entry point. UI thread only.
 bool RigExecSampleFrameInputsWithTrustedChainBindings(
     const RigExecRigEvaluator &evaluator, UsdTimeCode time,
@@ -966,7 +964,7 @@ bool RigExecSampleFrameInputsWithBurstCache(
 RigExecFrozenStepRunner RigExecMakeProductionStepRunner();
 
 /// Hashes \p inputs to the control-state digest the frame cache keys on
-/// (Stream A feeds this into RigExecFrameCacheKey::controlDigest). Time is
+/// (the frame cache feeds this into RigExecFrameCacheKey::controlDigest). Time is
 /// deliberately NOT hashed: a scrub between identical control states hits
 /// across times, and a control edit changes the digest at every affected
 /// frame by construction. Overrides are hashed with the authored values,
@@ -983,7 +981,7 @@ uint64_t RigExecFrozenControlDigest(const RigExecFrameInputs &inputs,
                                    bool *exact = nullptr);
 
 /// What the purity audit concluded about one unit of evaluation code: every
-/// kernel and solver Stream B examined, and the verdict each one earned.
+/// kernel and solver the audit examined, and the verdict each one earned.
 enum class RigExecFrozenPurity {
     /// A pure function of its inputs: no static, thread-local, or member
     /// state survives a call, so a worker may run it freely.
@@ -998,7 +996,7 @@ enum class RigExecFrozenPurity {
     LiveOnly,
 };
 
-/// One row of the Stream B purity audit (Constraints: a pose must be a pure
+/// One row of the purity audit (Constraints: a pose must be a pure
 /// function of its sampled inputs).
 struct RigExecPurityFinding {
     /// The unit examined, e.g. "rigExecMath/solvers.h".

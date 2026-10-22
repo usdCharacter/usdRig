@@ -422,7 +422,7 @@ RigExecRigEvaluator::_DiscoverMovers(
     // sits under is an authoring convention, never a requirement (see
     // _GetMoverExecutionOrder). Descendants run before their mover parent;
     // sibling branches run bottom-to-top in usdview (reverse composed child
-    // order, spec §4.2).
+    // order).
     /// Mover-bearing prims discovered but skipped because nothing is wired to
     /// their rigExec:moves yet. They are not outputs, but they ARE evidence
     /// that the rig root points somewhere real.
@@ -496,7 +496,7 @@ RigExecRigEvaluator::_DiscoverMovers(
             record.ordinal = ordinal++;
 
             // Structural/topology properties are never writable move
-            // targets (spec §4.2, §7.7).
+            // targets.
             static const std::set<TfToken> structuralProperties = {
                 TfToken("faceVertexCounts"), TfToken("faceVertexIndices"),
                 TfToken("holeIndices"), TfToken("curveVertexCounts"),
@@ -510,13 +510,13 @@ RigExecRigEvaluator::_DiscoverMovers(
             for (const SdfPath &t : targets) {
                 const SdfPath canonical = t;
                 const SdfPath primPath = canonical.GetPrimPath();
-                // Reject dangling targets (spec §4.2).
+                // Reject dangling targets.
                 if (!_stage->GetPrimAtPath(primPath)) {
                     return fail("Mover " + prim.GetPath().GetString() +
                                 " targets missing prim " +
                                 primPath.GetString(), {prim.GetPath()});
                 }
-                // Cross-rig writes are rejected in v1 (spec §4.2).
+                // Cross-rig writes are rejected in v1.
                 if (!primPath.HasPrefix(assetRoot)) {
                     return fail("Mover " + prim.GetPath().GetString() +
                                 " targets outside the rig asset: " +
@@ -529,8 +529,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                             " targets structural property " +
                             canonical.GetString(), {prim.GetPath()});
                     }
-                    // Derived properties are compiler-maintained (spec
-                    // §7.6 revised): no authored mover writes them.
+                    // Derived properties are compiler-maintained: no
+                    // authored mover writes them.
                     if (canonical.GetNameToken() == "normals" ||
                         canonical.GetNameToken() == "extent") {
                         return fail(
@@ -547,8 +547,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                             canonical.GetString(), {prim.GetPath()});
                     }
                 }
-                // Duplicate targets after canonicalization are rejected
-                // (spec §6.1).
+                // Duplicate targets after canonicalization are rejected.
                 if (std::find(record.targets.begin(), record.targets.end(),
                               canonical) != record.targets.end()) {
                     return fail("Mover " + prim.GetPath().GetString() +

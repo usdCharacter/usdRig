@@ -107,7 +107,7 @@ _FrameFromAxes(
     GfVec3d ey = eyCandidate - ex * GfDot(ex, eyCandidate);
     const double eyLen = ey.GetLength();
     if (eyLen < 1e-12) {
-        // Deterministic world-axis completion (spec §5.3 ladder tail).
+        // Deterministic world-axis completion.
         const GfVec3d axes[3] = {
             GfVec3d(0, 1, 0), GfVec3d(0, 0, 1), GfVec3d(1, 0, 0)};
         for (const GfVec3d &axis : axes) {
@@ -216,7 +216,7 @@ RigExecSolveTwoBoneIk(
         // Coincident goal: fall back to the root aim handle; if that is
         // also degenerate, fail atomically — return the input frames
         // flagged degenerate rather than normalizing a zero vector
-        // (spec §6.6: no silent identity, no NaNs).
+        // (no silent identity, no NaNs).
         const GfVec3d rootAim = rootFrame.X() - root;
         if (rootAim.GetLength() < 1e-12) {
             std::array<RigExecPointFrame, 3> failed = {
@@ -268,8 +268,7 @@ RigExecSolveTwoBoneIk(
     reach = std::max(reach, std::abs(s1 - s2) + 1e-12);
 
     // Bend plane normal from the pole; deterministic preferred-bend
-    // completion when the pole is on the aim line (spec §5.3 ladder shape:
-    // pole, rest up, then the world axis least parallel to the aim).
+    // completion when the pole is on the aim line (ladder: pole, rest up, then the world axis least parallel to the aim).
     GfVec3d poleDir = pole - root;
     poleDir -= aim * GfDot(aim, poleDir);
     GfVec3d bendUp;
@@ -393,7 +392,7 @@ RigExecBlendFrames(
     if (!RigExecPointsToParams(restPoints, a.points, RigExecAxis::Z, &pa) ||
         !RigExecPointsToParams(restPoints, b.points, RigExecAxis::Z, &pb)) {
         // A singular input frame cannot blend through SRT; hold the
-        // stronger input and flag it (no silent identity, spec §6.6).
+        // stronger input and flag it (no silent identity).
         RigExecPointFrame held = (w < 0.5) ? a : b;
         held.flags |= RigExecPointFrameDegenerate;
         return held;
@@ -429,7 +428,7 @@ RigExecBlendFrames(
 namespace {
 
 // Swing/twist decomposition of q about unit axis: q = swing * twist,
-// twist a rotation about the axis.
+// twist a rotation about the axis (Dobrowolski 2015, see docs/references.md).
 void
 _SwingTwist(const GfQuatd &q, const GfVec3d &axis,
             GfQuatd *swing, GfQuatd *twist)

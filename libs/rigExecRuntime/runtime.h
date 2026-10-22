@@ -1,4 +1,4 @@
-// rigExecRuntime: zero-USD .rigexec playback (M2).
+// rigExecRuntime: zero-USD .rigexec playback.
 // Opens a baked .rigexec file (one FlatBuffer, rigExecBinary/format.h),
 // replays its cluster DAG over the inputs the caller sets, and publishes
 // joint matrices and deformed points -- no USD headers, no USD library. The
@@ -13,9 +13,11 @@
 // hands it a dispatcher (SetTaskDispatch), which then runs the clusters the
 // DAG allows in parallel (the OpenUSD side passes a WorkDispatcher, Godot
 // its WorkerThreadPool). A classicLinear or dualQuaternion skin of at least
-// 4,096 points then splits at a grain of 512 on a local join. The host
-// dispatcher is not re-entered: the skin is already running on one of its
-// tasks. Successful points match the serial loop, including NaN payloads.
+// 4,096 points then splits at a grain of 512: the skin's task drains the
+// ranges itself and hands the dispatcher helper tasks that claim from the
+// same atomic counter. It never waits on the dispatcher, only on ranges
+// already claimed, and the helpers join with Execute's wait. Successful
+// points match the serial loop, including NaN payloads.
 // The reader holds no locks: one reader per thread, or external synchronization.
 #ifndef RIGEXEC_RUNTIME_H
 #define RIGEXEC_RUNTIME_H
@@ -105,15 +107,23 @@ public:
     }
 
 private:
-    static std::shared_ptr<const std::vector<T>> Empty()
-    {
-        static const std::shared_ptr<const std::vector<T>> empty =
-            std::make_shared<const std::vector<T>>();
-        return empty;
-    }
+    static std::shared_ptr<const std::vector<T>> Empty();
 
     std::shared_ptr<const std::vector<T>> _data;
 };
+
+// The one empty vector every empty view of element type T shares. Namespace
+// scope, initialized at load: no function-local static guard on a worker.
+template <class T>
+inline const std::shared_ptr<const std::vector<T>> RigExecSharedArrayEmpty =
+    std::make_shared<const std::vector<T>>();
+
+template <class T>
+inline std::shared_ptr<const std::vector<T>>
+RigExecSharedArray<T>::Empty()
+{
+    return RigExecSharedArrayEmpty<T>;
+}
 
 // A deformed-points output: the moved property's path plus its points.
 // points shares the buffer the chain published.

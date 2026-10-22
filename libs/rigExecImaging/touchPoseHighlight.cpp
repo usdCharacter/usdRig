@@ -164,8 +164,8 @@ _JsonDefault(const TfToken &name, const VtValue &value)
 // The wrapper's own code. `rigExecTouchPose_BaseSurfaceShader` is the
 // original terminal, renamed by a #define around its source so its body is
 // compiled byte for byte as it was.
-// The tint is mixed over the LIT colour, which is what the old overlay
-// patch did with its alpha, and it is shaded by a headlight term so a lit
+// The tint is mixed over the LIT colour, as an alpha overlay would be, and
+// it is shaded by a headlight term so a lit
 // region still reads as a surface with a shape rather than a flat decal.
 const char *const _kWrapSource = R"GLSL(
 #undef surfaceShader

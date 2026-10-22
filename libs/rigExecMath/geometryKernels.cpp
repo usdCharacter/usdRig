@@ -403,16 +403,15 @@ RigExecComputeVertexNormals(
             // Newell's method for the face normal: the only construction
             // that is correct for a non-planar n-gon, and the only one that
             // does not depend on how the polygon happens to be triangulated.
-            // Triangulating the face and accumulating per-triangle normals --
-            // which this kernel used to do -- gives every vertex only the fan
+            // Triangulating the face and accumulating per-triangle normals
+            // gives every vertex only the fan
             // triangles it happens to belong to. A vertex neighbouring the
             // fan anchor gets exactly one sliver triangle out of the whole
             // face, whose normal is the sliver's rather than the surface's;
             // where two faces meet along a symmetry seam the two slivers are
             // mirror images and cancel EXACTLY, leaving a valid manifold
-            // vertex with a zero normal. That is observable on puppetA
-            // (chars/puppetA), whose retopologised n-gons produce one such
-            // vertex.
+            // vertex with a zero normal. Retopologised n-gons produce such
+            // vertices.
             GfVec3f faceNormal(0);
             for (size_t k = 0; k < n; ++k) {
                 const GfVec3f &p = points[ring[k]];
@@ -886,7 +885,7 @@ RigExecSampleCurveRMF(
     samples.normals.resize(sampleCount);
     samples.binormals.resize(sampleCount);
     // Deterministic initial normal: world axis least parallel to the
-    // first tangent, projected (spec §5.3 ladder shape).
+    // first tangent, projected.
     {
         const GfVec3f t0 = samples.tangents[0];
         GfVec3f candidate(1, 0, 0);

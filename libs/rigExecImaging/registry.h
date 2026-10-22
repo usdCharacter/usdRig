@@ -214,6 +214,12 @@ public:
     /// Cache hits are not pulls and are not counted.
     size_t GetSessionEvaluationCount(const SdfPath &rigPath);
 
+    /// Re-reads RIGEXEC_FRAME_CACHE and RIGEXEC_FRAME_CACHE_VERIFY into
+    /// every live session's bridge. Bridges read them once when built; a
+    /// host or test that changes either mid-session calls this. Owner
+    /// thread only.
+    void RefreshFrameCacheSettings();
+
     /// Read the existing live evaluator on the stage owner thread. Never
     /// evaluates, compiles, changes time, or constructs a second evaluator.
     std::string LiveDebugJson(const SdfPath &rig, const std::string &knownGraph,
@@ -249,8 +255,8 @@ public:
     /// generation, sampling the input vector on the calling (UI) thread.
     /// A null \p runner builds the production runner (see OnEditCommitted).
     /// Empty work when no faithful job exists: unknown or playback rig,
-    /// default or non-finite time, stale generation, refusal rig (D7: no
-    /// background job, ever), unsampleable inputs, a vector carrying a stale
+    /// default or non-finite time, stale generation, refusal rig (no
+    /// baked program: no background job, ever), unsampleable inputs, a vector carrying a stale
     /// sample (no job is ever built from stale values), or an undigestible
     /// held type. A built job also records its time's
     /// freshness proof, so a completion is servable without a live visit.
@@ -332,8 +338,8 @@ public:
 
     /// Millisecond slice for one standing-burst rebuild; a rebuild past
     /// it parks the burst unusable (overrun) instead of serving a stale
-    /// one. Default 50 ms -- the stack's steady rebuild measures ~18 ms,
-    /// so the slice only bites on pathology (or a test's negative).
+    /// one. Default 50 ms, well above a steady rebuild, so the slice only
+    /// bites on pathology (or a test's negative).
     /// A negative slice overruns deterministically: a build always costs
     /// >= 0 ms, while a 0 slice races the clock on rigs that build in
     /// under a microsecond. Setting the
@@ -344,8 +350,8 @@ public:
 
     /// The rig's last reasoned factory skip (None when the rig is unknown
     /// or no reasoned skip has landed) and its detail: the freeze cause
-    /// for FreezeRefused, the sampler gate for Unsampleable, the D7 note
-    /// for D7Exempt. Burst prep records the session-level verdict on its
+    /// for FreezeRefused, the sampler gate for Unsampleable, the
+    /// no-baked-program note for D7Exempt. Burst prep records the session-level verdict on its
     /// null-factory paths, so a factory-less trigger names its cause.
     /// Unreasoned skips and successful builds leave it standing.
     RigExecWarmSkipReason GetLastWarmSkipReason(const SdfPath &rig);
@@ -355,10 +361,10 @@ public:
     /// factory invocations (default 16 -- one neighbor band: a commit warms
     /// neighbors now, the sweep follows on idle ticks) and a millisecond
     /// stop measured after burst prep (default 8 ms -- cached-route
-    /// sampling runs ~0.1 ms/frame on the biped, so the count binds;
-    /// the stop binds the plain route). Prep (frozen refresh + rebuild)
-    /// runs outside this budget under its own slice: measuring the stop
-    /// from the tick's start let a slow prep starve sampling forever.
+    /// sampling is cheap enough that the count binds; the stop binds the
+    /// plain route). Prep (frozen refresh + rebuild) runs outside this
+    /// budget under its own slice: measuring the stop from the tick's start
+    /// would let a slow prep starve sampling forever.
     /// Pass (max, infinity) for unlimited.
     void SetWarmSamplingBudget(size_t maxFactoryInvocations, double maxMs);
     size_t GetWarmSamplingMaxInvocations();
@@ -461,9 +467,8 @@ public:
     /// marked dirty, but nothing is evaluated: for a COMMIT that authors
     /// right after, whose own stage notice evaluates and publishes the
     /// committed rig. Ending first and publishing would flash the pre-drag
-    /// pose; ending after the commit evaluated the rig twice -- once from
-    /// the notice with the overrides still standing, once here. MEASURED on
-    /// the full biped stack: two EvaluateAndPublish passes per release.
+    /// pose; ending after the commit would evaluate the rig twice -- once
+    /// from the notice with the overrides still standing, once here.
     bool EndPreview(bool publish = true);
 
     bool IsPreviewActive() const;
@@ -483,8 +488,7 @@ public:
     bool IsActive() const;
 
     /// Activates the stage's rigs unless they are already active
-    /// (adapter-driven discovery, docs/specs/imaging-datasource-redesign.md
-    /// §3.2).
+    /// (adapter-driven discovery).
     ///
     /// The stage scene index's rig adapter calls this -- on
     /// ForStage(prim.GetStage()) -- the first time a RigExecRoot prim's data
@@ -500,8 +504,7 @@ public:
     ///
     /// Never refuses on account of another stage: each stage has its own
     /// context, so there is nothing to steal, and a second stage's rigs
-    /// evaluate independently. (It used to refuse while the process-global
-    /// registry was active on a different stage.) A successful automatic
+    /// evaluate independently. A successful automatic
     /// activation becomes the legacy current context only when no current
     /// context is live, so it never takes the legacy surface away from an
     /// explicit activation.
@@ -691,7 +694,7 @@ private:
         // frame's, so the pinned history is the frame's), and bound per
         // job in BuildWarmWork, which keeps a shared_ptr alive past
         // whatever the session does next. Null with frozenValid set means
-        // validly empty: no program (D7), or a rig the freeze refuses --
+        // validly empty: no baked program, or a rig the freeze refuses --
         // production jobs decline and live serves.
         const RigExecBakedProgram *frozenProgram = nullptr;
         uint64_t frozenCompiledRig = 0;
@@ -738,7 +741,7 @@ private:
         /// The session's last reasoned factory skip and its detail (the
         /// freeze cause or the sampler gate), for tests and the strip.
         /// Prep records the session-level verdict on its null-factory
-        /// paths (D7 / chain-bind / burst-declined). Unreasoned skips
+        /// paths (no baked program / chain-bind / burst-declined). Unreasoned skips
         /// and successful builds leave it standing.
         RigExecWarmSkipReason lastWarmSkip = RigExecWarmSkipReason::None;
         std::string lastWarmSkipDetail;
@@ -774,7 +777,7 @@ private:
         /// evaluation and by any notice that does not settle it.
         std::vector<RigExecValueOverride> settleOverrides;
         uint64_t burstChainGeneration = 0;
-        /// Frames a scoped retirement dirtied (plan 2.2 lane c), awaiting
+        /// Frames a scoped retirement dirtied, awaiting
         /// re-warm: the next commit/idle trigger enqueues these FIRST, so
         /// the affected-time set replaces the fixed sweep for the edit.
         /// A trigger drops the cached ones and keeps the rest (warming
@@ -841,15 +844,15 @@ private:
     /// would leave the index's generation behind. Call with _mutex held.
     void _CancelGenerationLocked(const SdfPath &rig);
 
-    /// Scoped cancellation for patch/stamp-bump edits (plan 2.1): purges
+    /// Scoped cancellation for patch/stamp-bump edits: purges
     /// the rig's queued jobs for its completed/queued times and assigns
     /// fresh per-time fence tokens, WITHOUT bumping the generation, and
     /// marks those completions path-scoped dirty in the warm index. Call
     /// with _mutex held.
     void _CancelGenerationTimesLocked(const SdfPath &rig);
 
-    /// Path-scoped retirement for one session's patch/stamp-bump edit
-    /// (plan 2.1/2.2): maps the notice to dirty clusters through the
+    /// Path-scoped retirement for one session's patch/stamp-bump edit:
+    /// maps the notice to dirty clusters through the
     /// session's compiled rig index, partitions completions by entry provenance
     /// (clean entries stand or carry, dirty ones retire), purges ONLY the
     /// affected/carried/queued times, retires intersecting proofs, and
@@ -1116,10 +1119,9 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGeneration();
 /// not publish leaves its slot at 0 and is not counted, so a caller can
 /// tell "everything is zero" from "nothing was published".
 ///
-/// This exists so a tool does not have to evaluate the rig a second time to
-/// see numbers the viewport already computed. The Shape Editor was doing
-/// exactly that -- 9-15 ms per refresh to recover pose-interpolator weights
-/// sitting in the current snapshot.
+/// This exists so a tool (the Shape Editor, for pose-interpolator weights)
+/// does not have to evaluate the rig a second time to see numbers the
+/// viewport already computed.
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloats(
     const char *packedPaths, float *out, int count);
 

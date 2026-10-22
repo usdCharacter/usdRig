@@ -4,6 +4,7 @@
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCacheSparsity.h"
+#include "rigExec/parallel.h"
 
 #include "rigExecMath/avarScale.h"
 
@@ -858,8 +859,8 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
     const uint64_t serial = evaluator.GetStageEditSerial();
     // The pins: the bridge's, which its notice tracking keeps current (a
     // constant edited mid-compiled rig moves no digest, but its notice drops them).
-    // Re-verifying a private copy after every edit re-probed every chain
-    // mover -- MEASURED at 60 ms on the full biped stack, on every commit.
+    // Re-verifying a private copy after every edit would re-probe every chain
+    // mover on every commit.
     const auto refreshPins = [&]() { _AdoptBridgeChainBindings(session); };
     if (session->frozenValid && session->frozenProgram == program &&
         session->frozenCompiledRig == compiledRig) {
@@ -869,8 +870,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
         // re-digest. (The burst pins, including overrides, compare
         // after the refresh regardless.) Failed pins still retry
         // every trigger -- only verified pins skip. During
-        // notice-free playback this skips the refresh floor (~15 ms
-        // on the stack) on every tick.
+        // notice-free playback this skips the refresh on every tick.
         if (session->frozenSerial == serial &&
             session->chainBindingsValid) {
             return;
@@ -1423,15 +1423,10 @@ RigExecImagingRegistry::_Activate(
     // ExecUsdSystem::_NoticeListener -- the thing that invalidates every
     // cached computed value when an attribute is authored -- is created by
     // the ExecUsdSystem constructor, which happens inside Compile(). So
-    // registering after Compile() put us AHEAD of exec in delivery order,
-    // and _OnObjectsChanged re-evaluated while exec still held the
-    // pre-edit value: every generation published from an edit was one
-    // edit stale. Measured on 11_VolumeWeights: with the overlay on and
-    // inputs:falloffMax dragged 4.46 -> 9 -> 1.5, the stage already
-    // resolved to the new value inside the callback while the published
-    // field was the previous one, and a second Evaluate in the same
-    // dispatch was equally stale -- only an evaluation after the dispatch
-    // ended came back fresh.
+    // registering after Compile() would put us AHEAD of exec in delivery
+    // order, and _OnObjectsChanged would re-evaluate while exec still held
+    // the pre-edit value: every generation published from an edit would be
+    // one edit stale, and a second Evaluate in the same dispatch equally so.
     // Registering first puts us at the BACK of the list, which is where a
     // re-evaluating listener belongs: every recompile builds a new
     // ExecUsdSystem that prepends ahead of us again, so this holds for the
@@ -2104,6 +2099,21 @@ RigExecImagingRegistry::GetSessionEvaluationCount(const SdfPath &rigPath)
     return 0;
 }
 
+void
+RigExecImagingRegistry::RefreshFrameCacheSettings()
+{
+    if (const Ptr routed = _Routed()) {
+        routed->RefreshFrameCacheSettings();
+        return;
+    }
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (RigSession &session : _sessions) {
+        if (session.bridge) {
+            session.bridge->RefreshFrameCacheSettings();
+        }
+    }
+}
+
 RigExecWarmFactoryResult
 RigExecImagingRegistry::BuildWarmWork(
     const SdfPath &rig, UsdTimeCode time,
@@ -2162,7 +2172,7 @@ RigExecImagingRegistry::BuildWarmWork(
         session->bridge->GetInteractiveOverrides();
     const RigExecBakedProgram *program = evaluator.GetBakedProgram();
     if (program == nullptr) {
-        // D7: a rig with no baked program evaluates dynamically against
+        // A rig with no baked program evaluates dynamically against
         // the live stage, which a worker must never touch. No job, ever;
         // the rig still memoizes its own UI-thread results.
         return skip(RigExecWarmSkipReason::D7Exempt,
@@ -2277,7 +2287,7 @@ RigExecImagingRegistry::BuildWarmWork(
     // snapshot pins and cross-checks against. The cached route reads the
     // prepared halves; the digests agree by construction (the same level-1s
     // over the same served values). The constant digest folds beside the
-    // sampled one on both routes (plan D3): the session's frozen avar
+    // sampled one on both routes: the session's frozen avar
     // digest IS the compiled rig constant digest, refreshed by
     // _RefreshFrozenSnapshot above, so a value patch opens a new key
     // namespace while the compiled rig half stands.
@@ -2304,7 +2314,7 @@ RigExecImagingRegistry::BuildWarmWork(
     // proves them.
     session->bridge->NoteWarmingEnqueued(time, key.controlDigest,
                                         unfoldedDigest, inputs);
-    // Dynamic-override bootstrapping (plan 2.1): an override identity the
+    // Dynamic-override bootstrapping: an override identity the
     // compiled rig index never learned would answer every plan as foreign (all
     // clusters). Admission is exact -- the seeds mirror SetOverrides'
     // placement -- and a no-op for identities already known.
@@ -2348,15 +2358,13 @@ RigExecImagingRegistry::BuildWarmWork(
                               runner, frozen, frozenPatch, workspaces, warmIndex, retained,
                               retainedBytes, provenance, progressPublication, publishObserver](
                                  const RigExecWarmRequest &request) {
-        RigExecProfiler *workerProfiler = scheduler ? scheduler->MutableProfiler() : nullptr;
-        uint64_t workerStart = workerProfiler && workerProfiler->IsEnabled() ? RigExecProfiler::NowUs() : 0;
-        const auto workerPhase = [&](const char *name) {
-            if (workerProfiler && workerProfiler->IsEnabled()) {
-                const uint64_t end = RigExecProfiler::NowUs();
-                workerProfiler->Record(name, "imagingWarm", workerStart, end);
-                workerStart = end;
-            }
+        // Phase marks go to the scheduler's per-run timings (null unless
+        // its profiler records); _FinishJob records them as one event.
+        RigExecWarmPhaseTimings *const timings = request.timings;
+        const auto workerPhase = [timings](const char *name) {
+            if (timings) timings->Mark(name);
         };
+        workerPhase(nullptr);
         RigExecFrozenEvalContext laneContext = context;
         RigExecWarmWorkspacePool::Lane *lane = workspaces->Acquire();
         struct Lease {
@@ -2558,7 +2566,7 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
                          session.burstUpstreamVaries ||
                          (session.burstDeclined && session.upstream));
                     sweepTimes = _CursorSweepTimes(session, playhead);
-                    // Retired frames re-warm FIRST (plan 2.2/2.4): the
+                    // Retired frames re-warm FIRST: the
                     // affected-time set replaces the fixed sweep for the
                     // edit, so a release re-warms what it retired before
                     // the cursor wanders on.
@@ -2569,10 +2577,9 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
                     // Stamped after prep: the stop bounds factory sampling,
                     // not the burst prep above (frozen refresh + rebuild),
                     // which runs outside the factory budget under its own
-                    // slice (plan 1.1). Measuring from the tick's start let
-                    // a slow prep -- the stack's refresh floor is ~15 ms --
-                    // trip the 8 ms stop before the first sample on every
-                    // tick, so the rig never warmed.
+                    // slice. Measured from the tick's start, a prep slower
+                    // than the stop would trip it before the first sample on
+                    // every tick, and the rig would never warm.
                     budget.startUs = RigExecProfiler::NowUs();
                     break;
                 }
@@ -2726,10 +2733,9 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
                     // Stamped after prep: the stop bounds factory sampling,
                     // not the burst prep above (frozen refresh + rebuild),
                     // which runs outside the factory budget under its own
-                    // slice (plan 1.1). Measuring from the tick's start let
-                    // a slow prep -- the stack's refresh floor is ~15 ms --
-                    // trip the 8 ms stop before the first sample on every
-                    // tick, so the rig never warmed.
+                    // slice. Measured from the tick's start, a prep slower
+                    // than the stop would trip it before the first sample on
+                    // every tick, and the rig would never warm.
                     budget.startUs = RigExecProfiler::NowUs();
                     break;
                 }
@@ -2754,11 +2760,17 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
     // preview, when warming is disabled, or for an injected test runner.
     const auto background = scheduler->Stats();
     if (!runner && enqueued == 0 && background.queuedDepth == 0 &&
-        background.running == 0 && RigExecBackgroundWarmingEnabled()) {
+        background.running == 0 && RigExecParallelEvaluationEnabled()) {
         std::lock_guard<std::mutex> lock(_mutex);
         if (!_previewActive && _warmSamplingMaxInvocations > 0 &&
             _warmSamplingMaxMs > 0.0) {
             for (RigSession &session : _sessions) {
+                // The bridge's stored switch, not the environment.
+                if (!session.bridge ||
+                    !RigExecBackgroundWarmingEnabled(
+                        session.bridge->GetFrameCacheMode(), true)) {
+                    continue;
+                }
                 if (_WarmOneFallbackFrame(&session, playhead)) {
                     break;
                 }
@@ -3059,7 +3071,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         if (cache && cache->LookupProvenance(oldKey, &provenance) &&
             provenance.unfoldedControlDigest != 0) {
             // The affected test is the executor's own dirtiness rule
-            // (bakedSchedule §7): an entry's pose moved exactly when a
+            // (bakedSchedule): an entry's pose moved exactly when a
             // dirty cluster reaches its computation, or an edited weight
             // object feeds it. Constant regions are recorded in the
             // provenance but deliberately NOT consulted: the patchable
@@ -3413,7 +3425,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         return true;
     }
     UsdTimeCode time;
-    // Fenced cancel-THEN-clear like ClearFrameCache (plan 3.3): the fence
+    // Fenced cancel-THEN-clear like ClearFrameCache: the fence
     // is outermost, so it is taken before the registry lock below and held
     // across every session's cancel plus clear.
     // Held, not borrowed: a Deactivate while the fence is held stops the
@@ -3449,7 +3461,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
             if (session.playback) {
                 session.playback->SetWeightOverlay(resolved);
             } else {
-                // Cancel BEFORE the bridge clears (plan 3.3): the overlay
+                // Cancel BEFORE the bridge clears: the overlay
                 // flag rides to workers in context.flags and changes pose
                 // content without moving the key, so the old clear-then-
                 // cancel order let a worker publish a stale-overlay pose
@@ -3471,8 +3483,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
     return SetTime(time);
 }
 
-// Manipulation preview (docs/superpowers/specs/
-// 2026-09-10-hydra-preview-manipulation-design.md)
+// Manipulation preview
 
 namespace {
 
@@ -3873,7 +3884,7 @@ RigExecImagingRegistry::UpdatePreview(const double *values, size_t count)
                 session.bridge->SetInteractiveOverrides(found->second);
                 needsRigPublish = true;
             }
-            // D5: any new edit bumps the generation and cancels the rig's
+            // Any new edit bumps the generation and cancels the rig's
             // in-flight jobs. A job sampled before this tick would land
             // under an unreachable key anyway (the digest folds the
             // overrides), but it would still burn a worker on a pose no
@@ -4205,7 +4216,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
                     // same footing: an edit under a chain mover moves a
                     // chain without moving the compiled rig signature.
                     session.bridge->NoteChainEdits(notice);
-                    // Outcome-driven retirement (plan 2.1/2.2): the
+                    // Outcome-driven retirement: the
                     // evaluator classifies this notice (patched plus
                     // paths, routed plus the paths it reads, stamp-bumped,
                     // or stale) through a read-only query, so the verdict
@@ -4254,7 +4265,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
                         // eagerly: a notice that hits it drops the compiled rig
                         // now, while its half still names it (the
                         // evaluator rebuilds lazily); a miss drops
-                        // nothing and D1 reachability decides.
+                        // nothing and digest reachability decides.
                         session.bridge->NoteCaptureIndex(notice);
                     }
                 }
@@ -4459,7 +4470,7 @@ _AccumulateGuideBounds(
     }
 
     // Built-in control guides are documented as unit-sized and
-    // centred on the frame origin with half-extent 1 (spec §10.3
+    // centred on the frame origin with half-extent 1
     // extension), so the unit cube bounds all six of them. Deliberately
     // NOT the exact per-shape extent: that table lives in the scene index,
     // which this registry must not depend on, and using it would make the
@@ -5008,21 +5019,19 @@ _WriteBounds(const PXR_NS::GfRange3d &range, double outMinMax[6])
 }
 
 // UsdGeomBoundable::ComputeExtentFromPlugins entry point for every RigExec
-// transform provider (spec §10.3 extension, host-durability redesign).
+// transform provider.
 // This is what makes framing a control work in EVERY host rather than in
 // the one whose Python we could reach. UsdGeomBBoxCache is what usdview
-// and Solaris both consult, and it asks a Boundable for its extent;
-// before this, RigExec types were not Boundable and reported nothing, so a
-// rig had no bounds anywhere and framing a control moved the camera not at
-// all. The usdview adapter used to monkeypatch computeWorldBound to paper
-// over that -- a patch for one host, replaced by this.
+// and Solaris both consult, and it asks a Boundable for its extent; a type
+// that is not Boundable reports nothing, so a rig would have no bounds
+// anywhere and framing a control would not move the camera.
 // The extent BAKES the posed frame, because the prim carries no stage
 // transform of its own: rest:space plus avars are the only transform
 // authority (the Ir alignment), and they are asset-relative.
 // "Asset-relative" is not "local", and an extent is LOCAL --
 // UsdGeomBBoxCache multiplies it by the prim's own local-to-world. The two
 // coincide only while nothing between the asset root and the provider
-// contributes a transform. Since 2026-09-10 something may: an intervening
+// contributes a transform. Something may: an intervening
 // Xformable is composed into the published frames
 // (RigExecRigEvaluator::_ComposeInterveningXforms), so the snapshot branch
 // below divides it back out. Leaving it in draws the guide in one place and
@@ -5599,8 +5608,7 @@ RigExecImaging_GetWarmingProgressCount()
     return static_cast<long long>(_Legacy().GetWarmingProgressCount());
 }
 
-// Manipulation preview (docs/superpowers/specs/
-// 2026-09-10-hydra-preview-manipulation-design.md). Three calls, and only the
+// Manipulation preview. Three calls, and only the
 // middle one runs per mouse sample: strings are marshalled once per drag and
 // every sample after that is an array of doubles.
 int

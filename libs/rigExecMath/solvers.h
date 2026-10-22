@@ -1,4 +1,4 @@
-// RigExec solver kernels (spec §4.1 solver schemas, §5 math).
+// RigExec solver kernels.
 // Pure, deterministic, stateless functions consumed by the OpenExec
 // computation callbacks. All frames are in rig-common space.
 #ifndef RIGEXEC_MATH_SOLVERS_H
@@ -48,7 +48,7 @@ std::vector<RigExecPointFrame> RigExecSolveFkChain(
 void RigExecScaleFkSegments(const std::vector<RigExecFkChainElement> &elements,
                             std::vector<RigExecPointFrame> *frames);
 
-/// Two-bone IK parameters (RigExecTwoBoneIk, spec §4.5 example).
+/// Two-bone IK parameters (RigExecTwoBoneIk).
 struct RigExecTwoBoneIkParams {
     double upperLength = 1.0;
     double lowerLength = 1.0;
@@ -86,7 +86,7 @@ struct RigExecTwoBoneIkParams {
 /// posed, so the two only agree while whatever the rig hangs from is
 /// unscaled. \p space -- rigExec:spaceMatrix, normally the posed space of
 /// a TRS master -- carries the rest points into the space the frames are
-/// already in. Identity reproduces the old measurement exactly.
+/// already in. Identity measures the rests as authored.
 ///
 /// The authored offsets are lengths, so each rides its own bone's factor:
 /// a chain that scales while its offset does not changes proportion as
@@ -176,7 +176,7 @@ std::vector<RigExecPointFrame> RigExecDistributeTwist(
     const std::vector<double> &weights,
     double twistTurns = 0.0);
 
-/// Weighted matrix movement kernel (RigExecMatrixMover, spec §7.4):
+/// Weighted matrix movement kernel (RigExecMatrixMover):
 ///   p' = q + w (T q - q), 0 <= w <= 1,
 /// applied per point of an exact native points value.
 GfVec3d RigExecApplyWeightedMatrix(
@@ -334,7 +334,7 @@ struct RigExecRotationConstraintParams {
     RigExecEulerOrder rotationOrder = RigExecEulerOrder::XYZ;
     double weight = 1.0;
     /// rigExec:space -- the rest->pose map of the provider that carries the
-    /// whole rig (the TRS masters on the biped), or nullptr when none is
+    /// whole rig (typically a TRS master), or nullptr when none is
     /// named. Picking Euler axes out of a rotation is not equivariant under
     /// an outer rotation: under a master rotation R the source reads Q*R,
     /// and the X component of Q*R has nothing to do with the X component of

@@ -1,4 +1,4 @@
-// RigExec property-domain math kernels (spec §4.1 math movers).
+// RigExec property-domain math kernels.
 // The point-domain movers revise a point3f[] array; these revise a single
 // scalar, vector, or matrix property. Same chain model -- base value in,
 // revised value out, one revision per mover in composed post-order -- so the

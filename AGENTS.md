@@ -123,6 +123,13 @@ cycle handling, and native/frozen/runtime parity. See
   than replaying them.
 - Core code never names an external mover. Plugin movers go through the
   generic contract in [external movers](docs/concepts/external-movers.md).
+- Never write back to the stage. Compile, evaluation, activation, caching,
+  playback and imaging author nothing: no session-layer or edit-target
+  opinions, no derived relationship targets or defaults, no cached results.
+  A value derived from the scene is resolved at compile into the compiled rig
+  as a declared input, the same way in every evaluator; display-only results
+  go to Hydra as primvars. Only the authoring APIs (`rigExecRigging`, the
+  `usdview` editors, explicit tools on their own stages) write to a stage.
 
 ## No-mutex zones and thread ownership
 

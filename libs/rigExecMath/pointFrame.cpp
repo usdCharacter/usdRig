@@ -1,4 +1,4 @@
-// RigExec point-frame math (spec §5).
+// RigExec point-frame math.
 #include "pointFrame.h"
 
 #include "pxr/base/gf/matrix3d.h"
@@ -64,7 +64,7 @@ RigExecPointsToMatrix(
     const std::array<GfVec3d, 4> &posePoints,
     GfMatrix4d *matrix)
 {
-    // Spec §5.1 (column convention): L = B_P B_Q^-1, t = po - L qo.
+    // Column convention: L = B_P B_Q^-1, t = po - L qo.
     // Row-vector storage: M3 = L^T = (B_Q^T)^-1 B_P^T = MQ^-1 * MP,
     // where MQ/MP are the row-basis matrices.
     const GfMatrix3d mq = _RowBasis(restPoints);
@@ -179,7 +179,7 @@ RigExecReconstructFrame(
         return frame;
     }
 
-    // Orthogonal family (spec §5.2). The aim/up landmark roles come from
+    // Orthogonal family. The aim/up landmark roles come from
     // the authored aimAxis/upAxis tokens; the remaining landmark carries
     // side scale and handedness.
     const int aimIdx = static_cast<int>(args.aimAxis) + 1;
@@ -212,13 +212,13 @@ RigExecReconstructFrame(
     const double aLen = a.GetLength();
     if (aLen < eps) {
         // Aim invalid: orientation cannot be derived. Keep raw points,
-        // flag degenerate (spec §5.3: no silent identity).
+        // flag degenerate (no silent identity).
         frame.flags |= RigExecPointFrameDegenerate;
         return frame;
     }
     const GfVec3d eAim = a / aLen;
 
-    // Up projection with the deterministic fallback ladder (spec §5.3):
+    // Up projection with the deterministic fallback ladder:
     // authored up landmark, parent computed up, authored rest up,
     // world axis least parallel to the aim direction.
     auto [u, uLen] = _ProjectUp(posePoints[upIdx] - po, eAim);
@@ -243,8 +243,8 @@ RigExecReconstructFrame(
     eSide.Normalize();
 
     // Scale magnitudes and handedness are measured on the UNTWISTED
-    // orthogonal basis (spec §5.2 defines dz against e_z, then applies
-    // twist to the reconstructed transverse axes).
+    // orthogonal basis (dz is defined against e_z, then twist is applied
+    // to the reconstructed transverse axes).
     double sAim = aLen / lAim;
     // When the up landmark was degenerate the transverse scale is
     // underdetermined; unit scale is the deterministic choice.
@@ -350,7 +350,7 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
         // so its largest-magnitude component is positive. This removes
         // per-vector sign ambiguity only; it cannot stabilize eigenvector
         // rotation within a (nearly) repeated eigenspace, which remains an
-        // open gap for the spec §5.4 pinned-axis policy.
+        // open gap for the pinned-axis policy.
         int maxK = 0;
         for (int k = 1; k < 3; ++k) {
             if (std::abs(evec[k][i]) > std::abs(evec[maxK][i])) {
@@ -368,7 +368,7 @@ _SymmetricEigen3(const double m[3][3], double eval[3], double evec[3][3])
     // eigenvalue group the eigenvectors are only determined up to a
     // rotation of the subspace, so Jacobi output can rotate under tiny
     // perturbations. Rebuild each group's basis deterministically from
-    // world-axis projections (spec §5.4 pinned-axis stability).
+    // world-axis projections.
     const double tol =
         1e-8 * std::max({std::abs(eval[0]), std::abs(eval[2]), 1.0});
     const bool eq01 = std::abs(eval[0] - eval[1]) <= tol;
@@ -443,7 +443,7 @@ RigExecPointsToParams(
         for (int j = 0; j < 3; ++j)
             L[i][j] = m[j][i];
 
-    // SVD via eigen decomposition of L^T L = V S^2 V^T (spec §5.4).
+    // SVD via eigen decomposition of L^T L = V S^2 V^T.
     double ltl[3][3];
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
@@ -481,7 +481,7 @@ RigExecPointsToParams(
     const double delta = (detL >= 0) ? 1.0 : -1.0;
 
     // Select singular index k: right-singular direction most aligned with
-    // the pinned reflection axis (spec §5.4). Immaterial when delta = +1.
+    // the pinned reflection axis. Immaterial when delta = +1.
     int k = 2;
     if (delta < 0) {
         const int axis = static_cast<int>(reflectionAxis);

@@ -5,7 +5,7 @@
 // intrinsic headers. ARM64EC is deliberately excluded even though MSVC
 // defines _M_X64 there.
 // The fallback delegates to RigExecApplyWeightedMatrix, the same scalar
-// reference kernel the parity mode (spec §13.4) compares SIMD output against,
+// reference kernel the parity mode compares SIMD output against,
 // so on a non-SSE target the two paths agree exactly rather than to tolerance.
 #include "simdKernels.h"
 

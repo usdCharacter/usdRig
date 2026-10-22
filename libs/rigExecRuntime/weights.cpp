@@ -1,4 +1,4 @@
-// rigExecRuntime weight family (M2): WeightPacket, VolumePlacements, and
+// rigExecRuntime weight family:WeightPacket, VolumePlacements, and
 // the weight oracle (RrResolveWeightOracle) that constraint envelopes and
 // current-phase fields resolve through, ported near the end of this file.
 // A bit-identical port of RigExecBakedRunWeightStep

@@ -11,6 +11,7 @@
 #include "pxr/usd/sdf/path.h"
 
 #include <map>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -93,6 +94,17 @@ struct RigExecFrozenProgram {
     /// frozenDetail::_FrozenWeightArrayRole order, built here with the
     /// sampler's own key function.
     std::vector<SdfPath> weightArrayKeys;
+    /// Whether input-replay capture (RIGEXEC_INPUT_REPLAY) was requested at
+    /// freeze, and the thread that froze. Capture is a serial owning-thread
+    /// log: only that thread records boundaries for this snapshot, and no
+    /// worker lane reads the environment or touches the recorder.
+    bool inputReplayCapture = false;
+    std::thread::id inputReplayOwner;
+    bool RecordsInputReplay() const
+    {
+        return inputReplayCapture &&
+               inputReplayOwner == std::this_thread::get_id();
+    }
 };
 
 }  // namespace rigExec

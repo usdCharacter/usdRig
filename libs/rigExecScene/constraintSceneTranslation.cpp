@@ -77,6 +77,18 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((inputsDecay, "inputs:decay"))
     ((inputsTermination, "inputs:termination"))
     ((inputsAxisAmplitude, "inputs:axisAmplitude"))
+    ((rigExecIkControl, "rigExec:ikControl"))
+    ((rigExecPoleControl, "rigExec:poleControl"))
+    ((rigExecRootControl, "rigExec:rootControl"))
+    ((rigExecFkControls, "rigExec:fkControls"))
+    ((rigExecLimbJoints, "rigExec:limbJoints"))
+    ((rigExecMoves, "rigExec:moves"))
+    ((rigExecIkValue, "rigExec:ikValue"))
+    ((rigExecScaleCalibration, "rigExec:scaleCalibration"))
+    ((rigExecUpperLengthOffset, "rigExec:upperLengthOffset"))
+    ((rigExecLowerLengthOffset, "rigExec:lowerLengthOffset"))
+    ((rigExecStretchPolicy, "rigExec:stretchPolicy"))
+    (softDistance)
     (vector)
     (x)
 );
@@ -120,8 +132,9 @@ bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,const 
         if(boxed.IsHolding<T>())*value=boxed.UncheckedGet<T>();return true;
     };
     auto bind=[&](const TfToken &name,RigExecSceneReadRoute route=RigExecSceneReadRoute::ConnectionResolved,
-                  const SdfValueTypeName *requestedType=nullptr) {
-        const auto property=path.AppendProperty(name);if(!source.Attribute(property))return true;
+                  const SdfValueTypeName *requestedType=nullptr,const SdfPath *boundAt=nullptr) {
+        const auto head=path.AppendProperty(name);if(!source.Attribute(head))return true;
+        const auto &property=boundAt?*boundAt:head;
         RigExecSceneBoundInput input;if(!source.Bind(property,route,&input,error))return false;
         const std::string &field=name.GetString();
         if(route!=RigExecSceneReadRoute::Raw) {
@@ -134,6 +147,20 @@ bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,const 
             result.typedReads.emplace(field,std::move(typed));
         }
         result.inputs.emplace(field,std::move(input));return true;
+    };
+    // A scalar bound AT the attribute its connection walk ends on, in that
+    // attribute's precision, as the baked program binds it: a double input
+    // connected to a float channel reads the float channel.
+    auto bindAtEndPrecision=[&](const TfToken &name) {
+        SdfValueTypeName end;SdfPath endPath;std::set<SdfPath> visited;
+        for(SdfPath at=path.AppendProperty(name);visited.insert(at).second;) {
+            const auto *attribute=source.Attribute(at);if(!attribute)break;
+            end=attribute->fact.type;endPath=at;
+            if(attribute->fact.connections.size()!=1)break;
+            at=attribute->fact.connections.front();
+        }
+        const auto requested=end==SdfValueTypeNames->Float?SdfValueTypeNames->Float:SdfValueTypeNames->Double;
+        return bind(name,RigExecSceneReadRoute::ConnectionResolved,&requested,endPath.IsEmpty()?nullptr:&endPath);
     };
     if(!bind(_tokens->inputsEnabled) || !bind(_tokens->inputsDefaultWeight))return false;
     result.space=first(_tokens->rigExecSpace);
@@ -151,17 +178,8 @@ bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,const 
            !raw(_tokens->rigExecFrequency,1.0,&result.harmonicsFrequency) ||
            !raw(_tokens->rigExecIgnoreFirstFrame,true,&result.harmonicsIgnoreFirstFrame) ||
            !raw(_tokens->rigExecMatchVelocity,true,&result.harmonicsMatchVelocity))return false;
-        for(const TfToken *name:{&_tokens->inputsAmplitude,&_tokens->inputsDecay,&_tokens->inputsTermination}) {
-            SdfValueTypeName end;std::set<SdfPath> visited;
-            for(SdfPath at=path.AppendProperty(*name);visited.insert(at).second;) {
-                const auto *attribute=source.Attribute(at);if(!attribute)break;
-                end=attribute->fact.type;
-                if(attribute->fact.connections.size()!=1)break;
-                at=attribute->fact.connections.front();
-            }
-            const auto requested=end==SdfValueTypeNames->Float?SdfValueTypeNames->Float:SdfValueTypeNames->Double;
-            if(!bind(*name,RigExecSceneReadRoute::ConnectionResolved,&requested))return false;
-        }
+        for(const TfToken *name:{&_tokens->inputsAmplitude,&_tokens->inputsDecay,&_tokens->inputsTermination})
+            if(!bindAtEndPrecision(*name))return false;
         if(!bind(_tokens->inputsAxisAmplitude))return false;
         *output=std::move(result);return true;
     }
@@ -173,9 +191,25 @@ bool RigExecTranslateSceneConstraint(const RigExecSceneDescriptors &scene,const 
        !raw(_tokens->rigExecWorldUpRotationOnly,false,&result.worldUpRotationOnly))return false;
     if(result.record.kind==RigExecConstraintKind::IkFkMatch) {
         result.effector=first(_tokens->rigExecEffector);
+        auto &match=result.match;
+        match.ikControl=relation(_tokens->rigExecIkControl);match.poleControl=relation(_tokens->rigExecPoleControl);
+        match.rootControl=relation(_tokens->rigExecRootControl);match.effector=relation(_tokens->rigExecEffector);
+        match.fkControls=relation(_tokens->rigExecFkControls);match.limbJoints=relation(_tokens->rigExecLimbJoints);
+        match.moves=relation(_tokens->rigExecMoves);match.space=relation(_tokens->rigExecSpace);
+        // A space that cannot supply a frame is dropped, as the compile drops it.
+        if(const auto *space=result.space.IsEmpty()?nullptr:source.Node(result.space);
+           !space || (space->fact.type!="RigExecControl" && space->fact.type!="RigExecJoint"))result.space=SdfPath();
+        TfToken policy;
+        if(!raw(_tokens->rigExecIkValue,1.0,&match.ikValue) ||
+           !raw(_tokens->rigExecScaleCalibration,0.0,&match.scaleCalibration) ||
+           !raw(_tokens->rigExecUpperLengthOffset,0.0,&match.upperLengthOffset) ||
+           !raw(_tokens->rigExecLowerLengthOffset,0.0,&match.lowerLengthOffset) ||
+           !raw(_tokens->rigExecStretchPolicy,_tokens->softDistance,&policy))return false;
+        if(!std::isfinite(match.ikValue))match.ikValue=1.0;
+        match.stretchLimb=policy==_tokens->softDistance;
         for(const TfToken *name:{&_tokens->inputsSwitch,&_tokens->inputsStretch,&_tokens->inputsSoftDistance,
                                  &_tokens->inputsUpperScale,&_tokens->inputsLowerScale,&_tokens->inputsPin,&_tokens->inputsTwist})
-            if(!bind(*name))return false;
+            if(!bindAtEndPrecision(*name))return false;
     } else if(result.record.kind==RigExecConstraintKind::SingleChainIk) {
         result.effector=first(_tokens->rigExecEffector);result.poleObjects=relation(_tokens->rigExecPoleVectorObjects);
         if(!raw(_tokens->rigExecSolverMode,_tokens->rotatePlane,&token))return false;

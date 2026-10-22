@@ -23,11 +23,10 @@
 // authored, no prim is created, deleted or toggled, and the rig never sees
 // a change notice: a hover is a Hydra dirty on one constant primvar of one
 // rprim.
-// WHY A SHADER AND NOT A SECOND MESH. The overlay mesh it replaces had to be
-// authored into the stage (a Hydra resync of a 17k-point rprim per region
-// crossing, measured at 71-91 ms to the next drawn frame), lifted off the
-// skin to avoid z-fighting, re-pointed on every pose change, and could be
-// picked by usdview instead of the skin under it. A tint in the body's own
+// WHY A SHADER AND NOT A SECOND MESH. An overlay mesh has to be authored
+// into the stage (a Hydra resync of a large rprim per region crossing),
+// lifted off the skin to avoid z-fighting, re-pointed on every pose change,
+// and can be picked by usdview instead of the skin under it. A tint in the body's own
 // shader has none of those properties: it is exactly on the surface, it
 // deforms with the surface because it IS the surface, and it is invisible
 // to picking.

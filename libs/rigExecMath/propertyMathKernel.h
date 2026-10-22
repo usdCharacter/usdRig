@@ -37,7 +37,7 @@ struct RigExecPropertyMathKernelParams {
     T value{};
     T min{};
     T max{};
-    /// Resolved common MoverAPI envelope (spec §5): either the bound
+    /// Resolved common MoverAPI envelope: either the bound
     /// rigExec:weightObject's one-element field or inputs:defaultWeight. The
     /// operation's result is mixed back toward the incoming value, so weight
     /// 0 is a no-op and weight 1 applies the operation outright. Same rule the

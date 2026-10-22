@@ -1,5 +1,4 @@
-// RigExecBlendShapeMover: everything about the blend-shape mover
-// (spec §4.1, §7.3).
+// RigExecBlendShapeMover: everything about the blend-shape mover.
 // A blend-shape mover accumulates channel-weighted delta samples onto
 // the points: p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}, with deltas
 // derived against the authored base. This TU owns its exec-side
@@ -28,6 +27,27 @@ using rigExec::RigExecMoverExecTokens;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((blendInputs, "rigExec:blendInputs"))
+    ((samples, "rigExec:samples"))
+    ((targetPoints, "rigExec:targetPoints"))
+    ((blendShape, "rigExec:blendShape")));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_blendShapeTokens,
+    (blendShape)
+    (faceVertexCounts)
+    (faceVertexIndices)
+    ((targetPoints, "rigExec:targetPoints"))
+    ((deltaSpace, "rigExec:deltaSpace"))
+    ((moves, "rigExec:moves"))
+    ((blendInputs, "rigExec:blendInputs"))
+    ((samples, "rigExec:samples"))
+    ((rigExecBlendShape, "rigExec:blendShape")));
+
 namespace {
 const TfToken _oracleToken0("rigExec:blendInputs");
 const TfToken _oracleToken1("inputs:weight");
@@ -49,7 +69,7 @@ RigExecMoverParameters
 _BuildBlendMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    params.kind = TfToken("blendShape");
+    params.kind = _blendShapeTokens->blendShape;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
@@ -58,7 +78,7 @@ _BuildBlendMoverParameters(const VdfContext &ctx)
         return params;
     }
 
-    // Base points for delta derivation (spec §7.3): deltas derive against
+    // Base points for delta derivation: deltas derive against
     // the authored base, never the preceding revision.
     std::vector<GfVec3f> base;
     {
@@ -128,26 +148,26 @@ _BindBlendShapeMover(const rigExec::RigExecMoverBindContext &ctx)
     const SdfPath &ownerPath = ctx.ownerPath;
     if (moverPrim.GetStage()->GetPrimAtPath(ownerPath).IsA<UsdGeomMesh>()) {
         binding.topologyCounts = ownerPath.AppendProperty(
-            TfToken("faceVertexCounts"));
+            _blendShapeTokens->faceVertexCounts);
         binding.topologyIndices = ownerPath.AppendProperty(
-            TfToken("faceVertexIndices"));
+            _blendShapeTokens->faceVertexIndices);
     }
     binding.blendInputs = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:blendInputs");
+        moverPrim, _relTokens->blendInputs);
     std::sort(binding.blendInputs.begin(), binding.blendInputs.end());
     for (const SdfPath &input : binding.blendInputs) {
         const UsdPrim channel = moverPrim.GetStage()->GetPrimAtPath(input);
         for (const SdfPath &samplePath :
              rigExec::RigExecRelationshipTargets(
-                 channel, "rigExec:samples")) {
+                 channel, _relTokens->samples)) {
             const UsdPrim sample =
                 moverPrim.GetStage()->GetPrimAtPath(samplePath);
             const SdfPathVector points =
                 rigExec::RigExecRelationshipTargets(
-                    sample, "rigExec:targetPoints");
+                    sample, _relTokens->targetPoints);
             const SdfPathVector shapes =
                 rigExec::RigExecRelationshipTargets(
-                    sample, "rigExec:blendShape");
+                    sample, _relTokens->blendShape);
             // Exactly one of the two. Both authored is not a precedence
             // question: two shapes that disagree with a silent winner is
             // the worst of the three outcomes, so the sample is dropped
@@ -167,7 +187,7 @@ _BindBlendShapeMover(const rigExec::RigExecMoverBindContext &ctx)
                 continue;
             }
             rigExec::RigExecResolveReadPhase(
-                sample.GetRelationship(TfToken("rigExec:targetPoints")),
+                sample.GetRelationship(_blendShapeTokens->targetPoints),
                 &phase, &error);
             binding.blendSamples[input].push_back(
                 {samplePath, rigExec::RigExecPointsOf(points[0]), phase,
@@ -184,14 +204,14 @@ _ValidateBlendShapeMover(
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
     TfToken deltaSpace("target");
-    prim.GetAttribute(TfToken("rigExec:deltaSpace")).Get(&deltaSpace);
+    prim.GetAttribute(_blendShapeTokens->deltaSpace).Get(&deltaSpace);
     if (deltaSpace != "target" && deltaSpace != "surfaceFrame") {
         *error = prim.GetPath().GetString() + ": invalid blend deltaSpace";
         return false;
     }
     if (deltaSpace == "surfaceFrame") {
         SdfPathVector targets;
-        prim.GetRelationship(TfToken("rigExec:moves")).GetTargets(&targets);
+        prim.GetRelationship(_blendShapeTokens->moves).GetTargets(&targets);
         for (const auto &target : targets) {
             if (!stage->GetPrimAtPath(target.GetPrimPath())
                      .IsA<UsdGeomMesh>()) {
@@ -202,7 +222,7 @@ _ValidateBlendShapeMover(
         }
     }
     SdfPathVector inputs;
-    prim.GetRelationship(TfToken("rigExec:blendInputs"))
+    prim.GetRelationship(_blendShapeTokens->blendInputs)
         .GetTargets(&inputs);
     for (const SdfPath &inputPath : inputs) {
         const UsdPrim input = stage->GetPrimAtPath(inputPath);
@@ -210,7 +230,7 @@ _ValidateBlendShapeMover(
             continue;
         }
         SdfPathVector samples;
-        input.GetRelationship(TfToken("rigExec:samples"))
+        input.GetRelationship(_blendShapeTokens->samples)
             .GetTargets(&samples);
         for (const SdfPath &samplePath : samples) {
             const UsdPrim sample = stage->GetPrimAtPath(samplePath);
@@ -223,11 +243,11 @@ _ValidateBlendShapeMover(
             // winner is worse than either shape being wrong.
             SdfPathVector densePoints, sparseShape;
             if (UsdRelationship rel = sample.GetRelationship(
-                    TfToken("rigExec:targetPoints"))) {
+                    _blendShapeTokens->targetPoints)) {
                 rel.GetTargets(&densePoints);
             }
             if (UsdRelationship rel = sample.GetRelationship(
-                    TfToken("rigExec:blendShape"))) {
+                    _blendShapeTokens->rigExecBlendShape)) {
                 rel.GetTargets(&sparseShape);
             }
             if (!densePoints.empty() && !sparseShape.empty()) {
@@ -264,7 +284,7 @@ _ValidateBlendShapeMover(
             std::string phaseError;
             if (!rigExec::RigExecResolveReadPhase(
                     sample.GetRelationship(
-                        TfToken("rigExec:targetPoints")),
+                        _blendShapeTokens->targetPoints),
                     &phase, &phaseError)) {
                 *error = samplePath.GetString() +
                          ": blend sample points read phase: " + phaseError;
@@ -288,14 +308,14 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
     std::vector<std::string> *diagnostics = ctx.diagnostics;
     VtVec3fArray &points = *ctx.points;
     const VtVec3fArray &basePoints = ctx.basePoints;
-    // p'_i = p_i + sum_k alpha_k(w_k) d_{k,i} (spec §7.3).
+    // p'_i = p_i + sum_k alpha_k(w_k) d_{k,i}.
     SdfPathVector inputs;
     if (rigExec::RigExecOracleRelationship rel =
             prim.GetRelationship(_oracleToken0)) {
         rel.GetTargets(&inputs);
     }
-    // Active inputs accumulate in canonical input-path order
-    // (spec §7.3); authored relationship order is non-semantic.
+    // Active inputs accumulate in canonical input-path order;
+    // authored relationship order is non-semantic.
     std::sort(inputs.begin(), inputs.end());
 
     VtVec3fArray next = points;
@@ -341,8 +361,7 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
         // Activations must be finite, strictly positive, and
         // unique; samples compile in (activation, canonicalPath)
         // order with an implicit zero-delta sample at activation 0
-        // and the channel weight clamped to [0, lastActivation]
-        // (spec §7.3).
+        // and the channel weight clamped to [0, lastActivation].
         struct _Sample {
             float activation;
             SdfPath path;
@@ -508,7 +527,7 @@ _OracleBlendShapeMover(const rigExec::RigExecMoverOracleContext &ctx)
         // Piecewise-linear interpolation between the bracketing
         // activation samples; the lower bracket may be the
         // implicit zero-delta sample at activation 0. Deltas
-        // derive against the destination BASE points (spec §7.3),
+        // derive against the destination BASE points,
         // then accumulate onto the preceding revision.
         size_t hi = 0;
         while (hi < samples.size() &&

@@ -1,4 +1,4 @@
-// RigExec math movers: the three property-domain movers (spec §4.1).
+// RigExec math movers: the three property-domain movers.
 // A math mover revises one exact scalar property -- a float (or a
 // control avar's double), a float3-family vector, or a matrix4d -- the
 // way another mover revises a points array. The three share everything
@@ -12,9 +12,17 @@
 
 #include "rigExecMath/propertyMath.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 
 PXR_NAMESPACE_USING_DIRECTIVE
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_mathTokens,
+    ((operation, "rigExec:operation"))
+    ((inputsKeys, "inputs:keys"))
+    ((inputsTangents, "inputs:tangents")));
 
 namespace {
 
@@ -31,7 +39,7 @@ _ValidateMathMoverOp(
     // pass-through every frame.
     TfToken operation;
     if (const UsdAttribute a = prim.GetAttribute(
-            TfToken("rigExec:operation"))) {
+            _mathTokens->operation)) {
         a.Get(&operation);
     }
     rigExec::RigExecPropertyOp op;
@@ -43,7 +51,7 @@ _ValidateMathMoverOp(
     if (op == rigExec::RigExecPropertyOp::Curve) {
         VtArray<GfVec2f> keys;
         const UsdAttribute keysAttr =
-            prim.GetAttribute(TfToken("inputs:keys"));
+            prim.GetAttribute(_mathTokens->inputsKeys);
         if (domain != rigExec::RigExecMoverDomain::PropertyFloat) {
             *error = who + ": rigExec:operation 'curve' is defined only "
                            "for RigExecFloatMathMover";
@@ -51,7 +59,7 @@ _ValidateMathMoverOp(
         }
         VtArray<GfVec2f> tangents;
         if (const UsdAttribute t = prim.GetAttribute(
-                TfToken("inputs:tangents"))) {
+                _mathTokens->inputsTangents)) {
             t.Get(&tangents);
         }
         if (!keysAttr || !keysAttr.Get(&keys) ||

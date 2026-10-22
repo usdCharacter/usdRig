@@ -155,7 +155,7 @@ RigExecMoverParameters RigExecAssembleSkinParameters(
     const std::shared_ptr<const RigExecSkinTopology> *resolvedTopology =
         nullptr);
 
-/// Derives a mover's status from its packet (spec §6.6): disabled and failed
+/// Derives a mover's status from its packet: disabled and failed
 /// movers both pass their preceding revision through, and a failure records the
 /// first bad canonical address.
 RigExecMoverStatus RigExecStatusForParameters(
@@ -269,18 +269,15 @@ RigExecMeasureInPosedSpace(const GfMatrix4d &transform, const GfMatrix4d &space)
 /// computeMatrix, normally a TRS master's -- and conjugating by it is the
 /// whole correction: `(p+T) * T^-1*M*T` is `p*M + T`, which is what
 /// rigidity wants, and the same product handles a rotated or scaled master
-/// because nothing about it assumed a translation. Measured 2026-09-24 on
-/// the biped with the face posed and Main moved (40, 0, 25):
-/// head_top_aim_cluster alone put 5.70 units of shear into body_geo, and
-/// with the carry named it is 0.0157 -- the residual every OTHER mover
-/// contributes, which this function cannot see.
+/// because nothing about it assumed a translation. Without the carry a
+/// cluster under a moved master shears its geometry; with it, the only
+/// residual is what every OTHER mover contributes, which this function
+/// cannot see.
 ///
 /// WITHOUT a carry the correction falls back to conjugating by the SPACE's
-/// own scale, which is what this function did before a carry could be
-/// named: it fixes a scaled master (the squetch clusters went 25.02 ->
-/// 3.1e-5 on M_HeadwireTop tx=2.0) and does nothing whatever for a
-/// translated or rotated one. Kept, and kept bit-identical, because a rig
-/// that names no space must not lose the half-fix it already had.
+/// own scale: it fixes a scaled master and does nothing whatever for a
+/// translated or rotated one. It stays bit-identical, so a rig that names
+/// no space keeps the scale correction.
 ///
 /// The two never compose: a named carry already contains the master's
 /// scale, so applying the scale conjugation as well would apply it twice.
@@ -342,11 +339,9 @@ RigExecClusterInPointFrame(const GfMatrix4d &m, const GfMatrix4d &space,
 /// and NURBS evaluation commutes with an affine map because the basis is
 /// a partition of unity, so Evaluate(carried CVs) == carry(Evaluate(CVs)).
 /// The bind table (u, d) was measured against the authored rest curve and
-/// stays valid, because the carry moves both curves equally. Measured
-/// 2026-09-24 on the biped with the face posed and Main turned ry=35: the
-/// nine carried head wires put 1.0257 units of non-rigid residual into
-/// hair_geo, and with the carry applied the rig is rigid to 2e-5 -- the
-/// floor every other mover leaves.
+/// stays valid, because the carry moves both curves equally. Without the
+/// carry, wires under a turned master leave a non-rigid residual; with it,
+/// the rig is rigid to the floor every other mover leaves.
 ///
 /// Same guard rule as the cluster: called when a carry was NAMED, never
 /// because it is identity, so a rig naming nothing is bit for bit what it
@@ -962,8 +957,8 @@ bool RigExecEvaluateProjectorTarget(
     const RigExecResolvedInputs *resolved, UsdTimeCode time,
     GfMatrix4d *matrix, std::vector<std::string> *diagnostics);
 
-/// Sums blend channels into dense per-point deltas against \p base
-/// (spec §7.3): deltas derive against the authored base, never the preceding
+/// Sums blend channels into dense per-point deltas against \p base:
+/// deltas derive against the authored base, never the preceding
 /// revision, and each channel's weight is clamped to [0, lastActivation] then
 /// interpolated between the bracketing samples.
 ///

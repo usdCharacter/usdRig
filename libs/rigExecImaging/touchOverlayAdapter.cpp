@@ -5,9 +5,7 @@
 // registered an adapter for produces a prim with no imaging
 // representation at all: it composes perfectly, reports the right
 // points, counts, extent, visibility and purpose, and changes zero
-// pixels. Measured on the biped, the identical overlay carrying 17,466
-// points at opacity 0.85 moved 0 of 80,730 sampled pixels as a
-// RigExecTouchOverlay and lit its region immediately as a plain Mesh.
+// pixels, where the identical prim typed as a plain Mesh draws.
 // Nothing in USD reports this; the prim is simply not an rprim.
 // So the type is declared to Hydra here, and the declaration is the
 // whole adapter: a RigExecTouchOverlay IS a mesh, drawn by exactly the

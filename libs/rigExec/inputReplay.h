@@ -86,6 +86,10 @@ private:
 /// Native-history harnesses execute comparison branches unchanged, while
 /// recording their nonauthoring boundaries. Direct mathematical runs require
 /// a separately declared native-equivalent adapter.
+/// Whether RIGEXEC_INPUT_REPLAY asks for capture. Reads the environment:
+/// call it on the owning thread (Build, Freeze), never on a worker lane.
+bool RigExecInputReplayCaptureRequested();
+
 class RigExecInputReplayComparisonScope {
 public:
     explicit RigExecInputReplayComparisonScope(const char *action,

@@ -252,8 +252,10 @@ RigExecTransportSurfaceOffsetsKernel(
         posed, faceCounts, faceIndices, deltas, restData, out);
 }
 
-// Corner tangent transport reference: Blender MOD_correctivesmooth.cc,
-// calc_tangent_spaces; see docs/references.md for provenance.
+// Corner tangent transport: each face corner's frame has x along the
+// bisector of its two edges and z along their cross product, weighted by the
+// corner angle; offsets move from the rest frames to the posed frames. See
+// docs/references.md (Delta Mush).
 template<class Point, class Wide>
 bool
 RigExecTransportCornerOffsetsKernel(

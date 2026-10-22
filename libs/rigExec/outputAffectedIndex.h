@@ -1,9 +1,8 @@
 // RigExec output-affected index: which clusters a changed control reaches.
-// Cross-frame sparse reuse (plan Stream D) needs the question the baked cone
-// machinery never asks: given a control that moved, which clusters downstream
-// of it have to re-run. The gap analysis flags this output-dependency list as
-// missing -- RigExecBakedCones maps a changed SOURCE to its seed clusters and
-// closes over them, but nothing maps a CONTROL to the clusters it reaches.
+// Cross-frame sparse reuse needs the question the baked cone machinery never
+// asks: given a control that moved, which clusters downstream of it have to
+// re-run. RigExecBakedCones maps a changed SOURCE to its seed clusters and
+// closes over them; this index maps a CONTROL to the clusters it reaches.
 // This index is that list, at cluster granularity.
 // It derives NOTHING. Build shares the forward closures (the program's
 // immutable cone table) and copies the seed tables RigExecBakedBuildCones
@@ -144,11 +143,11 @@ public:
     const RigExecBakedClusterSet &ConeOf(int cluster) const;
 
     /// Clusters holding a step that reads outside the graph: dirty on any
-    /// run whose time moved (§7), whatever the sources say.
+    /// run whose time moved, whatever the sources say.
     const RigExecBakedClusterSet &Always() const { return _always; }
 
     /// The forward closure of every varying step's cluster: what a moved
-    /// time dirties beside Always (the executor's time rule, plan 2.1).
+    /// time dirties beside Always (the executor's time rule).
     const RigExecBakedClusterSet &Varying() const { return _varying; }
 
     /// The forward closure of every override-step cluster: what dirties
@@ -182,8 +181,7 @@ private:
     mutable std::atomic<size_t> _walks{0};
 };
 
-/// Normalizes a USD notice's paths to control IDs (plan 2.1 notice
-/// adapter): every resynced, info-only, and resolved-asset-resynced path
+/// Normalizes a USD notice's paths to control IDs: every resynced, info-only, and resolved-asset-resynced path
 /// contributes its full path string plus, for a property path, its prim
 /// path string -- the two granularities the index maps (patchable avar
 /// properties exactly, providers and cone sources by prim). Sorted,
@@ -207,8 +205,8 @@ std::vector<RigExecControlId> RigExecNoticeControlIdsFromPaths(
     const std::vector<SdfPath> &infoOnly,
     const std::vector<SdfPath> &resolvedResynced);
 
-/// The seed clusters an interactive override reaches (plan 2.1
-/// MapControl production input): the clusters of the steps whose
+/// The seed clusters an interactive override reaches (the MapControl
+/// production input): the clusters of the steps whose
 /// overrideInputs carry the indices RigExecBakedProgram::SetOverrides
 /// would flag for \p override, plus the compose clusters of the avar
 /// bindings behind those indices -- the same prim-plus-attribute

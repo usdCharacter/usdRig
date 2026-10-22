@@ -47,8 +47,7 @@ struct RigExecPropertyChainBindings
     };
 
     /// One target, in _propertyChainOrder's order. An entry whose target
-    /// attribute did not resolve carries an invalid `target`, which is the
-    /// same thing the per-frame lookup used to report.
+    /// attribute did not resolve carries an invalid `target`.
     struct Chain {
         SdfPath targetPath;
         UsdAttribute target;

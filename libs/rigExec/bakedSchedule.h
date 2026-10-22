@@ -25,7 +25,8 @@ enum class RigExecBakedScheduleMode {
     Parallel,
 };
 
-/// The mode RIGEXEC_BAKED_SCHEDULE asks for, read once.
+/// The mode RIGEXEC_BAKED_SCHEDULE asks for. Reads the environment: call it
+/// at Build or Open on the owning thread; a program keeps its answer.
 ///
 /// Forced to Serial when RigExecParallelEvaluationEnabled() is false: the
 /// one switch every parallel region in this library is behind answers for
@@ -84,7 +85,7 @@ std::vector<int> RigExecBakedHeadSeedsFrom(
 /// longest-path level.
 ///
 /// The cost model is `a[kind] + b[kind] x size`, with the constants in the
-/// table at the head of bakedSchedule.cpp and the sizes §5.1 names. It is
+/// table at the head of bakedSchedule.cpp and the per-kind sizes. It is
 /// evaluated at Build from the program's own shape and never from a
 /// measurement -- see RigExecBakedScheduleCalibrationRequested for how the
 /// table is replaced when the shape stops predicting the machine.
@@ -102,7 +103,7 @@ constexpr size_t kRigExecBakedReferenceConcurrency = 8;
 
 /// The translation grain, in microseconds, for a program whose model serial
 /// cost is \p totalCost, scheduled for \p concurrency workers (0 counts as
-/// 1). RIGEXEC_BAKED_GRAIN_US, read once, overrides both.
+/// 1). RIGEXEC_BAKED_GRAIN_US overrides both; read at Build.
 double RigExecBakedScheduleGrainUs(double totalCost, size_t concurrency);
 
 /// kRigExecBakedReferenceConcurrency for an Export build, else the
@@ -128,7 +129,7 @@ std::vector<int> RigExecBakedClusterTopologicalOrder(
 /// compiled graph, not on timing or a particular execution.
 ///
 /// There is no second closure. A cluster never has to run so that another
-/// can read what it wrote LAST run -- versioned pose storage (§3.1) leaves
+/// can read what it wrote LAST run -- versioned pose storage leaves
 /// every version where its writer left it.
 void RigExecBakedBuildCones(RigExecBakedProgramImpl *program);
 
@@ -175,7 +176,14 @@ bool RigExecBakedRunSteps(RigExecBakedProgramImpl *program, UsdTimeCode time,
 /// finished.
 void RigExecBakedReplayStepTimings(const RigExecBakedProgramImpl &program);
 
+/// Reads every schedule diagnostic setting (mode, report, calibration, step
+/// timing and their frame counts, trace-all) into \p program. Called once at
+/// Build on the owning thread, so no frame reads the environment or a
+/// function-local static.
+void RigExecBakedReadScheduleSettings(RigExecBakedProgramImpl *program);
+
 /// Whether RIGEXEC_BAKED_SCHEDULE_CALIBRATE asks for a measured cost table.
+/// Reads the environment; a program keeps the answer it read at Build.
 ///
 /// Opt-in, and serial: the mode runs the program the reference way, times
 /// every op's memo, body and value publication with plain clock reads into

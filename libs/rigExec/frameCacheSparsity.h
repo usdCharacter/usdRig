@@ -25,7 +25,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-// D2 go/no-go, from reports/frame-cache-measurements.md.
+// Sparse-reuse go/no-go.
 
 /// Per-frame stored bytes, pose maps and slot arenas separately: biped
 /// 430,258 + 2,767,505 (3.05 MiB full), 9mesh 447,038 + 1,796,703.
@@ -38,7 +38,7 @@ constexpr size_t kRigExecSparsityStream0Mesh9ArenaBytes = 1796703;
 /// The sweep beyond it is headroom, not the bar retention has to clear.
 constexpr size_t kRigExecSparsityMinUsefulFrames = 16;
 
-/// What the D2 decision says, and the numbers that said it.
+/// What the sparsity decision says, and the numbers that said it.
 struct RigExecSparsityDecision {
     bool go = false;
     /// Full (pose + arena) frames the cap holds at these bytes.
@@ -54,8 +54,8 @@ RigExecSparsityDecision RigExecDecideSparsity(
     size_t arenaBytes, size_t poseBytes, size_t byteCap,
     size_t minFrames = kRigExecSparsityMinUsefulFrames);
 
-/// The decision on the Stream 0 biped numbers at the default cap: GO, ~80
-/// full frames. A test holds this to GO so a cap change revisits D2 aloud
+/// The decision on the reference biped numbers at the default cap: GO, ~80
+/// full frames. A test holds this to GO so a cap change revisits the decision aloud
 /// rather than silently pricing reuse out.
 RigExecSparsityDecision RigExecStream0SparsityDecision();
 
@@ -70,7 +70,7 @@ struct RigExecRetainedFrameState {
     /// retained under. Sampled values exclude avar constants by design, so
     /// a value comparison alone cannot see a constant patch: reuse plans
     /// against this base only when the live program's constant digest
-    /// still agrees, and live-evaluates (or carries, plan 2.2) otherwise.
+    /// still agrees, and live-evaluates (or carries) otherwise.
     /// Zero when the capturer did not record one: plans only against a
     /// live program whose digest is also zero, i.e. never in production.
     uint64_t constantDigest = 0;
@@ -117,7 +117,7 @@ bool RigExecCanReuseRetainedPose(
     const RigExecFrameInputs &requested,
     const std::vector<RigExecValueOverride> &requestedOverrides);
 
-// Entry provenance and retained-state rebind (plan 2.0).
+// Entry provenance and retained-state rebind.
 
 /// The provenance of a full evaluation over \p program: every cluster, every
 /// weight object the program reaches, and every constant region, with \p
@@ -180,7 +180,7 @@ size_t RigExecInvalidateCompiledRig(RigExecFrameCache &cache,
 
 /// Routes \p notice through the baked capture index: a hit drops the
 /// compiled rig's frames and memo and answers true; a miss leaves every cached
-/// frame standing (their digests decide reachability, plan D1) and answers
+/// frame standing (their digests decide reachability) and answers
 /// false. The program's IsInvalidatedBy is the whole oracle -- no second
 /// derivation of what a notice touches.
 bool RigExecNoteCaptureIndex(RigExecFrameCache &cache,

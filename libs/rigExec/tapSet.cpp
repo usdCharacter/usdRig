@@ -63,8 +63,8 @@ public:
         if (!_on) return;
         _watch.Stop();
         // GetSeconds, not GetMilliseconds: the latter returns an int64 count
-        // of WHOLE milliseconds, so every sub-millisecond scope reported
-        // 0.000 ms.
+        // of WHOLE milliseconds, which reports every sub-millisecond scope as
+        // zero.
         TF_DEBUG(RIGEXEC_TAP_TIMING).Msg(
             "[rigExec] %-22s %9.3f ms\n",
             _label, _watch.GetSeconds() * 1000.0);
@@ -215,7 +215,7 @@ RigExecTapSet::Prepare()
     for (size_t i = 0; i < _addresses.size(); ++i) {
         const RigExecValueAddress &address = _addresses[i];
         // The compiler-private resolution supplies the actual provider;
-        // the public address stays canonical (spec §9.1).
+        // the public address stays canonical.
         const SdfPath &provider =
             _resolutions[i].IsEmpty() ? address.target : _resolutions[i];
         if (provider.IsPropertyPath()) {
@@ -234,7 +234,7 @@ RigExecTapSet::Prepare()
         std::move(keys),
         [this](const ExecRequestIndexSet &, const EfTimeInterval &) {
             // Invalidation callbacks only record dirtiness; evaluation
-            // happens on the caller's next pull (spec §6.3, §9.3).
+            // happens on the caller's next pull.
             _dirty = true;
         },
         [this](const ExecRequestIndexSet &) {
@@ -346,7 +346,7 @@ RigExecTapSet::Evaluate(
         : system->ComputeWithOverrides(*_request, std::move(execOverrides));
 
     // Snapshot copies values immediately: the cache view must not outlive
-    // its system or request (spec §6.1).
+    // its system or request.
     snapshot._values.reserve(_addresses.size());
     bool complete = true;
     for (size_t i = 0; i < _addresses.size(); ++i) {

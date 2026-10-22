@@ -1,5 +1,4 @@
-// RigExec volumetric weight-field kernels (spec §4.1 weight objects,
-// volumetric extension).
+// RigExec volumetric weight-field kernels.
 // Pure, deterministic CPU kernels that turn a point set plus a placed
 // volume into a scalar weight field. Everything here is expressed in the
 // VOLUME's local space: callers hand in the world-to-volume matrix and the
@@ -25,7 +24,7 @@ namespace rigExec {
 
 /// Named analytic falloff profiles, baked to a lookup table so the hot
 /// loop has exactly one remap path whether the author picked a preset or
-/// drew a curve (spec §4.1 volumetric extension).
+/// drew a curve.
 ///
 /// Every profile maps the ramp parameter r in [0, 1] -- 1 at falloffMin,
 /// 0 at falloffMax -- to a weight in [0, 1], with f(0) = 0 and f(1) = 1.
@@ -198,14 +197,14 @@ void RigExecCurveWeightField(RigExecWeightPointView points,
     std::vector<GfVec3f> *localCurve,
     const RigExecRangeRunner *ranges = nullptr);
 
-// Composition (spec §4.1 volumetric extension: weight objects compose).
+// Composition (weight objects compose).
 
 /// How one weight field folds into the accumulated result.
 ///
 /// Multiply, Add, Max, Min, and Average are order independent. Subtract
 /// and Overlay are NOT: they consume the authored relationship target
 /// order, which is the one place the volumetric extension departs from
-/// the spec §7.2 rule that target-list permutation cannot change a
+/// the rule that target-list permutation cannot change a
 /// result. Authors who need a permutation-proof composition use the
 /// commutative modes or nest single-input combines.
 enum class RigExecWeightCombine {

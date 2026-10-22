@@ -45,11 +45,10 @@ annotations on drawable geometry, and an imageable container costs
 nothing and keeps the door open for anything drawable parented under
 it later.
 
-THE HIGHLIGHT OVERLAY IS NOT HERE, and that is measured rather than
-chosen. It is a real rprim, and a prim inside the asset is inside the
-rig's read roots: authoring the hover array there cost 184.89 ms per
-region crossing against 3.99 ms at the stage root, with a 16.7 ms
-frame. It also cannot carry its own schema type -- a concrete type
+THE HIGHLIGHT OVERLAY IS NOT HERE. It is a real rprim, and a prim inside
+the asset is inside the rig's read roots: authoring the hover array there
+invalidates the rig on every region crossing, which a prim at the stage
+root does not. It also cannot carry its own schema type -- a concrete type
 with no UsdImaging adapter never becomes an rprim at all. So the
 overlay is a plain Mesh at the stage root, named for its asset so a
 shot full of characters does not share one.

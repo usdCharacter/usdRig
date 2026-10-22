@@ -161,11 +161,11 @@ _GetPoseStackOrder(const UsdPrim &root)
 /// The same walk over the whole RIG ROOT, which is what numbers the mover
 /// stack. A mover is any prim beneath the rig that carries rigExec:moves --
 /// what it IS, not where it sits: `Movers` is the conventional scope for
-/// them, exactly as `Solvers` is for solvers (spec §4.1, no membership
+/// them, exactly as `Solvers` is for solvers (no membership
 /// lists), and a mover under `Ops`, under a control, or straight under the
 /// rig root is discovered the same way. The identical walk numbers the
 /// UNIFIED POSE STACK -- joint-writing aggregate solvers and pose-domain
-/// frame constraints in one order (spec §4.2) -- and the mover order is a
+/// frame constraints in one order -- and the mover order is a
 /// restriction of it, so a scope's position among its siblings orders the
 /// movers inside it against every other scope's.
 std::vector<UsdPrim>
@@ -501,14 +501,11 @@ RigExecRigEvaluator::SetInteractiveOverrides(
         _OverridesReachBlendShapes(overrides);
     _interactiveOverrides = std::move(overrides);
     _RebuildValueInputs();
-    // The static-input cache is NOT dropped here. It used to be, as defence
-    // in depth, on the reasoning that this "costs one map clear per drag
-    // start" -- but a manipulator calls this on EVERY MOUSE SAMPLE, not once
-    // per drag, so every drag frame began with a cold cache and re-read
-    // every static input from the stage. Measured on the biped, a brow drag
-    // spent 0.94 ms re-reading 161 blend-sample activations that are
-    // authored constants, the largest single item in its frame.
-    // It was never a correctness requirement, and the three ways it could
+    // The static-input cache is NOT dropped here. A manipulator calls this on
+    // EVERY MOUSE SAMPLE, not once per drag, so dropping it would start every
+    // drag frame with a cold cache and re-read every static input (blend-sample
+    // activations and other authored constants) from the stage.
+    // It is not a correctness requirement, and the three ways it could
     // matter are each closed by construction:
     //   * an overridden attribute is written into the resolved inputs before
     //     anything reads, and GetAttribute consults the resolved map FIRST,

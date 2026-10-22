@@ -78,7 +78,7 @@ _BakeFalloffLut(const UsdPrim &prim)
 
 // Resolves a READ-side geometry input: naming a PointBased prim means its
 // .points property, because a geometry input has exactly one thing to read.
-// Property paths stay exact (spec §4.2).
+// Property paths stay exact.
 // This rule is deliberately NOT applied to write targets. On the write side a
 // bare prim path names the transform domain and <prim>.points names the
 // geometry domain -- two different write sets on the same prim -- so inferring

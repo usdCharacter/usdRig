@@ -27,7 +27,7 @@ namespace {
 // RIGEXEC_VERIFY_SCOPED_CLEARS=1: every evaluator builds a shadow of itself
 // whose notices drop the value caches whole, evaluates it beside every
 // generation, and reports each way the two poses differ as a baked parity
-// mismatch (spec rule S6). The cone verifier cannot stand in for this: it
+// mismatch. The cone verifier cannot stand in for this: it
 // captures the program after the prologue, which is where a stale cache
 // would already have been read. Read once per process.
 bool
@@ -40,7 +40,7 @@ _ScopedClearShadowRequested()
 
 /// Destroys a program the evaluator has replaced, off this thread.
 ///
-/// A retiring program is several milliseconds of frees on the biped -- every
+/// A retiring program is a large batch of frees -- every
 /// step, table, query and geometry buffer of a compiled rig -- and nothing waits on
 /// them: once the replacement exists, no frame, notice or tool can reach the
 /// old one again. So the destroy is detached rather than paid on the thread
@@ -88,10 +88,8 @@ RigExecRigEvaluator::RigExecRigEvaluator(
             TfCreateWeakPtr(this), &RigExecRigEvaluator::_OnObjectsChanged,
             UsdStageWeakPtr(_stage));
     }
-    // The rig evaluates directly against the source stage. There used to be
-    // a private derived stage here, holding an anonymous session sublayer
-    // for the compiler's generated property applications; the engine authors
-    // nothing now, so there is nothing to hold and no stage to derive.
+    // The rig evaluates directly against the source stage; the engine
+    // authors nothing, so there is no derived stage.
 }
 
 RigExecRigEvaluator::~RigExecRigEvaluator()

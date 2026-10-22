@@ -1,4 +1,4 @@
-// RigExec compiled mover graph (spec §7.2). See moverGraph.h.
+// RigExec compiled mover graph. See moverGraph.h.
 #include "rigExecGraph/windowHistory.h"
 #include "moverGraph.h"
 #include "parallel.h"
@@ -64,11 +64,12 @@ TF_DEFINE_PRIVATE_TOKENS(
 // their bodies because TfToken(const char *) takes the token registry's spin
 // lock on every construction -- on the hit path as much as on the miss path --
 // and an assembler runs once per revision per frame, inside a baked step that
-// is not allowed to take a lock at all (docs/specs/baked-step-graph.md §2). The
+// is not allowed to take a lock at all (libs/rigExec/bodyPurity.h). The
 // bind-time readers below keep their inline tokens: they run once per
 // generation, off any step.
 TF_DEFINE_PRIVATE_TOKENS(
     _attrTokens,
+    ((weightObjectRel, "rigExec:weightObject"))
     ((enabled, "inputs:enabled"))
     ((defaultWeight, "inputs:defaultWeight"))
     ((jointIndices, "rigExec:jointIndices"))
@@ -947,10 +948,7 @@ RigExecApplySkinKernelWithTransforms(
     // independent sub-problem under either kernel -- the indices and weights
     // of point i live at i * elementSize and no point reads another's result
     // -- so which method is running says nothing about whether the work can
-    // be divided. Only the linear path was split, which left every
-    // dualQuaternion character skinning its whole mesh on one thread;
-    // measured on a 26,276-point body, that was the single largest cost in
-    // a drag.
+    // be divided, so both methods split.
     const bool splittable =
         RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
         count >= RigExecGeometryParallelThreshold &&
@@ -1056,15 +1054,10 @@ RigExecApplyBlendShapeKernel(const RigExecMoverParameters &p,
     // about the arithmetic, only who performs it. Everything above stays on
     // this thread, because the envelope resolve and the surface transport
     // are statements about the WHOLE array and fail it atomically.
-    // WORTH KNOWING WHAT THIS DID NOT FIX. On a 26,276-point body with 161
-    // corrective targets the blend-shape revision is the largest deformer
-    // cost left in an interactive drag once the skin kernel learned to
-    // split -- about 2 ms against the skin's 0.5 -- and splitting this loop
-    // moved it 1.07x. So the loop is not where that time goes: it is in
-    // assembling the channels (bakedGeometry.cpp, the per-sample
-    // GetAttribute reads), which is a compiled rig caching problem and not a
-    // parallelism one. The split is kept because it is correct, free and
-    // matches every other point kernel, not because it paid here.
+    // The blend-shape revision's cost is dominated by assembling the
+    // channels (bakedGeometry.cpp, the per-sample GetAttribute reads), not by
+    // this loop, so splitting it is not a speedup on its own. The split is
+    // kept because it is correct, free and matches every other point kernel.
     GfVec3f *const points = pts->data();
     const GfVec3f *const delta = deltas->data();
     const float *const weight = envelope.data();
@@ -1086,8 +1079,8 @@ RigExecApplyBlendShapeKernel(const RigExecMoverParameters &p,
 
 // The derived-maintenance kernel, shared by the mover-graph revision node and
 // by the baked program: normal3f[] and float3[] hosts recomputed from the
-// final same-generation points rather than from the preceding revision
-// (spec §7.6). Self-enveloping, like the matrix and blend-shape kernels.
+// final same-generation points rather than from the preceding revision.
+// Self-enveloping, like the matrix and blend-shape kernels.
 // One definition, so the size rules and the envelope cannot drift between the
 // two paths that maintain the same property.
 bool
@@ -1210,7 +1203,7 @@ ApplyRevisionKernel(RigExecRevisionOp op,
             return false;
         }
         // Rest-relative rigid transport: per-sample maps from the
-        // aggregate's rest frames to its posed frames (spec §7.5).
+        // aggregate's rest frames to its posed frames.
         const size_t n = p.frames.GetSize();
         if (n < 2) {
             return false;
@@ -2321,7 +2314,7 @@ RigExecResolveRevisionBinding(
 
     // Every point-chain mover may narrow its application with a weight object.
     const SdfPathVector weights = RigExecRelationshipTargets(
-        moverPrim, "rigExec:weightObject");
+        moverPrim, _attrTokens->weightObjectRel);
     if (!weights.empty()) {
         binding.weightObject = weights[0];
     }
@@ -2366,7 +2359,7 @@ RigExecAssembleMatrixParameters(
     if (!params.weights.valid) {
         return params;  // invalid common envelope => MoverFailed
     }
-    // The matrix must be finite and affine (spec §7.4).
+    // The matrix must be finite and affine.
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
             if (!std::isfinite((*transform)[i][j])) {
@@ -2394,7 +2387,7 @@ RigExecStatusForParameters(
         status.state = _valueTokens->ok;
     } else {
         status.state = _valueTokens->moverFailed;
-        // First bad canonical public address (spec §6.6): v0.1 reports the
+        // First bad canonical public address: v0.1 reports the
         // failed mover's own path; per-input attribution is future work.
         status.firstBadAddress = moverText;
     }
@@ -3316,11 +3309,8 @@ RigExecAssembleParameters(
         // matching _BuildLatticeMoverParameters. Reversing them is invisible
         // at rest (the two cages are equal) and inverts the deformation as
         // soon as the cage moves.
-        // The rest cage is the cage at Default time, read directly. It used to
-        // be a compiler-authored capture in rigExec:restCagePoints, but that
-        // capture was itself only `a.Get(&v, UsdTimeCode::Default())` on this
-        // same attribute -- so reading it here is identical and needs nothing
-        // authored. The live cage is the same attribute at the evaluated time.
+        // The rest cage is the cage at Default time, read directly; nothing
+        // is authored for it. The live cage is the same attribute at the evaluated time.
         params.auxPoints = _Array<GfVec3f>(moverPrim, binding.cagePoints, UsdTimeCode::Default(), /*resolved=*/nullptr, values.upstream);
         params.auxPointsB = _Array<GfVec3f>(moverPrim, binding.cagePoints, time, values.resolved);
         if (const UsdAttribute a =

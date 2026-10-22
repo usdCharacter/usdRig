@@ -18,6 +18,7 @@
 #include "solverKernels.h"
 #include "rigExecScene/sceneCompileInputs.h"
 #include "rigExecScene/solverSceneTranslation.h"
+#include "rigExecScene/startFrameDerivation.h"
 #include "rigExecScene/constraintSceneTranslation.h"
 #include "sceneDispatch.h"
 #include "types.h"
@@ -256,7 +257,16 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // the synthetic shape. An unwired target, a second target,
             // or a non-provider target is the computation's answer, not
             // a degenerate: no frame input, so the chain solves absolute.
-            const auto startTargets = targets(prim, "rigExec:startFrame");
+            // With no authored target, rigExec:startFramePolicy names the
+            // provider through the rule scene translation applies.
+            auto startTargets = targets(prim, "rigExec:startFrame");
+            SdfPath derivedStart;
+            if (startTargets.empty() &&
+                RigExecDeriveSceneStartFrame(*B.sceneDescriptors, solverPath,
+                                             &derivedStart) ==
+                    RigExecStartFrameDerivation::Derived) {
+                startTargets.push_back(derivedStart);
+            }
             if (!startTargets.empty()) {
                 const int slot = providerSlot(startTargets[0]);
                 if (slot >= 0) {
@@ -1302,8 +1312,7 @@ AddStep(RigExecBakedProgramImpl *program, RigExecBakedStepKind kind,
     return program->steps.back();
 }
 
-/// Binds every pose read and write of the walk to a VERSION of its slot
-/// (§3.1).
+/// Binds every pose read and write of the walk to a VERSION of its slot.
 ///
 /// One sweep in program order over the same writes the edge sweep sees,
 /// keeping the entry that holds each slot's current version. A read is bound
@@ -1494,8 +1503,7 @@ BindPoseVersions(RigExecBakedProgramImpl *program)
 
         // Then the write-back, in the order it happens: the candidates in
         // slot order, then the descendants in propagation order. A slot that
-        // is both gets two versions, and the second carries the first --
-        // which is exactly what the one storage used to end up holding.
+        // is both gets two versions, and the second carries the first.
         commit.slotWrites.assign(commit.slots.size(), 0);
         commit.slotCarry.assign(commit.slots.size(), 0);
         commit.slotBaseWrites.assign(
@@ -2436,7 +2444,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     // solver step only reads its sampled leaves and the epilogue consults
     // the toggle where the dynamic path does. The leaves are sampled in the
     // prologue whether or not a guide solver runs, so the static-input
-    // cache's counters (spec 5.2 [P37][S36]) do not move with the toggle
+    // cache's counters do not move with the toggle
     // either.
     for (const int si : B.guideSolvers) {
         RigExecBakedProgramImpl::Solver &solver = B.solvers[size_t(si)];
@@ -2794,7 +2802,7 @@ NoteConstraintInputs(const RigExecBakedProgramImpl::Constraint &constraint,
     // serial, the program stamp or a read that varies with the time moved;
     // ConstraintArrays) and compares them by value, and
     // `constraintArrayClusters` is what dirties this step when one moved
-    // (RigExecBakedComputeClosure) -- the §7 source mechanism, not the
+    // (RigExecBakedComputeClosure) -- the source mechanism, not the
     // varying-input one.
 }
 
@@ -4256,8 +4264,8 @@ FinishCommit(RigExecBakedProgramImpl *program, RigExecBakedStep *step,
     RigExecBakedProgramImpl &B = *program;
     // What a write site that does not write leaves behind: the version this
     // commit found, copied into the storage this commit owns, so that a
-    // reader bound to the commit's version reads the value the one frame map
-    // used to hold at this point in the walk (§3.1). Cheap where it matters
+    // reader bound to the commit's version reads the value the slot holds
+    // at this point in the walk. Cheap where it matters
     // -- a commit that applies carries only the candidates its batch
     // published nothing for -- and paid in full only by a commit that passes
     // through, which is the arithmetic it did not do.
@@ -4860,8 +4868,8 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
         }
         // A batch that published NOTHING still reaches FinishCommit, the
         // same way a constraint that passes through does. It writes no
-        // frame, but it owns a version of every slot it could have written
-        // (§3.1) and a write site that leaves its own storage untouched
+        // frame, but it owns a version of every slot it could have written,
+        // and a write site that leaves its own storage untouched
         // leaves every reader bound to it -- the matrices and the
         // publication among them -- reading whatever the last run left
         // there. Reachable only from a batch whose every solver published an
@@ -5721,8 +5729,16 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
     // The element comes from jointSolverBinding rather than from
     // Solver::fallbackSlots, which holds slots only: widening it would
     // change a serialized, round-trip-verified field for a diagnostic.
-    std::vector<std::pair<SdfPath, std::pair<SdfPath, int>>> fallbackJoints;
-    std::map<SdfPath, SdfPath> lastPublishingWriter;
+    // Paths are spelled from Build's texts: a frozen worker runs this, and
+    // SdfPath::GetString() interns under a lock.
+    struct FallbackJoint {
+        SdfPath joint;
+        size_t jointSlot;
+        const std::string *writerText;
+        int element;
+    };
+    std::vector<FallbackJoint> fallbackJoints;
+    std::map<SdfPath, const std::string *> lastPublishingWriter;
     for (const RigExecBakedProgramImpl::WalkStep &walk : B.walkSteps) {
         if (!walk.solverBatch) {
             continue;
@@ -5731,9 +5747,10 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
             if (!aliveSolver[size_t(si)]) continue;
             const RigExecBakedProgramImpl::Solver &s = B.solvers[size_t(si)];
             for (size_t k = 0; k < s.outputs.size(); ++k) {
-                const SdfPath &jointPath = B.paths[size_t(s.outputs[k].first)];
+                const size_t jointSlot = size_t(s.outputs[k].first);
+                const SdfPath &jointPath = B.paths[jointSlot];
                 if (k < s.outPresent.size() && s.outPresent[k]) {
-                    lastPublishingWriter[jointPath] = s.path;
+                    lastPublishingWriter[jointPath] = &s.pathText;
                     continue;
                 }
                 int element = -1;
@@ -5747,24 +5764,24 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
                         }
                     }
                 }
-                fallbackJoints.push_back({jointPath, {s.path, element}});
+                fallbackJoints.push_back(
+                    {jointPath, jointSlot, &s.pathText, element});
             }
         }
     }
     std::stable_sort(fallbackJoints.begin(), fallbackJoints.end(),
-                     [](const std::pair<SdfPath, std::pair<SdfPath, int>> &a,
-                        const std::pair<SdfPath, std::pair<SdfPath, int>> &b) {
-                         return a.first < b.first;
+                     [](const FallbackJoint &a, const FallbackJoint &b) {
+                         return a.joint < b.joint;
                      });
-    for (const auto &[jointPath, writer] : fallbackJoints) {
-        const auto kept = lastPublishingWriter.find(jointPath);
+    for (const FallbackJoint &fallback : fallbackJoints) {
+        const auto kept = lastPublishingWriter.find(fallback.joint);
         pose->diagnostics.push_back(
-            "solver " + writer.first.GetString() + " published no element " +
-            std::to_string(writer.second) + " for joint " +
-            jointPath.GetString() + "; " +
+            "solver " + *fallback.writerText + " published no element " +
+            std::to_string(fallback.element) + " for joint " +
+            (*B.pathTexts)[fallback.jointSlot] + "; " +
             (kept == lastPublishingWriter.end()
                  ? std::string("joint fell back to its rest chain")
-                 : "the joint keeps the frame " + kept->second.GetString() +
+                 : "the joint keeps the frame " + *kept->second +
                        " left"));
     }
 
@@ -5779,7 +5796,7 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
         const RigExecPointFrame &frame = B.fin[size_t(B.finLast[slot])];
         if (!RigExecBakedUsable(frame)) {
             pose->diagnostics.push_back(
-                "constraint target " + B.paths[slot].GetString() +
+                "constraint target " + (*B.pathTexts)[slot] +
                 " has an invalid final frame; transform omitted");
             continue;
         }
@@ -5797,8 +5814,7 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
 
     {
         RIGEXEC_PROFILE_SCOPE_CAT(*B.profiler, "BakedPublish", "baked");
-        // A biped frame publishes about 850 keys into five ordered maps and
-        // every one of them used to be a search from the root. The two
+        // A frame publishes its keys into five ordered maps. The two
         // passes below split that walk in half: the first decides, in the
         // publication list's own order, which joints publish a matrix and
         // which say why they do not -- the order those lines have always
@@ -5806,8 +5822,8 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
         // every key belongs immediately past the one before it and a hint at
         // the map's end makes the insertion one comparison.
         // Deciding first also settles the bail: a frame that cannot publish
-        // returns before a single key is inserted, where it used to return
-        // with the maps half filled. The caller drops the pose either way.
+        // returns before a single key is inserted, never with the maps half
+        // filled. The caller drops the pose either way.
         for (size_t k = 0; k < B.jointPaths.size(); ++k) {
             const int slot = B.jointSlots[k];
             const RigExecPointFrame &finalFrame =
@@ -5821,7 +5837,7 @@ RigExecBakedPublishPose(RigExecBakedProgramImpl *program, RigExecRigPose *pose)
             } else {
                 B.jointMatrixPublished[k] = 0;
                 pose->diagnostics.push_back(
-                    "joint " + B.jointPaths[k].GetString() +
+                    "joint " + (*B.pathTexts)[size_t(slot)] +
                     " has a degenerate final frame; matrix omitted");
             }
         }

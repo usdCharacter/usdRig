@@ -18,7 +18,7 @@
 // publishes -- a mismatch at any fence drops the result. A dropped job frees
 // its inputs promptly; the frame it would have warmed simply evaluates live
 // when asked.
-// Switches (plan D6): RIGEXEC_FRAME_CACHE={on,off,warm-off}, default on,
+// Switches: RIGEXEC_FRAME_CACHE={on,off,warm-off}, default on,
 // where off restores exact current behavior and warm-off keeps cache reads
 // while disabling background fill; RIGEXEC_ENABLE_PARALLEL_EVAL=0 likewise
 // disables background fill while reads are still served. When fill is off
@@ -49,9 +49,8 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
-/// Default background worker count, from
-/// reports/frame-cache-measurements.md: two below-normal workers drain the
-/// biped +-8 neighborhood in ~28 ms without contending with the UI thread.
+/// Default background worker count: two below-normal workers drain the
+/// default scrub neighborhood without contending with the UI thread.
 constexpr int kRigExecBackgroundSchedulerDefaultWorkers = 2;
 
 /// Most workers a scheduler ever runs. Past four the pool contends with the
@@ -59,15 +58,14 @@ constexpr int kRigExecBackgroundSchedulerDefaultWorkers = 2;
 /// this.
 constexpr int kRigExecBackgroundSchedulerMaxWorkers = 4;
 
-/// Default scrub-neighbor radius, from reports/frame-cache-measurements.md:
-/// +-8 (16 neighbors) costs one 1.2 ms sampling burst at enqueue and ~25 ms
-/// of background drain on two workers.
+/// Default scrub-neighbor radius: +-8 (16 neighbors), sampled in one burst at
+/// enqueue and drained in the background by the default workers.
 constexpr int kRigExecFrameCacheDefaultNeighborRadius = 8;
 
 /// Default per-rig in-flight cap: queued plus running jobs for one rig. One
 /// full default commit burst is 16 neighbors plus a 64-frame sweep; 96 holds
 /// that burst plus one more neighbor set while the first drains, and bounds
-/// the queued input vectors (~30 MB worst case on the biped) however fast
+/// the queued input vectors however fast
 /// commits arrive. Enqueue past the cap declines and the caller evaluates
 /// live.
 constexpr size_t kRigExecBackgroundSchedulerDefaultPerRigJobs = 96;
@@ -80,7 +78,7 @@ constexpr size_t kRigExecBackgroundSchedulerDefaultPerRigJobs = 96;
 /// dropped. Starts at zero for a rig the scheduler has never seen.
 using RigExecFrameGeneration = uint64_t;
 
-/// A per-time publish fence token (plan 2.1). Scoped cancellation
+/// A per-time publish fence token. Scoped cancellation
 /// (CancelGenerationTimes) purges queued jobs for affected times WITHOUT
 /// bumping the generation -- old and requeued jobs would then share one
 /// generation token -- so the purge assigns each affected time a fresh
@@ -100,13 +98,13 @@ enum class RigExecWarmPriority {
     Sweep = 1,
 };
 
-/// The RIGEXEC_FRAME_CACHE switch (plan D6).
+/// The RIGEXEC_FRAME_CACHE switch.
 enum class RigExecFrameCacheMode {
     /// Warming on, reads served. The default.
     On,
     /// Exact current behavior: no warming, no reads. The scheduler's half of
     /// off is declining every Enqueue and enqueueing nothing from triggers;
-    /// reads are Stream E's half.
+    /// reads are the publish fence's half.
     Off,
     /// Reads served, background fill off. The scheduler's half is the same
     /// decline as Off.
@@ -134,6 +132,35 @@ bool RigExecBackgroundWarmingEnabled(RigExecFrameCacheMode mode,
 /// switch). Enqueue and the triggers consult this on every call.
 bool RigExecBackgroundWarmingEnabled();
 
+/// The most phase marks one warm job may stamp: a start plus one end per
+/// phase.
+constexpr size_t kRigExecWarmPhaseMarks = 4;
+
+/// Clock reads a running warm job stamps for its own phases, owned by the
+/// worker frame that runs it. The job writes only integers and
+/// string-literal names; the scheduler records them as one profiler event
+/// when the job finishes, so no profiler lock or string building happens
+/// inside the job.
+struct RigExecWarmPhaseTimings {
+    /// NowUs() marks; phase i spans marks[i] to marks[i + 1].
+    uint64_t marks[kRigExecWarmPhaseMarks] = {};
+    /// Phase names, string literals only (never freed, never copied).
+    const char *names[kRigExecWarmPhaseMarks - 1] = {};
+    size_t markCount = 0;
+
+    /// Stamps the start, or ends phase \p name. Ignored when full.
+    void Mark(const char *name = nullptr)
+    {
+        if (markCount >= kRigExecWarmPhaseMarks) {
+            return;
+        }
+        if (markCount > 0) {
+            names[markCount - 1] = name;
+        }
+        marks[markCount++] = RigExecProfiler::NowUs();
+    }
+};
+
 /// One warming request: evaluate \p time for \p rig, publishing into the
 /// frame cache behind the generation fence.
 struct RigExecWarmRequest {
@@ -145,11 +172,15 @@ struct RigExecWarmRequest {
     /// scheduler on insert. The publish fence requires a match (see
     /// IsWarmRequestCurrent); callers never set this.
     RigExecWarmFenceToken fenceToken = 0;
+    /// Set by the scheduler on the copy it hands a running job, and only
+    /// while its profiler records; null otherwise and on every queued copy.
+    /// A job that times its phases marks here and never calls the profiler.
+    RigExecWarmPhaseTimings *timings = nullptr;
 };
 
 /// One ran job's publish disposition, reported by the work instead of void
 /// so completion accounting splits on what actually happened: a "ran" job
-/// that declined inside used to count completed exactly like a publish.
+/// that declined inside does not count as a publish.
 enum class RigExecWarmOutcome {
     /// Evaluated and published into the frame cache.
     Published,
@@ -186,7 +217,7 @@ enum class RigExecWarmSkipReason {
     /// The frame could not be sampled faithfully. The detail names the
     /// sampler gate.
     Unsampleable,
-    /// D7: no baked program, so the rig evaluates dynamically and never
+    /// No baked program, so the rig evaluates dynamically and never
     /// warms.
     D7Exempt,
 };
@@ -277,7 +308,7 @@ bool RigExecSetBackgroundThreadPriority();
 
 /// Names the RigExecSetBackgroundThreadPriority backend on this platform:
 /// "SetThreadPriority" (Windows), "sched-batch" (Linux), "qos-utility"
-/// (macOS), or "none" (logged no-op fallback). Never null. For the Stream F
+/// (macOS), or "none" (logged no-op fallback). Never null. For the
 /// bench report and for diagnosing whether priority applied; gate tests never
 /// assert OS priority values.
 const char *RigExecBackgroundPriorityBackend();
@@ -325,8 +356,8 @@ struct RigExecBackgroundSchedulerStats {
     /// which never entered the queue either (broken out below).
     size_t declined = 0;
     /// Reasoned factory skips by cause, each also counted in declined: the
-    /// rig refused the freeze, the frame was unsampleable, the rig is
-    /// D7-exempt.
+    /// rig refused the freeze, the frame was unsampleable, the rig has no
+    /// baked program.
     size_t declinedFreezeRefused = 0;
     size_t declinedUnsampleable = 0;
     size_t declinedD7Exempt = 0;
@@ -393,7 +424,7 @@ public:
     void ResetRig(const SdfPath &rig);
 
     /// Cancels the rig's queued jobs for \p times only, WITHOUT bumping
-    /// the generation (plan 2.1 scoped cancellation): the outcome-driven
+    /// the generation (scoped cancellation): the outcome-driven
     /// notice path calls this for patch/stamp-bump edits, where the compiled rig
     /// stands and only affected times requeue. Each affected time gets a
     /// fresh per-time fence token from the rig's monotonic counter, so an
@@ -431,7 +462,7 @@ public:
     /// has not published any provenance or completion yet.
     std::vector<UsdTimeCode> InFlightTimes(const SdfPath &rig) const;
 
-    /// The publish fence mutex (plan 3.3): worker publish and cancel/clear
+    /// The publish fence mutex: worker publish and cancel/clear
     /// share it. The background completion path holds it across the
     /// fence-check (generation + per-time token) and the cache insert, and
     /// the fenced clear holds it across generation-bump + queue-purge +
@@ -595,8 +626,11 @@ private:
     // splits it on \p outcome; false counts a stale drop (the work never
     // ran, \p outcome ignored). Either way the rig's in-flight count
     // falls and idleness is re-signalled.
+    // A ran job's \p timings, when given, are recorded as one profiler
+    // event after the lock drops.
     void _FinishJob(const RigExecWarmRequest &request, bool ran,
-                    RigExecWarmOutcome outcome);
+                    RigExecWarmOutcome outcome,
+                    const RigExecWarmPhaseTimings *timings = nullptr);
     // The time's current fence token: the sidecar's entry, or zero when the
     // time was never scoped-purged. Call with _mutex held.
     RigExecWarmFenceToken _CurrentFenceTokenLocked(
@@ -650,7 +684,7 @@ private:
     // Running jobs remain visible to scoped edit retirement after they
     // leave the queue. Counts cover overlapping jobs at the same time.
     std::map<std::pair<SdfPath, double>, size_t> _runningByRigAndTime;
-    // Per-time publish fence tokens (plan 2.1): (rig, time value) ->
+    // Per-time publish fence tokens: (rig, time value) ->
     // current token, assigned by CancelGenerationTimes from the rig's
     // monotonic counter below. Absent means never-purged (token zero).
     std::map<std::pair<SdfPath, double>, RigExecWarmFenceToken> _fenceTokens;

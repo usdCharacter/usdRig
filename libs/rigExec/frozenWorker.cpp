@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <type_traits>
 
@@ -49,8 +50,12 @@ RigExecFrozenWorkspace::~RigExecFrozenWorkspace() = default;
 std::unique_ptr<RigExecFrozenWorkspace>
 RigExecCreateFrozenWorkspace(std::shared_ptr<const RigExecFrozenProgram> snapshot)
 {
-    RigExecInputReplayComparisonScope replayComparison("RigExecCreateFrozenWorkspace");
     if (!snapshot) return {};
+    // Background lanes record nothing; see RigExecFrozenProgram.
+    std::optional<RigExecInputReplayComparisonScope> replayComparison;
+    if (snapshot->RecordsInputReplay()) {
+        replayComparison.emplace("RigExecCreateFrozenWorkspace");
+    }
     return std::unique_ptr<RigExecFrozenWorkspace>(
         new RigExecFrozenWorkspace(std::move(snapshot)));
 }

@@ -18,6 +18,8 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/array.h"
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +78,35 @@ using RigExecGpuDeformRunner = bool (*)(std::vector<RigExecGpuDeformJob> *jobs);
 /// with no runner, Readback chains run their CPU kernels at publication.
 void RigExecSetGpuDeformRunner(RigExecGpuDeformRunner runner);
 RigExecGpuDeformRunner RigExecGetGpuDeformRunner();
+
+/// Names one owner's device buffers (a chain's, a cloth compiled rig's) in
+/// device jobs. Keys are distinct for the process's life, so a runner never
+/// takes a new owner at a reused address for an old one. A copy takes a
+/// fresh key; destroying or assigning over a key that reached a device
+/// hands it to the registered releaser, which frees its buffers.
+class RigExecGpuDeviceKey {
+public:
+    RigExecGpuDeviceKey();
+    RigExecGpuDeviceKey(const RigExecGpuDeviceKey &);
+    RigExecGpuDeviceKey(RigExecGpuDeviceKey &&other) noexcept;
+    RigExecGpuDeviceKey &operator=(const RigExecGpuDeviceKey &other);
+    RigExecGpuDeviceKey &operator=(RigExecGpuDeviceKey &&other) noexcept;
+    ~RigExecGpuDeviceKey();
+
+    /// The key, marked as one a device may hold buffers for.
+    uint64_t Use() const;
+
+private:
+    void _Release() noexcept;
+    uint64_t _key;
+    mutable std::atomic<bool> _used{false};
+};
+
+/// Frees the device buffers \p key named. Must not wait on the device.
+using RigExecGpuDeviceReleaser = void (*)(uint64_t key);
+
+/// The releaser a GPU library registers with its runners.
+void RigExecSetGpuDeviceReleaser(RigExecGpuDeviceReleaser releaser);
 
 /// Whether the blend sum would accept \p channels over \p pointCount
 /// points (RigExecSumBlendChannels' structural checks), without summing.

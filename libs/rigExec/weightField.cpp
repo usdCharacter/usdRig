@@ -3,14 +3,33 @@
 #include "rigExec/crossDomainInputs.h"
 #include "rigExecScene/weightProgram.h"
 #include "rigExec/parallel.h"
+#include "rigExec/pathText.h"
+#include <pxr/base/tf/staticTokens.h>
 #include <pxr/usd/usdGeom/pointBased.h>
 #include <pxr/usd/sdf/types.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <set>
 
 PXR_NAMESPACE_USING_DIRECTIVE
+
+// Interned once: Build runs on parallel lanes, and building a token from
+// text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
+    (points)
+    (constant)
+    (dense)
+    (sparse)
+    (clamp)
+    ((planeAxis, "rigExec:planeAxis"))
+    ((planeBounds, "rigExec:planeBounds"))
+    ((sampleSource, "rigExec:sampleSource"))
+    ((weightTarget, "rigExec:weightTarget"))
+    ((curve, "rigExec:curve"))
+    ((weightObject, "rigExec:weightObject")));
+
 namespace rigExec {
 namespace {
 using Baked = RigExecBakedProgramImpl;
@@ -22,16 +41,28 @@ constexpr const char *ScalarNames[] = {
     "inputs:scaleYPos", "inputs:scaleZPos", "inputs:scaleXNeg", "inputs:scaleYNeg",
     "inputs:scaleZNeg", "inputs:extentU", "inputs:extentV"
 };
-SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const char *name)
+SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const TfToken &name)
 {
     SdfPathVector paths;
-    const auto rel = prim.GetRelationship(TfToken(name));
+    const auto rel = prim.GetRelationship(name);
     if (!rel || !rel.GetTargets(&paths) || paths.size() != 1) return SdfPath();
     if (paths[0].IsPrimPath()) {
         const auto target = stage->GetPrimAtPath(paths[0]);
-        return UsdGeomPointBased(target) ? paths[0].AppendProperty(TfToken("points")) : SdfPath();
+        return UsdGeomPointBased(target) ? paths[0].AppendProperty(_weightFieldTokens->points) : SdfPath();
     }
     return paths[0];
+}
+// The frozen run's per-leaf sample keys, interned once at load. A weight
+// object declares five oracle leaves (three point sets, two tokens).
+const std::array<TfToken, 5> _oracleLeafKeys = {
+    TfToken("rigExecFrozen:oracle:leaf0"), TfToken("rigExecFrozen:oracle:leaf1"),
+    TfToken("rigExecFrozen:oracle:leaf2"), TfToken("rigExecFrozen:oracle:leaf3"),
+    TfToken("rigExecFrozen:oracle:leaf4")};
+TfToken OracleLeafKey(size_t k)
+{
+    return k < _oracleLeafKeys.size()
+        ? _oracleLeafKeys[k]
+        : TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k));
 }
 float Scalar(const Baked &B, const Field &field, int object, int member, float fallback)
 {
@@ -50,42 +81,49 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
     auto &B = *program;
     B.weightFields.clear();
     B.weightProgram.clear();
+    // GetString() interns a path and reads a static on an empty token.
+    RigExecPathText pathText;
     for (auto &object : B.weightObjects) {
         RigExecBakedDescribeWeightOracle(evaluator,object.path,RigExecBakedProbeTime(B.stage),&object.oracleFacts);
-        object.oracleName = object.path.GetString();
-        const std::string type = object.type.GetString();
+        object.oracleName = pathText(object.path);
+        const std::string type = object.type.GetText();
         object.oracleKind = type == "RigExecStaticWeight" ? 0 : type == "RigExecDynamicWeight" ? 1 :
             type == "RigExecCombineWeight" ? 2 : type == "RigExecSphereWeight" ? 3 :
             type == "RigExecPlaneWeight" ? 4 : type == "RigExecCurveWeight" ? 5 : -1;
-        object.oracleRepresentation = object.representation == TfToken("constant") ? 0 :
-            object.representation == TfToken("dense") ? 1 : object.representation == TfToken("sparse") ? 2 : -1;
-        object.oracleClamp = object.rangePolicy == TfToken("clamp");
+        object.oracleRepresentation = object.representation == _weightFieldTokens->constant ? 0 :
+            object.representation == _weightFieldTokens->dense ? 1 :
+            object.representation == _weightFieldTokens->sparse ? 2 : -1;
+        object.oracleClamp = object.rangePolicy == _weightFieldTokens->clamp;
         const std::string modes[] = {"multiply","add","subtract","max","min","average","overlay"};
-        for (int i=0;i<7;++i) if (object.combineMode.GetString() == modes[i]) object.oracleCombineMode = i;
-        object.oracleAxisName = object.oracleFacts.planeAxis.GetString();
-        object.oracleBoundsName = object.oracleFacts.planeBounds.GetString();
+        const std::string combine = object.combineMode.GetText();
+        for (int i=0;i<7;++i) if (combine == modes[i]) object.oracleCombineMode = i;
+        object.oracleAxisName = object.oracleFacts.planeAxis.GetText();
+        object.oracleBoundsName = object.oracleFacts.planeBounds.GetText();
         object.oracleAxis = object.oracleAxisName == "x" ? 0 : object.oracleAxisName == "y" ? 1 :
             object.oracleAxisName == "z" ? 2 : -1;
         object.oracleBounded = object.oracleBoundsName == "bounded";
         object.oracleUnbounded = object.oracleBoundsName == "unbounded";
         const auto prim = B.stage->GetPrimAtPath(object.path);
-        object.oracleAxisAttribute = bool(prim.GetAttribute(TfToken("rigExec:planeAxis")));
-        object.oracleBoundsAttribute = bool(prim.GetAttribute(TfToken("rigExec:planeBounds")));
+        object.oracleAxisAttribute = bool(prim.GetAttribute(_weightFieldTokens->planeAxis));
+        object.oracleBoundsAttribute = bool(prim.GetAttribute(_weightFieldTokens->planeBounds));
         object.oracleLeaves.decl.keys.clear();
-        for (const char *name : {"rigExec:sampleSource","rigExec:weightTarget","rigExec:curve"}) {
-            object.oracleLeaves.decl.Add({PointsPath(B.stage,prim,name),
+        for (const TfToken *name : {&_weightFieldTokens->sampleSource,
+                                    &_weightFieldTokens->weightTarget,
+                                    &_weightFieldTokens->curve}) {
+            object.oracleLeaves.decl.Add({PointsPath(B.stage,prim,*name),
                 RigExecRevisionLeafType::Vec3fArray,RigExecRevisionLeafTime::AtTime,
                 RigExecRevisionLeafFlavour::Raw,VtValue()});
         }
-        for (const char *name : {"rigExec:planeAxis","rigExec:planeBounds"}) {
-            object.oracleLeaves.decl.Add({object.path.AppendProperty(TfToken(name)),
+        for (const TfToken *name : {&_weightFieldTokens->planeAxis,
+                                    &_weightFieldTokens->planeBounds}) {
+            object.oracleLeaves.decl.Add({object.path.AppendProperty(*name),
                 RigExecRevisionLeafType::Token,RigExecRevisionLeafTime::AtTime,
                 RigExecRevisionLeafFlavour::Raw,VtValue()});
         }
         object.oracleFrozenKeys.clear();
         for (size_t k = 0; k < object.oracleLeaves.decl.keys.size(); ++k)
             object.oracleFrozenKeys.push_back(object.path.AppendProperty(
-                TfToken("rigExecFrozen:oracle:leaf" + std::to_string(k))));
+                OracleLeafKey(k)));
         RigExecBakedBindPathLeaves(B.stage,&object.oracleLeaves);
         RigExecWeightRecord record;
         record.name=object.oracleName;record.kind=object.oracleKind;
@@ -116,10 +154,10 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
             reader=B.propertyChains[size_t(consumer)].revisions[size_t(part-1)].mover;
         else reader=B.constraints[size_t(B.walkSteps[size_t(consumer)].index)].path;
         RigExecReadPhase placement;std::string why;
-        const auto relation=B.stage->GetPrimAtPath(reader).GetRelationship(TfToken("rigExec:weightObject"));
+        const auto relation=B.stage->GetPrimAtPath(reader).GetRelationship(_weightFieldTokens->weightObject);
         if(!RigExecResolveReadPhase(relation,&placement,&why) ||
             (placement.kind!=RigExecReadPhaseKind::Base && placement.kind!=RigExecReadPhaseKind::Final)) {
-            placementError=reader.GetString()+": weight placement must read base or final"+
+            placementError=pathText(reader)+": weight placement must read base or final"+
                 (why.empty()?std::string():": "+why);return -1;
         }
         field.placementPhase=placement.kind==RigExecReadPhaseKind::Final?
@@ -320,10 +358,14 @@ bool RigExecBakedCaptureWeightFieldInputs(const Baked &B,int index,
                 input.rawPoints[size_t(key)]={false,true,points.data(),points.size()};
             }
         }
+        // GetString() on an empty token reads a function-local static.
         const auto token=[&](size_t key,bool exists,const char *fallback) {
             const auto &values=object.oracleLeaves.values;
-            return key<values.size() && values[key].IsHolding<TfToken>()
-                ? values[key].UncheckedGet<TfToken>().GetString() : exists?std::string():std::string(fallback);
+            if (key<values.size() && values[key].IsHolding<TfToken>()) {
+                const TfToken &value=values[key].UncheckedGet<TfToken>();
+                return value.IsEmpty()?std::string():value.GetString();
+            }
+            return exists?std::string():std::string(fallback);
         };
         input.axis=token(3,object.oracleAxisAttribute,"x");
         input.bounds=token(4,object.oracleBoundsAttribute,"unbounded");

@@ -801,7 +801,7 @@ RigExecBackgroundScheduler::_ExecutePoppedJob(_QueuedJob *job)
                    RigExecWarmOutcome::DeclinedInvalid);
         return false;
     }
-    // The D4 boundary: the serial scope forces every kernel variant this run
+    // The serial-variant boundary: the serial scope forces every kernel variant this run
     // reaches into its serial form on this thread, whatever the
     // process-wide switch says, so no work leaks back onto the shared arena
     // at normal priority. The work must also never hop threads: the scope
@@ -810,24 +810,48 @@ RigExecBackgroundScheduler::_ExecutePoppedJob(_QueuedJob *job)
     // the manual drain -- down with it: fail-closed, warn, and land the
     // terminal state the books require. The frame evaluates live when asked.
     RigExecWarmOutcome outcome = RigExecWarmOutcome::DeclinedInvalid;
+    // The job stamps its phases here, on this worker's frame; _FinishJob
+    // records them once.
+    RigExecWarmPhaseTimings timings;
+    RigExecWarmRequest running = request;
+    running.timings = _profiler.IsEnabled() ? &timings : nullptr;
     try {
         RigExecFrozenSerialScope serial;
-        outcome = job->work(request);
+        outcome = job->work(running);
     } catch (const std::exception &error) {
         TF_WARN("rigExec: background warming job threw: %s", error.what());
     } catch (...) {
         TF_WARN("rigExec: background warming job threw an unknown exception");
     }
     *job = _QueuedJob();
-    _FinishJob(request, /*ran=*/true, outcome);
+    _FinishJob(request, /*ran=*/true, outcome,
+               running.timings ? &timings : nullptr);
     return true;
 }
 
 void
 RigExecBackgroundScheduler::_FinishJob(const RigExecWarmRequest &request,
                                        bool ran,
-                                       RigExecWarmOutcome outcome)
+                                       RigExecWarmOutcome outcome,
+                                       const RigExecWarmPhaseTimings *timings)
 {
+    // One event per job, spanning its marks, with each phase's duration as
+    // an arg: one profiler lock at this boundary, none inside the job.
+    // Recorded before the books change, outside the scheduler mutex, so a
+    // caller that sees the job finished also sees its event.
+    if (ran && timings && timings->markCount > 1 && _profiler.IsEnabled()) {
+        std::map<std::string, std::string> phases;
+        for (size_t i = 1; i < timings->markCount; ++i) {
+            const char *name = timings->names[i - 1];
+            const uint64_t begin = timings->marks[i - 1];
+            const uint64_t end = timings->marks[i];
+            phases[name ? name : "phase"] =
+                std::to_string(end >= begin ? end - begin : 0);
+        }
+        _profiler.Record("Warm.Worker", "imagingWarm", timings->marks[0],
+                         timings->marks[timings->markCount - 1],
+                         std::move(phases));
+    }
     std::unique_lock<std::mutex> lock(_mutex);
     if (_running > 0) {
         --_running;

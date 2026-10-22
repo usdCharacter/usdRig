@@ -44,14 +44,10 @@ constexpr size_t _kDigestPrefetchParallelMin = 16;
 
 constexpr size_t _kDigestPrefetchPerLane = 4;
 
-// Its width beside compile (_DigestBesideCompile). MEASURED, cold compiles,
-// ms of prefetch by lanes:
-//   puppetA  1 / 2 / 3 / 4 / pool:       14.6 / 8.2 / 7.0 / 4.9 / 3.4
-//   biped    1 / 2 / 4 / 8 / 16 / 32:    24.6 / 20.0 / 12.2 / 12.5 / 12.7 / 12.9
-// DiscoverValidate on the compiling thread stays flat up to 4 lanes and is
-// ~1 ms slower with the whole pool. The biped stops scaling at 4: USD reads
-// beside compile's own share something that serializes them (one lane runs
-// at half the speed it does with nothing beside it).
+// Its width beside compile (_DigestBesideCompile). DiscoverValidate on the
+// compiling thread stays flat up to 4 lanes and slows with the whole pool,
+// and the prefetch itself stops scaling near 4: USD reads beside compile's
+// own share something that serializes them.
 constexpr size_t _kDigestPrefetchLanesBesideCompile = 4;
 
 // RIGEXEC_VERIFY_DIGEST_MEMO=1: every join also recomputes the Solvers
@@ -100,8 +96,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // The v0.1 compiled rig identity: canonical mover paths, schema
     // types, targets, mover execution ordinals, and the structural dependency
     // wiring each operation declares — relationship identities, read
-    // phases, weight-descriptor shape, and blend membership/activations
-    // (spec §4.2, §6.3). Structural edits change it; numeric values and
+    // phases, weight-descriptor shape, and blend membership/activations.
+    // Structural edits change it; numeric values and
     // shape-preserving enables do not.
     // Returned as TEXT, of only the segments \p segments selects, so the
     // three can be computed on three tasks and hashed once at the join
@@ -182,8 +178,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // Only relationships that exist. The digest also writes an empty list
     // for each one a prim's type could carry and does not -- most of the
     // mover segment's names, on any one mover -- and recording those too
-    // was measured at ~1.5 ms more on the Movers task on the biped. A
-    // relationship authored for the first time is left to the digest.
+    // would add cost to the Movers task for no answer. A relationship
+    // authored for the first time is left to the digest.
     const auto noteTargets = [footprint](const UsdPrim &prim,
                                          const TfToken &name,
                                          const SdfPathVector &targets,
@@ -385,7 +381,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         appendFrameBindingIdentityNamed(prim, TfToken(name));
     };
 
-    // Weight-object descriptor shape is compiled rig identity (spec §4.1):
+    // Weight-object descriptor shape is compiled rig identity:
     // target, representation, policy, and canonical sparse support.
     // Recursive, because a combine's field shape is its inputs' shapes:
     // an edit inside a composed input has to recompile the combine that
@@ -534,8 +530,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     if (segments & _DigestOutputSets) {
         // Rig output set. Discovered rather than authored, so the digest hashes the
         // discovered paths -- adding, removing, or renaming a joint prim changes
-        // the compiled rig exactly as editing the old manifest relationship did.
-        // Derived-property maintenance (spec §7.6 revised) is unconditional now, so
+        // the compiled rig.
+        // Derived-property maintenance is unconditional now, so
         // there is no policy token left to hash: what the compiler synthesizes depends
         // only on which gprims author normals/extent, and that is already compiled rig
         // identity through the points-chain targets below.
@@ -770,8 +766,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     stampDigestRegion("Digest.OutputSets");
         stampDigestRegion("Digest.OutputSets");
     }
-    // Solver->joint wiring is compiled rig identity (view-free extraction,
-    // user-directed 2026-07-25, replaces RigExecPointFrameView): each
+    // Solver->joint wiring is compiled rig identity (view-free extraction): each
     // solver's ORDERED rigExec:joints list decides which joint
     // self-extracts which aggregate element, so adding, removing, or
     // reordering joints changes what compile Pass 0 synthesizes. Order is
@@ -781,14 +776,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // nothing else -- and the stage cannot change underneath a const digest
     // computation, so memoizing it for the duration of THIS digest emits
     // exactly the bytes the uncached walk emits.
-    // MEASURED 2026-09-13, biped (24 solvers): uncached, this emission was
-    // 1.15 MILLION UsdAttribute::GetConnections calls per digest -- 2.33 s --
-    // and one digest is computed on EVERY evaluate that follows ANY stage
-    // edit, which is what made letting go of a gizmo take 2.4 s. It runs once
-    // per ancestor, per relationship target, per relationship, per aggregate
-    // solver, and each run re-walked the same pose-input closure from
-    // scratch, so a few hundred prims were re-closed tens of thousands of
-    // times: O(n^2) in solver count, the 455 + 51n + 6.2n^2 ms measured.
+    // Uncached, this emission runs once per ancestor, per relationship
+    // target, per relationship, per aggregate solver, and each run re-walks
+    // the same pose-input closure: O(n^2) in solver count. One digest is
+    // computed on every evaluate that follows any stage edit, so the memo
+    // keeps it to one closure per prim.
     // The caches are function-local: nothing survives the call, so a stage
     // edit between two digests is still seen. They are deliberately NOT
     // evaluator members -- a member cache would have to be invalidated by
@@ -932,16 +924,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             return;
         }
         // THE TRANSITIVE POSE-INPUT CLOSURE, AS A MERKLE TOKEN.
-        // This used to flatten a prim's whole provider closure into one set
-        // of attribute paths and hash the text of all of them -- rebuilt
-        // from scratch per prim, because every prim's closure is a
-        // different set and so the per-prim cache below could not share
-        // anything between them. On a nested chain a prim at depth d reads
-        // d providers, so its block was O(d) entries of O(d)-long paths,
-        // and the digest over N such prims was CUBIC. Measured on one
-        // RigExecFkChain over a nested chain: 2.0 s at 100 joints, 191 s at
-        // 400, all of it in Digest.Solvers.
-        // Now each provider's closure is a token computed once: the text of
+        // Flattening a prim's whole provider closure into one set of
+        // attribute paths and hashing their text is CUBIC on a nested chain:
+        // a prim at depth d reads d providers, so its block is O(d) entries
+        // of O(d)-long paths, and no two prims' sets can share work.
+        // Instead each provider's closure is a token computed once: the text of
         // its OWN attributes plus the tokens of the providers it reads, in
         // path order. A provider is shared by every closure that reaches
         // it, so the work is linear in providers. Identity is at least as
@@ -1163,7 +1150,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
 
         // The prim's own authored connection inputs sit beside its provider
-        // closure, exactly as the flattened set used to add them. The same
+        // closure. The same
         // iterative closure as _CollectAttributeConnectionInputs -- every
         // attribute the prim owns, then every source reached from one,
         // missing sources and cycles included -- but read through the memo,
@@ -1227,13 +1214,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // THE ANCESTOR CHAIN OF A RELATIONSHIP TARGET, AS ONE TOKEN PER PATH.
     // Every aggregate-solver target contributes its whole ancestor chain --
     // each ancestor's path, type and input closure -- because a rewire
-    // anywhere above a joint changes the frame it resolves against. That
-    // used to be emitted inline: per target, walk every ancestor and append
-    // its full path string. On a nested chain that is N targets x N
-    // ancestors x a path N components long, and it was cubic. Measured on
-    // one RigExecFkChain over a nested chain: 287 ms at 50 joints, 2.0 s at
-    // 100, 188 s at 400 -- and 224 of the biped's 372 ms compile, the
-    // largest single cost left after the pose-schedule work.
+    // anywhere above a joint changes the frame it resolves against. Emitted
+    // inline -- per target, walk every ancestor and append its full path
+    // string -- a nested chain costs N targets x N ancestors x a path N
+    // components long: cubic in chain depth.
     // Siblings share every ancestor above them, and a chain's joints share
     // all of theirs, so each path's chain is computed once and folds in its
     // parent's token. The identity is the same kind the closure tokens above
@@ -1406,10 +1390,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         };
         // How wide. Beside compile, a few lanes: compile's own thread is
         // reading the same prims at the same time, and USD reads slow each
-        // other down -- MEASURED on puppetA, the whole pool took the prefetch
-        // from 4.9 ms to 3.4 ms and added 1.1 ms to DiscoverValidate on the
-        // compiling thread, which is on compile's critical path where the
-        // digest is not. Alone, as the settle path runs it, it is the whole
+        // other down -- the whole pool shortens the prefetch but slows
+        // DiscoverValidate on the compiling thread, which is on compile's
+        // critical path where the digest is not. Alone, as the settle path runs it, it is the whole
         // wait, so the whole pool. Strided rather than blocked, because the
         // heavy prims (joints and controls, with their dozens of attributes)
         // sit together in the traversal.
@@ -1563,9 +1546,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             const TfToken stype = solver.GetTypeName();
             if (stype == "RigExecFkChain") {
                 appendRelTargets(solver, "rigExec:controls", false);
-                // The start-frame inference switch: flipping it rewrites
-                // the derived session targets the rel loop above hashed,
-                // so the token joins the digest or no recompile follows.
+                // The start-frame inference switch. Flipping it changes
+                // which provider the compile derives; the rule's other
+                // inputs (authored targets, joints, their ancestor
+                // chains) are hashed by the relationship loop above.
                 appendToken(solver, "rigExec:startFramePolicy");
             } else if (stype == "RigExecTwistDistribution") {
                 const UsdAttribute ca = solver.GetAttribute(kCount);
@@ -1665,7 +1649,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             SdfPathVector targets;
             moves.GetTargets(&targets);
             noteTargets(prim, _movesRel, targets, true);
-            // Target-list order is non-semantic (spec §4.2): sort before
+            // Target-list order is non-semantic: sort before
             // hashing so a permutation does not change the compiled rig.
             std::sort(targets.begin(), targets.end());
             for (const SdfPath &t : targets) {
@@ -1673,7 +1657,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 const SdfPath canonical = t;
                 digest += pathText(canonical);
                 digest += ',';
-                // Derived synthesis identity (spec §7.6 revised): whether
+                // Derived synthesis identity: whether
                 // a written points target's gprim authors the derived
                 // properties decides what the compiler synthesizes, so
                 // authoring or removing them is a structural edit.
@@ -1909,7 +1893,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                             TfToken("rigExec:activation"))) {
                         a.Get(&activation);
                     }
-                    // Activation edits are structural (spec §7.3).
+                    // Activation edits are structural.
                     digest += std::to_string(activation);
                     digest += '|';
                 }

@@ -2,6 +2,7 @@
 #include "rigExecPoseCompare.h"
 #include "rigExecGraphDependencyCheck.h"
 #include "rigExecRuntimeDrive.h"
+#include "rigExecSceneProgramDrive.h"
 #include "rigExec/frozenContext.h"
 #include "rigExecSampler/runtimePoseProjection.h"
 #include "rigExecRuntime/stageArrayInputs.h"
@@ -16,6 +17,7 @@
 
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/usd/sdf/layer.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/primDefinition.h"
 #include "pxr/usd/usd/schemaRegistry.h"
@@ -4949,6 +4951,285 @@ TestCompileRecoveryIgnoresOperationSpelling()
     }
 }
 
+// A switchable limb with an IK/FK match: the scene program publishes the
+// same outputs:ikValues/fkValues and presents the same control frames as the
+// native evaluator, on the FK value, the IK value and between them. A foreign
+// applied API schema on a control does not refuse the scene program.
+static void
+TestIkFkMatchSceneProgramMatchesNative()
+{
+    using rigExecSceneProgramDrive::SceneRun;
+    const SdfPath rig("/Asset/Rig");
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    MakeXform(stage, SdfPath("/Asset"), Matrix());
+    stage->DefinePrim(rig, TfToken("RigExecRoot"));
+    const auto control = [&](const std::string &path, double tx, double tz) {
+        const UsdPrim prim = stage->DefinePrim(SdfPath("/Asset/Rig/Controls/" + path),
+                                               TfToken("RigExecControl"));
+        CHECK(prim);
+        prim.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double).Set(tx);
+        prim.CreateAttribute(TfToken("rest:tz"), SdfValueTypeNames->Double).Set(tz);
+        return prim;
+    };
+    const UsdPrim shoulder = control("Shoulder", 0, 0);
+    const UsdPrim up = control("Shoulder/Up", 0, 0);
+    const UsdPrim lo = control("Shoulder/Up/Lo", 3, 0);
+    const UsdPrim hand = control("Shoulder/Up/Lo/Hand", 4, 0);
+    const UsdPrim ik = control("Ik", 7, 0);
+    const UsdPrim orient = control("Ik/Orient", 0, 0);
+    const UsdPrim pole = control("Pole", 3.5, 2);
+    const UsdPrim settings = control("Settings", 0, -3);
+    pole.AddAppliedSchema(TfToken("PhysicsRigidBodyAPI"));
+    const UsdAttribute ikfk = settings.CreateAttribute(TfToken("avars:ikfk"), SdfValueTypeNames->Float);
+    // FK on 1-4, IK on 5-8, between on 9-10.
+    for (int t = 1; t <= 10; ++t) ikfk.Set(t <= 4 ? 0.0f : t <= 8 ? 1.0f : 0.5f, UsdTimeCode(t));
+    const UsdAttribute ikTx = ik.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double);
+    const UsdAttribute ikTz = ik.CreateAttribute(TfToken("avars:tz"), SdfValueTypeNames->Double);
+    const UsdAttribute ikRy = ik.CreateAttribute(TfToken("avars:ry"), SdfValueTypeNames->Double);
+    const UsdAttribute upRz = up.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
+    const UsdAttribute loRz = lo.CreateAttribute(TfToken("avars:rz"), SdfValueTypeNames->Double);
+    const UsdAttribute handRx = hand.CreateAttribute(TfToken("avars:rx"), SdfValueTypeNames->Double);
+    for (int t = 1; t <= 10; ++t) {
+        ikTx.Set(-0.4 * t, UsdTimeCode(t));
+        ikTz.Set(0.3 * (t % 4), UsdTimeCode(t));
+        ikRy.Set(4.0 * t, UsdTimeCode(t));
+        upRz.Set(3.0 * t, UsdTimeCode(t));
+        loRz.Set(-6.0 * t, UsdTimeCode(t));
+        handRx.Set(5.0 * t, UsdTimeCode(t));
+    }
+    const SdfPath joints[3] = {SdfPath("/Asset/Rig/Joints/Shoulder"),
+                               SdfPath("/Asset/Rig/Joints/Shoulder/Elbow"),
+                               SdfPath("/Asset/Rig/Joints/Shoulder/Elbow/Wrist")};
+    const double restTx[3] = {0.0, 3.0, 4.0};
+    for (int i = 0; i < 3; ++i) {
+        const UsdPrim prim = stage->DefinePrim(joints[i], TfToken("RigExecJoint"));
+        prim.CreateAttribute(TfToken("rest:tx"), SdfValueTypeNames->Double).Set(restTx[i]);
+    }
+    const SdfPathVector chain(std::begin(joints), std::end(joints));
+    const UsdPrim fk = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/FK"), TfToken("RigExecFkChain"));
+    fk.CreateRelationship(TfToken("rigExec:controls"))
+        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
+    const UsdPrim twoBone = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/IK"), TfToken("RigExecTwoBoneIk"));
+    twoBone.CreateRelationship(TfToken("rigExec:rootControl")).SetTargets({shoulder.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:effectorControl")).SetTargets({orient.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:poleControl")).SetTargets({pole.GetPath()});
+    twoBone.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
+    const UsdPrim blend = stage->DefinePrim(SdfPath("/Asset/Rig/Solvers/Blend"),
+                                            TfToken("RigExecBlendPointFrames"));
+    blend.CreateRelationship(TfToken("rigExec:inputA")).SetTargets({fk.GetPath()});
+    blend.CreateRelationship(TfToken("rigExec:inputB")).SetTargets({twoBone.GetPath()});
+    blend.GetAttribute(TfToken("inputs:weight")).SetConnections({ikfk.GetPath()});
+    blend.CreateRelationship(TfToken("rigExec:joints")).SetTargets(chain);
+
+    const UsdPrim match = MakeConstraint(stage, "Match", "RigExecIkFkMatchConstraint",
+        {ik.GetPath(), pole.GetPath(), up.GetPath(), lo.GetPath(), hand.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:ikControl")).SetTargets({ik.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:poleControl")).SetTargets({pole.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:fkControls"))
+        .SetTargets({up.GetPath(), lo.GetPath(), hand.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:limbJoints")).SetTargets(chain);
+    match.CreateRelationship(TfToken("rigExec:rootControl")).SetTargets({shoulder.GetPath()});
+    match.CreateRelationship(TfToken("rigExec:effector")).SetTargets({orient.GetPath()});
+    // A double input connected to a float channel reads it as a float.
+    match.CreateAttribute(TfToken("inputs:switch"), SdfValueTypeNames->Double)
+        .SetConnections({ikfk.GetPath()});
+    match.CreateAttribute(TfToken("inputs:twist"), SdfValueTypeNames->Double).Set(10.0);
+    SolversLast(stage);
+
+    RigExecRigEvaluator native(stage, rig);
+    std::vector<std::string> errors;
+    CHECK(native.Compile(&errors));
+    for (const auto &message : errors) std::printf("native: %s\n", message.c_str());
+    SceneRun scene(stage, rig, 1, 10);
+    CHECK(scene.ok);
+    if (!scene.ok) return;
+
+    const SdfPath ikValuesPath = match.GetPath().AppendProperty(TfToken("outputs:ikValues"));
+    const SdfPath fkValuesPath = match.GetPath().AppendProperty(TfToken("outputs:fkValues"));
+    const SdfPath presentedControls[6] = {ik.GetPath(), pole.GetPath(), up.GetPath(),
+                                          lo.GetPath(), hand.GetPath(), orient.GetPath()};
+    for (const SdfPath &path : presentedControls) {
+        CHECK(scene.program.presentedPoses.count(path) == 1);
+    }
+    const auto sceneValue = [&](RigExecValueId id) {
+        VtValue value;
+        RigExecReadSceneGraphValue(scene.runtime.values, id, &value);
+        return value;
+    };
+    const auto publicValue = [&](const SdfPath &path) {
+        const auto found = scene.program.publicValues.find(path);
+        return found == scene.program.publicValues.end() ? VtValue() : sceneValue(found->second);
+    };
+    double worst = 0;
+    bool sawIk = false, sawFk = false, sawValues = false;
+    for (int t = 1; t <= 10; ++t) {
+        const RigExecRigPose pose = native.Evaluate(UsdTimeCode(t));
+        CHECK(pose.valid);
+        CHECK(scene.Evaluate(t));
+        // The consumed IK reads its joints' rests where the blend begins,
+        // never the blend's own output: no operation is set aside.
+        CHECK(scene.program.graph.cycleMembers.empty());
+        for (const SdfPath *path : {&ikValuesPath, &fkValuesPath}) {
+            const auto want = pose.movedProperties.find(*path);
+            const VtValue got = publicValue(*path);
+            CHECK((want != pose.movedProperties.end()) == got.IsHolding<VtDoubleArray>());
+            if (want == pose.movedProperties.end() || !got.IsHolding<VtDoubleArray>() ||
+                !want->second.IsHolding<VtDoubleArray>()) continue;
+            sawValues = true;
+            const VtDoubleArray &a = want->second.UncheckedGet<VtDoubleArray>();
+            const VtDoubleArray &b = got.UncheckedGet<VtDoubleArray>();
+            CHECK(a.size() == b.size());
+            for (size_t k = 0; k < std::min(a.size(), b.size()); ++k) {
+                worst = std::max(worst, std::abs(a[k] - b[k]));
+            }
+        }
+        for (size_t c = 0; c < 6; ++c) {
+            const auto want = pose.controlFrames.find(presentedControls[c]);
+            const auto found = scene.program.presentedPoses.find(presentedControls[c]);
+            CHECK(want != pose.controlFrames.end() && found != scene.program.presentedPoses.end());
+            if (want == pose.controlFrames.end() || found == scene.program.presentedPoses.end()) continue;
+            const VtValue got = sceneValue(found->second);
+            CHECK(got.IsHolding<RigExecPointFrame>());
+            if (!got.IsHolding<RigExecPointFrame>()) continue;
+            const RigExecPointFrame &frame = got.UncheckedGet<RigExecPointFrame>();
+            for (size_t p = 0; p < 4; ++p) {
+                worst = std::max(worst, (want->second.points[p] - frame.points[p]).GetLength());
+            }
+            // Presented away from the final version: the IK half on the FK
+            // value, the FK half on the IK value.
+            const VtValue last = scene.Final(presentedControls[c], RigExecSceneValueDomain::Pose);
+            if (last.IsHolding<RigExecPointFrame>() &&
+                (last.UncheckedGet<RigExecPointFrame>().Origin() - frame.Origin()).GetLength() > 1e-6) {
+                (c < 2 || c == 5 ? sawIk : sawFk) = true;
+            }
+        }
+        for (const SdfPath &joint : joints) {
+            const auto want = pose.jointFramesFinal.find(joint);
+            const VtValue got = scene.Final(joint, RigExecSceneValueDomain::Pose);
+            CHECK(want != pose.jointFramesFinal.end() && got.IsHolding<RigExecPointFrame>());
+            if (want != pose.jointFramesFinal.end() && got.IsHolding<RigExecPointFrame>()) {
+                worst = std::max(worst, (want->second.Origin() -
+                                         got.UncheckedGet<RigExecPointFrame>().Origin()).GetLength());
+            }
+        }
+    }
+    if (worst > 1e-9) std::printf("IK/FK match scene/native worst difference %g\n", worst);
+    CHECK(worst <= 1e-9);
+    CHECK(sawValues);
+    CHECK(sawIk);
+    CHECK(sawFk);
+}
+
+// Two (or three) unconsumed solvers naming the same joints stack in stack
+// order (testRigExecSolverStacking's Stacked rig): the scene program writes
+// the same joint frames as the native evaluator, the later writer measuring
+// its chain from the frames the earlier one left.
+static void
+TestStackedSolversSceneProgramMatchesNative()
+{
+    using rigExecSceneProgramDrive::SceneRun;
+    const auto rest = [](double x, double y, double z) {
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer),
+                      "( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (%g, %g, %g, 1) )", x, y, z);
+        return std::string(buffer);
+    };
+    const auto chain = [&](const char *prefix, const char *rz) {
+        return std::string("            def RigExecControl \"") + prefix + "Hip\"\n"
+            "            {\n"
+            "                double avars:rz.timeSamples = { 1: 0, 5: " + rz + " }\n"
+            "                matrix4d rest:space = " + rest(0, 8, 0) + "\n"
+            "                def RigExecControl \"" + prefix + "Knee\"\n"
+            "                {\n"
+            "                    double avars:rz.timeSamples = { 1: 0, 5: -25 }\n"
+            "                    matrix4d rest:space = " + rest(4, 0, 0) + "\n"
+            "                    def RigExecControl \"" + prefix + "Ankle\"\n"
+            "                    {\n"
+            "                        matrix4d rest:space = " + rest(4, 0, 0) + "\n"
+            "                    }\n"
+            "                }\n"
+            "            }\n";
+    };
+    const auto fkSolver = [](const char *name, const char *prefix) {
+        const std::string c = std::string("</Asset/Rig/Controls/") + prefix;
+        return std::string("            def RigExecFkChain \"") + name + "\"\n"
+            "            {\n"
+            "                rel rigExec:controls = [ " + c + "Hip>, " + c + "Hip/" + prefix + "Knee>, " +
+            c + "Hip/" + prefix + "Knee/" + prefix + "Ankle> ]\n"
+            "                rel rigExec:joints = [ </Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>, "
+            "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
+            "            }\n";
+    };
+    const SdfPath joints[3] = {SdfPath("/Asset/Rig/Joints/Hip"), SdfPath("/Asset/Rig/Joints/Hip/Knee"),
+                               SdfPath("/Asset/Rig/Joints/Hip/Knee/Ankle")};
+    for (const bool threeDeep : {false, true}) {
+        std::string text =
+            "#usda 1.0\n(\n    defaultPrim = \"Asset\"\n    startTimeCode = 1\n    endTimeCode = 5\n"
+            "    upAxis = \"Y\"\n)\n"
+            "def Xform \"Asset\"\n{\n    def RigExecRoot \"Rig\"\n    {\n"
+            "        def Scope \"Controls\"\n        {\n"
+            "            def RigExecControl \"HipRoot\"\n            {\n"
+            "                matrix4d rest:space = " + rest(0, 8, 0) + "\n            }\n"
+            "            def RigExecControl \"FootIK\"\n            {\n"
+            "                double avars:ty.timeSamples = { 1: 0, 3: 1.5, 5: 0.5 }\n"
+            "                matrix4d rest:space = " + rest(0, 0, 0) + "\n            }\n"
+            "            def RigExecControl \"KneePole\"\n            {\n"
+            "                matrix4d rest:space = " + rest(0, 4, 3) + "\n            }\n" +
+            chain("Fk", "30") + (threeDeep ? chain("Fk2", "-20") : std::string()) +
+            "        }\n"
+            "        def Scope \"Joints\"\n        {\n"
+            "            def RigExecJoint \"Hip\"\n            {\n"
+            "                matrix4d rest:space = " + rest(0, 8, 0) + "\n"
+            "                def RigExecJoint \"Knee\"\n                {\n"
+            "                    matrix4d rest:space = " + rest(4, 0, 0) + "\n"
+            "                    def RigExecJoint \"Ankle\"\n                    {\n"
+            "                        matrix4d rest:space = " + rest(4, 0, 0) + "\n"
+            "                    }\n                }\n            }\n        }\n"
+            "        def Scope \"Solvers\"\n        {\n"
+            "            def RigExecTwoBoneIk \"LegIK\"\n            {\n"
+            "                rel rigExec:rootControl = </Asset/Rig/Controls/HipRoot>\n"
+            "                rel rigExec:effectorControl = </Asset/Rig/Controls/FootIK>\n"
+            "                rel rigExec:poleControl = </Asset/Rig/Controls/KneePole>\n"
+            "                rel rigExec:joints = [ </Asset/Rig/Joints/Hip>, </Asset/Rig/Joints/Hip/Knee>, "
+            "</Asset/Rig/Joints/Hip/Knee/Ankle> ]\n"
+            "                double rigExec:preferredBendRadians = 0.3\n"
+            "            }\n" +
+            fkSolver("LegFK", "Fk") + (threeDeep ? fkSolver("LegFK2", "Fk2") : std::string()) +
+            "        }\n    }\n}\n";
+        const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
+        CHECK(layer && layer->ImportFromString(text));
+        if (!layer) return;
+        const UsdStageRefPtr stage = UsdStage::Open(layer);
+        const SdfPath rig("/Asset/Rig");
+        RigExecRigEvaluator native(stage, rig);
+        std::vector<std::string> errors;
+        CHECK(native.Compile(&errors));
+        for (const auto &message : errors) std::printf("native: %s\n", message.c_str());
+        SceneRun scene(stage, rig, 1, 5);
+        CHECK(scene.ok);
+        if (!scene.ok) return;
+        double worst = 0;
+        for (int t = 1; t <= 5; ++t) {
+            const RigExecRigPose pose = native.Evaluate(UsdTimeCode(t));
+            CHECK(pose.valid);
+            CHECK(scene.Evaluate(t));
+            for (const SdfPath &joint : joints) {
+                const auto want = pose.jointFramesFinal.find(joint);
+                const VtValue got = scene.Final(joint, RigExecSceneValueDomain::Pose);
+                CHECK(want != pose.jointFramesFinal.end() && got.IsHolding<RigExecPointFrame>());
+                if (want == pose.jointFramesFinal.end() || !got.IsHolding<RigExecPointFrame>()) continue;
+                for (size_t p = 0; p < 4; ++p) {
+                    const double d = (want->second.points[p] - got.UncheckedGet<RigExecPointFrame>().points[p]).GetLength();
+                    if (d > 1e-9) std::printf("stacked%s t=%d %s p%zu differs by %g\n", threeDeep ? " (three)" : "",
+                                              t, joint.GetText(), p, d);
+                    worst = std::max(worst, d);
+                }
+            }
+        }
+        CHECK(worst <= 1e-9);
+    }
+}
+
 int
 main()
 {
@@ -5018,6 +5299,8 @@ main()
     TestAuthoredPosedSpaceBakesAndAnimatedOneFollows();
     TestSingleChainIkOwnInputsMoveOverTimeAndUnderDrag();
     TestSingleChainIkComputedStretch();
+    TestIkFkMatchSceneProgramMatchesNative();
+    TestStackedSolversSceneProgramMatchesNative();
 
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

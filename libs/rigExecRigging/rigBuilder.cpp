@@ -3514,12 +3514,12 @@ RigExecRigBuilder::AddControl(
                 "parentControl must be a valid RigExecControl on this stage");
         }
         scope = parentControl->GetPath();
-        const SdfPath controlsRoot =
-            _root.AppendChild(TfToken("Controls"));
-        if (scope == controlsRoot || !scope.HasPrefix(controlsRoot)) {
+        // The parent's role comes from its schema, checked above; the
+        // Controls scope is only where a new top-level control goes.
+        if (scope == _root || !scope.HasPrefix(_root)) {
             throw std::invalid_argument(
-                "parentControl must belong to this builder's Controls "
-                "hierarchy");
+                "parentControl must be under this builder's rig root " +
+                _root.GetString());
         }
     } else {
         scope = _EnsureScope("Controls");
@@ -3548,11 +3548,12 @@ RigExecRigBuilder::AddJoint(
                 "parentJoint must be a valid RigExecJoint on this stage");
         }
         parent = parentJoint->GetPath();
-        const SdfPath jointsRoot =
-            _root.AppendChild(TfToken("Joints"));
-        if (parent == jointsRoot || !parent.HasPrefix(jointsRoot)) {
+        // The parent's role comes from its schema, checked above; the
+        // Joints scope is only where a new top-level joint goes.
+        if (parent == _root || !parent.HasPrefix(_root)) {
             throw std::invalid_argument(
-                "parentJoint must belong to this builder's Joints hierarchy");
+                "parentJoint must be under this builder's rig root " +
+                _root.GetString());
         }
     } else {
         parent = _EnsureScope("Joints");

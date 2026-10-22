@@ -1,4 +1,4 @@
-// Shared topology-connectivity builders for the deformation kernels (H1).
+// Shared topology-connectivity builders for the deformation kernels.
 // Header-only and USD-free so the USD evaluators and the zero-USD runtime
 // run one definition: the smooth adjacency, the delta-mush neighbor table,
 // and the wrinkle triangle topology are pure functions of the face counts

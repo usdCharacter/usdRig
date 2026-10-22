@@ -626,7 +626,7 @@ class RigExecFkChain "RigExecFkChain" (
     rel rigExec:joints (
         customData = {
             string userDocBrief = """Ordered output joints this solver poses (view-free
-        extraction, user-directed 2026-07-25)."""
+        extraction)."""
         }
     )
     uniform token rigExec:segmentScale = "none" (

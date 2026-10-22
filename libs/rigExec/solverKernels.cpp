@@ -1,4 +1,4 @@
-// RigExec solver glue shared by exec and the bake (spec §7.5).
+// RigExec solver glue shared by exec and the bake.
 // See solverKernels.h.
 #include "solverKernels.h"
 #include "frameExtraction.h"

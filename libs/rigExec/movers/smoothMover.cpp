@@ -1,4 +1,4 @@
-// RigExecSmoothMover: everything about the smooth mover (spec §4.1).
+// RigExecSmoothMover: everything about the smooth mover.
 // A smooth mover applies fixed-adjacency Laplacian smoothing over the
 // destination's standard topology. This TU owns its exec-side
 // computeMoverParameters registration and builder, its revision binder,
@@ -20,18 +20,25 @@ using rigExec::RigExecMoverExecTokens;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_smoothTokens,
+    (smooth)
+    (faceVertexCounts)
+    (faceVertexIndices));
+
 namespace {
 const TfToken _oracleToken0("faceVertexCounts");
 const TfToken _oracleToken1("faceVertexIndices");
 
 
 // RigExecSmoothMover parameters: fixed-adjacency Laplacian smoothing of
-// the destination's standard topology (spec §7.6 revised).
+// the destination's standard topology.
 RigExecMoverParameters
 _BuildSmoothMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    params.kind = TfToken("smooth");
+    params.kind = _smoothTokens->smooth;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
@@ -57,9 +64,9 @@ _BindSmoothMover(const rigExec::RigExecMoverBindContext &ctx)
     rigExec::RigExecRevisionBinding &binding = *ctx.binding;
     const SdfPath &ownerPath = ctx.ownerPath;
     binding.topologyCounts =
-        ownerPath.AppendProperty(TfToken("faceVertexCounts"));
+        ownerPath.AppendProperty(_smoothTokens->faceVertexCounts);
     binding.topologyIndices =
-        ownerPath.AppendProperty(TfToken("faceVertexIndices"));
+        ownerPath.AppendProperty(_smoothTokens->faceVertexIndices);
 }
 
 rigExec::RigExecOracleResult

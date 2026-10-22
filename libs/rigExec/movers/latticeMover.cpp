@@ -1,4 +1,4 @@
-// RigExecLatticeMover: everything about the lattice mover (spec §4.1).
+// RigExecLatticeMover: everything about the lattice mover.
 // A lattice mover deforms points through a posed lattice cage measured
 // against its rest cage. This TU owns its exec-side
 // computeMoverParameters registration and builder, its revision binder,
@@ -22,6 +22,31 @@ using rigExec::RigExecMoverExecTokens;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((cage, "rigExec:cage"))
+    ((frames, "rigExec:frames")));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_latticeTokens,
+    (lattice)
+    (latticeFrames)
+    ((evaluation, "rigExec:evaluation"))
+    ((interpolationU, "rigExec:interpolationU"))
+    ((interpolationV, "rigExec:interpolationV"))
+    ((interpolationW, "rigExec:interpolationW"))
+    ((origin, "rigExec:origin"))
+    ((spacing, "rigExec:spacing"))
+    ((strength, "rigExec:strength"))
+    ((mask, "rigExec:mask"))
+    ((pointSpace, "rigExec:pointSpace"))
+    ((cageMatrix, "rigExec:cageMatrix"))
+    ((targetMatrix, "rigExec:targetMatrix"))
+    ((frames, "rigExec:frames"))
+    ((divisions, "rigExec:divisions")));
+
 namespace {
 const TfToken _oracleToken0("rigExec:cage");
 const TfToken _oracleToken1("points");
@@ -36,34 +61,34 @@ const TfToken _localToken("local");
 template<class Read>
 bool Configure(RigExecMoverParameters *p,Read read,const std::vector<GfMatrix4d> &frames) {
     using namespace rigExec;
-    const TfToken evaluation=read("rigExec:evaluation",_legacyToken);
+    const TfToken evaluation=read(_latticeTokens->evaluation,_legacyToken);
     if(evaluation!=_legacyToken && evaluation!=_regularGridToken)return false;
     p->latticeSettings.regularGrid=evaluation==_regularGridToken;
     if(!p->latticeSettings.regularGrid)return true;
-    const char *names[]={"rigExec:interpolationU","rigExec:interpolationV","rigExec:interpolationW"};
-    for(int a=0;a<3;++a)if(!RigExecLatticeInterpolationFromString(read(names[a],_bsplineToken).GetText(),&p->latticeSettings.interpolation[a]))return false;
-    const auto origin=read("rigExec:origin",GfVec3f(-.5f)),spacing=read("rigExec:spacing",GfVec3f(1));
+    const TfToken *names[]={&_latticeTokens->interpolationU,&_latticeTokens->interpolationV,&_latticeTokens->interpolationW};
+    for(int a=0;a<3;++a)if(!RigExecLatticeInterpolationFromString(read(*names[a],_bsplineToken).GetText(),&p->latticeSettings.interpolation[a]))return false;
+    const auto origin=read(_latticeTokens->origin,GfVec3f(-.5f)),spacing=read(_latticeTokens->spacing,GfVec3f(1));
     for(int a=0;a<3;++a) {p->latticeSettings.origin[a]=origin[a];p->latticeSettings.spacing[a]=spacing[a];}
-    const auto mask=read("rigExec:mask",VtFloatArray());p->latticeSettings.mask.assign(mask.begin(),mask.end());
-    p->latticeSettings.strength=read("rigExec:strength",1.f);
-    auto cage=read("rigExec:cageMatrix",GfMatrix4d(1)),target=read("rigExec:targetMatrix",GfMatrix4d(1));
+    const auto mask=read(_latticeTokens->mask,VtFloatArray());p->latticeSettings.mask.assign(mask.begin(),mask.end());
+    p->latticeSettings.strength=read(_latticeTokens->strength,1.f);
+    auto cage=read(_latticeTokens->cageMatrix,GfMatrix4d(1)),target=read(_latticeTokens->targetMatrix,GfMatrix4d(1));
     if(!RigExecSurfaceSnapValidMatrix(cage) || !RigExecSurfaceSnapValidMatrix(target))return false;
     if(!frames.empty()) {
         if(frames.size()!=2)return false;cage*=frames[0];target*=frames[1];
         if(!RigExecSurfaceSnapCanonicalComputedMatrix(&cage) || !RigExecSurfaceSnapCanonicalComputedMatrix(&target))return false;
     }
-    return RigExecLatticeCoordinateMaps(read("rigExec:pointSpace",_localToken).GetText(),cage,target,
+    return RigExecLatticeCoordinateMaps(read(_latticeTokens->pointSpace,_localToken).GetText(),cage,target,
         &p->targetToLattice,&p->latticeToTarget,&p->cageToLattice);
 }
 
-// Synthesized derived-maintenance parameters (spec §7.6 revised): the
+// Synthesized derived-maintenance parameters: the
 // hosts are compiler-authored with no authored mover and no enable; the
 // rig-level derived policy gates synthesis at compile time.
 RigExecMoverParameters
 _BuildLatticeMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    params.kind = TfToken("lattice");
+    params.kind = _latticeTokens->lattice;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
@@ -83,13 +108,13 @@ _BuildLatticeMoverParameters(const VdfContext &ctx)
         ctx, RigExecMoverExecTokens->restCagePointsAttr);
     params.auxPointsB = rigExec::RigExecMoverCollect<GfVec3f>(
         ctx, RigExecMoverExecTokens->cagePoints);
-    const auto read=[&](const char *name,auto fallback) {
+    const auto read=[&](const TfToken &name,auto fallback) {
         using T=decltype(fallback);
         if constexpr(std::is_same_v<T,VtFloatArray>) {
-            const auto a=rigExec::RigExecMoverCollect<float>(ctx,TfToken(name));return VtFloatArray(a.begin(),a.end());
-        } else {const T *v=ctx.GetInputValuePtr<T>(TfToken(name));return v?*v:fallback;}
+            const auto a=rigExec::RigExecMoverCollect<float>(ctx,name);return VtFloatArray(a.begin(),a.end());
+        } else {const T *v=ctx.GetInputValuePtr<T>(name);return v?*v:fallback;}
     };
-    if(!Configure(&params,read,rigExec::RigExecMoverCollect<GfMatrix4d>(ctx,TfToken("latticeFrames"))))return params;
+    if(!Configure(&params,read,rigExec::RigExecMoverCollect<GfMatrix4d>(ctx,_latticeTokens->latticeFrames)))return params;
     const size_t cageCount = size_t(params.divisions[0]) *
                              size_t(params.divisions[1]) *
                              size_t(params.divisions[2]);
@@ -109,17 +134,17 @@ _BindLatticeMover(const rigExec::RigExecMoverBindContext &ctx)
     const UsdPrim &moverPrim = ctx.moverPrim;
     binding.base = ctx.target;
     const SdfPathVector cages = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:cage");
+        moverPrim, _relTokens->cage);
     if (!cages.empty()) {
         binding.cagePoints = rigExec::RigExecPointsOf(cages[0]);
         const rigExec::RigExecReadPhase phase =
-            rigExec::RigExecPhaseForInput(moverPrim, "rigExec:cage");
+            rigExec::RigExecPhaseForInput(moverPrim, _relTokens->cage);
         if (!phase.IsBase()) {
             binding.phases[binding.cagePoints] = phase;
         }
     }
-    binding.influences=rigExec::RigExecRelationshipTargets(moverPrim,"rigExec:frames");
-    binding.transformPhase=rigExec::RigExecPhaseForInput(moverPrim,"rigExec:frames");
+    binding.influences=rigExec::RigExecRelationshipTargets(moverPrim,_relTokens->frames);
+    binding.transformPhase=rigExec::RigExecPhaseForInput(moverPrim,_relTokens->frames);
     if(binding.transformPhase.kind==rigExec::RigExecReadPhaseKind::Final)
         for(auto &provider:binding.influences) {
             const auto head=ctx.frameChainHeads.find(provider);if(head!=ctx.frameChainHeads.end())provider=head->second;
@@ -142,10 +167,7 @@ _OracleLatticeMover(const rigExec::RigExecMoverOracleContext &ctx)
     // parity oracle, so it resolves its own inputs off the stage. A
     // reference that called the assembler would have agreed with the
     // SurfaceProject strength bug instead of catching it.
-    // The rest cage is the cage at Default time. That is exactly
-    // what the deleted compiler captured into
-    // rigExec:restCagePoints -- a Default-time read and nothing
-    // more, which is why the authored capture was removable.
+    // The rest cage is the cage at Default time, read directly.
     SdfPathVector cages;
     if (rigExec::RigExecOracleRelationship rel =
             prim.GetRelationship(_oracleToken0)) {
@@ -174,12 +196,12 @@ _OracleLatticeMover(const rigExec::RigExecMoverOracleContext &ctx)
             prim.GetAttribute(_oracleToken2)) {
         a.Get(&divisions, time);
     }
-    const auto read=[&](const char *name,auto fallback) {
+    const auto read=[&](const TfToken &name,auto fallback) {
         const auto a=prim.GetAttribute(name);if(a)ctx.resolved.GetAttribute(a,time,&fallback);return fallback;
     };
     std::vector<GfMatrix4d> matrices;
-    const auto frames=rigExec::RigExecRelationshipTargets(prim,"rigExec:frames");
-    const auto &table=rigExec::RigExecPhaseForInput(prim,"rigExec:frames").kind==rigExec::RigExecReadPhaseKind::Final?
+    const auto frames=rigExec::RigExecRelationshipTargets(prim,_relTokens->frames);
+    const auto &table=rigExec::RigExecPhaseForInput(prim,_relTokens->frames).kind==rigExec::RigExecReadPhaseKind::Final?
         ctx.finalProviderMatrices:ctx.baseProviderMatrices;
     for(const auto &path:frames) {const auto it=table.find(path);if(it==table.end())return RigExecOracleResult::PassThrough;matrices.push_back(it->second);}
     RigExecMoverParameters params;if(!Configure(&params,read,matrices))return RigExecOracleResult::PassThrough;
@@ -213,23 +235,23 @@ _OracleLatticeMover(const rigExec::RigExecMoverOracleContext &ctx)
 bool ValidateLattice(const rigExec::RigExecMoverValidateContext &ctx,std::string *error) {
     const auto &prim=ctx.prim;
     const auto fail=[&]() {*error="invalid lattice evaluation, interpolation, grid, mask or coordinate frame";return false;};
-    const auto read=[&](const char *name,auto fallback) {const auto a=prim.GetAttribute(TfToken(name));if(a)a.Get(&fallback);return fallback;};
+    const auto read=[&](const TfToken &name,auto fallback) {const auto a=prim.GetAttribute(name);if(a)a.Get(&fallback);return fallback;};
     RigExecMoverParameters p;if(!Configure(&p,read,{}))return fail();
-    const auto cages=rigExec::RigExecRelationshipTargets(prim,"rigExec:cage");
-    const auto frames=rigExec::RigExecRelationshipTargets(prim,"rigExec:frames");
+    const auto cages=rigExec::RigExecRelationshipTargets(prim,_relTokens->cage);
+    const auto frames=rigExec::RigExecRelationshipTargets(prim,_relTokens->frames);
     if(cages.size()!=1 || (!frames.empty() && frames.size()!=2))return fail();
     if(!ctx.stage->GetAttributeAtPath(rigExec::RigExecPointsOf(cages[0])))return fail();
-    if(!frames.empty() && rigExec::RigExecPhaseForInput(prim,"rigExec:frames").kind==rigExec::RigExecReadPhaseKind::AtPrim) {
+    if(!frames.empty() && rigExec::RigExecPhaseForInput(prim,_relTokens->frames).kind==rigExec::RigExecReadPhaseKind::AtPrim) {
         *error="lattice frame providers require base or final read phase";return false;
     }
     if(!p.latticeSettings.regularGrid) {
-        const char *names[]={"rigExec:interpolationU","rigExec:interpolationV","rigExec:interpolationW","rigExec:origin","rigExec:spacing","rigExec:strength","rigExec:mask","rigExec:pointSpace","rigExec:cageMatrix","rigExec:targetMatrix"};
-        for(const char *name:names) {const auto a=prim.GetAttribute(TfToken(name));if(a && (a.HasAuthoredValueOpinion() || a.HasAuthoredConnections())) {
-            *error=std::string(name)+" requires rigExec:evaluation=regularGrid";return false;
+        const TfToken *names[]={&_latticeTokens->interpolationU,&_latticeTokens->interpolationV,&_latticeTokens->interpolationW,&_latticeTokens->origin,&_latticeTokens->spacing,&_latticeTokens->strength,&_latticeTokens->mask,&_latticeTokens->pointSpace,&_latticeTokens->cageMatrix,&_latticeTokens->targetMatrix};
+        for(const TfToken *name:names) {const auto a=prim.GetAttribute(*name);if(a && (a.HasAuthoredValueOpinion() || a.HasAuthoredConnections())) {
+            *error=name->GetString()+" requires rigExec:evaluation=regularGrid";return false;
         }}
         if(!frames.empty()) {*error="lattice frames require rigExec:evaluation=regularGrid";return false;}
     }
-    const auto divisions=read("rigExec:divisions",GfVec3i(2));
+    const auto divisions=read(_latticeTokens->divisions,GfVec3i(2));
     const int minimum=p.latticeSettings.regularGrid?1:2;
     for(int a=0;a<3;++a)if(divisions[a]<minimum)return fail();
     if(p.latticeSettings.regularGrid) {
@@ -267,19 +289,19 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecLatticeMover)
         .Callback<RigExecMoverParameters>(&_BuildLatticeMoverParameters)
         .Inputs(
             RIGEXEC_MOVER_COMMON_INPUTS,
-            AttributeValue<TfToken>(TfToken("rigExec:evaluation")),
-            AttributeValue<TfToken>(TfToken("rigExec:interpolationU")),
-            AttributeValue<TfToken>(TfToken("rigExec:interpolationV")),
-            AttributeValue<TfToken>(TfToken("rigExec:interpolationW")),
-            AttributeValue<GfVec3f>(TfToken("rigExec:origin")),
-            AttributeValue<GfVec3f>(TfToken("rigExec:spacing")),
-            AttributeValue<float>(TfToken("rigExec:strength")),
-            AttributeValue<float>(TfToken("rigExec:mask")),
-            AttributeValue<TfToken>(TfToken("rigExec:pointSpace")),
-            AttributeValue<GfMatrix4d>(TfToken("rigExec:cageMatrix")),
-            AttributeValue<GfMatrix4d>(TfToken("rigExec:targetMatrix")),
-            Relationship(TfToken("rigExec:frames")).TargetedObjects<GfMatrix4d>(RigExecMoverExecTokens->computeMatrix)
-                .InputName(TfToken("latticeFrames")),
+            AttributeValue<TfToken>(_latticeTokens->evaluation),
+            AttributeValue<TfToken>(_latticeTokens->interpolationU),
+            AttributeValue<TfToken>(_latticeTokens->interpolationV),
+            AttributeValue<TfToken>(_latticeTokens->interpolationW),
+            AttributeValue<GfVec3f>(_latticeTokens->origin),
+            AttributeValue<GfVec3f>(_latticeTokens->spacing),
+            AttributeValue<float>(_latticeTokens->strength),
+            AttributeValue<float>(_latticeTokens->mask),
+            AttributeValue<TfToken>(_latticeTokens->pointSpace),
+            AttributeValue<GfMatrix4d>(_latticeTokens->cageMatrix),
+            AttributeValue<GfMatrix4d>(_latticeTokens->targetMatrix),
+            Relationship(_latticeTokens->frames).TargetedObjects<GfMatrix4d>(RigExecMoverExecTokens->computeMatrix)
+                .InputName(_latticeTokens->latticeFrames),
             AttributeValue<GfVec3i>(RigExecMoverExecTokens->divisionsAttr),
             AttributeValue<GfVec3f>(
                 RigExecMoverExecTokens->restCagePointsAttr),

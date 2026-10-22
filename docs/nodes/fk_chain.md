@@ -197,22 +197,20 @@ never guesses. The positional ordering rule above applies
 unchanged: the chain must still execute after the provider's
 writer, and the compiler warns when it does not.
 
-Mechanics: the inference is compiled, not evaluated. Each
-compile writes the derived target into the stage session layer
-(never the asset), where the ordinary relationship machinery
-picks it up -- scheduling and the compiled program both see it
-as authored. Session-layer opinions on
-rigExec:startFrame for a `parent` chain are therefore
-compiler-managed: hand-authoring targets there while the policy
-is active may be replaced on recompile. Author them in an
-asset layer instead, which always wins cleanly.
+Mechanics: the inference is compiled, not evaluated, and it
+authors nothing. Each compile resolves the provider into the
+compiled chain as its start-frame input, through one rule that
+native, frozen, and `.rigexec` evaluation share, so scheduling
+and every compiled program see it exactly as an authored target.
+The relationship itself stays empty on the stage; a recompile
+(a reparented joint, a policy edit) re-derives it.
 
 #### `rigExec:joints`
 
 *Relationship.*
 
 Ordered output joints this solver poses (view-free
-extraction, user-directed 2026-07-25). List position is the
+extraction). List position is the
 aggregate element index; length is the effective sample count.
 The compiler binds each joint to one aggregate element
 in the compiled program.

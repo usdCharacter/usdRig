@@ -6,6 +6,7 @@
 #include "rigExecMath/pointFrame.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frameCacheSparsity.h"
+#include "rigExec/parallel.h"
 #include "rigExecBinary/clothPlayback.h"
 #include "rigExec/movers/clothInputs.h"
 
@@ -37,6 +38,7 @@ namespace {
 const TfToken _tY("Y");
 const TfToken _tRigExecGenerated("__RigExecGenerated");
 const TfToken _tCircle("circle");
+const TfToken _tConstraintsRel("rigExec:constraints");
 const TfToken _tFaceVarying("faceVarying");
 const TfToken _tGuideDisplayColor("guide:displayColor");
 const TfToken _tGuideDisplayOpacity("guide:displayOpacity");
@@ -330,7 +332,7 @@ _ReadGuideStyle(
     }
 }
 
-// Influence volume guides (spec §4.1 volumetric extension, drawn side).
+// Influence volume guides.
 // A weight volume is otherwise invisible: it owns no points, and its effect
 // is only legible once geometry has already moved -- by which time the
 // artist is reading a deformation, not the region that caused it. What is
@@ -626,11 +628,9 @@ _AppendSphereVolumeGuide(
 // One plane iso-surface: the rectangle at signed offset \p distance along
 // the local rigExec:planeAxis, sized by the in-plane half-extents
 // \p extentU and \p extentV.
-// The size comes from inputs:extentU/extentV and from NOTHING ELSE. This
-// used to derive a half-size from the falloff band (max(1, |min|, |max|)),
-// which meant scrubbing the band resized the drawn square as well as
-// sliding it -- a rigger dragging falloffMax saw the plane grow instead of
-// the two surfaces separate. The band and the extents are different
+// The size comes from inputs:extentU/extentV and from NOTHING ELSE. A
+// half-size derived from the falloff band would resize the drawn square as
+// well as slide it when the band is scrubbed. The band and the extents are different
 // directions and different quantities: the band is a distance ALONG the
 // axis and is the only thing \p distance carries, the extents are the size
 // ACROSS it. Keeping them apart is bug (2) of this change.
@@ -921,6 +921,14 @@ RigExecImagingBridge::RigExecImagingBridge(
     if (TfGetenvBool("RIGEXEC_IMAGING_PROFILE", false)) {
         _evaluator->SetProfilingEnabled(true);
     }
+    RefreshFrameCacheSettings();
+}
+
+void
+RigExecImagingBridge::RefreshFrameCacheSettings()
+{
+    _frameCacheMode = RigExecFrameCacheModeFromEnvironment();
+    _frameCacheVerify = RigExecFrameCacheVerifyRequested();
 }
 
 bool
@@ -961,19 +969,36 @@ RigExecImagingBridge::_FillProviderXforms(
     // Flattening stamps resetXformStack=true on every output, so the results
     // index cannot recover authored reset boundaries from Hydra. Capture
     // them while the bridge still owns the source stage, under driven roots.
-    std::set<SdfPath> scanned;
+    // The walk runs when the driven set or the stage changes, not every
+    // frame: any authored edit advances the evaluator's stage edit serial.
+    std::vector<SdfPath> providerRoots;
+    providerRoots.reserve(pose.providerXforms.size());
     for (const auto &[providerPath, matrix] : pose.providerXforms) {
-        bool covered = false;
-        for (const auto &root : scanned) covered = covered || providerPath.HasPrefix(root);
-        if (covered) continue;
-        const auto root = _stage->GetPrimAtPath(providerPath);
-        if (!root) continue;
-        scanned.insert(providerPath);
-        for (const auto &prim : UsdPrimRange(root)) {
-            const UsdGeomXformable xform(prim);
-            if (xform && xform.GetResetXformStack()) snapshot->xformResetPaths.insert(prim.GetPath());
-        }
+        providerRoots.push_back(providerPath);
     }
+    const uint64_t serial = _evaluator->GetStageEditSerial();
+    if (!_xformResetsValid || _xformResetSerial != serial ||
+        providerRoots != _xformResetRoots) {
+        _xformResetPaths.clear();
+        std::vector<SdfPath> scanned;
+        for (const SdfPath &providerPath : providerRoots) {
+            bool covered = false;
+            for (const auto &root : scanned) covered = covered || providerPath.HasPrefix(root);
+            if (covered) continue;
+            const auto root = _stage->GetPrimAtPath(providerPath);
+            if (!root) continue;
+            scanned.push_back(providerPath);
+            for (const auto &prim : UsdPrimRange(root)) {
+                const UsdGeomXformable xform(prim);
+                if (xform && xform.GetResetXformStack()) _xformResetPaths.insert(prim.GetPath());
+            }
+        }
+        _xformResetRoots = std::move(providerRoots);
+        _xformResetSerial = serial;
+        _xformResetsValid = true;
+    }
+    snapshot->xformResetPaths.insert(_xformResetPaths.begin(),
+                                     _xformResetPaths.end());
 }
 
 void
@@ -1340,7 +1365,7 @@ RigExecImagingBridge::_FillClothConstraintGuides(
             const UsdPrim moverPrim = _stage->GetPrimAtPath(mover.moverPath);
             if (!moverPrim) continue;
             for (const auto &constraint :
-                 RigExecRelationshipTargets(moverPrim, "rigExec:constraints")) {
+                 RigExecRelationshipTargets(moverPrim, _tConstraintsRel)) {
                 for (const auto &destination : mover.targets) {
                     if (destination.GetNameToken() != _tPoints) continue;
                     _ClothGuideBinding guide;
@@ -1543,8 +1568,8 @@ RigExecImagingBridge::_FillGuides(
     }
 }
 
-// Controls draw one synthesized shape each at their posed frame
-// (spec §10.3 extension): shape, draw mode, and a positive per-axis draw
+// Controls draw one synthesized shape each at their posed frame:
+// shape, draw mode, and a positive per-axis draw
 // multiplier are authored on the control. Evaluated frame-axis magnitudes
 // multiply that authored size while the results scene index places the shape
 // with the rigidized frame.
@@ -1782,7 +1807,7 @@ RigExecImagingBridge::_FillControlGuides(
 
 
 // Every placed influence volume draws its falloffMin and falloffMax
-// iso-surfaces (spec §4.1 volumetric extension, drawn side).
+// iso-surfaces.
 // Driven by pose.weightFrames rather than by a second stage traversal: the
 // evaluator discovers every placed volume beneath the rig and resolves its
 // frame whether or not a mover consumes the field. That makes the schema's
@@ -1874,8 +1899,7 @@ RigExecImagingBridge::_FillVolumeGuides(
             }
             // Size from the authored extents ONLY. The band moves the two
             // surfaces apart along the axis; it must not change their
-            // size, which is what the old max(1, |min|, |max|) half-size
-            // did on every scrub.
+            // size (a max(1, |min|, |max|) half-size would, on every scrub).
             const double extentU = readFloat("inputs:extentU", 1.0f);
             const double extentV = readFloat("inputs:extentV", 1.0f);
             TfToken boundsToken("unbounded");
@@ -1991,7 +2015,7 @@ RigExecImagingBridge::_FillVolumeGuides(
 }
 
 // Paints ONE selected weight object's resolved field onto the geometry it
-// weights (spec §10.3 influence-overlay extension).
+// weights.
 // The field is taken from pose.weightFields -- the packet a mover actually
 // consumed -- rather than recomputed, so what a rigger sees is exactly what
 // deformed the geometry. A re-derivation could drift, and it would drift
@@ -2191,9 +2215,7 @@ RigExecImagingBridge::NoteWarmingEnqueued(
     UsdTimeCode time, uint64_t controlDigest, uint64_t unfoldedDigest,
     const RigExecFrameInputs &inputs)
 {
-    if (!_frameCache ||
-        RigExecFrameCacheModeFromEnvironment() ==
-            RigExecFrameCacheMode::Off) {
+    if (!_frameCache || _frameCacheMode == RigExecFrameCacheMode::Off) {
         return;
     }
     // Scope check, as on the lookup and memoization paths: the evaluation
@@ -2594,7 +2616,7 @@ RigExecImagingBridge::_ServeCachedPose(
 {
     _frameCache->NoteProvenanceAlias(key, time);
     RigExecRigPose cached = pose;
-    const bool verify = RigExecFrameCacheVerifyRequested();
+    const bool verify = _frameCacheVerify;
     if (verify) {
         // Verify the cached pose against a live evaluation. This evaluator
         // pull counts as a live publication regardless of its verdict.
@@ -2662,7 +2684,7 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
         !pose.valid || !retained) {
         return false;
     }
-    // The D5 rewrite sequence: publish under the new key, evict the old,
+    // The rewrite sequence: publish under the new key, evict the old,
     // re-record the completion -- which REPLACES the row, so no Drop (a
     // Drop erases by (compiled rig, time) and would eat the new row). The old key
     // is unreachable by construction past the namespace move (no fresh
@@ -2811,11 +2833,10 @@ RigExecImagingBridge::_TryPublishCachedResult(
     // Servable completions skip sampling entirely: the index row names the
     // exact key, and the retirement paths (generation tags, compiled rig tags,
     // path-scoped dirt, eviction) keep a clean row exact, so a store hit
-    // under it IS the proof compare. Sampling first here cost every hit
-    // the full vector (~49 ms on the stack for a ~10 ms evaluation --
-    // hits ran 4.5x slower than cache-off). A row miss, a store miss
-    // under the row (concurrent eviction), or a D7 rig falls through to
-    // the proof/sparse paths below, unchanged.
+    // under it IS the proof compare. Sampling first here would cost every
+    // hit the full input vector, which can exceed the evaluation it saves.
+    // A row miss, a store miss under the row (concurrent eviction), or a rig
+    // with no baked program falls through to the proof/sparse paths below.
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
     const RigExecBakedProgram *program = _evaluator->GetBakedProgram();
     const auto proof = _freshDigests.find({time.IsDefault(), stamped});
@@ -2987,7 +3008,7 @@ RigExecImagingBridge::_MemoizeLiveResult(
         RigExecProfileScope scope(MutableProfiler(),
                                   "Imaging.FrameCachePublish", "imaging");
         if (haveInputs) {
-            // Retained-state publish (plan 2.0): the source snapshot and
+            // Retained-state publish: the source snapshot and
             // the dependency record ride with the pose, so a later edit
             // retains the source snapshot used to validate cache reuse.
             const RigExecBakedProgramImpl &impl =
@@ -3096,8 +3117,8 @@ RigExecImagingBridge::_PublishPoseSnapshot(
     UsdTimeCode time, const RigExecRigPose &pose, PublishResult *result)
 {
     // Build the complete immutable generation from the exact native
-    // results: points and normals as flat primvars, extent as min/max
-    // (spec §10.2). Only standard data crosses this boundary.
+    // results: points and normals as flat primvars, extent as min/max.
+    // Only standard data crosses this boundary.
     auto snapshot = std::make_shared<RigExecImagingSnapshot>();
     snapshot->generation = ++_generation;
     _StampGeneration(time, snapshot.get());
@@ -3211,7 +3232,7 @@ RigExecImagingBridge::_PublishPoseSnapshot(
     }
 
     // A structural recompile publishes a replacement compiled rig
-    // before value notices (spec §10.4).
+    // before value notices.
     const size_t compiledRigSignature = _evaluator->GetCompiledRigSignature();
     if (compiledRigSignature != _publishedCompiledRigSignature) {
         auto compiledRig = std::make_shared<
@@ -3225,7 +3246,7 @@ RigExecImagingBridge::_PublishPoseSnapshot(
     }
 
     // Atomic snapshot swap; the caller sends the coalesced precise
-    // dirtied notices from the notice owner (spec §8.2, §10.4).
+    // dirtied notices from the notice owner.
     {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.StorePublish",
                                   "imaging");
@@ -3241,7 +3262,8 @@ RigExecImagingBridge::_PublishPoseSnapshot(
 bool
 RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
 {
-    if (!RigExecBackgroundWarmingEnabled() ||
+    if (!RigExecBackgroundWarmingEnabled(
+            _frameCacheMode, RigExecParallelEvaluationEnabled()) ||
         !_interactiveOverrides.empty()) {
         return false;
     }
@@ -3288,12 +3310,11 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // unproven all fall through to the live path, which is the historical
     // behavior plus one memoization. Off disables both halves: the cache
     // is neither read nor written -- as does an active drag (below).
-    const RigExecFrameCacheMode cacheMode =
-        RigExecFrameCacheModeFromEnvironment();
+    const RigExecFrameCacheMode cacheMode = _frameCacheMode;
     // Interactive bypass: every drag tick carries unique overrides, so a
     // lookup would always miss after paying a full sample+digest, and
     // memoization would store single-use entries no scrub can reach --
-    // pure overhead on the hottest path (D5: the playhead is always live).
+    // pure overhead on the hottest path (the playhead is always live).
     // While overrides stand the cache is neither read nor written, exactly
     // as when off; proofs and entries are left untouched, so releasing the
     // drag resumes hitting the authored frames.
@@ -3317,7 +3338,7 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     if (useCache && !editedHere && _TryPublishCachedResult(time, &result)) {
         return result;
     }
-    // 1. Evaluation always completes before publication (spec §8.2).
+    // 1. Evaluation always completes before publication.
     const RigExecRigPose pose = [&] {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.Evaluate",
                                   "imaging");
@@ -3325,16 +3346,12 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     }();
     if (!pose.valid) {
         // A rig that cannot evaluate STOPS DRIVING THE SCENE.
-        // Returning here without publishing used to leave the last good
-        // generation current, and every consumer kept serving it: disconnect
-        // a constraint's rigExec:moves and the recompile fails ("Mover has no
-        // moves targets"), so the mesh under the driven Xform stayed exactly
-        // where the constraint had put it -- forever, through frame changes
-        // and further edits.
-        // Nothing downstream could correct that. The results scene index
-        // handles a driven transform disappearing, and the store diffs a prim
-        // that left the generation as structural -- but neither runs, because
-        // there was no publication for them to run on.
+        // Returning here without publishing would leave the last good
+        // generation current, and every consumer would keep serving it (a
+        // driven mesh stays where a now-failed constraint put it). The results
+        // scene index handles a driven transform disappearing, and the store
+        // diffs a prim that left the generation as structural -- but only
+        // when there is a publication for them to run on.
         // Clearing is the rule the evaluator already applies to a
         // non-converged generation: an unevaluated result is recoverable, a
         // plausible wrong one is not. The scene falls back to what the stage
@@ -3377,7 +3394,7 @@ RigExecImagingBridge::PreflightMotionProfile(
             return false;
         }
     }
-    // motionBlurSupport = false permits one sample (spec §10.3.1); the
+    // motionBlurSupport = false permits one sample; the
     // capability bit never supplies offsets, and an absent bit leaves the
     // application's explicit render profile authoritative.
     if (support == MotionBlurSupport::False && shutterOffsets.size() > 1) {
@@ -3396,8 +3413,8 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
     MotionBlurSupport support)
 {
     PublishResult result;
-    // Preflight fails deterministically before any evaluation
-    // (spec §10.5): capability mismatch or an invalid profile never
+    // Preflight fails deterministically before any evaluation:
+    // capability mismatch or an invalid profile never
     // computes and never publishes.
     if (!PreflightMotionProfile(shutterOffsets, support) ||
         baseTime.IsDefault() || !std::isfinite(baseTime.GetValue())) {

@@ -1,9 +1,8 @@
-// RigExec OpenExec computation registrations (spec §12.1).
+// RigExec OpenExec computation registrations.
 // Every semantically addressable transform provider publishes paired
 // computePointFrame / computeMatrix. Packed solver boundaries publish the
 // aggregate computePointFrameArray; scalar scene-addressable providers
-// (joints, views) consume the aggregate and publish scalar frames
-// (spec §5.7 universal point extraction invariant).
+// (joints, views) consume the aggregate and publish scalar frames.
 #include "types.h"
 #include "frameExtraction.h"
 #include "solverKernels.h"
@@ -38,7 +37,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
 
-    // Computation names (spec §4.1).
+    // Computation names.
     (computePointFrame)
     (computeMatrix)
     (computeRestFrame)
@@ -180,10 +179,9 @@ _IdentityLandmarks()
 // RigExecControl and RigExecJoint both register the shared Ir-xformable
 // computations below: animation lives on avars / posed:space, and the rest
 // frame comes from rest:space plus the rest avars. There is no landmark-based
-// provider path -- RigExecPointTransformAPI carried one and was removed as
-// dead surface (see docs/specs/dead-surface-removal.md).
+// provider path.
 
-// RigExecJoint (IrXformable mirror, user-directed alignment 2026-07-25):
+// RigExecJoint (IrXformable mirror):
 // matrix4d rest/posed spaces with scalar avars. A solver-posed joint's frame
 // arrives as a value override from RigExecRigEvaluator (exec cannot traverse
 // the solver's rigExec:joints backwards, so the binding lives in the compiled
@@ -246,9 +244,7 @@ _FrameFromMatrix(const GfMatrix4d &m)
 // normalized posed axes scaled by the posed/rest axis-length ratios (rest
 // spaces are orthonormalized per the Ir contract, so the ratio is what
 // carries stretch). Identity when the element is absent or degenerate.
-// This is the former RigExecPointFrameView out:space math, reused for
-// view-free per-element extraction (user-directed 2026-07-25), with identical
-// numerics to the deleted view's out:space -> _FrameFromMatrix.
+// View-free per-element extraction of a solver aggregate element.
 static GfMatrix4d
 _ElementOutSpace(const RigExecPointFrameArray *source, size_t index)
 {
@@ -420,7 +416,7 @@ _ComputeVolumeWeightPointFrame(const VdfContext &ctx)
 static GfMatrix4d
 _ComputeJointMatrix(const VdfContext &ctx)
 {
-    // The rest->posed target-local map (spec §7.4 consumers): identical
+    // The rest->posed target-local map: identical
     // semantics to the landmark-based PointsToMatrix path.
     const RigExecPointFrame *rest =
         ctx.GetInputValuePtr<RigExecPointFrame>(_tokens->selfRestFrame);
@@ -571,8 +567,7 @@ RIGEXEC_REGISTER_XFORMABLE(
 RIGEXEC_REGISTER_XFORMABLE(
     RigExecControl, &_ComputeJointPointFrame, RIGEXEC_AVAR_SCALE_INPUTS)
 
-// The volumetric weight objects are RigExecXformables too (spec §4.1
-// volumetric extension), so they get the same placement contract: a
+// The volumetric weight objects are RigExecXformables too, so they get the same placement contract: a
 // volume authored inside a joint follows it through the same
 // NamespaceAncestor chain, with nothing wired. Unlike controls and joints,
 // it deliberately does not bind avars:sx/sy/sz: volume shape is authored only
@@ -615,9 +610,8 @@ RIGEXEC_REGISTER_XFORMABLE(
 // rigExec:startFrame (optional) is the frame the chain HANGS FROM. Without
 // it this solver is absolute: it composes control deltas onto the controls'
 // own asset-space rests and nothing tells it that its joints live under,
-// say, a wrist. Measured on a synthetic `a -> b -> c` with a chain over
-// `[b, c]` only: posing `a` by avars:rz = 90 left b at (10,0,0) and c at
-// (20,0,0), unmoved. With the relationship authored, the start provider's
+// say, a wrist: in `a -> b -> c` with a chain over `[b, c]` only, posing `a`
+// leaves b and c unmoved. With the relationship authored, the start provider's
 // rest-to-pose delta S is PREPENDED as a synthetic element -- reusing the
 // kernel rather than adding a case to it -- so W_0 = S . A_0 in `world`
 // and W_i = S . A_i in `parentRelative` (where each delta is already the
@@ -648,7 +642,7 @@ static RigExecPointFrameArray
 _ComputeFkChain(const VdfContext &ctx)
 {
     // A frame/rest cardinality mismatch is a structural error: fail the
-    // whole solver explicitly instead of silently truncating (spec §6.6).
+    // whole solver explicitly instead of silently truncating.
     VdfReadIterator<RigExecPointFrame> poseCount(ctx, _tokens->controlFrames);
     VdfReadIterator<RigExecPointFrame> restCount(ctx, _tokens->controlRests);
     if (poseCount.ComputeSize() != restCount.ComputeSize()) {
@@ -1051,7 +1045,7 @@ _ComputeBlendPointFrames(const VdfContext &ctx)
         rigExec::RigExecRotationBlend::ShortestArc;
 
     // Aggregate cardinality mismatch is structural: fail explicitly
-    // instead of silently dropping addressable elements (spec §6.6).
+    // instead of silently dropping addressable elements.
     if (a->GetSize() != b->GetSize()) {
         ctx.Warn("BlendPointFrames: input cardinality mismatch (%zu/%zu)",
                  a->GetSize(), b->GetSize());

@@ -1,4 +1,4 @@
-// RigExec exec-facing value types (spec §12.1).
+// RigExec exec-facing value types.
 // Only genuinely RigExec-specific, non-geometry value types are registered
 // with ExecTypeRegistry. Geometry stays native (VtArray never registered).
 #ifndef RIGEXEC_TYPES_H
@@ -36,7 +36,7 @@ using RigExecDeltaMushRest = RigExecDeltaMushRestData<GfVec3f, GfVec3d>;
 /// Retain the shared computation/type registration library in headless hosts.
 void RigExecLoadComputations();
 
-/// Aggregate result of a packed solver boundary (spec §4.3): an immutable
+/// Aggregate result of a packed solver boundary: an immutable
 /// sequence of frames plus the per-element reference (rest) landmark sets
 /// needed by downstream SRT-aware consumers (blend, twist, views, joints).
 struct RigExecPointFrameArray {
@@ -55,7 +55,7 @@ struct RigExecPointFrameArray {
 };
 
 /// Immutable resolved weight field value published by weight objects
-/// (spec §7.1 RigExecWeightPacket, v0.1 subset).
+/// (RigExecWeightPacket, v0.1 subset).
 /// A point array carried as ONE exec value.
 ///
 /// Exec models a `point3f[]` attribute as an output holding a vector of
@@ -121,8 +121,8 @@ struct RigExecWeightPacket {
     bool ResolvesAll(size_t count) const;
 };
 
-/// Baked distance-to-weight remap for one volumetric weight object
-/// (spec §4.1 volumetric extension): uniformly spaced samples of the
+/// Baked distance-to-weight remap for one volumetric weight object:
+/// uniformly spaced samples of the
 /// falloff curve over the ramp parameter r in [0, 1]. Empty means linear.
 ///
 /// This exists as a packet, and reaches exec as a value OVERRIDE on a
@@ -133,7 +133,7 @@ struct RigExecWeightPacket {
 /// function, so it cannot be an ordinary input.
 ///
 /// That is not a workaround so much as the correct shape: the curve is
-/// structural (spec §4.1 shape stability), so baking it once per
+/// structural, so baking it once per
 /// compiled rig and overriding is exactly what the ribbon's driver
 /// points already do for the same class of reason (see
 /// RigExecPointsPacket and RigExecValueOverride::attribute).
@@ -156,12 +156,10 @@ struct RigExecFalloffLut {
 ///
 /// `indices` empty means `offsets` is dense and parallel to the base points;
 /// otherwise the two are parallel to each other and name the points that
-/// move. The real correctives move 4.87% of a 26,276-point body (1,279 points
-/// on average), which is why the sparse case is the one worth having:
-/// A dense sample measures 0.37-0.38 ms
-/// per frame REGARDLESS of its channel weight, because the cost is reading
-/// and copying the full points array and not the accumulate loop. 169 dense
-/// correctives is ~65 ms/frame with the rig standing at rest.
+/// move. A corrective typically moves a small fraction of the mesh, which is
+/// why the sparse case is the one worth having: a dense sample costs the
+/// same per frame REGARDLESS of its channel weight, because the cost is
+/// reading and copying the full points array and not the accumulate loop.
 struct RigExecBlendSampleLayout {
     std::vector<GfVec3f> offsets;
     std::vector<int> indices;
@@ -185,7 +183,7 @@ struct RigExecBlendSampleLayout {
     }
 };
 
-/// One blend sample's activation and shape (spec §7.3), delivered by
+/// One blend sample's activation and shape, delivered by
 /// RigExecBlendSample.computeBlendSampleData.
 ///
 /// The shape arrives one of two ways. `points` is the original dense form:
@@ -285,7 +283,7 @@ struct RigExecSkinTopology {
     }
 };
 
-/// Immutable per-mover parameter packet (spec §4.1: every concrete mover
+/// Immutable per-mover parameter packet (every concrete mover
 /// schema owns a statically registered computeMoverParameters). The kind
 /// token names the owning operation; unused fields stay default.
 struct RigExecMoverParameters {
@@ -441,8 +439,8 @@ struct RigExecMoverParameters {
     }
 };
 
-/// Scalar status published by every concrete mover's computeMoverStatus
-/// (spec §7.1): the property application consumes it and preserves the
+/// Scalar status published by every concrete mover's computeMoverStatus:
+/// the property application consumes it and preserves the
 /// preceding vector exactly when the state is not "ok".
 struct RigExecMoverStatus {
     TfToken state;               ///< "ok", "disabled", or "moverFailed"

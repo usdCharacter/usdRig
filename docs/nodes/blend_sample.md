@@ -71,11 +71,10 @@ the base points.
 
 This exists because the dense form's cost does not depend on the weight.
 A dense sample's full points array is read and copied off the stage once
-per sample per frame whether its channel sits at 0 or at 1, measured at
-0.37-0.38 ms per target per frame on a 26,276-point body -- so 169
-correctives cost ~65 ms/frame with the rig standing at rest.
-The real correctives move 4.87% of
-the mesh, 1,279 points on average, so the sparse form is not an
+per sample per frame whether its channel sits at 0 or at 1, so a full
+set of correctives pays that copy every frame even with the rig at
+rest. Correctives move a small fraction of the mesh, so the sparse
+form is not an
 optimization of the dense one; it is the difference between a rig that
 runs and a rig that does not.
 

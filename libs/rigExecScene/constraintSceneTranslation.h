@@ -5,6 +5,14 @@
 #include "sceneTypedReads.h"
 #include "constraintProgram.h"
 namespace rigExec {
+/// RigExecIkFkMatchConstraint's relationships as authored and its uniform
+/// settings. The scene program checks their cardinality as the compile does.
+struct RigExecSceneIkFkMatchFacts {
+    SdfPathVector ikControl,poleControl,rootControl,effector,fkControls,limbJoints,moves,space;
+    double ikValue=1,scaleCalibration=0,upperLengthOffset=0,lowerLengthOffset=0;
+    /// rigExec:stretchPolicy == "softDistance".
+    bool stretchLimb=true;
+};
 struct RigExecSceneConstraintDescriptor {
     SdfPath path,space,worldUpObject,effector;
     SdfPathVector targets,sources,poleObjects,ikChain;
@@ -18,6 +26,7 @@ struct RigExecSceneConstraintDescriptor {
     /// RigExecHarmonicsConstraint's uniform window settings (harmonicsKernel.h).
     double harmonicsWaves=5,harmonicsWaveLength=5,harmonicsFrequency=1;
     bool harmonicsIgnoreFirstFrame=true,harmonicsMatchVelocity=true;
+    RigExecSceneIkFkMatchFacts match;
     GfVec3d aimAxisFallback{1,0,0},sceneUp{0,1,0};
 };
 /// Translates schema reads into detached ordered relationship and typed input facts.

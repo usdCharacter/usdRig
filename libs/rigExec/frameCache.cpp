@@ -47,8 +47,7 @@ namespace {
 
 // Within-process mixing (never persisted, never compared across runs, never
 // baked into tests): a word-at-a-time splitmix64 finalizer over the
-// identical logical stream the old byte loop folded -- same call order,
-// same tags, same counts. Large arrays dominate the digest cost, and one
+// logical stream -- call order, tags and counts. Large arrays dominate the digest cost, and one
 // mix per 8 bytes costs roughly a third of the multiplies of one FNV round
 // per byte, with stronger diffusion for short streams as well. The memcpy
 // reads are alignment-safe and platform-ordered, which is fine within one
@@ -1064,7 +1063,7 @@ RigExecRefusalControlDigest(
     hash = _FoldBytes(hash, "refusal\x1f", 8);
     // The edit sensor: every stage notice advances the evaluator's serial,
     // so an edit moves this digest at every frame and stale entries become
-    // unreachable -- the D1 rule for a rig that cannot re-sample.
+    // unreachable -- the reachability rule for a rig that cannot re-sample.
     hash = _FoldU64(hash, stageEditSerial);
     if (time.IsDefault()) {
         hash = _FoldBytes(hash, "default", 7);

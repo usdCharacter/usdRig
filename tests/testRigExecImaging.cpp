@@ -5517,17 +5517,14 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
     RigExecImaging_Deactivate();
 }
 
-// A policy-carrying rig activates without taking the registry down.
-// The compile derives rigExec:startFrame targets into the session layer,
-// and the registry registers its ObjectsChanged listener BEFORE Compile
-// and holds a non-recursive mutex across the whole call -- so a notice
-// fired by that derivation re-enters the registry on its own held mutex.
-// Measured as an access violation in _OnObjectsChanged on the first
-// usdview activation of Biped.usda; the derivation now swallows its own
-// notices (TfNotice::Block) and activation survives. This pins that:
-// both policy-carrying biped files activate, publish, retime, and
-// deactivate. (The derived values themselves are pinned by
-// test_rigexec_biped_hand.py; this test pins the activation.)
+// A policy-carrying rig activates without taking the registry down, and
+// without authoring. rigExec:startFramePolicy resolves into the compiled
+// chain; the stage, session layer included, is never written, so no notice
+// can re-enter the registry, which registers its ObjectsChanged listener
+// before Compile. Both policy-carrying biped files activate, publish,
+// retime, and deactivate, and no rigExec:startFrame opinion appears in the
+// session layer. (The derived values themselves are pinned by
+// test_rigexec_biped_hand.py; this test pins activation.)
 static void
 TestPolicyRigActivationSurvivesItsOwnDerivation(
     const std::string &examplesDir)
@@ -5549,6 +5546,9 @@ TestPolicyRigActivationSurvivesItsOwnDerivation(
         CHECK(registry.GetStore()->Get());
         CHECK(registry.SetTime(UsdTimeCode(2.0)));
         CHECK(registry.GetStore()->Get());
+        std::string session;
+        CHECK(stage->GetSessionLayer()->ExportToString(&session));
+        CHECK(session.find("rigExec:startFrame") == std::string::npos);
         registry.Deactivate();
     }
 }

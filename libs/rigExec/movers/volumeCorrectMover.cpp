@@ -1,5 +1,4 @@
-// RigExecVolumeCorrectMover: everything about the volume-correct mover
-// (spec §4.1).
+// RigExecVolumeCorrectMover: everything about the volume-correct mover.
 // A volume-correct mover preserves the authored base bound volume
 // against the deformation the chain has applied so far. This TU owns
 // its exec-side computeMoverParameters registration and builder, its
@@ -21,15 +20,20 @@ using rigExec::RigExecMoverExecTokens;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_volumeCorrectTokens,
+    (volumeCorrect));
+
 namespace {
 
 // RigExecVolumeCorrectMover parameters: the correction reference is the
-// authored base bound volume (spec §7.6 revised).
+// authored base bound volume.
 RigExecMoverParameters
 _BuildVolumeCorrectMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    params.kind = TfToken("volumeCorrect");
+    params.kind = _volumeCorrectTokens->volumeCorrect;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;

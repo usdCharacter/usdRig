@@ -32,9 +32,9 @@ RigExecScalarChainReference(
     // what makes parity a real check -- while sharing the authored INTENT,
     // which it must, or the two paths are evaluating different rigs.
 
-    // Base: the stock resolved value of the exact native property
-    // (spec §7.2). The base revision is retained: blend-shape deltas
-    // derive against base points, not the preceding revision (spec §7.3).
+    // Base: the stock resolved value of the exact native property.
+    // The base revision is retained: blend-shape deltas
+    // derive against base points, not the preceding revision.
     VtVec3fArray points;
     const RigExecOracleAttribute baseAttr = context.stage->GetAttributeAtPath(target);
     const auto upstream = context.upstream.find(target);
@@ -50,7 +50,7 @@ RigExecScalarChainReference(
         const RigExecMoverRecord *mover = chain[index];
         const RigExecOraclePrim prim = context.stage->GetPrimAtPath(mover->moverPath);
         if (!prim || !_IsEnabled(prim, time)) {
-            continue;  // pass-through (spec §4.2)
+            continue;  // pass-through
         }
 
         // Resolve the common envelope against the PRECEDING revision. A

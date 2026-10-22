@@ -22,7 +22,7 @@
 // The weight object types, spelled once. The per-frame dispatch runs a
 // step body down this list, and TfToken(const char *) takes the token
 // registry's spin lock on every construction -- which a step body may not
-// take (docs/specs/baked-step-graph.md section 2) -- so the comparison is against
+// take (libs/rigExec/bodyPurity.h) -- so the comparison is against
 // interned tokens rather than against literals.
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
@@ -445,7 +445,7 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
     // sees. Every volume slot gets a step, bound to a mover or not: an
     // unbound volume still publishes a weightFrames entry.
     // part = 1 marks the per-volume form (object = provider slot); the
-    // whole-map form (object 0, part -1) is no longer emitted.
+    // whole-map form (object 0, part -1) is not emitted.
     for (size_t i = 0; i < B.noScaleAvars.size(); ++i) {
         if (B.noScaleAvars[i] == 0) {
             continue;

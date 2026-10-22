@@ -659,8 +659,8 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // key moved, a released gizmo. The structure digest never reads an
     // avar's value (only rigExec:* attributes, and the time-sample COUNT of
     // a handful of those), and the rest frames the compiled rig refresh on an edit
-    // are rest:*, not avars -- so re-deriving both answered "nothing
-    // changed" at ~115 ms per slider tick on the biped. Anything else in the
+    // are rest:*, not avars -- so re-deriving both on every slider tick would
+    // only answer "nothing changed". Anything else in the
     // notice -- a resync, a non-avar property, a field other than a value --
     // keeps the conservative path.
     // A RESYNC on one of those channels still qualifies when it is on the
@@ -668,7 +668,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // property spec, which USD reports as a property resync carrying only
     // typeName, and undoing it removes the spec, a resync carrying nothing.
     // Every released gizmo drag and its undo is exactly that pair, and
-    // treating it as structure rebaked the program for ~250 ms per release.
+    // treating it as structure would rebake the program on every release.
     // A prim resync is never a value edit and keeps the conservative path.
     // And a notice that is not avar values reaches the digest only when it
     // could move it: _NoticeIsDigestSuspect is the prim-granular gate over
@@ -697,9 +697,8 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // in this rig is built -- and a binding that was resolved before the
     // avar moved is resolved against a stale number. The bindings' own dirty
     // test watches interactive overrides and upstream chains, not authored
-    // values, so a drag updated such a chain and AUTHORING the same avar did
-    // not: the cheeks followed the mouth corner while it was moving and
-    // stopped the moment it was let go.
+    // values, so without this a drag would update such a chain and
+    // AUTHORING the same avar would not.
     const bool chainReadsAnEditedAvar = avarValuesOnly &&
         !_propertyChainInputs.empty() && [this, &notice]() {
             for (const SdfPath &path : notice.GetResyncedPaths()) {
@@ -718,9 +717,9 @@ RigExecRigEvaluator::_OnObjectsChanged(
     }
     // A notice that moves only values the digest never writes -- a switch,
     // a dial, a space index on a control -- cannot move it, so it is not
-    // suspect even inside the rig, where every other notice is: the settle
-    // that recomputes the digest for a suspect notice was ~200 ms of a
-    // 220 ms IK/FK switch on the biped.
+    // suspect even inside the rig, where every other notice is: a suspect
+    // notice's settle recomputes the whole digest, which would dominate a
+    // switch flip.
     if (!avarValuesOnly) {
         if (!_NoticeIsDigestValueNeutral(notice) &&
             _NoticeIsDigestSuspect(notice)) {
@@ -739,9 +738,8 @@ RigExecRigEvaluator::_OnObjectsChanged(
     // The value caches that outlive a generation hold authored values and
     // where they come from, so an edit has to reach the very next read of
     // anything it moved -- and only that: dropping them whole on every
-    // notice cost ~2.5 ms of re-binding and re-reading on the first frame
-    // after any edit on the biped, for chains, layouts and shapes the edit
-    // never touched.
+    // notice would re-bind and re-read, on the first frame after any edit,
+    // chains, layouts and shapes the edit never touched.
     _ClearValueCaches(notice, avarValuesOnly);
     // The baked program captured values, and the compiled rig signature is deliberately
     // blind to values, so the digest cannot say whether one of them moved.

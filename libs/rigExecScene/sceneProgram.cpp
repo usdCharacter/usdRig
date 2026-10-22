@@ -16,7 +16,8 @@ bool RigExecSceneProgram::Append(const std::string &key,RigExecSceneOperation op
         else if constexpr(std::is_same_v<T,RigExecSceneBlendChannelOp>){descriptor.reads=op.binding.reads;descriptor.writes={op.output};}
         else if constexpr(std::is_same_v<T,RigExecSceneGeometryOp>){descriptor.reads=op.binding.reads;descriptor.reads.push_back(op.incoming);descriptor.reads.push_back(op.pointsBase);descriptor.reads.push_back(op.pointsFinal);if(op.field!=UINT64_MAX)descriptor.reads.push_back(op.field);descriptor.writes={op.output};}
         else if constexpr(std::is_same_v<T,RigExecSceneSwitchOp>){descriptor.reads=op.binding.reads;descriptor.writes={op.output};}
-        else if constexpr(std::is_same_v<T,RigExecConstraintGraphBinding>){descriptor.reads=op.reads;descriptor.writes={op.target.output};descriptor.writes.insert(descriptor.writes.end(),op.target.chainOutputs.begin(),op.target.chainOutputs.end());}
+        else if constexpr(std::is_same_v<T,RigExecConstraintGraphBinding>){descriptor.reads=op.reads;descriptor.writes={op.target.output};descriptor.writes.insert(descriptor.writes.end(),op.target.chainOutputs.begin(),op.target.chainOutputs.end());
+            descriptor.writes.insert(descriptor.writes.end(),op.writes.begin(),op.writes.end());}
         else if constexpr(std::is_same_v<T,RigExecBoundPoseInterpolator>){descriptor.reads=op.reads;descriptor.writes=op.weights;descriptor.writes.insert(descriptor.writes.end(),op.disabledWeights.begin(),op.disabledWeights.end());
             descriptor.writes.insert(descriptor.writes.end(),op.primvars.begin(),op.primvars.end());}
         else {descriptor.reads=op.reads;descriptor.writes={op.output};}

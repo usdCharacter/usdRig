@@ -21,7 +21,7 @@ namespace rigExec {
 ///
 /// A cluster's members are in increasing PROGRAM index, which is always a
 /// topological order because every edge of the step graph points forward in
-/// program order (§4.1). So a cluster needs no internal schedule: the loop
+/// program order. So a cluster needs no internal schedule: the loop
 /// that runs its members in order is the schedule.
 struct RigExecBakedCluster {
     /// Step indices, strictly increasing.

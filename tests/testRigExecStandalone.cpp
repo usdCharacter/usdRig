@@ -182,9 +182,14 @@ static void TestRequestBoundaries(const RigExecSceneDb &db)
         CHECK(restored.valid && restored.Get<double>(0) == 19.0);
     }
     auto unknownApi = db;
-    unknownApi.prims.at(SdfPath("/Api")).appliedSchemas = {TfToken("UnqualifiedExpressionAPI")};
+    unknownApi.prims.at(SdfPath("/Api")).appliedSchemas = {TfToken("RigExecUnqualifiedExpressionAPI")};
     RigExecStandaloneSystem unsupportedApi(unknownApi);
     CHECK(!unsupportedApi.Prepare());
+    // A schema from outside RigExec has no lowering to refuse: it is ignored.
+    auto foreignApi = db;
+    foreignApi.prims.at(SdfPath("/Api")).appliedSchemas = {TfToken("PhysicsRigidBodyAPI")};
+    RigExecStandaloneSystem foreign(foreignApi);
+    CHECK(foreign.Prepare());
 
     RigExecStandaloneSystem alias(db);
     alias.AddTap(RigExecValueAddress::Property(SdfPath("/Alias.value")));

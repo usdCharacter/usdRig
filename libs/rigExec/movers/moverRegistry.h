@@ -87,7 +87,7 @@ struct RigExecMoverOracleContext {
     std::vector<std::string> *diagnostics;
     VtVec3fArray *points;
     /// The chain target's authored base points, which blend deltas derive
-    /// against (spec §7.3).
+    /// against.
     const VtVec3fArray &basePoints;
     /// For blend samples: the recorded snapshot for a dense sample's
     /// phased points read, or null when no phased read was recorded for
@@ -358,20 +358,31 @@ RigExecNoMoverOp(const TfToken &)
 }
 
 /// The targets of \p prim's \p rel, or empty when the relationship is
-/// absent. Every binder reads its inputs through this.
+/// absent. Every binder reads its inputs through this. Pass an interned
+/// token: binders run on parallel lanes, and the text form builds a token
+/// (which locks the registry) on every call. The text form stays for
+/// external movers.
+SdfPathVector RigExecRelationshipTargets(
+    const UsdPrim &prim, const TfToken &rel);
 SdfPathVector RigExecRelationshipTargets(
     const UsdPrim &prim, const char *rel);
+
+/// The `points` property name, interned once.
+const TfToken &RigExecPointsToken();
 
 /// \p path as a points property: a prim path canonicalizes to its
 /// `.points`, a property path is already one.
 inline SdfPath
 RigExecPointsOf(const SdfPath &path)
 {
-    return path.IsPrimPath() ? path.AppendProperty(TfToken("points")) : path;
+    return path.IsPrimPath() ? path.AppendProperty(RigExecPointsToken()) : path;
 }
 
 /// The read phase declared for the input \p rel names: the relationship's
-/// rigExecReadPhase metadata, or Base. See RigExecResolveReadPhase.
+/// rigExecReadPhase metadata, or Base. See RigExecResolveReadPhase. As with
+/// RigExecRelationshipTargets, internal callers pass a token.
+RigExecReadPhase RigExecPhaseForInput(
+    const UsdPrim &moverPrim, const TfToken &rel);
 RigExecReadPhase RigExecPhaseForInput(
     const UsdPrim &moverPrim, const char *rel);
 

@@ -1,5 +1,5 @@
 // RigExec warm-frame index: the shared-owned completed-per-frame store
-// behind the per-frame query API (plan 1.4).
+// behind the per-frame query API.
 // One index serves every rig in the registry. It records, per (rig, time):
 //   * the publish completion (key + generation), fed by publish-confirmed
 //     completions recording into shared state -- the worker closure on its
@@ -9,7 +9,7 @@
 //   * the queue visibility (queued/running), fed by the scheduler's
 //     per-frame transition hooks.
 // Dirtiness is computed, not stored: a completion under an older generation
-// or compiled rig than the query's is dirty (global until Stream 2 scopes it).
+// or compiled rig than the query's is dirty.
 // Proofs are NOT consulted here -- no per-frame sampling on the query path,
 // and no callbacks into bridges, which sessions may destroy under live jobs.
 // Locking: the index mutex is a leaf, taken under the registry mutex (query,
@@ -124,7 +124,7 @@ public:
                        const RigExecFrameCacheKey &key,
                        RigExecFrameGeneration generation);
 
-    /// Marks the time's completion path-scoped dirty (plan 2.1): a
+    /// Marks the time's completion path-scoped dirty: a
     /// patch/stamp-bump edit retired it without bumping the generation.
     /// Records nothing when the time holds no completion (nothing cached
     /// reads uncached, never dirty). Cleared by the next completion,
@@ -195,7 +195,7 @@ private:
         bool hasCompletion = false;
         RigExecFrameCacheKey key{0, 0};
         RigExecFrameGeneration completedGeneration = 0;
-        /// Path-scoped dirtiness (plan 2.1): set by NoteDirtied, cleared by
+        /// Path-scoped dirtiness: set by NoteDirtied, cleared by
         /// NoteCompleted, NoteEvicted, and ResetRig. Read only beside a
         /// completion -- see _StateFor.
         bool dirty = false;

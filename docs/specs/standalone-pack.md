@@ -60,8 +60,8 @@ Export, load and runtime preparation share one capability validation: each
 prepares the standalone scene program (`RigExecSceneDb::ValidateCapabilities`,
 `libs/rigExecStandalone/sceneDb.cpp:93`). Export rejects native instances and
 instance proxies. Preparation rejects an active prim of an unknown RigExec
-type and any applied API outside the list in the
-[runtime guide](standalone-runtime.md). Movers, solver joint bindings and
+type and any RigExec applied API it does not lower (see the
+[runtime guide](standalone-runtime.md)); other applied APIs are ignored. Movers, solver joint bindings and
 read phases translate into the same graph as the rest of the scene.
 
 The version-3 manifest identifies the `scene` scope; the loader rejects any

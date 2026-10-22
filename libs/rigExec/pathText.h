@@ -60,8 +60,7 @@ AppendPrimPath(const SdfPath &prim, std::string *text)
 /// that writes out thousands of paths -- the structure digest writes every
 /// attribute of every pose-input provider, the baked schedule labels every
 /// step -- pays that per path, and from several threads at once pays it in
-/// contention too. MEASURED on puppetA: those calls were most of the ~8 ms
-/// the Solvers digest spent building provider tokens outside its USD reads.
+/// contention too.
 ///
 /// Here a prim path is its parent's text plus its name, and a prim property
 /// path is its prim's text, a dot and its name: the name tokens are fields

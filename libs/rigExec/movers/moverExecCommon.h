@@ -1,4 +1,4 @@
-// Shared scaffolding for mover-owned exec computations (spec §4.1).
+// Shared scaffolding for mover-owned exec computations.
 // Every concrete mover schema with exec-side computations owns a
 // statically registered computeMoverParameters over its own declared
 // inputs, plus the scalar computeMoverStatus. The registration blocks
@@ -39,7 +39,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
     (surfacePoints)                                                     \
     (bindCoords)                                                        \
     (driverFrames)                                                      \
-    (moverPath)                                                         \
+    (moverPath)                                                             (ok)                                                                    (disabled)                                                              (moverFailed)                                                       \
     ((inputsEnabled, "inputs:enabled"))                                 \
     ((inputsDefaultWeight, "inputs:defaultWeight"))                     \
     ((weightObjectRel, "rigExec:weightObject"))                         \
@@ -78,8 +78,8 @@ TF_DECLARE_PUBLIC_TOKENS(RigExecMoverExecTokens, RIGEXEC_MOVER_EXEC_TOKENS);
             .InputName(                                                 \
                 rigExec::RigExecMoverExecTokens->weightPacket)
 
-// Collects a vectorized input into transient scratch
-// (spec §6.5 ephemeral-scratch rule).
+// Collects a vectorized input into transient scratch, released before the
+// callback returns.
 template <typename T>
 std::vector<T>
 RigExecMoverCollect(const VdfContext &ctx, const TfToken &name)
@@ -111,7 +111,7 @@ RigExecMoverSetCommonEnvelope(
     return params->weights.valid;
 }
 
-// computeMoverStatus (spec §7.1): validates parameters and reports
+// computeMoverStatus: validates parameters and reports
 // success, disabled, or MoverFailed; the property application consumes
 // this scalar status and preserves the preceding vector when it does not
 // allow applying.
@@ -123,16 +123,16 @@ RigExecMoverBuildStatus(const VdfContext &ctx)
         ctx.GetInputValuePtr<RigExecMoverParameters>(
             RigExecMoverExecTokens->computeMoverParameters);
     if (!params) {
-        status.state = TfToken("moverFailed");
+        status.state = RigExecMoverExecTokens->moverFailed;
         return status;
     }
     if (!params->enabled) {
-        status.state = TfToken("disabled");
+        status.state = RigExecMoverExecTokens->disabled;
     } else if (params->valid) {
-        status.state = TfToken("ok");
+        status.state = RigExecMoverExecTokens->ok;
     } else {
-        status.state = TfToken("moverFailed");
-        // First bad canonical public address (spec §6.6). v0.1 reports
+        status.state = RigExecMoverExecTokens->moverFailed;
+        // First bad canonical public address. v0.1 reports
         // the failed mover's own canonical path; per-input attribution
         // is future diagnostic work.
         const SdfPath *path =

@@ -1,7 +1,7 @@
-// RigExec typed extraction API (spec §9), v0.1 subset.
+// RigExec typed extraction API, v0.1 subset.
 // Backend-neutral addresses resolve through the USD implementation to
 // ExecUsdValueKey batches; snapshots copy immutable values before crossing
-// threads (spec §6.1).
+// threads.
 #ifndef RIGEXEC_TAP_SET_H
 #define RIGEXEC_TAP_SET_H
 
@@ -29,14 +29,14 @@ namespace rigExec {
 class RigExecTapContext;
 const TfToken &RigExecFinalPhase();
 
-/// Backend-neutral value address (spec §9.1, v0.1 subset).
+/// Backend-neutral value address (v0.1 subset).
 ///
 /// A prim target with publicComputation names a rig value provider
 /// (e.g. computePointFrame). A property target with an empty
 /// publicComputation resolves to the stock computeValue bridge. The
 /// canonical public address never names a generated provider; the
 /// compiler-private resolution (RigExecTapSet::AddResolved) maps a public
-/// address to its hidden chain-head provider (spec §9.1: generated
+/// address to its hidden chain-head provider (generated
 /// provider paths never enter a public or durable tap address).
 struct RigExecValueAddress {
     SdfPath target;
@@ -135,7 +135,7 @@ private:
     bool _complete = false;
 };
 
-/// Typed batched extraction over one ExecUsdSystem (spec §9.1).
+/// Typed batched extraction over one ExecUsdSystem.
 ///
 /// Usage: Add() every address, Prepare() once, then Evaluate() per time.
 /// Adding taps after Prepare() rebuilds the request on the next Prepare().
@@ -153,7 +153,7 @@ public:
     /// Registers a public canonical address whose value is produced by a
     /// compiler-private provider (a generated chain head). The private
     /// path is used only to build the internal value key; it is never
-    /// part of the public address (spec §9.1).
+    /// part of the public address.
     RigExecTapId AddResolved(
         const RigExecValueAddress &publicAddress,
         const SdfPath &privateProvider);

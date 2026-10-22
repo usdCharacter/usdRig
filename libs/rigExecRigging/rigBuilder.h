@@ -597,8 +597,7 @@ public:
     /// A UsdSkelBlendShape carrying the same shape as sparse offsets, as the
     /// alternative to SetTargetPoints. Mutually exclusive with it: a dense
     /// sample's full points array is read per sample per frame regardless of
-    /// its channel weight, which is ~65 ms/frame for 169 correctives on a
-    /// 26,276-point body standing at rest.
+    /// its channel weight, even with the rig standing at rest.
     void SetBlendShape(const SdfPath &path);
     /// base | preceding | final, as rigExecReadPhase metadata on
     /// rigExec:targetPoints.
@@ -1268,8 +1267,8 @@ public:
     const SdfPath &GetRootPath() const { return _root; }
 
 
-    /// Create <rig>/Controls/<name> (or nested under \p parentControl) as a
-    /// RigExecControl. restSpace is asset space for a top-level control and
+    /// Create <rig>/Controls/<name> (or nested under \p parentControl, any
+    /// RigExecControl under the rig root) as a RigExecControl. restSpace is asset space for a top-level control and
     /// relative to the parent control's rest when nested: a nested
     /// control's rest and posed frames compose through its namespace
     /// ancestor, so it travels with the parent (an FK chain in
@@ -1278,8 +1277,8 @@ public:
         const std::string &name, const GfMatrix4d &restSpace = GfMatrix4d(),
         const RigExecControlHandle *parentControl = nullptr);
 
-    /// Create <rig>/Joints/<name> (or nested under \p parentJoint) as a
-    /// RigExecJoint. restSpace is the asset-space bind transform for
+    /// Create <rig>/Joints/<name> (or nested under \p parentJoint, any
+    /// RigExecJoint under the rig root) as a RigExecJoint. restSpace is the asset-space bind transform for
     /// solver-posed joints.
     RigExecJointHandle AddJoint(
         const std::string &name,

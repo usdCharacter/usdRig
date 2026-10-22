@@ -1,12 +1,10 @@
-// RigExec solver glue shared by the exec callbacks and the baked program
-// (spec §7.5).
+// RigExec solver glue shared by the exec callbacks and the baked program.
 // The solver MATH lives in rigExecMath (geometryKernels.h, solvers.h) and is
 // already shared. What is not is the glue around it: the guards that decide
 // when a solver publishes nothing, the defaulting of an unauthored input, and
-// the packing of sampled math results into a RigExecPointFrameArray. That glue
-// used to sit inside the VdfContext callbacks in computations.cpp and
-// moverKernels.cpp, where a baked program could only re-express it -- and a
-// second expression of a guard is a second chance to get it wrong.
+// the packing of sampled math results into a RigExecPointFrameArray. It lives
+// here once so the exec callbacks and the baked program share it -- a second
+// expression of a guard is a second chance to get it wrong.
 // These functions are the guard and the packing, with the ctx reads left
 // behind in the callback. They live here rather than in rigExecMath because
 // RigExecPointFrameArray is a rigExec type (types.h) and rigExecMath must not
@@ -32,7 +30,7 @@ struct RigExecPointFrameArray;
 /// Samples \p posed and \p rest driver curves at \p sampleCount arc-length
 /// parameters and packs the two rotation-minimizing frame sets into one
 /// aggregate: the posed samples become the published frames, the rest samples
-/// their paired landmark sets (spec §7.5).
+/// their paired landmark sets.
 ///
 /// Answers an EMPTY aggregate for an unresolvable ribbon -- an empty curve on
 /// either side, fewer than two samples, or a sampler that returned a different

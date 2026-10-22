@@ -1,5 +1,5 @@
 // Shared triangulation and nearest-primitive acceleration for the
-// brute-force geometry queries (surface projection, projector raycasts,
+// nearest-primitive geometry queries (surface projection, projector raycasts,
 // curve-volume weights). Header-only and USD-free so the USD evaluators
 // (instantiated with Gf types) and the zero-USD runtime (Rr types) run
 // one definition; every vector operation used here exists with the same
@@ -7,10 +7,11 @@
 //
 // A Vec3 here needs const operator[], operator- and GetLengthSq().
 //
-// Equivalence contract with the brute-force loops this replaces:
+// Equivalence contract: an accelerated query returns exactly what a linear
+// scan over every primitive returns.
 //   * the fan builders enumerate triangles in face-major fan order and
 //     reproduce each caller's validation verdicts, including the
-//     H7 skip/truncate rules and the M41 strict rules;
+//     skip/truncate rules and the strict rules below;
 //   * triangle queries retain all candidates in original fan order. The
 //     caller's float closest-point kernel is not certified to remain within
 //     the triangle's AABB; no triangle may be pruned by a geometric bound;
@@ -33,7 +34,7 @@
 namespace rigExec {
 
 // One fan triangle: corner indices into the caller's point array, in the
-// face-major fan order the brute-force loops enumerate.
+// face-major fan order a linear scan enumerates.
 struct RigExecFanTri {
     int a = -1, b = -1, c = -1;
 };
@@ -223,9 +224,9 @@ inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
 
 }  // namespace spatialAccelDetail
 
-// H7 validation flavor: out-of-range index triples are skipped (the
-// brute-force `continue`), and running past the index array truncates
-// the walk (the brute-force early return, which always lands during the
+// Skip/truncate validation flavor: out-of-range index triples are skipped
+// (the linear scan's `continue`), and running past the index array truncates
+// the walk (the linear scan's early return, which always lands during the
 // first point, so no point is modified). Offsets are signed: a wrapped
 // size_t offset in the original loop is an out-of-bounds read, which
 // the builder turns into a defined truncation instead.
@@ -299,7 +300,7 @@ inline RigExecFanTrisH7 RigExecBuildFanTrisH7(
         faceVertexIndices.data(), faceVertexIndices.size(), pointCount);
 }
 
-// M41 validation flavor: any short face, overrun, out-of-range corner
+// Strict validation flavor: any short face, overrun, out-of-range corner
 // or trailing index fails the whole build, exactly like the raycast.
 struct RigExecFanTrisStrict {
     std::vector<RigExecFanTri> tris;
@@ -399,10 +400,10 @@ struct RigExecTriangleBvh {
     }
 };
 
-// Nearest-segment acceleration for curve-volume weights (M49). Segment
+// Nearest-segment acceleration for curve-volume weights. Segment
 // i joins points[i] and points[i + 1]; the leaf calls the caller's own
-// segment-distance kernel, so the arithmetic is the brute-force
-// loop's verbatim. The callback contract is the project's segment
+// segment-distance kernel, so the arithmetic is the linear scan's
+// verbatim. The callback contract is the project's segment
 // distance: clamp its projection to [0,1], reconstruct a + (b-a)*t in float,
 // then measure float Euclidean distance. An arbitrary/unbounded callback
 // cannot use geometric pruning safely.
@@ -500,8 +501,8 @@ struct RigExecSegmentBvh {
             // The stack pops the LAST push, so the nearer child goes on
             // last and is visited first. Visiting it first finds a tight
             // best early and lets the farther subtree be pruned; the
-            // reverse order visits nearly every leaf (measured 2x slower
-            // than brute force on a 256-segment lip curve). Order never
+            // reverse order visits nearly every leaf and loses to a linear
+            // scan. Order never
             // changes the result: pruning is strict and ties keep the
             // lowest ordinal.
             if (lowerLeft < lowerRight) {

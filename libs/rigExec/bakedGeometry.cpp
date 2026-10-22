@@ -18,6 +18,7 @@
 #include "moverGraph.h"
 #include "movers/moverRegistry.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "types.h"
 
@@ -59,7 +60,7 @@
 // status a failed revision publishes, and the attribute the defaultWeight
 // diagnostic re-reads. Hoisted because TfToken(const char *) takes the token
 // registry's spin lock on every construction, and a step body may take no
-// lock (docs/specs/baked-step-graph.md §2).
+// lock (libs/rigExec/bodyPurity.h).
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((moverFailed, "moverFailed"))
@@ -584,7 +585,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
 // vertices is an independent sub-problem whose result is bit-identical to the
 // same vertices computed as part of the whole array. What is NOT separable is
 // everything around that body, which is why the range is cut here and the
-// decisions stay whole (§6 of docs/specs/baked-step-graph.md).
+// decisions stay whole.
 // The cut is by vertex COUNT and the key follows from it, rather than the
 // other way round: the vertex order is the mesh's and is never permuted, so
 // two body regions that happen to share a range simply wait for both their
@@ -4119,7 +4120,8 @@ ResolveShaderChains(RigExecBakedProgramImpl &B)
                 &piece.lo, &piece.hi);
         }
     };
-    static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+    // Printed by the owning thread only; a frozen worker never prints.
+    const bool stats = B.gpuDeformStats && !RigExecFrozenSerialActive();
     const auto t0 = std::chrono::steady_clock::now();
     if (pieces.size() > 1 && RigExecParallelEvaluationEnabled() &&
         !RigExecFrozenSerialActive()) {
@@ -4506,9 +4508,9 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
         }
         chain.gpuScratch.resize(chain.lastBase.size());
         RigExecGpuDeformJob job;
-        // The chain's own address names its device buffers: a frozen clone
-        // holds its chains apart from the live program's.
-        job.chain = uint64_t(reinterpret_cast<uintptr_t>(&chain));
+        // The chain's key names its device buffers: a frozen clone holds
+        // its chains apart from the live program's.
+        job.chain = chain.gpuDeviceKey.Use();
         job.frame = &chain.gpuFrame;
         job.base = reinterpret_cast<const float *>(chain.lastBase.cdata());
         job.baseVersion = chain.baseVersion;
@@ -4575,8 +4577,9 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
     }
     B.gpuBoundary = false;
     RekeyGpuChains(B, translate);
-    static const bool stats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
-    if (stats) {
+    // Printed by the owning thread only; a frozen worker never prints.
+    if (B.gpuDeformStats && !RigExecFrozenSerialActive()) {
+        RigExecPathText pathText;
         const auto t2 = std::chrono::steady_clock::now();
         std::fprintf(stderr, "GPUSTATS device %zu cpu %zu moved %zu run %.3f ms after %.3f ms\n",
             device.size(), cpu.size(), moved.size(),
@@ -4584,13 +4587,13 @@ RigExecBakedResolveGpuChains(RigExecBakedProgramImpl *program,
             std::chrono::duration<double, std::milli>(t2 - t1).count());
         for (const size_t c : device)
             std::fprintf(stderr, "GPUSTATS chain %s builds %zu points %zu ops %zu staticF %zu\n",
-                B.chains[c].target.GetText(), B.chains[c].gpuTranslation.LayoutBuilds(),
+                pathText(B.chains[c].target).c_str(), B.chains[c].gpuTranslation.LayoutBuilds(),
                 B.chains[c].lastBase.size(), B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->OpCount() : 0,
                 B.chains[c].gpuFrame.layout ? B.chains[c].gpuFrame.layout->staticF.size() : 0);
         for (size_t j = 0; j < device.size(); ++j)
             if (!(ran && jobs[j].ok))
                 std::fprintf(stderr, "GPUSTATS fallback %s (ran %d)\n",
-                    B.chains[device[j]].target.GetText(), int(ran));
+                    pathText(B.chains[device[j]].target).c_str(), int(ran));
     }
 }
 

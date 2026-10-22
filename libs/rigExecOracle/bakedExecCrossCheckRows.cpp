@@ -5,6 +5,7 @@
 #include "rigExec/solverKernels.h"
 #include "rigExec/weightPackets.h"
 #include "rigExec/independentConstraintCheck.h"
+#include "rigExecScene/startFrameDerivation.h"
 #include "pxr/base/vt/array.h"
 #include <algorithm>
 #include <limits>
@@ -481,8 +482,20 @@ std::shared_ptr<RigExecBakedExecCheckRows> RigExecBakedExecCheckRows::Build(cons
             const auto elementsPath=b.solvers[size_t(s)].path.AppendProperty(Token("rigExec:jointElements"));
             const auto weightsPath=b.solvers[size_t(s)].path.AppendProperty(Token("rigExec:weights"));
             const auto volumeWeightsPath=b.solvers[size_t(s)].path.AppendProperty(Token("rigExec:volumeWeights"));
+            // A policy-derived start frame has no OpenExec equivalent: exec
+            // binds rigExec:startFrame only from authored targets. Decided
+            // here, once, by the rule every evaluator shares.
+            const auto &solver=b.solvers[size_t(s)];
+            SdfPath derivedStart;
+            const bool startDerived=solver.type=="RigExecFkChain" && solver.start>=0 &&
+                b.sceneDescriptors &&
+                RigExecDeriveSceneStartFrame(*b.sceneDescriptors,solver.path,&derivedStart)==
+                    RigExecStartFrameDerivation::Derived;
             if (!add(b.solvers[size_t(s)].path,"computePointFrameArray",-1,false,
-                [s](const B &p){return SolveInputs(p,s);},[s](const B &p){return VtValue(p.aggregates[size_t(s)]);},{},
+                [s,startDerived](const B &p){
+                    Input in=SolveInputs(p,s);
+                    if(startDerived)in.skip=RigExecExecCheckSkip::NoEquivalent;
+                    return in;},[s](const B &p){return VtValue(p.aggregates[size_t(s)]);},{},
                 [s,elementsPath,weightsPath,volumeWeightsPath](const B &p){return SolveArrays(p,s,elementsPath,weightsPath,volumeWeightsPath);})) return {};
         } else if (step.kind == Kind::Constraint) {
             const int walk=step.object;

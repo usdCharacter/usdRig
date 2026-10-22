@@ -2,6 +2,7 @@
 
 #include "rigExecMath/propertyMath.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
@@ -12,6 +13,17 @@
 #include <cmath>
 
 PXR_NAMESPACE_USING_DIRECTIVE
+
+// Interned once: binders run on parallel lanes, and building a token from
+// text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_pathTokens,
+    ((path, "rigExec:path"))
+    ((pathComponent, "rigExec:pathComponent"))
+    ((pathOffset, "rigExec:pathOffset"))
+    ((pathHeadingOffset, "rigExec:pathHeadingOffset"))
+    ((pathMeasure, "rigExec:pathMeasure"))
+    (x)
+    (length));
 
 namespace rigExec {
 
@@ -45,11 +57,11 @@ bool
 RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
                          std::string *error)
 {
-    static const TfToken pathRel("rigExec:path");
-    static const TfToken componentName("rigExec:pathComponent");
-    static const TfToken offsetName("rigExec:pathOffset");
-    static const TfToken headingName("rigExec:pathHeadingOffset");
-    static const TfToken measureName("rigExec:pathMeasure");
+    const TfToken &pathRel = _pathTokens->path;
+    const TfToken &componentName = _pathTokens->pathComponent;
+    const TfToken &offsetName = _pathTokens->pathOffset;
+    const TfToken &headingName = _pathTokens->pathHeadingOffset;
+    const TfToken &measureName = _pathTokens->pathMeasure;
     *out = RigExecPathBinding();
     if (!mover) {
         return _Fail(error, "no mover prim");
@@ -57,13 +69,13 @@ RigExecBindPathOperation(const UsdPrim &mover, RigExecPathBinding *out,
     const std::string who = mover.GetPath().GetString();
     out->structural.push_back(mover.GetPath().AppendProperty(pathRel));
     const TfToken component =
-        _Uniform(mover, componentName, TfToken("x"), &out->structural);
+        _Uniform(mover, componentName, _pathTokens->x, &out->structural);
     const GfVec2f offset =
         _Uniform(mover, offsetName, GfVec2f(0.0f), &out->structural);
     const float heading =
         _Uniform(mover, headingName, 0.0f, &out->structural);
     const TfToken measure =
-        _Uniform(mover, measureName, TfToken("length"), &out->structural);
+        _Uniform(mover, measureName, _pathTokens->length, &out->structural);
     RigExecPathSettings &settings = out->settings;
     settings.offsetX = offset[0];
     settings.offsetZ = offset[1];

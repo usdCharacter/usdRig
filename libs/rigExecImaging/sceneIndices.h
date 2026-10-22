@@ -1,10 +1,10 @@
-// RigExec Hydra 2.0 filtering scene indices (spec §10.1):
+// RigExec Hydra 2.0 filtering scene indices:
 //   upstream (UsdImaging chain)
 //     -> RigExecInternalPrimPruningSceneIndex   (owned generated paths only)
 //     -> RigExecBindingResolvingSceneIndex      (immutable compiled rig)
 //     -> RigExecResultsSceneIndex               (cached snapshot overlays)
 //     -> downstream (merging scene index / renderer)
-// The public boundary contains only standard Hydra data (spec §10.2):
+// The public boundary contains only standard Hydra data:
 // HdXformSchema matrices, flat HdPrimvarsSchema entries for points and
 // normals, HdExtentSchema min/max, and HdBlockDataSource masks for the
 // derivative entries of owned points. Renderers never call RigExec.
@@ -83,7 +83,7 @@ uint64_t RigExecStageKeyFromAddedEntries(
     const HdSceneIndexObserver::AddedPrimEntries &entries);
 
 /// Removes only the derived __RigExecGenerated application paths owned by
-/// the current system (spec §10.1). The predicate is deliberately narrow:
+/// the current system. The predicate is deliberately narrow:
 /// exactly the reserved scopes registered by the compiler; unrelated
 /// authored prims, computations, and notices pass through unchanged.
 class RigExecInternalPrimPruningSceneIndex final
@@ -121,8 +121,7 @@ private:
     std::set<SdfPath> _ownedScopes;
 };
 
-/// In-memory transform previews for prims the rig does not drive
-/// (docs/superpowers/specs/2026-09-10-hydra-preview-manipulation-design.md).
+/// In-memory transform previews for prims the rig does not drive.
 ///
 /// This is the manipulation preview for a plain Xformable. A rig prim's
 /// preview goes through the evaluator, because moving a control has to re-run
@@ -209,7 +208,7 @@ private:
 };
 
 /// Atomically receives the compiler-produced immutable compiled rig and
-/// carries the reverse output map (spec §10.1). With the USD backend the
+/// carries the reverse output map. With the USD backend the
 /// compiled output addresses are stage paths, so prim shells pass through
 /// unchanged; a compiled rig replacement resyncs the previously and newly
 /// published outputs. The scene index never inspects Hydra to reconstruct
@@ -232,7 +231,7 @@ public:
     }
 
     /// Atomically swaps the compiled rig and dirties the affected outputs
-    /// (universal locator for output-set changes, spec §10.4).
+    /// (universal locator for output-set changes).
     void SetCompiledRigBinding(CompiledRigBindingConstPtr compiledRig);
 
     CompiledRigBindingConstPtr GetCompiledRigBinding() const {
@@ -261,7 +260,7 @@ private:
 };
 
 /// Overlays cached xform, primvar, and extent leaves from the snapshot
-/// store (spec §10.3). GetPrim() only reads the atomic immutable snapshot
+/// store. GetPrim() only reads the atomic immutable snapshot
 /// and constructs/returns cached data-source overlays; it never computes,
 /// waits, changes time, or locks the authoring stage.
 /// Snapshot-only publishers must populate xformResetPaths for authored
@@ -282,12 +281,12 @@ public:
     ~RigExecResultsSceneIndex() override;
 
     /// Called by the publisher after a complete generation swap: sends
-    /// coalesced dirtied notices from the per-prim changed-leaf sets
-    /// (spec §10.4). Value changes start from the narrowest logical
+    /// coalesced dirtied notices from the per-prim changed-leaf sets.
+    /// Value changes start from the narrowest logical
     /// leaves and are expanded with
     /// HdContainerDataSourceEditor::ComputeDirtyLocators() because v0.1
-    /// rebuilds the retained container handles per generation
-    /// (spec §10.3); structural entries use universal dirtiness.
+    /// rebuilds the retained container handles per generation;
+    /// structural entries use universal dirtiness.
     /// Resolves \p primPath's world transform against every constraint-driven
     /// ancestor (or itself). False when none applies.
     bool _ComputeDrivenXform(
@@ -334,7 +333,7 @@ public:
 
     /// The Hydra prim type this prim's synthesized control guide should
     /// have in the current generation, or an empty token when it should
-    /// have none (spec §10.3 extension). The type IS the desired-state
+    /// have none. The type IS the desired-state
     /// answer here: a control draws exactly one guide child, but changing
     /// guide:shape or guide:drawMode changes what kind of prim it is.
     TfToken _DesiredControlGuideType(const SdfPath &path) const;
@@ -346,7 +345,7 @@ public:
 
     /// The Hydra prim types this prim's synthesized volume weight guide
     /// children should have in the current generation, in index order;
-    /// empty for none (spec §4.1 volumetric extension, drawn side).
+    /// empty for none.
     ///
     /// Both a count and a set of types, unlike its two siblings, because
     /// a volume guide varies in both: the number of drawn iso-surfaces

@@ -1318,21 +1318,13 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
         CompareVector(differences, &count, where + " deltaOk",
                       commits[c].deltaOk, program.commits[c].deltaOk);
         // Every delta a candidate is PRESENT for, with nothing excused.
-        // This comparison used to be guarded, because two runs of one
-        // generation disagreed about the deltas of commits with no
-        // propagation pairs while agreeing about `present`, `frames`,
-        // `staged`, `outcome` and `deltaOk`. A delta is a pure function of
-        // its candidate's frame and of B.fin[slot] as it stands BEFORE the
-        // commit, so two passes that agree about every input to it cannot
-        // disagree about its output unless one of them did not compute it --
-        // and that was the whole story: the head step read B.fin[slot] and
-        // declared it only as a WRITE, so a cone could skip the commit in a
-        // generation that moved the slot and leave the delta measuring
-        // against its own last answer. The read is declared now
-        // (bakedPose.cpp, beside declarePropagation) and the disagreement is
-        // gone: 0 differences over the eight bakeable fixtures at
-        // RIGEXEC_BAKED_GRAIN_US=0, the grain that puts every step in its own
-        // cluster, against 3 per generation without the declaration.
+        // A delta is a pure function of its candidate's frame and of
+        // B.fin[slot] as it stands BEFORE the commit, so two passes that agree
+        // about every input to it cannot disagree about its output unless one
+        // of them did not compute it. The head step declares that read
+        // (bakedPose.cpp, beside declarePropagation); without the declaration
+        // a cone could skip the commit in a generation that moved the slot
+        // and leave the delta measuring against its own last answer.
         for (size_t pos = 0;
              pos < commits[c].deltas.size() &&
                  pos < program.commits[c].deltas.size() &&

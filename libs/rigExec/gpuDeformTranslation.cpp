@@ -202,6 +202,83 @@ RigExecGetGpuDeformRunner()
     return _runner.load();
 }
 
+namespace {
+// Constant-initialized: no guard stands between a key and these.
+std::atomic<uint64_t> _deviceKeys{0};
+std::atomic<RigExecGpuDeviceReleaser> _releaser{nullptr};
+}  // namespace
+
+void
+RigExecSetGpuDeviceReleaser(RigExecGpuDeviceReleaser releaser)
+{
+    _releaser.store(releaser, std::memory_order_release);
+}
+
+RigExecGpuDeviceKey::RigExecGpuDeviceKey()
+    : _key(_deviceKeys.fetch_add(1, std::memory_order_relaxed) + 1)
+{
+}
+
+RigExecGpuDeviceKey::RigExecGpuDeviceKey(const RigExecGpuDeviceKey &)
+    : RigExecGpuDeviceKey()
+{
+}
+
+RigExecGpuDeviceKey::RigExecGpuDeviceKey(RigExecGpuDeviceKey &&other) noexcept
+    : _key(other._key), _used(other._used.load(std::memory_order_relaxed))
+{
+    // The moved-from object keeps a key of its own, never one in use.
+    other._key = _deviceKeys.fetch_add(1, std::memory_order_relaxed) + 1;
+    other._used.store(false, std::memory_order_relaxed);
+}
+
+RigExecGpuDeviceKey &
+RigExecGpuDeviceKey::operator=(const RigExecGpuDeviceKey &other)
+{
+    if (this != &other) {
+        _Release();
+        _key = _deviceKeys.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+    return *this;
+}
+
+RigExecGpuDeviceKey &
+RigExecGpuDeviceKey::operator=(RigExecGpuDeviceKey &&other) noexcept
+{
+    if (this != &other) {
+        _Release();
+        _key = other._key;
+        _used.store(other._used.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+        other._key = _deviceKeys.fetch_add(1, std::memory_order_relaxed) + 1;
+        other._used.store(false, std::memory_order_relaxed);
+    }
+    return *this;
+}
+
+RigExecGpuDeviceKey::~RigExecGpuDeviceKey()
+{
+    _Release();
+}
+
+uint64_t
+RigExecGpuDeviceKey::Use() const
+{
+    if (!_used.load(std::memory_order_relaxed))
+        _used.store(true, std::memory_order_relaxed);
+    return _key;
+}
+
+void
+RigExecGpuDeviceKey::_Release() noexcept
+{
+    if (!_used.load(std::memory_order_relaxed)) return;
+    _used.store(false, std::memory_order_relaxed);
+    if (const RigExecGpuDeviceReleaser release =
+            _releaser.load(std::memory_order_acquire))
+        release(_key);
+}
+
 bool
 RigExecBlendChannelsAreUsable(const std::vector<RigExecBlendChannel> &channels,
                               size_t pointCount)

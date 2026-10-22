@@ -8,6 +8,13 @@
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
 
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_wrinkleTokens,
+    (wrinkle)
+    (faceVertexCounts)
+    (faceVertexIndices));
+
 TF_DEFINE_PRIVATE_TOKENS(_wrinkle,
     ((rest, "inputs:restPoints"))
     ((iterations, "inputs:iterations"))
@@ -41,7 +48,7 @@ T Input(const VdfContext &ctx, const TfToken &name, T fallback)
 RigExecMoverParameters Parameters(const VdfContext &ctx)
 {
     RigExecMoverParameters p;
-    p.kind = TfToken("wrinkle");
+    p.kind = _wrinkleTokens->wrinkle;
     p.enabled = Input(ctx, RigExecMoverExecTokens->inputsEnabled, true);
     if (!p.enabled) {
         p.valid = true;
@@ -83,9 +90,9 @@ void Bind(const RigExecMoverBindContext &ctx)
 {
     ctx.binding->base = ctx.target;
     ctx.binding->topologyCounts =
-        ctx.ownerPath.AppendProperty(TfToken("faceVertexCounts"));
+        ctx.ownerPath.AppendProperty(_wrinkleTokens->faceVertexCounts);
     ctx.binding->topologyIndices =
-        ctx.ownerPath.AppendProperty(TfToken("faceVertexIndices"));
+        ctx.ownerPath.AppendProperty(_wrinkleTokens->faceVertexIndices);
 }
 
 bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)

@@ -7,6 +7,19 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((frame, "rigExec:frame")));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_deltaMushTokens,
+    (deltaMush)
+    (faceVertexCounts)
+    (faceVertexIndices));
+
 TF_DEFINE_PRIVATE_TOKENS(_mush,
     ((rest,"inputs:restPoints")) ((iterations,"inputs:iterations"))
     ((step,"inputs:step")) ((pin,"inputs:pinBorders"))
@@ -26,7 +39,7 @@ template<class T> T Input(const VdfContext &ctx,const TfToken &name,T fallback) 
     const auto *value=ctx.GetInputValuePtr<T>(name);return value ? *value : fallback;
 }
 RigExecMoverParameters Parameters(const VdfContext &ctx) {
-    RigExecMoverParameters p;p.kind=TfToken("deltaMush");
+    RigExecMoverParameters p;p.kind=_deltaMushTokens->deltaMush;
     p.enabled=Input(ctx,RigExecMoverExecTokens->enabled,true);
     if(!p.enabled) {p.valid=true;return p;}
     if(!RigExecMoverSetCommonEnvelope(ctx,&p))return p;
@@ -41,8 +54,8 @@ RigExecMoverParameters Parameters(const VdfContext &ctx) {
         if(needsRest&&!p.mushSettings.onlySmooth)return p;
         p.restPoints=RigExecMoverCollect<GfVec3f>(ctx,RigExecMoverExecTokens->basePoints);
     }
-    if(!RigExecParseDeltaMushSmoothing(Input(ctx,_mush->smoothing,_restToken).GetString(),&p.mushSettings.smoothing)||
-       !RigExecParseDeltaMushFrameTransport(Input(ctx,_mush->transport,_vertexToken).GetString(),&p.mushSettings.frameTransport))return p;
+    if(!RigExecParseDeltaMushSmoothing(Input(ctx,_mush->smoothing,_restToken).GetText(),&p.mushSettings.smoothing)||
+       !RigExecParseDeltaMushFrameTransport(Input(ctx,_mush->transport,_vertexToken).GetText(),&p.mushSettings.frameTransport))return p;
     p.mushSettings.smoothWeights=RigExecMoverCollect<float>(ctx,_mush->smoothWeights);
     p.mushSettings.edges=RigExecMoverCollect<int>(ctx,_mush->edges);
     p.topologyCounts=RigExecMoverCollect<int>(ctx,RigExecMoverExecTokens->topologyCounts);
@@ -54,10 +67,10 @@ RigExecMoverParameters Parameters(const VdfContext &ctx) {
 }
 void Bind(const RigExecMoverBindContext &ctx) {
     ctx.binding->base=ctx.target;
-    ctx.binding->topologyCounts=ctx.ownerPath.AppendProperty(TfToken("faceVertexCounts"));
-    ctx.binding->topologyIndices=ctx.ownerPath.AppendProperty(TfToken("faceVertexIndices"));
-    ctx.binding->influences=RigExecRelationshipTargets(ctx.moverPrim,"rigExec:frame");
-    ctx.binding->transformPhase=RigExecPhaseForInput(ctx.moverPrim,"rigExec:frame");
+    ctx.binding->topologyCounts=ctx.ownerPath.AppendProperty(_deltaMushTokens->faceVertexCounts);
+    ctx.binding->topologyIndices=ctx.ownerPath.AppendProperty(_deltaMushTokens->faceVertexIndices);
+    ctx.binding->influences=RigExecRelationshipTargets(ctx.moverPrim,_relTokens->frame);
+    ctx.binding->transformPhase=RigExecPhaseForInput(ctx.moverPrim,_relTokens->frame);
     if(ctx.binding->transformPhase.kind==RigExecReadPhaseKind::Final)
         for(auto &path:ctx.binding->influences) {
             const auto it=ctx.frameChainHeads.find(path);if(it!=ctx.frameChainHeads.end())path=it->second;
@@ -71,9 +84,9 @@ bool Validate(const RigExecMoverValidateContext &ctx,std::string *error) {
     if(attr.GetNumTimeSamples()!=0 || attr.HasAuthoredConnections()) {
         *error="DeltaMush restPoints must be static";return false;
     }
-    const auto frames=RigExecRelationshipTargets(ctx.prim,"rigExec:frame");
+    const auto frames=RigExecRelationshipTargets(ctx.prim,_relTokens->frame);
     if(frames.size()>1){*error="DeltaMush frame takes at most one provider";return false;}
-    if(RigExecPhaseForInput(ctx.prim,"rigExec:frame").kind==RigExecReadPhaseKind::AtPrim) {
+    if(RigExecPhaseForInput(ctx.prim,_relTokens->frame).kind==RigExecReadPhaseKind::AtPrim) {
         *error="DeltaMush frame read phase must be base or final";return false;
     }
     for(const auto &name:{_mush->smoothing,_mush->transport,_mush->edges}) {
@@ -111,12 +124,12 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx) {
     settings.smoothWeights.assign(weights.begin(),weights.end());settings.edges.assign(edges.begin(),edges.end());
     GfMatrix4d computationToTarget(1);
     ctx.resolved.GetAttribute(ctx.prim.GetAttribute(_mush->computationToTarget),ctx.time,&computationToTarget);
-    const auto frames=RigExecRelationshipTargets(ctx.prim,"rigExec:frame");
+    const auto frames=RigExecRelationshipTargets(ctx.prim,_relTokens->frame);
     if(rest.empty()&&(!frames.empty()||computationToTarget!=GfMatrix4d(1))&&!settings.onlySmooth)return RigExecOracleResult::PassThrough;
     if(rest.empty())rest=ctx.basePoints;
     if(frames.size()>1)return RigExecOracleResult::PassThrough;
     if(!frames.empty()) {
-        const bool final=RigExecPhaseForInput(ctx.prim,"rigExec:frame").kind==RigExecReadPhaseKind::Final;
+        const bool final=RigExecPhaseForInput(ctx.prim,_relTokens->frame).kind==RigExecReadPhaseKind::Final;
         const auto &matrices=final?ctx.finalProviderMatrices:ctx.baseProviderMatrices;
         const auto it=matrices.find(frames.front());if(it==matrices.end())return RigExecOracleResult::PassThrough;
         computationToTarget*=it->second;

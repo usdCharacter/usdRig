@@ -10,4 +10,6 @@
 # test selection.
 if (WIN32)
     target_link_libraries(rigExec INTERFACE rigExecGraph rigExecMath)
+    # The GPU worker's hidden OpenGL context.
+    target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
 endif()

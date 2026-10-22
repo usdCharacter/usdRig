@@ -1,8 +1,8 @@
-// RigExec geometry mover kernels (spec §7.5–§7.6).
+// RigExec geometry mover kernels.
 // Pure, deterministic CPU reference kernels over exact native property
 // values. Callers collect the vectorized element stream into transient
 // scratch, apply one kernel, and write the result back before the
-// callback returns (spec §6.5 ephemeral-scratch rule).
+// callback returns.
 #ifndef RIGEXEC_MATH_GEOMETRY_KERNELS_H
 #define RIGEXEC_MATH_GEOMETRY_KERNELS_H
 
@@ -70,16 +70,16 @@ bool RigExecApplyWrinkle(
 /// Axis-aligned bound volume of a point set (zero for < 2 points).
 double RigExecBoundVolume(const GfVec3f *points, size_t count);
 
-/// Volume/segment-length correction (RigExecPostMover "volumeCorrect",
-/// spec §7.6): uniformly scales the point set about its centroid so its
+/// Volume/segment-length correction (RigExecPostMover "volumeCorrect"):
+/// uniformly scales the point set about its centroid so its
 /// bound volume moves toward the reference volume; strength in [0, 1]
 /// blends between no correction (0) and full restoration (1).
 void RigExecApplyVolumeCorrect(
     std::vector<GfVec3f> *points, double referenceVolume, double strength);
 
 /// One iteration of uniform Laplacian smoothing with fixed adjacency
-/// derived from standard mesh topology (RigExecPostMover "smooth",
-/// spec §7.6): p' = lerp(p, average of edge-connected neighbors, strength).
+/// derived from standard mesh topology (RigExecPostMover "smooth"):
+/// p' = lerp(p, average of edge-connected neighbors, strength).
 /// Points without neighbors are unchanged.
 ///
 /// \p source lends the read side: a caller that seeded \p points from a
@@ -213,7 +213,7 @@ GfMatrix4d RigExecApplyPartialDecomposition(
     const RigExecPartialDecomposition &decomposition, double w);
 
 /// Angle-weighted vertex normals from standard polygon topology
-/// (RigExecPostMover "recomputeNormals", spec §7.6).
+/// (RigExecPostMover "recomputeNormals").
 ///
 /// Each face contributes its Newell normal to its own corners, weighted by
 /// the interior angle there, so the result is correct for a non-planar
@@ -257,7 +257,7 @@ bool RigExecTransportSurfaceOffsets(
     std::vector<GfVec3f> *out);
 
 /// Two-element extent (min, max) from final local points, optionally
-/// widened by the winning widths (curves/points rule, spec §7.6).
+/// widened by the winning widths (curves/points rule).
 std::vector<GfVec3f> RigExecComputeExtent(
     const std::vector<GfVec3f> &points,
     const std::vector<float> &widths);
@@ -270,8 +270,8 @@ std::vector<GfVec3f> RigExecComputeExtent(
     const GfVec3f *points, size_t pointsSize,
     const float *widths, size_t widthsSize);
 
-/// Tensor-product Bernstein lattice evaluation (RigExecLatticeMover,
-/// spec §7.5): p'(u,v,w) = sum_abc B_a(u) B_b(v) B_c(w) C_abc.
+/// Tensor-product Bernstein lattice evaluation (RigExecLatticeMover):
+/// p'(u,v,w) = sum_abc B_a(u) B_b(v) B_c(w) C_abc.
 ///
 /// The cage is divisions.x * divisions.y * divisions.z control points in
 /// x-fastest lexicographic order. Bind coordinates derive from each rest
@@ -482,7 +482,7 @@ void RigExecBuildSurfaceAccel(
     RigExecSurfaceAccel *accel);
 
 /// Closest point on a triangulated standard mesh (RigExecSurfaceMover
-/// "project", spec §7.5): p' = lerp(p, closestSurfacePoint(p), weight).
+/// "project"): p' = lerp(p, closestSurfacePoint(p), weight).
 /// \p accel supplies prebuilt triangulation; null builds it per call.
 /// An entry built for another surface falls back to the per-call build.
 void RigExecApplySurfaceProject(
@@ -506,7 +506,7 @@ void RigExecApplySurfaceProject(
     const RigExecSurfaceAccel *accel = nullptr);
 
 /// Sampled curve frames: positions plus a rotation-minimizing frame per
-/// sample (spec §7.5), parameterized by normalized arc length.
+/// sample, parameterized by normalized arc length.
 struct RigExecCurveFrameSamples {
     std::vector<GfVec3f> positions;
     std::vector<GfVec3f> tangents;
@@ -533,8 +533,8 @@ RigExecCurveFrameSamples RigExecSampleCurveRMF(
     const GfVec3f *controlPoints, size_t controlPointsSize,
     int sampleCount);
 
-/// Rest-relative ribbon transport (RigExecCurveMover "ribbon", spec
-/// §7.5): each destination point binds to the curve parameter u from its
+/// Rest-relative ribbon transport (RigExecCurveMover "ribbon"): each
+/// destination point binds to the curve parameter u from its
 /// declared two-component bind coordinates; the point moves by the rigid
 /// map taking its rest frame sample to its posed frame sample:
 ///   p' = M(u) p,  M(u) = PointsToMatrix(restFrame(u), posedFrame(u)).

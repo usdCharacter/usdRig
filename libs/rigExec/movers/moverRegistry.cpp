@@ -11,6 +11,7 @@
 #include "pxr/usd/usdSkel/blendShape.h"
 
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <mutex>
 
@@ -209,31 +210,73 @@ RigExecMoverHandlers()
     return result;
 }
 
+namespace {
+// Interned at load: RigExecPointsOf runs in binders on parallel lanes.
+const TfToken _pointsToken("points");
+}  // namespace
+
+const TfToken &
+RigExecPointsToken()
+{
+    return _pointsToken;
+}
+
 SdfPathVector
-RigExecRelationshipTargets(const UsdPrim &prim, const char *rel)
+RigExecRelationshipTargets(const UsdPrim &prim, const TfToken &rel)
 {
     SdfPathVector targets;
-    if (const UsdRelationship r = prim.GetRelationship(TfToken(rel))) {
+    if (const UsdRelationship r = prim.GetRelationship(rel)) {
         r.GetTargets(&targets);
     }
     return targets;
 }
 
+SdfPathVector
+RigExecRelationshipTargets(const UsdPrim &prim, const char *rel)
+{
+    return RigExecRelationshipTargets(prim, TfToken(rel));
+}
+
 RigExecReadPhase
-RigExecPhaseForInput(const UsdPrim &moverPrim, const char *rel)
+RigExecPhaseForInput(const UsdPrim &moverPrim, const TfToken &rel)
 {
     RigExecReadPhase phase;
-    if (const UsdRelationship r = moverPrim.GetRelationship(TfToken(rel))) {
+    if (const UsdRelationship r = moverPrim.GetRelationship(rel)) {
         RigExecResolveReadPhase(r, &phase, nullptr);
     }
     return phase;
 }
 
+RigExecReadPhase
+RigExecPhaseForInput(const UsdPrim &moverPrim, const char *rel)
+{
+    return RigExecPhaseForInput(moverPrim, TfToken(rel));
+}
+
+SdfPathVector
+RigExecRelationshipTargets(const RigExecOraclePrim &prim, const TfToken &name)
+{
+    for (const auto &entry : prim.relationships) {
+        if (entry.first == name) return entry.second.targets;
+    }
+    return {};
+}
+
+RigExecReadPhase
+RigExecPhaseForInput(const RigExecOraclePrim &prim, const TfToken &name)
+{
+    for (const auto &entry : prim.relationships) {
+        if (entry.first == name) return entry.second.phase;
+    }
+    return {};
+}
+
+// The text forms compare text: no token is built.
 SdfPathVector
 RigExecRelationshipTargets(const RigExecOraclePrim &prim, const char *name)
 {
     for (const auto &entry : prim.relationships) {
-        if (entry.first.GetString() == name) return entry.second.targets;
+        if (std::strcmp(entry.first.GetText(), name) == 0) return entry.second.targets;
     }
     return {};
 }
@@ -242,7 +285,7 @@ RigExecReadPhase
 RigExecPhaseForInput(const RigExecOraclePrim &prim, const char *name)
 {
     for (const auto &entry : prim.relationships) {
-        if (entry.first.GetString() == name) return entry.second.phase;
+        if (std::strcmp(entry.first.GetText(), name) == 0) return entry.second.phase;
     }
     return {};
 }

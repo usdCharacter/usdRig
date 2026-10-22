@@ -1,9 +1,8 @@
 // TouchPose geometry: the posed mesh a touch lands on, and the questions a
 // pick asks of it.
-// WHY THIS IS C++. The Python version cast every ray against all 52,548
-// triangles of the biped's body with numpy -- 1.6 ms a ray measured in
-// usdview, paid on every hover sample -- and rebuilt its derived arrays
-// whenever the pose moved. Here the triangles live in a bounding volume
+// WHY THIS IS C++. A pick is cast on every hover sample, so testing every
+// triangle per ray and rebuilding derived arrays per pose is too slow for
+// interaction. Here the triangles live in a bounding volume
 // hierarchy built ONCE per topology and REFIT per pose, so a pose change is
 // one parallel pass over the triangle bounds plus a bottom-up sweep of the
 // nodes, and a ray is a few dozen box tests and a handful of triangle tests.

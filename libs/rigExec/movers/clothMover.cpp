@@ -10,6 +10,7 @@
 #include "moverRegistry.h"
 #include "externalPlayback.h"
 #include "rigExec/gpuCloth.h"
+#include "rigExec/gpuDeformTranslation.h"
 #include "rigExecBinary/clothPlayback.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "rigExecScene/sceneCompileInputs.h"
@@ -18,6 +19,7 @@
 #include "pxr/usd/usdGeom/mesh.h"
 #include "pxr/usd/usdGeom/tokens.h"
 #include "clothInputs.h"
+#include "rigExec/pathText.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +30,16 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((colliders, "rigExec:colliders"))
+    ((moves, "rigExec:moves"))
+    ((constraints, "rigExec:constraints"))
+    ((targetMesh, "rigExec:targetMesh"))
+    ((restShape, "rigExec:restShape"))
+    ((uvSet, "rigExec:uvSet")));
 
 namespace {
 
@@ -56,6 +68,7 @@ const TfToken _faceVertexIndices("faceVertexIndices");
 const TfToken _orientation("orientation");
 const TfToken _rightHanded("rightHanded");
 const TfToken _leftHanded("leftHanded");
+const TfToken _vertex("vertex");
 
 // The schema's fallbacks, which the declared inputs repeat.
 constexpr int kWindowFrames = 16;
@@ -143,18 +156,35 @@ SdfPathVector
 CollidersOf(const UsdPrim &mover)
 {
     SdfPathVector out;
-    for (const SdfPath &path : RigExecRelationshipTargets(mover, "rigExec:colliders"))
+    for (const SdfPath &path : RigExecRelationshipTargets(mover, _relTokens->colliders))
         out.push_back(MeshOf(path));
-    const auto moves = RigExecRelationshipTargets(mover, "rigExec:moves");
+    const auto moves = RigExecRelationshipTargets(mover, _relTokens->moves);
     const SdfPath cloth = moves.size() == 1 ? MeshOf(moves[0]) : SdfPath();
-    for (const auto &path : RigExecRelationshipTargets(mover, "rigExec:constraints")) {
+    for (const auto &path : RigExecRelationshipTargets(mover, _relTokens->constraints)) {
         const UsdPrim profile = mover.GetStage()->GetPrimAtPath(path);
-        for (const auto &target : RigExecRelationshipTargets(profile, "rigExec:targetMesh")) {
+        for (const auto &target : RigExecRelationshipTargets(profile, _relTokens->targetMesh)) {
             const SdfPath mesh = MeshOf(target);
             if (mesh != cloth && std::find(out.begin(), out.end(), mesh) == out.end()) out.push_back(mesh);
         }
     }
     return out;
+}
+
+// Each collider's points property, spelled once per compile so Payload,
+// which steps run, interns no path text. Payload names the collider's phased points by it.
+VtValue ColliderPathTexts(const std::vector<RigExecRevisionLeafKey> &inputs,
+                          size_t colliders)
+{
+    std::vector<VtValue> texts;
+    texts.reserve(colliders);
+    for (size_t k = 0; k < colliders; ++k) {
+        const size_t at = RigExecClothFirstCollider + k * RigExecClothInputsPerCollider;
+        std::string text;
+        if (at < inputs.size() && !RigExecSpellPathText(inputs[at].path, &text))
+            text = inputs[at].path.GetAsString();
+        texts.push_back(VtValue(std::move(text)));
+    }
+    return VtValue(texts);
 }
 
 void DeclareModel(const UsdPrim &mover, const SdfPath &target,
@@ -167,6 +197,7 @@ void DeclareModel(const UsdPrim &mover, const SdfPath &target,
     VtDictionary data;
     data["frameRate"] = VtValue(stage->GetTimeCodesPerSecond());
     data["layout"] = VtValue(cloth_inputs::Declare(mover.GetPath(), MeshOf(target), colliders, &declaration));
+    data["colliderPaths"] = ColliderPathTexts(*inputs, colliders.size());
     binding->externalCompileData = VtValue(data);
 }
 
@@ -222,11 +253,15 @@ bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &bindi
              VtValue *out)
 {
     const VtValue *layoutValue = nullptr;
+    const std::vector<VtValue> *spelledPaths = nullptr;
     if (binding.externalCompileData.IsHolding<VtDictionary>()) {
         const auto &compiled = binding.externalCompileData.UncheckedGet<VtDictionary>();
         const auto found = compiled.find("layout");
         if (found != compiled.end() && found->second.IsHolding<VtDictionary>())
             layoutValue = &found->second;
+        const auto paths = compiled.find("colliderPaths");
+        if (paths != compiled.end() && paths->second.IsHolding<std::vector<VtValue>>())
+            spelledPaths = &paths->second.UncheckedGet<std::vector<VtValue>>();
     }
     const VtDictionary *layout =
         layoutValue ? &layoutValue->UncheckedGet<VtDictionary>() : nullptr;
@@ -299,7 +334,16 @@ bool Payload(const std::vector<VtValue> &in, const RigExecRevisionBinding &bindi
         // The collider's points property, which playback names its phased
         // points by.
         if (at >= binding.externalInputs.size()) return false;
-        cPaths[k] = VtValue(binding.externalInputs[at].path.GetString());
+        if (spelledPaths && k < spelledPaths->size() &&
+            spelledPaths->at(k).IsHolding<std::string>() &&
+            !spelledPaths->at(k).UncheckedGet<std::string>().empty()) {
+            cPaths[k] = spelledPaths->at(k);
+        } else {
+            // No bind-time text: spell without interning, or refuse.
+            std::string text;
+            if (!RigExecSpellPathText(binding.externalInputs[at].path, &text)) return false;
+            cPaths[k] = VtValue(std::move(text));
+        }
     }
     d["colliderPoints"] = VtValue(points);
     d["colliderCounts"] = VtValue(cCounts);
@@ -425,7 +469,7 @@ bool CompiledRigOf(const VtValue &data, RigExecClothCompiledData *compiledRig, s
 void Bind(const RigExecMoverBindContext &ctx)
 {
     auto &b = *ctx.binding;
-    const RigExecReadPhase phase = RigExecPhaseForInput(ctx.moverPrim, "rigExec:colliders");
+    const RigExecReadPhase phase = RigExecPhaseForInput(ctx.moverPrim, _relTokens->colliders);
     if (!phase.IsBase()) {
         for (const SdfPath &collider : CollidersOf(ctx.moverPrim))
             b.phases[collider.AppendProperty(_points)] = phase;
@@ -489,7 +533,7 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                 if (interpolation != found->second.fact.metadata.end() && interpolation->second.IsHolding<TfToken>())
                     return interpolation->second.UncheckedGet<TfToken>();
             }
-            return TfToken("vertex");
+            return _vertex;
         },
         [&scene](const SdfPath &path) {
             const auto found = scene.nodes.find(path);
@@ -498,6 +542,7 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
     VtDictionary data;
     data["frameRate"] = VtValue(double(scene.timeCodesPerSecond));
     data["layout"] = VtValue(cloth_inputs::Declare(mover, MeshOf(target), colliders, &declaration));
+    data["colliderPaths"] = ColliderPathTexts(binding->externalInputs, colliders.size());
     binding->externalCompileData = VtValue(data);
     return true;
 }
@@ -550,6 +595,8 @@ std::atomic<uint64_t> _preparedSerial{0};
 struct Built {
     RigExecClothPrepared prepared;
     VtDictionary source;
+    // Names the device's buffers for this compiled rig; freed with it.
+    RigExecGpuDeviceKey deviceKey;
 };
 
 // Whether payloads \p a and \p b build the same compiled rig: every entry is equal
@@ -625,6 +672,9 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     if (!points || !runner) return false;
     const auto prepared = PreparedFor(data, cache);
     if (!prepared || points->size() != prepared->compiledRig.pointCount) return false;
+    // PreparedFor stores the Built that holds `prepared` in the slot.
+    const Built *built = cache ? static_cast<const Built *>(cache->get()) : nullptr;
+    if (!built || &built->prepared != prepared.get()) return false;
     std::vector<RigExecClothTick> window;
     if (!prepared->mesh.model.Empty()) return false;
     if (!RigExecClothTicksFromPackets(*prepared, ticks, tickCount, &window, nullptr) ||
@@ -636,7 +686,9 @@ bool ApplyWindowDevice(const VtValue &data, const RigExecWindowPacket *const *ti
     std::vector<float> out(3 * points->size());
     std::vector<RigExecGpuClothJob> jobs(1);
     RigExecGpuClothJob &job = jobs[0];
-    job.key = uint64_t(reinterpret_cast<uintptr_t>(cache));
+    // Lanes sharing this compiled rig share its mesh upload; every solve
+    // uploads its own window.
+    job.key = built->deviceKey.Use();
     job.compiledRigSerial = prepared->serial;
     job.mesh = &prepared->mesh;
     job.colliders = &prepared->colliders;
@@ -747,9 +799,9 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
             return false;
         }
     }
-    if (!RigExecRelationshipTargets(ctx.prim, "rigExec:constraints").empty() ||
-        !RigExecRelationshipTargets(ctx.prim, "rigExec:restShape").empty() ||
-        !RigExecRelationshipTargets(ctx.prim, "rigExec:uvSet").empty()) {
+    if (!RigExecRelationshipTargets(ctx.prim, _relTokens->constraints).empty() ||
+        !RigExecRelationshipTargets(ctx.prim, _relTokens->restShape).empty() ||
+        !RigExecRelationshipTargets(ctx.prim, _relTokens->uvSet).empty()) {
         RigExecRevisionBinding binding;
         const auto colliders = CollidersOf(ctx.prim);
         binding.externalInputs = DeclaredInputs(ctx.prim.GetPath(), ctx.targets[0], colliders);

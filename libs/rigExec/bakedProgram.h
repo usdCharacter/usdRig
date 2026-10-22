@@ -337,10 +337,10 @@ public:
     /// whether it did.
     ///
     /// This is what an Avar Editor slider, a typed value and a released
-    /// gizmo in Default mode all author, one value at a time. Before this
-    /// each of them rebuilt the whole program (~120 ms on the biped) because
-    /// a captured constant is in the rebuild index -- to change one double
-    /// in a dense table. Here the new value is written straight into that
+    /// gizmo in Default mode all author, one value at a time. A captured
+    /// constant is in the rebuild index, so without this each of them would
+    /// rebuild the whole program to change one double in a dense table.
+    /// Here the new value is written straight into that
     /// table's slot; the frame path already compares every avar slot against
     /// last run's by value, so the next generation re-runs exactly the cone
     /// of what moved and nothing else.
@@ -357,7 +357,7 @@ public:
     /// RigExecBakedProgramImpl::patchableAvars).
     bool IsPatchableAvarPath(const SdfPath &path) const;
 
-    /// The read-only half of ApplyAvarValueEdits (plan 2.1): decides the
+    /// The read-only half of ApplyAvarValueEdits: decides the
     /// patch without writing anything, answering whether the notice is
     /// nothing but patchable avar default values and, in \p patchedPaths,
     /// the property paths it would patch. ApplyAvarValueEdits answers
@@ -388,7 +388,7 @@ public:
     /// captured", and its documented gap is the other half: a value edit on
     /// an input the frame path re-reads changes what the next generation
     /// must compute while leaving every captured constant right. Cone
-    /// re-execution (§7) decides what to re-run from the SOURCES it compares
+    /// re-execution decides what to re-run from the SOURCES it compares
     /// by value, and a stage edit is the one thing no source of the program
     /// compares -- so the evaluator says so here, and the next run runs
     /// everything once. Interactive overrides do NOT call this: an override
@@ -397,7 +397,7 @@ public:
 
     /// Routes \p notice to the per-frame inputs it reached, when it is
     /// nothing but new VALUES the program can place, and says whether it
-    /// did (unified-program spec rules S2, S3).
+    /// did.
     ///
     /// An edit on an input a step reads every frame is answered the way the
     /// run after a drag is lifted is: the input's override number is marked

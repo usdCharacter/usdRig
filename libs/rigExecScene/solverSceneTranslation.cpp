@@ -1,5 +1,6 @@
 #include "solverSceneTranslation.h"
 #include "sceneInputTypes.h"
+#include "startFrameDerivation.h"
 #include "rigExec/solverKernels.h"
 #include "rigExec/types.h"
 #include "pxr/base/vt/types.h"
@@ -116,6 +117,7 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         s.jointRests.push_back(rest(result.joints[k]).points);
     }
     s.restIsLive.assign(result.joints.size(),false);
+    SdfPath derivedStart;
     if(s.kind==RigExecSolverKind::FkChain) {
         TfToken mode;if(!token(_tokens->rigExecControlSpace,TfToken(),&mode))return false;
         s.parentRelative=mode=="parentRelative";
@@ -124,7 +126,13 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         for(const auto &control:targets(_tokens->rigExecControls))if(providerExists(control)) {
             result.controls.push_back(control);s.controlRests.push_back(rest(control).points);
         }
-        result.start=first(_tokens->rigExecStartFrame,true);s.hasStart=!result.start.IsEmpty();
+        result.start=first(_tokens->rigExecStartFrame,true);
+        // rigExec:startFramePolicy resolves here, at compile time, into the
+        // same declared start-frame input an authored target binds.
+        if(RigExecDeriveSceneStartFrame(scene,path,&derivedStart)!=RigExecStartFrameDerivation::Derived ||
+           !providerExists(derivedStart))derivedStart=SdfPath();
+        if(!derivedStart.IsEmpty())result.start=derivedStart;
+        s.hasStart=!result.start.IsEmpty();
         if(s.hasStart)s.startRest=rest(result.start).points;
     } else if(s.kind==RigExecSolverKind::TwoBoneIk) {
         result.root=first(_tokens->rigExecRootControl,true);result.end=first(_tokens->rigExecEffectorControl,true);
@@ -233,6 +241,9 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         binding.phase=relation?relation->readPhase:_tokens->base;
         if(relation)for(const auto &target:relation->forwardedTargets)
             binding.keys.emplace(target,relationPath.AppendTarget(target));
+        // A derived start binds exactly as the authored target would.
+        if(name==&_tokens->rigExecStartFrame && !derivedStart.IsEmpty())
+            binding.keys.emplace(derivedStart,relationPath.AppendTarget(derivedStart));
         result.frameBindings.emplace(name->GetString(),std::move(binding));
     }
     if(!result.space.IsEmpty())result.spaceRest=rest(result.space).points;

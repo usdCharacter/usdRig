@@ -7,6 +7,17 @@
 
 namespace rigExec {
 
+/// Points per task in the per-point geometry kernels.
+///
+/// Large enough that a task is worth its dispatch, small enough that the
+/// tail task does not decide the wall time on a wide machine.
+inline constexpr size_t RigExecGeometryGrainSize = 512;
+
+/// Below this many points a per-point geometry kernel stays serial: the
+/// dispatch and the join cost more than the work they would spread, and a
+/// rig is far more likely to hold many small meshes than one large one.
+inline constexpr size_t RigExecGeometryParallelThreshold = 4096;
+
 /// One slice [begin, end) of a per-element loop.
 using RigExecRangeBody = std::function<void(size_t begin, size_t end)>;
 

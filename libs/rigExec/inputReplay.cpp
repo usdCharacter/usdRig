@@ -600,6 +600,7 @@ RigExecInputReplaySuppression::RigExecInputReplaySuppression(){++suppressed;}
 RigExecInputReplaySuppression::~RigExecInputReplaySuppression(){--suppressed;}
 RigExecInputReplayImplementationScope::RigExecInputReplayImplementationScope(bool enabled):_enabled(enabled){if(_enabled){recorder->Check();++implementationDepth;++recorder->numerical;}}
 RigExecInputReplayImplementationScope::~RigExecInputReplayImplementationScope(){if(_enabled){--recorder->numerical;--implementationDepth;}}
+bool RigExecInputReplayCaptureRequested(){const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");return mode&&*mode;}
 RigExecInputReplayComparisonScope::RigExecInputReplayComparisonScope(const char *action,bool equivalent) {
     const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");
     if(!mode||!*mode||suppressed||implementationDepth||(recorder&&recorder->numerical))return;

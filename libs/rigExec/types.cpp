@@ -1,4 +1,4 @@
-// RigExec exec type registrations (spec §12.1).
+// RigExec exec type registrations.
 #include "types.h"
 
 #include "pxr/exec/exec/typeRegistry.h"
@@ -111,9 +111,8 @@ _WeightPacketResolvesAll(const RigExecWeightPacket &packet, size_t count)
 
     // sparse: the default is only checked when some point can actually read
     // it. A sparse packet that happens to name every point never resolves to
-    // its default, and the per-point loop this replaces would never have
-    // seen it -- so rejecting an unusable one here would fail a packet that
-    // used to succeed.
+    // its default, and a per-point loop would never see it -- so rejecting an
+    // unusable one here would fail a packet that resolves correctly.
     if (packet.indices.size() < count && !usable(packet.defaultWeight)) {
         return false;
     }

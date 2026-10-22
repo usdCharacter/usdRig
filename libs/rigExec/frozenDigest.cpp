@@ -287,10 +287,11 @@ RigExecFrozenPurityAudit()
          RigExecFrozenPurity::LiveOnly,
          "dynamic only; baked and frozen build layouts in the SkinTopology "
          "op"},
-        {"calibration/timing statics (bakedSchedule.cpp framesSeen)",
+        {"calibration/timing frame counters (program framesSeen fields)",
          RigExecFrozenPurity::LiveOnly,
-         "unsynchronized diagnostic counters; frozen runs never enable "
-         "calibration or step timing, so workers never touch them"},
+         "per-program diagnostic counters the owning Run epilogue counts; "
+         "frozen runs never enable calibration or step timing, so workers "
+         "never touch them"},
         {"registry mutex / imaging bridge / snapshot store writes",
          RigExecFrozenPurity::LiveOnly,
          "Stream E's publish fence; background completions publish into "
@@ -310,7 +311,7 @@ RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evaluator)
     }
     const uint64_t builds = uint64_t(evaluator.GetBakedProgramBuildCount());
     h = _HashBytes(h, &builds, sizeof(builds));
-    // Structure only (plan D3): the binding-table shapes, never the
+    // Structure only: the binding-table shapes, never the
     // constant values. A value patch moves the constant digest the
     // control half folds -- not this -- so it opens a new key namespace
     // instead of evicting the compiled rig.

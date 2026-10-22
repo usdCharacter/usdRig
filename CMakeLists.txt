@@ -228,7 +228,7 @@ target_include_directories(rigExec PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExec PUBLIC
-    # usdSkel is here for UsdSkelBlendShape only: a sparse blend sample names
+    # usdSkel is here for UsdSkelBlendShape only.
     plug sdf usd usdGeom usdSkel work
     exec execUsd ef vdf
 )
@@ -236,7 +236,7 @@ target_link_libraries(rigExec PUBLIC
 target_link_libraries(rigExec PRIVATE
     rigExecGraph rigExecMath rigExecInputValues ts)
 # On Windows the consumers of rigExec need those two archives as well.
-include(cmake/WindowsArchiveLinks.cmake)
+
 # Scene translation calls back into the evaluator. The evaluator does not
 # link the scene library; callers that compile a stage do.
 target_link_libraries(rigExecScene PUBLIC rigExec)
@@ -314,9 +314,7 @@ target_include_directories(rigExecGpu PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecGpu PUBLIC rigExec tf gf)
 target_link_libraries(rigExecGpu PRIVATE garch)
-if(WIN32)
-    target_link_libraries(rigExecGpu PRIVATE opengl32 user32 gdi32)
-endif()
+include(cmake/WindowsArchiveLinks.cmake)
 
 # rigExecImaging: Hydra 2.0 scene-index publication (spec §10).
 add_library(rigExecImaging SHARED

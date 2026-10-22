@@ -475,6 +475,11 @@ struct RrStore {
     // clusters to dispatch and joins with wait; both empty, it runs serially.
     std::function<void(std::function<void()>)> dispatch;
     std::function<void()> wait;
+    // &dispatch while Execute's op graph runs on it, else null: the one
+    // window in which a body may hand extra tasks to the host (a point
+    // range split). Set and cleared on the owner thread around the graph,
+    // read-only to bodies in between; the graph's wait joins those tasks.
+    const std::function<void(std::function<void()>)> *rangeDispatch = nullptr;
     // Per op (canonical index), sized at compile: the failure its body
     // reported this run. Written only by that op's body; read and cleared
     // on the owner thread after the join.

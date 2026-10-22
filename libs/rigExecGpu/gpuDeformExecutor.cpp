@@ -102,15 +102,17 @@ struct _ClothBuffers {
     int constraints = 0, colors = 0, triangles = 0;
 };
 
-/// Replaces \p id's contents (creating it on first use). A zero-length
-/// storage buffer is not a buffer; keep a word.
+// What a zero-length upload stores: a zero-length storage buffer is not a
+// buffer, so keep a word.
+constexpr int32_t _zeroWord = 0;
+
+/// Replaces \p id's contents (creating it on first use).
 void
 _Upload(GLuint *id, size_t bytes, const void *data)
 {
     if (!*id) glCreateBuffers(1, id);
-    static const int32_t zero = 0;
-    glNamedBufferData(*id, GLsizeiptr(bytes ? bytes : 4), bytes ? data : &zero,
-                      GL_STREAM_DRAW);
+    glNamedBufferData(*id, GLsizeiptr(bytes ? bytes : 4),
+                      bytes ? data : &_zeroWord, GL_STREAM_DRAW);
 }
 
 GLuint
@@ -118,12 +120,16 @@ _ImmutableBuffer(size_t bytes, const void *data, GLbitfield flags)
 {
     GLuint id = 0;
     glCreateBuffers(1, &id);
-    // A zero-length storage buffer is not a buffer; keep a word.
-    static const int32_t zero = 0;
     glNamedBufferStorage(id, GLsizeiptr(bytes ? bytes : 4),
-                         bytes ? data : &zero, flags);
+                         bytes ? data : &_zeroWord, flags);
     return id;
 }
+
+// The process's executor and how far its start got. Constant-initialized,
+// so a caller on a step path reads them with no initialization guard.
+enum _ExecutorState : int { _Unstarted, _Starting, _Ready, _Failed };
+std::atomic<int> _executorState{_Unstarted};
+std::atomic<RigExecGpuDeformExecutor *> _executor{nullptr};
 
 }  // namespace
 
@@ -133,8 +139,13 @@ struct RigExecGpuDeformExecutor::Impl {
     GLuint program = 0;
     GLint pointCountLocation = -1;
     GLint opCountLocation = -1;
+    // Keyed by RigExecGpuDeviceKey; a key's buffers go when its owner does.
     std::map<uint64_t, _ChainBuffers> chains;
     std::string description;
+    // RIGEXEC_GPU_DEFORM_STATS / RIGEXEC_GPU_CLOTH_STATS, read at Create:
+    // print where a run's or a solve's time went.
+    bool deformStats = false;
+    bool clothStats = false;
     // The cloth kernel, compiled on its first solve; failure is remembered.
     GLuint clothProgram = 0;
     bool clothTried = false;
@@ -153,7 +164,8 @@ struct RigExecGpuDeformExecutor::Impl {
     bool stop = false;
     std::thread worker;
     bool started = false;
-    double lastRunMs = 0.0;
+    // Written by whichever thread's Run returns last.
+    std::atomic<double> lastRunMs{0.0};
 
     void Loop()
     {
@@ -192,6 +204,32 @@ struct RigExecGpuDeformExecutor::Impl {
         return result.get();
     }
 
+    // Queues \p f without waiting for it.
+    void PostDetached(std::function<void()> f)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (stop) return;
+            tasks.emplace_back(std::move(f));
+        }
+        wake.notify_one();
+    }
+
+    // Frees \p key's chain or cloth buffers, if the device made any.
+    void ReleaseKeyOnWorker(uint64_t key)
+    {
+        const auto chain = chains.find(key);
+        if (chain != chains.end()) {
+            Release(&chain->second);
+            chains.erase(chain);
+        }
+        const auto cloth = cloths.find(key);
+        if (cloth != cloths.end()) {
+            ReleaseCloth(&cloth->second);
+            cloths.erase(cloth);
+        }
+    }
+
     bool Start()
     {
         worker = std::thread([this] { Loop(); });
@@ -213,6 +251,8 @@ struct RigExecGpuDeformExecutor::Impl {
 
     bool Create()
     {
+        deformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+        clothStats = TfGetenvBool("RIGEXEC_GPU_CLOTH_STATS", false);
         if (!context.Create()) return false;
         GarchGLApiLoad();
         const char *vendor = (const char *)glGetString(GL_VENDOR);
@@ -338,8 +378,7 @@ struct RigExecGpuDeformExecutor::Impl {
     bool RunClothOnWorker(std::vector<RigExecGpuClothJob> *jobs)
     {
         if (!program || !CompileCloth()) return false;
-        // RIGEXEC_GPU_CLOTH_STATS prints where a solve's time went.
-        const bool stats = TfGetenvBool("RIGEXEC_GPU_CLOTH_STATS", false);
+        const bool stats = clothStats;
         const auto now = [] { return std::chrono::steady_clock::now(); };
         const auto ms = [](auto a, auto b) {
             return std::chrono::duration<double, std::milli>(b - a).count();
@@ -530,8 +569,7 @@ struct RigExecGpuDeformExecutor::Impl {
     bool RunOnWorker(std::vector<RigExecGpuDeformJob> *jobs)
     {
         if (!program) return false;
-        static const bool stats =
-            TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
+        const bool stats = deformStats;
         const auto now = [] { return std::chrono::steady_clock::now(); };
         const auto t0 = now();
         constexpr GLbitfield mapped = GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT |
@@ -648,16 +686,43 @@ RigExecGpuDeformExecutor *
 RigExecGpuDeformExecutor::Get()
 {
     // Started once; a device that could not be created is remembered as
-    // null rather than retried every frame.
-    static RigExecGpuDeformExecutor *const executor = [] {
+    // null rather than retried every frame. After the start, a call is two
+    // atomic loads.
+    int state = _executorState.load(std::memory_order_acquire);
+    if (state == _Ready) return _executor.load(std::memory_order_acquire);
+    if (state == _Failed) return nullptr;
+    int expected = _Unstarted;
+    if (_executorState.compare_exchange_strong(expected, _Starting,
+                                               std::memory_order_acq_rel)) {
         auto *e = new RigExecGpuDeformExecutor();
         if (!e->_impl->Start()) {
             delete e;
-            return static_cast<RigExecGpuDeformExecutor *>(nullptr);
+            e = nullptr;
         }
+        _executor.store(e, std::memory_order_release);
+        _executorState.store(e ? _Ready : _Failed, std::memory_order_release);
         return e;
-    }();
-    return executor;
+    }
+    // Another caller is starting the device: wait out the start, as its
+    // first run would wait on the device anyway.
+    while ((state = _executorState.load(std::memory_order_acquire)) == _Starting)
+        std::this_thread::yield();
+    return state == _Ready ? _executor.load(std::memory_order_acquire) : nullptr;
+}
+
+void
+RigExecGpuDeformExecutor::ReleaseKey(uint64_t key)
+{
+    // Never starts the device: a key that reached one names a started one.
+    if (_executorState.load(std::memory_order_acquire) != _Ready) return;
+    RigExecGpuDeformExecutor *executor = _executor.load(std::memory_order_acquire);
+    if (!executor) return;
+    Impl *impl = executor->_impl.get();
+    try {
+        impl->PostDetached([impl, key] { impl->ReleaseKeyOnWorker(key); });
+    } catch (...) {
+        // Out of memory queueing: the buffers stay until the device goes.
+    }
 }
 
 bool
@@ -667,8 +732,10 @@ RigExecGpuDeformExecutor::Run(std::vector<RigExecGpuDeformJob> *jobs)
     const auto start = std::chrono::steady_clock::now();
     const bool ok =
         _impl->Post([this, jobs] { return _impl->RunOnWorker(jobs); });
-    _impl->lastRunMs = std::chrono::duration<double, std::milli>(
-                           std::chrono::steady_clock::now() - start).count();
+    _impl->lastRunMs.store(
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count(),
+        std::memory_order_relaxed);
     return ok;
 }
 
@@ -688,7 +755,7 @@ RigExecGpuDeformExecutor::ClothSolveCount() const
 double
 RigExecGpuDeformExecutor::LastRunMs() const
 {
-    return _impl->lastRunMs;
+    return _impl->lastRunMs.load(std::memory_order_relaxed);
 }
 
 std::string
@@ -713,17 +780,25 @@ _RunClothOnDevice(std::vector<RigExecGpuClothJob> *jobs)
     return executor && executor->RunCloth(jobs);
 }
 
+void
+_ReleaseOnDevice(uint64_t key)
+{
+    RigExecGpuDeformExecutor::ReleaseKey(key);
+}
+
 }  // namespace
 
 void
 RigExecGpuRegisterDeformRunner()
 {
+    RigExecSetGpuDeviceReleaser(&_ReleaseOnDevice);
     RigExecSetGpuDeformRunner(&_RunOnDevice);
 }
 
 void
 RigExecGpuRegisterClothRunner()
 {
+    RigExecSetGpuDeviceReleaser(&_ReleaseOnDevice);
     RigExecSetGpuClothRunner(&_RunClothOnDevice);
 }
 

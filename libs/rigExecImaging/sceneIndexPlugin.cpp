@@ -3,7 +3,7 @@
 // uses for its points-resolving skinning scene indices). Discovered
 // through Plug metadata; instantiated by UsdImagingCreateSceneIndices for
 // every constructed UsdImaging graph.
-// Note on placement (spec §10.1): the spec's canonical construction wraps
+// Note on placement: the canonical construction wraps
 // the completed UsdImaging branch explicitly. Stock usdview offers no
 // application hook, so this transport inserts inside the UsdImaging chain
 // via the sanctioned plugin point instead — a compatibility transport,

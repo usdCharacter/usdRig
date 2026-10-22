@@ -5,6 +5,7 @@
 #include "rigExec/movers/externalPlayback.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "rigExecMath/solvers.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 #include <cmath>
@@ -12,6 +13,30 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((influences, "rigExec:influences"))
+    ((transform, "rigExec:transform")));
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_armatureTokens,
+    (classicLinear)
+    ((influences, "rigExec:influences"))
+    (points)
+    (RigExecJoint)
+    (RigExecControl)
+    ((jointIndices, "rigExec:jointIndices"))
+    ((jointWeights, "rigExec:jointWeights"))
+    ((elementSize, "rigExec:elementSize"))
+    ((inputsMask, "inputs:mask"))
+    ((inputsUseBaseInput, "inputs:useBaseInput"))
+    ((skinningMethod, "rigExec:skinningMethod"))
+    ((inputsTransformInput, "inputs:transformInput"))
+    ((transform, "rigExec:transform")));
+
 namespace {
 // The declared inputs, in this order: assembly reads them by position.
 enum Input { kJointIndices, kJointWeights, kElementSize, kSkinningMethod, kMask,
@@ -23,18 +48,18 @@ std::vector<RigExecRevisionLeafKey>
 DeclaredInputs(const SdfPath &mover)
 {
     using Type = RigExecRevisionLeafType;
-    const auto key = [&](const char *name, Type type, VtValue fallback) {
-        return RigExecRevisionLeafKey{mover.AppendProperty(TfToken(name)), type,
+    const auto key = [&](const TfToken &name, Type type, VtValue fallback) {
+        return RigExecRevisionLeafKey{mover.AppendProperty(name), type,
             RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::Resolved,
             std::move(fallback)};
     };
-    return {key("rigExec:jointIndices", Type::IntArray, VtValue(VtIntArray())),
-            key("rigExec:jointWeights", Type::FloatArray, VtValue(VtFloatArray())),
-            key("rigExec:elementSize", Type::Int, VtValue(1)),
-            key("rigExec:skinningMethod", Type::Token, VtValue(TfToken("classicLinear"))),
-            key("inputs:mask", Type::FloatArray, VtValue(VtFloatArray())),
-            key("inputs:useBaseInput", Type::Bool, VtValue(false)),
-            key("inputs:transformInput", Type::Bool, VtValue(false))};
+    return {key(_armatureTokens->jointIndices, Type::IntArray, VtValue(VtIntArray())),
+            key(_armatureTokens->jointWeights, Type::FloatArray, VtValue(VtFloatArray())),
+            key(_armatureTokens->elementSize, Type::Int, VtValue(1)),
+            key(_armatureTokens->skinningMethod, Type::Token, VtValue(_armatureTokens->classicLinear)),
+            key(_armatureTokens->inputsMask, Type::FloatArray, VtValue(VtFloatArray())),
+            key(_armatureTokens->inputsUseBaseInput, Type::Bool, VtValue(false)),
+            key(_armatureTokens->inputsTransformInput, Type::Bool, VtValue(false))};
 }
 
 // \p value as T, or false when it holds another type.
@@ -58,14 +83,14 @@ bool Is(const char *token, const char *text) {
 
 void Bind(const RigExecMoverBindContext &ctx) {
     auto &binding = *ctx.binding;
-    binding.influences = RigExecRelationshipTargets(ctx.moverPrim, "rigExec:influences");
-    binding.transformPhase = RigExecPhaseForInput(ctx.moverPrim, "rigExec:influences");
+    binding.influences = RigExecRelationshipTargets(ctx.moverPrim, _relTokens->influences);
+    binding.transformPhase = RigExecPhaseForInput(ctx.moverPrim, _relTokens->influences);
     if (binding.transformPhase.kind == RigExecReadPhaseKind::Final)
         for (auto &path : binding.influences) {
             auto it = ctx.frameChainHeads.find(path);
             if (it != ctx.frameChainHeads.end()) path = it->second;
         }
-    auto transform=RigExecRelationshipTargets(ctx.moverPrim,"rigExec:transform");
+    auto transform=RigExecRelationshipTargets(ctx.moverPrim,_relTokens->transform);
     if(transform.size()==1) {
         binding.transform=transform[0];
         auto it=ctx.frameChainHeads.find(binding.transform);
@@ -81,16 +106,16 @@ void DeclareInputs(const RigExecMoverBindContext &ctx,
 bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                   const SdfPath &, RigExecRevisionBinding *binding, std::string *error) {
     if (!binding) return false;
-    const auto targets = [&](const char *name) {
-        const auto found = scene.relationships.find(mover.AppendProperty(TfToken(name)));
+    const auto targets = [&](const TfToken &name) {
+        const auto found = scene.relationships.find(mover.AppendProperty(name));
         return found == scene.relationships.end() ? SdfPathVector() : found->second.fact.targets;
     };
-    binding->influences = targets("rigExec:influences");
-    const auto influences = scene.relationships.find(mover.AppendProperty(TfToken("rigExec:influences")));
+    binding->influences = targets(_armatureTokens->influences);
+    const auto influences = scene.relationships.find(mover.AppendProperty(_armatureTokens->influences));
     if (influences != scene.relationships.end() &&
         !RigExecParseReadPhase(influences->second.readPhase.GetString(), &binding->transformPhase, error))
         return false;
-    const auto transform = targets("rigExec:transform");
+    const auto transform = targets(_armatureTokens->transform);
     if (transform.size() == 1) binding->transform = transform[0];
     binding->externalInputs = DeclaredInputs(mover);
     return true;
@@ -209,15 +234,15 @@ bool Play(const void *, const uint8_t *, size_t, const RigExecExternalPhasedPoin
 
 bool Validate(const RigExecMoverValidateContext &ctx, std::string *error) {
     auto reject = [&](const std::string &message) { *error = ctx.prim.GetPath().GetString()+": "+message; return false; };
-    if (ctx.targets.size()!=1 || ctx.targets[0].GetNameToken()!=TfToken("points") ||
+    if (ctx.targets.size()!=1 || ctx.targets[0].GetNameToken()!=_armatureTokens->points ||
         !UsdGeomPointBased(ctx.stage->GetPrimAtPath(ctx.targets[0].GetPrimPath())))
         return reject("requires one native point3f[] points property");
     VtVec3fArray points; ctx.stage->GetAttributeAtPath(ctx.targets[0]).Get(&points);
-    auto influences = RigExecRelationshipTargets(ctx.prim,"rigExec:influences");
+    auto influences = RigExecRelationshipTargets(ctx.prim,_relTokens->influences);
     if (influences.empty()) return reject("no influences");
     for (const auto &path : influences) {
         auto type = ctx.stage->GetPrimAtPath(path).GetTypeName();
-        if (type!=TfToken("RigExecJoint") && type!=TfToken("RigExecControl")) return reject("invalid frame provider");
+        if (type!=_armatureTokens->RigExecJoint && type!=_armatureTokens->RigExecControl) return reject("invalid frame provider");
     }
     // The authored layout against identity frames and the authored points.
     std::vector<VtValue> inputs;
@@ -245,8 +270,8 @@ RigExecMoverHandler Handler(const char *type) {
     handler.encodeExternalCompiledData = &EncodeCompiledData; handler.encodeExternal = &Encode;
     handler.runtimeKernel.prepare = &Prepare; handler.runtimeKernel.applyWithProviders = &Play;
     handler.hasScalarOracle = false;
-    handler.layoutAttributes = {TfToken("rigExec:jointIndices"),TfToken("rigExec:jointWeights"),
-        TfToken("rigExec:elementSize"),TfToken("inputs:mask"),TfToken("inputs:useBaseInput")};
+    handler.layoutAttributes = {_armatureTokens->jointIndices,_armatureTokens->jointWeights,
+        _armatureTokens->elementSize,_armatureTokens->inputsMask,_armatureTokens->inputsUseBaseInput};
     return handler;
 }
 }

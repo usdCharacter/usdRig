@@ -6,6 +6,7 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecScene/sceneDescriptors.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 
@@ -18,6 +19,31 @@
 
 PXR_NAMESPACE_USING_DIRECTIVE
 using namespace rigExec;
+
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((patch, "rigExec:patch"))
+    ((uvPoints, "rigExec:uvPoints"))
+    ((uvShapes, "rigExec:uvShapes")));
+
+// Interned once: callbacks, binders and validators run on parallel
+// lanes, and building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_patchTokens,
+    ((patch, "rigExec:patch"))
+    (points)
+    (pointWeights)
+    (uVertexCount)
+    (vVertexCount)
+    (uOrder)
+    (vOrder)
+    (uKnots)
+    (vKnots)
+    (uForm)
+    (open)
+    (vForm)
+    ((uvPoints, "rigExec:uvPoints"))
+    ((uvShapes, "rigExec:uvShapes")));
 
 namespace {
 
@@ -101,7 +127,7 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
     std::vector<RigExecRevisionLeafKey> inputs;
     inputs.reserve(UvShapes + 2 * shapeTargets.size() + 3);
     if (patchTarget.IsEmpty()) {
-        const SdfPath unbound = mover.AppendProperty(TfToken("rigExec:patch"));
+        const SdfPath unbound = mover.AppendProperty(_patchTokens->patch);
         const Type patchTypes[] = {
             Type::Vec3fArray, Type::DoubleArray, Type::Int, Type::Int,
             Type::Int, Type::Int, Type::DoubleArray, Type::DoubleArray,
@@ -112,30 +138,30 @@ DeclaredInputs(const SdfPath &mover, const SdfPath &patchTarget,
         }
     } else {
         const SdfPath prim = patchTarget.GetPrimPath();
-        inputs.push_back(key(prim.AppendProperty(TfToken("points")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->points),
                              Type::Vec3fArray, VtValue(VtVec3fArray())));
-        inputs.push_back(key(prim.AppendProperty(TfToken("pointWeights")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->pointWeights),
                              Type::DoubleArray, VtValue(VtDoubleArray())));
-        inputs.push_back(key(prim.AppendProperty(TfToken("uVertexCount")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->uVertexCount),
                              Type::Int, VtValue(0)));
-        inputs.push_back(key(prim.AppendProperty(TfToken("vVertexCount")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->vVertexCount),
                              Type::Int, VtValue(0)));
-        inputs.push_back(key(prim.AppendProperty(TfToken("uOrder")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->uOrder),
                              Type::Int, VtValue(0)));
-        inputs.push_back(key(prim.AppendProperty(TfToken("vOrder")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->vOrder),
                              Type::Int, VtValue(0)));
-        inputs.push_back(key(prim.AppendProperty(TfToken("uKnots")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->uKnots),
                              Type::DoubleArray, VtValue(VtDoubleArray())));
-        inputs.push_back(key(prim.AppendProperty(TfToken("vKnots")),
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->vKnots),
                              Type::DoubleArray, VtValue(VtDoubleArray())));
-        inputs.push_back(key(prim.AppendProperty(TfToken("uForm")),
-                             Type::Token, VtValue(TfToken("open"))));
-        inputs.push_back(key(prim.AppendProperty(TfToken("vForm")),
-                             Type::Token, VtValue(TfToken("open"))));
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->uForm),
+                             Type::Token, VtValue(_patchTokens->open)));
+        inputs.push_back(key(prim.AppendProperty(_patchTokens->vForm),
+                             Type::Token, VtValue(_patchTokens->open)));
     }
     if (uvTarget.IsEmpty()) {
         const SdfPath unbound =
-            mover.AppendProperty(TfToken("rigExec:uvPoints"));
+            mover.AppendProperty(_patchTokens->uvPoints);
         inputs.push_back({unbound, Type::Vec3fArray,
                           RigExecRevisionLeafTime::AtTime,
                           RigExecRevisionLeafFlavour::Raw, VtValue()});
@@ -340,31 +366,31 @@ void Bind(const RigExecMoverBindContext &ctx)
 {
     auto &b = *ctx.binding;
     const auto patches =
-        RigExecRelationshipTargets(ctx.moverPrim, "rigExec:patch");
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->patch);
     if (patches.size() == 1) {
         const SdfPath patchPoints =
-            patches[0].GetPrimPath().AppendProperty(TfToken("points"));
+            patches[0].GetPrimPath().AppendProperty(_patchTokens->points);
         const RigExecReadPhase phase =
-            RigExecPhaseForInput(ctx.moverPrim, "rigExec:patch");
+            RigExecPhaseForInput(ctx.moverPrim, _relTokens->patch);
         if (!phase.IsBase()) {
             b.phases[patchPoints] = phase;
         }
     }
     const auto uvs =
-        RigExecRelationshipTargets(ctx.moverPrim, "rigExec:uvPoints");
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->uvPoints);
     if (uvs.size() == 1) {
         const SdfPath uvPoints = RigExecPointsOf(uvs[0]);
         const RigExecReadPhase phase =
-            RigExecPhaseForInput(ctx.moverPrim, "rigExec:uvPoints");
+            RigExecPhaseForInput(ctx.moverPrim, _relTokens->uvPoints);
         if (!phase.IsBase()) {
             b.phases[uvPoints] = phase;
         }
     }
     const RigExecReadPhase shapePhase =
-        RigExecPhaseForInput(ctx.moverPrim, "rigExec:uvShapes");
+        RigExecPhaseForInput(ctx.moverPrim, _relTokens->uvShapes);
     if (!shapePhase.IsBase()) {
         for (const SdfPath &shape :
-             RigExecRelationshipTargets(ctx.moverPrim, "rigExec:uvShapes")) {
+             RigExecRelationshipTargets(ctx.moverPrim, _relTokens->uvShapes)) {
             b.phases[RigExecPointsOf(shape)] = shapePhase;
         }
     }
@@ -378,13 +404,13 @@ void DeclareInputs(const RigExecMoverBindContext &ctx,
                    std::vector<RigExecRevisionLeafKey> *inputs)
 {
     const auto patches =
-        RigExecRelationshipTargets(ctx.moverPrim, "rigExec:patch");
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->patch);
     const auto uvs =
-        RigExecRelationshipTargets(ctx.moverPrim, "rigExec:uvPoints");
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->uvPoints);
     *inputs = DeclaredInputs(
         ctx.moverPrim.GetPath(), patches.size() == 1 ? patches[0] : SdfPath(),
         uvs.size() == 1 ? uvs[0] : SdfPath(),
-        RigExecRelationshipTargets(ctx.moverPrim, "rigExec:uvShapes"),
+        RigExecRelationshipTargets(ctx.moverPrim, _relTokens->uvShapes),
         WeightSources(ctx.moverPrim));
 }
 
@@ -395,9 +421,9 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
     if (!binding) {
         return false;
     }
-    const auto relationship = [&](const char *name) {
+    const auto relationship = [&](const TfToken &name) {
         const auto found =
-            scene.relationships.find(mover.AppendProperty(TfToken(name)));
+            scene.relationships.find(mover.AppendProperty(name));
         return found == scene.relationships.end() ? nullptr : &found->second;
     };
     const auto phaseOf = [&](const RigExecSceneRelationshipDescriptor &rel,
@@ -406,7 +432,7 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
     };
     SdfPath patchTarget, uvTarget;
     SdfPathVector shapeTargets, weightSources;
-    if (const auto *rel = relationship("rigExec:patch");
+    if (const auto *rel = relationship(_patchTokens->patch);
         rel && rel->fact.targets.size() == 1) {
         patchTarget = rel->fact.targets[0];
         RigExecReadPhase phase;
@@ -415,10 +441,10 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
         }
         if (!phase.IsBase()) {
             binding->phases[patchTarget.GetPrimPath().AppendProperty(
-                TfToken("points"))] = phase;
+                _patchTokens->points)] = phase;
         }
     }
-    if (const auto *rel = relationship("rigExec:uvPoints");
+    if (const auto *rel = relationship(_patchTokens->uvPoints);
         rel && rel->fact.targets.size() == 1) {
         uvTarget = rel->fact.targets[0];
         RigExecReadPhase phase;
@@ -429,7 +455,7 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
             binding->phases[RigExecPointsOf(uvTarget)] = phase;
         }
     }
-    if (const auto *rel = relationship("rigExec:uvShapes")) {
+    if (const auto *rel = relationship(_patchTokens->uvShapes)) {
         shapeTargets = rel->fact.targets;
         RigExecReadPhase phase;
         if (!phaseOf(*rel, &phase)) {
@@ -629,11 +655,11 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
 {
     SdfPathVector patches, uvs, shapeTargets;
     if (RigExecOracleRelationship rel =
-            ctx.prim.GetRelationship(TfToken("rigExec:patch"))) {
+            ctx.prim.GetRelationship(_patchTokens->patch)) {
         rel.GetTargets(&patches);
     }
     if (RigExecOracleRelationship rel =
-            ctx.prim.GetRelationship(TfToken("rigExec:uvPoints"))) {
+            ctx.prim.GetRelationship(_patchTokens->uvPoints)) {
         rel.GetTargets(&uvs);
     }
     if (RigExecOracleRelationship rel =
@@ -645,7 +671,7 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     }
     const SdfPath patchPrimPath = patches[0].GetPrimPath();
     const SdfPath patchPointsPath =
-        patchPrimPath.AppendProperty(TfToken("points"));
+        patchPrimPath.AppendProperty(_patchTokens->points);
     const SdfPath uvPointsPath = RigExecPointsOf(uvs[0]);
 
     VtVec3fArray patchPoints, uvPoints;
@@ -698,8 +724,8 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
     if (!patchPrim) {
         return RigExecOracleResult::PassThrough;
     }
-    const auto read = [&](const char *name, auto fallback) {
-        const auto a = patchPrim.GetAttribute(TfToken(name));
+    const auto read = [&](const TfToken &name, auto fallback) {
+        const auto a = patchPrim.GetAttribute(name);
         if (a) {
             if (!ctx.resolved.GetAttribute(a, ctx.time, &fallback)) {
                 a.Get(&fallback, ctx.time);
@@ -707,15 +733,15 @@ RigExecOracleResult Oracle(const RigExecMoverOracleContext &ctx)
         }
         return fallback;
     };
-    const VtDoubleArray pointWeights = read("pointWeights", VtDoubleArray());
-    const int uVertexCount = read("uVertexCount", 0);
-    const int vVertexCount = read("vVertexCount", 0);
-    const int uOrder = read("uOrder", 0);
-    const int vOrder = read("vOrder", 0);
-    const VtDoubleArray uKnots = read("uKnots", VtDoubleArray());
-    const VtDoubleArray vKnots = read("vKnots", VtDoubleArray());
-    const TfToken uForm = read("uForm", TfToken("open"));
-    const TfToken vForm = read("vForm", TfToken("open"));
+    const VtDoubleArray pointWeights = read(_patchTokens->pointWeights, VtDoubleArray());
+    const int uVertexCount = read(_patchTokens->uVertexCount, 0);
+    const int vVertexCount = read(_patchTokens->vVertexCount, 0);
+    const int uOrder = read(_patchTokens->uOrder, 0);
+    const int vOrder = read(_patchTokens->vOrder, 0);
+    const VtDoubleArray uKnots = read(_patchTokens->uKnots, VtDoubleArray());
+    const VtDoubleArray vKnots = read(_patchTokens->vKnots, VtDoubleArray());
+    const TfToken uForm = read(_patchTokens->uForm, _patchTokens->open);
+    const TfToken vForm = read(_patchTokens->vForm, _patchTokens->open);
 
     bool uPeriodic = false, vPeriodic = false;
     if (!ValidForm(uForm.GetText(), &uPeriodic) ||
@@ -920,37 +946,37 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         *error = who + ": patch mover requires a single target";
         return false;
     }
-    const auto patches = RigExecRelationshipTargets(ctx.prim, "rigExec:patch");
+    const auto patches = RigExecRelationshipTargets(ctx.prim, _relTokens->patch);
     if (patches.size() != 1) {
         *error = who + ": rigExec:patch requires exactly one target";
         return false;
     }
-    const auto uvs = RigExecRelationshipTargets(ctx.prim, "rigExec:uvPoints");
+    const auto uvs = RigExecRelationshipTargets(ctx.prim, _relTokens->uvPoints);
     if (uvs.size() != 1) {
         *error = who + ": rigExec:uvPoints requires exactly one target";
         return false;
     }
     const UsdPrim patchPrim =
         ctx.stage->GetPrimAtPath(patches[0].GetPrimPath());
-    if (!patchPrim || !patchPrim.GetAttribute(TfToken("points"))) {
+    if (!patchPrim || !patchPrim.GetAttribute(_patchTokens->points)) {
         *error = who + ": rigExec:patch target has no points attribute";
         return false;
     }
     const SdfPath patchPointsPath =
-        patchPrim.GetPath().AppendProperty(TfToken("points"));
+        patchPrim.GetPath().AppendProperty(_patchTokens->points);
     const SdfPath uvPointsPath = RigExecPointsOf(uvs[0]);
     if (!IsPointsProperty(ctx.stage, uvPointsPath)) {
         *error = who + ": rigExec:uvPoints target is not a point3f[]/float3[] property";
         return false;
     }
     if (patchPointsPath == uvPointsPath &&
-        RigExecPhaseForInput(ctx.prim, "rigExec:patch") !=
-            RigExecPhaseForInput(ctx.prim, "rigExec:uvPoints")) {
+        RigExecPhaseForInput(ctx.prim, _relTokens->patch) !=
+            RigExecPhaseForInput(ctx.prim, _relTokens->uvPoints)) {
         *error = who + ": rigExec:patch and rigExec:uvPoints name the same "
                        "points property with conflicting read phases";
         return false;
     }
-    const auto shapes = RigExecRelationshipTargets(ctx.prim, "rigExec:uvShapes");
+    const auto shapes = RigExecRelationshipTargets(ctx.prim, _relTokens->uvShapes);
     VtVec3fArray neutral;
     const bool haveNeutral =
         ctx.stage->GetAttributeAtPath(uvPointsPath).Get(&neutral);

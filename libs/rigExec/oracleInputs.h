@@ -152,6 +152,8 @@ RigExecOracleScene RigExecCaptureOracleInputs(const UsdStageRefPtr &, const RigE
     UsdTimeCode,size_t pointCount,const std::vector<SdfPath> &roots,
     const std::map<SdfPath,VtValue> &upstream,
     RigExecOracleCaptureMode mode = RigExecOracleCaptureMode::ResolvedValues);
+SdfPathVector RigExecRelationshipTargets(const RigExecOraclePrim &, const TfToken &);
+RigExecReadPhase RigExecPhaseForInput(const RigExecOraclePrim &, const TfToken &);
 SdfPathVector RigExecRelationshipTargets(const RigExecOraclePrim &, const char *);
 RigExecReadPhase RigExecPhaseForInput(const RigExecOraclePrim &, const char *);
 bool RigExecResolveBlendSampleLayout(const RigExecOracleScene &,const SdfPath &,size_t,RigExecBlendSampleLayout *);

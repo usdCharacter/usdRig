@@ -31,7 +31,7 @@ class RigExecSkinTopologyCache;
 class RigExecResolvedInputs;
 
 /// The operation a revision performs. One node type per operation and value
-/// type, mirroring the frozen application signatures (spec §4.1): no runtime
+/// type, mirroring the frozen application signatures: no runtime
 /// operation dispatch inside a node.
 enum class RigExecRevisionOp {
     Matrix,
@@ -123,8 +123,7 @@ bool RigExecParseReadPhase(
 
 /// Where one revision reads its side inputs from.
 ///
-/// These are the bindings the compiler used to author onto the mover prim as
-/// rigExec:resolved* relationships so a registered computation could name them.
+/// These bindings are resolved in memory, never authored onto the mover prim.
 /// Every one is a build-time path choice -- which provider supplies the matrix,
 /// which prim carries the topology, which attribute holds the cage -- so in the
 /// graph they are just the paths an edge will be built from, and nothing needs
@@ -231,7 +230,7 @@ struct RigExecRevisionBinding {
 /// through the revision binding. These are the dynamic ones: results of
 /// computations on authored prims, pulled through a tap set on that same stage.
 /// A null/empty member means the provider produced nothing and normally fails
-/// the application rather than substituting a default (spec §6.6). The one
+/// the application rather than substituting a default. The one
 /// deliberate exception is weights: null means no weight object was bound,
 /// so inputs:defaultWeight supplies the common envelope.
 struct RigExecProviderValues {

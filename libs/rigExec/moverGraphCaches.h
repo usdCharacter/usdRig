@@ -315,8 +315,8 @@ public:
         // has been ruled out, because a property chain result outranks the
         // authored value the cache holds.
         // While no overlay is published there is nothing to rule out, so the
-        // read skips the path hash; the path itself is spelled once, because
-        // the cache lookup below used to spell it a second time.
+        // read skips the path hash; the path itself is spelled once and shared
+        // with the cache lookup below.
         if (attribute) {
             const bool checkOverlay = !_values.empty() || (_base && !_base->IsEmpty());
             const SdfPath attrPath =
@@ -333,10 +333,10 @@ public:
                 // The cache refused it: a connection to follow, or a value
                 // that varies with time -- which is every avar, so the
                 // refused reads are exactly the ones that recur every frame.
-                // MEASURED 2026-09-13, biped: ~11 600 scalar reads per frame,
-                // and an unconnected one still reaches the walk below, which
-                // allocates a std::set and a std::vector to discover there is
-                // no single connection to follow. Same answer, no allocation.
+                // An unconnected one would otherwise reach the walk below,
+                // which allocates a std::set and a std::vector to discover
+                // there is no single connection to follow. Same answer, no
+                // allocation per unconnected read.
                 if (!attribute.HasAuthoredConnections()) {
                     return attribute.Get(out, time);
                 }
@@ -548,12 +548,11 @@ private:
 /// Peer of RigExecSkinTopologyCache, and there for the same reason, but the
 /// arithmetic is starker here. A dense blend sample's full points array is
 /// read and copied off the stage once per sample per frame whether its
-/// channel sits at 0 or at 1 -- measured at 0.37-0.38 ms per sample per frame
-/// on a 26,276-point body, so 169 correctives cost ~65 ms/frame with the rig
-/// standing at REST. Resolving the shape
+/// channel sits at 0 or at 1, so a rig with many correctives pays for all
+/// of them with the rig standing at REST. Resolving the shape
 /// once per rig compilation and sharing it by pointer is what removes that, and the
-/// sparse layout is what makes the resolved shape small: the real correctives
-/// move 1,279 points on average, 4.87% of the mesh.
+/// sparse layout is what makes the resolved shape small: a corrective
+/// typically moves a small fraction of the mesh.
 ///
 /// Owned by the evaluator, never a static: a cache that outlives the
 /// evaluator outlives the stage it read, and a sculpt edit has to be able to

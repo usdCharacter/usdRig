@@ -102,6 +102,29 @@ RigExecBakedPlayback::NoteStageChanged()
 {
     if (_sampler) _sampler->NoteStageChanged();
     _historyHave = false;
+    // An edit may author or clear resetXformStack under a driven root.
+    _xformResetsValid = false;
+}
+
+const RigExecBakedPlayback::_OutputPath &
+RigExecBakedPlayback::_ResolveOutputPath(const std::string &text)
+{
+    const auto found = _outputPaths.find(text);
+    if (found != _outputPaths.end()) {
+        return found->second;
+    }
+    _OutputPath resolved;
+    if (_PlaybackPathOk(text)) {
+        resolved.ok = true;
+        resolved.path = SdfPath(text);
+        resolved.isPrim = resolved.path.IsPrimPath();
+        resolved.isProperty = resolved.path.IsPropertyPath();
+        resolved.primPath = resolved.path.GetPrimPath();
+        if (resolved.isProperty) {
+            resolved.name = resolved.path.GetNameToken();
+        }
+    }
+    return _outputPaths.emplace(text, std::move(resolved)).first->second;
 }
 
 bool
@@ -210,6 +233,10 @@ RigExecBakedPlayback::Open(const std::string &resolvedPath,
         RigExecBakedScheduleModeFromEnvironment() ==
             RigExecBakedScheduleMode::Parallel;
     _assetPath = resolvedPath;
+    _outputPaths.clear();
+    _xformResetRoots.clear();
+    _xformResetPaths.clear();
+    _xformResetsValid = false;
     // Admission condition 3 in playback: a listed input, holding its tag's
     // type, including the evaluator's admitted arrays.
     _listedInputs.clear();
@@ -458,15 +485,12 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     const TfToken &normalsName = _playbackTokens->normals;
     const TfToken &extentName = _playbackTokens->extent;
     for (const RigExecRuntimePoints &moved : _reader->GetPoints()) {
-        if (!_PlaybackPathOk(moved.path)) {
+        const _OutputPath &output = _ResolveOutputPath(moved.path);
+        if (!output.ok || !output.isProperty) {
             continue;
         }
-        const SdfPath propertyPath(moved.path);
-        if (!propertyPath.IsPropertyPath()) {
-            continue;
-        }
-        const SdfPath primPath = propertyPath.GetPrimPath();
-        const TfToken property = propertyPath.GetNameToken();
+        const SdfPath &primPath = output.primPath;
+        const TfToken &property = output.name;
         RigExecPublishedPrim *published = nullptr;
         if (property == pointsName || property == normalsName ||
             (property == extentName && moved.points.size() == 2)) {
@@ -503,16 +527,14 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     // Constraint-driven transforms, published onto the prim itself so
     // parented geometry rides along -- the bridge's _FillProviderXforms,
     // fed by the runtime's revised/base pair instead of the pose.
-    std::set<SdfPath> scanned;
+    std::vector<SdfPath> providerRoots;
     for (const RigExecRuntimeProviderXform &provider :
          _reader->GetProviderXforms()) {
-        if (!_PlaybackPathOk(provider.path)) {
+        const _OutputPath &output = _ResolveOutputPath(provider.path);
+        if (!output.ok || !output.isPrim) {
             continue;
         }
-        const SdfPath providerPath(provider.path);
-        if (!providerPath.IsPrimPath()) {
-            continue;
-        }
+        const SdfPath &providerPath = output.path;
         RigExecPublishedPrim &published = snapshot->prims[providerPath];
         published.assetRoot = _assetRoot;
         published.xform = GfMatrix4d(
@@ -535,40 +557,56 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             provider.base[3][2], provider.base[3][3]);
         published.hasXform = true;
         snapshot->hasDrivenXforms = true;
-        // Authored reset boundaries beneath driven roots, captured while
-        // the stage is still in reach: flattening erases them later.
-        bool covered = false;
-        for (const SdfPath &root : scanned) {
-            covered = covered || providerPath.HasPrefix(root);
-        }
-        if (covered) {
-            continue;
-        }
-        scanned.insert(providerPath);
-        const UsdPrim root = _stage->GetPrimAtPath(providerPath);
-        if (!root) {
-            continue;
-        }
-        for (const UsdPrim &prim : UsdPrimRange(root)) {
-            const UsdGeomXformable xform(prim);
-            if (xform && xform.GetResetXformStack()) {
-                snapshot->xformResetPaths.insert(prim.GetPath());
+        providerRoots.push_back(providerPath);
+    }
+    // Authored reset boundaries beneath driven roots, captured while the
+    // stage is still in reach: flattening erases them later. The walk runs
+    // when the driven set or the stage changes, not every frame.
+    if (!_xformResetsValid || providerRoots != _xformResetRoots) {
+        _xformResetPaths.clear();
+        std::vector<SdfPath> scanned;
+        for (const SdfPath &providerPath : providerRoots) {
+            bool covered = false;
+            for (const SdfPath &root : scanned) {
+                covered = covered || providerPath.HasPrefix(root);
+            }
+            if (covered) {
+                continue;
+            }
+            scanned.push_back(providerPath);
+            const UsdPrim root = _stage->GetPrimAtPath(providerPath);
+            if (!root) {
+                continue;
+            }
+            for (const UsdPrim &prim : UsdPrimRange(root)) {
+                const UsdGeomXformable xform(prim);
+                if (xform && xform.GetResetXformStack()) {
+                    _xformResetPaths.insert(prim.GetPath());
+                }
             }
         }
+        _xformResetRoots = std::move(providerRoots);
+        _xformResetsValid = true;
     }
+    snapshot->xformResetPaths = _xformResetPaths;
 
     // The influence overlay, from the fields the runtime published --
     // what the movers consumed, not a re-derivation, like the bridge.
     if (!_weightOverlay.IsEmpty()) {
         for (const RigExecRuntimeWeightField &field :
              _reader->GetWeightFields()) {
-            if (field.path != _weightOverlay.GetString() ||
-                field.weights.empty() ||
-                !_PlaybackPathOk(field.target)) {
+            if (field.weights.empty()) {
                 continue;
             }
-            const SdfPath geomPath =
-                SdfPath(field.target).GetPrimPath();
+            const _OutputPath &weight = _ResolveOutputPath(field.path);
+            if (!weight.ok || weight.path != _weightOverlay) {
+                continue;
+            }
+            const _OutputPath &target = _ResolveOutputPath(field.target);
+            if (!target.ok) {
+                continue;
+            }
+            const SdfPath &geomPath = target.primPath;
             if (geomPath.IsEmpty() || geomPath.IsAbsoluteRootPath()) {
                 continue;
             }

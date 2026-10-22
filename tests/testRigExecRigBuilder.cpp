@@ -88,6 +88,42 @@ main()
     RigExecJointHandle endJoint =
         builder.AddJoint("EndJoint", GfMatrix4d(), &middleJoint);
 
+    // A parent's role comes from its schema, not from the scope it sits in:
+    // any control or joint under the rig root may parent a new one, and one
+    // outside the root may not.
+    {
+        stage->DefinePrim(SdfPath("/Rig/Arm"), TfToken("Scope"));
+        stage->DefinePrim(SdfPath("/Rig/Arm/ArmCtl"),
+                          TfToken("RigExecControl"));
+        stage->DefinePrim(SdfPath("/Rig/Arm/ArmJnt"), TfToken("RigExecJoint"));
+        const RigExecControlHandle armControl(stage,
+                                              SdfPath("/Rig/Arm/ArmCtl"));
+        const RigExecJointHandle armJoint(stage, SdfPath("/Rig/Arm/ArmJnt"));
+        const RigExecControlHandle wrist =
+            builder.AddControl("WristCtl", GfMatrix4d(), &armControl);
+        CHECK(wrist.GetPath() == SdfPath("/Rig/Arm/ArmCtl/WristCtl"));
+        const RigExecJointHandle wristJoint =
+            builder.AddJoint("WristJnt", GfMatrix4d(), &armJoint);
+        CHECK(wristJoint.GetPath() == SdfPath("/Rig/Arm/ArmJnt/WristJnt"));
+
+        stage->DefinePrim(SdfPath("/Elsewhere/OutCtl"),
+                          TfToken("RigExecControl"));
+        stage->DefinePrim(SdfPath("/Elsewhere/OutJnt"),
+                          TfToken("RigExecJoint"));
+        const RigExecControlHandle outControl(stage,
+                                              SdfPath("/Elsewhere/OutCtl"));
+        const RigExecJointHandle outJoint(stage,
+                                          SdfPath("/Elsewhere/OutJnt"));
+        CHECK(Throws([&] {
+            builder.AddControl("Stray", GfMatrix4d(), &outControl);
+        }));
+        CHECK(Throws([&] {
+            builder.AddJoint("Stray", GfMatrix4d(), &outJoint);
+        }));
+        stage->RemovePrim(SdfPath("/Elsewhere"));
+        stage->RemovePrim(SdfPath("/Rig/Arm"));
+    }
+
     // Scale is part of the same schema-backed avar surface on controls and
     // joints. The typed setters must author the declared double properties,
     // never custom lookalikes.

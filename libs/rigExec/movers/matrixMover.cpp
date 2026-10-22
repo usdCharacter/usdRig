@@ -1,4 +1,4 @@
-// RigExecMatrixMover: everything about the matrix mover (spec §4.1).
+// RigExecMatrixMover: everything about the matrix mover.
 // A matrix mover applies one provider's transform to a points array,
 // measured against an optional transform space: p' = q + w (T q - q).
 // This TU owns its exec-side computeMoverParameters registration and
@@ -22,6 +22,26 @@ using rigExec::RigExecMoverExecTokens;
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
+// Relationship names the binders and validators read, interned once:
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_relTokens,
+    ((transform, "rigExec:transform"))
+    ((transformSpace, "rigExec:transformSpace"))
+    ((space, "rigExec:space"))
+    ((referenceTransform, "rigExec:referenceTransform"))
+    ((referenceTransformSpace, "rigExec:referenceTransformSpace")));
+
+// Interned once: callbacks and validators run on parallel lanes, and
+// building a token from text takes the registry lock.
+TF_DEFINE_PRIVATE_TOKENS(_matrixTokens,
+    (matrix)
+    (radial)
+    ((transform, "rigExec:transform"))
+    (RigExecControl)
+    (RigExecJoint)
+    ((transformSpace, "rigExec:transformSpace"))
+    ((space, "rigExec:space")));
+
 namespace {
 const TfToken _oraclePointFrame("rigExec:pointFrame");
 const TfToken _oracleRestFrame("rest");
@@ -34,7 +54,7 @@ RigExecMoverParameters
 _BuildMatrixMoverParameters(const VdfContext &ctx)
 {
     RigExecMoverParameters params;
-    params.kind = TfToken("matrix");
+    params.kind = _matrixTokens->matrix;
     const bool *enabled =
         ctx.GetInputValuePtr<bool>(RigExecMoverExecTokens->enabled);
     params.enabled = enabled ? *enabled : true;
@@ -49,10 +69,9 @@ _BuildMatrixMoverParameters(const VdfContext &ctx)
     // Read here AND in RigExecAssembleMatrixParameters: the biped runs its
     // baked program, which never touches this builder, so a flag set only
     // here is silently ignored on exactly the rig it was turned on for.
-    static const TfToken radial("radial");
     const TfToken *blend =
         ctx.GetInputValuePtr<TfToken>(RigExecMoverExecTokens->weightBlendAttr);
-    params.radialWeight = blend && *blend == radial;
+    params.radialWeight = blend && *blend == _matrixTokens->radial;
 
     const GfMatrix4d *transform =
         ctx.GetInputValuePtr<GfMatrix4d>(RigExecMoverExecTokens->transform);
@@ -60,7 +79,7 @@ _BuildMatrixMoverParameters(const VdfContext &ctx)
         !rigExec::RigExecMoverSetCommonEnvelope(ctx, &params)) {
         return params;  // MoverFailed
     }
-    // The matrix must be finite and affine (spec §7.4).
+    // The matrix must be finite and affine.
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
             if (!std::isfinite((*transform)[i][j])) {
@@ -84,12 +103,12 @@ _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
     const UsdPrim &moverPrim = ctx.moverPrim;
     const std::map<SdfPath, SdfPath> &frameChainHeads = ctx.frameChainHeads;
     // "final" binds the provider's frame-chain head instead of the
-    // provider itself; every other phase binds the provider (spec §12.1).
+    // provider itself; every other phase binds the provider.
     const SdfPathVector transforms =
-        rigExec::RigExecRelationshipTargets(moverPrim, "rigExec:transform");
+        rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->transform);
     SdfPath provider = transforms.empty() ? SdfPath() : transforms[0];
     binding.transformPhase =
-        rigExec::RigExecPhaseForInput(moverPrim, "rigExec:transform");
+        rigExec::RigExecPhaseForInput(moverPrim, _relTokens->transform);
     if (binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
         const auto it = frameChainHeads.find(provider);
         if (it != frameChainHeads.end()) {
@@ -98,7 +117,7 @@ _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
     }
     binding.transform = provider;
     const SdfPathVector spaces = rigExec::RigExecRelationshipTargets(
-        moverPrim, "rigExec:transformSpace");
+        moverPrim, _relTokens->transformSpace);
     SdfPath space = spaces.empty() ? SdfPath() : spaces[0];
     if (!space.IsEmpty() &&
         binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
@@ -111,7 +130,7 @@ _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
     // rigExec:space, the rig's carry, read at the transform's phase. Only a
     // cluster whose points are posed applies it (RigExecClusterInPointFrame).
     const SdfPathVector carries =
-        rigExec::RigExecRelationshipTargets(moverPrim, "rigExec:space");
+        rigExec::RigExecRelationshipTargets(moverPrim, _relTokens->space);
     SdfPath carry = carries.empty() ? SdfPath() : carries[0];
     if (!carry.IsEmpty() &&
         binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
@@ -125,9 +144,8 @@ _BindMatrixMover(const rigExec::RigExecMoverBindContext &ctx)
     // neutral references: transform first, then transformSpace. This gives
     // them the same phase, dependency, invalidation and frozen-run handling
     // as the provider lists used by skin and wire movers.
-    for (const char *name : {"rigExec:referenceTransform",
-                             "rigExec:referenceTransformSpace"}) {
-        const auto targets = rigExec::RigExecRelationshipTargets(moverPrim, name);
+    for (const TfToken *name : {&_relTokens->referenceTransform, &_relTokens->referenceTransformSpace}) {
+        const auto targets = rigExec::RigExecRelationshipTargets(moverPrim, *name);
         if (targets.empty()) continue;
         SdfPath reference = targets.front();
         if (binding.transformPhase.kind == rigExec::RigExecReadPhaseKind::Final) {
@@ -188,7 +206,7 @@ _ValidateMatrixMover(
         return false;
     }
     // Exact Sdf type/role check: equal C++ element types never infer
-    // compatibility (spec §7.2).
+    // compatibility.
     const UsdAttribute targetAttr =
         stage->GetAttributeAtPath(targets[0]);
     if (!targetAttr ||
@@ -199,7 +217,7 @@ _ValidateMatrixMover(
 
     SdfPathVector transforms;
     if (UsdRelationship rel =
-            prim.GetRelationship(TfToken("rigExec:transform"))) {
+            prim.GetRelationship(_matrixTokens->transform)) {
         rel.GetTargets(&transforms);
     }
     if (transforms.size() != 1) {
@@ -208,11 +226,13 @@ _ValidateMatrixMover(
     }
     // The transform target must be a catalogued computeMatrix provider.
     const UsdPrim transformPrim = stage->GetPrimAtPath(transforms[0]);
-    static const std::set<TfToken> frameProviderTypes = {
-        TfToken("RigExecControl"), TfToken("RigExecJoint")};
+    const auto isFrameProvider = [](const TfToken &type) {
+        return type == _matrixTokens->RigExecControl ||
+               type == _matrixTokens->RigExecJoint;
+    };
     SdfPathVector spaces;
     if (UsdRelationship rel =
-            prim.GetRelationship(TfToken("rigExec:transformSpace"))) {
+            prim.GetRelationship(_matrixTokens->transformSpace)) {
         rel.GetTargets(&spaces);
     }
     if (spaces.size() > 1) {
@@ -221,7 +241,7 @@ _ValidateMatrixMover(
     }
     if (!spaces.empty()) {
         const UsdPrim spacePrim = stage->GetPrimAtPath(spaces[0]);
-        if (!spacePrim || !frameProviderTypes.count(spacePrim.GetTypeName())) {
+        if (!spacePrim || !isFrameProvider(spacePrim.GetTypeName())) {
             *error = who + ": rigExec:transformSpace target is not a "
                            "catalogued matrix provider";
             return false;
@@ -232,7 +252,7 @@ _ValidateMatrixMover(
     // a carry that silently resolved to nothing is exactly the bug it was
     // added to fix, reappearing as a typo nobody is told about.
     SdfPathVector carries;
-    if (UsdRelationship rel = prim.GetRelationship(TfToken("rigExec:space"))) {
+    if (UsdRelationship rel = prim.GetRelationship(_matrixTokens->space)) {
         rel.GetTargets(&carries);
     }
     if (carries.size() > 1) {
@@ -241,7 +261,7 @@ _ValidateMatrixMover(
     }
     if (!carries.empty()) {
         const UsdPrim carryPrim = stage->GetPrimAtPath(carries[0]);
-        if (!carryPrim || !frameProviderTypes.count(carryPrim.GetTypeName())) {
+        if (!carryPrim || !isFrameProvider(carryPrim.GetTypeName())) {
             *error = who + ": rigExec:space target is not a catalogued "
                            "matrix provider";
             return false;
@@ -251,16 +271,16 @@ _ValidateMatrixMover(
     // pre-alignment landmark transform model, superseded by RigExecXformable
     // (matrix rest/posed spaces plus avars) and applied by nothing.
     const bool isProvider =
-        transformPrim && frameProviderTypes.count(transformPrim.GetTypeName());
+        transformPrim && isFrameProvider(transformPrim.GetTypeName());
     if (!isProvider) {
         *error = who + ": rigExec:transform target is not a catalogued "
                        "matrix provider";
         return false;
     }
     const auto references = rigExec::RigExecRelationshipTargets(
-        prim, "rigExec:referenceTransform");
+        prim, _relTokens->referenceTransform);
     const auto referenceSpaces = rigExec::RigExecRelationshipTargets(
-        prim, "rigExec:referenceTransformSpace");
+        prim, _relTokens->referenceTransformSpace);
     if (references.size() > 1 || referenceSpaces.size() > 1 ||
         (!referenceSpaces.empty() && (references.empty() || spaces.empty())) ||
         (!references.empty() && !spaces.empty() && referenceSpaces.empty())) {
@@ -271,7 +291,7 @@ _ValidateMatrixMover(
     for (const auto &paths : {references, referenceSpaces}) {
         for (const auto &path : paths) {
             const UsdPrim reference = stage->GetPrimAtPath(path);
-            if (!reference || !frameProviderTypes.count(reference.GetTypeName())) {
+            if (!reference || !isFrameProvider(reference.GetTypeName())) {
                 *error = who + ": reference target is not a matrix provider";
                 return false;
             }
@@ -288,7 +308,7 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
     const SdfPath &moverPath = ctx.moverPath;
     std::vector<std::string> *diagnostics = ctx.diagnostics;
     VtVec3fArray &points = *ctx.points;
-    // p' = q + w (T q - q) (spec §7.4).
+    // p' = q + w (T q - q).
     SdfPathVector transforms;
     if (rigExec::RigExecOracleRelationship rel =
             prim.GetRelationship(_oracleToken0)) {
@@ -300,11 +320,11 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
             ": transform must have exactly one target");
         return RigExecOracleResult::PassThrough;
     }
-    const auto phase = rigExec::RigExecPhaseForInput(prim, "rigExec:transform");
+    const auto phase = rigExec::RigExecPhaseForInput(prim, _relTokens->transform);
     const bool final = phase.kind == rigExec::RigExecReadPhaseKind::Final;
     std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
-    for (const char *name : {"rigExec:transform", "rigExec:transformSpace", "rigExec:referenceTransform", "rigExec:referenceTransformSpace"}) {
-        for (const auto &path : rigExec::RigExecRelationshipTargets(prim,name)) {
+    for (const TfToken *name : {&_relTokens->transform, &_relTokens->transformSpace, &_relTokens->referenceTransform, &_relTokens->referenceTransformSpace}) {
+        for (const auto &path : rigExec::RigExecRelationshipTargets(prim,*name)) {
             const auto *value = ctx.phasedMatrix ? ctx.phasedMatrix(path,phase,moverPath) : nullptr;
             if (value) matrices[path] = *value;
         }
@@ -318,7 +338,7 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         return RigExecOracleResult::PassThrough;
     }
     GfMatrix4d m = matrixIt->second;
-    const auto normalize = [&](const char *name, GfMatrix4d *value) {
+    const auto normalize = [&](const TfToken &name, GfMatrix4d *value) {
         const auto refs = rigExec::RigExecRelationshipTargets(prim, name);
         if (refs.empty()) return true;
         const auto it = matrices.find(refs.front());
@@ -326,7 +346,7 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
         *value = rigExec::RigExecMeasureFromReference(*value, it->second);
         return true;
     };
-    if (!normalize("rigExec:referenceTransform", &m)) {
+    if (!normalize(_relTokens->referenceTransform, &m)) {
         return RigExecOracleResult::PassThrough;
     }
     SdfPathVector spaces;
@@ -344,14 +364,14 @@ _OracleMatrixMover(const rigExec::RigExecMoverOracleContext &ctx)
             return RigExecOracleResult::PassThrough;
         }
         GfMatrix4d space = spaceIt->second;
-        if (!normalize("rigExec:referenceTransformSpace", &space)) {
+        if (!normalize(_relTokens->referenceTransformSpace, &space)) {
             return RigExecOracleResult::PassThrough;
         }
         m = rigExec::RigExecMeasureInSpace(m, space);
         TfToken pointFrame = _oracleRestFrame;
         prim.GetAttribute(_oraclePointFrame).Get(&pointFrame,ctx.time);
         if (pointFrame == "posed") {
-            const auto carries = rigExec::RigExecRelationshipTargets(prim,"rigExec:space");
+            const auto carries = rigExec::RigExecRelationshipTargets(prim,_relTokens->space);
             if (!carries.empty()) {
                 const auto *carry = ctx.phasedMatrix ? ctx.phasedMatrix(carries[0],phase,moverPath) : nullptr;
                 if (!carry) return RigExecOracleResult::PassThrough;

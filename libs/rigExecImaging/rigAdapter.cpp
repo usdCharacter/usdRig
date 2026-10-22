@@ -5,8 +5,7 @@
 // such hook -- its FrameRecorder only calls UsdImagingStageSceneIndex::SetTime
 // per frame. So a rig recorded with usdrecord renders its rest pose on every
 // frame: evaluation never runs.
-// This adapter closes that gap with no application code (docs/specs/
-// imaging-datasource-redesign.md §3.2). It contributes one time-varying leaf,
+// This adapter closes that gap with no application code. It contributes one time-varying leaf,
 // rigExec/time, to every RigExecRoot prim's data; it notes each root at
 // subprim-enumeration time so the results index's _PrimsAdded can force the
 // data (and the activation) into existence during populate; and it activates

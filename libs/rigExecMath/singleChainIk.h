@@ -49,7 +49,8 @@ struct RigExecSingleChainIkParams {
 /// joint origins is measured from currentFrames and preserved at zero stretch.
 /// Positive stretch permits uniform length growth beyond full reach, with
 /// matching frame scaling along each bone. A reachable
-/// effector origin is reached by deterministic FABRIK; a goal beyond full
+/// effector origin is reached by deterministic FABRIK (Aristidou and Lasenby
+/// 2011, see docs/references.md); a goal beyond full
 /// extension returns the chain aimed at the goal at its maximum reach.
 /// RotatePlane solves in the plane spanned by the root-to-goal direction and
 /// absolute pole point, rotated by twist; it does not consume effector
