@@ -318,6 +318,15 @@ jobs:
           tar -C usd-install -xf usd-install.tar
           tar -C build -xf usdrig-build.tar
 
+      # Imaging and GPU test binaries link OpenGL at load time through
+      # garch, so this fresh runner needs the same GL/X11 closure the
+      # build jobs installed.
+      - name: Install test runtime dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev xorg-dev
+
       - name: Run C++ tests
         run: |
           ctest --test-dir build \
