@@ -2407,6 +2407,14 @@ class "RigExecWeightObject" (
     }
 )
 {
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
+        }
+    )
     uniform token rigExec:rangePolicy = "strict" (
         allowedTokens = ["strict", "clamp"]
     )
@@ -2429,6 +2437,14 @@ class RigExecStaticWeight "RigExecStaticWeight" (
     }
 )
 {
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
+        }
+    )
     uniform float rigExec:defaultWeight = 0
     uniform int[] rigExec:indices = []
     uniform token rigExec:rangePolicy = "strict" (
@@ -2454,6 +2470,14 @@ class RigExecDynamicWeight "RigExecDynamicWeight" (
     }
 )
 {
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
+        }
+    )
     float inputs:bias = 0
     float inputs:driver = 1
     float inputs:scale = 1
@@ -2535,11 +2559,19 @@ class "RigExecVolumeWeight" (
         }
     )
     float guide:displayOpacity = 0.35
-    uniform token guide:drawMode = "wire" (
-        allowedTokens = ["wire", "geometry", "none"]
+    uniform token guide:drawMode = "falloff" (
+        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
         customData = {
-            string userDocBrief = """wire draws the falloffMin and falloffMax iso-surfaces as
-        curves, widthed by guide:wireWidth."""
+            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
+        continuous inner rings and a dashed exterior cage at falloffMax."""
+        }
+    )
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
         }
     )
     double guide:wireWidth = 0.05 (
@@ -2736,11 +2768,19 @@ class RigExecSphereWeight "RigExecSphereWeight" (
         }
     )
     float guide:displayOpacity = 0.35
-    uniform token guide:drawMode = "wire" (
-        allowedTokens = ["wire", "geometry", "none"]
+    uniform token guide:drawMode = "falloff" (
+        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
         customData = {
-            string userDocBrief = """wire draws the falloffMin and falloffMax iso-surfaces as
-        curves, widthed by guide:wireWidth."""
+            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
+        continuous inner rings and a dashed exterior cage at falloffMax."""
+        }
+    )
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
         }
     )
     double guide:wireWidth = 0.05 (
@@ -2972,11 +3012,19 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
         }
     )
     float guide:displayOpacity = 0.35
-    uniform token guide:drawMode = "wire" (
-        allowedTokens = ["wire", "geometry", "none"]
+    uniform token guide:drawMode = "falloff" (
+        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
         customData = {
-            string userDocBrief = """wire draws the falloffMin and falloffMax iso-surfaces as
-        curves, widthed by guide:wireWidth."""
+            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
+        continuous inner rings and a dashed exterior cage at falloffMax."""
+        }
+    )
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
         }
     )
     double guide:wireWidth = 0.05 (
@@ -3197,11 +3245,19 @@ class RigExecCurveWeight "RigExecCurveWeight" (
         }
     )
     float guide:displayOpacity = 0.35
-    uniform token guide:drawMode = "wire" (
-        allowedTokens = ["wire", "geometry", "none"]
+    uniform token guide:drawMode = "falloff" (
+        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
         customData = {
-            string userDocBrief = """wire draws the falloffMin and falloffMax iso-surfaces as
-        curves, widthed by guide:wireWidth."""
+            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
+        continuous inner rings and a dashed exterior cage at falloffMax."""
+        }
+    )
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
         }
     )
     double guide:wireWidth = 0.05 (
@@ -3356,6 +3412,14 @@ class RigExecCombineWeight "RigExecCombineWeight" (
     }
 )
 {
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates blue, cyan, green, yellow and red at weights
+        0, .25, .5, .75 and 1."""
+        }
+    )
     float inputs:invert = 0 (
         customData = {
             string userDocBrief = "Reflects the folded field about 0.5; lerped, as elsewhere."

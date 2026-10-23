@@ -2752,7 +2752,7 @@ sphere authored inside the probe joint rides it, so the region the mover
 grabs travels and a bump walks back and forth. The plank is wider than
 the ball and the travel stops short of both ends, so the field never
 runs off an edge: it stays a complete red disc ringed by grey. In the
-default wire draw, the max-weight interior is geometry at 50% opacity
+legacy wire draw, the max-weight interior is geometry at 50% opacity
 with dotted great-circle rings on it, and the exterior falloff is the
 same dotted wire — the translucent ball is `inputs:falloffMin` 0.6,
 where the field is fully on and the plank is lifted the whole unit,

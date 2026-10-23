@@ -91,6 +91,8 @@ struct RigExecVolumeGuideElement {
     }
 };
 
+enum class RigExecWeightDisplay { Tint, Heatmap, Bands };
+
 /// The published results for one Hydra prim in one generation. Only
 /// standard data crosses this boundary: local xforms,
 /// points/normals as flat primvars, and the two-element extent.
@@ -250,6 +252,7 @@ struct RigExecPublishedPrim {
     /// so an ordinary render is byte-for-byte what it was.
     bool hasWeightOverlay = false;
     VtFloatArray weightOverlay;
+    RigExecWeightDisplay weightDisplay = RigExecWeightDisplay::Tint;
 
     /// Volume weight guide payload: the falloffMin and falloffMax
     /// iso-surfaces one placed influence volume draws.
@@ -724,7 +727,8 @@ private:
             changes |= RigExecChangeGuides;
         }
         if (after.hasWeightOverlay &&
-            before->weightOverlay != after.weightOverlay) {
+            (before->weightOverlay != after.weightOverlay ||
+             before->weightDisplay != after.weightDisplay)) {
             changes |= RigExecChangeWeightOverlay;
         }
         return changes;

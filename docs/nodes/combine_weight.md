@@ -66,6 +66,19 @@ its points through unchanged.
 
 ### Weight field
 
+#### `guide:weightDisplay`
+
+*Type:* `uniform token`. *Default:* `"tint"`.
+
+Valid values: `tint`, `heatmap`, `bands`.
+
+Selected influence overlay: tint blends gray to red;
+heatmap interpolates blue, cyan, green, yellow and red at weights
+0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
+Colors use resolved vertex weights, clamped to [0,1] for display;
+faces interpolate them, so bands are approximate on coarse meshes.
+Does not change weights, materials or opacity on the source stage.
+
 #### `rigExec:weightTarget`
 
 *Relationship.*

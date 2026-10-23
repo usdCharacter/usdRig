@@ -108,6 +108,7 @@ struct Fixture {
                                SdfValueTypeNames->Float).Set(0.0f);
         volume.CreateAttribute(TfToken("inputs:falloffMax"),
                                SdfValueTypeNames->Float).Set(2.0f);
+        volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
         // Linear keeps the expected weights arithmetic rather than
         // smoothstep evaluations.
         volume.CreateAttribute(TfToken("rigExec:falloffProfile"),
@@ -831,6 +832,7 @@ TestPlaneAndCurveVolumeGuides()
         // wiring, different volume type.
         f.stage->RemovePrim(_kVolumePath);
         UsdPrim volume = f.stage->DefinePrim(_kVolumePath, c.type);
+        volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
         GfMatrix4d at(1.0);
         at.SetTranslate(GfVec3d(0, 0, 0));
         volume.CreateAttribute(TfToken("posed:space"),
@@ -1223,6 +1225,7 @@ TestPlaneGuideSizeIsExtentsNotBand()
     f.stage->RemovePrim(_kVolumePath);
     UsdPrim volume =
         f.stage->DefinePrim(_kVolumePath, TfToken("RigExecPlaneWeight"));
+    volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
     GfMatrix4d at(1.0);
     volume.CreateAttribute(TfToken("posed:space"),
                            SdfValueTypeNames->Matrix4d).Set(at);
@@ -1821,6 +1824,84 @@ DefaultResourceDir()
 #endif
 }
 
+void
+TestWeightDisplayStyles()
+{
+    Fixture f;
+    UsdPrim volume = f.stage->GetPrimAtPath(_kVolumePath);
+    volume.GetAttribute(TfToken("guide:drawMode")).Clear();
+    TfToken defaultMode;
+    CHECK(volume.GetAttribute(TfToken("guide:drawMode")).Get(&defaultMode));
+    CHECK(defaultMode == TfToken("falloff"));
+    volume.GetAttribute(TfToken("inputs:falloffMin")).Set(0.5f);
+    auto store = std::make_shared<RigExecSnapshotStore>();
+    RigExecImagingBridge bridge(f.stage, _kRigPath, store);
+    CHECK(bridge.Compile());
+    auto binding = RigExecBindingResolvingSceneIndex::New(_BuildUpstream());
+    auto results = RigExecResultsSceneIndex::New(binding, store);
+    bridge.SetSceneIndices(binding, results);
+    bridge.SetWeightOverlay(_kVolumePath);
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+    const auto retained = store->Get();
+    const VtFloatArray weights = retained->prims.at(_kMeshPath).weightOverlay;
+    const auto originalGuides = retained->prims.at(_kVolumePath).volumeGuides;
+
+    for (const char *style : {"falloff", "cage", "brackets", "shell", "none", "wire"}) {
+        volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken(style));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        const auto snapshot = store->Get();
+        CHECK(snapshot->prims.at(_kMeshPath).weightOverlay == weights);
+        const auto children = results->GetChildPrimPaths(_kVolumePath);
+        const std::string mode(style);
+        CHECK(children.size() == (mode == "none" ? 0 :
+            mode == "wire" || mode == "shell" || mode == "falloff" ? 3 : 2));
+        for (const SdfPath &child : children) CHECK(results->GetPrim(child).dataSource);
+        CHECK(retained->prims.at(_kVolumePath).volumeGuides == originalGuides);
+        if (mode == "falloff") {
+            const auto &guides = snapshot->prims.at(_kVolumePath).volumeGuides;
+            CHECK(guides.size() == 3);
+            CHECK(guides[0].primType == HdPrimTypeTokens->mesh);
+            CHECK(Near(float(guides[0].xform.GetRow3(0).GetLength()), 0.5f));
+            CHECK(Near(guides[0].opacity, 0.35f * 0.25f));
+            CHECK(guides[1].counts == VtIntArray({65, 65, 65}));
+            CHECK(guides[2].primType == HdPrimTypeTokens->basisCurves);
+            CHECK(Near(float(guides[2].xform.GetRow3(0).GetLength()), 2.0f));
+            for (int count : guides[2].counts) CHECK(count == 2);
+        }
+        if (mode == "cage" || mode == "brackets") {
+            const auto &guides = snapshot->prims.at(_kVolumePath).volumeGuides;
+            CHECK(guides.size() == 2);
+            for (const auto &guide : guides) {
+                CHECK(guide.primType == HdPrimTypeTokens->basisCurves);
+                CHECK(Near(float(guide.wireWidth), 0.015f));
+            }
+        }
+    }
+    VtVec3fArray previous = _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
+    for (const char *style : {"heatmap", "bands", "tint"}) {
+        volume.GetAttribute(TfToken("guide:weightDisplay")).Set(TfToken(style));
+        std::string before;
+        f.stage->GetRootLayer()->ExportToString(&before);
+        const auto publication = bridge.EvaluateAndPublishResult(UsdTimeCode::Default());
+        CHECK(publication.ok);
+        results->NotifyGenerationPublished(publication.dirtied);
+        bool dirty = false;
+        for (const auto &entry : publication.dirtied)
+            if (entry.path == _kMeshPath)
+                dirty |= (entry.changes & RigExecChangeWeightOverlay) != 0;
+        CHECK(dirty);
+        const auto colors = _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
+        CHECK(colors.size() == weights.size());
+        CHECK(colors != previous);
+        previous = colors;
+        CHECK(store->Get()->prims.at(_kMeshPath).weightOverlay == weights);
+        CHECK(retained->prims.at(_kMeshPath).weightOverlay == weights);
+        std::string after;
+        f.stage->GetRootLayer()->ExportToString(&after);
+        CHECK(before == after);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1834,6 +1915,7 @@ main(int argc, char **argv)
     }
 
     TestPoseCarriesWeightField();
+    TestWeightDisplayStyles();
     TestOverlayPublishesDisplayColor();
     TestOverlayOfUnknownWeightObjectPaintsNothing();
     TestOverlayToggleDirtiesTheMesh();

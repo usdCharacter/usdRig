@@ -69,6 +69,9 @@ struct RigExecWarmWorkspacePool {
 namespace {
 
 const TfToken _tRigRootType("RigExecRoot");
+const TfToken _tWeightCage("cage"), _tWeightBrackets("brackets"),
+              _tWeightShell("shell"), _tWeightWire("wire"),
+              _tWeightGeometry("geometry"), _tWeightFalloff("falloff");
 
 uint64_t
 _HashCompiledRigPart(uint64_t hash, const void *data, size_t size)
@@ -5018,17 +5021,21 @@ _AccumulateRestGuideBounds(
     if (type == "RigExecSphereWeight" ||
         type == "RigExecPlaneWeight" ||
         type == "RigExecCurveWeight") {
-        const PXR_NS::TfToken drawMode = token("guide:drawMode", "wire");
-        if (drawMode != PXR_NS::TfToken("wire") &&
-            drawMode != PXR_NS::TfToken("geometry")) {
+        const PXR_NS::TfToken drawMode = token("guide:drawMode", "falloff");
+        const bool clean = drawMode == rigExec::_tWeightFalloff ||
+            drawMode == rigExec::_tWeightCage ||
+            drawMode == rigExec::_tWeightBrackets ||
+            drawMode == rigExec::_tWeightShell;
+        if (drawMode != rigExec::_tWeightWire &&
+            drawMode != rigExec::_tWeightGeometry && !clean) {
             return false;
         }
-        const bool wire = drawMode == PXR_NS::TfToken("wire");
+        const bool wire = drawMode == rigExec::_tWeightWire || clean;
         double halfWidth = 0.0;
         if (wire) {
             const double width = number("guide:wireWidth", 0.05);
             if (std::isfinite(width) && width > 0.0) {
-                halfWidth = width * 0.5;
+                halfWidth = width * (clean ? 0.15 : 0.5);
             }
         }
         const double falloffMin =

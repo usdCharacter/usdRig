@@ -1999,7 +1999,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._overlayCheckBox = QtWidgets.QCheckBox("Show influence")
         self._overlayCheckBox.setToolTip(
             "Paint the chosen weight object's influence onto its target "
-            "geometry as a red gradient in the viewport.")
+            "geometry using its Surface display setting.")
         self._overlayCheckBox.stateChanged.connect(self._onOverlayToggled)
         layout.addWidget(self._overlayCheckBox)
 
@@ -2021,6 +2021,15 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             self._onOverlayTargetChanged)
         row.addWidget(self._overlayTargetCombo, 1)
         layout.addLayout(row)
+
+        legend = QtWidgets.QLabel(
+            "Tint: gray 0 → red 1. Heatmap: blue 0 → cyan .25 → "
+            "green .5 → yellow .75 → red 1. Bands: five .2-wide ranges.")
+        legend.setWordWrap(True)
+        legend.setToolTip(
+            "Colors use resolved vertex weights. Faces interpolate the colors; "
+            "bands are approximate on coarse geometry. Display clamps to 0–1.")
+        layout.addWidget(legend)
 
         self._overlayStatusLabel = QtWidgets.QLabel("")
         self._overlayStatusLabel.setWordWrap(True)
@@ -2244,6 +2253,14 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             "rangePolicy")
         self._AddAttributeRow(
             self._parametersLayout, prim, "guide:drawMode", "guide:drawMode")
+        self._AddAttributeRow(
+            self._parametersLayout, prim, "guide:weightDisplay", "Surface display")
+        self._AddAttributeRow(
+            self._parametersLayout, prim, "guide:displayOpacity", "Guide opacity",
+            normalized=True)
+        self._AddAttributeRow(
+            self._parametersLayout, prim, "guide:wireWidth", "Guide width",
+            sensitivity=0.001)
 
         targets = []
         relationship = prim.GetRelationship("rigExec:weightTarget")

@@ -22,6 +22,7 @@ Storm viewport with the rig guides on.
 | ![External mover plugins](../icons/concept.png) | [External mover plugins](concepts/external-movers.md) | Build and register point movers from a separate repository for native, frozen and .rigexec playback. |
 | ![Live evaluator inspection](../icons/concept.png) | [Live evaluator inspection](concepts/live-evaluator-inspection.md) | Attach the optional rigExec_viz tool to usdview and read a session's operation graph and per-operation thread timings. |
 | ![Paths and walking](../icons/concept.png) | [Paths and walking](concepts/paths.md) | Drive a rig along a BasisCurves path by arc length, author and edit the path, and steer a baked program with a moving window. |
+| ![Weight display in usdview](../icons/concept.png) | [Weight display in usdview](concepts/weight-display.md) | Choose volume guides and surface color mappings for resolved weight fields. |
 
 ## Rig
 

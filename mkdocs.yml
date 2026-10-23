@@ -122,6 +122,7 @@ nav:
       - tools/touchpose.md
       - tools/limbs.md
       - Viewport gizmos: specs/viewport-gizmos.md
+      - Weight display: concepts/weight-display.md
       - Graph editor: specs/graph-editor.md
       - View cube: specs/view-cube.md
   - Concepts:

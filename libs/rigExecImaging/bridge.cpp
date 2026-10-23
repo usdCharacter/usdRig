@@ -30,6 +30,7 @@
 #include <cmath>
 #include <mutex>
 #include <set>
+#include <utility>
 
 namespace rigExec {
 
@@ -69,6 +70,11 @@ const TfToken _tRigExecPlaneAxis("rigExec:planeAxis");
 const TfToken _tRigExecPlaneBounds("rigExec:planeBounds");
 const TfToken _tVertex("vertex");
 const TfToken _tWire("wire");
+const TfToken _tGeometry("geometry"), _tCage("cage");
+const TfToken _tBrackets("brackets"), _tShell("shell");
+const TfToken _tFalloff("falloff");
+const TfToken _tWeightDisplay("guide:weightDisplay");
+const TfToken _tHeatmap("heatmap"), _tBands("bands");
 
 // The rigid ASSET-space placement matrix of one posed frame, or nothing
 // when the frame cannot supply one.
@@ -558,6 +564,64 @@ const _UnitSphereRings _unitSphereRings = []() {
     return built;
 }();
 
+const _UnitSphereRings _cleanSphereRings = []() {
+    _UnitSphereRings built;
+    const GfVec3f axes[3] = {GfVec3f(1, 0, 0), GfVec3f(0, 1, 0),
+                            GfVec3f(0, 0, 1)};
+    for (int axis = 0; axis < 3; ++axis) {
+        _AppendVolumeRing(GfVec3f(0), axes[axis], axes[(axis + 1) % 3],
+                          64, &built.points);
+        built.counts.push_back(65);
+    }
+    return built;
+}();
+
+// Clip existing polylines into evenly spaced dashes or cardinal brackets.
+// Positions stay on the original guide, including asymmetric sphere halves.
+void
+_PatternVolumeCurves(RigExecVolumeGuideElement *element, bool brackets)
+{
+    const auto &source = std::as_const(element->points);
+    VtVec3fArray points;
+    VtIntArray counts;
+    size_t start = 0;
+    for (const int count : std::as_const(element->counts)) {
+        if (count < 2) { start += count; continue; }
+        double length = 0;
+        for (int i = 1; i < count; ++i)
+            length += (source[start + i] - source[start + i - 1]).GetLength();
+        if (length <= 1e-9) { start += count; continue; }
+        const bool closed = source[start] == source[start + count - 1];
+        const int marks = brackets ? (closed ? 4 : 2) : 16;
+        const double period = length / marks;
+        const double duty = brackets ? 0.22 : 0.62;
+        double distance = 0;
+        for (int i = 1; i < count; ++i) {
+            const GfVec3f a = source[start + i - 1];
+            const GfVec3f b = source[start + i];
+            const double segment = (b - a).GetLength();
+            const double end = distance + segment;
+            if (segment > 1e-9) {
+                // Center bracket marks at cardinal points, wrapping at zero.
+                for (int mark = -1; mark <= marks; ++mark) {
+                    const double lo = std::max(distance,
+                        period * (mark - (brackets ? duty * 0.5 : 0.0)));
+                    const double hi = std::min(end,
+                        period * (mark + (brackets ? duty * 0.5 : duty)));
+                    if (hi <= lo) continue;
+                    points.push_back(a + float((lo - distance) / segment) * (b - a));
+                    points.push_back(a + float((hi - distance) / segment) * (b - a));
+                    counts.push_back(2);
+                }
+            }
+            distance = end;
+        }
+        start += count;
+    }
+    element->points = std::move(points);
+    element->counts = std::move(counts);
+}
+
 // One sphere iso-surface at local radius \p radius.
 // The radius and shared axis scales ride in the transform. Directional
 // scales reshape the unit points; asymmetric geometry uses a closed mesh
@@ -570,7 +634,7 @@ _AppendSphereVolumeGuide(
     double radius, const GfVec3d &axisScale,
     const GfVec3d &positiveScales, const GfVec3d &negativeScales, bool wire,
     const GfMatrix4d &rigidToAsset, double wireWidth, float opacity,
-    std::vector<RigExecVolumeGuideElement> *elements)
+    std::vector<RigExecVolumeGuideElement> *elements, bool clean = false)
 {
     if (!std::isfinite(radius) || radius <= 0.0) {
         // A zero- or negative-radius iso-surface is a point or nothing at
@@ -587,7 +651,7 @@ _AppendSphereVolumeGuide(
     element.xform = scale * rigidToAsset;
     element.opacity = opacity;
     const bool asymmetric = positiveScales != negativeScales;
-    if (!wire && !asymmetric) {
+    if (!wire && !asymmetric && !clean) {
         GfMatrix4d directional(1.0);
         directional.SetScale(positiveScales);
         element.xform = directional * element.xform;
@@ -626,7 +690,7 @@ _AppendSphereVolumeGuide(
     element.wireWidth = wireWidth;
     // Three orthogonal great circles, dotted. Wire mode draws this both
     // on the exterior falloff and over the translucent interior fill.
-    const _UnitSphereRings &rings = _unitSphereRings;
+    const _UnitSphereRings &rings = clean ? _cleanSphereRings : _unitSphereRings;
     element.points.resize(rings.points.size());
     for (size_t v = 0; v < rings.points.size(); ++v) {
         element.points[v] = shapePoint(rings.points[v]);
@@ -740,7 +804,7 @@ void
 _AppendCurveVolumeGuide(
     double radius, const VtVec3fArray &localCurve, const GfMatrix4d &toAsset,
     bool wire, double wireWidth,
-    std::vector<RigExecVolumeGuideElement> *elements)
+    std::vector<RigExecVolumeGuideElement> *elements, bool clean = false)
 {
     if (!std::isfinite(radius) || radius <= 0.0 || localCurve.size() < 2) {
         return;
@@ -765,6 +829,7 @@ _AppendCurveVolumeGuide(
         return;
     }
 
+    const int tubeSegments = clean ? 32 : _kVolumeTubeSegments;
     const size_t vertices = curve.size();
     std::vector<GfVec3f> segmentTangents(vertices - 1);
     for (size_t k = 0; k + 1 < vertices; ++k) {
@@ -815,10 +880,13 @@ _AppendCurveVolumeGuide(
         element.primType = HdPrimTypeTokens->basisCurves;
         element.wireWidth = wireWidth;
         for (size_t k = 0; k < vertices; ++k) {
+            // Keep at most five section rings; rails still follow every bend.
+            if (clean && k != vertices - 1 &&
+                k % std::max(size_t(1), (vertices - 1 + 3) / 4) != 0) continue;
             _AppendVolumeRing(curve[k], float(radius) * ringU[k],
                               float(radius) * ringV[k],
-                              _kVolumeTubeSegments, &element.points);
-            element.counts.push_back(_kVolumeTubeSegments + 1);
+                              tubeSegments, &element.points);
+            element.counts.push_back(tubeSegments + 1);
         }
         // Four rails, at the quarter turns of each ring.
         for (int quarter = 0; quarter < 4; ++quarter) {
@@ -838,11 +906,11 @@ _AppendCurveVolumeGuide(
 
     element.primType = HdPrimTypeTokens->mesh;
     element.normalsInterpolation = _tFaceVarying;
-    element.points.reserve(vertices * _kVolumeTubeSegments);
+    element.points.reserve(vertices * tubeSegments);
     for (size_t k = 0; k < vertices; ++k) {
-        for (int j = 0; j < _kVolumeTubeSegments; ++j) {
+        for (int j = 0; j < tubeSegments; ++j) {
             const double theta = _kTwoPi * double(j) /
-                                 double(_kVolumeTubeSegments);
+                                 double(tubeSegments);
             const GfVec3f radial =
                 float(std::cos(theta)) * ringU[k] +
                 float(std::sin(theta)) * ringV[k];
@@ -874,12 +942,12 @@ _AppendCurveVolumeGuide(
     // Side quads. With V = tangent x U, increasing the ring index and then
     // advancing along the curve winds the face outward.
     for (size_t k = 0; k + 1 < vertices; ++k) {
-        for (int j = 0; j < _kVolumeTubeSegments; ++j) {
-            const int next = (j + 1) % _kVolumeTubeSegments;
-            const int a = int(k * _kVolumeTubeSegments) + j;
-            const int b = int(k * _kVolumeTubeSegments) + next;
-            const int c = int((k + 1) * _kVolumeTubeSegments) + next;
-            const int d = int((k + 1) * _kVolumeTubeSegments) + j;
+        for (int j = 0; j < tubeSegments; ++j) {
+            const int next = (j + 1) % tubeSegments;
+            const int a = int(k * tubeSegments) + j;
+            const int b = int(k * tubeSegments) + next;
+            const int c = int((k + 1) * tubeSegments) + next;
+            const int d = int((k + 1) * tubeSegments) + j;
             const int quad[] = {a, b, c, d};
             appendFace(quad, 4);
         }
@@ -889,11 +957,11 @@ _AppendCurveVolumeGuide(
     // boundary edges therefore oppose the adjacent side edges, making the
     // complete face set a consistently oriented closed manifold.
     std::vector<int> startCap, endCap;
-    startCap.reserve(_kVolumeTubeSegments);
-    endCap.reserve(_kVolumeTubeSegments);
-    for (int j = 0; j < _kVolumeTubeSegments; ++j) {
-        startCap.push_back(_kVolumeTubeSegments - 1 - j);
-        endCap.push_back(int((vertices - 1) * _kVolumeTubeSegments) + j);
+    startCap.reserve(tubeSegments);
+    endCap.reserve(tubeSegments);
+    for (int j = 0; j < tubeSegments; ++j) {
+        startCap.push_back(tubeSegments - 1 - j);
+        endCap.push_back(int((vertices - 1) * tubeSegments) + j);
     }
     appendFace(startCap.data(), startCap.size());
     appendFace(endCap.data(), endCap.size());
@@ -1864,9 +1932,6 @@ RigExecImagingBridge::_FillVolumeGuides(
     // anchor gets recorded (see _FillGuides).
     snapshot->assetRoot = _rigPath.GetParentPath();
 
-    static const TfToken kWire("wire");
-    static const TfToken kGeometry("geometry");
-
     for (const auto &[weightPath, placement] : pose.weightFrames) {
         const UsdPrim prim = _stage->GetPrimAtPath(weightPath);
         if (!prim) {
@@ -1877,17 +1942,21 @@ RigExecImagingBridge::_FillVolumeGuides(
         // the codeless schema plugin registered has no fallback to
         // resolve, and a volume would silently stop drawing rather than
         // draw the documented default.
-        TfToken drawMode(kWire);
+        TfToken drawMode(_tFalloff);
         if (UsdAttribute a = prim.GetAttribute(_tGuideDrawMode)) {
             a.Get(&drawMode, pose.time);
         }
-        if (drawMode != kWire && drawMode != kGeometry) {
+        const bool clean = drawMode == _tCage || drawMode == _tBrackets ||
+                           drawMode == _tShell || drawMode == _tFalloff;
+        const bool shell = drawMode == _tShell;
+        const bool falloff = drawMode == _tFalloff;
+        if (drawMode != _tWire && drawMode != _tGeometry && !clean) {
             // `none` -- and any unrecognized token, which has to mean
             // something definite and means the same thing here as an
             // unknown control shape does: nothing is drawn.
             continue;
         }
-        const bool wire = drawMode == kWire;
+        const bool wire = drawMode != _tGeometry;
 
         GfMatrix4d rigid(1.0);
         if (!_RigidVolumeMatrix(placement, &rigid)) {
@@ -1926,6 +1995,23 @@ RigExecImagingBridge::_FillVolumeGuides(
 
         const TfToken typeName = prim.GetTypeName();
         std::vector<RigExecVolumeGuideElement> elements;
+        float guideOpacity = 0.35f;
+        if (const UsdAttribute attr = prim.GetAttribute(_tGuideDisplayOpacity))
+            attr.Get(&guideOpacity, pose.time);
+        auto finishBoundary = [&](size_t first, bool outer) {
+            if (!clean) return;
+            for (size_t i = first; i < elements.size(); ++i) {
+                auto &element = elements[i];
+                if (element.primType == HdPrimTypeTokens->basisCurves) {
+                    element.wireWidth *= 0.3;
+                    element.opacity = guideOpacity * (outer ? 0.75f : 1.0f);
+                    if (drawMode == _tBrackets || (outer && !shell))
+                        _PatternVolumeCurves(&element, drawMode == _tBrackets);
+                } else {
+                    element.opacity = guideOpacity * 0.25f;
+                }
+            }
+        };
 
         if (typeName == "RigExecPlaneWeight") {
             TfToken axisToken("y");
@@ -1953,9 +2039,15 @@ RigExecImagingBridge::_FillVolumeGuides(
             }
             const bool bounded = boundsToken == "bounded";
             for (const double distance : {falloffMin, falloffMax}) {
+                const size_t first = elements.size();
+                if ((shell && distance == falloffMax) ||
+                    (falloff && distance == falloffMin))
+                    _AppendPlaneVolumeGuide(distance, axis, extentU, extentV,
+                        bounded, false, rigid, wireWidth, &elements);
                 _AppendPlaneVolumeGuide(distance, axis, extentU, extentV,
                                         bounded, wire, rigid, wireWidth,
                                         &elements);
+                finishBoundary(first, distance == falloffMax);
             }
         } else {
             // Sphere and curve share the per-axis divisors, and reject the
@@ -1995,7 +2087,12 @@ RigExecImagingBridge::_FillVolumeGuides(
                 // falloffMin = 0 draws the dotted exterior alone.
                 const double radii[2] = {falloffMin, falloffMax};
                 for (int surface = 0; surface < 2; ++surface) {
-                    const bool interior = wire && surface == 0;
+                    const size_t first = elements.size();
+                    if ((shell && surface == 1) || (falloff && surface == 0))
+                        _AppendSphereVolumeGuide(radii[surface], axisScale,
+                            positiveScales, negativeScales, false, rigid,
+                            wireWidth, -1.0f, &elements, clean);
+                    const bool interior = wire && !clean && surface == 0;
                     if (interior) {
                         _AppendSphereVolumeGuide(
                             radii[surface], axisScale, positiveScales,
@@ -2009,8 +2106,9 @@ RigExecImagingBridge::_FillVolumeGuides(
                         _AppendSphereVolumeGuide(
                             radii[surface], axisScale, positiveScales,
                             negativeScales, wire, rigid, wireWidth, -1.0f,
-                            &elements);
+                            &elements, clean);
                     }
+                    finishBoundary(first, surface == 1);
                 }
             } else if (typeName == "RigExecCurveWeight") {
                 VtVec3fArray curvePoints;
@@ -2034,8 +2132,14 @@ RigExecImagingBridge::_FillVolumeGuides(
                 scale.SetScale(axisScale);
                 const GfMatrix4d toAsset = scale * rigid;
                 for (const double radius : {falloffMin, falloffMax}) {
+                    const size_t first = elements.size();
+                    if ((shell && radius == falloffMax) ||
+                        (falloff && radius == falloffMin))
+                        _AppendCurveVolumeGuide(radius, localCurve, toAsset,
+                            false, wireWidth, &elements, clean);
                     _AppendCurveVolumeGuide(radius, localCurve, toAsset,
-                                            wire, wireWidth, &elements);
+                                            wire, wireWidth, &elements, clean);
+                    finishBoundary(first, radius == falloffMax);
                 }
             } else {
                 continue;  // not a shape this version draws
@@ -2084,6 +2188,14 @@ RigExecImagingBridge::_FillWeightOverlay(
     RigExecPublishedPrim &published = snapshot->prims[geomPath];
     published.hasWeightOverlay = true;
     published.weightOverlay = it->second.weights;
+    TfToken display;
+    const UsdPrim weight = _stage->GetPrimAtPath(_weightOverlay);
+    if (weight) {
+        if (const UsdAttribute attr = weight.GetAttribute(_tWeightDisplay))
+            attr.Get(&display, pose.time);
+    }
+    published.weightDisplay = display == _tHeatmap ? RigExecWeightDisplay::Heatmap
+        : display == _tBands ? RigExecWeightDisplay::Bands : RigExecWeightDisplay::Tint;
 }
 
 // Stamps WHICH STAGE and WHICH TIME a generation describes onto it.

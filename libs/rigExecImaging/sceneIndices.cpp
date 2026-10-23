@@ -1573,14 +1573,26 @@ _BuildVolumeGuidePrim(
 // what RigExecVolumeWeight's guide:displayColor already defaults to: the
 // volume and the region it grabs read as one object.
 GfVec3f
-_WeightOverlayColor(float weight)
+_WeightOverlayColor(float weight, RigExecWeightDisplay display)
 {
-    static const GfVec3f kOff(0.55f, 0.55f, 0.55f);
-    static const GfVec3f kOn(1.0f, 0.05f, 0.05f);
+    const GfVec3f kOff(0.55f, 0.55f, 0.55f);
+    const GfVec3f kOn(1.0f, 0.05f, 0.05f);
     // Clamped rather than extrapolated: rigExec:rangePolicy already lets a
     // volume publish out-of-range weights under `clamp`, and a colour
     // channel outside [0, 1] is a renderer's problem, not a signal.
-    const float t = weight < 0.0f ? 0.0f : (weight > 1.0f ? 1.0f : weight);
+    const float t = !std::isfinite(weight) ? 0.0f : std::clamp(weight, 0.0f, 1.0f);
+    if (display != RigExecWeightDisplay::Tint) {
+        // Ordered anchors at 0, .25, .5, .75, 1. Bands quantize the
+        // resolved vertex samples; the renderer still interpolates faces.
+        const GfVec3f ramp[5] = {GfVec3f(0.04f, 0.08f, 0.22f),
+            GfVec3f(0.02f, 0.36f, 0.60f), GfVec3f(0.04f, 0.72f, 0.56f),
+            GfVec3f(0.95f, 0.78f, 0.12f), GfVec3f(1.0f, 0.12f, 0.04f)};
+        if (display == RigExecWeightDisplay::Bands)
+            return ramp[std::min(4, int(t * 5.0f))];
+        const float scaled = t * 4.0f;
+        const int index = std::min(3, int(scaled));
+        return ramp[index] + (ramp[index + 1] - ramp[index]) * (scaled - index);
+    }
     return kOff + (kOn - kOff) * t;
 }
 
@@ -1846,7 +1858,8 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
     if (published.hasWeightOverlay && !published.weightOverlay.empty()) {
         VtVec3fArray colors(published.weightOverlay.size());
         for (size_t i = 0; i < published.weightOverlay.size(); ++i) {
-            colors[i] = _WeightOverlayColor(published.weightOverlay[i]);
+            colors[i] = _WeightOverlayColor(published.weightOverlay[i],
+                                          published.weightDisplay);
         }
         primvarNames.push_back(HdTokens->displayColor);
         primvarValues.push_back(

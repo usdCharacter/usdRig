@@ -216,13 +216,33 @@ weights one mesh by another mesh's shape -- typically an
 unposed reference copy. Ignored when rigExec:weightTarget reads
 `preceding`.
 
+#### `guide:weightDisplay`
+
+*Type:* `uniform token`. *Default:* `"tint"`.
+
+Valid values: `tint`, `heatmap`, `bands`.
+
+Selected influence overlay: tint blends gray to red;
+heatmap interpolates blue, cyan, green, yellow and red at weights
+0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
+Colors use resolved vertex weights, clamped to [0,1] for display;
+faces interpolate them, so bands are approximate on coarse meshes.
+Does not change weights, materials or opacity on the source stage.
+
 #### `guide:drawMode`
 
-*Type:* `uniform token`. *Default:* `"wire"`.
+*Type:* `uniform token`. *Default:* `"falloff"`.
 
-Valid values: `wire`, `geometry`, `none`.
+Valid values: `falloff`, `cage`, `brackets`, `shell`, `wire`, `geometry`, `none`.
 
-wire draws the falloffMin and falloffMax iso-surfaces as
+falloff draws a soft inner shell at falloffMin with
+continuous inner rings and a dashed exterior cage at falloffMax.
+A zero inner radius draws only the exterior cage.
+cage draws a continuous inner boundary and dashed outer
+boundary without fill. brackets draws short cardinal sections of
+both boundaries. shell adds a faint outer surface to continuous
+rings. These styles use 30% of guide:wireWidth and at most five
+cross-section rings along a curve. wire draws the falloffMin and falloffMax iso-surfaces as
 curves, widthed by guide:wireWidth. A sphere weight in wire mode
 draws the falloffMin surface, the max-weight interior, as geometry
 at 50% opacity with dotted great-circle rings on it, and the
@@ -493,7 +513,7 @@ sphere authored inside the probe joint rides it, so the region the mover
 grabs travels and a bump walks back and forth. The plank is wider than
 the ball and the travel stops short of both ends, so the field never
 runs off an edge: it stays a complete red disc ringed by grey. In the
-default wire draw, the max-weight interior is geometry at 50% opacity
+legacy wire draw, the max-weight interior is geometry at 50% opacity
 with dotted great-circle rings on it, and the exterior falloff is the
 same dotted wire — the translucent ball is `inputs:falloffMin` 0.6,
 where the field is fully on and the plank is lifted the whole unit,
