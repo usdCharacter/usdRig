@@ -13,53 +13,32 @@ Tests every branch of the shortcut interception logic that prevents
 usdview's ApplicationShortcut-scoped actions (e.g. 'J' for Toggle
 Framed View) from firing while Noodles has focus.
 
-GraphView cannot be imported in headless CI (GL context init hangs),
-so we call the method through a lightweight shim that uses the same
-Qt constant values.  The shim is kept in lockstep with the production
-code via a docstring cross-reference to graphView.py:3745.
+Production methods run against lightweight view and settings doubles.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-# Standard Qt enum values — stable across PySide2/6 and PyQt5/6.
-# Using raw ints avoids importing pxr.Usdviewq.qt (which pulls in GL).
-_KEY_TAB = 0x01000001
-_KEY_A = 0x41
-_KEY_J = 0x4A
-_KEY_X = 0x58
-_KEY_F = 0x46
-_KEY_5 = 0x35
-_KEY_F1 = 0x01000030
-_KEY_ESCAPE = 0x01000000
-_KEY_RETURN = 0x01000004
+from pxr.Usdviewq.qt import QtCore
+from UsdNoodles.graphView import GraphView
 
-_NO_MODIFIER = 0x00000000
-_SHIFT_MODIFIER = 0x02000000
-_CTRL_MODIFIER = 0x04000000
-_ALT_MODIFIER = 0x08000000
-_KEYPAD_MODIFIER = 0x20000000
+_KEY_TAB = QtCore.Qt.Key_Tab
+_KEY_A = QtCore.Qt.Key_A
+_KEY_J = QtCore.Qt.Key_J
+_KEY_X = QtCore.Qt.Key_X
+_KEY_F = QtCore.Qt.Key_F
+_KEY_5 = QtCore.Qt.Key_5
+_KEY_F1 = QtCore.Qt.Key_F1
+_KEY_ESCAPE = QtCore.Qt.Key_Escape
+_KEY_RETURN = QtCore.Qt.Key_Return
 
+_NO_MODIFIER = QtCore.Qt.NoModifier
+_SHIFT_MODIFIER = QtCore.Qt.ShiftModifier
+_CTRL_MODIFIER = QtCore.Qt.ControlModifier
+_ALT_MODIFIER = QtCore.Qt.AltModifier
+_KEYPAD_MODIFIER = QtCore.Qt.KeypadModifier
 
-def _should_intercept_shortcut(view, event):
-    """Mirror of GraphView._shouldInterceptShortcut (graphView.py:3745).
-
-    Kept as a thin shim so the test exercises the same branching logic.
-    If the production method changes, update this shim to match.
-    """
-    if view.nodeCreationHotbox.is_showing:
-        return True
-
-    if event.key() == _KEY_TAB:
-        return True
-
-    modifiers = event.modifiers() & ~_KEYPAD_MODIFIER
-    if modifiers in (_NO_MODIFIER, _SHIFT_MODIFIER):
-        text = event.text()
-        if text and text.isprintable():
-            return True
-
-    return False
+_should_intercept_shortcut = GraphView._shouldInterceptShortcut
 
 
 def _make_event(key, modifiers=_NO_MODIFIER, text=""):
@@ -76,6 +55,11 @@ def _make_view(hotbox_showing=False):
     view = MagicMock(spec=[])
     view.nodeCreationHotbox = MagicMock()
     view.nodeCreationHotbox.is_showing = hotbox_showing
+    view._renamingNodeId = ""
+    view._valueEditTarget = None
+    view._mungState = None
+    view._tokenPopup = None
+    view._shortcutActions = {}
     return view
 
 
@@ -173,37 +157,13 @@ class TestShouldInterceptShortcut(unittest.TestCase):
 
 
 def _resolve_shortcut_conflicts(shortcuts, settings):
-    """Mirror of GraphView._resolveShortcutConflicts.
-
-    Walks the shortcuts list, normalizes each loaded shortcut string via the
-    settings.normalize() callback, and resets any earlier configKey whose
-    loaded value collides with a later configKey's value to its schema
-    default. Kept in lockstep with graphView.py:_resolveShortcutConflicts.
-    """
-    if settings is None:
-        return
-
-    loaded = []
-    for _name, configKey, *_rest in shortcuts:
-        shortcutStr = settings.get(configKey, "")
-        normalized = settings.normalize(shortcutStr) if shortcutStr else ""
-        loaded.append((configKey, normalized))
-
-    seen = {}
-    for configKey, normalized in reversed(loaded):
-        if not normalized:
-            continue
-        if normalized in seen:
-            info = settings.getSettingInfo(configKey)
-            if not info:
-                continue
-            defaultStr = info.get("default", "")
-            defaultNormalized = settings.normalize(defaultStr) if defaultStr else ""
-            if defaultNormalized == normalized:
-                continue
-            settings.set(configKey, defaultStr)
-        else:
-            seen[normalized] = configKey
+    entries = [(name, key, False, None, None) for name, key in shortcuts]
+    with patch("UsdNoodles.graphView.NoodlesConfig") as config:
+        config.settings.return_value = settings
+        if settings is not None:
+            config.get.side_effect = settings.get
+            config.set.side_effect = settings.set
+        GraphView._resolveShortcutConflicts(_make_view(), entries)
 
 
 class _FakeSettings:
@@ -226,11 +186,6 @@ class _FakeSettings:
             return None
         return {"name": key, "default": self._defaults[key]}
 
-    @staticmethod
-    def normalize(value):
-        # Production code uses QKeySequence.toString() for normalization.
-        # For the shim we just upper-case so "d" and "D" compare equal.
-        return value.upper()
 
 
 class TestResolveShortcutConflicts(unittest.TestCase):

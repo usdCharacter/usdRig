@@ -20,343 +20,65 @@ Covers the logic added in D101275205:
   7. _make_reconnect_edits: redo/undo closure correctness
   8. _make_connection_edit: create vs delete on the current edit target
 
-GraphView cannot be imported in headless CI (module-level GL imports),
-so production logic is mirrored in shims — same approach as
-testUsdNoodlesStageReload and testUsdNoodlesGraphViewShortcut.
+The undo callbacks below exercise production functions with a supplied view.
+Controller methods run directly against view doubles with rendering mocked.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+from UsdNoodles.graphView import GraphView
 
 
-# Shim: _make_connection_edit  (graphView.py:104)
+def _make_connection_edit(gv, *args, **kwargs):
+    """Bind the test view to the production replay callback."""
+    from UsdNoodles.graphView import _make_connection_edit as make_edit
+
+    callback = make_edit(*args, **kwargs)
+    return lambda: callback(gv)
 
 
-def _make_connection_edit(gv, src_id, src_port, tgt_id, tgt_port, create):
-    """Mirror of graphView._make_connection_edit (graphView.py:104).
+def _make_reconnect_edits(gv, *args, **kwargs):
+    from UsdNoodles.graphView import _make_reconnect_edits as make_edits
 
-    The shim authors on whatever edit target is currently set on the stage —
-    the production code stopped forcing the root layer once the UI gained
-    real edit-target support.
-    """
-
-    def _fn():
-        stage = gv.nodeGraph.getStage()
-        if not stage:
-            return
-        out_p = stage.GetPrimAtPath(src_id)
-        in_p = stage.GetPrimAtPath(tgt_id)
-        if out_p and in_p:
-            lib = gv._findLibraryForPrim(in_p)
-            if lib:
-                if create:
-                    lib.create_connection(stage, out_p, src_port, in_p, tgt_port)
-                else:
-                    lib.delete_connection(stage, out_p, src_port, in_p, tgt_port)
-
-    return _fn
+    redo, undo = make_edits(*args, **kwargs)
+    return lambda: redo(gv), lambda: undo(gv)
 
 
-# Shim: _make_reconnect_edits  (graphView.py:140)
-
-
-def _make_reconnect_edits(
-    gv,
-    old_src,
-    old_src_port,
-    old_tgt,
-    old_tgt_port,
-    new_src,
-    new_src_port,
-    new_tgt,
-    new_tgt_port,
-):
-    """Mirror of graphView._make_reconnect_edits (graphView.py:140)."""
-    delete_old = _make_connection_edit(
-        gv,
-        old_src,
-        old_src_port,
-        old_tgt,
-        old_tgt_port,
-        create=False,
-    )
-    create_old = _make_connection_edit(
-        gv,
-        old_src,
-        old_src_port,
-        old_tgt,
-        old_tgt_port,
-        create=True,
-    )
-    delete_new = _make_connection_edit(
-        gv,
-        new_src,
-        new_src_port,
-        new_tgt,
-        new_tgt_port,
-        create=False,
-    )
-    create_new = _make_connection_edit(
-        gv,
-        new_src,
-        new_src_port,
-        new_tgt,
-        new_tgt_port,
-        create=True,
-    )
-
-    def redo():
-        delete_old()
-        create_new()
-        gv.linksChanged = True
-        gv.update()
-
-    def undo():
-        delete_new()
-        create_old()
-        gv.linksChanged = True
-        gv.update()
-
-    return redo, undo
-
-
-# Shim: _startLinkReconnect  (graphView.py:4329)
-
-
-def _start_link_reconnect(view, linkIndex, worldClickPos):
-    """Mirror of GraphView._startLinkReconnect (graphView.py:4329)."""
-    link = view.links[linkIndex]
-
-    startPos = link.start
-    endPos = link.end
-    startDistSq = (worldClickPos[0] - startPos[0]) ** 2 + (
-        worldClickPos[1] - startPos[1]
-    ) ** 2
-    endDistSq = (worldClickPos[0] - endPos[0]) ** 2 + (
-        worldClickPos[1] - endPos[1]
-    ) ** 2
-
-    if startDistSq < endDistSq:
-        anchorNodeId = link.targetNodeId
-        anchorPort = link.targetPort
-        anchorIsOutput = False
-    else:
-        anchorNodeId = link.sourceNodeId
-        anchorPort = link.sourcePort
-        anchorIsOutput = True
-
-    view._reconnectingLink = True
-    view._reconnectOldSourceNodeId = link.sourceNodeId
-    view._reconnectOldSourcePort = link.sourcePort
-    view._reconnectOldTargetNodeId = link.targetNodeId
-    view._reconnectOldTargetPort = link.targetPort
-
-    view._removeLinkFromGraph(
-        link.sourceNodeId, link.sourcePort, link.targetNodeId, link.targetPort
-    )
-
-    if anchorNodeId not in view.nodes:
-        view._cancelLinkReconnect()
-        return
-
-    view._startLinkDrag(anchorNodeId, anchorPort, anchorIsOutput)
-
-    if anchorIsOutput:
-        view._dragLinkTempLink.end = worldClickPos
-    else:
-        view._dragLinkTempLink.start = worldClickPos
-
-
-# Shim: _clearReconnectState  (graphView.py:4377)
-
-
-def _clear_reconnect_state(view):
-    """Mirror of GraphView._clearReconnectState (graphView.py:4377)."""
-    view._reconnectingLink = False
-    view._reconnectOldSourceNodeId = None
-    view._reconnectOldSourcePort = None
-    view._reconnectOldTargetNodeId = None
-    view._reconnectOldTargetPort = None
-
-
-# Shim: _cancelLinkReconnect  (graphView.py:4384)
-
-
-def _cancel_link_reconnect(view):
-    """Mirror of GraphView._cancelLinkReconnect (graphView.py:4384)."""
-    srcId = view._reconnectOldSourceNodeId
-    srcPort = view._reconnectOldSourcePort
-    tgtId = view._reconnectOldTargetNodeId
-    tgtPort = view._reconnectOldTargetPort
-    _clear_reconnect_state(view)
-
-    srcNode = view.nodes.get(srcId)
-    tgtNode = view.nodes.get(tgtId)
-    if srcNode and tgtNode:
-        view._addLinkToGraph(srcId, srcPort, tgtId, tgtPort, srcNode, tgtNode)
-
-
-# Shim: _finishReconnectDisconnect  (graphView.py:4394)
+_start_link_reconnect = GraphView._startLinkReconnect
+_clear_reconnect_state = GraphView._clearReconnectState
+_cancel_link_reconnect = GraphView._cancelLinkReconnect
+_resolve_connection_endpoints = GraphView._resolveConnectionEndpoints
+_delete_old_connection = GraphView._deleteOldConnection
 
 
 def _finish_reconnect_disconnect(view, push_undo_fn):
-    """Mirror of GraphView._finishReconnectDisconnect (graphView.py:4394).
+    def push(description, redo, undo, *, view):
+        push_undo_fn(description, lambda: redo(view), lambda: undo(view))
 
-    push_undo_fn is injected to avoid importing the C++ noodles module.
-    """
-    srcId = view._reconnectOldSourceNodeId
-    srcPort = view._reconnectOldSourcePort
-    tgtId = view._reconnectOldTargetNodeId
-    tgtPort = view._reconnectOldTargetPort
-
-    inputNode = view.nodes.get(tgtId)
-    outputNode = view.nodes.get(srcId)
-    if not inputNode or not outputNode:
-        _cancel_link_reconnect(view)
-        return
-
-    inputPrim = inputNode.getUsdPrim()
-    outputPrim = outputNode.getUsdPrim()
-    if not inputPrim or not outputPrim:
-        _cancel_link_reconnect(view)
-        return
-
-    library = view._findLibraryForPrim(inputPrim)
-    if not library:
-        _cancel_link_reconnect(view)
-        return
-
-    _clear_reconnect_state(view)
-
-    stage = view.nodeGraph.getStage()
-
-    view._noticeHandler.setEnabled(False)
-    try:
-        success = library.delete_connection(
-            stage, outputPrim, srcPort, inputPrim, tgtPort
-        )
-        if success:
-            gv = view
-            delete_fn = _make_connection_edit(
-                gv,
-                srcId,
-                srcPort,
-                tgtId,
-                tgtPort,
-                create=False,
-            )
-            create_fn = _make_connection_edit(
-                gv,
-                srcId,
-                srcPort,
-                tgtId,
-                tgtPort,
-                create=True,
-            )
-
-            def redo():
-                delete_fn()
-                gv.linksChanged = True
-                gv.update()
-
-            def undo():
-                create_fn()
-                gv.linksChanged = True
-                gv.update()
-
-            push_undo_fn("Disconnect", redo, undo)
-
-            # Re-derive links from USD so the disconnected pin's port highlight
-            # (relationship arrow / port circle) reflects the now-empty target;
-            # the in-place removal at reconnect-start is not guaranteed to match
-            # relationship links, which would leave the arrow stuck yellow.
-            view.linksChanged = True
-            view._rebuildLinks()
-            view.update()
-        else:
-            view._addLinkToGraph(srcId, srcPort, tgtId, tgtPort, outputNode, inputNode)
-    finally:
-        view._noticeHandler.setEnabled(True)
-
-
-# Shim: _abortConnection  (graphView.py:5027)
+    with (patch("UsdNoodles.graphView._push_undo_command", side_effect=push),
+          patch("UsdNoodles.graphView.warn_if_non_persistent_edit_target")):
+        GraphView._finishReconnectDisconnect(view)
 
 
 def _abort_connection(view, message):
-    """Mirror of GraphView._abortConnection (graphView.py:5027)."""
-    view._warnCalled = message
-    if view._reconnectingLink:
-        _cancel_link_reconnect(view)
-
-
-# Shim: _resolveConnectionEndpoints  (graphView.py:5032)
-
-
-def _resolve_connection_endpoints(view, outputNodeId, inputNodeId):
-    """Mirror of GraphView._resolveConnectionEndpoints (graphView.py:5032)."""
-    outputNode = view.nodes.get(outputNodeId)
-    inputNode = view.nodes.get(inputNodeId)
-    if not outputNode or not inputNode:
-        _abort_connection(view, "Cannot create connection: invalid node IDs")
-        return None
-
-    outputPrim = outputNode.getUsdPrim()
-    inputPrim = inputNode.getUsdPrim()
-    if not outputPrim or not inputPrim:
-        _abort_connection(view, "Cannot create connection: invalid USD prims")
-        return None
-
-    library = view._findLibraryForPrim(inputPrim)
-    if not library:
-        _abort_connection(
-            view,
-            f"Cannot create connection: no library handles prim type "
-            f"'{inputPrim.GetTypeName()}'",
-        )
-        return None
-
-    return outputNode, inputNode, outputPrim, inputPrim, library
-
-
-# Shim: _deleteOldConnection  (graphView.py:5054)
-
-
-def _delete_old_connection(view, stage, oldSrcId, oldSrcPort, oldTgtId, oldTgtPort):
-    """Mirror of GraphView._deleteOldConnection (graphView.py:5054)."""
-    oldInputNode = view.nodes.get(oldTgtId)
-    oldOutputNode = view.nodes.get(oldSrcId)
-    if not oldInputNode or not oldOutputNode:
-        return False
-    oldInputPrim = oldInputNode.getUsdPrim()
-    oldOutputPrim = oldOutputNode.getUsdPrim()
-    if not oldInputPrim or not oldOutputPrim:
-        return False
-    oldLib = view._findLibraryForPrim(oldInputPrim)
-    if not oldLib:
-        return False
-    return oldLib.delete_connection(
-        stage,
-        oldOutputPrim,
-        oldSrcPort,
-        oldInputPrim,
-        oldTgtPort,
-    )
-
-
-# Shim: same-pin no-op check from _completeLinkDrag  (graphView.py:4593)
+    with patch("UsdNoodles.graphView.Tf.Warn") as warn:
+        GraphView._abortConnection(view, message)
+    view._warnCalled = warn.call_args.args[0]
 
 
 def _is_same_pin_reconnect(view, outputNodeId, outputPort, inputNodeId, inputPort):
-    """Mirror of the same-pin no-op guard in _completeLinkDrag."""
-    if view._reconnectingLink and (
-        outputNodeId == view._reconnectOldSourceNodeId
-        and outputPort == view._reconnectOldSourcePort
-        and inputNodeId == view._reconnectOldTargetNodeId
-        and inputPort == view._reconnectOldTargetPort
-    ):
-        _cancel_link_reconnect(view)
-        return True
-    return False
+    view._dragLinkValidTarget = True
+    view._dragLinkSourceNode = outputNodeId
+    view._dragLinkSourcePort = outputPort
+    view._dragLinkSourceIsOutput = True
+    target = (inputNodeId, inputPort, False, "")
+    view._dragLinkResolvedTarget = target
+    view._dragLinkSyntheticTarget = target
+    view._dragLinkTempLink.is_relationship_link = False
+    before = view._cancelLinkReconnect.call_count
+    GraphView._completeLinkDrag(view)
+    return view._cancelLinkReconnect.call_count > before
 
 
 # Mock helpers
@@ -374,6 +96,7 @@ def _make_link(src_node_id, src_port, tgt_node_id, tgt_port, start, end):
     link.start = start
     link.end = end
     link.isDangling = False
+    link.is_relationship_link = False
     return link
 
 
@@ -383,6 +106,8 @@ def _make_node(node_id, has_prim=True, prim_type="NoodleSoupNode"):
     node.id = node_id
     node.inputLinks = []
     node.outputLinks = []
+    node._title_collapsed = False
+    node.is_relationship_pin.return_value = False
     if has_prim:
         prim = MagicMock()
         prim.GetTypeName.return_value = prim_type
@@ -402,8 +127,16 @@ def _make_view(nodes=None, links=None):
     view._reconnectOldSourcePort = None
     view._reconnectOldTargetNodeId = None
     view._reconnectOldTargetPort = None
+    view._reconnectOldSourcePropertyName = ""
+    view._reconnectOldTargetPropertyName = ""
     view.linksChanged = False
     view._warnCalled = None
+    view._clearReconnectState = lambda: GraphView._clearReconnectState(view)
+    view._cancelLinkReconnect = MagicMock(
+        side_effect=lambda: GraphView._cancelLinkReconnect(view))
+    view._abortConnection = lambda message: _abort_connection(view, message)
+    view._hasExactLink.return_value = False
+    view._findLinkToInput.return_value = None
 
     library = MagicMock()
     library.enabled = True
@@ -429,44 +162,9 @@ def _set_reconnect_state(view, src_id, src_port, tgt_id, tgt_port):
     view._reconnectOldTargetPort = tgt_port
 
 
-# Shim: connected-input-port lift logic added to _startLinkDrag
-#       (graphView.py:5184)
-
-
 def _apply_connected_input_lift(view, nodeId, portName):
-    """Mirror of the connected-input lift block at the end of _startLinkDrag.
-
-    When dragging from an input port that already has a connection, enter
-    reconnect mode so that releasing on empty space or an invalid target
-    deletes the existing connection (T262819088 — the editor parity).
-    """
-    if view._reconnectingLink:
-        return
-    existing = view._findLinkToInput(nodeId, portName)
-    if not existing or getattr(existing, "isDangling", False):
-        return
-    view._reconnectingLink = True
-    view._reconnectOldSourceNodeId = existing.sourceNodeId
-    view._reconnectOldSourcePort = existing.sourcePort
-    view._reconnectOldTargetNodeId = existing.targetNodeId
-    view._reconnectOldTargetPort = existing.targetPort
-    view._reconnectOldSourcePropertyName = str(
-        getattr(existing, "sourcePropertyName", "")
-    )
-    view._reconnectOldTargetPropertyName = str(
-        getattr(existing, "targetPropertyName", "")
-    )
-    view._removeLinkFromGraph(
-        existing.sourceNodeId,
-        existing.sourcePort,
-        existing.targetNodeId,
-        existing.targetPort,
-        sourcePropertyName=str(getattr(existing, "sourcePropertyName", "")),
-        targetPropertyName=str(getattr(existing, "targetPropertyName", "")),
-    )
-
-
-# Tests
+    view.nodes.setdefault(nodeId, _make_node(nodeId))
+    GraphView._startLinkDrag(view, nodeId, portName, False)
 
 
 class TestStartLinkReconnect(unittest.TestCase):
@@ -512,7 +210,8 @@ class TestStartLinkReconnect(unittest.TestCase):
 
     def test_removes_link_from_local_graph(self):
         view = self._run((10.0, 0.0))
-        view._removeLinkFromGraph.assert_called_once_with("/A", "out", "/B", "inp")
+        view._removeLinkFromGraph.assert_called_once_with(
+            "/A", "out", "/B", "inp", sourcePropertyName="", targetPropertyName="")
 
     def test_temp_link_end_set_when_anchor_is_output(self):
         """When anchor is output, the cursor side is the end (input)."""
@@ -576,6 +275,8 @@ class TestCancelLinkReconnect(unittest.TestCase):
             "inp",
             nodeA,
             nodeB,
+            sourcePropertyName="",
+            targetPropertyName="",
         )
 
     def test_no_restore_when_source_node_missing(self):
@@ -681,26 +382,12 @@ class TestFinishReconnectDisconnect(unittest.TestCase):
 
         self.assertEqual(len(self.push_calls), 0)
 
-    def test_delete_fails_does_not_rebuild_links(self):
-        # The failure path uses its own recovery (restore the visual link); it
-        # must not run the success-path USD rebuild.
+    def test_missing_connection_rebuilds_from_usd_without_restoring_stale_link(self):
         view, push = self._setup(delete_ok=False)
         _finish_reconnect_disconnect(view, push)
 
-        view._rebuildLinks.assert_not_called()
-
-    def test_delete_fails_restores_visual_link(self):
-        view, push = self._setup(delete_ok=False)
-        _finish_reconnect_disconnect(view, push)
-
-        view._addLinkToGraph.assert_called_once_with(
-            "/A",
-            "out",
-            "/B",
-            "inp",
-            view.nodes["/A"],
-            view.nodes["/B"],
-        )
+        view._rebuildLinks.assert_called_once()
+        view._addLinkToGraph.assert_not_called()
 
     def test_missing_nodes_restores_link(self):
         view = _make_view(nodes={})
@@ -1278,9 +965,13 @@ class TestConnectedInputLiftIntegration(unittest.TestCase):
         view = _make_view()
         view._reconnectingLink = False
         push_calls = []
-        # Simulate _completeLinkDrag cancel path with no reconnect state
-        if view._reconnectingLink:
-            _finish_reconnect_disconnect(view, lambda *a: push_calls.append(a))
+        view._dragLinkResolvedTarget = None
+        view._dragLinkSyntheticTarget = None
+        view._hoveredPort = None
+        view._dragLinkValidTarget = False
+        with patch("UsdNoodles.graphView._push_undo_command") as push:
+            GraphView._completeLinkDrag(view)
+        push.assert_not_called()
         self.assertEqual(push_calls, [])
         view._library.delete_connection.assert_not_called()
 
@@ -1295,7 +986,8 @@ class TestConnectedInputLiftIntegration(unittest.TestCase):
         view.nodes["/B"] = nodeB
         _cancel_link_reconnect(view)
         view._addLinkToGraph.assert_called_once_with(
-            "/A", "out", "/B", "inp", nodeA, nodeB
+            "/A", "out", "/B", "inp", nodeA, nodeB,
+            sourcePropertyName="", targetPropertyName=""
         )
 
     def test_cancel_reconnect_after_lift_no_usd_mutation(self):

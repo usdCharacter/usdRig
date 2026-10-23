@@ -51,5 +51,6 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecTargets.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/rigExecMoverPlugin.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/rigExecMover.cmake")
 
 check_required_components(rigExec)

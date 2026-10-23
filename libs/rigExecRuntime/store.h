@@ -751,6 +751,8 @@ struct RrProgram {
         std::string type;
         RigExecExternalKernel kernel;
         std::shared_ptr<const void> state;
+        uint64_t version = 0;
+        std::vector<uint32_t> windows;
     };
     std::vector<ExternalRevision> externals;
     /// (chain, revision) -> index into `externals`.

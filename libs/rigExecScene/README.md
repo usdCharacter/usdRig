@@ -57,11 +57,14 @@ link lines. Stage-compiling tests are listed near the end of the root
 `CMakeLists.txt`.
 
 The evaluator in `rigExec` calls scene functions through
-[sceneDispatch.h](../rigExec/sceneDispatch.h). `registerScene.cpp` installs
-those function pointers when `rigExecScene` loads. The build-tree target
-also supplies `sceneLinkAnchor.cpp` to consumers so the linker retains the
-library when calls reach it only through dispatch. A missing hook reports
-"RigExec scene library is not linked" and terminates the process.
+[sceneDispatch.h](../rigExec/sceneDispatch.h). `RigExecRegisterScene()` in
+[registerScene.h](registerScene.h) publishes an immutable function table.
+The build and installed CMake targets supply `sceneLinkAnchor.cpp` to
+consumers so the linker retains the library and registers it when loaded.
+Manual linker users call `RigExecRegisterScene()` before compiling or
+evaluating, and keep the library loaded for the process lifetime once
+registered. Missing scene support returns false from `Compile` or an
+invalid pose from `Evaluate`, with a diagnostic in the existing error channel.
 
 `rigExecScene` links `rigExec` publicly; `rigExec` does not link back to
 `rigExecScene`. Its other public dependencies are `tf`, `gf`, `vt`, `sdf`,

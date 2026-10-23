@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -39,6 +40,43 @@ namespace {
 const SdfPath kRig("/Rig"), kTarget("/Rig/Body.points");
 const SdfPath kReference("/Rig/Reference.points"), kControl("/Rig/Ctl");
 const VtVec3fArray kBase{GfVec3f(-2, 0, 0), GfVec3f(1, 2, 3), GfVec3f(0)};
+const std::shared_ptr<const void> kReplacementState = std::make_shared<const int>(0);
+
+template<int Offset>
+bool AddPlaybackZ(const void *, const uint8_t *, size_t,
+                  const RigExecExternalPhasedPoints *, size_t,
+                  const RigExecExternalInputValue *, size_t,
+                  float *xyz, size_t count)
+{
+    for (size_t i = 0; i < count; ++i) xyz[i * 3 + 2] += float(Offset);
+    return true;
+}
+
+template<int Marker>
+RigExecExternalKernel WindowPlaybackKernel()
+{
+    RigExecExternalKernel kernel;
+    kernel.prepare = [](const uint8_t *, size_t, std::string *) {
+        return kReplacementState;
+    };
+    kernel.apply = AddPlaybackZ<Marker>;
+    kernel.captureWindow = [](const void *, const RigExecExternalPhasedPoints *,
+        size_t, const RigExecExternalInputValue *, size_t, const float *, size_t,
+        RigExecWindowPacket *packet) {
+        packet->scalars.push_back(double(Marker));
+        return true;
+    };
+    kernel.applyWindow = [](const void *, const RigExecWindowPacket *const *ticks,
+                             size_t tickCount, float *xyz, size_t pointCount) {
+        for (size_t t = 0; t < tickCount; ++t)
+            if (!ticks[t] || ticks[t]->scalars.size() != 1 ||
+                ticks[t]->scalars[0] != double(Marker)) return false;
+        for (size_t i = 0; i < pointCount; ++i)
+            xyz[i * 3 + 2] += float(Marker * tickCount);
+        return true;
+    };
+    return kernel;
+}
 
 void Compile(RigExecRigEvaluator *evaluator)
 {
@@ -81,6 +119,13 @@ void TestRegistration(const char *pluginDirectory)
     CHECK(external->declareExternalInputs && external->compileScene && external->assembleExternal && external->applyExternal);
     CHECK(PlugRegistry::GetInstance().GetPluginWithName("testExternalMover")->IsLoaded());
     CHECK(builtIn == RigExecFindMoverHandler(TfToken("RigExecMatrixMover")));
+    const auto schemaStage = UsdStage::CreateInMemory();
+    const auto schemaPrim = schemaStage->DefinePrim(
+        SdfPath("/Mover"), TfToken("ExternalQuadraticMover"));
+    const auto schemaGain = schemaPrim.GetAttribute(TfToken("inputs:gain"));
+    float schemaDefault = 0.0f;
+    CHECK(schemaGain && schemaGain.Get(&schemaDefault));
+    CHECK(schemaDefault == 1.0f && !schemaGain.HasAuthoredValueOpinion());
 
     std::vector<std::string> diagnostics;
     CHECK(RigExecLoadMoverPlugins(&diagnostics));
@@ -556,7 +601,48 @@ bool Mentions(const std::vector<std::string> &lines, const std::string &text)
     return false;
 }
 
-void TestExport()
+void TestWindowKernelReplacement(const std::vector<uint8_t> &source,
+                                 const std::string &type)
+{
+    std::string error;
+    std::unique_ptr<fb::RigExecWireFile> file;
+    CHECK(RigExecFormatOpen(source.data(), source.size(), &file, &error));
+    // Give the exported external revision a history window for this runtime
+    // contract test; its kernels intentionally use incompatible packet markers.
+    CHECK(file->windowedOps.empty());
+    for (size_t s = 0; s < file->steps.size(); ++s) {
+        if (file->steps[s].kind != RigExecWireStepKind::RevisionChunk ||
+            RigExecFormatStepLabel(*file, s).find("/Rig/External") == std::string::npos)
+            continue;
+        fb::RigExecWireWindowedOp window;
+        window.step = int32_t(s);
+        window.frames = 2;
+        file->windowedOps.push_back(window);
+    }
+    CHECK(file->windowedOps.size() == 1);
+    std::vector<uint8_t> bytes;
+    CHECK(RigExecFormatWrite(*file, &bytes, &error));
+    auto reader = RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &error);
+    CHECK(reader);
+    const auto checkOffset = [&](float offset) {
+        VtVec3fArray expected = kBase;
+        for (auto &point : expected) point[2] += offset;
+        CheckSame(Points(*reader, kTarget), expected, "replaced history kernel");
+    };
+    CHECK(reader->SetExternalKernel(type, WindowPlaybackKernel<4>(), &error));
+    CHECK(reader->ExecuteHistory(&error));
+    CHECK(reader->ExecuteHistory(&error));
+    CHECK(reader->Execute(&error));
+    checkOffset(6.0f); // Two earlier ticks and the current tick, envelope 0.5.
+    CHECK(reader->SetExternalKernel(type, WindowPlaybackKernel<8>(), &error));
+    CHECK(reader->Execute(&error));
+    checkOffset(4.0f); // The previous kernel's packets were discarded.
+    CHECK(reader->ExecuteHistory(&error));
+    CHECK(reader->Execute(&error));
+    checkOffset(8.0f); // The retained history reader also adopted the replacement.
+}
+
+void TestExport(const char *fixturePath)
 {
     const std::string type = "ExternalQuadraticMover";
     const auto stage = MakeExportRig(type.c_str());
@@ -571,6 +657,11 @@ void TestExport()
     std::string error;
     if (!RigExecBakeToBinary(baked, options, &result, &error)) {
         throw std::runtime_error("export failed: " + error);
+    }
+    if (fixturePath) {
+        std::ofstream fixture(fixturePath, std::ios::binary);
+        fixture.write(reinterpret_cast<const char *>(result.bytes.data()), result.bytes.size());
+        CHECK(fixture.good());
     }
     // The file holds the plugin mover's entry: its type, its compiled rig and the
     // frame bytes of the bake's run. The plugin's own reads stay inside
@@ -657,6 +748,48 @@ void TestExport()
                   .Get<VtVec3fArray>(),
               "reference beside a missing kernel");
 
+    const auto checkRefresh = [&] {
+        bool ranExternal = false;
+        for (const int32_t step : bare->GetLastRunTraceForTesting()) {
+            const std::string label = bare->GetStepLabelForTesting(size_t(step));
+            ranExternal |= label.find("/Rig/External") != std::string::npos;
+            CHECK(label.find("/Rig/Ctl") == std::string::npos);
+            CHECK(label.find("/Rig/Lift") == std::string::npos);
+            CHECK(label.find("/Rig/Reference") == std::string::npos);
+        }
+        CHECK(ranExternal);
+        CHECK(bare->Execute(&error));
+        CHECK(bare->GetCounters().executedOpCount == 0);
+    };
+    // Registration after a cached pass-through wakes the revision without an
+    // input edit, and leaves its independent control/reference branch asleep.
+    CHECK(bare->SetExternalKernel(type, handler->runtimeKernel, &error));
+    CHECK(bare->Execute(&error));
+    CHECK(!Mentions(bare->GetDiagnostics(), "no kernel"));
+    CheckDeformed(Points(*bare, kTarget), 0.0f, 0.5f, "late registration");
+    checkRefresh();
+
+    // A host may replace callbacks while prepare returns the same state.
+    RigExecExternalKernel replacement;
+    replacement.prepare = [](const uint8_t *, size_t, std::string *) {
+        return kReplacementState;
+    };
+    replacement.apply = AddPlaybackZ<4>;
+    const auto checkOffset = [&](float offset) {
+        VtVec3fArray expected = kBase;
+        for (auto &point : expected) point[2] += offset;
+        CheckSame(Points(*bare, kTarget), expected, "replacement arithmetic");
+    };
+    CHECK(bare->SetExternalKernel(type, replacement, &error));
+    CHECK(bare->Execute(&error));
+    checkOffset(2.0f);
+    checkRefresh();
+    replacement.apply = AddPlaybackZ<8>;
+    CHECK(bare->SetExternalKernel(type, replacement, &error));
+    CHECK(bare->Execute(&error));
+    checkOffset(4.0f);
+    checkRefresh();
+
     // A kernel that cannot read the compiled data bytes leaves it passing through.
     RigExecExternalKernel refusing = handler->runtimeKernel;
     refusing.prepare = [](const uint8_t *, size_t, std::string *why)
@@ -668,8 +801,17 @@ void TestExport()
     CHECK(error.find("refused") != std::string::npos);
     CHECK(bare->GetMissingExternalKernels() ==
           std::vector<std::string>{type});
+    CHECK(bare->Execute(&error));
+    CheckSame(Points(*bare, kTarget), kBase, "refused replacement");
+    CHECK(Mentions(bare->GetDiagnostics(), "no kernel"));
+    checkRefresh();
+    CHECK(bare->SetExternalKernel(type, handler->runtimeKernel, &error));
+    CHECK(bare->Execute(&error));
+    CheckDeformed(Points(*bare, kTarget), 0.0f, 0.5f, "registration recovery");
+    checkRefresh();
     CHECK(!bare->SetExternalKernel("NoSuchMover", handler->runtimeKernel,
                                    &error));
+    TestWindowKernelReplacement(result.bytes, type);
 
     // A plugin that never adopted export refuses it, naming the mover.
     const auto unexportable = MakeExportRig("ExternalUnexportableMover");
@@ -1102,7 +1244,7 @@ void TestBoundUsdAttributeCapture()
 int main(int argc, char **argv)
 {
     try {
-        CHECK(argc == 3);
+        CHECK(argc == 3 || argc == 4);
         PlugRegistry::GetInstance().RegisterPlugins(argv[1]);
         TestRegistration(argv[2]);
         TestCapturedMetadataOwnership();
@@ -1113,7 +1255,7 @@ int main(int argc, char **argv)
         TestEvaluation();
         TestTimeVaryingInputsKeyFramesApart();
         TestDetachedExternalProgram();
-        TestExport();
+        TestExport(argc == 4 ? argv[3] : nullptr);
         TestPhasedReferenceIsBound();
         TestTheExternalPayloadIsTheAssemblersAnswer();
         TestIncompatiblePlugin();

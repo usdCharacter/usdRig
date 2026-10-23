@@ -109,6 +109,12 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
 bool
 RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
 {
+    std::string sceneError;
+    if (!RigExecSceneAvailable(&sceneError)) {
+        if (errors) errors->push_back(std::move(sceneError));
+        return false;
+    }
+
     // Bounds the retries on a rig that is broken everywhere at once; past it
     // the rig fails as a whole, as it always did.
     static constexpr size_t kMaxSkippedOperations = 64;
@@ -3699,6 +3705,13 @@ bool
 RigExecRigEvaluator::_CompileUnlessKnownBroken(
     std::vector<std::string> *diagnostics)
 {
+    // Library availability is process state, not a stage failure to memoize.
+    std::string sceneError;
+    if (!RigExecSceneAvailable(&sceneError)) {
+        if (diagnostics) diagnostics->push_back(std::move(sceneError));
+        return false;
+    }
+
     // A compile that failed fails again for as long as nothing it read has
     // moved, and what it reads is the stage and the mode. So a failure is
     // answered from the memo while the key still matches: the same errors,

@@ -150,6 +150,113 @@ def TestUndoStack():
     _Check(not stack.CanUndo() and not stack.CanRedo(), "cleared")
 
 
+def TestUndoFailures():
+    stage = _Stage()
+    attr = stage.GetAttributeAtPath("/Rig/Ctl.avars:tx")
+    root, session = stage.GetRootLayer(), stage.GetSessionLayer()
+    path = attr.GetPath()
+    entries = []
+    for layer, value in ((root, 1.0), (session, 2.0)):
+        before = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+        with Usd.EditContext(stage, layer):
+            attr.Set(value)
+        after = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+        entries.append(rigExecUndo.EditEntry(layer, path, before, after))
+    stack = rigExecUndo.UndoStack()
+    events = []
+    stack.AddListener(lambda: events.append(1))
+    stack.Push(rigExecUndo.Edit("Two layers", entries))
+    original = [layer.ExportToString() for layer in (root, session)]
+    session.SetPermissionToEdit(False)
+    try:
+        stack.Undo()
+        raise AssertionError("a locked layer must reject the whole undo")
+    except RuntimeError:
+        pass
+    finally:
+        session.SetPermissionToEdit(True)
+    _Check(original == [layer.ExportToString() for layer in (root, session)],
+           "preflight rejects before changing any layer")
+    _Check(stack.CanUndo() and not stack.CanRedo() and len(events) == 1,
+           "failed undo retains its entry without notifying success")
+
+    restore = entries[1].before.Restore
+    def FailAfterRestore():
+        restore()
+        raise RuntimeError("injected partial failure")
+    entries[1].before.Restore = FailAfterRestore
+    try:
+        stack.Undo()
+        raise AssertionError("partial restoration must report failure")
+    except RuntimeError:
+        pass
+    entries[1].before.Restore = restore
+    _Check(original == [layer.ExportToString() for layer in (root, session)],
+           "failure rolls back both completed and partially restored entries")
+    _Check(stack.CanUndo() and not stack.CanRedo(), "partial failure is retryable")
+    stack.Undo()
+    root.SetPermissionToEdit(False)
+    try:
+        stack.Redo()
+        raise AssertionError("a locked layer must reject redo")
+    except RuntimeError:
+        pass
+    finally:
+        root.SetPermissionToEdit(True)
+    _Check(stack.CanRedo() and not stack.CanUndo(), "failed redo retains history")
+    stack.Redo()
+    _Check(original == [layer.ExportToString() for layer in (root, session)],
+           "redo can be retried after repairing the layer")
+
+    layer = Sdf.Layer.CreateAnonymous()
+    prim = Sdf.CreatePrimInLayer(layer, "/New/Child")
+    attr = Sdf.AttributeSpec(prim, "value", Sdf.ValueTypeNames.Double)
+    attr.default = 3.0
+    path = attr.path
+    populated = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+    layer.Clear()
+    absent = rigExecUndo.AttributeSnapshot.Capture(layer, path)
+    original = layer.ExportToString()
+    restore = populated.Restore
+    def FailAfterCreatingAncestors():
+        restore()
+        raise RuntimeError("injected failure after creating parents")
+    populated.Restore = FailAfterCreatingAncestors
+    stack = rigExecUndo.UndoStack()
+    stack.Push(rigExecUndo.Edit("Recreate", [
+        rigExecUndo.EditEntry(layer, path, populated, absent)]))
+    try:
+        stack.Undo()
+        raise AssertionError("failed replay must roll back new ancestors")
+    except RuntimeError:
+        pass
+    _Check(layer.ExportToString() == original,
+           "rollback removes ancestor specs created by a failed replay")
+    _Check(stack.CanUndo() and not stack.CanRedo(),
+           "failed ancestor restoration keeps history retryable")
+
+    # A layer that expired after the edit (removed or reloaded) is skipped;
+    # the live entries still apply and the edit moves, so history never sticks.
+    class _ExpiredLayer(object):
+        expired = True
+    stage = _Stage()
+    attr = stage.GetAttributeAtPath("/Rig/Ctl.avars:tx")
+    root = stage.GetRootLayer()
+    path = attr.GetPath()
+    before = rigExecUndo.AttributeSnapshot.Capture(root, path)
+    attr.Set(5.0)
+    after = rigExecUndo.AttributeSnapshot.Capture(root, path)
+    stack = rigExecUndo.UndoStack()
+    stack.Push(rigExecUndo.Edit("Expired", [
+        rigExecUndo.EditEntry(_ExpiredLayer(), path, before, after),
+        rigExecUndo.EditEntry(root, path, before, after)]))
+    _Check(stack.Undo() and attr.Get() != 5.0,
+           "undo applies the live entries past an expired layer")
+    _Check(stack.CanRedo() and not stack.CanUndo(),
+           "an edit with an expired layer still moves to redo")
+    _Check(stack.Redo() and attr.Get() == 5.0, "and redoes")
+
+
 def TestEditRecorder():
     stage = _Stage()
     stage.SetEditTarget(Usd.EditTarget(stage.GetSessionLayer()))
@@ -382,6 +489,7 @@ def main():
         ("default + time samples", TestSnapshotDefaultAndTimeSamples),
         ("spline", TestSnapshotSpline),
         ("undo stack", TestUndoStack),
+        ("undo failures", TestUndoFailures),
         ("edit recorder", TestEditRecorder),
         ("one notice per edit", TestSingleNoticePerEdit),
         ("spec snapshot undoes prim creation",

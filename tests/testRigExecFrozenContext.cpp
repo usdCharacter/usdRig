@@ -1542,9 +1542,9 @@ TestAPropertyEnvelopeFreezes()
     CHECK(evaluator.Evaluate(UsdTimeCode(2.0)).valid);
     RigExecBackgroundScheduler scheduler;
     if (frozen) {
-        CHECK(frozen->program.weightFields.size() == 1);
-        if (frozen->program.weightFields.size() == 1) {
-            const auto &field = frozen->program.weightFields.front();
+        CHECK(frozen->program->weightFields.size() == 1);
+        if (frozen->program->weightFields.size() == 1) {
+            const auto &field = frozen->program->weightFields.front();
             CHECK(field.form == RigExecBakedProgramImpl::WeightField::Form::EnvelopeProperty);
             CHECK(field.ok && field.count == 1);
             CHECK(field.values == std::vector<float>{0.5f});
@@ -2400,9 +2400,9 @@ TestFrozenWeightFramesMatchLive(const std::string &examplesDir)
     const size_t i = size_t(slot->second);
     CHECK(i < B.noScaleAvars.size() && B.noScaleAvars[i] == 1);
     CHECK(i < B.placedVolumes.size() && B.placedVolumes[i] == 0);
-    CHECK(i < ranSlots->program.volumePlacement.size());
-    if (i < ranSlots->program.volumePlacement.size())
-        CHECK(ranSlots->program.volumePlacement[i].ExtractTranslation()[1] == 5.0);
+    CHECK(i < ranSlots->program->volumePlacement.size());
+    if (i < ranSlots->program->volumePlacement.size())
+        CHECK(ranSlots->program->volumePlacement[i].ExtractTranslation()[1] == 5.0);
 }
 
 // A cold workspace computes both typed placement producers, replacing
@@ -2535,16 +2535,16 @@ def Xform "Asset"
         CheckWeightFramesEqual(label,"completed independent input",
                                completed.weightFrames,independent.weightFrames);
     }
-    // RigExecFreezeProgram allocates the snapshot non-const, and no job is
-    // running on it.
+    // Corrupt a private clone before publishing it as a test snapshot.
     GfMatrix4d poison(1.0);
     poison.SetTranslate(GfVec3d(0, 100, 0));
-    const_cast<RigExecFrozenProgram &>(*poisoned)
-        .program.volumePlacement[size_t(guideSlot->second)] = poison;
-    // An edit after the freeze settles the snapshot's clone verdict again,
-    // as RigExecPatchFrozenAvarConstants does: its lanes inherit it.
-    frozenDetail::_SettleCloneVerdict(
-        &const_cast<RigExecFrozenProgram &>(*poisoned).program);
+    auto corruptProgram = std::make_shared<RigExecBakedProgramImpl>();
+    frozenDetail::_CloneImpl(*poisoned->program, corruptProgram.get());
+    corruptProgram->volumePlacement[size_t(guideSlot->second)] = poison;
+    frozenDetail::_SettleCloneVerdict(corruptProgram.get());
+    auto corruptSnapshot = std::make_shared<RigExecFrozenProgram>(*poisoned);
+    corruptSnapshot->program = std::move(corruptProgram);
+    poisoned = std::move(corruptSnapshot);
 
     auto workspace = RigExecCreateFrozenWorkspace(poisoned);
     CHECK(workspace);
@@ -4044,6 +4044,10 @@ TestPatchFrozenAvarConstants()
                                           &error));
     CHECK(patched != nullptr);
     CHECK(patched.get() != frozen.get());
+    CHECK(patched->program == frozen->program);
+    CHECK(patched->bindings == frozen->bindings);
+    CHECK(patched->avarPatch && patched->avarPatch->basis == patched.get());
+    CHECK(!frozen->avarPatch);
     const RigExecRigPose warmed3 =
         RunWarmingJob(&evaluator, rig, patched, at3, &scheduler, nullptr);
     CheckPosesBitIdentical("warmed frame 3 under patched constants", live3,
@@ -4071,6 +4075,19 @@ TestPatchFrozenAvarConstants()
     std::shared_ptr<const RigExecFrozenAvarPatch> newer;
     CHECK(RigExecCaptureFrozenAvarPatch(*frozen, *liveProgram, &newer, &error));
     const auto newerLive = evaluator.Evaluate(UsdTimeCode(3.0));
+    std::shared_ptr<const RigExecFrozenProgram> repatched;
+    CHECK(RigExecPatchFrozenAvarConstants(*patched, *liveProgram, &repatched, &error));
+    CHECK(repatched && repatched->program == frozen->program);
+    CHECK(repatched && repatched->bindings == frozen->bindings);
+    if (repatched) {
+        CHECK(!RigExecFrozenSnapshotOwesLiveEdits(*repatched, *liveProgram));
+        const auto result = RunWarmingJob(&evaluator, rig, repatched, at3,
+                                          &scheduler, nullptr);
+        CheckPosesBitIdentical("successive snapshot patches", newerLive, result);
+        const auto retained = RunWarmingJob(&evaluator, rig, patched, at3,
+                                            &scheduler, nullptr);
+        CheckPosesBitIdentical("retained patched snapshot", live3, retained);
+    }
     const auto original = RunWarmingJob(&evaluator, rig, frozen, at3, &scheduler, nullptr);
     auto workspace = RigExecCreateFrozenWorkspace(frozen);
     RigExecFrozenEvalContext context;
@@ -5056,11 +5073,11 @@ TestRangeChainWarmsBitIdentical()
                                           a[g].published.count)});
         }
     };
-    CHECK(live.chains.size() == frozen->program.chains.size());
+    CHECK(live.chains.size() == frozen->program->chains.size());
     for (size_t c = 0;
-         c < live.chains.size() && c < frozen->program.chains.size(); ++c) {
+         c < live.chains.size() && c < frozen->program->chains.size(); ++c) {
         const auto &a = live.chains[c];
-        const auto &b = frozen->program.chains[c];
+        const auto &b = frozen->program->chains[c];
         collect(a.baseGroups, b.baseGroups);
         CHECK(a.revisions.size() == b.revisions.size());
         for (size_t r = 0; r < a.revisions.size() && r < b.revisions.size();
@@ -5476,28 +5493,28 @@ TestFrozenAssemblesFromLeaves(const std::string &examplesDir)
             // sampler's own, one per revision and four per weight object.
             const RigExecBakedProgramImpl &B =
                 evaluator.GetBakedProgram()->GetStepGraph();
-            CHECK(frozen->moverDefaultWeightKeys.size() ==
+            CHECK(frozen->bindings->moverDefaultWeightKeys.size() ==
                   B.revisionIndex.size());
             for (size_t r = 0; r < B.revisionIndex.size() &&
-                               r < frozen->moverDefaultWeightKeys.size();
+                               r < frozen->bindings->moverDefaultWeightKeys.size();
                  ++r) {
                 const auto &[c, i] = B.revisionIndex[r];
-                CHECK(frozen->moverDefaultWeightKeys[r] ==
+                CHECK(frozen->bindings->moverDefaultWeightKeys[r] ==
                       B.chains[size_t(c)]
                           .revisions[size_t(i)]
                           .moverPath.AppendProperty(
                               TfToken("inputs:defaultWeight")));
             }
-            CHECK(frozen->weightArrayKeys.size() ==
+            CHECK(frozen->bindings->weightArrayKeys.size() ==
                   4 * B.weightObjects.size());
             for (size_t w = 0; w < B.weightObjects.size() &&
-                               4 * w + 3 < frozen->weightArrayKeys.size();
+                               4 * w + 3 < frozen->bindings->weightArrayKeys.size();
                  ++w) {
                 const SdfPath &object = B.weightObjects[w].path;
-                CHECK(frozen->weightArrayKeys[4 * w] ==
+                CHECK(frozen->bindings->weightArrayKeys[4 * w] ==
                       object.AppendProperty(
                           TfToken("frozenWeight:targetPoints")));
-                CHECK(frozen->weightArrayKeys[4 * w + 3] ==
+                CHECK(frozen->bindings->weightArrayKeys[4 * w + 3] ==
                       object.AppendProperty(
                           TfToken("frozenWeight:combineTargetCount")));
             }
@@ -6184,8 +6201,8 @@ TestAFrozenRewarmAfterAReleasedOverrideCarriesTheEdit(const std::string &example
         std::printf("freeze refused: %s\n", error.c_str());
         return;
     }
-    CHECK(frozen->program.anyEdited);
-    CHECK(frozen->program.lastTime == held);
+    CHECK(frozen->program->anyEdited);
+    CHECK(frozen->program->lastTime == held);
     RigExecFrameInputs at;
     CHECK(RigExecSampleFrameInputs(evaluator, held, {}, &at, &error));
     RigExecBackgroundScheduler scheduler;
@@ -6286,7 +6303,8 @@ TestAStandingSnapshotPatchedAfterALiveRunCarriesTheEdit(
     if (!patched) {
         return;
     }
-    CHECK(patched->program.anyEdited);
+    CHECK(patched->avarPatch &&
+          patched->avarPatch->valueEditSerial == program->GetStepGraph().valueEditSerial);
     CHECK(!RigExecFrozenSnapshotOwesLiveEdits(*patched, *program));
     ran = false;
     const RigExecRigPose warmed =
@@ -6325,7 +6343,7 @@ TestCpuReferenceSnapshotPreservesInputs()
     frozen.reset();
     CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));
     CHECK(frozen != nullptr);
-    CHECK(frozen && frozen->program.oraclePublications.has_value());
+    CHECK(frozen && frozen->program->oraclePublications.has_value());
 }
 
 // A constraint consumes the explicit one-element field in a detached job.
@@ -6354,9 +6372,9 @@ TestPoseConstraintWeightFieldFreezes()
     CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));
     CHECK(frozen != nullptr);
     if (!frozen) return;
-    CHECK(frozen->program.weightFields.size() == 1);
-    if (frozen->program.weightFields.size() == 1) {
-        const auto &field = frozen->program.weightFields.front();
+    CHECK(frozen->program->weightFields.size() == 1);
+    if (frozen->program->weightFields.size() == 1) {
+        const auto &field = frozen->program->weightFields.front();
         CHECK(field.form == RigExecBakedProgramImpl::WeightField::Form::EnvelopeConstraint);
         CHECK(field.ok && field.count == 1);
         CHECK(field.values == std::vector<float>{0.5f});
@@ -6395,9 +6413,9 @@ TestUnboundConstraintArrayKeysIgnoreEmptyRows()
     CHECK(B.constraintArrays.size()==1);
     std::shared_ptr<const RigExecFrozenProgram> frozen;std::string error;
     CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));if(!frozen)return;
-    CHECK(frozen->arrayKeys.size()==4);if(frozen->arrayKeys.size()!=4)return;
-    CHECK(frozen->arrayKeys[0]==weights);
-    CHECK(frozen->arrayKeys[1].IsEmpty() && frozen->arrayKeys[2].IsEmpty() && frozen->arrayKeys[3].IsEmpty());
+    CHECK(frozen->bindings->arrayKeys.size()==4);if(frozen->bindings->arrayKeys.size()!=4)return;
+    CHECK(frozen->bindings->arrayKeys[0]==weights);
+    CHECK(frozen->bindings->arrayKeys[1].IsEmpty() && frozen->bindings->arrayKeys[2].IsEmpty() && frozen->bindings->arrayKeys[3].IsEmpty());
     RigExecFrameInputs inputs;
     CHECK(RigExecSampleFrameInputs(evaluator,UsdTimeCode(1),{},&inputs,&error));
     inputs.values.insert(inputs.values.begin(),{SdfPath(),VtValue(VtFloatArray{7.0f,9.0f}),true});
@@ -6923,7 +6941,7 @@ TestFrameRecordFallbacksFreeze(const std::string &examplesDir)
             ++failures;
             return;
         }
-        CHECK(frozen->program.frameRecords.size() == 3);
+        CHECK(frozen->program->frameRecords.size() == 3);
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
                                        noOverrides, &inputs, &error));
@@ -6981,7 +6999,7 @@ TestSolverCheckpointFreezes(const std::string &examplesDir)
             ++failures;
             return;
         }
-        CHECK(frozen->program.frameRecords.size() == 3);
+        CHECK(frozen->program->frameRecords.size() == 3);
         RigExecFrameInputs inputs;
         CHECK(RigExecSampleFrameInputs(evaluator, UsdTimeCode(frame),
                                        noOverrides, &inputs, &error));
@@ -7044,8 +7062,8 @@ TestPrecedingOwnChainFreezes(const std::string &examplesDir)
             return;
         }
         int bound = 0;
-        for (size_t c = 0; c < frozen->program.chains.size(); ++c) {
-            const auto &chain = frozen->program.chains[c];
+        for (size_t c = 0; c < frozen->program->chains.size(); ++c) {
+            const auto &chain = frozen->program->chains[c];
             if (chain.target != box) {
                 continue;
             }
@@ -7213,7 +7231,7 @@ TestVolumePlacementsFixtureFreezes(const std::string &examplesDir)
         std::shared_ptr<const RigExecFrozenProgram> frozen;
         CHECK(RigExecFreezeProgram(evaluator,&frozen,&error));
         CHECK(frozen != nullptr);
-        CHECK(frozen && !frozen->program.weightFields.empty());
+        CHECK(frozen && !frozen->program->weightFields.empty());
         if (frozen) {
             RigExecFrameInputs inputs;
             CHECK(RigExecSampleFrameInputs(evaluator,UsdTimeCode(1),{},&inputs,&error));
@@ -7397,7 +7415,7 @@ TestFrozenVolumePlacementUsesTheSharedGate(const std::string &examplesDir)
         // The frozen worker, as a job clones it, with the poisoned final
         // frame.
         auto worker = std::make_unique<frozenDetail::_FrozenWorker>();
-        frozenDetail::_CloneImpl(frozen->program, &worker->B);
+        frozenDetail::_CloneImpl(*frozen->program, &worker->B);
         CHECK(finIndex < worker->B.fin.size() &&
               stepIndex < worker->B.steps.size());
         if (finIndex >= worker->B.fin.size() ||
@@ -8185,12 +8203,16 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
         ++failures;
         return;
     }
-    CHECK(frozen->program.cones.cone.get() == table);
+    CHECK(frozen->program->cones.cone.get() == table);
     const auto *providers = live.compiledProviderProgram.get();
     CHECK(providers != nullptr);
-    CHECK(frozen->program.compiledProviderProgram.get() == providers);
+    CHECK(frozen->program->compiledProviderProgram.get() == providers);
+    std::shared_ptr<const RigExecFrozenProgram> unchanged;
+    CHECK(RigExecPatchFrozenAvarConstants(*frozen, *program, &unchanged, &error));
+    CHECK(unchanged && unchanged->program == frozen->program);
+    CHECK(unchanged && unchanged->bindings == frozen->bindings);
     auto lane = std::make_unique<RigExecBakedProgramImpl>();
-    frozenDetail::_CloneImpl(frozen->program, lane.get(),
+    frozenDetail::_CloneImpl(*frozen->program, lane.get(),
                              frozenDetail::_CloneVerdict::Inherit);
     CHECK(lane->cones.cone.get() == table);
     CHECK(lane->compiledProviderProgram.get() == providers);
@@ -8207,16 +8229,16 @@ TestAFreezeSharesTheConeTable(const std::string &examplesDir)
         CHECK(after.compiledProviderProgram.get() != providers);
         CHECK(after.cones.Cone().size() == after.clustering.clusters.size());
     }
-    CHECK(frozen->program.cones.cone.get() == table);
-    CHECK(frozen->program.cones.Cone().size() == clusters);
-    CHECK(&frozen->program.GetProviderProgram() == providers);
+    CHECK(frozen->program->cones.cone.get() == table);
+    CHECK(frozen->program->cones.Cone().size() == clusters);
+    CHECK(&frozen->program->GetProviderProgram() == providers);
     CHECK(lane->cones.cone.get() == table);
 }
 
 // A lane inherits its snapshot's settled clone verdict, and the judge
-// (RIGEXEC_VERIFY_CLONE_KEYS, read at freeze) agrees with it. A patched
-// snapshot settles its own verdict after the patch, and its jobs equal
-// live. A key edited after the settle is caught by the judge, which counts
+// (RIGEXEC_VERIFY_CLONE_KEYS, read at freeze) agrees with it. Patched jobs
+// place their inputs in a private lane and agree with live. A key edited
+// after the settle is caught by the judge, which counts
 // without deciding, and a settle turns the verdict cold.
 void
 TestAWorkspaceInheritsTheVerdict()
@@ -8248,18 +8270,18 @@ TestAWorkspaceInheritsTheVerdict()
         ++failures;
         return;
     }
-    CHECK(!unjudged->program.verifyCloneKeys);
-    CHECK(frozen->program.verifyCloneKeys);
+    CHECK(!unjudged->program->verifyCloneKeys);
+    CHECK(frozen->program->verifyCloneKeys);
     // A completed run's snapshot: its keys stand.
-    CHECK(frozen->program.opAdapter.everRan);
+    CHECK(frozen->program->opAdapter.everRan);
     {
         auto inherited = std::make_unique<RigExecBakedProgramImpl>();
-        frozenDetail::_CloneImpl(frozen->program, inherited.get(),
+        frozenDetail::_CloneImpl(*frozen->program, inherited.get(),
                                  frozenDetail::_CloneVerdict::Inherit);
         auto computed = std::make_unique<RigExecBakedProgramImpl>();
-        frozenDetail::_CloneImpl(frozen->program, computed.get());
+        frozenDetail::_CloneImpl(*frozen->program, computed.get());
         CHECK(inherited->opAdapter.everRan ==
-              frozen->program.opAdapter.everRan);
+              frozen->program->opAdapter.everRan);
         CHECK(inherited->opAdapter.everRan == computed->opAdapter.everRan);
         CHECK(inherited->opAdapter.retainedFirst ==
               computed->opAdapter.retainedFirst);
@@ -8294,7 +8316,7 @@ TestAWorkspaceInheritsTheVerdict()
     // A key that no longer describes its bytes, on a copy whose verdict was
     // deferred (the source's, as copied).
     auto poisoned = std::make_unique<RigExecBakedProgramImpl>();
-    frozenDetail::_CloneImpl(frozen->program, poisoned.get(),
+    frozenDetail::_CloneImpl(*frozen->program, poisoned.get(),
                              frozenDetail::_CloneVerdict::Defer);
     CHECK(poisoned->opAdapter.everRan);
     bool edited = false;
@@ -8327,9 +8349,8 @@ TestAWorkspaceInheritsTheVerdict()
         CHECK(inherited->opAdapter.retainedFirst.empty());
     }
 
-    // A patched snapshot: the patch moves the constant tx under the AlongX
-    // AvarInputs op's key, so its settled verdict is cold, exactly what a
-    // lane computing its own check finds.
+    // A patch shares the completed history. The worker places the changed
+    // constant through its normal input path before checking graph keys.
     UsdStageRefPtr patchStage = MakeTinyRigWith(options);
     RigExecRigEvaluator patchEvaluator(patchStage, rig);
     CHECK(patchEvaluator.Compile());
@@ -8344,7 +8365,7 @@ TestAWorkspaceInheritsTheVerdict()
     if (!base) {
         return;
     }
-    CHECK(base->program.opAdapter.everRan);
+    CHECK(base->program->opAdapter.everRan);
     patchStage->GetAttributeAtPath(SdfPath("/Asset/Rig/AlongX.avars:tx"))
         .Set(TinyTx(2.0) + 1.5);
     const RigExecBakedProgram *liveProgram = patchEvaluator.GetBakedProgram();
@@ -8363,18 +8384,19 @@ TestAWorkspaceInheritsTheVerdict()
     if (!patched) {
         return;
     }
-    CHECK(patched->program.verifyCloneKeys);
-    CHECK(patched->program.compiledProviderProgram ==
-          base->program.compiledProviderProgram);
-    CHECK(patched->program.avarConstantSerial ==
-          base->program.avarConstantSerial + 1);
-    CHECK(!patched->program.opAdapter.everRan);
+    CHECK(patched->program->verifyCloneKeys);
+    CHECK(patched->program->compiledProviderProgram ==
+          base->program->compiledProviderProgram);
+    CHECK(patched->program == base->program);
+    CHECK(patched->bindings == base->bindings);
+    CHECK(patched->avarPatch);
+    CHECK(patched->program->opAdapter.everRan);
     {
         auto inherited = std::make_unique<RigExecBakedProgramImpl>();
-        frozenDetail::_CloneImpl(patched->program, inherited.get(),
+        frozenDetail::_CloneImpl(*patched->program, inherited.get(),
                                  frozenDetail::_CloneVerdict::Inherit);
         auto computed = std::make_unique<RigExecBakedProgramImpl>();
-        frozenDetail::_CloneImpl(patched->program, computed.get());
+        frozenDetail::_CloneImpl(*patched->program, computed.get());
         CHECK(inherited->opAdapter.everRan == computed->opAdapter.everRan);
         CHECK(inherited->cloneVerdictMismatches == 0);
     }
@@ -8490,9 +8512,9 @@ TestAClonesDropsIdleScratch(const std::string &examplesDir)
         return;
     }
     auto lane = std::make_unique<RigExecBakedProgramImpl>();
-    frozenDetail::_CloneImpl(frozen->program, lane.get(),
+    frozenDetail::_CloneImpl(*frozen->program, lane.get(),
                              frozenDetail::_CloneVerdict::Inherit);
-    const RigExecBakedProgramImpl *const clones[] = {&frozen->program,
+    const RigExecBakedProgramImpl *const clones[] = {frozen->program.get(),
                                                      lane.get()};
     for (const RigExecBakedProgramImpl *clone : clones) {
         CHECK(_RevisionOf(*clone, mover) != nullptr);

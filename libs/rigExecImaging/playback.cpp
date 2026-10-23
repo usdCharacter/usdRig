@@ -1,8 +1,8 @@
 // RigExec baked playback for Hydra (M2b). See playback.h for the contract.
 #include "playback.h"
 #include "rigExecRuntime/runtime.h"
-#include "rigExecRuntime/stageArrayInputs.h"
 #include "rigExecSampler/inputSampler.h"
+#include "rigExecMath/pointFrame.h"
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedSchedule.h"
 #include "rigExec/movers/moverRegistry.h"
@@ -106,7 +106,7 @@ RigExecBakedPlayback::NoteStageChanged()
     _xformResetsValid = false;
 }
 
-const RigExecBakedPlayback::_OutputPath &
+RigExecBakedPlayback::_OutputPath &
 RigExecBakedPlayback::_ResolveOutputPath(const std::string &text)
 {
     const auto found = _outputPaths.find(text);
@@ -146,10 +146,9 @@ RigExecBakedPlayback::_PrepareHistory(UsdTimeCode time, std::string *error)
     const size_t depth = _reader->GetHistoryDepth();
     for (size_t k = depth; k >= 1; --k) {
         const UsdTimeCode tick(time.GetValue() - double(k));
-        bool sampled = false;
-        if (!_sampler->Apply(tick, _reader.get(), error, &sampled)) return false;
+        if (!_sampler->Apply(tick, _reader.get(), error)) return false;
         _AdmitUpstream(tick);
-        if (!_ApplyUpstream(tick, sampled, error)) return false;
+        if (!_ApplyUpstream(tick, error)) return false;
         if (!_reader->ExecuteHistory(error)) return false;
     }
     return true;
@@ -234,6 +233,8 @@ RigExecBakedPlayback::Open(const std::string &resolvedPath,
             RigExecBakedScheduleMode::Parallel;
     _assetPath = resolvedPath;
     _outputPaths.clear();
+    _providerOutputs.clear();
+    _providerOutputsValid = false;
     _xformResetRoots.clear();
     _xformResetPaths.clear();
     _xformResetsValid = false;
@@ -316,13 +317,12 @@ RigExecBakedPlayback::_AdmitUpstream(UsdTimeCode time)
             continue;
         }
         // Authored array sets reach both time and rest reads. Their lift
-        // restores the stage sample at playback time for Animated slots.
+        // restores the stage sample only where the sampler has a binding.
         const RigExecRuntimeInputInfo &info = _reader->GetInputInfo(index);
         _UpstreamKey key;
         key.index = index;
         key.name = info.name;
         key.tag = info.type;
-        key.animated = info.animated;
         key.attribute = _stage->GetAttributeAtPath(entry.path);
         key.value = entry.value;
         _upstreamAdmitted[entry.path] = std::move(key);
@@ -331,32 +331,26 @@ RigExecBakedPlayback::_AdmitUpstream(UsdTimeCode time)
 
 bool
 RigExecBakedPlayback::_LiftUpstream(const _UpstreamKey &key,
-                                    UsdTimeCode time, bool sampled,
+                                    UsdTimeCode time,
                                     std::string *error)
 {
-    // A non-Animated input's default is the bake-time stage value, which is
-    // the stage value at every time. An Animated one takes the stage at
-    // this time: Apply already read it when it sampled, else one read here.
-    const bool sampledArray = !RrInputTagIsArray(key.tag) ||
-        RigExecRuntimeStageArrayInputs::CanSample(*_reader, key.index);
-    if (!key.animated || !sampledArray) {
-        // A static input the sampler binds is read again at the next
-        // sampling Apply, over this reset (see _ApplyUpstream).
-        _sampler->NoteStageChanged();
+    // Restore the bound stage source, including a static SourceBacked input.
+    // Unbound inputs (for example Default-only arrays) retain bake defaults.
+    if (!_sampler->HasBinding(key.index)) {
         return _reader->ResetInput(key.name, error);
     }
-    return sampled || RigExecSampleInputAt(key.attribute, key.index,
-                                           key.name, key.tag, time,
-                                           _reader.get(), error);
+    return _sampler->DidSampleInput(key.index) ||
+           RigExecSampleInputAt(key.attribute, key.index, key.name, key.tag,
+                                 time, _reader.get(), error);
 }
 
 bool
-RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time, bool sampled,
+RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time,
                                      std::string *error)
 {
     for (const auto &[path, key] : _upstreamApplied) {
         if (!_upstreamAdmitted.count(path) &&
-            !_LiftUpstream(key, time, sampled, error)) {
+            !_LiftUpstream(key, time, error)) {
             return false;
         }
     }
@@ -366,8 +360,8 @@ RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time, bool sampled,
         const auto was = _upstreamApplied.find(path);
         const bool moved =
             was == _upstreamApplied.end() || was->second.value != key.value;
-        // Apply overwrote an Animated input with the stage at the new time.
-        if (moved || (key.animated && sampled)) {
+        // Sampling can replace static SourceBacked inputs during a refresh.
+        if (moved || _sampler->DidSampleInput(key.index)) {
             // SetSampledInputAt: the value stands where the stage value
             // stood, and a stage value may be non-finite. A Token is set by
             // its text, which the reader interns when the file lacks it.
@@ -394,17 +388,10 @@ RigExecBakedPlayback::_ApplyUpstream(UsdTimeCode time, bool sampled,
                                  : why) +
                     "; ignored");
                 refused.push_back(path);
-                if (!_LiftUpstream(key, time, sampled, error)) {
+                if (!_LiftUpstream(key, time, error)) {
                     return false;
                 }
                 continue;
-            }
-            // The sampler skips a static input it binds until it refreshes,
-            // and a write here is not the stage's value: the next sampling
-            // Apply refreshes and reads the stage over it, as every
-            // sampling Apply reads an Animated input.
-            if (!key.animated) {
-                _sampler->NoteStageChanged();
             }
         }
         applied.emplace(path, key);
@@ -430,7 +417,6 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         return result;
     }
     std::string why;
-    bool sampled = false;
     // Upstream values go in after Apply, never through
     // _sampler->Invalidate(): an invalidated Apply touches every Animated
     // input, so every varying step would re-run for a change that reaches
@@ -439,10 +425,10 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     if (_reader->GetWindowedOperationCount()) {
         ran = _PrepareHistory(time, &why);
     }
-    ran = ran && _sampler->Apply(time, _reader.get(), &why, &sampled);
+    ran = ran && _sampler->Apply(time, _reader.get(), &why);
     if (ran) {
         _AdmitUpstream(time);
-        ran = _ApplyUpstream(time, sampled, &why);
+        ran = _ApplyUpstream(time, &why);
     }
     if (ran && _dispatchExecute && !RigExecFrozenSerialActive()) {
         // The dispatcher lives for this Execute only, in its own arena; the
@@ -485,7 +471,7 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
     const TfToken &normalsName = _playbackTokens->normals;
     const TfToken &extentName = _playbackTokens->extent;
     for (const RigExecRuntimePoints &moved : _reader->GetPoints()) {
-        const _OutputPath &output = _ResolveOutputPath(moved.path);
+        _OutputPath &output = _ResolveOutputPath(moved.path);
         if (!output.ok || !output.isProperty) {
             continue;
         }
@@ -499,21 +485,23 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
         } else {
             continue;
         }
-        if (property == pointsName) {
-            published->hasPoints = true;
-            published->points.resize(moved.points.size());
-            for (size_t i = 0; i < moved.points.size(); ++i) {
-                published->points[i] = GfVec3f(
-                    moved.points[i][0], moved.points[i][1],
-                    moved.points[i][2]);
+        if (property == pointsName || property == normalsName) {
+            const auto source = moved.points.Share();
+            if (output.pointsSource != source) {
+                VtVec3fArray points(moved.points.size());
+                for (size_t i = 0; i < moved.points.size(); ++i) {
+                    points[i] = GfVec3f(moved.points[i][0],
+                        moved.points[i][1], moved.points[i][2]);
+                }
+                output.points = std::move(points);
+                output.pointsSource = source;
             }
-        } else if (property == normalsName) {
-            published->hasNormals = true;
-            published->normals.resize(moved.points.size());
-            for (size_t i = 0; i < moved.points.size(); ++i) {
-                published->normals[i] = GfVec3f(
-                    moved.points[i][0], moved.points[i][1],
-                    moved.points[i][2]);
+            if (property == pointsName) {
+                published->hasPoints = true;
+                published->points = output.points;
+            } else {
+                published->hasNormals = true;
+                published->normals = output.points;
             }
         } else {
             published->hasExtent = true;
@@ -522,6 +510,36 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             published->extentMax = GfVec3d(
                 moved.points[1][0], moved.points[1][1], moved.points[1][2]);
         }
+    }
+
+    // Evaluated provider frames serve manipulators and pose readers without
+    // creating guide geometry or another evaluator.
+    if (!_providerOutputsValid) {
+        const auto providers = _reader->GetProviderFramePublications();
+        for (size_t slot = 0; slot < providers.size(); ++slot) {
+            if (!(providers[slot].publicationRole & 3)) continue;
+            const _OutputPath &output = _ResolveOutputPath(providers[slot].path);
+            if (!output.ok || !output.isPrim) continue;
+            _providerOutputs.push_back({slot, output.path});
+        }
+        _providerOutputsValid = true;
+    }
+    const RigExecPointFrame identityFrame;
+    for (const _ProviderOutput &provider : _providerOutputs) {
+        uint8_t role = 0;
+        RrPointFrame final;
+        if (!_reader->GetProviderFinalFrame(provider.slot, &role, &final) ||
+            !final.IsValid() || final.IsDegenerate()) continue;
+        std::array<GfVec3d, 4> points;
+        for (size_t i = 0; i < points.size(); ++i)
+            points[i] = GfVec3d(final.points[i][0], final.points[i][1],
+                                final.points[i][2]);
+        GfMatrix4d matrix(1.0);
+        if (!RigExecPointsToMatrix(identityFrame.points, points, &matrix)) continue;
+        auto &published = snapshot->prims[provider.path];
+        published.assetRoot = _assetRoot;
+        published.hasControlFrame = true;
+        published.controlFrame = matrix;
     }
 
     // Constraint-driven transforms, published onto the prim itself so
@@ -598,7 +616,7 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             if (field.weights.empty()) {
                 continue;
             }
-            const _OutputPath &weight = _ResolveOutputPath(field.path);
+            _OutputPath &weight = _ResolveOutputPath(field.path);
             if (!weight.ok || weight.path != _weightOverlay) {
                 continue;
             }
@@ -613,8 +631,12 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             RigExecPublishedPrim &published = snapshot->prims[geomPath];
             published.assetRoot = _assetRoot;
             published.hasWeightOverlay = true;
-            published.weightOverlay = VtFloatArray(
-                field.weights.begin(), field.weights.end());
+            const auto source = field.weights.Share();
+            if (weight.weightsSource != source) {
+                weight.weights = VtFloatArray(field.weights.begin(), field.weights.end());
+                weight.weightsSource = source;
+            }
+            published.weightOverlay = weight.weights;
             break;
         }
     }

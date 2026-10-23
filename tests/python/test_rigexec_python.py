@@ -109,6 +109,68 @@ def _setup_environment():
     rigexec_test_env.ScrubForeignPxrFinders(usd_install)
 
 
+def _test_cached_stage(rigexec):
+    """Native borrowing preserves the exact cached stage's composition."""
+    import gc
+    from pxr import Sdf, Usd
+
+    authored = Usd.Stage.CreateInMemory()
+    builder = rigexec.Builder.create(authored, "/Rig")
+    kept = builder.add_control("Kept")
+    masked = builder.add_control("Masked")
+    kept_prim = authored.GetPrimAtPath(kept.path)
+    kept_prim.GetAttribute("avars:tx").Set(2.0)
+
+    muted = Sdf.Layer.CreateAnonymous("muted.usda")
+    muted_stage = Usd.Stage.Open(muted)
+    muted_stage.DefinePrim("/Rig/Muted", "RigExecControl")
+    authored.GetRootLayer().subLayerPaths.append(muted.identifier)
+    payload = Usd.Stage.CreateInMemory()
+    payload.DefinePrim("/Payload", "Xform")
+    payload.DefinePrim("/Payload/Control", "RigExecControl")
+    authored.DefinePrim("/Rig/Deferred", "Xform").GetPayloads().AddPayload(
+        payload.GetRootLayer().identifier, "/Payload")
+
+    mask = Usd.StagePopulationMask()
+    for path in (kept.path, "/Rig/Muted", "/Rig/Deferred"):
+        mask.Add(path)
+    stage = Usd.Stage.OpenMasked(authored.GetRootLayer(), mask, Usd.Stage.LoadNone)
+    stage.MuteLayer(muted.identifier)
+    with Usd.EditContext(stage, stage.GetSessionLayer()):
+        stage.GetPrimAtPath(kept.path).GetAttribute("avars:tx").Set(7.0)
+    before = (stage.GetRootLayer().ExportToString(),
+              stage.GetSessionLayer().ExportToString())
+    cache = Usd.StageCache()
+    cache_id = cache.Insert(stage)
+    del stage
+    gc.collect()
+    cached = cache.Find(cache_id)
+    rig = rigexec.Rig(cached, "/Rig")
+    rig.compile()
+    pose = rig.evaluate(0)
+    assert pose.valid, pose.diagnostics
+    assert set(pose.control_paths()) == {kept.path}, pose.control_paths()
+    assert _close(pose.control_frame(kept.path).origin[0], 7.0)
+    assert not cached.GetPrimAtPath(masked.path)
+    assert not cached.GetPrimAtPath("/Rig/Deferred/Control")
+    assert before == (cached.GetRootLayer().ExportToString(),
+                      cached.GetSessionLayer().ExportToString())
+    with Usd.EditContext(cached, cached.GetSessionLayer()):
+        cached.GetPrimAtPath(kept.path).GetAttribute("avars:tx").Set(9.0)
+    assert _close(rig.evaluate(1).control_frame(kept.path).origin[0], 9.0)
+
+    cache.Erase(cache_id)
+    del cached
+    gc.collect()
+    assert _close(rig.evaluate(2).control_frame(kept.path).origin[0], 9.0)
+    try:
+        rigexec.Rig(object(), "/Rig")
+    except (TypeError, ValueError, RuntimeError):
+        pass
+    else:
+        raise AssertionError("Rig accepted a non-stage object")
+
+
 def main():
     plugin_dir = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -182,7 +244,8 @@ def main():
     wf = pose1.weight_field(w.path)
     assert [round(x, 6) for x in wf] == [1.0, 0.5, 0.0], wf
 
-    print("OK: python bindings end-to-end")
+    _test_cached_stage(rigexec)
+    print("OK: python bindings end-to-end and cached-stage identity")
 
 
 if __name__ == "__main__":

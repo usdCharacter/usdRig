@@ -2,6 +2,7 @@
 
 #include "frozenContextInternal.h"
 #include "inputReplay.h"
+#include "oracleDispatch.h"
 #include "bakedOpValues.h"
 #include "pxr/base/tf/getenv.h"
 #include <algorithm>
@@ -530,6 +531,7 @@ bool
 RigExecCanFreezeProgram(const RigExecRigEvaluator &evaluator,
                         std::string *error)
 {
+    if (evaluator.cpuReference && !RigExecOracleAvailable(error)) return false;
     const auto fail = [&error](const std::string &why) {
         if (error) {
             *error = why;
@@ -664,16 +666,20 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
     const RigExecBakedProgramImpl &B =
         evaluator.GetBakedProgram()->GetStepGraph();
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
+    auto program = std::make_shared<RigExecBakedProgramImpl>();
+    auto bindings = std::make_shared<RigExecFrozenBindings>();
+    snapshot->program = program;
+    snapshot->bindings = bindings;
     snapshot->inputReplayCapture = RigExecInputReplayCaptureRequested();
     snapshot->inputReplayOwner = std::this_thread::get_id();
     // Settled below, after the snapshot's own edits; its lanes inherit it.
-    _CloneImpl(B, &snapshot->program, _CloneVerdict::Defer);
-    snapshot->program.verifyCloneKeys =
+    _CloneImpl(B, program.get(), _CloneVerdict::Defer);
+    program->verifyCloneKeys =
         TfGetenvBool("RIGEXEC_VERIFY_CLONE_KEYS", false);
     // Workers clone this snapshot and index its spelled slot paths unchecked.
-    if (!TF_VERIFY(snapshot->program.pathTexts &&
-                   snapshot->program.pathTexts->size() ==
-                       snapshot->program.paths.size())) {
+    if (!TF_VERIFY(program->pathTexts &&
+                   program->pathTexts->size() ==
+                       program->paths.size())) {
         if (error) {
             *error = "slot path texts do not match the slot table";
         }
@@ -683,7 +689,7 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         // Freeze is an owning-thread source boundary. Enabling the judge
         // after Evaluate must capture its independent inputs here, rather
         // than require another production generation or retain old facts.
-        auto &reference = snapshot->program;
+        auto &reference = *program;
         struct SourceCaptureScope {
             RigExecBakedProgramImpl &program;
             ~SourceCaptureScope() {
@@ -696,18 +702,18 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         reference.oraclePublications.emplace();
         RigExecBakedBeginOracleReference(&reference, 0, B.lastTime);
     }
-    _SettleCloneVerdict(&snapshot->program);
+    _SettleCloneVerdict(program.get());
     if (B.jointSolverBinding) {
-        snapshot->jointSolverBinding = *B.jointSolverBinding;
+        bindings->jointSolverBinding = *B.jointSolverBinding;
     }
-    snapshot->solverGuidesPresent = !B.solverArrays.empty();
+    bindings->solverGuidesPresent = !B.solverArrays.empty();
     // Handle identities, captured here (UI thread) as plain data: the
     // worker must not even ask a handle whether it is valid.
     _ForEachPatchableInput(
-        B, [&snapshot](const auto &input) {
-            snapshot->inputHeadPaths.push_back(
+        B, [&bindings](const auto &input) {
+            bindings->inputHeadPaths.push_back(
                 input.head ? input.head.GetPath() : SdfPath());
-            snapshot->inputConstants.push_back(VtValue(
+            bindings->inputConstants.push_back(VtValue(
                 input.sourceBacked ? input.sourceFallback : input.constant));
         }, /*includeIntervening=*/false);
     // The samplers' own keys, empty where they read nothing: one source of
@@ -716,44 +722,44 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
          B.constraintArrays) {
         const bool valid = arrays.prim.IsValid();
         for (size_t k = 0; k < arrays.keys.size(); ++k) {
-            snapshot->arrayKeys.push_back(
+            bindings->arrayKeys.push_back(
                 valid && arrays.Sampled(k) ? arrays.keys[k] : SdfPath());
         }
     }
     for (const RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
-        snapshot->chainBaseQueryValid.push_back(
+        bindings->chainBaseQueryValid.push_back(
             chain.baseQuery.IsValid() ? 1 : 0);
     }
     for (const auto &[chainIndex, derivedIndex] : B.derivedIndex) {
         const RigExecBakedProgramImpl::GeomChain::Derived &derived =
             B.chains[size_t(chainIndex)].derived[size_t(derivedIndex)];
-        snapshot->derivedBaseQueryValid.push_back(
+        bindings->derivedBaseQueryValid.push_back(
             derived.baseQuery.IsValid() ? 1 : 0);
     }
     for (const RigExecBakedProgramImpl::Solver &solver : B.solvers) {
-        snapshot->ribbonQueryValid.push_back(
+        bindings->ribbonQueryValid.push_back(
             solver.ribbonPointsQuery.IsValid() ? 1 : 0);
     }
     for (const auto &[chainIndex, revisionIndex] : B.revisionIndex) {
         const RigExecBakedProgramImpl::GeomRevision &revision =
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         const UsdPrim &moverPrim = revision.moverPrim;
-        snapshot->moverHasEnabled.push_back(
+        bindings->moverHasEnabled.push_back(
             moverPrim && moverPrim.GetAttribute(TfToken("inputs:enabled"))
                 ? 1
                 : 0);
-        snapshot->moverHasDefaultWeight.push_back(
+        bindings->moverHasDefaultWeight.push_back(
             moverPrim &&
                     moverPrim.GetAttribute(TfToken("inputs:defaultWeight"))
                 ? 1
                 : 0);
-        snapshot->moverHasMethod.push_back(
+        bindings->moverHasMethod.push_back(
             moverPrim &&
                     moverPrim.GetAttribute(TfToken("rigExec:skinningMethod"))
                 ? 1
                 : 0);
         // The sampler's key for the mover's defaultWeight sample.
-        snapshot->moverDefaultWeightKeys.push_back(
+        bindings->moverDefaultWeightKeys.push_back(
             revision.moverPath.AppendProperty(
                 TfToken("inputs:defaultWeight")));
     }
@@ -765,7 +771,7 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
               _frozenWeightTokens->samplePointsKey,
               _frozenWeightTokens->curvePointsKey,
               _frozenWeightTokens->combineTargetCountKey}) {
-            snapshot->weightArrayKeys.push_back(
+            bindings->weightArrayKeys.push_back(
                 _FrozenWeightArrayKey(object.path, role));
         }
     }
@@ -777,9 +783,12 @@ bool
 RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
                                    const RigExecBakedProgram &live)
 {
+    if (!base.program) return true;
     const RigExecBakedProgramImpl &L = live.GetStepGraph();
-    return L.valueEditSerial != base.program.valueEditSerial ||
-           L.programStamp != base.program.programStamp;
+    const auto *patch = base.avarPatch.get();
+    const uint64_t serial = patch ? patch->valueEditSerial : base.program->valueEditSerial;
+    const uint64_t stamp = patch ? patch->programStamp : base.program->programStamp;
+    return L.valueEditSerial != serial || L.programStamp != stamp;
 }
 
 uint64_t

@@ -16,7 +16,7 @@ by a button that silently does nothing.
 import os
 import sys
 
-from pxr import Sdf, Tf, Usd, UsdGeom
+from pxr import Sdf, Tf, Usd
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 if __name__ != "__main__":
@@ -570,6 +570,8 @@ class PickerPanel(QtWidgets.QDialog):
         # single-character code below reads the same as it always did.
         self._pickers = []
         self._visAttrs = []
+        self._visAnimated = False
+        self._controlsByRig = {}
         self._picker = None
         self._views = []
         self._noticeKey = None
@@ -729,20 +731,26 @@ class PickerPanel(QtWidgets.QDialog):
                 Usd.Notice.ObjectsChanged, self._OnObjectsChanged, stage)
 
     def _OnObjectsChanged(self, notice, sender):
-        # Cheap first: four `AffectedObject` calls, each a prefix lookup
-        # in the notice's own table, and nothing else happens unless a
-        # dial is among them. This runs on every edit to the stage, which
-        # on this rig means every gizmo drag frame.
+        # Cached property handles avoid rediscovering controls on value edits.
         for attr in self._dials:
             if notice.AffectedObject(attr):
                 self._RefreshModes()
-                return
+                break
         # The controls hidden or shown from outside the picker (usdview's
         # own hide, an override layer): keep the toggle's tick honest.
-        for attr in self._visAttrs:
-            if notice.AffectedObject(attr):
-                self._SyncToggles()
-                return
+        visibility_changed = any(notice.AffectedObject(attr) for attr in self._visAttrs)
+        resynced = list(notice.GetResyncedPaths())
+        if resynced:
+            scopes = [Sdf.Path(p.rig_path or "/") for p in self._pickers]
+            collection_changed = any(
+                path.HasPrefix(scope) or scope.HasPrefix(path)
+                for path in resynced for scope in scopes
+                if path.IsPrimPath() or path == Sdf.Path.absoluteRootPath)
+            if collection_changed:
+                self._controlsByRig.clear()
+                visibility_changed = True
+        if visibility_changed:
+            self._SyncToggles()
 
         # THE PICKER ITSELF WAS EDITED. Somebody deactivated a button,
         # moved one, renamed one, retargeted one, or sublayered a whole
@@ -786,6 +794,9 @@ class PickerPanel(QtWidgets.QDialog):
         # animator scrubs, so the drawn half has to follow the frame too.
         # The SIGNAL's frame, never `self._api.frame` -- see `_Frame`.
         self._RefreshModes(frame)
+        # Only animated visibility can change the tick between frames.
+        if self._visAnimated:
+            self._SyncToggles(frame)
 
     def _OnStageReplaced(self, *args):
         self.Reload()
@@ -798,6 +809,8 @@ class PickerPanel(QtWidgets.QDialog):
         super(PickerPanel, self).showEvent(event)
         self._ObserveStage(self._stage())
         self._RefreshModes()
+        self._controlsByRig.clear()
+        self._SyncToggles()
 
     def closeEvent(self, event):
         # Revoke before Qt deletes the C++ side, or the notice fires into
@@ -812,6 +825,9 @@ class PickerPanel(QtWidgets.QDialog):
     def Reload(self):
         self._tabs.clear()
         self._views = []
+        self._controlsByRig.clear()
+        self._visAttrs = []
+        self._visAnimated = False
         # The stage may be a different one than we were watching (the
         # panel outlives a File > Open), and the cached dials belong to
         # whichever stage `_RefreshModes` last read.
@@ -927,61 +943,50 @@ class PickerPanel(QtWidgets.QDialog):
                 return
 
 
-    def _ControlsPrim(self, picker=None):
-        """The prim holding the rig's controls: the `Controls` scope under
-        `Aux` in the rig the picker names (the whole stage when it names
-        none), or any `Controls` scope when no `Aux` parents one."""
+    def _ControlPrims(self, picker=None):
+        """Controls in the picker's rig, independent of their namespace layout."""
         stage = self._stage()
         picker = picker or self._picker
         if stage is None or picker is None:
-            return None
-        root = stage.GetPrimAtPath(getattr(picker, "rig_path", "") or "/")
-        if not root or not root.IsValid():
-            root = stage.GetPseudoRoot()
-        fallback = None
-        for prim in Usd.PrimRange(root):
-            if prim.GetName() != "Controls":
-                continue
-            if prim.GetParent().GetName() == "Aux":
-                return prim
-            fallback = fallback or prim
-        return fallback
+            return []
+        path = getattr(picker, "rig_path", "")
+        if path not in self._controlsByRig:
+            # Prim resyncs and reloads clear this collection; scrubbing does not.
+            self._controlsByRig[path] = pickerScene.control_prims(stage, path)
+        return self._controlsByRig[path]
 
     def _ToggleControlsVisibility(self):
         """Hide or show the rig's controls, as usdview's own hide does:
         a visibility opinion in the session layer, so the rig's files are
         never touched and reopening the stage shows them again."""
         stage = self._stage()
-        prim = self._ControlsPrim()
-        if stage is None or prim is None:
-            self._status.setText("No Controls prim under Aux on this rig.")
+        controls = self._ControlPrims()
+        if not controls:
+            self._status.setText("No controls in this picker's rig.")
             return
-        imageable = UsdGeom.Imageable(prim)
-        hide = imageable.ComputeVisibility() != UsdGeom.Tokens.invisible
-        with Usd.EditContext(stage, stage.GetSessionLayer()):
-            attr = imageable.GetVisibilityAttr()
-            if hide:
-                attr.Set(UsdGeom.Tokens.invisible)
-            else:
-                attr.Clear()
-                # Still hidden: the rig itself, or an ancestor, says so.
-                if imageable.ComputeVisibility() == UsdGeom.Tokens.invisible:
-                    attr.Set(UsdGeom.Tokens.inherited)
+        hide = pickerScene.controls_visible(controls, self._Frame())
+        pickerScene.set_controls_visible(stage, controls, not hide)
         self._SyncToggles()
-        self._status.setText("Controls %s." % ("hidden" if hide else "shown"))
+        if not hide and not pickerScene.controls_visible(controls, self._Frame()):
+            self._status.setText("Some controls remain hidden by authored visibility.")
+        else:
+            self._status.setText("Controls %s." % ("hidden" if hide else "shown"))
 
-    def _SyncToggles(self):
+    def _SyncToggles(self, frame=None):
         """Tick each Ctrl Vis button when its rig's controls are visible."""
-        self._visAttrs = []
+        attributes = {}
+        time = self._Frame(frame)
         for picker in self._pickers:
-            prim = self._ControlsPrim(picker)
-            shown = prim is not None and UsdGeom.Imageable(
-                prim).ComputeVisibility() != UsdGeom.Tokens.invisible
-            if prim is not None:
-                self._visAttrs.append(UsdGeom.Imageable(prim).GetVisibilityAttr())
+            controls = self._ControlPrims(picker)
+            shown = pickerScene.controls_visible(controls, time)
+            for attr in pickerScene.control_visibility_attributes(controls):
+                attributes[attr.GetPath()] = attr
             for button in picker.buttons:
                 if button.command == "ctrl_vis":
                     button.checked = shown
+        self._visAttrs = list(attributes.values())
+        self._visAnimated = any(
+            attr.ValueMightBeTimeVarying() for attr in self._visAttrs)
         for view in self._views:
             view.update()
         self._Notify("update")

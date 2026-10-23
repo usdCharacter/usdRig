@@ -2303,11 +2303,20 @@ _TestStaticProviderInputsAreReadOnce(const UsdStageRefPtr &stage,
         }
         CHECK(_SameOutputs(*skip.reader, *plain.reader));
         CHECK(_SameOutputs(*unnoted.reader, *plain.reader));
+        for (const auto &info : statics) {
+            CHECK(skip.sampler.HasBinding(info.slot));
+            CHECK(skip.sampler.DidSampleInput(info.slot) == (frame == 2));
+        }
         if (frame >= 2) {
             CHECK(plain.sampler.GetLastReadCount() == bound);
             CHECK(skip.sampler.GetLastReadCount() ==
                   (frame == 2 ? bound : animated));
         }
+    }
+    // Sampling reports describe this call, including a same-time no-op.
+    play(&plain, UsdTimeCode(4));
+    for (const auto &info : statics) {
+        CHECK(!plain.sampler.DidSampleInput(info.slot));
     }
 
     // A static Double input whose Default edit moves what the rig plays:

@@ -534,7 +534,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 // nothing at all.
                 VtVec3fArray rest;
                 readFact(s.ribbonPointsPath,UsdTimeCode::Default(),&rest);
-                s.ribbonRestPoints.assign(rest.begin(), rest.end());
+                s.ribbonRestPoints.assign(rest.cbegin(), rest.cend());
                 s.ribbonPointsVarying = a.ValueMightBeTimeVarying() ||
                                         a.GetNumTimeSamples() > 0;
                 if (s.ribbonPointsVarying) {
@@ -544,7 +544,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                     // nothing to read and the cone nothing to compare.
                     VtVec3fArray live;
                     readFact(s.ribbonPointsPath,ctx->capture,&live);
-                    s.ribbonConstantPoints.assign(live.begin(), live.end());
+                    s.ribbonConstantPoints.assign(live.cbegin(), live.cend());
                 }
                 // Registered BY PATH rather than through fold(prim, name):
                 // the driver curve is another prim entirely, and the target
@@ -4182,7 +4182,7 @@ RigExecBakedRunSolverSources(RigExecBakedProgramImpl *program,
         VtVec3fArray live;
         s.ribbonPointsQuery.Get(&live, time);
         s.lastRibbonPoints.swap(s.ribbonPoints);
-        s.ribbonPoints.assign(live.begin(), live.end());
+        s.ribbonPoints.assign(live.cbegin(), live.cend());
         // By VALUE, never "the time moved": a curve keyed on two frames
         // holds the same points across most of a sweep, and comparing is
         // what lets the ribbon's whole cone sit out those frames.

@@ -367,6 +367,26 @@ def TestContainerLegacyLibrary():
     print("  ok: a legacy library keeps the single-stage behavior")
 
 
+def TestFailedActivationEnablesGuides():
+    class FailedLibrary(_MultiStageLibrary):
+        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+            self.calls.append(("Activate", cacheId, rigPath, frame))
+            return 3
+
+    stage, other = _TwinStages()
+    container = _BareContainer(FailedLibrary(), stage)
+    container._api.dataModel.viewSettings.displayGuide = False
+    try:
+        container._ActivateCurrentStage()
+        _Check(not container._active, "compile failure stays inactive")
+        _Check(container._api.dataModel.viewSettings.displayGuide,
+               "authored guides remain enabled after compile failure")
+    finally:
+        container._Shutdown()
+        _Erase(stage, other)
+    print("  ok: failed activation leaves authored guides enabled")
+
+
 def main():
     TestForStageRouting()
     TestLegacyFallback()
@@ -374,7 +394,8 @@ def main():
     TestLazyCacheId()
     TestContainersNeverTouchEachOther()
     TestContainerLegacyLibrary()
-    print("IMAGING_HANDLE_OK (6 groups)")
+    TestFailedActivationEnablesGuides()
+    print("IMAGING_HANDLE_OK (7 groups)")
     return 0
 
 

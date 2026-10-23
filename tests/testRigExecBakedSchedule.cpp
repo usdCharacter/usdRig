@@ -2113,8 +2113,8 @@ TestAStaleFuseKeepsTheChunkKeys()
         restore();
         return;
     }
-    CHECK(B.opAdapter.everRan && frozen->program.opAdapter.everRan);
-    CHECK(frozen->program.opAdapter.retainedFirst ==
+    CHECK(B.opAdapter.everRan && frozen->program->opAdapter.everRan);
+    CHECK(frozen->program->opAdapter.retainedFirst ==
           B.opAdapter.retainedFirst);
 
     // ... and its first job runs what live runs for the next drag.

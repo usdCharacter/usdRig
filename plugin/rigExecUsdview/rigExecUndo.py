@@ -281,6 +281,27 @@ class Edit(object):
         self.entries = list(entries)
 
     def _Apply(self, useAfter):
+        snapshots = []
+        for entry in self.entries:
+            # A removed or reloaded layer has nothing left to restore; the
+            # rest of the edit still applies, so history never sticks on it.
+            if entry.layer is None or entry.layer.expired:
+                continue
+            if not entry.layer.permissionToEdit:
+                raise RuntimeError("Undo layer is not editable: %s" %
+                                   entry.layer.identifier)
+            target = entry.after if useAfter else entry.before
+            rollbackPath = entry.specPath
+            snapshotType = type(target)
+            # Restoring a property can create an entire missing parent chain.
+            # Roll back from its first absent ancestor to remove those specs too.
+            for prefix in entry.specPath.GetPrefixes():
+                if entry.layer.GetObjectAtPath(prefix) is None:
+                    rollbackPath = prefix
+                    snapshotType = SpecSnapshot
+                    break
+            snapshots.append((target, snapshotType.Capture(
+                entry.layer, rollbackPath)))
         # ONE change block around the whole edit, not one per attribute.
         # An xform edit writes the op attributes and xformOpOrder as
         # separate specs; restoring them in separate blocks lets the
@@ -290,10 +311,23 @@ class Edit(object):
         # warns. The nested blocks inside Restore() are harmless: USD
         # sends the notices when the OUTERMOST block closes.
         with Sdf.ChangeBlock():
-            for entry in self.entries:
-                if entry.layer is None or entry.layer.expired:
-                    continue
-                (entry.after if useAfter else entry.before).Restore()
+            attempted = []
+            try:
+                for target, current in snapshots:
+                    attempted.append(current)
+                    target.Restore()
+            except Exception as error:
+                failures = []
+                for current in reversed(attempted):
+                    try:
+                        current.Restore()
+                    except Exception as rollbackError:
+                        failures.append(str(rollbackError))
+                if failures:
+                    raise RuntimeError(
+                        "Undo restoration failed (%s); rollback also failed: %s" %
+                        (error, "; ".join(failures))) from error
+                raise
 
     def Undo(self):
         self._Apply(useAfter=False)
@@ -311,6 +345,7 @@ class UndoStack(object):
         self._undo = []
         self._redo = []
         self._listeners = []
+        self._replaying = False
 
     def AddListener(self, fn):
         self._listeners.append(fn)
@@ -320,6 +355,8 @@ class UndoStack(object):
             fn()
 
     def Push(self, edit):
+        if self._replaying:
+            raise RuntimeError("Cannot record an edit during undo or redo")
         self._undo.append(edit)
         del self._undo[:-self.LIMIT]
         self._redo = []
@@ -338,24 +375,30 @@ class UndoStack(object):
         return self._redo[-1].label if self._redo else ""
 
     def Undo(self):
-        if not self._undo:
-            return False
-        edit = self._undo.pop()
-        edit.Undo()
-        self._redo.append(edit)
-        self._Notify()
-        return True
+        return self._Replay(self._undo, self._redo, "Undo")
 
     def Redo(self):
-        if not self._redo:
+        return self._Replay(self._redo, self._undo, "Redo")
+
+    def _Replay(self, source, destination, method):
+        if self._replaying:
+            raise RuntimeError("Undo and redo cannot be nested")
+        if not source:
             return False
-        edit = self._redo.pop()
-        edit.Redo()
-        self._undo.append(edit)
+        edit = source[-1]
+        self._replaying = True
+        try:
+            getattr(edit, method)()
+        finally:
+            self._replaying = False
+        destination.append(edit)
+        source.pop()
         self._Notify()
         return True
 
     def Clear(self):
+        if self._replaying:
+            raise RuntimeError("Cannot clear history during undo or redo")
         self._undo = []
         self._redo = []
         self._Notify()

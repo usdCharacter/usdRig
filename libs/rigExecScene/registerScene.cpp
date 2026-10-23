@@ -1,6 +1,7 @@
 // Installs the translation entry points the evaluator calls. Linked into
 // librigExecScene, not librigExec.
 #include "rigExec/sceneDispatch.h"
+#include "rigExecScene/registerScene.h"
 #include "rigExecScene/usdSceneAccess.h"
 
 namespace rigExec {
@@ -14,26 +15,23 @@ bool CaptureStage(const UsdStageRefPtr &stage, const SdfPath &rigRoot,
     return RigExecCaptureSceneDescriptors(source, rigRoot, identities, result, error);
 }
 
-struct Install {
-    Install()
-    {
-        RigExecSceneHooks hooks;
-        hooks.capture = &CaptureStage;
-        hooks.select = &RigExecSelectSceneDescriptorIdentities;
-        hooks.translatePoseInterpolator = &RigExecTranslateScenePoseInterpolator;
-        hooks.translateSpaceSwitch = &RigExecTranslateSceneSpaceSwitch;
-        hooks.translateGeometry = &RigExecTranslateSceneGeometry;
-        hooks.translateSolver = &RigExecTranslateSceneSolver;
-        hooks.translateConstraint = &RigExecTranslateSceneConstraint;
-        hooks.bindAutoClavicle = &RigExecBindAutoClavicle;
-        hooks.runAutoClavicle = &RigExecRunAutoClavicle;
-        RigExecInstallSceneHooks(hooks);
-    }
+const RigExecSceneHooks hooks = {
+    &CaptureStage,
+    &RigExecSelectSceneDescriptorIdentities,
+    &RigExecTranslateScenePoseInterpolator,
+    &RigExecTranslateSceneSpaceSwitch,
+    &RigExecTranslateSceneGeometry,
+    &RigExecTranslateSceneSolver,
+    &RigExecTranslateSceneConstraint,
+    &RigExecBindAutoClavicle,
+    &RigExecRunAutoClavicle
 };
 
-const Install installed;
 }
 
-void RigExecSceneLinkAnchor() {}
+void RigExecRegisterScene()
+{
+    RigExecInstallSceneHooks(&hooks);
+}
 
 }

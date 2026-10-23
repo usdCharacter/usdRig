@@ -71,6 +71,19 @@ def _sync_cpp_vector(descriptor, instance, py_list):
     descriptor.__set__(instance, list(py_list))
 
 
+def write_node_position(prim, value):
+    """Author display coordinates without requiring a node in any open view."""
+    if not prim or not prim.IsValid():
+        return
+    # The pseudo-root and instance proxies cannot receive authored attributes.
+    if not prim.GetPath().name or prim.IsInstanceProxy():
+        return
+    attr = prim.GetAttribute("ui:nodegraph:node:pos")
+    if not attr:
+        attr = prim.CreateAttribute("ui:nodegraph:node:pos", Sdf.ValueTypeNames.Float2)
+    attr.Set(Gf.Vec2f(value[0] / 1000.0, value[1] / 1000.0))
+
+
 class NodeModel(NodeData):
     """
     USD-aware data model for a node in the graph.
@@ -332,31 +345,8 @@ class NodeModel(NodeData):
         self._position = value
 
     def _writePositionToUsdRaw(self, value):
-        """Write position attribute to the stage's current edit target.
-
-        Args:
-            value: Gf.Vec2d position in display coordinates.
-        """
-        if not self._prim or not self._prim.IsValid():
-            return
-        # Pseudo-root "/" has no path name component and does not support attributes.
-        if not self._prim.GetPath().name:
-            return
-        # Prims inside a USD instance are instance proxies; USD forbids authoring
-        # to them ("authoring to an instance proxy is not allowed"). Skip the USD
-        # write rather than raising — the display position still updates, and
-        # bulk authoring (auto-layout, save) must not abort on instanced nodes.
-        if self._prim.IsInstanceProxy():
-            return
-
-        posAttr = self._prim.GetAttribute("ui:nodegraph:node:pos")
-        if not posAttr or not posAttr.IsValid():
-            posAttr = self._prim.CreateAttribute(
-                "ui:nodegraph:node:pos", Sdf.ValueTypeNames.Float2
-            )
-        if posAttr and posAttr.IsValid():
-            positionScale = 1.0 / 1000.0
-            posAttr.Set(Gf.Vec2f(value[0] * positionScale, value[1] * positionScale))
+        """Write display coordinates to the stage's current edit target."""
+        write_node_position(self._prim, value)
 
     def _writePositionToUsd(self, value):
         """Write position to the stage's current edit target.

@@ -349,6 +349,11 @@ jobs:
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
+      - name: Install consumer build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-dev xorg-dev
+
       - name: Download OpenUSD prefix
         uses: actions/download-artifact@v4
         with:
@@ -448,3 +453,11 @@ jobs:
               sys.exit(1)
           print("\nall plugInfo checks passed")
           PY
+
+      - name: Build and run installed scene and oracle consumers
+        run: |
+          cmake -S tests/installedScene -B installed-scene-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usdrig-install;${GITHUB_WORKSPACE}/usd-install"
+          cmake --build installed-scene-build --parallel 2
+          ctest --test-dir installed-scene-build --output-on-failure

@@ -24,9 +24,11 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 try:
     from pxr import Sdf, Usd
+    from UsdNoodles.graphView import GraphView
     from UsdNoodles.nodeGraph import (
         NodeGraph,
         subscribe_edit_target_warning,
@@ -193,11 +195,7 @@ class TestGetEditTargetLayer(unittest.TestCase):
     _can_create_stage, "UsdNoodles not available or real USD stages crash"
 )
 class TestSaveStageIntegration(unittest.TestCase):
-    """Verify the _saveStage path: layer.Save() on the active edit target.
-
-    Mirrors graphView.py:4526 — stage.GetEditTarget().GetLayer().Save().
-    Uses real USD stages and temp files; no Qt required.
-    """
+    """Save actual edit-target layers through GraphView and reopen them."""
 
     def _make_stage_on_disk(self, suffix=".usda"):
         fd, path = tempfile.mkstemp(suffix=suffix)
@@ -207,10 +205,16 @@ class TestSaveStageIntegration(unittest.TestCase):
         return path
 
     def _save_active_edit_target(self, stage):
-        """Mirror of graphView._saveStage sans Qt error reporting."""
-        layer = stage.GetEditTarget().GetLayer()
-        if layer and not layer.anonymous:
-            layer.Save()
+        view = SimpleNamespace(
+            nodeGraph=SimpleNamespace(getStage=lambda: stage),
+            nodes={},
+            _showPopupMessage=MagicMock(),
+            _saveLayerAsSpelled=GraphView._saveLayerAsSpelled,
+        )
+        view._persistNodePositions = lambda stage, layer: GraphView._persistNodePositions(
+            view, stage, layer)
+        GraphView._saveStage(view)
+        self.assertTrue(view._showPopupMessage.call_args.args[0].startswith("Saved layer:"))
 
     def test_connection_persists_after_root_layer_save_reload(self):
         """Author a relationship on root layer, save, reload — opinion must persist."""
@@ -219,9 +223,9 @@ class TestSaveStageIntegration(unittest.TestCase):
         prim = stage.DefinePrim("/Node", "Xform")
         rel = prim.CreateRelationship("inputs:value")
         rel.AddTarget("/Source")
-        stage.GetRootLayer().Save()
+        self._save_active_edit_target(stage)
 
-        reloaded = Usd.Stage.Open(path)
+        reloaded = Usd.Stage.Open(Sdf.Layer.OpenAsAnonymous(path))
         reloaded_rel = reloaded.GetPrimAtPath("/Node").GetRelationship("inputs:value")
         self.assertTrue(reloaded_rel.IsValid())
         self.assertIn(Sdf.Path("/Source"), reloaded_rel.GetTargets())

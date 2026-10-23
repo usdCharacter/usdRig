@@ -16,6 +16,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/registryManager.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usd/attribute.h"
@@ -24,6 +25,7 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/sdf/layer.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/usdGeom/boundable.h"
 #include "pxr/usd/usdGeom/imageable.h"
 #include "pxr/usd/usdGeom/tokens.h"
@@ -65,6 +67,8 @@ struct RigExecWarmWorkspacePool {
 };
 
 namespace {
+
+const TfToken _tRigRootType("RigExecRoot");
 
 uint64_t
 _HashCompiledRigPart(uint64_t hash, const void *data, size_t size)
@@ -811,6 +815,9 @@ RigExecImagingRegistry::_LegacyActivate(
         target->_weightOverlay = overlay;
     }
     if (!target->Activate(stage, rigPath, initialTime, errors)) {
+        if (target->GetStore()->Get()) {
+            RigExecImagingDirectory::Get().OfferCurrent(target);
+        }
         return false;
     }
     RigExecImagingDirectory::Get().SetCurrent(target);
@@ -1338,6 +1345,63 @@ RigExecImagingRegistry::Activate(
                      /* automatic = */ false);
 }
 
+std::shared_ptr<RigExecImagingSnapshot>
+RigExecImagingRegistry::_BuildAuthoredGuides(
+    const UsdStageRefPtr &stage, const std::vector<SdfPath> &rigPaths,
+    UsdTimeCode time)
+{
+    auto snapshot = std::make_shared<RigExecImagingSnapshot>();
+    snapshot->stage = UsdStageWeakPtr(stage);
+    snapshot->sampleTimeIsDefault = time.IsDefault();
+    snapshot->sampleTime = time.IsDefault() ? 0.0 : time.GetValue();
+    // Live sessions own the display state: a session without a bridge (a
+    // playback) draws through a scratch builder that is not retained, so
+    // _authoredGuides stays the guide-only state alone.
+    const bool guideOnly = _sessions.empty();
+    std::set<SdfPath> retained;
+    std::unique_ptr<RigExecImagingBridge> scratch;
+    SdfPath commonAssetRoot;
+    bool firstRoot = true;
+    for (const SdfPath &path : rigPaths) {
+        const UsdPrim root = stage->GetPrimAtPath(path);
+        if (!root || root.GetTypeName() != _tRigRootType) continue;
+        RigExecImagingBridge *builder = nullptr;
+        for (RigSession &session : _sessions) {
+            if (session.rigPath == path && session.bridge) {
+                builder = session.bridge.get();
+                break;
+            }
+        }
+        if (!builder && guideOnly) {
+            auto &bridge = _authoredGuides[path];
+            if (!bridge) {
+                bridge = std::make_unique<RigExecImagingBridge>(stage, path);
+            }
+            builder = bridge.get();
+            retained.insert(path);
+        } else if (!builder) {
+            scratch = std::make_unique<RigExecImagingBridge>(stage, path);
+            builder = scratch.get();
+        }
+        builder->AppendAuthoredGuides(time, snapshot.get());
+        if (firstRoot) {
+            commonAssetRoot = path.GetParentPath();
+            firstRoot = false;
+        } else if (commonAssetRoot != path.GetParentPath()) {
+            commonAssetRoot = SdfPath();
+        }
+    }
+    if (guideOnly) {
+        for (auto it = _authoredGuides.begin(); it != _authoredGuides.end();) {
+            it = retained.count(it->first) ? std::next(it)
+                                           : _authoredGuides.erase(it);
+        }
+        _authoredGuidesDirty = false;
+    }
+    snapshot->assetRoot = commonAssetRoot;
+    return snapshot;
+}
+
 bool
 RigExecImagingRegistry::_Activate(
     const UsdStageRefPtr &stage, const SdfPath &rigPath,
@@ -1451,15 +1515,58 @@ RigExecImagingRegistry::_Activate(
     // Keep the previous key registered until commit: re-registering it on
     // rollback would put it ahead of the retained ExecUsdSystem listener,
     // causing the next edit to publish before exec invalidates its cache.
-    const auto abandon = [&]() {
-        TfNotice::Revoke(candidateChangeKey);
-        _assetRoots = previousAssetRoots;
+    RigSessions candidate;
+    candidate.reserve(rigPaths.size());
+    const auto abandon = [&](bool evaluationFailed) {
+        const bool hasRoot = std::any_of(rigPaths.begin(), rigPaths.end(),
+            [&stage](const SdfPath &path) {
+                const UsdPrim prim = stage->GetPrimAtPath(path);
+                return prim && prim.GetTypeName() == _tRigRootType;
+            });
+        if (!_sessions.empty() || !hasRoot) {
+            TfNotice::Revoke(candidateChangeKey);
+            _assetRoots = previousAssetRoots;
+            return;
+        }
+        // An incomplete rig still has editable authored guides. Evaluation
+        // remains failed; only display data enters the snapshot store.
+        TfNotice::Revoke(_changeKey);
+        _changeKey = candidateChangeKey;
+        _stage = stage;
+        _lastTime = initialTime;
+        _autoActivated = automatic;
+        _deactivatedByHost = false;
+        _authoredGuidesRequest = rigPath;
+        _authoredGuidesRetryOnValues = evaluationFailed;
+        for (RigSession &session : candidate) {
+            if (session.bridge) {
+                _authoredGuides[session.rigPath] = std::move(session.bridge);
+            }
+        }
+        auto snapshot = _BuildAuthoredGuides(stage, rigPaths, initialTime);
+        // Same scope and noted-root state a commit leaves: the guide
+        // builders own their generated scopes, and the roots this attempt
+        // covered are no longer pending eager activation.
+        {
+            std::lock_guard<std::mutex> notedLock(_notedMutex);
+            _notedRigRoots.clear();
+        }
+        _generatedScopes.clear();
+        for (const auto &[path, bridge] : _authoredGuides) {
+            _generatedScopes.insert(bridge->GetGeneratedScope());
+        }
+        for (const Chain &chain : _BoundChains()) {
+            if (chain.pruning) {
+                chain.pruning->SetOwnedScopes(_generatedScopes);
+            }
+        }
+        const auto published = _Publish(std::move(snapshot), nullptr);
+        lock.unlock();
+        _Broadcast(published);
     };
 
     // Prepare a complete replacement without touching the active stage,
     // scene-index scopes, or published store.
-    RigSessions candidate;
-    candidate.reserve(rigPaths.size());
     for (const SdfPath &path : rigPaths) {
         const UsdPrim rig = stage->GetPrimAtPath(path);
         if (!rig || rig.GetTypeName() != "RigExecRoot") {
@@ -1468,7 +1575,7 @@ RigExecImagingRegistry::_Activate(
                     "activation path is not a RigExecRoot: " +
                     path.GetString());
             }
-            abandon();
+            abandon(false);
             return false;
         }
         RigSession session;
@@ -1529,7 +1636,10 @@ RigExecImagingRegistry::_Activate(
             // the first evaluation so the initial generation already carries it.
             session.bridge->SetWeightOverlay(_weightOverlay);
             if (!session.bridge->Compile(errors)) {
-                abandon();
+                if (_sessions.empty()) {
+                    _authoredGuides[path] = std::move(session.bridge);
+                }
+                abandon(false);
                 return false;
             }
         }
@@ -1555,7 +1665,7 @@ RigExecImagingRegistry::_Activate(
     RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr initialCompiledRig;
     if (!_EvaluateSessions(&candidate, stage, initialTime,
                            &initialSnapshot, &initialCompiledRig, errors)) {
-        abandon();
+        abandon(true);
         return false;
     }
 
@@ -1564,6 +1674,9 @@ RigExecImagingRegistry::_Activate(
     TfNotice::Revoke(_changeKey);
     _changeKey = candidateChangeKey;
     _sessions = std::move(candidate);
+    _authoredGuides.clear();
+    _authoredGuidesRequest = SdfPath();
+    _authoredGuidesRetryOnValues = false;
     _active = !_sessions.empty();
     _deactivatedByHost = false;
     // Who owns the activation's lifetime: the host (explicit), or the
@@ -1638,6 +1751,7 @@ RigExecImagingRegistry::EnsureActivated(
             // Already active on this (its only) stage: a no-op.
             return true;
         }
+        if (!_authoredGuides.empty()) return false;
         if (_deactivatedByHost) {
             // The host turned this stage off; only its explicit Activate
             // turns it back on (see the header).
@@ -1653,6 +1767,9 @@ RigExecImagingRegistry::EnsureActivated(
     std::vector<std::string> errors;
     if (!_Activate(stage, SdfPath::EmptyPath(), time, &errors,
                    /* automatic = */ true)) {
+        if (_store->Get()) {
+            RigExecImagingDirectory::Get().OfferCurrent(ForKey(_key));
+        }
         // One line, not silent: a broken rig in a batch host (usdrecord)
         // otherwise renders its rest pose with no explanation. During live
         // authoring this fires at most once per root definition -- defining
@@ -1684,6 +1801,20 @@ RigExecImagingRegistry::IsActiveRigRoot(const SdfPath &path)
         if (session.rigPath == path) {
             return true;
         }
+    }
+    return false;
+}
+
+bool
+RigExecImagingRegistry::IsDisplayedRigRoot(const SdfPath &path)
+{
+    if (const Ptr routed = _Routed()) {
+        return routed->IsDisplayedRigRoot(path);
+    }
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_authoredGuides.count(path)) return true;
+    for (const RigSession &session : _sessions) {
+        if (session.rigPath == path) return true;
     }
     return false;
 }
@@ -1956,6 +2087,26 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     // index's time trigger.
     std::unique_lock<std::mutex> lock(_mutex);
     if (_sessions.empty() || !_stage) {
+        if (_stage && !_authoredGuides.empty()) {
+            const auto current = _store->Get();
+            if (!_authoredGuidesDirty && current && current->Describes(_stage, time)) {
+                return false;
+            }
+            std::vector<SdfPath> roots;
+            for (const auto &entry : _authoredGuides) roots.push_back(entry.first);
+            auto snapshot = _BuildAuthoredGuides(_stage, roots, time);
+            _lastTime = time;
+            const auto published = _Publish(std::move(snapshot), nullptr);
+            if (_authoredGuides.empty()) {
+                TfNotice::Revoke(_changeKey);
+                _changeKey = TfNotice::Key();
+                _stage.Reset();
+                _autoActivated = false;
+            }
+            lock.unlock();
+            _Broadcast(published);
+            return false;
+        }
         // A plain stage has no evaluator, but its xform previews still
         // compose against the host's displayed frame.
         _lastTime = time;
@@ -2012,13 +2163,17 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         // mover's rigExec:moves and the recompile fails, so the mesh under
         // the driven Xform stayed where the constraint had put it through
         // every later edit and frame change.
-        // Cleared exactly the way Deactivate does, and broadcast for the
-        // same reason: the store being right is worth nothing if the
-        // observers are never told.
+        // Replace driven results with authored guides and notify observers.
         _lastTime = time;
         RigExecImagingBridge::PublishResult cleared;
         cleared.ok = true;
-        cleared.dirtied = _store->Publish(nullptr);
+        std::vector<SdfPath> roots;
+        for (const RigSession &session : _sessions) roots.push_back(session.rigPath);
+        auto guides = _BuildAuthoredGuides(_stage, roots, time);
+        guides->generation = ++_generation;
+        RigExecImagingSnapshotConstPtr replaced = _store->Get();
+        cleared.dirtied = _store->Publish(std::move(guides));
+        WorkMoveDestroyAsync(replaced);
         // The next good generation must re-announce its compiled rig; the one the
         // binding index holds names prims this clear just removed.
         _publishedCompiledRigId = 0;
@@ -4041,9 +4196,115 @@ RigExecImagingRegistry::_NoticeSettlesPreview(
 }
 
 void
+RigExecImagingRegistry::_OnGuideOnlyObjectsChanged(
+    const UsdNotice::ObjectsChanged &notice, const UsdStageWeakPtr &sender,
+    const std::set<SdfPath> &guideRoots, const SdfPath &request,
+    UsdTimeCode guideTime, bool automatic, bool retryOnValues)
+{
+    // Only edits inside or above a guide asset can change what it draws or
+    // complete its missing inputs.
+    const auto touchesGuides = [&guideRoots](const SdfPath &path) {
+        const SdfPath primPath = path.GetPrimPath();
+        for (const SdfPath &root : guideRoots) {
+            if (primPath.HasPrefix(root) || root.HasPrefix(primPath)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    bool relevant = false;
+    bool structural = false;
+    for (const SdfPath &path : notice.GetResyncedPaths()) {
+        if (touchesGuides(path)) {
+            relevant = structural = true;
+            break;
+        }
+    }
+    if (!structural) {
+        for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
+            if (!touchesGuides(path)) {
+                continue;
+            }
+            relevant = true;
+            // A value edit to a display attribute (visibility, transform,
+            // rest placement, guide styling) cannot complete a rig that
+            // failed to compile; any other edit (targets, connections,
+            // metadata, other values) can.
+            bool displayValue = path.IsPropertyPath() && !retryOnValues;
+            if (displayValue) {
+                const TfToken &name = path.GetNameToken();
+                displayValue = name == UsdGeomTokens->visibility ||
+                    name == UsdGeomTokens->purpose ||
+                    name == UsdGeomTokens->xformOpOrder ||
+                    TfStringStartsWith(name.GetString(), "xformOp:") ||
+                    TfStringStartsWith(name.GetString(), "rest:") ||
+                    TfStringStartsWith(name.GetString(), "guide:");
+            }
+            if (displayValue) {
+                for (const TfToken &field : notice.GetChangedFields(path)) {
+                    if (field != SdfFieldKeys->Default &&
+                        field != SdfFieldKeys->TimeSamples &&
+                        field != SdfFieldKeys->Spline) {
+                        displayValue = false;
+                        break;
+                    }
+                }
+            }
+            if (!displayValue) {
+                structural = true;
+                break;
+            }
+        }
+    }
+    if (!relevant) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _authoredGuidesDirty = true;
+    }
+    // Completing missing inputs can restore the ordinary evaluator. A
+    // failed retry, or a display-only edit, republishes authored guides
+    // with the edited values.
+    if (structural) {
+        std::vector<std::string> errors;
+        if (_Activate(UsdStageRefPtr(sender), request, guideTime, &errors,
+                      automatic)) {
+            return;
+        }
+    }
+    SetTime(guideTime);
+}
+
+void
 RigExecImagingRegistry::_OnObjectsChanged(
     const UsdNotice::ObjectsChanged &notice, const UsdStageWeakPtr &sender)
 {
+    bool authoredOnly = false;
+    bool automatic = false;
+    bool retryOnValues = false;
+    UsdTimeCode guideTime;
+    SdfPath request;
+    std::set<SdfPath> guideRoots;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        authoredOnly = _sessions.empty() && !_authoredGuides.empty() &&
+            sender == UsdStageWeakPtr(_stage);
+        if (authoredOnly) {
+            automatic = _autoActivated;
+            retryOnValues = _authoredGuidesRetryOnValues;
+            guideTime = _lastTime;
+            request = _authoredGuidesRequest;
+            for (const auto &entry : _authoredGuides) {
+                guideRoots.insert(entry.first.GetParentPath());
+            }
+        }
+    }
+    if (authoredOnly) {
+        _OnGuideOnlyObjectsChanged(notice, sender, guideRoots, request,
+                                   guideTime, automatic, retryOnValues);
+        return;
+    }
     RigExecTapSet::PrepareStageChange(UsdStageRefPtr(sender), notice);
     std::shared_ptr<RigExecBackgroundScheduler> scheduler;
     {
@@ -4296,7 +4557,7 @@ RigExecImagingRegistry::IsAutoActivated() const
         return routed->IsAutoActivated();
     }
     std::lock_guard<std::mutex> lock(_mutex);
-    return _autoActivated && !_sessions.empty();
+    return _autoActivated && (!_sessions.empty() || !_authoredGuides.empty());
 }
 
 void
@@ -4320,7 +4581,7 @@ RigExecImagingRegistry::_Deactivate(bool byHost)
         // lock nests inside it -- so a chain binding meanwhile either shows
         // up here or adopts the cleared state and re-activates through its
         // own population.
-        if (!_autoActivated || _sessions.empty() ||
+        if (!_autoActivated || (_sessions.empty() && _authoredGuides.empty()) ||
             !_BoundChains().empty()) {
             return;
         }
@@ -4338,6 +4599,10 @@ RigExecImagingRegistry::_Deactivate(bool byHost)
         }
     }
     _sessions.clear();
+    _authoredGuides.clear();
+    _authoredGuidesDirty = false;
+    _authoredGuidesRequest = SdfPath();
+    _authoredGuidesRetryOnValues = false;
     _active = false;
     // A library release is not a host decision: a later engine on the same
     // stage activates it again (EnsureActivated). A host deactivation of an
@@ -4590,81 +4855,6 @@ _ResolvedPurpose(const PXR_NS::UsdPrim &prim)
     return PXR_NS::UsdGeomTokens->default_;
 }
 
-// The authored REST frame of one RigExec transform provider, composed the
-// same way RigExecJointRestSpace does it in computations.cpp: the rest
-// avars as a local delta preceding the authored rest:space, orthonormalized
-// (rest spaces always are, per the Ir contract).
-// Duplicated rather than shared with the evaluator on purpose. This runs
-// with no compiled rig and no exec system -- the whole point of the rest
-// fallback is to answer for a stage nobody has evaluated -- so it can only
-// read authored attributes, which is precisely what it does.
-PXR_NS::GfMatrix4d
-_AuthoredRestSpace(const PXR_NS::UsdPrim &prim, const PXR_NS::UsdTimeCode &time,
-                   bool *rigid)
-{
-    auto scalar = [&prim, &time](const char *name) {
-        double value = 0.0;
-        if (const PXR_NS::UsdAttribute a =
-                prim.GetAttribute(PXR_NS::TfToken(name))) {
-            a.Get(&value, time);
-        }
-        return value;
-    };
-    static const PXR_NS::GfVec3d axes[3] = {
-        PXR_NS::GfVec3d(1, 0, 0), PXR_NS::GfVec3d(0, 1, 0),
-        PXR_NS::GfVec3d(0, 0, 1)};
-    const double angles[3] = {scalar("rest:rx"), scalar("rest:ry"),
-                              scalar("rest:rz")};
-    PXR_NS::GfMatrix4d local(1.0);
-    for (int index = 0; index < 3; ++index) {  // XYZ, the rest-avar order
-        if (angles[index] != 0.0) {
-            local = local * PXR_NS::GfMatrix4d(
-                                PXR_NS::GfRotation(axes[index], angles[index]),
-                                PXR_NS::GfVec3d(0));
-        }
-    }
-    PXR_NS::GfMatrix4d translate(1.0);
-    translate.SetTranslate(
-        PXR_NS::GfVec3d(scalar("rest:tx"), scalar("rest:ty"),
-                        scalar("rest:tz")));
-    local = local * translate;
-
-    PXR_NS::GfMatrix4d space(1.0);
-    if (const PXR_NS::UsdAttribute a =
-            prim.GetAttribute(PXR_NS::TfToken("rest:space"))) {
-        a.Get(&space, time);
-    }
-    PXR_NS::GfMatrix4d rest = local * space;
-    // Reported, not swallowed: the bridge refuses to publish a guide whose
-    // frame cannot be orthonormalized, so an extent computed from one would
-    // bound a guide the renderer declines to draw.
-    *rigid = rest.Orthonormalize(/* issueWarning = */ false);
-    if (!*rigid) {
-        return rest;
-    }
-    // An authored rest is relative to the namespace frame provider, so it
-    // only becomes a world frame once the ancestor chain is folded in --
-    // the same multiply _JointRestSpace does (computations.cpp:230).
-    // Without it a nested joint bounds at its parent-relative offset, which
-    // for a chain authored as successive 2-unit steps collapses the whole
-    // tail onto the origin.
-    for (PXR_NS::UsdPrim parent = prim.GetParent();
-         parent && !parent.IsPseudoRoot(); parent = parent.GetParent()) {
-        const PXR_NS::TfToken parentType = parent.GetTypeName();
-        if (parentType != "RigExecJoint" && parentType != "RigExecControl") {
-            continue;
-        }
-        bool parentRigid = false;
-        const PXR_NS::GfMatrix4d parentRest =
-            _AuthoredRestSpace(parent, time, &parentRigid);
-        if (parentRigid) {
-            rest = rest * parentRest;
-        }
-        break;
-    }
-    return rest;
-}
-
 // The bounds a provider's guide would draw AT REST, from authored
 // attributes alone.
 // This is the answer for a stage that has never been evaluated -- opened in
@@ -4702,7 +4892,7 @@ _AccumulateRestGuideBounds(
         return value;
     };
     bool rigid = false;
-    const PXR_NS::GfMatrix4d rest = _AuthoredRestSpace(prim, time, &rigid);
+    const PXR_NS::GfMatrix4d rest = rigExec::RigExecAuthoredGuideRestSpace(prim, time, &rigid);
     if (!rigid) {
         return false;
     }
@@ -4810,7 +5000,7 @@ _AccumulateRestGuideBounds(
             }
             bool childRigid = false;
             const PXR_NS::GfMatrix4d childRest =
-                _AuthoredRestSpace(candidate, time, &childRigid);
+                rigExec::RigExecAuthoredGuideRestSpace(candidate, time, &childRigid);
             if (!childRigid) {
                 continue;
             }

@@ -241,6 +241,26 @@ def parse(cmake_text: str) -> dict:
             exe = args[0]
             sources = [a for a in args[1:] if not a.startswith("$")]
             executables[exe] = {"sources": sources, "links": [], "link_vis": {}}
+        elif name == "rigexec_add_mover" and "BUILTIN" in args:
+            # The module helper compiles its pure definition into both hosts;
+            # only the native host compiles its USD adapter. Schema defaults
+            # feed both through generated headers.
+            keywords = {"BUILTIN", "NO_INSTALL", "DEFINITION", "TYPE", "KERNEL",
+                        "USD_ADAPTER", "FACTORY", "SCHEMA", "SCHEMA_TYPE",
+                        "PLUGIN_ROOT", "LIBRARIES", "KERNEL_LIBRARIES", "SCHEMA_DEPENDS"}
+            fields = defaultdict(list)
+            field = None
+            for arg in args[1:]:
+                if arg in keywords:
+                    field = arg
+                elif field:
+                    fields[field].append(arg)
+            shared = fields["DEFINITION"] + fields["KERNEL"] + fields["SCHEMA"] + fields["SCHEMA_DEPENDS"]
+            for target in ("rigExec", "rigExecRuntime"):
+                if target in libraries:
+                    libraries[target]["sources"].extend(shared)
+            if "rigExec" in libraries:
+                libraries["rigExec"]["sources"].extend(fields["USD_ADAPTER"])
         elif name == "target_link_libraries" and len(args) >= 2:
             target = args[0]
             vis = "PUBLIC"

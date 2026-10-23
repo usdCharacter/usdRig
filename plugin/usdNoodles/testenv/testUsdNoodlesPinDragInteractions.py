@@ -7,34 +7,17 @@
 #
 
 
-"""Unit tests for pin-drag interaction behavior in the node graph view.
+"""Production pin hit-testing, cached layout, and renderer state handoff.
 
-Covers three related GraphView features:
-
-  REQ 3 - Pin visibility gate (graphView.py:5011, top of _addPortVertices):
-          a non-relationship pin glyph is only drawn when the pin carries a
-          connection or is the endpoint currently being dragged. Relationship
-          glyphs always render as authoring handles.
-
-  REQ 4 - Row-edge drag start (graphView.py:5464): pressing the outer tenth of
-          a row on the left or right side starts a new connection from that row
-          even when no pin glyph is visible. Left band -> input side, right band
-          -> output side. A press in the middle of the row, above the first row
-          (the title), or below the last row falls through to node drag.
-
-  REQ 5 - Arrowhead hit-test (graphView.py:8030): the arrowhead at a
-          relationship link's target end is grabbable so it can be dragged to
-          another pin (reconnect) or onto empty space (disconnect).
-
-GraphView cannot be imported in headless CI (module-level GL imports), so the
-production logic is mirrored here in shims tested against lightweight fakes -
-the same approach as testUsdNoodlesDisconnectDrag and
-testUsdNoodlesGraphViewShortcut. The shims are byte-faithful copies of the
-production methods; the cited line numbers keep them aligned.
+View and node doubles provide geometry without constructing a GL widget.
 """
 
 import collections
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from UsdNoodles.graphView import GraphView
 
 
 # Lightweight fakes (plain objects, NOT MagicMock).
@@ -95,6 +78,11 @@ class _Node:
         self._title_collapsed = title_collapsed
         self.renderer = renderer
 
+    inputRowSlots = property(lambda self: self._input_row_slots)
+    outputRowSlots = property(lambda self: self._output_row_slots)
+    inputRowKinds = property(lambda self: self._input_row_kinds)
+    outputRowKinds = property(lambda self: self._output_row_kinds)
+
 
 # namedtuple (immutable) keeps FLAKE8 B903 quiet for this pure data holder.
 _Link = collections.namedtuple(
@@ -126,6 +114,9 @@ class _View:
         self._dragLinkSourcePort = None
         self._dragLinkSourceIsOutput = None
 
+    _rowEdgePinCandidates = GraphView._rowEdgePinCandidates
+    _pinAtRowEdge = GraphView._pinAtRowEdge
+
     # Unchanged production helpers, stubbed deterministically.
     def _getRowHitMetrics(self, node, renderer):
         return self._port_start_y, self._port_line_height
@@ -134,192 +125,54 @@ class _View:
         return self._port_positions.get((pinName, isOutput))
 
 
-# Shims (byte-faithful mirrors of the production methods)
-
-
-def _should_draw_pin(view, node, pin_name, is_output, is_connected, is_rel_pin):
-    """Mirror of the visibility gate at the top of _addPortVertices
-    (graphView.py:5011). Returns True when the glyph should be drawn."""
-    if not is_rel_pin:
-        is_drag_source = (
-            view._draggingLink
-            and view._dragLinkSourceNode == getattr(node, "id", None)
-            and view._dragLinkSourcePort == pin_name
-            and view._dragLinkSourceIsOutput == is_output
-        )
-        if not (is_connected or is_drag_source):
-            return False
-    return True
-
-
 def _row_edge_pin_candidates(node, is_output):
-    """Mirror of GraphView._rowEdgePinCandidates (graphView.py:5403)."""
-    candidates = []
-    if is_output:
-        out_pins = getattr(node, "outputPins", [])
-        out_slots = getattr(node, "_output_row_slots", [])
-        out_kinds = getattr(node, "_output_row_kinds", [])
-        for i, pin in enumerate(out_pins):
-            if i < len(out_kinds) and out_kinds[i] == 2:
-                continue
-            candidates.append((pin, out_slots[i] if i < len(out_slots) else i))
-        out_set = set(out_pins)
-        dual = getattr(node, "_dual_pin_names", set())
-        in_pins = getattr(node, "inputPins", [])
-        in_slots = getattr(node, "_input_row_slots", [])
-        in_kinds = getattr(node, "_input_row_kinds", [])
-        for i, pin in enumerate(in_pins):
-            if pin not in dual or pin in out_set:
-                continue
-            if i < len(in_kinds) and in_kinds[i] == 2:
-                continue
-            candidates.append((pin, in_slots[i] if i < len(in_slots) else i))
-    else:
-        in_pins = getattr(node, "inputPins", [])
-        in_slots = getattr(node, "_input_row_slots", [])
-        in_kinds = getattr(node, "_input_row_kinds", [])
-        for i, pin in enumerate(in_pins):
-            if i < len(in_kinds) and in_kinds[i] == 2:
-                continue
-            candidates.append((pin, in_slots[i] if i < len(in_slots) else i))
-    return candidates
+    return GraphView._rowEdgePinCandidates(None, node, is_output)
 
 
-def _pin_at_row_edge(view, node, world_pos, is_output):
-    """Mirror of GraphView._pinAtRowEdge (graphView.py:5440)."""
-    renderer = node.renderer if node.renderer else view.defaultRenderer
-    if not renderer:
-        return None
-    port_start_y, port_line_height = view._getRowHitMetrics(node, renderer)
-    best = None
-    best_distance = None
-    for pin_name, row_slot in _row_edge_pin_candidates(node, is_output):
-        row_y = port_start_y + row_slot * port_line_height
-        if world_pos[1] < row_y or world_pos[1] > row_y + port_line_height:
-            continue
-        port_pos = view._getPortPosition(node, pin_name, is_output)
-        row_center_y = (
-            float(port_pos[1])
-            if port_pos is not None
-            else row_y + port_line_height * 0.5
-        )
-        distance = abs(float(world_pos[1]) - row_center_y)
-        if best_distance is None or distance < best_distance:
-            best_distance = distance
-            best = pin_name
-    return best
+_pin_at_row_edge = GraphView._pinAtRowEdge
+_find_row_edge_drag_start = GraphView._findRowEdgeDragStart
+_find_arrowhead_under_cursor = GraphView._findArrowheadUnderCursor
 
 
-def _find_row_edge_drag_start(view, node, world_pos):
-    """Mirror of GraphView._findRowEdgeDragStart (graphView.py:5464)."""
-    if getattr(node, "_title_collapsed", False):
-        return None
-    renderer = node.renderer if node.renderer else view.defaultRenderer
-    if not renderer:
-        return None
-    nx = float(node.position[0])
-    nw = float(node.size[0])
-    if world_pos[0] < nx or world_pos[0] > nx + nw:
-        return None
-    edge_band = nw * 0.1
-    if world_pos[0] >= nx + nw - edge_band:
-        is_output = True
-    elif world_pos[0] <= nx + edge_band:
-        is_output = False
-    else:
-        return None
-    pin_name = _pin_at_row_edge(view, node, world_pos, is_output)
-    if pin_name is None:
-        return None
-    return (pin_name, is_output)
-
-
-def _find_arrowhead_under_cursor(view, world_pos):
-    """Mirror of GraphView._findArrowheadUnderCursor (graphView.py:8030)."""
-    arrow_length = max(10.0 / max(view.zoom, 1e-6), 2.0)
-    arrow_width = max(8.0 / max(view.zoom, 1e-6), 2.0)
-    hit_radius = max(arrow_length, arrow_width)
-    hit_radius_sq = hit_radius * hit_radius
-    best = -1
-    best_distance = None
-    for i, link in enumerate(view.links):
-        if not bool(getattr(link, "is_relationship_link", False)):
-            continue
-        if getattr(link, "isDangling", False):
-            continue
-        dx = world_pos[0] - float(link.end[0])
-        dy = world_pos[1] - float(link.end[1])
-        distance = dx * dx + dy * dy
-        if distance <= hit_radius_sq and (
-            best_distance is None or distance < best_distance
-        ):
-            best_distance = distance
-            best = i
-    return best
-
-
-# REQ 3 - Pin visibility gate
-
-
-class TestPinVisibilityGate(unittest.TestCase):
-    """A pin glyph is drawn only when connected, drag-source, or relationship."""
-
+class TestPortHighlightHandoff(unittest.TestCase):
     def _view(self):
-        return _View()
-
-    def test_connected_pin_is_drawn(self):
-        node = _Node(node_id="/A")
-        self.assertTrue(_should_draw_pin(self._view(), node, "in", False, True, False))
-
-    def test_unconnected_idle_pin_is_hidden(self):
-        node = _Node(node_id="/A")
-        self.assertFalse(
-            _should_draw_pin(self._view(), node, "in", False, False, False)
+        return SimpleNamespace(
+            nodeGraph=object(),
+            _renderConfig=lambda: SimpleNamespace(nodePortWidth=10),
+            _cachedPortRingThickness=1,
+            _cachedPortConnectedFillColor=(1, 1, 1, 1),
+            _cachedPortConnectedRingColor=(1, 1, 1, 1),
+            _cachedPortDisconnectedFillColor=(0, 0, 0, 1),
+            _cachedPortDisconnectedRingColor=(0, 0, 0, 1),
+            _cachedPortHoverColor=(1, 1, 0, 1),
+            _worldSpaceProjectionMatrix=lambda: SimpleNamespace(data=lambda: [0.0] * 16),
+            _hoveredPort=None,
+            _portHighlightsDirty=False,
+            textChanged=False,
+            draggingNodes=False,
+            _draggingLink=False,
+            _dragLinkSourceNode=None,
+            _dragLinkSourcePort=None,
+            _dragLinkSourceIsOutput=False,
+            _nodeRenderManager=MagicMock(),
         )
 
-    def test_relationship_pin_always_drawn_even_when_idle(self):
-        node = _Node(node_id="/A")
-        self.assertTrue(_should_draw_pin(self._view(), node, "rel", True, False, True))
-
-    def test_drag_source_pin_is_drawn_while_unconnected(self):
+    def test_drag_endpoint_reaches_the_authoritative_renderer(self):
         view = self._view()
-        node = _Node(node_id="/A")
         view._draggingLink = True
         view._dragLinkSourceNode = "/A"
         view._dragLinkSourcePort = "in"
-        view._dragLinkSourceIsOutput = False
-        self.assertTrue(_should_draw_pin(view, node, "in", False, False, False))
+        GraphView._renderPortHighlightsCpp(view)
+        args = view._nodeRenderManager.renderPortHighlightsFromGraph.call_args.args
+        self.assertEqual(args[8:12], (True, "/A", "in", False))
+        self.assertTrue(args[12])
 
-    def test_drag_other_side_of_same_pin_stays_hidden(self):
-        """Dragging a dual row's input side must not reveal its output glyph."""
+    def test_idle_frame_keeps_cached_geometry(self):
         view = self._view()
-        node = _Node(node_id="/A")
-        view._draggingLink = True
-        view._dragLinkSourceNode = "/A"
-        view._dragLinkSourcePort = "dual"
-        view._dragLinkSourceIsOutput = False
-        # The output-side render of the same pin should NOT match.
-        self.assertFalse(_should_draw_pin(view, node, "dual", True, False, False))
-        # The input-side render does match.
-        self.assertTrue(_should_draw_pin(view, node, "dual", False, False, False))
-
-    def test_drag_different_port_stays_hidden(self):
-        view = self._view()
-        node = _Node(node_id="/A")
-        view._draggingLink = True
-        view._dragLinkSourceNode = "/A"
-        view._dragLinkSourcePort = "other"
-        view._dragLinkSourceIsOutput = False
-        self.assertFalse(_should_draw_pin(view, node, "in", False, False, False))
-
-    def test_drag_from_different_node_stays_hidden(self):
-        view = self._view()
-        node = _Node(node_id="/A")
-        view._draggingLink = True
-        view._dragLinkSourceNode = "/OTHER"
-        view._dragLinkSourcePort = "in"
-        view._dragLinkSourceIsOutput = False
-        self.assertFalse(_should_draw_pin(view, node, "in", False, False, False))
+        GraphView._renderPortHighlightsCpp(view)
+        args = view._nodeRenderManager.renderPortHighlightsFromGraph.call_args.args
+        self.assertFalse(args[8])
+        self.assertFalse(args[12])
 
 
 # REQ 4 - Row-edge drag start
@@ -579,183 +432,20 @@ class TestFindArrowheadUnderCursor(unittest.TestCase):
         self.assertEqual(_find_arrowhead_under_cursor(view, (106.0, 50.0)), -1)
 
 
-# Bug 2 regression - _getRowHitMetrics schema-type offset
-#
-# After REQ 1 every USD-prim node carries a schemaTypeName, so the renderer
-# draws a schema-type subtitle that reserves an extra line below the title
-# (C++ GraphNodeRenderer::getSchemaTypeHeight, mirrored in getPortPosition).
-# _getRowHitMetrics computes the row-edge-drag / row-hover hit bands and must
-# add the same offset; otherwise the bands sit above the real rows and a
-# freshly added (unconnected, glyph-less) node cannot start a connection from
-# its side. The shim below mirrors the production method (graphView.py:5224);
-# schema_type_font_ratio stands in for RenderConfig.kSchemaTypeFontRatio.
+class TestCachedRowHitMetrics(unittest.TestCase):
+    def test_uses_cached_layout_with_world_position(self):
+        node = SimpleNamespace(position=(5, 7), layoutPortStartY=50,
+                               layoutPortLineHeight=20)
+        self.assertEqual(GraphView._getRowHitMetrics(None, node, _Renderer()), (57, 20))
 
+    def test_uncomputed_line_height_uses_port_width_floor(self):
+        node = SimpleNamespace(position=(0, 7), layoutPortStartY=50,
+                               layoutPortLineHeight=0)
+        self.assertEqual(GraphView._getRowHitMetrics(None, node, _Renderer(12)), (57, 24))
 
-class _MetricsRenderer:
-    """Renderer fake exposing the font-size getters _getRowHitMetrics reads."""
-
-    def __init__(
-        self,
-        port_margin_v=4.0,
-        title_font_size=14.0,
-        port_font_size=10.0,
-        port_type_font_size=8.0,
-        port_spacing=2.0,
-        port_width=8.0,
-    ):
-        self._port_margin_v = port_margin_v
-        self._title_font_size = title_font_size
-        self._port_font_size = port_font_size
-        self._port_type_font_size = port_type_font_size
-        self._port_spacing = port_spacing
-        self._port_width = port_width
-
-    def getPortMarginV(self):
-        return self._port_margin_v
-
-    def getTitleFontSize(self):
-        return self._title_font_size
-
-    def getPortFontSize(self):
-        return self._port_font_size
-
-    def getPortTypeFontSize(self):
-        return self._port_type_font_size
-
-    def getPortSpacing(self):
-        return self._port_spacing
-
-    def getPortWidth(self):
-        return self._port_width
-
-
-class _FontAtlas:
-    """Font-atlas fake with the three metrics _getRowHitMetrics reads."""
-
-    __slots__ = ("ascender", "descender", "lineHeight")
-
-    def __init__(self, ascender=0.8, descender=-0.2, line_height=1.2):
-        self.ascender = ascender
-        self.descender = descender
-        self.lineHeight = line_height
-
-
-class _MetricsNode:
-    """Node fake carrying the geometry/schema fields _getRowHitMetrics reads."""
-
-    # __slots__ silences FLAKE8 B903 while still allowing the getattr-default
-    # test to `del` schemaTypeName (slots support attribute deletion).
-    __slots__ = ("position", "size", "schemaTypeName")
-
-    def __init__(self, position=(0.0, 0.0), size=(100.0, 200.0), schema_type_name=""):
-        self.position = position
-        self.size = size
-        self.schemaTypeName = schema_type_name
-
-
-def _row_hit_metrics(node, renderer, font_atlas, schema_type_font_ratio):
-    """Mirror of GraphView._getRowHitMetrics (graphView.py:5224).
-
-    font_atlas is the production self.fontAtlas (None falls to the size-based
-    fallback). schema_type_font_ratio stands in for the production module
-    constant RenderConfig.kSchemaTypeFontRatio.
-    """
-    node_margin_v = renderer.getPortMarginV()
-    if font_atlas:
-        title_height = (
-            renderer.getTitleFontSize() * (font_atlas.ascender - font_atlas.descender)
-            + node_margin_v * 2.0
-        )
-        if getattr(node, "schemaTypeName", ""):
-            title_height += (
-                renderer.getTitleFontSize()
-                * schema_type_font_ratio
-                * font_atlas.lineHeight
-            )
-        port_name_height = renderer.getPortFontSize() * font_atlas.lineHeight
-        port_type_height = renderer.getPortTypeFontSize() * font_atlas.lineHeight
-        port_line_height = (
-            port_name_height + port_type_height + renderer.getPortSpacing()
-        )
-    else:
-        title_height = min(float(node.size[1]), 32.0)
-        port_line_height = max(renderer.getPortWidth() * 2.0, 16.0)
-    port_start_y = node.position[1] + title_height + node_margin_v
-    return port_start_y, port_line_height
-
-
-class TestRowHitMetricsSchemaTypeOffset(unittest.TestCase):
-    """_getRowHitMetrics reserves the schema-type subtitle line (Bug 2)."""
-
-    _RATIO = 0.6  # stand-in for RenderConfig.kSchemaTypeFontRatio
-
-    def _expected_schema_offset(self, renderer, font_atlas):
-        return renderer.getTitleFontSize() * self._RATIO * font_atlas.lineHeight
-
-    def test_schema_type_pushes_first_row_down(self):
-        renderer = _MetricsRenderer()
-        atlas = _FontAtlas()
-        typed_start, _ = _row_hit_metrics(
-            _MetricsNode(schema_type_name="IrFkController"),
-            renderer,
-            atlas,
-            self._RATIO,
-        )
-        bare_start, _ = _row_hit_metrics(
-            _MetricsNode(schema_type_name=""), renderer, atlas, self._RATIO
-        )
-        self.assertGreater(typed_start, bare_start)
-        self.assertAlmostEqual(
-            typed_start - bare_start,
-            self._expected_schema_offset(renderer, atlas),
-        )
-
-    def test_missing_schema_attr_matches_empty(self):
-        renderer = _MetricsRenderer()
-        atlas = _FontAtlas()
-        # A node lacking schemaTypeName exercises the getattr default branch.
-        no_attr = _MetricsNode(schema_type_name="")
-        del no_attr.schemaTypeName
-        empty_start, _ = _row_hit_metrics(
-            _MetricsNode(schema_type_name=""), renderer, atlas, self._RATIO
-        )
-        no_attr_start, _ = _row_hit_metrics(no_attr, renderer, atlas, self._RATIO)
-        self.assertAlmostEqual(no_attr_start, empty_start)
-
-    def test_port_line_height_unaffected_by_schema_type(self):
-        renderer = _MetricsRenderer()
-        atlas = _FontAtlas()
-        _, typed_h = _row_hit_metrics(
-            _MetricsNode(schema_type_name="Mesh"), renderer, atlas, self._RATIO
-        )
-        _, bare_h = _row_hit_metrics(
-            _MetricsNode(schema_type_name=""), renderer, atlas, self._RATIO
-        )
-        self.assertAlmostEqual(typed_h, bare_h)
-
-    def test_typed_start_matches_full_formula(self):
-        renderer = _MetricsRenderer()
-        atlas = _FontAtlas()
-        node = _MetricsNode(position=(5.0, 7.0), schema_type_name="Xform")
-        start, line_h = _row_hit_metrics(node, renderer, atlas, self._RATIO)
-        margin = renderer.getPortMarginV()
-        title = (
-            renderer.getTitleFontSize() * (atlas.ascender - atlas.descender)
-            + margin * 2.0
-            + self._expected_schema_offset(renderer, atlas)
-        )
-        self.assertAlmostEqual(start, node.position[1] + title + margin)
-        self.assertAlmostEqual(
-            line_h,
-            renderer.getPortFontSize() * atlas.lineHeight
-            + renderer.getPortTypeFontSize() * atlas.lineHeight
-            + renderer.getPortSpacing(),
-        )
-
-    def test_fallback_without_font_atlas(self):
-        renderer = _MetricsRenderer()
-        node = _MetricsNode(position=(0.0, 0.0), size=(100.0, 20.0))
-        start, line_h = _row_hit_metrics(node, renderer, None, self._RATIO)
-        # title_height = min(size[1], 32.0) = 20.0; plus the vertical margin.
-        self.assertAlmostEqual(start, 0.0 + 20.0 + renderer.getPortMarginV())
-        self.assertAlmostEqual(line_h, max(renderer.getPortWidth() * 2.0, 16.0))
+    def test_layout_updates_are_visible_to_hit_testing(self):
+        node = SimpleNamespace(position=(0, 7), layoutPortStartY=50,
+                               layoutPortLineHeight=20)
+        node.layoutPortStartY = 80
+        node.layoutPortLineHeight = 30
+        self.assertEqual(GraphView._getRowHitMetrics(None, node, _Renderer()), (87, 30))

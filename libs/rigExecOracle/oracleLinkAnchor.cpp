@@ -1,11 +1,12 @@
 // Compiled into each consumer of librigExecOracle. The call keeps the
 // shared library on the link line when the consumer only reaches the
-// hooks through librigExec, so the load-time registration runs.
+// hooks through librigExec, and registers its immutable dispatch table.
+#include "rigExecOracle/registerOracle.h"
+
 namespace rigExec {
-void RigExecOracleLinkAnchor();
 namespace {
 struct Anchor {
-    Anchor() { RigExecOracleLinkAnchor(); }
+    Anchor() { RigExecRegisterOracle(); }
 };
 const Anchor anchor;
 }

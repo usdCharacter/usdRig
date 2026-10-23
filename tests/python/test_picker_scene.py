@@ -25,7 +25,7 @@ import rigexec_test_env
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Gf, Plug, Sdf, Tf, Usd  # noqa: E402
+from pxr import Gf, Plug, Sdf, Tf, Usd, UsdGeom  # noqa: E402
 
 if len(sys.argv) > 1:
     Plug.Registry().RegisterPlugins(sys.argv[1])
@@ -158,6 +158,17 @@ with Usd.EditContext(stage, Usd.EditTarget(stage.GetSessionLayer())):
           "a picker naming no rig falls back to the whole stage")
 stage.GetSessionLayer().Clear()
 
+# An unresolved explicit rig is not permission to affect another character.
+with Usd.EditContext(stage, stage.GetSessionLayer()):
+    stage.GetPrimAtPath("/Char/Picker").GetRelationship(
+        "rigExec:picker:rig").SetTargets([Sdf.Path("/MissingRig")])
+    missing = Only(stage)
+    Check(missing.rig_path == "/MissingRig" and missing.coverage()[0] == 0,
+          "an unresolved rig target is retained and has no live controls")
+    Check(pickerScene.control_prims(stage, missing.rig_path) == [],
+          "an invalid explicit rig cannot toggle controls from the whole stage")
+stage.GetSessionLayer().Clear()
+
 # A picker may live anywhere, including INSIDE the RigExecRoot. Where it
 # sits is a placement decision for whoever builds the rig; discovery
 # prunes rig GRAPH (joints, controls, solvers, movers) rather than the
@@ -287,6 +298,114 @@ with Usd.EditContext(stage, session):
           "a button pointing into the OTHER character's rig is not live")
 
 stage.GetSessionLayer().Clear()
+
+print("")
+print("control visibility follows schemas and inherited visibility")
+visibility_stage = Usd.Stage.CreateInMemory()
+visibility_stage.DefinePrim("/Cast", "Xform")
+visibility_stage.DefinePrim("/Cast/Hero", "RigExecRoot")
+visibility_stage.DefinePrim("/Cast/Hero/Animation", "Scope")
+visibility_stage.DefinePrim("/Cast/Hero/Details", "Xform")
+paths = ["/Cast/Hero/Animation/Hand", "/Cast/Hero/Animation/Hand/Finger",
+         "/Cast/Hero/Details/Face"]
+for path in paths:
+    visibility_stage.DefinePrim(path, "RigExecControl")
+# Conventional names confer no control role.
+visibility_stage.DefinePrim("/Cast/Hero/Aux/Controls", "Scope")
+mesh = visibility_stage.DefinePrim("/Cast/Hero/Aux/Controls/Geometry", "Mesh")
+neighbor_mesh = visibility_stage.DefinePrim("/Cast/Hero/Details/Geometry", "Mesh")
+visibility_stage.DefinePrim("/Cast/Other", "RigExecRoot")
+other = visibility_stage.DefinePrim("/Cast/Other/Hand", "RigExecControl")
+controls = pickerScene.control_prims(visibility_stage, "/Cast/Hero")
+Check({str(p.GetPath()) for p in controls} == set(paths),
+      "arbitrary scopes and nested controls are collected by schema")
+Check(len(pickerScene.control_prims(visibility_stage)) == len(paths) + 1,
+      "only an absent rig scope includes the whole stage")
+Check(not pickerScene.controls_visible([]), "an empty rig is not shown as visible")
+Check(pickerScene.controls_visible(controls), "all controls start visible")
+root_before = visibility_stage.GetRootLayer().ExportToString()
+edit_target = visibility_stage.GetEditTarget()
+pickerScene.set_controls_visible(visibility_stage, controls, False)
+Check(all(UsdGeom.Imageable(p).ComputeVisibility() == UsdGeom.Tokens.invisible
+          for p in controls), "hide applies to every actual control")
+Check(all(UsdGeom.Imageable(p).ComputeVisibility() == UsdGeom.Tokens.inherited
+          for p in (mesh, neighbor_mesh, other)),
+      "named scopes, unrelated geometry and another rig remain visible")
+session = visibility_stage.GetSessionLayer()
+Check(all(session.GetPropertyAtPath(p.GetPath().AppendProperty("visibility"))
+          for p in controls), "visibility opinions live on controls in the session")
+Check(not session.GetPropertyAtPath(other.GetPath().AppendProperty("visibility"))
+      and not session.GetPrimAtPath("/Cast/Hero/Aux/Controls"),
+      "no opinion is authored on another rig or a conventionally named scope")
+pickerScene.set_controls_visible(visibility_stage, controls, True)
+Check(pickerScene.controls_visible(controls), "show restores nested controls together")
+Check(visibility_stage.GetEditTarget() == edit_target
+      and visibility_stage.GetRootLayer().ExportToString() == root_before,
+      "visibility actions preserve the edit target and source layer")
+
+# One hidden child makes the aggregate checkbox false, even with visible peers.
+with Usd.EditContext(visibility_stage, session):
+    UsdGeom.Imageable(controls[1]).GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+Check(not pickerScene.controls_visible(controls),
+      "a partially visible collection is not reported as wholly visible")
+pickerScene.set_controls_visible(visibility_stage, controls, True)
+Check(pickerScene.controls_visible(controls), "show restores a hidden child")
+
+# A control the rig itself authors invisible stays hidden after a show and
+# does not hold the tick off; hiding still covers it.
+helper = UsdGeom.Imageable(controls[2])
+helper.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+pickerScene.set_controls_visible(visibility_stage, controls, False)
+pickerScene.set_controls_visible(visibility_stage, controls, True)
+Check(helper.ComputeVisibility() == UsdGeom.Tokens.invisible,
+      "show keeps a rig-authored invisible control hidden")
+Check(pickerScene.controls_visible(controls),
+      "a rig-hidden control does not count against the visible tick")
+pickerScene.set_controls_visible(visibility_stage, controls, False)
+Check(not pickerScene.controls_visible(controls),
+      "after a hide the collection reports hidden")
+pickerScene.set_controls_visible(visibility_stage, controls, True)
+helper.GetVisibilityAttr().Clear()
+Check(pickerScene.controls_visible(controls), "clearing the rig opinion restores it")
+
+# Watch the same dependencies the UI subscribes to, including outside the rig.
+attributes = pickerScene.control_visibility_attributes(controls)
+attribute_paths = {str(attr.GetPath()) for attr in attributes}
+Check(set(path + ".visibility" for path in paths).issubset(attribute_paths)
+      and "/Cast/Hero/Details.visibility" in attribute_paths
+      and "/Cast.visibility" in attribute_paths,
+      "visibility dependencies include controls and all imageable ancestors")
+Check(len(attributes) == len(attribute_paths), "shared ancestors are watched once")
+seen = []
+def visibility_notice(notice, sender):
+    seen.extend(str(attr.GetPath()) for attr in attributes if notice.AffectedObject(attr))
+notice_key = Tf.Notice.Register(Usd.Notice.ObjectsChanged, visibility_notice, visibility_stage)
+ancestor = UsdGeom.Imageable(visibility_stage.GetPrimAtPath("/Cast/Hero/Details"))
+ancestor.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+Check("/Cast/Hero/Details.visibility" in seen,
+      "external ancestor visibility edits affect the watched attributes")
+notice_key.Revoke()
+root_before = visibility_stage.GetRootLayer().ExportToString()
+pickerScene.set_controls_visible(visibility_stage, controls, True)
+Check(not pickerScene.controls_visible(controls)
+      and ancestor.ComputeVisibility() == UsdGeom.Tokens.invisible,
+      "show cannot claim success under a hidden non-control ancestor")
+Check(UsdGeom.Imageable(neighbor_mesh).ComputeVisibility() == UsdGeom.Tokens.invisible
+      and not session.GetPropertyAtPath(ancestor.GetPath().AppendProperty("visibility")),
+      "show does not reveal unrelated geometry by making its ancestor visible")
+Check(visibility_stage.GetRootLayer().ExportToString() == root_before,
+      "the hidden ancestor's source opinion remains untouched")
+ancestor.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible, Usd.TimeCode(1))
+ancestor.GetVisibilityAttr().Set(UsdGeom.Tokens.inherited, Usd.TimeCode(2))
+Check(not pickerScene.controls_visible(controls, Usd.TimeCode(1))
+      and pickerScene.controls_visible(controls, Usd.TimeCode(2)),
+      "effective visibility follows the displayed frame")
+
+# Collection membership follows schema and activation edits without named scopes.
+with Usd.EditContext(visibility_stage, session):
+    visibility_stage.GetPrimAtPath(paths[0]).SetActive(False)
+Check([str(p.GetPath()) for p in pickerScene.control_prims(visibility_stage, "/Cast/Hero")]
+      == [paths[2]], "inactive controls and their children leave the collection")
 
 # Panel images are layer-relative assets, including when inside USDZ.
 import tempfile, pathlib

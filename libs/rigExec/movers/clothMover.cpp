@@ -20,6 +20,7 @@
 #include "pxr/usd/usdGeom/tokens.h"
 #include "clothInputs.h"
 #include "rigExec/pathText.h"
+#include "ClothMoverSchema.h"
 
 #include <algorithm>
 #include <atomic>
@@ -70,12 +71,11 @@ const TfToken _rightHanded("rightHanded");
 const TfToken _leftHanded("leftHanded");
 const TfToken _vertex("vertex");
 
-// The schema's fallbacks, which the declared inputs repeat.
-constexpr int kWindowFrames = 16;
-constexpr int kMaxWindowFrames = 64;
-constexpr int kSubsteps = 10;
-constexpr int kIterations = 1;
-constexpr float kTetherSlack = 0.05f;
+constexpr int kWindowFrames = ClothMoverSchema::rigExec_windowFrames;
+constexpr int kMaxWindowFrames = ClothMoverSchema::rigExec_maxWindowFrames;
+constexpr int kSubsteps = ClothMoverSchema::rigExec_substeps;
+constexpr int kIterations = ClothMoverSchema::rigExec_iterations;
+constexpr float kTetherSlack = ClothMoverSchema::rigExec_tetherSlack;
 
 SdfPath
 MeshOf(const SdfPath &target)
@@ -829,10 +829,13 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     return true;
 }
 
-RigExecMoverHandler Handler()
+} // namespace
+
+namespace rigExec {
+RigExecMoverHandler RigExecClothUsdAdapter(const char *schemaType)
 {
     RigExecMoverHandler h(
-        "RigExecClothMover",
+        schemaType,
         &RigExecFixedMoverOp<RigExecRevisionOp::External>,
         RigExecMoverDomain::Points);
     h.singleTarget = true;
@@ -850,10 +853,7 @@ RigExecMoverHandler Handler()
     h.captureWindow = &CaptureWindow;
     h.applyWindow = &ApplyWindow;
     h.applyWindowDevice = &ApplyWindowDevice;
-    h.runtimeKernel = RigExecClothPlaybackKernel();
     return h;
 }
 
-}  // namespace
-
-RIGEXEC_REGISTER_MOVER(Handler());
+} // namespace rigExec

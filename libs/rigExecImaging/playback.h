@@ -13,6 +13,8 @@
 //   * constraint-driven provider transforms as (revised, base) pairs,
 //     so parented geometry rides along through the same world-space
 //     delta the live path computes;
+//   * evaluated control and final joint matrices for manipulators and pose
+//     readers, from the runtime's published provider frames;
 //   * the selected weight object's resolved field as the influence
 //     overlay, from the runtime's published weight fields;
 //   * NO guides (joint skeletons, control shapes, volume iso-surfaces):
@@ -22,9 +24,10 @@
 //     so tool reads of RigExecImaging_GetMovedFloats find nothing on a
 //     playback session rather than a recomputed guess.
 // Each generation plays the binary over the stage's values at the
-// requested time: the inputs the file marks Animated are read from the
-// stage there (RigExecInputSampler), every other input keeps the value it
-// had at the bake time. UsdTimeCode::Default is a time like any other; a
+// requested time: Animated and static SourceBacked inputs are bound to the
+// stage by RigExecInputSampler; unbound inputs keep their bake-time value.
+// Bound static inputs refresh after stage notices or transitions between
+// Default and numeric time. UsdTimeCode::Default is a time like any other; a
 // keyed input with no default value holds no value there, as on the stage,
 // and so does one whose sample is blocked. Stage edits never dirty a
 // playback session, so an edit is read only at the next change of time,
@@ -35,9 +38,9 @@
 // already-active stage.
 // Upstream scene-index values (docs/specs/upstream-inputs.md, "Playback")
 // reach the binary through its inputs, as authored values: after each
-// Apply, every admitted key is set where the stage value stood, and a
-// lifted key returns to what the stage says. The sampler is never
-// invalidated for them, so an upstream change dirties only what reads it.
+// Apply, admitted keys that it sampled are reapplied, and a lifted bound
+// key returns to what the stage says. Unbound keys retain their bake defaults
+// on lift. Upstream changes never invalidate or refresh the sampler.
 #ifndef RIGEXEC_IMAGING_PLAYBACK_H
 #define RIGEXEC_IMAGING_PLAYBACK_H
 
@@ -151,15 +154,14 @@ private:
         size_t index = 0;
         std::string name;
         RrInputTag tag{};
-        bool animated = false;
         UsdAttribute attribute;
         VtValue value;
     };
 
     void _AdmitUpstream(UsdTimeCode time);
-    bool _ApplyUpstream(UsdTimeCode time, bool sampled, std::string *error);
+    bool _ApplyUpstream(UsdTimeCode time, std::string *error);
     bool _LiftUpstream(const _UpstreamKey &key, UsdTimeCode time,
-                       bool sampled, std::string *error);
+                       std::string *error);
     // Windowed operations: the reader's history for a frame at \p time, as
     // the USD evaluators read it (the stage at the frames before, with the
     // upstream values). A frame right after the last one executed pushes
@@ -175,11 +177,16 @@ private:
         SdfPath path;
         SdfPath primPath;
         TfToken name;
+        // Pin the runtime buffer identity while sharing its converted Hydra
+        // array across publications. Replaced only when that buffer changes.
+        std::shared_ptr<const void> pointsSource, weightsSource;
+        VtVec3fArray points;
+        VtFloatArray weights;
     };
     // The parsed form of \p text, from the memo. The reader's outputs are
     // a fixed set per file, so each text is parsed the first frame it
     // appears and read from the memo after. Owner thread only.
-    const _OutputPath &_ResolveOutputPath(const std::string &text);
+    _OutputPath &_ResolveOutputPath(const std::string &text);
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
@@ -211,6 +218,15 @@ private:
     bool _historyHave = false;
     // Runtime output path text to its parsed path, cleared at Open.
     std::unordered_map<std::string, _OutputPath> _outputPaths;
+    // Provider slots that publish a joint or control frame, with their
+    // resolved prim paths. Built on the first frame after Open; the slot
+    // set is fixed per file. Owner thread only.
+    struct _ProviderOutput {
+        size_t slot = 0;
+        SdfPath path;
+    };
+    std::vector<_ProviderOutput> _providerOutputs;
+    bool _providerOutputsValid = false;
     // Authored resetXformStack prims under the driven provider roots in
     // _xformResetRoots. Walked again only when the provider set changes,
     // the stage changes (NoteStageChanged) or a file opens.

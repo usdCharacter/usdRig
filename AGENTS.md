@@ -66,6 +66,18 @@ starting its workflow, and keep this list current when adding or changing skills
   `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
   remains for cross-check and tests.
 - `libs/rigExecRigging` and `python`: authoring APIs and Python bindings.
+- When adding or changing a registered mover module, read
+  [external movers](docs/concepts/external-movers.md#build-a-mover-repository).
+  Use `rigexec_add_mover` in [rigExecMover.cmake](cmake/rigExecMover.cmake)
+  to declare its USD-free typed definition, USD adapter, and `schema.usda`.
+  Keep schema names, types, and defaults authoritative in the schema; consume
+  generated metadata and defaults in the adapter. Keep scene binding in the
+  adapter and computation in the shared kernel. The helper generates kernel
+  factories and adapter registration; do not manually register the same type.
+  Built-ins enter the generated runtime catalog, and standalone hosts supply
+  generated definitions at `Open`. Do not add mover names to runtime dispatch
+  or registry lookups to graph bodies. Preserve existing binary opcodes and
+  specialized range or weighting contracts when migrating built-ins.
 - `libs/rigExecImaging`: scene indices, activation, and display state.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
@@ -156,6 +168,23 @@ A queued UI callback still blocks that thread while it runs: offload only
 detached work through the existing worker path, and measure both dispatch and
 completion latency when fixing interaction stalls.
 
+### Copy-on-write (CoW)
+
+Share immutable compiled data and completed buffers across native, frozen,
+runtime, cache, and imaging consumers. When a revision needs to change shared
+data, detach only the affected storage before writing; keep unchanged storage
+shared. Retained snapshots, history packets, and cache entries must keep their
+original values. Do not deep-copy a whole rig or all geometry for a local edit,
+or cast away constness to mutate a published result.
+
+Read shared arrays through const interfaces; non-const access can trigger a
+CoW allocation even when the caller only reads. Recycle a buffer only when its
+owner has exclusive write access and no outstanding readers or views. A
+reference-count check alone does not establish thread ownership. CoW must
+preserve graph value versions, invalidation, and publication fences, and must
+not introduce locks into computation. When changing sharing or buffer reuse,
+verify that retained results stay unchanged and unaffected storage stays shared.
+
 ### Hidden locks
 
 Compile, digest, baked and frozen steps, and runtime execution run on
@@ -199,7 +228,7 @@ scripts; their defaults look for a sibling dependency install.
    one edit, a rebuild and a test run.
 3. Before testing, and again before committing, review the whole change
    against this file's rules: unified loop, rig semantics, no-mutex zones,
-   hidden locks, USD-free runtime, and documentation hygiene. Fix every
+   CoW, hidden locks, USD-free runtime, and documentation hygiene. Fix every
    violation first; do not test or commit code that breaks a rule here.
 4. Rebuild only the targets you need, e.g.
    `cmake --build build --target testRigExecOpValues rigExecPose`.
@@ -248,10 +277,14 @@ Linking rules:
 
 - A new test, bench, or probe that compiles a stage through `rigExec` alone
   joins the `rigExecScene` list near the end of `CMakeLists.txt`. Without
-  it, compile prints "RigExec scene library is not linked" and the process
-  exits. A test that runs a cpu-reference, golden, or exec cross-check joins
-  the `rigExecOracle` list beside it, or exits with "RigExec oracle library
-  is not linked".
+  it, compile returns false with a missing-scene diagnostic. Core-only tests
+  of that failure deliberately omit the scene library. A test that runs a
+  cpu-reference, golden, or exec cross-check joins the `rigExecOracle` list
+  beside it. Missing oracle support returns false with diagnostics; golden
+  APIs without an error channel throw `std::runtime_error`. Both scene and
+  oracle targets register automatically in build and installed consumers.
+  Manual linker users call `RigExecRegisterScene()` or `RigExecRegisterOracle()`
+  and keep the registered library loaded for the process lifetime.
 - A Windows DLL exports only its own objects, so a caller of an archive that
   `rigExec` links privately has nothing to resolve against.
   `cmake/WindowsArchiveLinks.cmake` re-exposes those archives on Windows.

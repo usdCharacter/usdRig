@@ -8,6 +8,9 @@
 
 namespace rigExec {
 
+// Golden APIs require rigExecOracle registration. Boolean APIs report a
+// missing library through false/error; value-only APIs throw std::runtime_error.
+
 /// A typed published value. The encoding retains every floating-point bit.
 struct RigExecGoldenValue {
     std::string domain, key, value;

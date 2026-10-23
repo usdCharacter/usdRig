@@ -1,6 +1,5 @@
-// The frozen program snapshot's definition. It holds a whole baked program
-// clone, so only code that reads a snapshot's fields includes this; code
-// that only passes snapshots around needs frozenContext.h alone.
+// Frozen program storage and its captured avar edits. Callers that only
+// pass snapshots around need frozenContext.h alone.
 #ifndef RIGEXEC_FROZEN_PROGRAM_H
 #define RIGEXEC_FROZEN_PROGRAM_H
 
@@ -31,30 +30,9 @@ struct RigExecFrozenAvarPatch {
     uint64_t valueEditSerial = 0, programStamp = 0;
 };
 
-/// A worker-safe snapshot of a baked program tied to its compiled rig.
-///
-/// Built on the UI thread by RigExecFreezeProgram, which deep-copies the
-/// live program's compiled rig tables and per-frame state into `program`, nulls
-/// every pointer to live evaluator state (evaluator, stage, caches,
-/// evaluator-bound std::functions), and captures the small compiled rig values the
-/// frame path reads through those pointers (the joint/solver binding map,
-/// whether guide taps stand). Immutable after the freeze: shared across the
-/// jobs of its compiled rig, read-only on every thread. A workspace clones the
-/// snapshot once into private working state and executes sampled jobs through
-/// the shared graph. Concurrent jobs use distinct workspace lanes.
-///
-/// The clone keeps the live program's USD handles COPIED but DEAD: no frozen
-/// code path dereferences them (see the audit on RigExecFreezeProgram in
-/// frozenContext.cpp), and the worker nulls every input head/query it patches
-/// so a misrouted read fails closed onto the patched constant instead of
-/// reaching the stage. A null or mismatched snapshot (or none at all, see
-/// RigExecFrozenEvalContext::frozen) declines the job; the frame evaluates
-/// live when asked.
-struct RigExecFrozenProgram {
-    /// The program clone: compiled rig tables plus the per-frame state as it stood
-    /// at freeze time (the history the frozen run branches from). Live
-    /// pointers nulled; see RigExecFreezeProgram.
-    RigExecBakedProgramImpl program;
+/// Binding facts captured on the stage owner thread and shared unchanged
+/// by every avar revision of the frozen program.
+struct RigExecFrozenBindings {
     /// Copy of the evaluator's joint/solver binding map (compiled rig data the
     /// pose epilogue reads through a live pointer).
     std::map<SdfPath, std::vector<std::pair<SdfPath, int>>> jointSolverBinding;
@@ -94,6 +72,18 @@ struct RigExecFrozenProgram {
     /// frozenDetail::_FrozenWeightArrayRole order, built here with the
     /// sampler's own key function.
     std::vector<SdfPath> weightArrayKeys;
+};
+
+/// Immutable frozen history plus an optional captured avar revision.
+/// Freeze detaches live state and clears live evaluator pointers. Patching
+/// shares that history and its bindings; the existing worker input placement
+/// applies avarPatch before executing the common graph. A workspace clones
+/// the history once into its private arena. Concurrent jobs own distinct arenas.
+/// Copied USD handles remain inert; workers consume only captured facts.
+struct RigExecFrozenProgram {
+    std::shared_ptr<const RigExecBakedProgramImpl> program;
+    std::shared_ptr<const RigExecFrozenBindings> bindings;
+    std::shared_ptr<const RigExecFrozenAvarPatch> avarPatch;
     /// Whether input-replay capture (RIGEXEC_INPUT_REPLAY) was requested at
     /// freeze, and the thread that froze. Capture is a serial owning-thread
     /// log: only that thread records boundaries for this snapshot, and no

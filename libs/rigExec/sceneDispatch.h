@@ -1,6 +1,6 @@
 // Function pointers the scene-translation library installs. The evaluator calls
-// the dispatch functions below; those forward here. A missing hook aborts, so
-// a compile cannot succeed without the library. The frame-path kernels live
+// the dispatch functions below; those forward here. Missing hooks report
+// failure through the caller's error channel. The frame-path kernels live
 // in librigExec and are not dispatched.
 #ifndef RIGEXEC_SCENE_DISPATCH_H
 #define RIGEXEC_SCENE_DISPATCH_H
@@ -48,8 +48,9 @@ struct RigExecSceneHooks {
                             std::string *) = nullptr;
 };
 
-void RigExecInstallSceneHooks(const RigExecSceneHooks &hooks);
-[[noreturn]] void RigExecSceneMissing(const char *feature);
+// The table and its functions must remain alive for the process lifetime.
+void RigExecInstallSceneHooks(const RigExecSceneHooks *hooks);
+bool RigExecSceneAvailable(std::string *error = nullptr);
 
 bool RigExecDispatchCaptureSceneDescriptors(
     const UsdStageRefPtr &stage, const SdfPath &rigRoot,

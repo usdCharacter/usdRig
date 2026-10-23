@@ -202,7 +202,8 @@ public:
     /// A context only ever evaluates its own stage: called with another
     /// stage, the call is forwarded to that stage's context (created when
     /// the stage has none). On the legacy handle a successful activation
-    /// also makes the target the current context.
+    /// also makes the target the current context. An initial failure keeps
+    /// authored rest guides visible while returning false and staying inactive.
     bool Activate(
         const UsdStageRefPtr &stage, const SdfPath &rigPath,
         UsdTimeCode initialTime, std::vector<std::string> *errors);
@@ -527,11 +528,11 @@ public:
     bool EnsureActivated(
         const UsdStageRefPtr &stage, UsdTimeCode time);
 
-    /// Whether \p path is an active rig root. The results index's
-    /// _PrimsDirtied time trigger only fires for these, so output-prim
-    /// dirties (including the universal ones from compiled rig swaps) never
-    /// re-enter evaluation.
+    /// Whether \p path is an active rig root.
     bool IsActiveRigRoot(const SdfPath &path);
+
+    /// A root whose evaluated or authored guides receive time updates.
+    bool IsDisplayedRigRoot(const SdfPath &path);
 
     /// Records a RigExecRoot sighting for eager activation. The rig adapter
     /// calls this from GetImagingSubprims, which the stage scene index runs
@@ -924,6 +925,15 @@ private:
         const UsdNotice::ObjectsChanged &notice,
         const UsdStageWeakPtr &sender);
 
+    /// Guide-only mode: edits under \p guideRoots refresh the authored
+    /// guides; edits that can complete the rig retry the activation of
+    /// \p request. Unrelated edits do nothing. Called unlocked.
+    void _OnGuideOnlyObjectsChanged(
+        const UsdNotice::ObjectsChanged &notice,
+        const UsdStageWeakPtr &sender, const std::set<SdfPath> &guideRoots,
+        const SdfPath &request, UsdTimeCode guideTime, bool automatic,
+        bool retryOnValues);
+
     /// One declared value of a manipulation in progress; see BeginPreview.
     struct PreviewSlot {
         SdfPath primPath;
@@ -998,6 +1008,19 @@ private:
     /// (the compute-extent callback runs on arbitrary threads).
     const std::shared_ptr<RigExecSnapshotStore> _store;
     RigSessions _sessions;
+    /// Display-only builders retained after an initial activation failure.
+    /// They never evaluate or schedule work; IsActive remains false.
+    std::map<SdfPath, std::unique_ptr<RigExecImagingBridge>> _authoredGuides;
+    bool _authoredGuidesDirty = false;
+    /// The rig path the failed activation asked for (empty: every root).
+    /// The edit-driven retry activates exactly that request again.
+    SdfPath _authoredGuidesRequest;
+    /// True when the failure came from evaluation rather than compile, so
+    /// a value edit may complete the rig and is worth a retry.
+    bool _authoredGuidesRetryOnValues = false;
+    std::shared_ptr<RigExecImagingSnapshot> _BuildAuthoredGuides(
+        const UsdStageRefPtr &stage, const std::vector<SdfPath> &rigPaths,
+        UsdTimeCode time);
     uint64_t _nextDebugGraph = 0;
     /// The active stage (strong while active, reset by Deactivate).
     UsdStageRefPtr _stage;
@@ -1108,9 +1131,6 @@ RIGEXEC_IMAGING_C_API void RigExecImaging_Deactivate();
 /// Current published snapshot generation (0 before first publication).
 RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGeneration();
 
-/// Reads one complete evaluated control matrix from the exact published
-/// stage/time. Returns 1 on success, 0 without changing output otherwise.
-/// isDefault selects UsdTimeCode::Default; ordinary frames must be finite.
 /// Reads scalar properties this generation published, by property path.
 ///
 /// \p packedPaths is newline-separated absolute property paths, the same
@@ -1125,6 +1145,10 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGeneration();
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloats(
     const char *packedPaths, float *out, int count);
 
+/// Reads a complete evaluated control or final joint matrix from the exact
+/// published stage/time. Authored guide placements never supply this value.
+/// Returns 1 on success, 0 without changing output otherwise. isDefault selects
+/// UsdTimeCode::Default; ordinary frames must be finite. Does not evaluate.
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetControlFrameAssetSpace(
     long long stageCacheId, const char *primPath, double frame,
     int isDefault, double outMatrix[16]);

@@ -23,6 +23,7 @@
 #include "bakedProgramImpl.h"
 #include "projectorCaptureNotice.h"
 #include "sceneDispatch.h"
+#include "oracleDispatch.h"
 #include "bakedSchedule.h"
 #include "bakedOpGraph.h"
 #include "crossDomainInputs.h"
@@ -4458,6 +4459,15 @@ RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
     _lastBail = RigExecBakedBail::None;
     RigExecBakedProgramImpl &B = *_impl;
     RigExecRigEvaluator &E = *B.evaluator;
+    if (E.cpuReference) {
+        std::string error;
+        if (!RigExecOracleAvailable(&error)) {
+            pose->valid = false;
+            pose->diagnostics.push_back(std::move(error));
+            _lastBail = RigExecBakedBail::Step;
+            return false;
+        }
+    }
     B.recordOpTimings = E.GetOpTimingEnabled();
     if (E.cpuReference) { if (!B.oraclePublications) B.oraclePublications.emplace(); }
     else { B.oraclePublications.reset(); B.oracleWeightInputs.clear(); }

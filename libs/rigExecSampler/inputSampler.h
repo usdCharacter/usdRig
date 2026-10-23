@@ -109,6 +109,21 @@ public:
     /// Inputs the last sampling Apply read (a cost counter for tests).
     size_t GetLastReadCount() const { return _lastReads; }
 
+    /// Whether Bind resolved this slot to a stage attribute. Includes static
+    /// SourceBacked inputs and private slots; false for captured defaults.
+    bool HasBinding(size_t index) const
+    {
+        return index < _inputStates.size() && _inputStates[index].bound;
+    }
+    /// Whether the last Apply successfully sampled this slot. Cleared at
+    /// every Apply, including a same-time no-op; a failed Apply reports only
+    /// the slots it sampled before the failure.
+    bool DidSampleInput(size_t index) const
+    {
+        return _lastApplySampled && index < _inputStates.size() &&
+               _inputStates[index].sampled;
+    }
+
     /// One line per input Bind could not resolve, naming it and why.
     const std::vector<std::string> &GetWarnings() const { return _warnings; }
 
@@ -128,10 +143,16 @@ private:
     };
 
     std::vector<_Bound> _animated;
+    struct _InputState {
+        bool bound = false;
+        bool sampled = false;
+    };
+    std::vector<_InputState> _inputStates;
     size_t _animatedCount = 0;
     std::vector<std::string> _warnings;
     PXR_NS::UsdTimeCode _last;
     bool _sampled = false;
+    bool _lastApplySampled = false;
     bool _staticSkip = false, _staticStale = true;
     size_t _lastReads = 0;
 };

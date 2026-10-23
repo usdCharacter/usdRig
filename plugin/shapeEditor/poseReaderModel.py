@@ -296,27 +296,6 @@ def _Matrix(value):
     return Gf.Matrix4d(*flat)
 
 
-def FinalFrame(pose, path):
-    """The evaluated, asset-space frame of a joint or control, or None.
-
-    Joints and controls publish into different maps, so both are asked;
-    a degenerate or missing frame is None rather than a guess.
-    """
-    text = str(path)
-    for read in (lambda: pose.joint_frame(text, True),
-                 lambda: pose.control_frame(text)):
-        try:
-            frame = read()
-        except Exception:
-            continue
-        if frame is None or not getattr(frame, "valid", True):
-            continue
-        if getattr(frame, "degenerate", False):
-            continue
-        return _Matrix(frame.to_matrix4())
-    return None
-
-
 def ProviderParent(prim, rigRoot):
     """The nearest joint or control ancestor, as the evaluator picks it.
 
@@ -442,10 +421,11 @@ def _Poses(prim, weights):
     return out
 
 
-def BuildReader(stage, prim, pose, time, weights, restSpace,
+def BuildReader(stage, prim, readFrame, time, weights, restSpace,
                 sizeScale=1.0, restCache=None):
     """One interpolator as a Reader. Never raises on a bad rig.
 
+    `readFrame(path)` returns a published asset-space matrix or None.
     `restSpace(prim, time)` is the orthonormal asset-space rest frame --
     gizmoMath.RestSpace in the panel, which replicates the evaluator's
     computeRestFrame. `weights` maps pose prim paths to the published
@@ -475,8 +455,8 @@ def BuildReader(stage, prim, pose, time, weights, restSpace,
     rigRoot = RigRoot(stage, prim)
     toWorld = AssetToWorld(stage, rigRoot, time)
     parent = ProviderParent(driver, rigRoot)
-    finalD = FinalFrame(pose, driverPath)
-    finalP = FinalFrame(pose, parent.GetPath()) if parent else \
+    finalD = readFrame(driverPath)
+    finalP = readFrame(parent.GetPath()) if parent else \
         Gf.Matrix4d(1.0)
     if finalD is None or finalP is None:
         reader.note = "the evaluator published no frame for the driver"
@@ -545,7 +525,7 @@ def BuildReader(stage, prim, pose, time, weights, restSpace,
     return reader
 
 
-def Build(stage, interpolators, pose, time, restSpace, sizeScale=1.0,
+def Build(stage, interpolators, readFrame, time, restSpace, sizeScale=1.0,
           restCache=None):
     """A Reader per interpolator prim path, in the order given.
 
@@ -560,7 +540,7 @@ def Build(stage, interpolators, pose, time, restSpace, sizeScale=1.0,
             continue
         weights = {p.path: p.weight for p in getattr(interp, "poses", ())}
         try:
-            readers.append(BuildReader(stage, prim, pose, time, weights,
+            readers.append(BuildReader(stage, prim, readFrame, time, weights,
                                        restSpace, sizeScale, restCache))
         except Exception as error:
             reader = Reader(prim.GetPath(), prim.GetName(), None)

@@ -93,11 +93,12 @@ is unconnected and has a value. Drop diagnostics follow live admission.
 
 Playback applies upstream values after the stage sampler's `Apply`, without
 invalidating the sampler. Numeric keys use `SetSampledInputAt`; Token keys use
-`SetInputToken` with their text, including text absent from the file. Animated
-keys are reapplied whenever `Apply` sampled the stage. Lifting a non-Animated key
-uses `ResetInput`. Lifting an Animated key restores the sampler's value when it
-just sampled, otherwise it rereads that one stage attribute at the playback time;
-a failed read uses `ClearInputAt`.
+`SetInputToken` with their text, including text absent from the file. The sampler
+reports which slots it sampled, so playback reapplies those keys, including
+static SourceBacked inputs during a refresh. Upstream changes do not refresh
+unrelated static inputs. Lifting a bound key restores the sampler's value when
+it just sampled that slot; otherwise it rereads that one stage attribute at the
+playback time. Unbound keys restore their captured defaults with `ResetInput`.
 
 Playback applies arrays with the authored `SetInputArray` API. Admission checks
 against the stage count at evaluation time; the runtime additionally requires

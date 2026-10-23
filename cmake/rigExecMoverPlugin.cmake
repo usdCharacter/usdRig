@@ -7,7 +7,7 @@ set(RIGEXEC_MOVER_PLUGIN_API_VERSION 7)
 
 # Available both inside the usdRig build and from find_package(rigExec).
 function(rigexec_add_mover_plugin name)
-    cmake_parse_arguments(P "NO_INSTALL" "PLUGIN_ROOT" "SOURCES;LIBRARIES" ${ARGN})
+    cmake_parse_arguments(P "NO_INSTALL;SCHEMA_INCLUDE" "PLUGIN_ROOT" "SOURCES;LIBRARIES" ${ARGN})
     if (P_UNPARSED_ARGUMENTS OR P_KEYWORDS_MISSING_VALUES OR NOT P_SOURCES)
         message(FATAL_ERROR
             "rigexec_add_mover_plugin(${name}) requires SOURCES; optional LIBRARIES, PLUGIN_ROOT and NO_INSTALL")
@@ -36,6 +36,9 @@ function(rigexec_add_mover_plugin name)
     file(WRITE "${_plugin_root}/plugInfo.json"
         "{\"Includes\": [\"*/resources/\", \"*/*/resources/\"]}\n")
     set(_metadata "{\"Plugins\": [{\"Type\": \"library\", \"Name\": \"${name}\", \"Root\": \".\", \"ResourcePath\": \".\", \"LibraryPath\": \"@LIBRARY@\", \"Info\": {\"RigExecMoverPlugin\": ${RIGEXEC_MOVER_PLUGIN_API_VERSION}}}]}\n")
+    if(P_SCHEMA_INCLUDE)
+        string(REPLACE "{\"Plugins\":" "{\"Includes\": [\"schema/\"], \"Plugins\":" _metadata "${_metadata}")
+    endif()
     string(REPLACE "@LIBRARY@" "$<TARGET_FILE:${name}>" _build_metadata "${_metadata}")
     file(GENERATE OUTPUT "${_resources}/plugInfo.json" CONTENT "${_build_metadata}")
 

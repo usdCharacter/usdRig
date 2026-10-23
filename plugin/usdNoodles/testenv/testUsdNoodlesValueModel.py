@@ -10,10 +10,8 @@
 """Unit tests for ``UsdNoodles.noodlesValues`` -- the pure value model behind
 the inline attribute value cells.
 
-Everything here runs against an in-memory ``Usd.Stage``: no Qt, no GL, no
-``GraphView`` (whose module-level GL imports are why
-``testUsdNoodlesPinDragInteractions.py`` mirrors logic instead of importing
-it). What is asserted, in order of how much it would cost to get wrong:
+Everything here runs against an in-memory ``Usd.Stage``, without Qt or GL.
+The tests cover:
 
   * the TYPE WHITELIST -- only simple types get a cell. A matrix, an array,
     an asset path or a quaternion getting one is the failure this guards.

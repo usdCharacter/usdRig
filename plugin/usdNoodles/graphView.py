@@ -43,6 +43,7 @@ from ._schema_pin_names import (
 from .constants import MAX_RENDER_DEPTH, node_content_depth
 from .linkRenderer import computeLinkCurveBounds, LinkRenderer, sampleLinkCurve
 from .nodeFactory import NodeFactory
+from .nodeActivation import capture_activation, replay_activation
 from .nodeGraph import (
     createNodeRenderer,
     NodeGraph,
@@ -71,6 +72,7 @@ from .pinUtils import (
 from .textRenderer import TextRenderer
 from .touchPose import collect_graph_prims, is_touch_group
 from .usdNoticeHandler import UsdNoticeHandler
+from .undoHistory import history_for_stage
 from .utils import M, MenuBuilder
 from .widgets import valueCell
 from .widgets.selectableList import SelectableList, SelectableListItem
@@ -162,37 +164,26 @@ def _isPathRelated(pathA, pathB):
     return longer[len(shorter)] in "/."
 
 
-def _push_undo_command(description, do_func, undo_func):
-    """Create and push a LambdaCommand to the undo manager.
+def _push_undo_command(description, do_func, undo_func, *, view):
+    """Record an already applied edit in the view's stage history.
 
-    Args:
-        description: Human-readable description for undo/redo menu.
-        do_func: Callable invoked on redo (re-applies the edit).
-        undo_func: Callable invoked on undo (reverses the edit).
+    Callbacks accept the view invoking undo/redo and capture edit data only.
     """
-    try:
-        from UsdNoodles._usdNoodles import pushLambdaCommand
-
-        pushLambdaCommand(description, do_func, undo_func)
-        Tf.Status(f"Pushed undo command: {description}")
-    except ImportError:
-        Tf.Warn(f"Undo not available (ImportError), skipped: {description}")
-    except Exception as e:
-        Tf.Warn(f"Failed to push undo command '{description}': {e}")
+    if view._undoHistory is not None:
+        view._undoHistory.push(description, do_func, undo_func)
 
 
-def _make_prim_activation_undo(gv, paths, activate):
+def _make_prim_activation_undo(paths, activate):
     """Return a callable that activates or deactivates prims at *paths*.
 
     The activation opinion is authored to the stage's current edit target.
 
     Args:
-        gv: GraphView reference (prevents closure over self).
         paths: List of prim path strings.
         activate: True to set prims active, False to deactivate.
     """
 
-    def _fn(_paths=paths, _activate=activate):
+    def _fn(gv, _paths=paths, _activate=activate):
         stage = gv.nodeGraph.getStage()
         if not stage:
             return
@@ -204,7 +195,7 @@ def _make_prim_activation_undo(gv, paths, activate):
     return _fn
 
 
-def _make_rename_undo(gv, parent_path, from_name, to_name):
+def _make_rename_undo(parent_path, from_name, to_name):
     """Return a callable that renames a sibling of *parent_path*.
 
     Named by (parent, name) rather than by a captured prim, because the prim
@@ -212,7 +203,7 @@ def _make_rename_undo(gv, parent_path, from_name, to_name):
     path it was fetched from no longer resolves.
     """
 
-    def _fn(_parent=parent_path, _from=from_name, _to=to_name):
+    def _fn(gv, _parent=parent_path, _from=from_name, _to=to_name):
         from .primRename import RENAMED, rename_prim
 
         stage = gv.nodeGraph.getStage()
@@ -254,7 +245,7 @@ def _frameOf(value):
         return Usd.TimeCode.Default()
 
 
-def _make_value_edit(gv, prim_path, property_name, components, time_code, mode):
+def _make_value_edit(prim_path, property_name, components, time_code, mode):
     """Return a callable that authors *components* onto one attribute.
 
     Named by path rather than by a captured ``Usd.Prim``: ``_performUndo``
@@ -264,6 +255,7 @@ def _make_value_edit(gv, prim_path, property_name, components, time_code, mode):
     """
 
     def _fn(
+        gv,
         _path=str(prim_path),
         _prop=property_name,
         _components=tuple(components),
@@ -290,21 +282,20 @@ def _make_value_edit(gv, prim_path, property_name, components, time_code, mode):
     return _fn
 
 
-def _make_api_schema_undo(gv, identifier, applied, apply):
+def _make_api_schema_undo(identifier, applied, apply):
     """Return a callable that applies or removes an API schema.
 
     The instance names chosen when the schema was first applied are captured
     here so that redo reuses them instead of generating new ones.
 
     Args:
-        gv: GraphView reference (prevents closure over self).
         identifier: USD schema identifier.
         applied: List of (primPath, instanceName) pairs; instanceName is ""
             for single-apply schemas.
         apply: True to apply the schema on redo, False to remove it on undo.
     """
 
-    def _fn(_identifier=identifier, _applied=list(applied), _apply=apply):
+    def _fn(gv, _identifier=identifier, _applied=list(applied), _apply=apply):
         from .apiSchemas import apply_named, remove_from_prim
 
         stage = gv.nodeGraph.getStage()
@@ -324,7 +315,6 @@ def _make_api_schema_undo(gv, identifier, applied, apply):
 
 
 def _make_connection_edit(
-    gv,
     src_id,
     src_port,
     tgt_id,
@@ -343,7 +333,7 @@ def _make_connection_edit(
         create: True to create the connection, False to delete it.
     """
 
-    def _fn():
+    def _fn(gv):
         stage = gv.nodeGraph.getStage()
         if not stage:
             return
@@ -373,7 +363,6 @@ def _make_connection_edit(
 
 
 def _make_reconnect_edits(
-    gv,
     old_src,
     old_src_port,
     old_tgt,
@@ -388,13 +377,12 @@ def _make_reconnect_edits(
 ):
     """Return (redo, undo) callables for a reconnection."""
     delete_old = _make_connection_edit(
-        gv, old_src, old_src_port, old_tgt, old_tgt_port, create=False
+        old_src, old_src_port, old_tgt, old_tgt_port, create=False
     )
     create_old = _make_connection_edit(
-        gv, old_src, old_src_port, old_tgt, old_tgt_port, create=True
+        old_src, old_src_port, old_tgt, old_tgt_port, create=True
     )
     delete_new = _make_connection_edit(
-        gv,
         new_src,
         new_src_port,
         new_tgt,
@@ -404,7 +392,6 @@ def _make_reconnect_edits(
         target_property_name=targetPropertyName,
     )
     create_new = _make_connection_edit(
-        gv,
         new_src,
         new_src_port,
         new_tgt,
@@ -414,15 +401,15 @@ def _make_reconnect_edits(
         target_property_name=targetPropertyName,
     )
 
-    def redo():
-        delete_old()
-        create_new()
+    def redo(gv):
+        delete_old(gv)
+        create_new(gv)
         gv.linksChanged = True
         gv.update()
 
-    def undo():
-        delete_new()
-        create_old()
+    def undo(gv):
+        delete_new(gv)
+        create_old(gv)
         gv.linksChanged = True
         gv.update()
 
@@ -482,6 +469,7 @@ class GraphView(QGLWidget):
 
         # Initialize backing field before any property setter touches it.
         self._nodeGraph = None
+        self._undoHistory = None
         self._assetsPath = None
 
         glFormat = QGLFormat()
@@ -1652,6 +1640,7 @@ class GraphView(QGLWidget):
 
     def closeEvent(self, event):
         unsubscribe_edit_target_warning(self._showWarningPopup)
+        self._undoHistory = None
         super().closeEvent(event)
 
     def _onStageReplaced(self):
@@ -1693,6 +1682,7 @@ class GraphView(QGLWidget):
 
         stage = self._usdviewApi.stage if self._usdviewApi else None
         if stage is None:
+            self._undoHistory = None
             QtCore.QTimer.singleShot(0, self._finishStageReload)
             return
 
@@ -2399,14 +2389,17 @@ class GraphView(QGLWidget):
 
         super().enterEvent(event)
 
+    def _clearPropertyTooltip(self):
+        self._tooltipTimer.stop()
+        self._tooltipProperty = None
+        QtWidgets.QToolTip.hideText()
+
     def leaveEvent(self, event):
         if self._previousActiveWindow and self._previousActiveWindow.isVisible():
             self._previousActiveWindow.activateWindow()
         self._previousActiveWindow = None
 
-        self._tooltipTimer.stop()
-        self._tooltipProperty = None
-        QtWidgets.QToolTip.hideText()
+        self._clearPropertyTooltip()
 
         # The resize cursor belongs to a value cell the pointer has now left.
         if self._valueCursorSet is not None:
@@ -2997,9 +2990,11 @@ class GraphView(QGLWidget):
 
     def _loadSampleGraph(self, jsonPath):
         self.nodeGraph = NodeGraphJson()
+        self._initUndoTracking(None)
         self.nodeGraph.load(
             jsonPath, self.textRenderer.calculateTextWidth, self.fontAtlas
         )
+        self._initUndoTracking(self.nodeGraph.getStage())
         self.linksChanged = True
 
     def loadBlueprint(self, stage, primPath, useFieldnames=True):
@@ -3007,6 +3002,7 @@ class GraphView(QGLWidget):
 
         self.nodeGraph = NodeGraphBlueprint()
         self.nodeGraph.setStage(stage)
+        self._initUndoTracking(stage)
         self.nodeGraph.load(
             stage,
             primPath,
@@ -3023,9 +3019,6 @@ class GraphView(QGLWidget):
 
         self._noticeHandler.register(stage)
 
-        # Attach undo state delegates to track layer edits
-        self._initUndoTracking(stage)
-
         if self.nodes:
             self.frameAll()
 
@@ -3036,6 +3029,7 @@ class GraphView(QGLWidget):
 
         self.nodeGraph = NodeGraphBpContainer()
         self.nodeGraph.setStage(stage)
+        self._initUndoTracking(stage)
         self.nodeGraph.load(
             stage,
             primPath,
@@ -3052,9 +3046,6 @@ class GraphView(QGLWidget):
 
         # Register for USD change notices on this stage
         self._noticeHandler.register(stage)
-
-        # Attach undo state delegates to track layer edits
-        self._initUndoTracking(stage)
 
         if self.nodes:
             self.frameAll()
@@ -3075,6 +3066,7 @@ class GraphView(QGLWidget):
 
         self.nodeGraph = NodeGraphStage()
         self.nodeGraph.setStage(stage)
+        self._initUndoTracking(stage)
         self.nodeGraph.syncSelectionToPrimTree = True
         self.nodeGraph.linksChanged = True
 
@@ -3082,9 +3074,6 @@ class GraphView(QGLWidget):
 
         self._resetRenderCachesAfterBulkMove()
         self._noticeHandler.register(stage)
-
-        # Attach undo state delegates to track layer edits
-        self._initUndoTracking(stage)
 
     # Auto-layout grid for nodes that have no position of their own, in
     # logical/world coordinates (independent of window size): ~30 columns per
@@ -3315,14 +3304,9 @@ class GraphView(QGLWidget):
             self._nextZOrder += 1
             node.zOrder = self._nextZOrder
 
-    def _initUndoTracking(self, _stage):
-        """Clear the undo stack for the fresh graph."""
-        try:
-            from UsdNoodles._usdNoodles import NoodlesUndoManager
-
-            NoodlesUndoManager.instance().clear()
-        except ImportError:
-            pass
+    def _initUndoTracking(self, stage):
+        """Bind this view to the stage's history without resetting other views."""
+        self._undoHistory = history_for_stage(stage)
 
     def _autoLayoutNodes(self):
         """Arrange every node left-to-right by connection (L / context menu).
@@ -3395,15 +3379,11 @@ class GraphView(QGLWidget):
 
         self._applyNodePositions(new_positions)
 
-        gv = self  # avoid closing over self directly
-
-        def _restore_positions(gv_ref, positions_map):
-            gv_ref._applyNodePositions(positions_map)
-
         _push_undo_command(
             "Auto Layout",
-            lambda p=new_positions: _restore_positions(gv, p),
-            lambda p=old_positions: _restore_positions(gv, p),
+            lambda gv, p=new_positions: gv._restoreNodePositions(p),
+            lambda gv, p=old_positions: gv._restoreNodePositions(p),
+            view=self,
         )
 
         self.frameAll()
@@ -3455,6 +3435,18 @@ class GraphView(QGLWidget):
         # repaint.
         self._resetRenderCachesAfterBulkMove(rebuild_links=False)
         self.update()
+
+    def _restoreNodePositions(self, positions):
+        """Replay positions even for nodes absent from the invoking canvas."""
+        from .models import write_node_position
+
+        stage = self.nodeGraph.getStage()
+        with Sdf.ChangeBlock():
+            for node_id, pos in positions.items():
+                write_node_position(stage.GetPrimAtPath(_nodeIdPrimPath(node_id)), pos)
+                node = self.nodes.get(node_id)
+                if node is not None:
+                    node.setDisplayPosition(Gf.Vec2d(*pos))
 
     def _updateNodeSpatialBounds(self, node_ids):
         """Refresh the spatial-index bounds for the given moved nodes.
@@ -5734,21 +5726,11 @@ class GraphView(QGLWidget):
             f"new_positions={len(new_positions)}"
         )
         if old_positions and new_positions:
-            gv = self  # prevent closure over self directly
-
-            def _restore_positions(gv_ref, positions):
-                from pxr import Gf
-
-                for nid, pos in positions.items():
-                    node = gv_ref.nodes.get(nid)
-                    if node:
-                        node._writePositionToUsdRaw(Gf.Vec2d(pos[0], pos[1]))
-                        node._position = Gf.Vec2d(pos[0], pos[1])
-
             _push_undo_command(
                 "Move Nodes",
-                lambda p=new_positions: _restore_positions(gv, p),
-                lambda p=old_positions: _restore_positions(gv, p),
+                lambda gv, p=new_positions: gv._restoreNodePositions(p),
+                lambda gv, p=old_positions: gv._restoreNodePositions(p),
+                view=self,
             )
 
     @_guardsQtBoundary
@@ -5901,20 +5883,17 @@ class GraphView(QGLWidget):
                     return
 
     def _performUndo(self):
-        """Execute undo via the NoodlesUndoManager."""
-        try:
-            from UsdNoodles._usdNoodles import NoodlesUndoManager
-        except ImportError:
+        """Execute undo in this view's stage history."""
+        mgr = self._undoHistory
+        if mgr is None:
             return
-
-        mgr = NoodlesUndoManager.instance()
         if not mgr.canUndo():
             Tf.Status("Undo: nothing to undo")
             return
 
         Tf.Status(f"Undo: executing '{mgr.undoDescription()}'")
         try:
-            mgr.undo()
+            mgr.undo(self)
         except Exception as e:
             Tf.Warn(f"Undo callback failed: {e}")
         # Always reload so the visual state matches the USD layer state,
@@ -5922,18 +5901,15 @@ class GraphView(QGLWidget):
         self._reloadCurrentGraph()
 
     def _performRedo(self):
-        """Execute redo via the NoodlesUndoManager."""
-        try:
-            from UsdNoodles._usdNoodles import NoodlesUndoManager
-        except ImportError:
+        """Execute redo in this view's stage history."""
+        mgr = self._undoHistory
+        if mgr is None:
             return
-
-        mgr = NoodlesUndoManager.instance()
         if not mgr.canRedo():
             return
 
         try:
-            mgr.redo()
+            mgr.redo(self)
         except Exception as e:
             Tf.Warn(f"Redo callback failed: {e}")
         # Always reload so the visual state matches the USD layer state,
@@ -6718,25 +6694,24 @@ class GraphView(QGLWidget):
                 stage, outputPrim, srcPort, inputPrim, tgtPort
             )
             if success:
-                gv = self
                 delete_fn = _make_connection_edit(
-                    gv, srcId, srcPort, tgtId, tgtPort, create=False
+                    srcId, srcPort, tgtId, tgtPort, create=False
                 )
                 create_fn = _make_connection_edit(
-                    gv, srcId, srcPort, tgtId, tgtPort, create=True
+                    srcId, srcPort, tgtId, tgtPort, create=True
                 )
 
-                def redo():
-                    delete_fn()
+                def redo(gv):
+                    delete_fn(gv)
                     gv.linksChanged = True
                     gv.update()
 
-                def undo():
-                    create_fn()
+                def undo(gv):
+                    create_fn(gv)
                     gv.linksChanged = True
                     gv.update()
 
-                _push_undo_command("Disconnect", redo, undo)
+                _push_undo_command("Disconnect", redo, undo, view=self)
 
                 # Re-derive links from USD so the disconnected pin's port
                 # highlight (the relationship arrow / port circle) reflects the
@@ -7547,13 +7522,13 @@ class GraphView(QGLWidget):
                 stage, linksToDelete
             )
             # Deactivation is authored to the stage's current edit target.
-            deleted_prim_paths, deletedNodes = self._deactivateNodesInUsd(selectedNodes)
+            activation_edits, deletedNodes = self._deactivateNodesInUsd(selectedNodes)
         finally:
             self._noticeHandler.setEnabled(True)
 
         # Push undo command if anything was deleted
         if deletedLinks > 0 or deletedNodes > 0:
-            self._pushDeleteSelectedUndo(actually_deleted_links, deleted_prim_paths)
+            self._pushDeleteSelectedUndo(actually_deleted_links, activation_edits)
 
         self.clearLinkSelection()
 
@@ -7863,17 +7838,19 @@ class GraphView(QGLWidget):
     def _deactivateNodesInUsd(self, selectedNodes):
         """Deactivate selected nodes in USD and remove from graph state.
 
-        Returns (deleted_prim_paths, count).
+        Returns (activation_edits, count), captured before each authored edit.
         """
-        deleted_prim_paths = []
+        activation_edits = []
         count = 0
         for nodeId, node in selectedNodes:
             prim = node.getUsdPrim()
             if not prim or not prim.IsValid():
                 continue
             try:
-                deleted_prim_paths.append(str(prim.GetPath()))
-                prim.SetActive(False)
+                edit = capture_activation(prim)
+                if not prim.SetActive(False):
+                    continue
+                activation_edits.append(edit)
                 del self.nodes[nodeId]
                 self._selectedNodes.discard(nodeId)
                 self._spatialIndex.removeNode(nodeId)
@@ -7883,44 +7860,39 @@ class GraphView(QGLWidget):
                 import traceback
 
                 traceback.print_exc()
-        return deleted_prim_paths, count
+        return activation_edits, count
 
-    def _pushDeleteSelectedUndo(self, deleted_links, deleted_paths):
+    def _pushDeleteSelectedUndo(self, deleted_links, activation_edits):
         """Push an undo command that restores deleted links and nodes.
 
         Links and nodes are stored with their layer info so undo/redo
         can operate on the correct layers regardless of the current edit target.
         """
-        gv = self
-        stage = gv.nodeGraph.getStage()
+        stage = self.nodeGraph.getStage()
         if not stage:
             Tf.Warn(
                 "Cannot register undo for delete: no stage available. "
-                f"{len(deleted_links)} link(s) and {len(deleted_paths)} node(s) "
+                f"{len(deleted_links)} link(s) and {len(activation_edits)} node(s) "
                 "have already been deleted and will not be undoable."
             )
             return
 
-        # Capture layer info for nodes (typically session layer, but be explicit)
-        session_layer_id = stage.GetSessionLayer().identifier
-        node_data_with_layers = [(path, session_layer_id) for path in deleted_paths]
-
         # Links already have layer info from _deleteLinksInUsd
         link_data_with_layers = deleted_links
 
-        def _undo(link_data=link_data_with_layers, node_data=node_data_with_layers):
+        def _undo(gv, link_data=link_data_with_layers, node_data=tuple(activation_edits)):
             gv._applyRestoreDeleted(link_data, node_data)
             gv.linksChanged = True
             gv._rebuildLinks()
             gv.update()
 
-        def _redo(link_data=link_data_with_layers, node_data=node_data_with_layers):
+        def _redo(gv, link_data=link_data_with_layers, node_data=tuple(activation_edits)):
             gv._applyDeleteSelected(link_data, node_data)
             gv.linksChanged = True
             gv._rebuildLinks()
             gv.update()
 
-        _push_undo_command("Delete Selected", _redo, _undo)
+        _push_undo_command("Delete Selected", _redo, _undo, view=self)
 
     @contextmanager
     def _editOnLayer(self, stage, layer_id, fallback_layer):
@@ -7961,27 +7933,6 @@ class GraphView(QGLWidget):
         for link_record in link_data:
             by_layer[link_record.get("_layer_id")].append(link_record)
         return by_layer
-
-    @staticmethod
-    def _groupNodesByLayer(node_data):
-        by_layer = defaultdict(list)
-        for path, layer_id in node_data:
-            by_layer[layer_id].append(path)
-        return by_layer
-
-    def _setNodesActiveOnLayer(self, stage, layer_id, paths, active):
-        """Apply SetActive(active) to each path on the resolved layer.
-
-        Fallback (when ``layer_id`` is empty or no longer loadable) is the
-        stage's current edit target so undo/redo of legacy records honors the
-        user's chosen authoring layer.
-        """
-        fallback = stage.GetEditTarget().GetLayer()
-        with self._editOnLayer(stage, layer_id, fallback):
-            for path_str in paths:
-                prim = stage.GetPrimAtPath(path_str)
-                if prim:
-                    prim.SetActive(active)
 
     def _runLinkOperationOnLayer(
         self, stage, layer_id, link_records, op_name, failure_verb
@@ -8024,49 +7975,27 @@ class GraphView(QGLWidget):
                     )
 
     def _applyRestoreDeleted(self, link_data, node_data):
-        """Reactivate nodes and recreate connections for undo.
-
-        link_data: list of link records (dicts) with '_layer_id' key
-        node_data: list of (path, layer_id) tuples
-
-        Records that carry a layer id replay on that exact layer. Records with
-        no recorded layer (e.g. legacy data) fall back to the stage's current
-        edit target so the undo still honors the user's authoring choice. All
-        edits across all layers are wrapped in a single ``Sdf.ChangeBlock`` so
-        the notice handler observes one batched change rather than many.
-        """
+        """Restore recorded activation opinions before reconnecting prims."""
         stage = self.nodeGraph.getStage()
         if not stage:
             return
-        nodes_by_layer = self._groupNodesByLayer(node_data)
-        links_by_layer = self._groupLinksByLayer(link_data)
-        with Sdf.ChangeBlock():
-            for layer_id, paths in nodes_by_layer.items():
-                self._setNodesActiveOnLayer(stage, layer_id, paths, True)
-            for layer_id, link_records in links_by_layer.items():
-                self._runLinkOperationOnLayer(
-                    stage, layer_id, link_records, "create_connection", "restore"
-                )
+        replay_activation(node_data, restore=True)
+        # Stage recomposition must finish before looking up reactivated prims.
+        for layer_id, link_records in self._groupLinksByLayer(link_data).items():
+            self._runLinkOperationOnLayer(
+                stage, layer_id, link_records, "create_connection", "restore"
+            )
 
     def _applyDeleteSelected(self, link_data, node_data):
-        """Delete connections and deactivate nodes for redo.
-
-        Mirrors _applyRestoreDeleted: same layer dispatch, opposite operations
-        and reverse order (links removed before nodes deactivate). All edits
-        are batched in a single Sdf.ChangeBlock.
-        """
+        """Remove connections, then reapply deletion at the captured spec paths."""
         stage = self.nodeGraph.getStage()
         if not stage:
             return
-        nodes_by_layer = self._groupNodesByLayer(node_data)
-        links_by_layer = self._groupLinksByLayer(link_data)
-        with Sdf.ChangeBlock():
-            for layer_id, link_records in links_by_layer.items():
-                self._runLinkOperationOnLayer(
-                    stage, layer_id, link_records, "delete_connection", "delete"
-                )
-            for layer_id, paths in nodes_by_layer.items():
-                self._setNodesActiveOnLayer(stage, layer_id, paths, False)
+        for layer_id, link_records in self._groupLinksByLayer(link_data).items():
+            self._runLinkOperationOnLayer(
+                stage, layer_id, link_records, "delete_connection", "delete"
+            )
+        replay_activation(node_data, restore=False)
 
     def deleteSelectedNodes(self):
         """Delete all selected nodes (and their incident links) from USD.
@@ -8104,12 +8033,12 @@ class GraphView(QGLWidget):
             # _deleteLinksInUsd handles layer targeting internally via
             # _findConnectionAuthoringLayer for each connection.
             actually_deleted_links, _ = self._deleteLinksInUsd(stage, incidentLinks)
-            deleted_prim_paths, deletedCount = self._deactivateNodesInUsd(selectedNodes)
+            activation_edits, deletedCount = self._deactivateNodesInUsd(selectedNodes)
         finally:
             self._noticeHandler.setEnabled(True)
 
         if deletedCount > 0:
-            self._pushDeleteSelectedUndo(actually_deleted_links, deleted_prim_paths)
+            self._pushDeleteSelectedUndo(actually_deleted_links, activation_edits)
 
             # Mark caches as dirty to trigger proper rebuild
             self.linksChanged = True
@@ -8284,10 +8213,8 @@ class GraphView(QGLWidget):
                 targetPropertyName=targetPropertyName,
             )
 
-            gv = self
             if isReconnect:
                 redo_fn, undo_fn = _make_reconnect_edits(
-                    gv,
                     oldSrcId,
                     oldSrcPort,
                     oldTgtId,
@@ -8299,12 +8226,11 @@ class GraphView(QGLWidget):
                     sourcePropertyName=sourcePropertyName,
                     targetPropertyName=targetPropertyName,
                 )
-                _push_undo_command("Reconnect", redo_fn, undo_fn)
+                _push_undo_command("Reconnect", redo_fn, undo_fn, view=self)
             else:
                 _push_undo_command(
                     "Create Connection",
                     _make_connection_edit(
-                        gv,
                         outputNodeId,
                         outputPort,
                         inputNodeId,
@@ -8314,7 +8240,6 @@ class GraphView(QGLWidget):
                         target_property_name=targetPropertyName,
                     ),
                     _make_connection_edit(
-                        gv,
                         outputNodeId,
                         outputPort,
                         inputNodeId,
@@ -8323,6 +8248,7 @@ class GraphView(QGLWidget):
                         source_property_name=sourcePropertyName,
                         target_property_name=targetPropertyName,
                     ),
+                    view=self,
                 )
 
         finally:
@@ -8507,11 +8433,9 @@ class GraphView(QGLWidget):
                     targetPropertyName=targetPropertyName,
                 )
 
-                gv = self
                 _push_undo_command(
                     "Delete Connection",
                     _make_connection_edit(
-                        gv,
                         outputNodeId,
                         outputPort,
                         inputNodeId,
@@ -8521,7 +8445,6 @@ class GraphView(QGLWidget):
                         target_property_name=targetPropertyName,
                     ),
                     _make_connection_edit(
-                        gv,
                         outputNodeId,
                         outputPort,
                         inputNodeId,
@@ -8530,6 +8453,7 @@ class GraphView(QGLWidget):
                         source_property_name=sourcePropertyName,
                         target_property_name=targetPropertyName,
                     ),
+                    view=self,
                 )
         finally:
             # Mirror _createConnection: drop the back-reference cache while the
@@ -10181,8 +10105,9 @@ class GraphView(QGLWidget):
             # affected nodes need their pins rebuilt from USD.
             _push_undo_command(
                 f"Apply {identifier}",
-                _make_api_schema_undo(self, identifier, applied, apply=True),
-                _make_api_schema_undo(self, identifier, applied, apply=False),
+                _make_api_schema_undo(identifier, applied, apply=True),
+                _make_api_schema_undo(identifier, applied, apply=False),
+                view=self,
             )
             self._reloadCurrentGraph()
 
@@ -10766,12 +10691,12 @@ class GraphView(QGLWidget):
     def _pushValueUndo(self, primPath, propertyName, oldComponents, newComponents,
                        timeCode):
         """One undo entry per committed value edit, whatever gesture made it."""
-        gv = self
         mode = self._cachedValueWriteMode
         _push_undo_command(
             "Set %s.%s" % (primPath, propertyName),
-            _make_value_edit(gv, primPath, propertyName, newComponents, timeCode, mode),
-            _make_value_edit(gv, primPath, propertyName, oldComponents, timeCode, mode),
+            _make_value_edit(primPath, propertyName, newComponents, timeCode, mode),
+            _make_value_edit(primPath, propertyName, oldComponents, timeCode, mode),
+            view=self,
         )
 
     def _onValueCellPressed(self, hit, event):
@@ -11823,11 +11748,11 @@ class GraphView(QGLWidget):
             self._selectedNodes.add(newNodeId)
             self._afterUsdviewRefresh(self._syncSelectionToPrimtree)
 
-        gv = self
         _push_undo_command(
             f"Rename: {oldName} -> {newName}",
-            _make_rename_undo(gv, str(newPath.GetParentPath()), oldName, newName),
-            _make_rename_undo(gv, str(newPath.GetParentPath()), newName, oldName),
+            _make_rename_undo(str(newPath.GetParentPath()), oldName, newName),
+            _make_rename_undo(str(newPath.GetParentPath()), newName, oldName),
+            view=self,
         )
 
         self._showPopupMessage(f"Renamed {oldName} to {newName}")
@@ -11913,12 +11838,12 @@ class GraphView(QGLWidget):
             # selected.
             self._syncSelectionToPrimtree()
 
-        gv = self
         created_path = str(prim_path)
         _push_undo_command(
             f"Create Node: {identifier}",
-            _make_prim_activation_undo(gv, [created_path], activate=True),
-            _make_prim_activation_undo(gv, [created_path], activate=False),
+            _make_prim_activation_undo([created_path], activate=True),
+            _make_prim_activation_undo([created_path], activate=False),
+            view=self,
         )
 
         self.update()

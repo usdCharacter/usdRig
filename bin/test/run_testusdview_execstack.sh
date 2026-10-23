@@ -1,16 +1,7 @@
 #!/bin/bash
-# bin/test/run_testusdview_avars.sh -- headless end-to-end test of the Avar
-# Editor panel (tests/testUsdviewExecStack.py) on biped_rigged.usda.
-#
-# Asserts the RigExec menu item is registered, that the panel follows
-# usdview's prim selection, and that driving a row's spin box or slider
-# through the panel's own Qt signals moves the EVALUATED rig by the amount
-# the maths says (the elbow's chord under a 30 degree FK rotate, the IK/FK
-# blend under the custom ikfk dial), republishes to Hydra, keeps a
-# file-animated channel's other keys, and lands as one entry per edit on
-# the shared undo stack. Prints RIGEXEC_AVAR_EDITOR_OK.
-#
-# Usage: bin/test/run_testusdview_avars.sh [rendererDisplayName]   (e.g. Embree)
+# Exercise Execution Stack on a cache-owned viewer stage: compiled order,
+# compiler diagnostics, registration and filters.
+# Usage: bin/test/run_testusdview_execstack.sh [rendererDisplayName]
 # Set RIGEXEC_EXECSTACK_SHOT=/path.png to keep a window grab.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]:-$0}")/../_env.sh"

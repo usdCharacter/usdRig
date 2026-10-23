@@ -301,6 +301,7 @@ class _StubGraphView:
         self.nodeGraph = MagicMock()
         self.nodeGraph.getStage.return_value = stage
         self.nodeGraph.nodes = {}
+        GraphView._initUndoTracking(self, stage)
 
         # Everything else _remapMovedNodes carries across a move.
         self._marqueeBaseSelectedNodes = set()
@@ -430,6 +431,7 @@ class InlineRenameEditorTest(unittest.TestCase):
         self.assertTrue(self.stage.GetPrimAtPath("/World/New").IsValid())
         self.assertFalse(self.stage.GetPrimAtPath("/World/Old").IsValid())
         self.assertEqual(self.view._renamingNodeId, "")
+        self.assertTrue(self.view._undoHistory.canUndo())
 
     def test_commit_selects_the_renamed_prim_in_usdview(self):
         self.view._beginRename("/World/Old")
@@ -971,8 +973,8 @@ class RenameUndoTest(unittest.TestCase):
         )
         self.assertEqual(status, RENAMED, message)
 
-        undo = _make_rename_undo(self.gv, "/World", "New", "Old")
-        undo()
+        undo = _make_rename_undo("/World", "New", "Old")
+        undo(self.gv)
 
         # Not just the name: the relationship targets and connections the
         # rename retargeted have to come back with it.
@@ -984,15 +986,15 @@ class RenameUndoTest(unittest.TestCase):
         rename_prim(self.stage, self.stage.GetPrimAtPath("/World/Old"), "New")
         after = self.stage.GetRootLayer().ExportToString()
 
-        _make_rename_undo(self.gv, "/World", "New", "Old")()
-        _make_rename_undo(self.gv, "/World", "Old", "New")()
+        _make_rename_undo("/World", "New", "Old")(self.gv)
+        _make_rename_undo("/World", "Old", "New")(self.gv)
 
         self.assertEqual(self.stage.GetRootLayer().ExportToString(), after)
 
     def test_a_missing_prim_is_warned_about_not_raised(self):
         from UsdNoodles.graphView import _make_rename_undo
 
-        _make_rename_undo(self.gv, "/World", "NotThere", "Whatever")()
+        _make_rename_undo("/World", "NotThere", "Whatever")(self.gv)
 
     def test_the_undo_does_not_reload_the_graph(self):
         """Ctrl+Z after a rename is the same bug wearing a different hat: the
@@ -1001,7 +1003,7 @@ class RenameUndoTest(unittest.TestCase):
 
         rename_prim(self.stage, self.stage.GetPrimAtPath("/World/Old"), "New")
 
-        _make_rename_undo(self.gv, "/World", "New", "Old")()
+        _make_rename_undo("/World", "New", "Old")(self.gv)
 
         self.gv._reloadCurrentGraph.assert_not_called()
         self.gv._remapMovedNodes.assert_called_once_with(
@@ -1037,7 +1039,7 @@ class RenameUndoKeepsTheGraphTest(unittest.TestCase):
     def _undo(self, fromName, toName):
         from UsdNoodles.graphView import _make_rename_undo
 
-        _make_rename_undo(self.view, "/World/Deep", fromName, toName)()
+        _make_rename_undo("/World/Deep", fromName, toName)(self.view)
 
     def test_undo_brings_the_node_back_under_the_old_name(self):
         self._undo("Renamed", "Node")
@@ -1258,6 +1260,7 @@ class _ReloadStubGraphView:
 
         self.nodeGraph = NodeGraphStage()
         self.nodeGraph.setStage(stage)
+        GraphView._initUndoTracking(self, stage)
         self._currentPrimPath = None
         self._nextZOrder = 0
 

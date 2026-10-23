@@ -208,8 +208,8 @@ struct RigExecPublishedPrim {
     /// same guide:displayColor / guide:displayOpacity attributes, and a
     /// prim never carries both payloads (a control is not a joint).
     bool hasControlGuide = false;
-    /// The original evaluated control matrix for native manipulators. Kept
-    /// before guide rigidization/scaling, including when guide drawing is off.
+    /// The evaluated control or final joint matrix for manipulators and pose
+    /// readers, before guide rigidization/scaling, even when guides are hidden.
     bool hasControlFrame = false;
     GfMatrix4d controlFrame{1.0};
     /// Rigidized, ASSET-space, like guideFrames.

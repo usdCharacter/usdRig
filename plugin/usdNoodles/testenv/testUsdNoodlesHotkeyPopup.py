@@ -7,33 +7,7 @@
 #
 
 
-"""Unit tests for the HotkeyPopup widget's pure helpers.
-
-Covers the two new pieces of behavior added in D106047854:
-  1. ``HotkeyPopup._wrap_message`` — static greedy word-wrap helper used by
-     ``render()`` to keep popup text inside a fraction of the viewport width.
-  2. ``HotkeyPopup.show(..., duration_ms=...)`` — optional override for the
-     auto-dismiss timer, used by the warning-popup path so toast warnings
-     linger longer than navigation popups.
-
-Importing ``UsdNoodles.widgets.hotkeyPopup`` directly fails in the
-``noodles_pytest`` sandbox because ``pxr`` transitively requires
-``libpcre.so.1`` which is not installed in the linux-no-san dev mode (this
-is the same limitation that causes ``testUsdNoodlesActiveFlowHighlight`` and
-``testUsdNoodlesGraphViewRelationships`` to skip).
-
-The tests below mirror the production logic as a thin shim. The shim and
-production code MUST be kept in sync — when the production helper changes,
-update the shim. Because production source files are not packaged in the
-``noodles_pytest`` link tree, a textual integrity check inside this target
-would always skip and provide no real drift signal, so we omit it; drift
-is instead caught at code-review time on any change to ``hotkeyPopup.py``
-that does not also update this shim.
-
-Render-path coverage is intentionally NOT attempted here — render() reaches
-into a real GL context and requires an offscreen Qt surface, which is the
-domain of ``noodles_headless_pytest`` (separate target).
-"""
+"""Test production popup wrapping and timer behavior without a GL context."""
 
 from __future__ import annotations
 
@@ -41,53 +15,7 @@ import unittest
 from unittest.mock import MagicMock
 
 
-# --- Shim mirrors of production code --------------------------------------
-#
-# These are textual mirrors of widgets/hotkeyPopup.py. Update them when the
-# production helpers change.
-
-
-def _wrap_message_shim(message, text_renderer, font_size, max_width):
-    """Mirror of HotkeyPopup._wrap_message (widgets/hotkeyPopup.py)."""
-    wrapped = []
-    for explicit_line in message.splitlines() or [message]:
-        words = explicit_line.split()
-        if not words:
-            wrapped.append("")
-            continue
-        current = words[0]
-        for word in words[1:]:
-            candidate = current + " " + word
-            if text_renderer.calculateTextWidth(candidate, font_size) <= max_width:
-                current = candidate
-            else:
-                wrapped.append(current)
-                current = word
-        wrapped.append(current)
-    return wrapped
-
-
-class _ShowTimerShim:
-    """Mirror of HotkeyPopup.show timer logic for ``duration_ms`` handling.
-
-    Captures only the parts under test: the timer-replacement and
-    timer-duration-selection branches added in D106047854.
-    """
-
-    def __init__(self, parent_widget, default_display_duration_ms=400):
-        self._parent_widget = parent_widget
-        self._timer_id = None
-        self._display_duration_ms = default_display_duration_ms
-
-    def show(self, _message, _cursor_pos, duration_ms=None):
-        if self._timer_id is not None and self._parent_widget is not None:
-            self._parent_widget.killTimer(self._timer_id)
-            self._timer_id = None
-        if self._parent_widget is not None:
-            timer_duration = (
-                duration_ms if duration_ms is not None else self._display_duration_ms
-            )
-            self._timer_id = self._parent_widget.startTimer(timer_duration)
+from UsdNoodles.widgets.hotkeyPopup import HotkeyPopup
 
 
 # --- Test helpers ---------------------------------------------------------
@@ -142,7 +70,7 @@ class WrapMessageTest(unittest.TestCase):
         for label, message, max_width, expected in self.CASES:
             with self.subTest(case=label):
                 renderer = _make_renderer(_char_width(10))
-                lines = _wrap_message_shim(
+                lines = HotkeyPopup._wrap_message(
                     message, renderer, font_size=12, max_width=max_width
                 )
                 self.assertEqual(lines, expected)
@@ -153,7 +81,7 @@ class WrapMessageTest(unittest.TestCase):
         # for an empty message. Width measurement must NOT be called because
         # there's nothing to measure.
         renderer = _make_renderer(_char_width(10))
-        lines = _wrap_message_shim("", renderer, font_size=12, max_width=1000)
+        lines = HotkeyPopup._wrap_message("", renderer, font_size=12, max_width=1000)
         self.assertEqual(lines, [""])
         renderer.calculateTextWidth.assert_not_called()
 
@@ -168,7 +96,8 @@ class ShowDurationMsTest(unittest.TestCase):
     def _make_popup(self):
         parent = MagicMock()
         parent.startTimer.return_value = 42
-        popup = _ShowTimerShim(parent_widget=parent)
+        popup = HotkeyPopup(MagicMock())
+        popup.set_parent_widget(parent)
         cursor_pos = MagicMock()
         return popup, parent, cursor_pos
 

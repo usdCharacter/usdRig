@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    subLayers = [@usd/schema.usda@]
+)
+over "GLOBAL" (
+    customData = {
+        string libraryName = "testExternalMoverSchema"
+        string libraryPath = "testExternalMoverSchema"
+        string libraryPrefix = "External"
+        bool skipCodeGeneration = true
+    }
+) {}
+
+class ExternalQuadraticMover "ExternalQuadraticMover" (
+    inherits = </Typed>
+    customData = { string className = "QuadraticMover" }
+) {
+    float inputs:gain = 1
+    rel rigExec:reference
+}

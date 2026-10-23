@@ -109,7 +109,6 @@ def testUsdviewInputFunction(appController):
     for window in (editor, layerEditor):
         checkOnScreen(window)
 
-    from UsdNoodles._usdNoodles import NoodlesUndoManager
     from UsdNoodles.graphView import GraphView
 
     views = [w for w in app.allWidgets() if isinstance(w, GraphView)]
@@ -138,7 +137,7 @@ def testUsdviewInputFunction(appController):
            "%s did not become a node: %s" % (VALUES, sorted(view.nodes)))
     valuesNode = view.nodes[VALUES]
 
-    undo = NoodlesUndoManager.instance()
+    undo = view._undoHistory
 
     # --- helpers ---------------------------------------------------------
     def screenPoint(worldX, worldY):
@@ -300,7 +299,7 @@ def testUsdviewInputFunction(appController):
     _Check(undo.canUndo(), "the drag pushed no undo entry")
     _Check(undo.undoDescription().startswith("Set "),
            "undo says %r" % undo.undoDescription())
-    undo.undo()
+    undo.undo(view)
     _pump(app, 10)
     got = valuesPrim.GetAttribute("plain").Get()
     _Check(abs(got - 2.5) < 1e-4,

@@ -1,37 +1,11 @@
 # Copyright (c) 2026 Nick Burkard
 # SPDX-License-Identifier: MIT
-"""The rig's execution stack, as a filterable list.
+"""Compiled mover order and solver outputs for the selected rig.
 
-Answers "what runs, in what order, and what does it write" against the
-stage currently open in usdview. Ordering mistakes here are silent and
-expensive: a mover chain applies in REVERSE add order, so a skin mover
-authored last runs FIRST and deforms with pre-pose joint transforms. The
-joints all read correct while the mesh is wrong by centimetres, and
-nothing in the prim browser hints at it.
-
-Two sections, because RigExec evaluates in two stages:
-
-  POSE PHASE   aggregate solvers (FK chains, two-bone IK, blends, twist
-               distributions, ribbons, spline IK). They WRITE joints
-               through `rigExec:joints` -- an ordered write, not an
-               exclusive claim, so two solvers may write one joint and
-               their writes stack, the last one supplying its base frame.
-               They are scheduled by DEPENDENCY rather than in one line, so
-               they are grouped by type with what each writes rather than
-               numbered; a single number per solver would imply one global
-               line that does not exist.
-  EXECUTION    `Rig.mover_order`, which IS a strict order (reverse-sibling
-               post-order, spec section 4.2). This is the list to read
-               when something deforms wrongly.
-
-The footer checks the invariant that matters: every deformer must run
-after every constraint, or a deformer reading final joint transforms sees
-unposed frames.
+Read phases and dependency edges determine which produced values a consumer
+reads. The panel displays compiler diagnostics without inferring extra rules
+from operation types or their positions in the list.
 """
-import os
-import sys
-
-from pxr import Usd
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
@@ -42,40 +16,6 @@ except ImportError:                    # loader that did not add our dir
     _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
     import sessionRegistry
 
-
-# Cache the twin so a repopulate does not reopen the stage on every
-# selection change; keyed on the root AND session layers' identities. Two
-# usdview sessions in one process can open the same root file -- and then
-# share its root layer -- but each stage has its own session layer, so the
-# root alone would hand one session a twin composed over another's session
-# layer.
-_TWIN = {}
-
-
-def _CompilableStage(stage):
-    """A stage `rigexec.Rig` will accept, over the same layers.
-
-    usdview hands out a stage it holds in a `UsdStageCache`, and the
-    Python binding for `rigexec.Rig` refuses it -- "needs a `__owner`
-    capsule" -- because that wrapper does not own the stage. The panel
-    only READS through this stage (solver list, compile, mover order), so
-    a second stage opened over the same root and session layers gives the
-    identical composition and the identical mover order, and any edit the
-    animator makes lands in those same layers and is seen here.
-
-    Without this the Execution Stack panel reported "Rig compile failed"
-    in usdview for every rig, while the same rig compiled fine from a
-    script.
-    """
-    root = stage.GetRootLayer()
-    session = stage.GetSessionLayer()
-    key = (root.identifier, session.identifier if session else None)
-    twin = _TWIN.get(key)
-    if (twin is None or twin.GetRootLayer() != root or
-            twin.GetSessionLayer() != session):
-        twin = Usd.Stage.Open(root, session)
-        _TWIN[key] = twin
-    return twin
 
 # Schema-type tokens per filter. A type may appear in several groups -- a
 # single-chain IK is legitimately both a constraint and IK -- so the
@@ -97,12 +37,6 @@ _GROUPS = {
 _SOLVER_TYPES = ("RigExecFkChain", "RigExecTwoBoneIk",
                  "RigExecBlendPointFrames", "RigExecTwistDistribution",
                  "RigExecRibbon", "RigExecSplineIk")
-
-_DEFORMER_TOKENS = ("SkinMover", "MatrixMover", "CurveMover",
-                    "LatticeMover", "SurfaceMover", "PatchMover", "SmoothMover", "DeltaMushMover", "WrinkleMover",
-                    "BlendShapeMover", "MlMover", "VolumeCorrectMover")
-
-
 def _tail(path, keep=1):
     parts = str(path).split("/")
     return "/".join(parts[-keep:]) if len(parts) > keep else str(path)
@@ -190,6 +124,8 @@ class ExecStackPanel(QtWidgets.QDialog):
     def Rebuild(self):
         """Recompile the rig and re-read its order. Safe to call often."""
         self._solvers, self._movers = [], []
+        self._compileError = None
+        self._compileDiagnostics = []
         stage = self._Stage()
         if stage is None:
             self._status.setText("No stage open.")
@@ -215,18 +151,12 @@ class ExecStackPanel(QtWidgets.QDialog):
 
         root = self._rootBox.currentText() or roots[0]
 
-        # Solvers come off the stage. rigExec:joints is an ordered WRITE,
-        # not an exclusive claim, so two solvers may name one joint and their
-        # writes stack: data flow orders any pair it reaches, and the reverse
-        # composed pre-order of the rig breaks every remaining tie. There IS
-        # an order to read -- it just is not a single line the way the mover
-        # stack is, so the panel lists the joints each solver writes and
-        # leaves the schedule to the compiled mover order below.
+        # These rows show declared solver outputs, not a separate phase.
         for prim in stage.Traverse():
             t = prim.GetTypeName()
             if t not in _SOLVER_TYPES:
                 continue
-            if not str(prim.GetPath()).startswith(root):
+            if not prim.GetPath().HasPrefix(root):
                 continue
             rel = prim.GetRelationship("rigExec:joints")
             claims = [str(x) for x in rel.GetTargets()] if rel else []
@@ -239,23 +169,23 @@ class ExecStackPanel(QtWidgets.QDialog):
         try:
             import rigexec
         except ImportError:
-            self._status.setText(
-                "The rigexec Python module is not importable, so the "
-                "ordered mover list is unavailable. Solvers are still "
-                "listed above.")
+            self._compileError = "The rigexec Python module is not importable."
             self._Repopulate()
             return
         try:
-            rig = rigexec.Rig(_CompilableStage(stage), root)
+            rig = rigexec.Rig(stage, root)
             rig.compile()
             order = rig.mover_order
             if callable(order):
                 order = order()
             self._movers = list(order)
+            self._compileDiagnostics = [
+                "Skipped %s: %s" % (path, reason)
+                for path, reason in sorted(rig.skipped_operations().items())]
             self._compileError = None
         except Exception as exc:  # compile errors are expected while rigging
             self._movers = []
-            self._compileError = str(exc).strip().splitlines()[-1]
+            self._compileError = str(exc).strip() or type(exc).__name__
         self._Repopulate()
 
     # -- view ------------------------------------------------------------
@@ -279,8 +209,7 @@ class ExecStackPanel(QtWidgets.QDialog):
         mono.setStyleHint(QtGui.QFont.Monospace)
 
         solverRoot = QtWidgets.QTreeWidgetItem(
-            ["", "POSE PHASE", "solvers", "scheduled by dependency; two "
-             "writing one joint stack, last one wins"])
+            ["", "SOLVERS", "declared outputs", "scheduled by dependency"])
         self._tree.addTopLevelItem(solverRoot)
         shown_solvers = 0
         for t, name, path, claims in self._solvers:
@@ -296,8 +225,7 @@ class ExecStackPanel(QtWidgets.QDialog):
         solverRoot.setExpanded(True)
 
         moverRoot = QtWidgets.QTreeWidgetItem(
-            ["", "EXECUTION ORDER", "movers", "strict order, first runs "
-             "first"])
+            ["", "EXECUTION ORDER", "movers", "compiled dependency order"])
         self._tree.addTopLevelItem(moverRoot)
         shown_movers = 0
         for e in self._movers:
@@ -327,24 +255,7 @@ class ExecStackPanel(QtWidgets.QDialog):
                 % (shown_solvers, len(self._solvers), shown_movers,
                    len(self._movers))]
 
-        deform = [e for e in self._movers
-                  if any(tok.lower() in e["type"].lower()
-                         for tok in _DEFORMER_TOKENS)]
-        constraints = [e for e in self._movers if "Constraint" in e["type"]]
-        if deform and constraints:
-            first = min(e["ordinal"] for e in deform)
-            last = max(e["ordinal"] for e in constraints)
-            if first > last:
-                bits.append(
-                    "Ordering ok: every deformer (first at %d) runs after "
-                    "every constraint (last at %d), so a deformer reading "
-                    "final joint transforms sees posed frames." % (first,
-                                                                   last))
-            else:
-                bits.append(
-                    "WARNING: a deformer runs at %d, BEFORE a constraint "
-                    "at %d. A deformer reading final joint transforms will "
-                    "skin with pre-pose frames." % (first, last))
+        bits.extend(getattr(self, "_compileDiagnostics", ()))
         return "  ".join(bits)
 
     def _OnSelect(self):

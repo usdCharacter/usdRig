@@ -4,6 +4,7 @@
 namespace rigExec {
 /// Executable-owned completion after all observed owners close, before teardown.
 /// Both functions are idempotent and do nothing when observation is disabled.
+/// Golden completion throws std::runtime_error when enabled without rigExecOracle.
 void RigExecFinalizeGoldenSuite();
 void RigExecFinalizeInputReplay();
 }

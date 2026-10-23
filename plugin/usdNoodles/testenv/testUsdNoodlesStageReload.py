@@ -19,115 +19,29 @@ Covers the logic added/modified for NVIDIA Windows stage-reopen safety:
      rebind the stage view's context for Storm's teardown
   6. event() paint guard: blocks Paint during teardown
 
-GraphView cannot be imported in headless CI (module-level GL imports),
-so production logic is mirrored in shims — same approach as
-testUsdNoodlesSaveStage and testUsdNoodlesGraphViewShortcut.
+Production methods run against view doubles; Qt scheduling and GL calls are mocked.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+from UsdNoodles.graphView import GraphView
+from UsdNoodles.nodeGraphBpContainer import NodeGraphBpContainer
+from UsdNoodles._qt_editor import NoodlesEditorManager, _makeStageViewCurrent
 
 
 def _on_stage_replaced(view):
-    """Mirror of GraphView._onStageReplaced (graphView.py:1110).
-
-    Keep in lockstep with the production implementation.
-    """
-    view.setUpdatesEnabled(False)
-    view.initialized = False
-
-    view._noticeHandler.unregister()
-
-    view._lastPrimTreeSelection = []
-    view._lastSelectedNode = None
-    view._selectedNodes.clear()
-    view._selectedLinks.clear()
-
-    stage = view._usdviewApi.stage if view._usdviewApi else None
-    if stage is None:
-        view._scheduleFinishReload()
-        return
-
-    view._deferRenderCacheClear = True
-    try:
-        if view._isContainer and view._currentPrimPath:
-            view.loadContainer(stage, view._currentPrimPath)
-        elif view._currentPrimPath is not None:
-            view.loadBlueprint(stage, view._currentPrimPath)
-        else:
-            view.loadStage(stage)
-    except Exception as e:
-        view._warnReloadFailed(e)
-    finally:
-        view._deferRenderCacheClear = False
-
-    view.initialized = False
-    view._scheduleFinishReload()
+    with (patch("UsdNoodles.graphView.QtCore.QTimer.singleShot") as schedule,
+          patch("UsdNoodles.graphView.Tf.Warn") as warnings):
+        GraphView._onStageReplaced(view)
+    view._scheduleFinishReload = schedule
+    view._reloadWarnings = warnings
 
 
-def _finish_stage_reload(view):
-    """Mirror of GraphView._finishStageReload (graphView.py:1175)."""
-    if view._renderCacheClearPending:
-        view._renderCacheClearPending = False
-        view.makeCurrent()
-        view._nodeRenderManager.clearCache()
-        view.doneCurrent()
-
-    view.linksChanged = True
-    view.textChanged = True
-    view.initialized = True
-    view.setUpdatesEnabled(True)
-    view.update()
-
-
-def _is_stage_view_mid_teardown(view):
-    """Mirror of GraphView._isStageViewMidTeardown (graphView.py:4031)."""
-    if not view._usdviewApi:
-        return False
-    try:
-        controller = view._usdviewApi._UsdviewApi__appController
-        sv = getattr(controller, "_stageView", None)
-        return sv is not None and not sv.updatesEnabled()
-    except AttributeError:
-        return False
-
-
-def _make_stage_view_current(controller):
-    """Mirror of _qt_editor._makeStageViewCurrent."""
-    stageView = getattr(controller, "_stageView", None)
-    if stageView is None:
-        return
-    try:
-        if stageView.context() is not None:
-            stageView.makeCurrent()
-    except RuntimeError:
-        pass
-
-
-def _install_close_stage_guard(manager, usdviewApi):
-    """Mirror of NoodlesEditorManager._installCloseStageGuard."""
-    try:
-        controller = usdviewApi._UsdviewApi__appController
-        if getattr(controller, "_noodles_close_guard", False):
-            return
-        original = controller._closeStage
-
-        def _guarded_close():
-            try:
-                for window in manager.getAllWindows():
-                    gv = window.graphView
-                    gv.setUpdatesEnabled(False)
-                    gv.makeCurrent()
-                    gv._nodeRenderManager.clearCache()
-                    gv.doneCurrent()
-            finally:
-                _make_stage_view_current(controller)
-                original()
-
-        controller._closeStage = _guarded_close
-        controller._noodles_close_guard = True
-    except AttributeError:
-        pass
+_finish_stage_reload = GraphView._finishStageReload
+_is_stage_view_mid_teardown = GraphView._isStageViewMidTeardown
+_make_stage_view_current = _makeStageViewCurrent
+_install_close_stage_guard = NoodlesEditorManager._installCloseStageGuard
 
 
 def _make_view():
@@ -209,7 +123,7 @@ class TestOnStageReplacedWithStage(unittest.TestCase):
         stage = MagicMock()
         view._usdviewApi.stage = stage
         view._currentPrimPath = "/Root/MyContainer"
-        view._isContainer = True
+        view.nodeGraph = NodeGraphBpContainer()
 
         _on_stage_replaced(view)
 
@@ -226,9 +140,8 @@ class TestOnStageReplacedExceptionLogging(unittest.TestCase):
 
         _on_stage_replaced(view)
 
-        view._warnReloadFailed.assert_called_once()
-        args = view._warnReloadFailed.call_args[0]
-        self.assertIsInstance(args[0], RuntimeError)
+        view._reloadWarnings.assert_called_once()
+        self.assertIn("stage broken", view._reloadWarnings.call_args.args[0])
 
     def test_load_stage_exception_still_schedules_finish(self):
         view = _make_view()

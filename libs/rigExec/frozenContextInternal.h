@@ -223,12 +223,12 @@ TF_DEFINE_PRIVATE_TOKENS(
 
 /// \p name is one of the frozenWeight: keys of _frozenWeightTokens. The
 /// sampler and the freeze call it; the worker reads the freeze's keys
-/// (RigExecFrozenProgram::weightArrayKeys) and builds none.
+/// (RigExecFrozenBindings::weightArrayKeys) and builds none.
 SdfPath
 _FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name);
 
 /// The position of each frozenWeight: key in a weight object's four
-/// RigExecFrozenProgram::weightArrayKeys.
+/// RigExecFrozenBindings::weightArrayKeys.
 enum _FrozenWeightArrayRole : size_t {
     _FrozenWeightTargetPoints = 0,
     _FrozenWeightSamplePoints,

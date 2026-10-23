@@ -13,11 +13,7 @@ a few hundred evaluations, and the `author` workload deliberately dirties
 the compiled rig -- so doing that on every selection change would make usdview
 feel exactly as slow as the thing being measured. The button is the point.
 
-The panel opens a SECOND stage over the same layers, for the same reason
-the Execution Stack panel does: usdview hands out a stage it holds in a
-UsdStageCache and the `rigexec.Rig` binding refuses it. Reads compose
-identically, and the measurement authors nothing that outlives it -- the
-avar it drives is restored and the interactive overrides are cleared.
+Measurements use the open stage, including its load rules and muted layers.
 """
 import os
 import sys
@@ -38,24 +34,6 @@ try:
 except ImportError:  # pragma: no cover - plugin path, not test path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import profilerModel
-
-
-# Same twin-stage cache and the same reason as execStackUI's.
-_TWIN = {}
-
-
-def _CompilableStage(stage):
-    # Keyed on the root AND session layers, like execStackUI's: two usdview
-    # sessions in one process can share a root layer, never a session layer.
-    root = stage.GetRootLayer()
-    session = stage.GetSessionLayer()
-    key = (root.identifier, session.identifier if session else None)
-    twin = _TWIN.get(key)
-    if (twin is None or twin.GetRootLayer() != root or
-            twin.GetSessionLayer() != session):
-        twin = Usd.Stage.Open(root, session)
-        _TWIN[key] = twin
-    return twin
 
 
 class ProfilerPanel(QtWidgets.QDialog):
@@ -170,7 +148,7 @@ class ProfilerPanel(QtWidgets.QDialog):
         QtWidgets.QApplication.processEvents()
         try:
             report, rig = profilerModel.build_report(
-                _CompilableStage(stage), root,
+                stage, root,
                 samples=self._samples.value())
         except Exception as error:  # a bad rig must not take usdview with it
             self._text.setPlainText("Measurement failed:\n\n%s" % error)

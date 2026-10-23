@@ -20,7 +20,7 @@ a value would start a link instead -- the one regression this whole feature
 must never cause. It is asserted structurally, over a grid of node widths
 and row heights, rather than trusted to a comment.
 
-The row-suppression rules are mirrored here against plain-object fakes
+The production row-suppression rules run against plain-object fakes
 (NOT MagicMock: ``getattr(mock, "_title_collapsed", False)`` returns a
 truthy Mock rather than the default, which would silently short-circuit
 exactly the branch under test -- the same trap
@@ -28,6 +28,9 @@ exactly the branch under test -- the same trap
 """
 
 import unittest
+from types import SimpleNamespace
+
+from UsdNoodles.graphView import GraphView
 
 try:
     from UsdNoodles.widgets import valueCell as vc
@@ -84,40 +87,23 @@ class _Node:
 
 
 def _rows_for(node):
-    """The row-suppression rules of ``GraphView._valueRowGeometry``.
-
-    Mirrored rather than imported, because GraphView cannot be imported
-    headlessly (module-level GL). Kept byte-faithful to the production
-    method; the production method is the one that ships.
-    """
-    if getattr(node, "_title_collapsed", False):
-        return []
-    cell_w = float(getattr(node, "_value_cell_width", 0.0) or 0.0)
-    if cell_w <= 0.0:
-        return []
-    nx = float(node.position[0])
-    nw = float(node.size[0])
-    h = float(node.layoutPortLineHeight)
-    port_start_y = float(node.position[1]) + float(node.layoutPortStartY)
-
-    occupied = set(
-        node.outputRowSlots[i] if i < len(node.outputRowSlots) else i
-        for i in range(len(node.outputPins))
+    renderer = SimpleNamespace(getPortWidth=lambda: 8.0)
+    node.renderer = renderer
+    node.value_rows = lambda _time: {
+        (pin, False): SimpleNamespace(pin_name=pin, count=1, has_swatch=False)
+        for pin in node.inputPins
+    }
+    view = SimpleNamespace(
+        _cachedShowAttributeValues=True,
+        _currentTimeCode=None,
+        defaultRenderer=renderer,
+        _getRowHitMetrics=lambda n, r: GraphView._getRowHitMetrics(None, n, r),
+        _valueTextBand=lambda h: (0.0, h),
+        _valueRowLayout=lambda n: GraphView._valueRowLayout(None, n),
     )
-
-    out = []
-    for i, pin in enumerate(node.inputPins):
-        kind = node.inputRowKinds[i] if i < len(node.inputRowKinds) else 0
-        if kind in (1, 2):
-            continue
-        slot = node.inputRowSlots[i] if i < len(node.inputRowSlots) else i
-        if slot in occupied:
-            continue
-        rect = vc.cell_rect(nx, nw, port_start_y + slot * h, h, cell_w)
-        if rect is None:
-            continue
-        out.append((pin, slot, rect))
-    return out
+    slots = dict(zip(node.inputPins, node.inputRowSlots))
+    return [(row.pin_name, slots[row.pin_name], rect)
+            for row, rect, _subs, _height in GraphView._valueRowGeometry(view, node)]
 
 
 @unittest.skipUnless(_HAS_CELL, "UsdNoodles.widgets.valueCell unavailable")

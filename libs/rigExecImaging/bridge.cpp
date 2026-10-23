@@ -35,6 +35,16 @@ namespace rigExec {
 
 namespace {
 // Guide names are interned before frame publication.
+const TfToken _tControlType("RigExecControl");
+const TfToken _tJointType("RigExecJoint");
+const TfToken _tSphereWeightType("RigExecSphereWeight");
+const TfToken _tPlaneWeightType("RigExecPlaneWeight");
+const TfToken _tCurveWeightType("RigExecCurveWeight");
+const TfToken _tRestRx("rest:rx"), _tRestRy("rest:ry"), _tRestRz("rest:rz");
+const TfToken _tRestTx("rest:tx"), _tRestTy("rest:ty"), _tRestTz("rest:tz");
+const TfToken _tRestSpace("rest:space");
+const GfVec3d _restAxes[3] = {
+    GfVec3d(1, 0, 0), GfVec3d(0, 1, 0), GfVec3d(0, 0, 1)};
 const TfToken _tY("Y");
 const TfToken _tRigExecGenerated("__RigExecGenerated");
 const TfToken _tCircle("circle");
@@ -938,6 +948,104 @@ RigExecImagingBridge::Compile(std::vector<std::string> *errors)
     return _evaluator->Compile(errors);
 }
 
+// The same authored rest placement used by cold guide bounds.
+GfMatrix4d
+RigExecAuthoredGuideRestSpace(const UsdPrim &prim, UsdTimeCode time,
+                   bool *rigid)
+{
+    auto scalar = [&prim, &time](const TfToken &name) {
+        double value = 0.0;
+        if (const UsdAttribute a =
+                prim.GetAttribute(name)) {
+            a.Get(&value, time);
+        }
+        return value;
+    };
+    const double angles[3] = {scalar(_tRestRx), scalar(_tRestRy),
+                              scalar(_tRestRz)};
+    GfMatrix4d local(1.0);
+    for (int index = 0; index < 3; ++index) {  // XYZ, the rest-avar order
+        if (angles[index] != 0.0) {
+            local = local * GfMatrix4d(
+                                GfRotation(_restAxes[index], angles[index]),
+                                GfVec3d(0));
+        }
+    }
+    GfMatrix4d translate(1.0);
+    translate.SetTranslate(
+        GfVec3d(scalar(_tRestTx), scalar(_tRestTy),
+                        scalar(_tRestTz)));
+    local = local * translate;
+
+    GfMatrix4d space(1.0);
+    if (const UsdAttribute a =
+            prim.GetAttribute(_tRestSpace)) {
+        a.Get(&space, time);
+    }
+    GfMatrix4d rest = local * space;
+    *rigid = rest.Orthonormalize(/* issueWarning = */ false);
+    if (!*rigid) {
+        return rest;
+    }
+    // USD row vectors: the local rest precedes the nearest provider rest.
+    for (UsdPrim parent = prim.GetParent();
+         parent && !parent.IsPseudoRoot(); parent = parent.GetParent()) {
+        const TfToken parentType = parent.GetTypeName();
+        if (parentType != _tJointType && parentType != _tControlType) {
+            continue;
+        }
+        bool parentRigid = false;
+        const GfMatrix4d parentRest =
+            RigExecAuthoredGuideRestSpace(parent, time, &parentRigid);
+        if (parentRigid) {
+            rest = rest * parentRest;
+        }
+        break;
+    }
+    return rest;
+}
+
+void
+RigExecImagingBridge::AppendAuthoredGuides(
+    UsdTimeCode time, RigExecImagingSnapshot *snapshot)
+{
+    const UsdPrim root = _stage->GetPrimAtPath(_rigPath);
+    if (!root) return;
+    InvalidateGuideCaches();
+    // Scratch inputs for the shared drawing helpers, never a valid rig pose.
+    RigExecRigPose authored;
+    authored.time = time;
+    const RigExecPointFrame identity;
+    for (const UsdPrim &prim : UsdPrimRange(root)) {
+        const TfToken type = prim.GetTypeName();
+        const bool provider = type == _tControlType || type == _tJointType;
+        const bool volume = type == _tSphereWeightType ||
+            type == _tPlaneWeightType || type == _tCurveWeightType;
+        if (!provider && !volume) continue;
+        bool rigid = false;
+        const GfMatrix4d rest = RigExecAuthoredGuideRestSpace(prim, time, &rigid);
+        if (!rigid) continue;
+        if (volume) {
+            authored.weightFrames.emplace(prim.GetPath(), rest);
+        } else {
+            RigExecPointFrame frame;
+            for (size_t i = 0; i < frame.points.size(); ++i) {
+                frame.points[i] = rest.Transform(identity.points[i]);
+            }
+            if (type == _tControlType) {
+                authored.controlFrames.emplace(prim.GetPath(), frame);
+            } else {
+                authored.jointFramesFinal.emplace(prim.GetPath(), frame);
+            }
+        }
+    }
+    _FillGuides(authored, snapshot);
+    _FillControlGuides(authored, snapshot);
+    _FillVolumeGuides(authored, snapshot);
+    // Manipulators must not mistake authored placements for evaluated frames.
+    for (auto &[path, prim] : snapshot->prims) prim.hasControlFrame = false;
+}
+
 SdfPath
 RigExecImagingBridge::GetGeneratedScope() const
 {
@@ -1008,7 +1116,6 @@ RigExecImagingBridge::InvalidateGuideCaches()
     _guideInputs.clear();
     _jointChildren.clear();
     _jointChildrenValid = false;
-    _controlSpaceJoints.clear();
 }
 
 void
@@ -1057,66 +1164,6 @@ RigExecImagingBridge::NoteGuideEdits(const UsdNotice::ObjectsChanged &notice)
     }
 }
 
-bool
-RigExecImagingBridge::_IsControlSpaceJoint(const SdfPath &path) const
-{
-    auto found = _controlSpaceJoints.find(path);
-    if (found == _controlSpaceJoints.end()) {
-        bool nested = false;
-        // Any control above it through a chain of controls and joints: a
-        // pivot can nest under another pivot (a follow above a compression).
-        static const TfToken kControl("RigExecControl");
-        static const TfToken kJoint("RigExecJoint");
-        const UsdPrim prim = _stage->GetPrimAtPath(path);
-        if (prim) {
-            for (UsdPrim up = prim.GetParent(); up; up = up.GetParent()) {
-                const TfToken &type = up.GetTypeName();
-                if (type == kControl) {
-                    nested = true;
-                    break;
-                }
-                if (type != kJoint) {
-                    break;
-                }
-            }
-        }
-        // ... or any control BELOW it, through a chain of joints.
-        //
-        // Looking up alone misses the case this publication exists for. A
-        // limb bend or spine bend follow hangs off the Controls SCOPE, not
-        // off a control -- there is nothing above it to find -- and carries
-        // the bend control as its child. That control composes against this
-        // joint's frame, a constraint writes that frame, and without it
-        // published the manipulator reads the joint's REST frame, decides
-        // the control has no trustworthy parent, and refuses the gizmo: the
-        // bend controls could be selected and dragged from the avar editor
-        // but had no viewport manipulator at all.
-        //
-        // Having a control beneath it is the property that actually matters
-        // -- "a control composes against this joint" -- where being beneath
-        // a control is only one way to end up that way.
-        if (!nested && prim) {
-            std::vector<UsdPrim> pending(1, prim);
-            while (!pending.empty() && !nested) {
-                const UsdPrim here = pending.back();
-                pending.pop_back();
-                for (const UsdPrim &child : here.GetChildren()) {
-                    const TfToken &type = child.GetTypeName();
-                    if (type == kControl) {
-                        nested = true;
-                        break;
-                    }
-                    if (type == kJoint) {
-                        pending.push_back(child);
-                    }
-                }
-            }
-        }
-        found = _controlSpaceJoints.emplace(path, nested).first;
-    }
-    return found->second;
-}
-
 void
 RigExecImagingBridge::_SyncGuideCaches() const
 {
@@ -1134,7 +1181,6 @@ RigExecImagingBridge::_SyncGuideCaches() const
         _guideInputs.clear();
         _jointChildren.clear();
         _jointChildrenValid = false;
-        _controlSpaceJoints.clear();
         _guideCacheSerial = serial;
     }
 }
@@ -1586,8 +1632,9 @@ RigExecImagingBridge::_FillControlGuides(
 
     for (const auto &[controlPath, frame] : pose.controlFrames) {
         GfMatrix4d evaluated(1.0);
-        static const RigExecPointFrame identity;
-        if (frame.IsValid() && RigExecPointsToMatrix(identity.points, frame.points, &evaluated)) {
+        const RigExecPointFrame identity;
+        if (frame.IsValid() && !frame.IsDegenerate() &&
+            RigExecPointsToMatrix(identity.points, frame.points, &evaluated)) {
             auto &published = snapshot->prims[controlPath];
             published.assetRoot = _rigPath.GetParentPath();
             published.hasControlFrame = true;
@@ -1781,17 +1828,11 @@ RigExecImagingBridge::_FillControlGuides(
         published.hasControlGuide = published.guideOpacity > 0.0f || inputs.opacityLive;
     }
 
-    // The evaluated frames of the PIVOTS nested in a control hierarchy
-    // (a RigExecJoint whose parent is a control: a follow, compression or
-    // drag pivot). A constraint writes those frames, so a viewer composing
-    // them from authored values gets the rest pose, and the controls
-    // nested under them would have no trustworthy parent frame. Published
-    // beside the controls' own frames so a manipulator can read the
-    // evaluator's answer for them. Only these joints: every other joint's
-    // frame is not something a control composes against.
-    static const RigExecPointFrame identityFrame;
+    // Pose readers and manipulators consume final joint frames wherever the
+    // joint sits. Preserve full evaluated matrices before guide rigidization.
+    const RigExecPointFrame identityFrame;
     for (const auto &[jointPath, frame] : pose.jointFramesFinal) {
-        if (!frame.IsValid() || !_IsControlSpaceJoint(jointPath)) {
+        if (!frame.IsValid() || frame.IsDegenerate()) {
             continue;
         }
         GfMatrix4d evaluated(1.0);
@@ -1987,7 +2028,7 @@ RigExecImagingBridge::_FillVolumeGuides(
                 VtVec3fArray localCurve(curvePoints.size());
                 for (size_t k = 0; k < curvePoints.size(); ++k) {
                     localCurve[k] =
-                        GfVec3f(toLocal.Transform(GfVec3d(curvePoints[k])));
+                        GfVec3f(toLocal.Transform(GfVec3d(curvePoints.cdata()[k])));
                 }
                 GfMatrix4d scale(1.0);
                 scale.SetScale(axisScale);

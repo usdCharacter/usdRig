@@ -1,31 +1,7 @@
-#
-# The Shape Editor panel: which correctives are firing, and how hard.
-#
-# HOW IT GETS THE WEIGHTS, and why it costs what it does.
-#
-# The numbers this panel exists to show are published by the evaluator
-# into `RigExecRigPose::movedProperties`, and usdview's imaging bridge
-# holds that pose privately -- there is no `RigExecImaging_GetMovedFloats`
-# entry point today. The only thing the bridge exposes is a GENERATION
-# counter, so this panel keeps its own `rigexec.Rig` on the same stage and
-# evaluates when that counter moves.
-#
-# That is a second evaluation of the rig, and it is not free (~20 ms on
-# the biped). Three things keep it honest:
-#
-#   * it runs ONLY when the generation changes, so an idle viewport costs
-#     one integer read every 150 ms and nothing else;
-#   * it runs only while the panel is VISIBLE -- closing it stops the
-#     timer, so nobody pays for a panel they are not looking at;
-#   * it is a read-only evaluation on a private evaluator, so it cannot
-#     perturb what the viewport is showing.
-#
-# The right long-term answer is a `GetMovedFloats` on the bridge, which
-# would make this free; it is a C++ change and is noted rather than done.
-#
+"""Pose weights and reader guides from the stage's published imaging snapshot."""
 import ctypes
 
-from pxr import Sdf, Tf, Usd
+from pxr import Gf, Sdf, Tf, Usd
 
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
@@ -39,38 +15,6 @@ import poseReaderModel as readerViz
 # Shape Editor reads rigExecImaging through rigExecUsdview already, so its
 # directory is on the module search path wherever this panel can work.
 import sessionRegistry
-
-
-# The second stages the private evaluator compiles against, keyed by
-# their root and session layers.
-_TWIN = {}
-
-
-def _CompilableStage(stage):
-    """A stage `rigexec.Rig` will accept, over the same layers.
-
-    usdview hands out a stage it holds in a `UsdStageCache`, and the
-    binding for `rigexec.Rig` refuses it ("needs a `__owner` capsule")
-    because that wrapper does not own the stage. A second stage opened
-    over the same root and session layers composes identically, and every
-    edit -- a mute here, a drag committed in the viewport -- lands in
-    those shared layers and reaches both. Without it the private
-    evaluator never built inside usdview, which went unseen because the
-    weights normally come straight off the viewport; the frames the
-    viewport overlay needs do not.
-
-    The same answer the Execution Stack panel uses, kept local because the
-    editors load independently of each other.
-    """
-    root = stage.GetRootLayer()
-    session = stage.GetSessionLayer()
-    key = (root.identifier, session.identifier if session else None)
-    twin = _TWIN.get(key)
-    if (twin is None or twin.GetRootLayer() != root or
-            twin.GetSessionLayer() != session):
-        twin = Usd.Stage.Open(root, session)
-        _TWIN[key] = twin
-    return twin
 
 
 # How often the generation counter is read. Not how often the rig is
@@ -88,19 +32,7 @@ _NEUTRAL = QtGui.QColor(120, 125, 135)
 
 
 def _Imaging():
-    """The imaging library: the generation counter and the weights.
-
-    `RigExecImaging_GetMovedFloats` is what makes this panel cheap. The
-    viewport has already evaluated the rig and published every pose
-    weight; without that entry point the panel had to evaluate a SECOND
-    time to recover numbers that were sitting in the current snapshot --
-    measured at 9 ms per refresh against roughly nothing for a batched
-    map lookup.
-
-    A build without the entry point falls back to the private evaluator,
-    which is correct and slower, so an older library degrades rather than
-    breaks.
-    """
+    """The imaging library publishing the viewport snapshot."""
     try:
         from rigExecUsdview import ImagingLibraryPath
         lib = ctypes.CDLL(ImagingLibraryPath())
@@ -183,8 +115,6 @@ class ShapeEditorPanel(QtWidgets.QDialog):
             parent or usdviewApi.qMainWindow)
         self._api = usdviewApi
         self._interpolators = []
-        self._rig = None
-        self._rigStage = None
         self._lib = _Imaging()
         self._imaging = None      # _lib bound to the stage shown
         self._generation = None
@@ -299,54 +229,8 @@ class ShapeEditorPanel(QtWidgets.QDialog):
             self._imaging = handle
         return handle
 
-    # -- the private evaluator -------------------------------------------
-
-    def _Rig(self):
-        """A read-only evaluator on the current stage, built once.
-
-        Rebuilt when the stage changes. A failure here is reported in the
-        status line and leaves the panel showing structure with no
-        weights, which is still useful -- it says what EXISTS even when
-        it cannot say what is firing.
-        """
-        stage = self._Stage()
-        if stage is None:
-            return None
-        if self._rig is not None and self._rigStage is stage:
-            return self._rig
-        self._rig = None
-        self._rigStage = stage
-        try:
-            import rigexec
-            for prim in stage.Traverse():
-                if str(prim.GetTypeName()) == "RigExecRoot":
-                    rig = rigexec.Rig(_CompilableStage(stage),
-                                      str(prim.GetPath()))
-                    rig.compile()
-                    # This evaluator exists to read published floats, and
-                    # nothing looks at its guides -- so stop computing
-                    # them. MEASURED elsewhere at ~1.4 ms/frame of pure
-                    # viewport data. The graph handles changed input cones
-                    # while the panel re-evaluates an interactive drag.
-                    try:
-                        rig.solver_guides_enabled = False
-                    except Exception:
-                        pass
-                    self._rig = rig
-                    break
-        except Exception as error:
-            Tf.Warn("shapeEditor: no private evaluator: %s" % error)
-        return self._rig
-
     def _Poll(self):
-        """Evaluate only when the viewport's generation has moved.
-
-        THE GENERATION IS THE WHOLE POINT. A drag moves it 60+ times a
-        second; this fires at most every POLL_MS and coalesces everything
-        in between, so a long drag costs the same per second as a short
-        one. An idle viewport moves it not at all, and then this is one
-        integer read and a comparison -- no evaluate, no Qt, nothing.
-        """
+        """Coalesce refreshes until the published generation changes."""
         imaging = self._StageImaging()
         if imaging is None:
             return
@@ -365,7 +249,6 @@ class ShapeEditorPanel(QtWidgets.QDialog):
         stage = self._Stage()
         self._interpolators = model.Discover(stage) if stage else []
         self._packed = None       # the path list is only valid for these
-        self._rig = None          # the stage may have changed under us
         self._vizRest = {}        # and so may every rest frame
         self._Populate()
         self.Refresh()
@@ -380,33 +263,19 @@ class ShapeEditorPanel(QtWidgets.QDialog):
     def _RefreshWeights(self):
         if self._ReadFromViewport():
             return
-        rig = self._Rig()
-        if rig is None or not self._interpolators:
-            self._Status("no live weights" if self._interpolators else None)
-            return
-        try:
-            frame = self._api.frame.GetValue() if self._api.frame else 0.0
-        except Exception:
-            frame = 0.0
-        try:
-            pose = rig.evaluate(float(frame))
-        except Exception as error:
-            self._Status("evaluate failed: %s" % error)
-            return
-        found = model.ReadWeights(self._interpolators, pose)
+        for interp in self._interpolators:
+            for pose in interp.poses:
+                pose.weight = 0.0
         if self._firingOnly.isChecked():
             self._Populate()
         else:
             self._UpdateNumbers()
-        self._Status(None if found else
-                     "the engine published no pose weights -- is this a "
-                     "stage with the interpolators AND the shapes?")
+        self._Status("no published weights" if self._interpolators else None)
 
     def _ReadFromViewport(self):
         """Take the weights straight off the viewport's own snapshot.
 
-        Returns False when the entry point is missing or published
-        nothing, so the caller falls back to the private evaluator.
+        Returns False when no weights are published for this stage.
         """
         imaging = self._StageImaging()
         if imaging is None or not self._interpolators:
@@ -432,11 +301,7 @@ class ShapeEditorPanel(QtWidgets.QDialog):
             return False
         for entry, value in zip(self._packedEntries, self._buffer):
             entry.weight = float(value)
-        # REPOPULATE in firing-only mode, exactly as the slow path does.
-        # Which rows exist is a function of the weights there, so updating
-        # the numbers without rebuilding froze the list at whatever was
-        # firing when the box was ticked -- which at rest is nothing, so
-        # the panel looked permanently empty.
+        # Firing-only rows depend on the new weights.
         if self._firingOnly.isChecked():
             self._Populate()
         else:
@@ -551,11 +416,6 @@ class ShapeEditorPanel(QtWidgets.QDialog):
         target = Usd.EditTarget(stage.GetSessionLayer())
         with Usd.EditContext(stage, target):
             model.SetEnabled(prim, value)
-        # NO `self._rig = None` HERE. Throwing the evaluator away forces a
-        # fresh compile, MEASURED at 332.59 ms against a 15.77 ms evaluate
-        # -- twenty times the cost of the thing it was protecting. The
-        # evaluator already watches the stage: `inputs:enabled` is a value
-        # edit, the notice reaches it, and the next evaluate reflects it.
         self.Refresh()
 
     def _OnSelected(self):
@@ -834,49 +694,25 @@ class ShapeEditorPanel(QtWidgets.QDialog):
                 self._vizRest = {}
                 return
 
-    def _VizPose(self):
-        """A pose with live frames, the viewport's drag values included.
+    def _VizFrames(self):
+        """Read asset-space frames from this stage's current publication."""
+        imaging = self._StageImaging()
+        if imaging is None or not imaging.Has("GetControlFrameAssetSpace"):
+            self._vizInfo.setText("No published driver frames available.")
+            return None
+        time = self._api.frame if self._api.frame is not None else Usd.TimeCode.Default()
+        frame = 0.0 if time.IsDefault() else time.GetValue()
+        frames = {}
 
-        The viewport's own snapshot carries weights but not joint frames,
-        so the private evaluator supplies the frames. A gizmo drag holds
-        its values in a preview channel until release; they are handed to
-        this evaluator as interactive overrides, so the cones follow the
-        drag instead of jumping on release.
-        """
-        rig = self._Rig()
-        stage = self._Stage()
-        if rig is None or stage is None:
-            return None
-        overrides = []
-        try:
-            import gizmoMath
-            for path, value in gizmoMath.PreviewValues(stage).items():
-                path = Sdf.Path(str(path))
-                if not path.IsPropertyPath():
-                    continue
-                if isinstance(value, bool) or \
-                        not isinstance(value, (int, float)):
-                    continue
-                overrides.append((str(path.GetPrimPath()), path.name,
-                                  float(value)))
-        except Exception:
-            overrides = []
-        try:
-            if overrides:
-                rig.set_interactive_overrides(overrides)
-            else:
-                rig.clear_interactive_overrides()
-        except Exception:
-            pass
-        try:
-            frame = self._api.frame.GetValue() if self._api.frame else 0.0
-        except Exception:
-            frame = 0.0
-        try:
-            return rig.evaluate(float(frame))
-        except Exception as error:
-            self._vizInfo.setText("evaluate failed: %s" % error)
-            return None
+        def read(path):
+            path = str(path)
+            if path not in frames:
+                buffer = (ctypes.c_double * 16)()
+                found = imaging.GetControlFrameAssetSpace(
+                    path, frame, int(time.IsDefault()), buffer)
+                frames[path] = Gf.Matrix4d(*buffer) if found else None
+            return frames[path]
+        return read
 
     def _RefreshViz(self):
         settings = self._vizSettings
@@ -904,8 +740,8 @@ class ShapeEditorPanel(QtWidgets.QDialog):
                 if settings.scope == readerViz.SCOPE_FIRING else
                 "No interpolators on this stage.")
             return
-        pose = self._VizPose()
-        if pose is None:
+        frames = self._VizFrames()
+        if frames is None:
             view.SetReaders([])
             return
         try:
@@ -914,11 +750,8 @@ class ShapeEditorPanel(QtWidgets.QDialog):
         except Exception as error:
             self._vizInfo.setText("no rest frames: %s" % error)
             return
-        try:
-            frame = self._api.frame.GetValue() if self._api.frame else 0.0
-        except Exception:
-            frame = 0.0
-        readers = readerViz.Build(stage, chosen, pose, Usd.TimeCode(frame),
+        time = self._api.frame if self._api.frame is not None else Usd.TimeCode.Default()
+        readers = readerViz.Build(stage, chosen, frames, time,
                                   restSpace, settings.size, self._vizRest)
         drawn = readerViz.Visible(readers, settings,
                                   [r.path for r in readers])

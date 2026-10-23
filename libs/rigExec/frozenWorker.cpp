@@ -38,7 +38,7 @@ RigExecFrozenWorkspace::RigExecFrozenWorkspace(
 {
     _impl->snapshot = std::move(snapshot);
     _impl->worker.snapshot = _impl->snapshot.get();
-    _CloneImpl(_impl->snapshot->program, &_impl->worker.B,
+    _CloneImpl(*_impl->snapshot->program, &_impl->worker.B,
                _CloneVerdict::Inherit);
     _impl->worker.B.opAdapter.parallel = false;
     // _CloneImpl adopts only completed owned output/signature state, by the
@@ -50,7 +50,7 @@ RigExecFrozenWorkspace::~RigExecFrozenWorkspace() = default;
 std::unique_ptr<RigExecFrozenWorkspace>
 RigExecCreateFrozenWorkspace(std::shared_ptr<const RigExecFrozenProgram> snapshot)
 {
-    if (!snapshot) return {};
+    if (!snapshot || !snapshot->program || !snapshot->bindings) return {};
     // Background lanes record nothing; see RigExecFrozenProgram.
     std::optional<RigExecInputReplayComparisonScope> replayComparison;
     if (snapshot->RecordsInputReplay()) {
@@ -114,12 +114,12 @@ _PatchInputs(RigExecBakedProgramImpl &B,
         if (!ok) {
             return;
         }
-        if (walked >= snapshot.inputHeadPaths.size() ||
-            walked >= snapshot.inputConstants.size()) {
+        if (walked >= snapshot.bindings->inputHeadPaths.size() ||
+            walked >= snapshot.bindings->inputConstants.size()) {
             ok = false;
             return;
         }
-        const SdfPath &key = snapshot.inputHeadPaths[walked];
+        const SdfPath &key = snapshot.bindings->inputHeadPaths[walked];
         bool held = false;
         using T = std::decay_t<decltype(input.constant)>;
         if constexpr (std::is_same_v<T, double>) {
@@ -129,7 +129,7 @@ _PatchInputs(RigExecBakedProgramImpl &B,
                 held = true;
             }
         }
-        if (!held && !_SampleHolds(snapshot.inputConstants[walked], &input.constant)) {
+        if (!held && !_SampleHolds(snapshot.bindings->inputConstants[walked], &input.constant)) {
             ok = false;
             return;
         }
@@ -194,7 +194,7 @@ _PatchInputs(RigExecBakedProgramImpl &B,
     if (avarMoved) {
         ++B.avarConstantSerial;
     }
-    return ok && walked == snapshot.inputHeadPaths.size();
+    return ok && walked == snapshot.bindings->inputHeadPaths.size();
 }
 
 // Writes every head leaf the sampler keyed (RigExecForEachHeadLeaf) from
@@ -366,8 +366,8 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
     for (size_t si = 0; si < B.solvers.size(); ++si) {
         RigExecBakedProgramImpl::Solver &solver = B.solvers[si];
         if (!solver.ribbonPointsVarying ||
-            si >= snapshot.ribbonQueryValid.size() ||
-            !snapshot.ribbonQueryValid[si]) {
+            si >= snapshot.bindings->ribbonQueryValid.size() ||
+            !snapshot.bindings->ribbonQueryValid[si]) {
             continue;
         }
         const RigExecSampledInput *sample =
@@ -431,10 +431,10 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
 
     // Raw operator arrays are sampled sources. The owning Constraint body
     // validates cardinalities and expands neutral defaults when it runs.
-    if (snapshot.arrayKeys.size() < B.constraintArrays.size() * 4) return false;
+    if (snapshot.bindings->arrayKeys.size() < B.constraintArrays.size() * 4) return false;
     for (size_t row = 0; admission.admitted && row < B.constraintArrays.size(); ++row) {
         for (size_t channel = 0; channel < 4; ++channel) {
-            const SdfPath &key = snapshot.arrayKeys[row * 4 + channel];
+            const SdfPath &key = snapshot.bindings->arrayKeys[row * 4 + channel];
             // An empty key denotes an unbound channel, not a source named
             // by an empty path. Keep its captured raw opinion unchanged.
             if (key.IsEmpty()) continue;
@@ -448,12 +448,12 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
     // ChainInputs and Derived own adoption. Layout-source prep stays independent.
     for (size_t ci = 0; admission.admitted && ci < B.chains.size(); ++ci) {
         RigExecBakedProgramImpl::GeomChain &chain = B.chains[ci];
-        if (ci >= snapshot.chainBaseQueryValid.size()) {
+        if (ci >= snapshot.bindings->chainBaseQueryValid.size()) {
             return false;
         }
         VtVec3fArray basePoints;
         bool haveBase = false;
-        if (snapshot.chainBaseQueryValid[ci]) {
+        if (snapshot.bindings->chainBaseQueryValid[ci]) {
             const RigExecSampledInput *sample = findSample(chain.target);
             if (!sample) {
                 return false;
@@ -488,10 +488,10 @@ _FrozenPrologue(_FrozenWorker *worker, const RigExecFrozenProgram &snapshot,
                     break;
                 }
             }
-            if (derivedKey >= snapshot.derivedBaseQueryValid.size()) {
+            if (derivedKey >= snapshot.bindings->derivedBaseQueryValid.size()) {
                 return false;
             }
-            if (snapshot.derivedBaseQueryValid[derivedKey]) {
+            if (snapshot.bindings->derivedBaseQueryValid[derivedKey]) {
                 if (!sample) {
                     return false;
                 }
@@ -738,6 +738,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
         return false;
     }
     const RigExecFrozenProgram &snapshot = *context.frozen;
+    if (!snapshot.program || !snapshot.bindings) return false;
     if (inputs.HasChainResolvedInputs()) {
         return false;
     }
@@ -748,7 +749,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
         if (!lane) return false;
     } else {
         ephemeral.snapshot = &snapshot;
-        _CloneImpl(snapshot.program, &ephemeral.B, _CloneVerdict::Inherit);
+        _CloneImpl(*snapshot.program, &ephemeral.B, _CloneVerdict::Inherit);
         ephemeral.B.opAdapter.parallel = false;
         // The same completed-state guard applies to ephemeral workers.
         lane = &ephemeral;
@@ -760,8 +761,8 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
     } release{context.workspace};
     _FrozenWorker &worker = *lane;
     RigExecBakedProgramImpl &B = worker.B;
-    const auto *edits = context.avarPatch;
-    const auto &origin = snapshot.program;
+    const auto *edits = context.avarPatch ? context.avarPatch : snapshot.avarPatch.get();
+    const auto &origin = *snapshot.program;
     if (edits && (edits->basis != &snapshot ||
         edits->avars.size() != B.avarConstantBindings.size() ||
         edits->constants.size() != B.avarConstants.size())) return false;
@@ -803,7 +804,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
     B.resolvedInputs = &worker.resolved;
     B.profiler = &worker.profiler;
     B.interactiveOverrides = &inputs.overrides;
-    B.jointSolverBinding = &snapshot.jointSolverBinding;
+    B.jointSolverBinding = &snapshot.bindings->jointSolverBinding;
     B.solverGuidesEnabled = &worker.guidesEnabled;
     B.publishWeightFields =
         (context.flags & kRigExecFrozenPublishWeightFields) != 0;
@@ -883,7 +884,7 @@ _RunFrozenWith(const RigExecFrozenEvalContext &context,
     if (!RigExecBakedPublishPose(&B, &working)) {
         return false;
     }
-    if (snapshot.solverGuidesPresent && worker.guidesEnabled) {
+    if (snapshot.bindings->solverGuidesPresent && worker.guidesEnabled) {
         // The guide block PublishPose skipped for the null taps
         // (bakedPose.cpp:3673), replayed from the aggregates.
         for (const int solverIndex : B.solverPublishOrder) {

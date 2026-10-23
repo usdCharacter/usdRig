@@ -2830,6 +2830,7 @@ _SampleWithPinnedChainBindings(
     if (!out) {
         return fail("no input vector to sample into");
     }
+    if (evaluator.cpuReference && !RigExecOracleAvailable(error)) return false;
     // The pinned route trusts nothing: stale bindings fail the sample and
     // the caller rebinds. An empty pin on a chained rig fails here too, so
     // the check cannot be skipped around -- only the bind, which names the
@@ -3442,6 +3443,7 @@ RigExecSampleFrameInputsWithBurstCache(
     if (!out) {
         return fail("no input vector to sample into");
     }
+    if (evaluator.cpuReference && !RigExecOracleAvailable(error)) return false;
     // The cache is burst-scoped: a foreign program or a differing override
     // list fails loud rather than sampling through prepared state that no
     // longer describes the call. A burst holds both fixed (the registry

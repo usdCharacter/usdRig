@@ -424,20 +424,7 @@ class TestShowPropertyTooltip(unittest.TestCase):
 
 
 def _leave_event_cleanup(view):
-    """Mirror of the cleanup portion of GraphView.leaveEvent (graphView.py).
-
-    Production leaveEvent also calls super().leaveEvent(event) which requires a
-    real QGLWidget instance, so we shim the cleanup portion that the new code
-    added. This locks down the regression that an already-visible tooltip
-    would remain on screen after the cursor left the widget (G3).
-    """
-    view._tooltipTimer.stop()
-    view._tooltipProperty = None
-    # Production calls QtWidgets.QToolTip.hideText() — invoke via the same
-    # module attribute so the test patch intercepts it.
-    from UsdNoodles import graphView as _gv
-
-    _gv.QtWidgets.QToolTip.hideText()
+    GraphView._clearPropertyTooltip(view)
 
 
 @unittest.skipUnless(_has_graph, "GraphView modules not available (headless CI)")

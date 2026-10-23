@@ -21,9 +21,7 @@ Covers:
     3. Unsaved-layer warnings when other layers are dirty
     4. Outer try/except: unexpected failure shows "Save failed: ..."
 
-GraphView cannot be imported in headless CI (module-level GL imports
-hang the test runner), so production logic is mirrored in shims —
-same approach used by ``testUsdNoodlesGraphViewShortcut``.
+Production methods run against view doubles without constructing a GL widget.
 """
 
 import os
@@ -31,93 +29,12 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import MagicMock
 
-
-# -- shims -----------------------------------------------------------------
-
-
-def _persist_node_positions(view, stage, layer):
-    """Mirror of GraphView._persistNodePositions (graphView.py:5541).
-
-    Omits ``Sdf.ChangeBlock()`` — that is a USD batching optimisation
-    and does not affect the try/finally restore logic under test.
-    """
-    prev = stage.GetEditTarget()
-    stage.SetEditTarget(layer)
-    try:
-        for node in view.nodes.values():
-            node._writePositionToUsdRaw(node.position)
-    finally:
-        stage.SetEditTarget(prev)
+from UsdNoodles.graphView import GraphView
 
 
-def _save_layer_as_spelled(layer):
-    """Mirror of GraphView._saveLayerAsSpelled.
-
-    Saves through the RigExec plugin's pathSpelling when it is importable,
-    else plainly.  Either way the layer's own Save() is what runs for a
-    stand-in layer: pathSpelling saves anything that is not a .usda text
-    layer as is.
-    """
-    try:
-        import pathSpelling
-    except ImportError:
-        layer.Save()
-        return
-    pathSpelling.SaveLayer(layer)
-
-
-def _save_stage(view):
-    """Mirror of GraphView._saveStage (graphView.py:5559).
-
-    ``view`` is a duck-typed stand-in carrying the attributes the real
-    method touches.  Keep this shim in lockstep with the production
-    implementation.
-    """
-    stage = view.nodeGraph.getStage() if view.nodeGraph else None
-    if not stage:
-        view._showPopupMessage("No stage to save")
-        return
-
-    try:
-        layer = stage.GetEditTarget().GetLayer()
-
-        if not layer:
-            view._showPopupMessage("No edit target layer to save")
-            return
-
-        if layer.anonymous:
-            view._showPopupMessage(
-                f"Layer '{layer.identifier}' is anonymous — use File > Save As"
-            )
-            return
-
-        _persist_node_positions(view, stage, layer)
-        _save_layer_as_spelled(layer)
-
-        unsaved = []
-        try:
-            for otherLayer in stage.GetLayerStack(includeSessionLayers=False):
-                if otherLayer and otherLayer != layer and otherLayer.dirty:
-                    unsaved.append(
-                        os.path.basename(otherLayer.identifier) or otherLayer.identifier
-                    )
-        except Exception:
-            pass
-        if unsaved:
-            names = ", ".join(unsaved[:3])
-            suffix = f" (+{len(unsaved) - 3} more)" if len(unsaved) > 3 else ""
-            view._showPopupMessage(
-                f"Saved layer: {layer.identifier}\n"
-                f"⚠ Unsaved changes on: {names}{suffix}"
-            )
-        else:
-            view._showPopupMessage(f"Saved layer: {layer.identifier}")
-
-    except Exception as e:
-        view._showPopupMessage(f"Save failed: {e}")
-        import traceback
-
-        traceback.print_exc()
+_persist_node_positions = GraphView._persistNodePositions
+_save_layer_as_spelled = GraphView._saveLayerAsSpelled
+_save_stage = GraphView._saveStage
 
 
 # -- helpers ---------------------------------------------------------------
@@ -150,13 +67,15 @@ def _make_stage(*, edit_target_layer=None, layer_stack=None):
 
 
 def _make_view(stage=None, has_node_graph=True, nodes=None):
-    """Build a minimal mock view with the surface the shims touch."""
+    """Build a minimal mock view with the surface the production methods touch."""
     view = MagicMock(spec=[])
     view.nodeGraph = MagicMock() if has_node_graph else None
     if has_node_graph:
         view.nodeGraph.getStage.return_value = stage
     view._showPopupMessage = MagicMock()
     view.nodes = nodes if nodes is not None else {}
+    view._persistNodePositions = lambda stage, layer: GraphView._persistNodePositions(view, stage, layer)
+    view._saveLayerAsSpelled = GraphView._saveLayerAsSpelled
     return view
 
 

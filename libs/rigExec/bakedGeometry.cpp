@@ -3002,7 +3002,7 @@ struct _StageBlendReads {
                 std::vector<GfVec3f> *out) const {
         VtVec3fArray points;
         R.GetAttribute(sample.points, time, &points);
-        out->assign(points.begin(), points.end());
+        out->assign(points.cbegin(), points.cend());
     }
 };
 
@@ -4009,7 +4009,7 @@ RunGpuChainOnCpu(RigExecBakedProgramImpl &B,
                  RigExecBakedProgramImpl::GeomChain *chain,
                  std::vector<GfVec3f> *points)
 {
-    points->assign(chain->lastBase.begin(), chain->lastBase.end());
+    points->assign(chain->lastBase.cbegin(), chain->lastBase.cend());
     std::vector<GfVec3f> before;
     for (RigExecBakedProgramImpl::GeomRevision &revision : chain->revisions) {
         if (!revision.gpuApplies) {
@@ -4670,8 +4670,8 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     derived.lastBase.cdata(),derived.lastBase.size(),&values);
             revision.resultStatus = status.state;
             if (!applied) {
-                values.assign(derived.lastBase.begin(),
-                              derived.lastBase.end());
+                values.assign(derived.lastBase.cbegin(),
+                              derived.lastBase.cend());
                 if (status.AllowsApply()) {
                     revision.resultStatus = _tokens->moverFailed;
                 }

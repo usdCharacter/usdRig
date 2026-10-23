@@ -16,6 +16,9 @@ namespace rigExec {
 
 namespace {
 
+// Host registration is a runtime input, absent from the serialized domains.
+constexpr uint32_t _externalKernelDomain = std::numeric_limits<uint32_t>::max();
+
 bool
 _RrIsGeometryKind(RigExecWireStepKind kind)
 {
@@ -358,6 +361,10 @@ void RrResetExcludedValue(RrProgram *p,uint32_t domain,uint32_t slot)
 }
 void RrOpValue(const RrProgram *p, uint32_t domain, uint32_t slot, std::string *key)
 {
+    if (domain == _externalKernelDomain) {
+        RigExecOpKeyAppend(key, p->externals[slot].version);
+        return;
+    }
     const auto d=RigExecWireSlotDomain(domain); const auto &s=p->store;
     const auto *pose=static_cast<const RrPoseScratch *>(p->pose.get());
     switch(d) {
@@ -466,6 +473,12 @@ void RrOpValueKey(const RrProgram *p,uint32_t domain,uint32_t slot,std::string *
 }
 bool RrPublishSmallValue(const RrProgram *p,RigExecOpValueState *value)
 {
+    if (value->domain == _externalKernelDomain) {
+        const uint64_t version = p->externals[value->slot].version;
+        RigExecOpPublishKeyBytes(value, reinterpret_cast<const char *>(&version),
+                                sizeof(version));
+        return true;
+    }
     const auto &s=p->store; const uint32_t slot=value->slot;
     // RrOpValue's fields in its order, each as its object bytes. The
     // largest layout, a SpaceValue holding a matrix, is 155 bytes.
@@ -749,6 +762,35 @@ static bool RrCompileCommonGraph(RrProgram *p,std::string *error)
     }
     // The checked compile has these exact canonical ops and descriptors.
     graph.volatileOps=checked.volatileOps;
+    if (!p->externals.empty()) {
+        // Only RevisionStatic consumes registration. Its packet publishes the
+        // version through the existing revision and downstream dependencies.
+        const RigExecValueId firstKernel = state.values.size();
+        for (size_t k = 0; k < p->externals.size(); ++k) {
+            state.leaves.push_back(state.values.size());
+            state.values.push_back({_externalKernelDomain, uint32_t(k)});
+        }
+        for (size_t c = 0; c < graph.ops.size(); ++c) {
+            const auto &body = (*p->steps)[graph.ops[c].originalIndex];
+            if (body.kind != RigExecWireStepKind::RevisionStatic) continue;
+            const auto &revision = p->file->geometry->revisionIndex[size_t(body.object)];
+            const auto found = p->externalIndex.find(
+                {uint32_t(revision.first), uint32_t(revision.second)});
+            if (found != p->externalIndex.end())
+                descriptors[c].reads.push_back(firstKernel + found->second);
+        }
+        RigExecCompiledGraph registered;
+        if (!RigExecCompileOpGraph(descriptors, state.leaves,
+                                  RigExecCyclePolicy::Reject, &registered, error))
+            return false;
+        // New leaves introduce no producer edges; retain the file's clustering
+        // and excluded-cycle reports for these same canonical operations.
+        registered.clusters = std::move(graph.clusters);
+        registered.opClusters = std::move(graph.opClusters);
+        registered.cycles = std::move(graph.cycles);
+        registered.cycleMembers = std::move(graph.cycleMembers);
+        graph = std::move(registered);
+    }
     state.compiled=true; p->opGraph=std::move(graph); p->store.opAdapter=std::move(state);
     _RrIndexSkipEffects(p);
     return true;
@@ -785,6 +827,18 @@ bool RrCompileOpGraph(RrProgram *p,std::string *error)
         for(size_t w=0;w<p->windowedOps.size();++w) {
             p->windowedOps[w].inner=std::move(layout.inner[w]);
             p->windowedOps[w].feedsWindow=layout.feedsWindow[w]!=0;
+        }
+        for (auto &external : p->externals) external.windows.clear();
+        for (size_t w = 0; w < p->windowedOps.size(); ++w) {
+            const int32_t step = p->windowedOps[w].step;
+            if (step < 0 || size_t(step) >= p->steps->size()) continue;
+            const auto &body = (*p->steps)[size_t(step)];
+            if (body.kind != RigExecWireStepKind::RevisionChunk) continue;
+            const auto &revision = p->geometry->revisionIndex[size_t(body.object)];
+            const auto found = p->externalIndex.find(
+                {uint32_t(revision.first), uint32_t(revision.second)});
+            if (found != p->externalIndex.end())
+                p->externals[found->second].windows.push_back(uint32_t(w));
         }
         p->store.windowCaptures.assign(p->windowedOps.size(),RigExecWindowPacketPtr());
         p->store.windowRings.assign(p->windowedOps.size(),RigExecWindowRing());

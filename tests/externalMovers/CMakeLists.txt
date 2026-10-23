@@ -6,6 +6,12 @@ if(NOT TARGET rigExec::rigExec)
     find_package(rigExec CONFIG REQUIRED)
 endif()
 
-rigexec_add_mover_plugin(testExternalMover NO_INSTALL
+rigexec_add_mover(testExternalMover NO_INSTALL
     PLUGIN_ROOT "${CMAKE_BINARY_DIR}/test-plugins"
-    SOURCES mover.cpp)
+    DEFINITION kernel.h
+    TYPE rigExec::TestQuadraticDefinition
+    KERNEL kernel.cpp
+    USD_ADAPTER mover.cpp
+    FACTORY RigExecQuadraticUsdAdapter
+    SCHEMA schema.usda
+    SCHEMA_TYPE ExternalQuadraticMover)

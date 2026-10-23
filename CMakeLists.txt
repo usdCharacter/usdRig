@@ -135,7 +135,8 @@ target_link_libraries(rigExecScene PRIVATE rigExecGraph rigExecMath)
 set_target_properties(rigExecScene PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecScene ALIAS rigExecScene)
 target_sources(rigExecScene INTERFACE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecScene/sceneLinkAnchor.cpp>")
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecScene/sceneLinkAnchor.cpp>"
+    "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/sceneLinkAnchor.cpp>")
 
 # rigExec: schema bindings and native evaluation. It does not link the
 # scene or oracle libraries. Callers that compile a stage link
@@ -175,7 +176,6 @@ add_library(rigExec SHARED
     libs/rigExec/movers/latticeMover.cpp
     libs/rigExec/movers/surfaceBindingMover.cpp
     libs/rigExec/movers/patchMover.cpp
-    libs/rigExec/movers/clothMover.cpp
     libs/rigExec/movers/surfaceMover.cpp
     libs/rigExec/movers/curveMover.cpp
     libs/rigExec/movers/mathMovers.cpp
@@ -245,7 +245,7 @@ target_link_libraries(rigExecScene PUBLIC rigExec)
 # it and a static math edge does not land on every consumer. Not linked
 # into imaging, playback, or runtime tests. The Python module links it,
 # so the install ships the library beside librigExec. A cpu-reference or
-# golden run aborts when the library is missing.
+# golden run reports an error when the library is missing.
 add_library(rigExecOracle SHARED
     libs/rigExecOracle/goldenPose.cpp
     libs/rigExecOracle/goldenSuite.cpp
@@ -262,19 +262,21 @@ target_compile_features(rigExecOracle PUBLIC cxx_std_17)
 target_include_directories(rigExecOracle PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecOracle PRIVATE rigExecMath rigExec)
+target_link_libraries(rigExecOracle PRIVATE rigExecMath)
 target_link_libraries(rigExecOracle PUBLIC
-    tf gf vt sdf ts usd usdGeom usdSkel)
+    rigExec tf gf vt sdf ts usd usdGeom usdSkel)
 set_target_properties(rigExecOracle PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(rigExec::rigExecOracle ALIAS rigExecOracle)
 target_sources(rigExecOracle INTERFACE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecOracle/oracleLinkAnchor.cpp>")
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExecOracle/oracleLinkAnchor.cpp>"
+    "$<INSTALL_INTERFACE:${RIGEXEC_INSTALL_CMAKEDIR}/oracleLinkAnchor.cpp>")
 
 target_sources(rigExec INTERFACE
     "$<BUILD_INTERFACE:$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:${CMAKE_CURRENT_SOURCE_DIR}/libs/rigExec/observerHostExit.cpp>>")
 
 add_library(rigExec::rigExec ALIAS rigExec)
 include(cmake/rigExecMoverPlugin.cmake)
+include(cmake/rigExecMover.cmake)
 
 add_library(rigExecStandalone SHARED
     libs/rigExecStandalone/sceneDb.cpp
@@ -373,6 +375,7 @@ add_library(rigExec::rigExecLzma ALIAS rigExecLzma)
 
 add_library(rigExecBinary STATIC libs/rigExecBinary/format.cpp
     libs/rigExecBinary/transport.cpp)
+add_library(rigExec::rigExecBinary ALIAS rigExecBinary)
 target_include_directories(rigExecBinary PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
@@ -406,6 +409,18 @@ set_target_properties(rigExecRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Installed names, so a mover plugin's tests can export and replay its rigs
 # the same way inside this build and against an installed SDK.
 add_library(rigExec::rigExecRuntime ALIAS rigExecRuntime)
+rigexec_add_mover(ClothMover BUILTIN
+    DEFINITION libs/rigExec/movers/clothDefinition.h
+    TYPE rigExec::RigExecClothDefinition
+    USD_ADAPTER libs/rigExec/movers/clothMover.cpp
+    FACTORY RigExecClothUsdAdapter
+    SCHEMA libs/rigExecSchema/schema.usda
+    SCHEMA_TYPE RigExecClothMover)
+# The standalone compiler check consumes the same generated module sources.
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeSources.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,SOURCES>,\n>\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/runtimeIncludes.txt"
+    CONTENT "$<JOIN:$<TARGET_PROPERTY:rigExecRuntime,INCLUDE_DIRECTORIES>,\n>\n")
 # -ffp-contract=off repeats the global option so the runtime's own flags
 # name everything its bitwise operation order needs; other builds of these
 # sources (the Godot extension) copy this list.
@@ -489,6 +504,41 @@ set(_rigexec_schema_resource_define
 set(_rigexec_imaging_resource_define
     RIGEXEC_IMAGING_RESOURCE_DIR="${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecImaging/resources")
 
+add_executable(testRigExecSceneDependency tests/testRigExecSceneDependency.cpp)
+target_compile_definitions(testRigExecSceneDependency PRIVATE RIGEXEC_EXPECT_SCENE)
+target_link_libraries(testRigExecSceneDependency PRIVATE rigExecScene)
+add_test(NAME testRigExecSceneDependency COMMAND testRigExecSceneDependency
+    "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+
+# Deliberately core-only: missing scene support is an error, not process exit.
+add_executable(testRigExecSceneMissing tests/testRigExecSceneDependency.cpp)
+target_link_libraries(testRigExecSceneMissing PRIVATE rigExec)
+add_test(NAME testRigExecSceneMissing COMMAND testRigExecSceneMissing
+    "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+
+add_executable(testRigExecSceneRecovery tests/testRigExecSceneDependency.cpp)
+target_compile_definitions(testRigExecSceneRecovery PRIVATE RIGEXEC_TEST_SCENE_RECOVERY)
+target_link_libraries(testRigExecSceneRecovery PRIVATE rigExecScene)
+add_test(NAME testRigExecSceneRecovery COMMAND testRigExecSceneRecovery
+    "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+
+foreach(_case Dependency Missing Recovery)
+    add_executable(testRigExecOracle${_case} tests/testRigExecOracleDependency.cpp)
+    target_link_libraries(testRigExecOracle${_case} PRIVATE rigExecScene)
+    add_test(NAME testRigExecOracle${_case} COMMAND testRigExecOracle${_case}
+        "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    set_tests_properties(testRigExecOracle${_case} PROPERTIES
+        ENVIRONMENT "RIGEXEC_GOLDEN_SUITE=;RIGEXEC_INPUT_REPLAY=")
+endforeach()
+target_compile_definitions(testRigExecOracleDependency PRIVATE RIGEXEC_EXPECT_ORACLE)
+target_compile_definitions(testRigExecOracleRecovery PRIVATE RIGEXEC_TEST_ORACLE_RECOVERY)
+target_link_libraries(testRigExecOracleDependency PRIVATE rigExecOracle)
+target_link_libraries(testRigExecOracleRecovery PRIVATE rigExecOracle)
+add_test(NAME testRigExecOracleGoldenSuiteMissing COMMAND "${CMAKE_COMMAND}"
+    "-DDRIVER=$<TARGET_FILE:testRigExecOracleMissing>"
+    "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/checkOracleGoldenSuiteMissing.cmake")
+
 add_subdirectory(tests/externalMovers)
 add_executable(testRigExecExternalMovers tests/testRigExecExternalMovers.cpp)
 target_link_libraries(testRigExecExternalMovers PRIVATE
@@ -496,7 +546,13 @@ target_link_libraries(testRigExecExternalMovers PRIVATE
 add_dependencies(testRigExecExternalMovers testExternalMover)
 add_test(NAME testRigExecExternalMovers COMMAND testRigExecExternalMovers
     "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources"
-    "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>")
+    "$<TARGET_GENEX_EVAL:testExternalMover,$<TARGET_PROPERTY:testExternalMover,RIGEXEC_PLUGIN_RESOURCE_DIR>>"
+    "${CMAKE_CURRENT_BINARY_DIR}/registeredMover.rigexec")
+add_executable(testRigExecRegisteredMover tests/testRigExecRegisteredMover.cpp)
+target_link_libraries(testRigExecRegisteredMover PRIVATE rigExecRuntime testExternalMoverKernel)
+add_test(NAME testRigExecRegisteredMover COMMAND testRigExecRegisteredMover
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/registeredMover.rigexec")
+set_tests_properties(testRigExecRegisteredMover PROPERTIES LABELS "rigExecRuntime;usd-free;fast")
 # TestRegistration asserts on the global loader, so an ambient plugin path
 # naming a stale third-party mover must not leak in. The test registers
 # both directories explicitly, so discovery adds nothing.
@@ -2215,6 +2271,9 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_undo.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    add_test(NAME testEditorPublications
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_editor_publications.py")
     add_test(NAME testGizmoMath
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_gizmo_math.py"
@@ -2332,7 +2391,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testRigExecSkippedOperations
                          testRigExecFloatCurveOp
                          testRigExecOpTracePython testRigExecOpTracePython_serial
-                         testRigExecUndo testGizmoMath testGizmoScreen
+                         testRigExecUndo testEditorPublications testGizmoMath testGizmoScreen
                          testPoseReaderViz
                          testLayerOpinionsModel testCompositionArcsModel
                          testPathSpelling
@@ -2561,6 +2620,11 @@ install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExe
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     ARCHIVE DESTINATION "${RIGEXEC_INSTALL_LIBDIR}")
 
+install(FILES libs/rigExecScene/sceneLinkAnchor.cpp libs/rigExecOracle/oracleLinkAnchor.cpp
+    DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
+install(FILES libs/rigExecOracle/registerOracle.h
+    DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
+
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
 foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecRigging rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
@@ -2678,6 +2742,8 @@ install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfig.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/rigExecConfigVersion.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMoverPlugin.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rigExecMover.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generateMoverSchema.py"
     DESTINATION "${RIGEXEC_INSTALL_CMAKEDIR}")
 
 install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md

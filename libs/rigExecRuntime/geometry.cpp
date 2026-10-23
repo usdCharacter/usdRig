@@ -658,9 +658,8 @@ struct RrGeoMoverParameters {
     // export's assembly failed on the frame), and the points its binding
     // reads at a declared phase, as this run evaluated them.
     const RrProgram::ExternalRevision *external = nullptr;
-    // The prepared state the packet was assembled under, so installing a
-    // kernel re-runs a revision whose bytes did not move.
-    const void *externalState = nullptr;
+    // Registration identity also changes when prepare reuses its state.
+    uint64_t externalVersion = 0;
     const std::vector<uint8_t> *externalFrame = nullptr;
     std::vector<RrGeoExternalInput> externalInputs;
     std::vector<std::string> externalPhasedPaths;
@@ -721,7 +720,7 @@ struct RrGeoMoverParameters {
                skinElementSize == o.skinElementSize &&
                skinMethod == o.skinMethod &&
                external == o.external &&
-               externalState == o.externalState &&
+               externalVersion == o.externalVersion &&
                externalFrame == o.externalFrame &&
                externalInputs == o.externalInputs &&
                externalPhasedPaths == o.externalPhasedPaths &&
@@ -6479,7 +6478,7 @@ RrGeoAssembleExternal(const RrGeoAssembleInputs &in,
     const RrProgram::ExternalRevision &state =
         program.externals[found->second];
     params->external = &state;
-    params->externalState = state.state.get();
+    params->externalVersion = state.version;
     if (!state.state) {
         params->valid = true;
         return;
@@ -9038,7 +9037,7 @@ void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p,
     RrOpBytes(key, p.skinLayoutRead);
     RrOpBytes(key, p.skinElementSize);
     RrOpBytes(key, p.skinMethod);
-    RrOpBytes(key, p.externalState);
+    RrOpBytes(key, p.externalVersion);
     RrOpBytes(key,p.externalInputs.size());
     for(const auto &input:p.externalInputs) {
         RrOpBytes(key,input.type); RrOpBytes(key,input.have); RrOpBytes(key,input.count);

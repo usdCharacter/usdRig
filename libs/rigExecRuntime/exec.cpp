@@ -660,6 +660,7 @@ RigExecRuntimeReader::ExecuteHistory(std::string *error)
     for (size_t k = 0; k < program.externals.size() && k < tick.externals.size(); ++k) {
         tick.externals[k].kernel = program.externals[k].kernel;
         tick.externals[k].state = program.externals[k].state;
+        tick.externals[k].version = program.externals[k].version;
     }
     RrInputsCopyCurrent(program, &tick);
     tick.store.windowRings = program.store.windowRings;

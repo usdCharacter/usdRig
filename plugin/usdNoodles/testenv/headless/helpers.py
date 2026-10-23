@@ -84,7 +84,7 @@ class GraphTestHelper:
         new_pos = Gf.Vec2d(new_position[0], new_position[1])
 
         if with_undo:
-            from UsdNoodles._usdNoodles import pushLambdaCommand
+            from UsdNoodles.graphView import _push_undo_command
 
             # Write position to USD session layer
             if not hasattr(self.gv, "nodeGraph") or self.gv.nodeGraph is None:
@@ -94,7 +94,7 @@ class GraphTestHelper:
             stage = self.gv.nodeGraph.getStage()
             prim = stage.GetPrimAtPath(node_id)
 
-            def do_move():
+            def do_move(_view):
                 node.position = new_pos
                 if prim and prim.IsValid():
                     pos_attr = prim.GetAttribute("ui:nodegraph:node:pos")
@@ -102,7 +102,7 @@ class GraphTestHelper:
                         scaled = Gf.Vec2f(new_pos[0] / 1000.0, new_pos[1] / 1000.0)
                         pos_attr.Set(scaled)
 
-            def undo_move():
+            def undo_move(_view):
                 node.position = old_pos
                 if prim and prim.IsValid():
                     pos_attr = prim.GetAttribute("ui:nodegraph:node:pos")
@@ -110,8 +110,8 @@ class GraphTestHelper:
                         scaled = Gf.Vec2f(old_pos[0] / 1000.0, old_pos[1] / 1000.0)
                         pos_attr.Set(scaled)
 
-            do_move()
-            pushLambdaCommand("Move node", do_move, undo_move)
+            do_move(self.gv)
+            _push_undo_command("Move node", do_move, undo_move, view=self.gv)
         else:
             node.position = new_pos
 
@@ -149,27 +149,21 @@ class GraphTestHelper:
         self.gv._selectedNodes.clear()
 
     def undo(self):
-        """Execute undo via the NoodlesUndoManager."""
+        """Execute undo in the graph's stage history."""
         self.gv._performUndo()
 
     def redo(self):
-        """Execute redo via the NoodlesUndoManager."""
+        """Execute redo in the graph's stage history."""
         self.gv._performRedo()
 
     def can_undo(self):
         """Check if undo is available."""
-        from UsdNoodles._usdNoodles import NoodlesUndoManager
-
-        return NoodlesUndoManager.instance().canUndo()
+        return self.gv._undoHistory.canUndo()
 
     def can_redo(self):
         """Check if redo is available."""
-        from UsdNoodles._usdNoodles import NoodlesUndoManager
-
-        return NoodlesUndoManager.instance().canRedo()
+        return self.gv._undoHistory.canRedo()
 
     def clear_undo_stack(self):
         """Clear the undo/redo stacks."""
-        from UsdNoodles._usdNoodles import NoodlesUndoManager
-
-        NoodlesUndoManager.instance().clear()
+        self.gv._undoHistory.clear()

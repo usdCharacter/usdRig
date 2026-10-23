@@ -1,26 +1,5 @@
-#
-# THE EXECUTION STACK PANEL, end to end.
-#
-# This exists because the panel shipped with no test and was broken in
-# usdview -- and ONLY in usdview. `execStackUI` compiled the rig with
-# `rigexec.Rig(stage)` on the stage usdview hands out, which comes from a
-# `UsdStageCache`; the Python binding refuses a stage its wrapper does not
-# own ("needs a `__owner` capsule"), so the panel reported "Rig compile
-# failed" for every rig while the same rig compiled fine from a script. A
-# unit test over an in-memory stage could not have caught it: the bug is
-# entirely about WHICH stage object the panel is handed.
-#
-# So the assertions are about the ordered list actually being populated,
-# not about the widget existing:
-#   * the RigExec menu carries the item (and the Window menu does not),
-#   * opening it on the biped lists movers in a real order,
-#   * that order is IDENTICAL to a script-side compile of the same layers,
-#   * the deformer-after-constraint invariant holds,
-#   * and the filters narrow the list rather than emptying it.
-#
+"""Execution Stack uses the viewer stage and displays its compiled mover order."""
 import os
-
-from pxr import Usd
 
 RIG = "/Biped/Rig"
 
@@ -105,10 +84,7 @@ def testUsdviewInputFunction(appController):
     _Check(panel._solvers, "solvers were listed too")
 
     # --- 3. the order matches a script-side compile ---------------------
-    # Same layers, a stage this process owns -- which is exactly the twin
-    # the panel now builds for itself.
-    twin = Usd.Stage.Open(stage.GetRootLayer(), stage.GetSessionLayer())
-    rig = rigexec.Rig(twin, RIG)
+    rig = rigexec.Rig(stage, RIG)
     rig.compile()
     order = rig.mover_order
     if callable(order):
@@ -119,17 +95,10 @@ def testUsdviewInputFunction(appController):
            "panel order differs from a script compile:\n  panel  %s\n  "
            "script %s" % (got[:6], expected[:6]))
 
-    # --- 4. the deformer-after-constraint invariant ---------------------
-    deform = [e for e in movers
-              if "SkinMover" in e["type"] or "MatrixMover" in e["type"]]
-    constraints = [e for e in movers if "Constraint" in e["type"]]
-    if deform and constraints:
-        first = min(e["ordinal"] for e in deform)
-        last = max(e["ordinal"] for e in constraints)
-        _Check(first > last,
-               "a deformer at ordinal %d runs before the last constraint "
-               "at %d -- it would read stale joint transforms"
-               % (first, last))
+    # The compiler's diagnostics are displayed without type-order heuristics.
+    status = panel._StatusText(len(panel._solvers), len(movers))
+    for diagnostic in panel._compileDiagnostics:
+        _Check(diagnostic in status, "compiler diagnostic is displayed")
 
     # --- 5. filtering narrows rather than empties ------------------------
     box = panel._filterBox

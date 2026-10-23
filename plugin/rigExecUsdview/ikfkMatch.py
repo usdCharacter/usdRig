@@ -502,47 +502,16 @@ def Residual(limb, evaluate, time, values):
     return worstPosition, worstRotation
 
 
-# -- a private evaluator, for space matching ------------------------------
-
-# Second stages over a host's layers, keyed by their root and session
-# layers, and the rigs compiled on them.
-_TWINS = {}
-_RIGS = {}
-
-
-def _CompilableStage(stage):
-    """A stage `rigexec.Rig` will accept, over the same layers.
-
-    A host such as usdview hands out a stage held in a `UsdStageCache`,
-    which the binding refuses. A second stage over the same root and
-    session layers composes identically, and every edit lands in those
-    shared layers and reaches both. (The Shape Editor and the Execution
-    Stack panel use the same answer.)"""
-    root = stage.GetRootLayer()
-    session = stage.GetSessionLayer()
-    key = (root.identifier, session.identifier if session else None)
-    twin = _TWINS.get(key)
-    if (twin is None or twin.GetRootLayer() != root or
-            twin.GetSessionLayer() != session):
-        twin = Usd.Stage.Open(root, session)
-        _TWINS[key] = twin
-        for stale in [k for k in _RIGS if k[0] == key]:
-            del _RIGS[stale]
-    return twin, key
-
-
 def Evaluator(stage, rigPath):
-    """evaluate(overrides, time) for `stage`'s rig at `rigPath`, on a
-    private rig compiled once per stage. Weight fields are off: a match
-    reads frames only."""
+    """An explicit matching evaluator retaining the caller's exact stage.
+
+    The returned callable owns the evaluator; no process-wide cache retains
+    stages after the caller releases it.
+    """
     import rigexec
-    twin, key = _CompilableStage(stage)
-    rig = _RIGS.get((key, str(rigPath)))
-    if rig is None:
-        rig = rigexec.Rig(twin, str(rigPath))
-        rig.compile()
-        rig.publish_weight_fields = False
-        _RIGS[(key, str(rigPath))] = rig
+    rig = rigexec.Rig(stage, str(rigPath))
+    rig.compile()
+    rig.publish_weight_fields = False
 
     def evaluate(overrides, time):
         rig.set_interactive_overrides(

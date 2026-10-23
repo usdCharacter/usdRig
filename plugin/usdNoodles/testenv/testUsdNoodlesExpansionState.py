@@ -20,6 +20,9 @@ binaries (see testUsdNoodlesNodeFactoryIcon.py for the same pattern).
 
 import unittest
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+
+from UsdNoodles.nodeFactory import NodeFactory
 
 from pxr import Tf, Usd, UsdUI
 
@@ -33,81 +36,31 @@ except ImportError:
 _EXPANSION_STATE_ATTR_NAME = "ui:nodegraph:node:expansionState"
 
 
-def _resolve_expansion_state(prim):
-    """Extract expansion state, mirroring NodeFactory logic."""
-    expansion_attr = prim.GetAttribute(_EXPANSION_STATE_ATTR_NAME)
-    if expansion_attr.IsValid() and expansion_attr.HasAuthoredValue():
-        return str(expansion_attr.Get())
-    return None
-
-
-def _mock_prim(expansion_state=None, authored=True, has_attr=True):
-    """Create a mock prim with configurable expansionState attribute behavior."""
-    prim = MagicMock()
-    attr = MagicMock()
-
-    if not has_attr:
-        attr.IsValid.return_value = False
-        prim.GetAttribute.return_value = attr
-        return prim
-
-    attr.IsValid.return_value = True
-    attr.HasAuthoredValue.return_value = authored
-
-    if authored and expansion_state is not None:
-        attr.Get.return_value = expansion_state
-
-    prim.GetAttribute.return_value = attr
-    return prim
-
-
 class TestExpansionState(unittest.TestCase):
-    """Verify ui:nodegraph:node:expansionState is read from prims."""
+    def test_authored_states_update_both_node_representations(self):
+        for state, collapsed in (("closed", True), ("minimized", True), ("open", False)):
+            with self.subTest(state=state):
+                node = SimpleNamespace(_title_collapsed=False, titleCollapsed=False)
+                with patch("UsdNoodles.nodeFactory.UsdUI.NodeGraphNodeAPI") as api:
+                    attr = api.return_value.GetExpansionStateAttr.return_value
+                    attr.IsValid.return_value = True
+                    attr.HasAuthoredValue.return_value = True
+                    attr.Get.return_value = state
+                    NodeFactory._apply_expansion_state_from_prim(node, MagicMock())
+                self.assertEqual(node._title_collapsed, collapsed)
+                self.assertEqual(node.titleCollapsed, collapsed)
 
-    def test_expansion_state_closed(self):
-        prim = _mock_prim(expansion_state="closed")
-
-        result = _resolve_expansion_state(prim)
-        self.assertEqual(result, "closed")
-
-    def test_expansion_state_open(self):
-        prim = _mock_prim(expansion_state="open")
-
-        result = _resolve_expansion_state(prim)
-        self.assertEqual(result, "open")
-
-    def test_expansion_state_minimized(self):
-        prim = _mock_prim(expansion_state="minimized")
-
-        result = _resolve_expansion_state(prim)
-        self.assertEqual(result, "minimized")
-
-    def test_no_expansion_state_authored(self):
-        prim = _mock_prim(has_attr=False)
-
-        result = _resolve_expansion_state(prim)
-        self.assertIsNone(result)
-
-    def test_closed_maps_to_collapsed(self):
-        """Verify the title_collapsed mapping used by NodeFactory."""
-        prim = _mock_prim(expansion_state="closed")
-
-        state = _resolve_expansion_state(prim)
-        self.assertIn(state, ("closed", "minimized"))
-
-    def test_minimized_maps_to_collapsed(self):
-        """Verify minimized is also treated as collapsed."""
-        prim = _mock_prim(expansion_state="minimized")
-
-        state = _resolve_expansion_state(prim)
-        self.assertIn(state, ("closed", "minimized"))
-
-    def test_open_maps_to_expanded(self):
-        """Verify open is not treated as collapsed."""
-        prim = _mock_prim(expansion_state="open")
-
-        state = _resolve_expansion_state(prim)
-        self.assertNotIn(state, ("closed", "minimized"))
+    def test_missing_opinion_leaves_node_expanded(self):
+        for valid, authored in ((False, False), (True, False)):
+            with self.subTest(valid=valid, authored=authored):
+                node = SimpleNamespace(_title_collapsed=False, titleCollapsed=False)
+                with patch("UsdNoodles.nodeFactory.UsdUI.NodeGraphNodeAPI") as api:
+                    attr = api.return_value.GetExpansionStateAttr.return_value
+                    attr.IsValid.return_value = valid
+                    attr.HasAuthoredValue.return_value = authored
+                    NodeFactory._apply_expansion_state_from_prim(node, MagicMock())
+                self.assertFalse(node._title_collapsed)
+                self.assertFalse(node.titleCollapsed)
 
 
 @unittest.skipUnless(_has_node_model, "UsdNoodles.models is not importable")

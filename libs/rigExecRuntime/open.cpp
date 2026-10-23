@@ -12,7 +12,7 @@
 // reads the environment.
 // Cross-references that do not close are Open errors naming the table.
 #include "rigExecRuntime/runtime.h"
-#include "rigExecBinary/clothPlayback.h"
+#include "rigExecRuntime/moverCatalog.h"
 
 #include "rigExecRuntime/store.h"
 #include "rigExecRuntime/spaces.h"
@@ -721,24 +721,63 @@ RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
         !RrCompileOpGraph(&program, error)) {
         return fail(error ? *error : std::string("common graph initialization failed"));
     }
-    // The built-in movers the runtime plays itself, so a file plays with no
-    // host library; a host may still install its own kernel for the type.
-    // A revision whose compiled rig does not prepare passes its points through,
-    // and GetMissingExternalKernels names it.
-    for (const RrProgram::ExternalRevision &state : program.externals) {
-        if (state.type == RigExecClothMoverType) {
-            std::string ignored;
-            self->SetExternalKernel(RigExecClothMoverType,
-                                    RigExecClothPlaybackKernel(), &ignored);
-            break;
-        }
-    }
+    // Unavailable compiled data retains the existing missing-kernel behavior.
+    // Module declarations generate this catalog; the engine names no mover.
+    size_t moverCount = 0;
+    const auto *factories = RrBuiltinMovers(&moverCount);
+    std::vector<RigExecMoverDefinition> movers;
+    movers.reserve(moverCount);
+    for (size_t i = 0; i < moverCount; ++i) movers.push_back(factories[i]());
+    std::string registrationError;
+    self->InstallMoverDefinitions(movers.data(), movers.size(), &registrationError);
     // History ticks open their own program from these (ExecuteHistory).
     if (!program.windowedOps.empty()) {
         self->_historyBytes =
             std::make_shared<const std::vector<uint8_t>>(bytes, bytes + size);
     }
     return self;
+}
+
+std::unique_ptr<RigExecRuntimeReader>
+RigExecRuntimeReader::Open(const uint8_t *bytes, size_t size,
+    const RigExecMoverDefinition *movers, size_t moverCount, std::string *error)
+{
+    auto reader = Open(bytes, size, error);
+    if (reader && !reader->InstallMoverDefinitions(movers, moverCount, error))
+        return nullptr;
+    return reader;
+}
+
+bool
+RigExecRuntimeReader::InstallMoverDefinitions(const RigExecMoverDefinition *movers,
+    size_t count, std::string *error)
+{
+    const auto fail = [error](const std::string &why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (count && !movers) return fail("missing mover definitions");
+    std::set<std::string> names;
+    for (size_t i = 0; i < count; ++i) {
+        const auto &mover = movers[i];
+        if (!mover.schemaType || !*mover.schemaType || !mover.kernel.IsSet() ||
+            ((mover.kernel.captureWindow != nullptr) != (mover.kernel.applyWindow != nullptr)))
+            return fail("incomplete mover definition");
+        if (!names.insert(mover.schemaType).second)
+            return fail(std::string("duplicate mover definition: ") + mover.schemaType);
+    }
+    const auto required = GetExternalMoverTypes();
+    bool ok = true;
+    for (size_t i = 0; i < count; ++i) {
+        if (std::find(required.begin(), required.end(), movers[i].schemaType) == required.end())
+            continue;
+        std::string why;
+        if (!SetExternalKernel(movers[i].schemaType, movers[i].kernel, &why)) {
+            if (ok && error) *error = std::move(why);
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 std::vector<std::string>
@@ -777,8 +816,17 @@ RigExecRuntimeReader::SetExternalKernel(const std::string &type,
         const std::vector<uint8_t> &compiledRig =
             _program->file->externalMovers[k].epoch;
         std::string reason;
+        auto preparedState =
+            kernel.prepare(compiledRig.data(), compiledRig.size(), &reason);
         state.kernel = kernel;
-        state.state = kernel.prepare(compiledRig.data(), compiledRig.size(), &reason);
+        state.state = std::move(preparedState);
+        ++state.version;
+        // Captures are opaque to the host and belong to this registration.
+        for (const uint32_t w : state.windows) {
+            _program->store.windowCaptures[w].reset();
+            _program->store.windowRings[w].clear();
+            _program->store.windowRingChanged[w] = 1;
+        }
         if (!state.state) {
             state.kernel = RigExecExternalKernel();
             if (prepared) {
@@ -830,6 +878,24 @@ RigExecRuntimeReader::GetProviderFramePublications() const
         result.push_back(std::move(value));
     }
     return result;
+}
+
+bool
+RigExecRuntimeReader::GetProviderFinalFrame(
+    size_t slot, uint8_t *publicationRole, RrPointFrame *final) const
+{
+    if (!_program || !_program->slotMeta) return false;
+    const auto &meta = *_program->slotMeta;
+    if (slot >= meta.paths.size()) return false;
+    const auto &store = _program->store;
+    *publicationRole = meta.publicationRoles[slot];
+    *final = store.fin[store.finLast[slot]];
+    // The same control override GetProviderFramePublications applies.
+    if (*publicationRole & 2) {
+        const auto published = store.controlFrames.find(meta.paths[slot]);
+        if (published != store.controlFrames.end()) *final = published->second;
+    }
+    return true;
 }
 
 std::vector<RigExecRuntimeSolverFrames>

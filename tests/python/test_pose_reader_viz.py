@@ -59,10 +59,24 @@ def _Evaluate(stage):
     return rig
 
 
+def _Frames(pose):
+    """Adapt reference-evaluator frames to the publication reader contract."""
+    def read(path):
+        for get in (pose.joint_frame, pose.control_frame):
+            try:
+                frame = get(str(path))
+            except KeyError:
+                continue
+            if frame.valid and not frame.degenerate:
+                return Gf.Matrix4d(*frame.to_matrix4())
+        return None
+    return read
+
+
 def _Readers(stage, pose):
     interps = shapeEditorModel.Discover(stage)
     shapeEditorModel.ReadWeights(interps, pose)
-    return viz.Build(stage, interps, pose, Usd.TimeCode.Default(),
+    return viz.Build(stage, interps, _Frames(pose), Usd.TimeCode.Default(),
                      gizmoMath.RestSpace)
 
 
@@ -200,7 +214,7 @@ def TestQuaternionConvention():
     pose = rig.evaluate(0)
     interps = shapeEditorModel.Discover(stage, "/Asset/Rig")
     shapeEditorModel.ReadWeights(interps, pose)
-    readers = viz.Build(stage, interps, pose, Usd.TimeCode.Default(),
+    readers = viz.Build(stage, interps, _Frames(pose), Usd.TimeCode.Default(),
                         gizmoMath.RestSpace)
     _Check(len(readers) == 1 and readers[0].kind == "rotation",
            "the synthetic reader resolves as rotation")

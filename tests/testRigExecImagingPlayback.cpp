@@ -4,8 +4,8 @@
 // publish through a live RigExecImagingBridge and through a
 // RigExecBakedPlayback (which samples the stage's Animated inputs at each
 // time), and compare the two generations leaf by leaf -- points, normals,
-// extents and driven transforms, bitwise. An `inputs` row is compared at
-// every table frame and at the midpoint of each consecutive pair, times the
+// extents, driven transforms and provider frames, bitwise. An `inputs` row is
+// compared at every table frame and the midpoint of each consecutive pair, times the
 // file never held; a `static` row, whose binary holds an animated source as
 // static data, at the bake time alone. Guide payloads and movedFloats are
 // playback's two documented v1 gaps (see playback.h) and are not compared:
@@ -111,31 +111,74 @@ _SameMatrices(const GfMatrix4d &a, const GfMatrix4d &b)
     return true;
 }
 
-// Every geometry leaf the live generation owns, playback owns with the same
-// value -- and playback owns no geometry leaf the live one lacks. Guide-only
-// prims (joints drawn as skeletons, controls as shapes) exist only on the
-// live side and are skipped, not failed: guides are playback's documented
-// v1 gap.
+// Independent bytes detect writes through a retained publication's storage.
+static std::vector<unsigned char>
+_GeometryBytes(const RigExecImagingSnapshot &snapshot)
+{
+    std::vector<unsigned char> bytes;
+    const auto append = [&](const auto &array) {
+        const size_t count = array.size();
+        const auto *sizeBytes = reinterpret_cast<const unsigned char *>(&count);
+        bytes.insert(bytes.end(), sizeBytes, sizeBytes + sizeof(count));
+        if (array.empty()) return;
+        const auto *data = reinterpret_cast<const unsigned char *>(array.cdata());
+        bytes.insert(bytes.end(), data, data + count * sizeof(array[0]));
+    };
+    for (const auto &[path, prim] : snapshot.prims) {
+        append(prim.points);
+        append(prim.normals);
+        append(prim.weightOverlay);
+    }
+    return bytes;
+}
+
+static void
+_CheckSharedGeometry(const RigExecImagingSnapshot &before,
+                     const RigExecImagingSnapshot &after)
+{
+    CHECK(_GeometryBytes(before) == _GeometryBytes(after));
+    for (const auto &[path, prim] : before.prims) {
+        const auto found = after.prims.find(path);
+        CHECK(found != after.prims.end());
+        if (found == after.prims.end()) continue;
+        const auto &next = found->second;
+        if (!prim.points.empty()) CHECK(prim.points.cdata() == next.points.cdata());
+        if (!prim.normals.empty()) CHECK(prim.normals.cdata() == next.normals.cdata());
+        if (!prim.weightOverlay.empty())
+            CHECK(prim.weightOverlay.cdata() == next.weightOverlay.cdata());
+    }
+}
+
+// Geometry and provider frame publications agree in both directions.
+// Synthesized guide geometry remains specific to the live bridge.
 static void
 _CompareGenerations(const RigExecImagingSnapshot &live,
                     const RigExecImagingSnapshot &play,
                     const std::string &what)
 {
     for (const auto &[path, expected] : live.prims) {
-        const bool liveGeometry = expected.hasPoints ||
+        const bool liveOutput = expected.hasPoints ||
                                   expected.hasNormals ||
-                                  expected.hasExtent || expected.hasXform;
-        if (!liveGeometry) {
+                                  expected.hasExtent || expected.hasXform ||
+                                  expected.hasControlFrame;
+        if (!liveOutput) {
             continue;
         }
         const auto found = play.prims.find(path);
         if (found == play.prims.end()) {
-            std::printf("playback lacks live geometry prim %s [%s]\n",
+            std::printf("playback lacks live output prim %s [%s]\n",
                         path.GetString().c_str(), what.c_str());
             CHECK(found != play.prims.end());
             continue;
         }
         const RigExecPublishedPrim &got = found->second;
+        if (expected.hasControlFrame != got.hasControlFrame ||
+            (expected.hasControlFrame &&
+             !_SameMatrices(expected.controlFrame, got.controlFrame))) {
+            std::printf("provider frame differs on %s [%s]\n",
+                        path.GetString().c_str(), what.c_str());
+            CHECK(false);
+        }
         if (expected.hasPoints != got.hasPoints ||
             (expected.hasPoints &&
              !_SamePoints(expected.points, got.points))) {
@@ -175,16 +218,17 @@ _CompareGenerations(const RigExecImagingSnapshot &live,
         }
     }
     for (const auto &[path, got] : play.prims) {
-        const bool playGeometry = got.hasPoints || got.hasNormals ||
-                                  got.hasExtent || got.hasXform;
-        if (!playGeometry) {
+        const bool playOutput = got.hasPoints || got.hasNormals ||
+                                  got.hasExtent || got.hasXform || got.hasControlFrame;
+        if (!playOutput) {
             continue;
         }
         const auto found = live.prims.find(path);
         if (found == live.prims.end() ||
             (!found->second.hasPoints && !found->second.hasNormals &&
-             !found->second.hasExtent && !found->second.hasXform)) {
-            std::printf("playback owns geometry %s the live path lacks "
+             !found->second.hasExtent && !found->second.hasXform &&
+             !found->second.hasControlFrame)) {
+            std::printf("playback owns output %s the live path lacks "
                         "[%s]\n",
                         path.GetString().c_str(), what.c_str());
             CHECK(false);
@@ -309,6 +353,8 @@ _TestFixture(const std::string &stagePath, const std::string &frameText,
         live.SetWeightOverlay(SdfPath(operatorPrim));
         play.SetWeightOverlay(SdfPath(operatorPrim));
     }
+    RigExecImagingSnapshotConstPtr retained;
+    std::vector<unsigned char> retainedBytes;
     for (double frame : times) {
         const UsdTimeCode time(frame);
         const RigExecImagingBridge::PublishResult liveResult =
@@ -331,7 +377,26 @@ _TestFixture(const std::string &stagePath, const std::string &frameText,
         CHECK(b->Describes(UsdStageWeakPtr(stage), time));
         _CompareGenerations(*a, *b,
                             stagePath + " frame " + std::to_string(frame));
+        if (!retained) {
+            retained = b;
+            retainedBytes = _GeometryBytes(*b);
+            const auto repeated = play.EvaluateAndPublishResult(time);
+            CHECK(repeated.ok && repeated.dirtied.empty());
+            const auto next = playStore->Get();
+            CHECK(next);
+            if (next) _CheckSharedGeometry(*b, *next);
+        }
         ++comparedTimes;
+    }
+    if (retained) {
+        CHECK(_GeometryBytes(*retained) == retainedBytes);
+        // Reopening resets conversion identities without invalidating an
+        // older snapshot still held by Hydra.
+        CHECK(play.Open(binary, &error));
+        CHECK(play.EvaluateAndPublishResult(UsdTimeCode(times.front())).ok);
+        const auto reopened = playStore->Get();
+        CHECK(reopened && _GeometryBytes(*reopened) == retainedBytes);
+        CHECK(_GeometryBytes(*retained) == retainedBytes);
     }
     std::printf("  %s: %zu time(s) compared, baked at %g (%s)\n",
                 stagePath.c_str(), times.size(), frames.front(),

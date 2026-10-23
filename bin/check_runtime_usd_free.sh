@@ -5,6 +5,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD="${1:-$ROOT/build}"
+if [[ ! -f "$BUILD/runtimeSources.txt" || ! -f "$BUILD/runtimeIncludes.txt" ]]; then
+    echo "configure and build rigExecRuntime first (missing source manifest in $BUILD)" >&2
+    exit 1
+fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -18,11 +23,19 @@ CFLAGS=(
     -std=c11 -O2 -DZ7_ST -DRIGEXEC_LZMA_PORTABLE_SCALAR
     -I "$ROOT/thirdparty/lzma/C"
 )
+while IFS= read -r include_dir; do
+    include_dir="${include_dir%$'\r'}"
+    if [[ -d "$include_dir/pxr" ]]; then
+        echo "runtime include directories expose OpenUSD: $include_dir" >&2
+        exit 1
+    fi
+    [[ -z "$include_dir" ]] || CXXFLAGS+=(-I "$include_dir")
+done < "$BUILD/runtimeIncludes.txt"
 
 objs=()
 compile_one() {
     local src="$1"
-    local obj="$WORK/$(basename "${src%.*}").o"
+    local obj="$WORK/${#objs[@]}_$(basename "${src%.*}").o"
     if [[ "$src" == *.c ]]; then
         gcc "${CFLAGS[@]}" -c "$src" -o "$obj"
     else
@@ -31,24 +44,15 @@ compile_one() {
     objs+=("$obj")
 }
 
-sources=(
-    "$ROOT/libs/rigExecRuntime/open.cpp"
-    "$ROOT/libs/rigExecRuntime/exec.cpp"
-    "$ROOT/libs/rigExecRuntime/closure.cpp"
-    "$ROOT/libs/rigExecRuntime/publish.cpp"
-    "$ROOT/libs/rigExecRuntime/kernels.cpp"
-    "$ROOT/libs/rigExecRuntime/pose.cpp"
-    "$ROOT/libs/rigExecRuntime/poseConstraints.cpp"
-    "$ROOT/libs/rigExecRuntime/poseInterpolation.cpp"
-    "$ROOT/libs/rigExecRuntime/poseMath.cpp"
-    "$ROOT/libs/rigExecRuntime/poseSolvers.cpp"
-    "$ROOT/libs/rigExecRuntime/poseSteps.cpp"
-    "$ROOT/libs/rigExecRuntime/geometry.cpp"
-    "$ROOT/libs/rigExecRuntime/weights.cpp"
-    "$ROOT/libs/rigExecRuntime/inputs.cpp"
-    "$ROOT/libs/rigExecRuntime/labels.cpp"
-    "$ROOT/libs/rigExecRuntime/properties.cpp"
-    "$ROOT/libs/rigExecRuntime/spaces.cpp"
+sources=()
+while IFS= read -r src; do
+    src="${src%$'\r'}"
+    [[ -z "$src" ]] && continue
+    [[ "$src" = *.cpp || "$src" = *.c ]] || continue
+    [[ "$src" = /* ]] || src="$ROOT/$src"
+    sources+=("$src")
+done < "$BUILD/runtimeSources.txt"
+sources+=(
     "$ROOT/libs/rigExecGraph/opGraph.cpp"
     "$ROOT/libs/rigExecBinary/format.cpp"
     "$ROOT/libs/rigExecBinary/transport.cpp"

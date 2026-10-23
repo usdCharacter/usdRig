@@ -479,7 +479,7 @@ RunFrozenLegs(const std::string &what, const RigExecRigEvaluator &evaluator,
     if (!standingSnapshot) {
         return;
     }
-    CHECK(!standingSnapshot->program.lastUpstream.empty());
+    CHECK(!standingSnapshot->program->lastUpstream.empty());
     const FrozenJob again = RunJob(evaluator, standingSnapshot, time, inputs,
                                    what + ": standing");
     CheckSamePose(what + ": frozen, standing", standing, again.pose);
@@ -795,7 +795,7 @@ TestALiftReachesAnOlderSnapshot()
         if (!standing) {
             continue;
         }
-        CHECK(!standing->program.lastUpstream.empty());
+        CHECK(!standing->program->lastUpstream.empty());
         // The value stands at the warmed frame too.
         const FrozenJob held =
             RunJob(*evaluator, standing, warmedAt, {lift.input},
@@ -1049,7 +1049,7 @@ TestAStandingValueCostsNothing()
     const auto snapshot = Freeze(*evaluator, "D2 standing snapshot");
     CHECK(snapshot);
     if (!snapshot) return;
-    const auto snapshotUpstream = snapshot->program.lastUpstream;
+    const auto snapshotUpstream = snapshot->program->lastUpstream;
 
     evaluator->SetUpstreamInputs(inputs);
     CheckSamePose("D2 repeated live standing", standing,
@@ -1064,14 +1064,14 @@ TestAStandingValueCostsNothing()
         CheckSamePose("D2 frozen standing", standing, held.pose);
         const auto heldWork = work(held.report.region);
         CHECK(heldWork.first == 0 && heldWork.second == 0);
-        CHECK(snapshot->program.lastUpstream == snapshotUpstream);
+        CHECK(snapshot->program->lastUpstream == snapshotUpstream);
     }
     const auto lifted = RunJob(*evaluator, snapshot, time, {},
                               "D2 frozen lift");
     CHECK(lifted.report.ran && lifted.pose.valid);
     CheckSamePose("D2 frozen lift", authored, lifted.pose);
     CHECK(work(lifted.report.region).second > 0);
-    CHECK(snapshot->program.lastUpstream == snapshotUpstream);
+    CHECK(snapshot->program->lastUpstream == snapshotUpstream);
     evaluator->SetUpstreamInputs({});
     CheckSamePose("D2 live lift", authored, evaluator->Evaluate(time));
     CHECK(work(evaluator->GetLastOpTrace()).second > 0);
@@ -2299,6 +2299,83 @@ TestAPlaybackTokenKey()
     }
 }
 
+// Static SourceBacked inputs are sampled on refresh even though the binary
+// does not mark them Animated. Standing values survive those samples; lifting
+// one restores the current stage value, including edits made after the bake.
+void
+TestAStaticPlaybackKey()
+{
+    const SdfPath path("/LimbsAsset/Rig/Controls/A0.rest:rx");
+    const auto stage = OpenAuthored(Fixture("upstream_inputs.usda"), {});
+    if (!stage) return;
+    const UsdAttribute attribute = stage->GetAttributeAtPath(path);
+    CHECK(attribute);
+    if (!attribute) return;
+    auto evaluator = Make(stage, kLimbsRig);
+    RigExecBakedPlayback play(stage, kLimbsRig,
+                              std::make_shared<RigExecSnapshotStore>());
+    std::string error;
+    CHECK(play.Open(WriteBake(*evaluator, 1, "static_playback_key"), &error));
+    const auto *reader = play.GetReaderForTesting();
+    CHECK(reader);
+    if (!reader) return;
+    size_t index = 0;
+    const bool listed = reader->FindInput(path.GetString(), &index);
+    CHECK(listed);
+    if (!listed) return;
+    CHECK(!reader->GetInputInfo(index).animated);
+    CHECK(RigExecRuntimeStageArrayInputs::CanSampleProviderValue(*reader, index));
+    const auto setUpstream = [&](bool standing) {
+        const auto values = standing
+            ? std::vector<RigExecValueOverride>{Up(path, VtValue(13.0))}
+            : std::vector<RigExecValueOverride>{};
+        evaluator->SetUpstreamInputs(values);
+        play.SetUpstreamInputs(UpstreamList(values));
+    };
+    const auto check = [&](UsdTimeCode time, double value) {
+        CHECK(play.EvaluateAndPublishResult(time).ok);
+        CHECK(reader->GetInputValue(index).f64 == value);
+        CHECK(play.GetUpstreamDropLines().empty());
+        CheckSameRun("static playback key", evaluator->Evaluate(time), reader);
+    };
+    const auto edit = [&](double value, UsdTimeCode time) {
+        UsdEditContext context(stage, stage->GetSessionLayer());
+        CHECK(attribute.Set(value, time));
+        play.NoteStageChanged();
+    };
+
+    setUpstream(true);
+    for (double frame : {1.0, 2.0, 3.0}) {
+        check(UsdTimeCode(frame), 13.0);
+    }
+    check(UsdTimeCode(3), 13.0);
+    CHECK(reader->GetCounters().executedOpCount == 0);
+
+    edit(6.0, UsdTimeCode::Default());
+    check(UsdTimeCode(4), 13.0);
+    edit(7.0, UsdTimeCode::Default());
+    setUpstream(false);
+    check(UsdTimeCode(4), 7.0);
+    setUpstream(true);
+    check(UsdTimeCode(4), 13.0);
+    setUpstream(false);
+    check(UsdTimeCode(5), 7.0);
+
+    // A static slot can acquire stage animation without changing the file.
+    setUpstream(true);
+    edit(8.0, UsdTimeCode(6));
+    edit(9.0, UsdTimeCode(7));
+    check(UsdTimeCode(6), 13.0);
+    check(UsdTimeCode(7), 13.0);
+    setUpstream(false);
+    check(UsdTimeCode(7), 9.0);
+    setUpstream(true);
+    check(UsdTimeCode::Default(), 13.0);
+    check(UsdTimeCode(7), 13.0);
+    setUpstream(false);
+    check(UsdTimeCode::Default(), 7.0);
+}
+
 // Double arrays currently have a real Default-only leaf: wire knots.
 // Numeric animation marks its slot Animated but must not make it sampled.
 void
@@ -2941,6 +3018,7 @@ main(int argc, char **argv)
         TestTheBakeGuard();
         TestPlaybackParity();
         TestAPlaybackTokenKey();
+        TestAStaticPlaybackKey();
         TestAnOracleBakeListsTheAttribute();
         TestStandingBakes();
         // Structural painted arrays, followed by admitted array paths.

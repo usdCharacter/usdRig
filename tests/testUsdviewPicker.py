@@ -295,6 +295,22 @@ def testUsdviewInputFunction(appController):
            Sdf.Path(arm.attr_target["path"]).AppendProperty(
                arm.attr_target["attr"]),
            "the L_Arm button drives a limb ikfkMatch found")
+
+    def RefreshPickerHandles():
+        # Undo can remove session ancestor specs and resync the whole picker.
+        # Assert against the current UI records after that rebuild.
+        nonlocal picker, body, view, switches, arm
+        picker = next(p for p in panel.Pickers() if p.path == picker.path)
+        body = next(p for p in picker.panels if p.id == body.id)
+        view = next(v for v in panel._views if v._panel.id == body.id)
+        switches = [b for b in picker.buttons if b.attr_target and
+                    b.attr_target["attr"] == "avars:ikfk"]
+        arm = next(b for b in switches if b.id == arm.id and b.parent == arm.parent)
+
+    def CurrentButton(button):
+        return next(b for b in picker.buttons
+                    if b.id == button.id and b.parent == button.parent)
+
     pose = {limb.switchPath: limb.fkValue,
             limb.fkControls[0].AppendProperty("avars:rz"): -30.0,
             limb.fkControls[0].AppendProperty("avars:rx"): 20.0,
@@ -337,6 +353,7 @@ def testUsdviewInputFunction(appController):
     if switchUndo is not None and switchUndo.CanUndo():
         switchUndo.Undo()
         appController._processEvents()
+        RefreshPickerHandles()
         _Check(float(switchAttr.Get(frame)) == limb.fkValue and
                Read(ikChannels) == channelsBefore,
                "one undo restored the switch and every matched channel")
@@ -385,6 +402,7 @@ def testUsdviewInputFunction(appController):
     if switchUndo is not None and switchUndo.CanUndo():
         switchUndo.Undo()
         appController._processEvents()
+        RefreshPickerHandles()
         _Check(float(rightSwitch.Get(frame)) == right.fkValue,
                "undo put R_Arm back in FK")
 
@@ -403,6 +421,7 @@ def testUsdviewInputFunction(appController):
     api.ClearPrimSelection()
     api.AddPrimToSelection(stage.GetPrimAtPath(limb.ikControl))
     appController._processEvents()
+    RefreshPickerHandles()
     _Check(float(switchAttr.Get(frame)) == limb.ikValue,
            "selecting L_ArmIK put L_Arm in IK, got %g"
            % float(switchAttr.Get(frame)))
@@ -425,6 +444,7 @@ def testUsdviewInputFunction(appController):
            "grabbing L_ArmIK, now driving, switches nothing")
     _Check(gizmo.undoStack.Undo(), "the select switch is one undo entry")
     appController._processEvents()
+    RefreshPickerHandles()
     _Check(float(switchAttr.Get(frame)) == limb.fkValue and
            view._modes.get(armDial) == "fk" and arm.value == "FK",
            "undo put L_Arm back in FK, in the picker too: %g %r %r"
@@ -456,8 +476,9 @@ def testUsdviewInputFunction(appController):
     _Check(not still,
            "deactivating the control removed its button: %s" % victim.id)
     stage.GetSessionLayer().Clear()
+    RefreshPickerHandles()
 
-    modes = panel._RefreshModes() or {}
+    modes = panel.Modes()
     _Check(modes, "the panel read the limb dials, got %s" % modes)
     with_modes = picker.visible(body.id, modes=modes)
     _Check(len(with_modes) < len(drawn),
@@ -496,56 +517,69 @@ def testUsdviewInputFunction(appController):
     knob = next(b for b in picker.buttons if b.attr_target
                 and dial.startswith(b.attr_target["path"] + "."))
     label = knob.value
-    attr.Set(1.0 if was == "fk" else 0.0)
+    dial_time = panel._Frame()
+    requested = 1.0 if was == "fk" else 0.0
+    gizmoMath.SetAnimated(attr, requested, dial_time)
     appController._processEvents()
-    _Check(view._modes.get(dial) != was,
-           "an outside edit to %s reached the picker: still %r"
-           % (dial, view._modes.get(dial)))
+    RefreshPickerHandles()
+    knob = CurrentButton(knob)
+    _Check(float(attr.Get(dial_time)) == requested and
+           panel.Modes().get(dial) != was and view._modes.get(dial) != was,
+           "outside edit to %s at %s: composed %r, panel %r, view %r"
+           % (dial, dial_time, attr.Get(dial_time),
+              panel.Modes().get(dial), view._modes.get(dial)))
     # The label is BAKED at export, so it has to be read back off the
     # attribute too or the panel contradicts the half it is drawing.
     _Check(knob.value != label,
            "and the switch label followed the rig: %r -> %r"
            % (label, knob.value))
-    attr.Set(0.0 if was == "fk" else 1.0)
+    requested = 0.0 if was == "fk" else 1.0
+    gizmoMath.SetAnimated(attr, requested, dial_time)
     appController._processEvents()
-    _Check(view._modes.get(dial) == was and knob.value == label,
-           "and back again: %r / %r" % (view._modes.get(dial), knob.value))
+    RefreshPickerHandles()
+    knob = CurrentButton(knob)
+    _Check(float(attr.Get(dial_time)) == requested and
+           panel.Modes().get(dial) == was and
+           view._modes.get(dial) == was and knob.value == label,
+           "restored outside edit: composed %r, panel %r, view %r, label %r"
+           % (attr.Get(dial_time), panel.Modes().get(dial),
+              view._modes.get(dial), knob.value))
 
     # --- 7b. Ctrl Vis: hide and show the rig's controls ----------------
     vis = next((b for b in picker.buttons if b.command == "ctrl_vis"), None)
     _Check(vis is not None, "the picker has a Ctrl Vis button")
     _Check(vis.live and not vis.decoration and vis.checkbox,
            "and it is a live, clickable checkbox")
-    controls = panel._ControlsPrim(picker)
-    _Check(controls is not None and controls.GetParent().GetName() == "Aux",
-           "it finds the Controls prim under Aux: %s"
-           % (controls.GetPath() if controls else None))
+    controls = panel._ControlPrims(picker)
+    _Check(controls and all(p.IsA(pickerScene.CONTROL_TYPE) for p in controls),
+           "it collects the rig's actual controls by schema: %d" % len(controls))
     _Check(vis.checked, "ticked while the controls are visible")
     # What Hydra draws, not only what the stage says: hiding the controls
     # changes no rig output, so nothing republishes, and the guides follow
     # their controls' visibility through the scene index alone.
-    hand = next(p for p in Usd.PrimRange(controls)
-                if p.GetName() == "L_Hand" and
-                p.GetTypeName() == "RigExecControl")
+    hand = next(p for p in controls if p.GetName() == "L_Hand")
     _Check(_GuideDrawnVisible(hand.GetPath()) is True,
            "L_Hand's guide is drawn visible before the click, got %r"
            % _GuideDrawnVisible(hand.GetPath()))
     view.picked.emit([vis], "replace")
     appController._processEvents()
-    imageable = UsdGeom.Imageable(controls)
-    _Check(imageable.ComputeVisibility() == UsdGeom.Tokens.invisible,
-           "a click hides the controls")
+    RefreshPickerHandles()
+    vis = CurrentButton(vis)
+    imageable = UsdGeom.Imageable(hand)
+    _Check(all(UsdGeom.Imageable(p).ComputeVisibility(panel._Frame()) == UsdGeom.Tokens.invisible
+               for p in controls), "a click hides every control")
     _Check(_GuideDrawnVisible(hand.GetPath()) is False,
            "and Hydra draws L_Hand's guide hidden, got %r"
            % _GuideDrawnVisible(hand.GetPath()))
-    session = stage.GetSessionLayer().GetPropertyAtPath(
-        controls.GetPath().AppendProperty("visibility"))
-    _Check(session is not None,
-           "with an opinion in the session layer, not the rig's files")
+    _Check(all(stage.GetSessionLayer().GetPropertyAtPath(
+               p.GetPath().AppendProperty("visibility")) for p in controls),
+           "with opinions on controls in the session layer, not the rig's files")
     _Check(not vis.checked, "and the tick clears")
     view.picked.emit([vis], "replace")
     appController._processEvents()
-    _Check(imageable.ComputeVisibility() != UsdGeom.Tokens.invisible,
+    RefreshPickerHandles()
+    vis = CurrentButton(vis)
+    _Check(pickerScene.controls_visible(controls, panel._Frame()),
            "a second click shows them again")
     _Check(_GuideDrawnVisible(hand.GetPath()) is True,
            "and Hydra draws L_Hand's guide again, got %r"
@@ -555,10 +589,14 @@ def testUsdviewInputFunction(appController):
     with Usd.EditContext(stage, stage.GetSessionLayer()):
         imageable.GetVisibilityAttr().Set(UsdGeom.Tokens.invisible)
     appController._processEvents()
+    RefreshPickerHandles()
+    vis = CurrentButton(vis)
     _Check(not vis.checked, "the tick follows a hide made elsewhere")
     with Usd.EditContext(stage, stage.GetSessionLayer()):
         imageable.GetVisibilityAttr().Clear()
     appController._processEvents()
+    RefreshPickerHandles()
+    vis = CurrentButton(vis)
     _Check(vis.checked, "and a show made elsewhere")
 
     # --- 7c. Space buttons switch without moving the control ----------
@@ -575,24 +613,28 @@ def testUsdviewInputFunction(appController):
            % space_button.attr_target.get("enum"))
     posed = {ct + ".avars:rz": -30.0, swing + ".avars:ry": 15.0,
              swing + ".avars:space": 0.0}
+    now = panel._Frame()
     for path, value in posed.items():
         attr = stage.GetAttributeAtPath(path)
         if not attr:
             prim = stage.GetPrimAtPath(Sdf.Path(path).GetPrimPath())
             attr = prim.CreateAttribute(Sdf.Path(path).name,
                                         Sdf.ValueTypeNames.Double)
-        attr.Set(value)
+        gizmoMath.SetAnimated(attr, value, now)
     appController._processEvents()
+    RefreshPickerHandles()
+    space_button = CurrentButton(space_button)
     evaluate = ikfkMatch.Evaluator(stage, Sdf.Path("/Biped/Rig"))
     # The panel writes the way a drag does -- keyed at its frame in
     # animation mode -- so everything is read at that frame.
-    now = panel._Frame()
     before = ikfkMatch.ControlFrame(evaluate({}, now), Sdf.Path(swing))
     panel._WriteSwitch(space_button, "world")
     _Check(space_button.value == "world",
            "the button reads world before the commit lands, got %r"
            % space_button.value)
     appController._processEvents()
+    RefreshPickerHandles()
+    space_button = CurrentButton(space_button)
     _Check(space_button.value == "world",
            "the button still reads world after the commit, got %r"
            % space_button.value)
@@ -608,6 +650,7 @@ def testUsdviewInputFunction(appController):
     if undo is not None and undo.CanUndo():
         undo.Undo()
         appController._processEvents()
+        RefreshPickerHandles()
         _Check(stage.GetAttributeAtPath(swing + ".avars:space").Get(now) == 0.0
                and abs(stage.GetAttributeAtPath(swing + ".avars:ry").Get(now)
                        - 15.0) < 1e-9,
@@ -615,6 +658,7 @@ def testUsdviewInputFunction(appController):
     for path in posed:
         stage.GetAttributeAtPath(path).Clear()
     appController._processEvents()
+    RefreshPickerHandles()
 
     # --- 8. Zero Ctrls -------------------------------------------------
     zero = next((b for b in picker.buttons if b.command == "zero_ctrls"),
@@ -638,10 +682,14 @@ def testUsdviewInputFunction(appController):
             attr = prim.CreateAttribute("avars:tx", Sdf.ValueTypeNames.Double)
         attr.Set(4.0)
     appController._processEvents()
+    RefreshPickerHandles()
+    zero = CurrentButton(zero)
 
     selection.clearPrims()
     selection.setPrim(stage.GetPrimAtPath(a_path))
     appController._processEvents()
+    RefreshPickerHandles()
+    zero = CurrentButton(zero)
     view.picked.emit([zero], "replace")
     appController._processEvents()
 
@@ -671,6 +719,8 @@ def testUsdviewInputFunction(appController):
            % (a_attr.Get() if a_attr.HasAuthoredValue() else "nothing"))
     undo.Redo()
     appController._processEvents()
+    RefreshPickerHandles()
+    zero = next(b for b in picker.buttons if b.command == "zero_ctrls")
     _Check(not stage.GetPrimAtPath(a_path)
            .GetAttribute("avars:tx").HasAuthoredValue(),
            "redo zeroed it again")
@@ -678,6 +728,8 @@ def testUsdviewInputFunction(appController):
     # Nothing selected -> everything.
     selection.clearPrims()
     appController._processEvents()
+    RefreshPickerHandles()
+    zero = CurrentButton(zero)
     view.picked.emit([zero], "replace")
     appController._processEvents()
     _Check(not b_attr.HasAuthoredValue(),
@@ -686,6 +738,7 @@ def testUsdviewInputFunction(appController):
     _Check(undo.CanUndo(), "zeroing the whole rig pushed an undo entry too")
     undo.Undo()
     appController._processEvents()
+    RefreshPickerHandles()
     b_attr = stage.GetPrimAtPath(b_path).GetAttribute("avars:tx")
     _Check(b_attr.HasAuthoredValue() and float(b_attr.Get()) == 4.0,
            "the whole-rig zero came back in one step, got %s"

@@ -23,6 +23,7 @@
 #define RIGEXEC_RUNTIME_H
 
 #include "rigExecBinary/external.h"
+#include "rigExecBinary/moverDefinition.h"
 #include "rigExecRuntime/runtimeMath.h"
 #include "rigExecRuntime/values.h"
 
@@ -199,6 +200,15 @@ public:
     static std::unique_ptr<RigExecRuntimeReader> Open(
         const uint8_t *bytes, size_t size, std::string *error);
 
+    // Bind a host's USD-free modules at Open. Unused definitions are allowed;
+    // duplicate names, incomplete callbacks and failed preparation are errors.
+    // Module code must stay loaded for the reader's lifetime.
+    static std::unique_ptr<RigExecRuntimeReader> Open(
+        const uint8_t *bytes, size_t size, const RigExecMoverDefinition *movers,
+        size_t moverCount, std::string *error);
+    bool InstallMoverDefinitions(const RigExecMoverDefinition *movers,
+        size_t moverCount, std::string *error);
+
     // The inputs: every attribute a read of the rig walks, sorted by path.
     size_t GetInputCount() const;
     // Input \p index's name, type, animation flag and bake-time default
@@ -331,6 +341,9 @@ public:
     // Every plugin mover type the file holds, sorted, each once.
     std::vector<std::string> GetExternalMoverTypes() const;
     // Installs \p kernel for \p type and prepares each of its revisions.
+    // Installation or replacement takes effect on the next Execute, including
+    // when no input values changed. Only dependent operations are invalidated.
+    // A replaced revision's own history packets are cleared.
     // False with the reason when the file holds no such type or a
     // revision's compiled data bytes do not prepare; those revisions keep passing
     // their points through.
@@ -487,6 +500,11 @@ public:
     const std::vector<RrPointFrame> &GetFinFrames() const;
     const std::vector<RrPointFrame> &GetBaseFrames() const;
     std::vector<RigExecRuntimeProviderFrames> GetProviderFramePublications() const;
+    // One slot of that list without building it: the publication role and
+    // the final frame it reports. Slots are fixed per file; false when
+    // \p slot is out of range.
+    bool GetProviderFinalFrame(size_t slot, uint8_t *publicationRole,
+                               RrPointFrame *final) const;
     // Empty when solver guides were disabled in the captured export context.
     std::vector<RigExecRuntimeSolverFrames> GetSolverFramePublications() const;
     const std::vector<RrMat4d> &GetFinalMatrices() const;

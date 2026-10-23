@@ -5,6 +5,7 @@
 #include "rigEvaluatorPropertyBindings.h"
 #include "parallel.h"
 #include "goldenSuite.h"
+#include "oracleDispatch.h"
 #include "inputReplay.h"
 
 #include "pxr/base/work/detachedTask.h"
@@ -252,6 +253,13 @@ RigExecRigEvaluator::_EvaluateGeneration(UsdTimeCode time)
     RIGEXEC_PROFILE_SCOPE_CAT(_profiler,time.IsDefault()?std::string("Evaluate@default"):
         "Evaluate@"+TfStringPrintf("%g",time.GetValue()),"evaluate");
     RigExecRigPose pose;pose.time=time;
+    if (cpuReference) {
+        std::string error;
+        if (!RigExecOracleAvailable(&error)) {
+            pose.diagnostics.push_back(std::move(error));
+            return pose;
+        }
+    }
     // Preserve the observable rest-classification transition at this owner
     // boundary. The standing program supplies the compiled rig's chain authority;
     // the existing rebuild below remains the sole binding rebuild.

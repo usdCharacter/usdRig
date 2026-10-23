@@ -19,19 +19,21 @@ binaries (see testUsdNoodlesNodeFactoryIcon.py for the same pattern).
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+
+from UsdNoodles.nodeFactory import NodeFactory
 
 _DISPLAY_COLOR_ATTR_NAME = "ui:nodegraph:node:displayColor"
 
 
 def _resolve_display_color(prim):
-    """Extract display color, mirroring NodeFactory logic."""
-    color_attr = prim.GetAttribute(_DISPLAY_COLOR_ATTR_NAME)
-    if color_attr.IsValid() and color_attr.HasAuthoredValue():
-        color = color_attr.Get()
-        if color is not None:
-            return (color[0], color[1], color[2])
-    return None
+    node = SimpleNamespace(_display_color=None)
+    with patch("UsdNoodles.nodeFactory.UsdUI.NodeGraphNodeAPI") as api:
+        api.return_value.GetDisplayColorAttr.return_value = prim.GetAttribute(
+            _DISPLAY_COLOR_ATTR_NAME)
+        NodeFactory._apply_display_color_from_prim(node, prim)
+    return node._display_color
 
 
 def _mock_prim(color=None, authored=True, has_attr=True):

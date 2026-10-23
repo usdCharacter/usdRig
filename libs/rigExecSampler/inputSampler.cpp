@@ -346,9 +346,11 @@ RigExecInputSampler::Bind(const UsdStagePtr &stage,
                           std::string *error)
 {
     _animated.clear();
+    _inputStates.clear();
     _animatedCount = 0;
     _warnings.clear();
     _sampled = false;
+    _lastApplySampled = false;
     _staticStale = true;
     _lastReads = 0;
     if (!stage) {
@@ -434,6 +436,10 @@ RigExecInputSampler::Bind(const UsdStagePtr &stage,
     }
     for (_Bound &bound : _animated) {
         bound.isStatic = _StaticInput(bound.animated, bound.attribute);
+        if (_inputStates.size() <= bound.index) {
+            _inputStates.resize(bound.index + 1);
+        }
+        _inputStates[bound.index].bound = true;
     }
     _last = UsdTimeCode(reader.GetBakeTime());
     _sampled = true;
@@ -444,11 +450,15 @@ bool
 RigExecInputSampler::Apply(UsdTimeCode time, RigExecRuntimeReader *reader,
                            std::string *error, bool *sampled)
 {
+    _lastApplySampled = false;
     if (sampled) {
         *sampled = false;
     }
     if (_sampled && time == _last) {
         return true;
+    }
+    for (const _Bound &bound : _animated) {
+        _inputStates[bound.index].sampled = false;
     }
     // A refresh reads every input and re-decides which are static: keys
     // authored since the last one make an input varying, removed keys make
@@ -464,17 +474,21 @@ RigExecInputSampler::Apply(UsdTimeCode time, RigExecRuntimeReader *reader,
     const bool skipStatic = _staticSkip && !refresh;
     _lastReads = 0;
     for (const _Bound &bound : _animated) {
-        // A skipped input holds what the last refresh read, the stage's
-        // value at every numeric time; a caller that writes such an input
-        // itself calls NoteStageChanged so the next Apply reads it again.
+        // Static sources retain their last sample until a refresh. Callers
+        // layering values over them use DidSampleInput to detect replacement.
         if (skipStatic && bound.isStatic) {
             continue;
         }
         ++_lastReads;
         if (!RigExecSampleInputAt(bound.attribute, bound.index, bound.name,
                                   bound.type, time, reader, error)) {
+            // Earlier slots may already have replaced their caller's values.
+            // A retry must resample all slots, even at the last good time.
+            Invalidate();
             return false;
         }
+        _inputStates[bound.index].sampled = true;
+        _lastApplySampled = true;
     }
     reader->TouchAnimatedInputs();
     _last = time;

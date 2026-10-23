@@ -5,8 +5,7 @@
 # an entire rig on a pxr.Usd.Stage and evaluate it in-process -- the same way
 # other OpenUSD python bindings are used. The pxr modules of this USD build
 # are Boost.Python; _rigexec is pybind11. Both coexist because they load the
-# SAME USD shared libraries (Windows DLL caching), and a pxr object's C++
-# owner is recovered through its "refptr" capsule -- see _rigexec.cpp.
+# SAME USD shared libraries and USD's registered Python converters.
 
 find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
 
@@ -35,7 +34,7 @@ target_link_libraries(_rigexec PRIVATE
     rigExecScene
     rigExecOracle
     rigExecGpu
-    usd sdf tf gf vt)
+    usd sdf tf gf vt python)
 
 # The installed extension lands in lib/python while rigExec/rigExecRigging land
 # in lib, so the loader-relative rpath inherited from CMAKE_INSTALL_RPATH

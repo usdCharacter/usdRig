@@ -84,8 +84,8 @@ struct RigExecExternalProviders {
 
 /// A plugin mover's playback kernel.
 struct RigExecExternalKernel {
-    /// Decodes one revision's compiled data bytes into immutable state, once per
-    /// opened file. Null, with a reason, when the bytes are not ones this
+    /// Decodes one revision's compiled data bytes into immutable state on each
+    /// kernel registration. Null, with a reason, when the bytes are not ones this
     /// kernel can read; the revision then passes its points through.
     std::shared_ptr<const void> (*prepare)(
         const uint8_t *compiledRig, size_t compiledRigSize, std::string *error) = nullptr;

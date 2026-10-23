@@ -1,6 +1,6 @@
 // Function pointers the test oracle library installs. Evaluator translation
-// units call the public functions below; those forward here. A missing hook
-// aborts, so a cpu-reference or golden run cannot succeed without the library.
+// units call the public functions below; those forward here. Missing hooks
+// fail through an error result, or throw when an API has no error channel.
 #ifndef RIGEXEC_ORACLE_DISPATCH_H
 #define RIGEXEC_ORACLE_DISPATCH_H
 
@@ -40,7 +40,9 @@ struct RigExecOracleHooks {
     bool (*compareGolden)(const std::string &, const std::string &, std::string *) = nullptr;
 };
 
-void RigExecInstallOracleHooks(const RigExecOracleHooks &hooks);
+// Publish a complete immutable table; it and its library live for the process lifetime.
+void RigExecInstallOracleHooks(const RigExecOracleHooks *hooks);
+bool RigExecOracleAvailable(std::string *error = nullptr);
 const RigExecOracleHooks &RigExecOracleInstalledHooks();
 [[noreturn]] void RigExecOracleMissing(const char *feature);
 

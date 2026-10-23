@@ -1,12 +1,7 @@
 // _rigexec: native Python bindings for the RigExec rigging API (spec §4)
 // and the staged rig evaluator.
-// Interop note: this OpenUSD build's pxr modules are Boost.Python, while
-// this module is pybind11. Both coexist in one interpreter because they load
-// the SAME USD shared libraries through Windows DLL caching. A pxr object
-// (e.g. a Usd.Stage) carries its C++ owner as a capsule named "refptr" under
-// the instance attribute "__owner" (pxr/base/tf/pyIdentity.h: PyCapsule_New(
-// new TfRefPtr<T>(ptr), "refptr", dtor)). _ExtractStage recovers the stage
-// through that capsule and copies the refcounted pointer properly.
+// OpenUSD's Python converter preserves stage identity whether Python or a
+// native stage cache owns it. This module exposes its own API with pybind11.
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -23,6 +18,7 @@
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
+#include "pxr/external/boost/python/extract.hpp"
 
 #include "rigExec/rigEvaluator.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
@@ -66,33 +62,13 @@ _IsPxrType(const py::object &obj, const char *className)
     return false;
 }
 
-/// Extract the C++ stage owned by a pxr.Usd.Stage instance. Returns an empty
-/// RefPtr on failure (with the Python exception cleared) so callers can raise
-/// a precise error.
+/// Borrow through USD's registered converter, then retain the same stage.
+/// Extracting the weak pointer leaves any Python ownership intact.
 UsdStageRefPtr
 _ExtractStage(const py::object &obj)
 {
-    if (!_IsPxrType(obj, "pxr.Usd.Stage")) {
-        return UsdStageRefPtr();
-    }
-    PyObject *owner = PyObject_GetAttrString(obj.ptr(), "__owner");
-    if (!owner) {
-        PyErr_Clear();
-        return UsdStageRefPtr();
-    }
-    UsdStageRefPtr result;
-    if (PyCapsule_CheckExact(owner)) {
-        void *held = PyCapsule_GetPointer(owner, "refptr");
-        if (held && !PyErr_Occurred()) {
-            // The capsule owns a heap TfRefPtr<UsdStage>; copy it so the
-            // refcount stays balanced on both sides.
-            result = UsdStageRefPtr(*static_cast<TfRefPtr<UsdStage> *>(held));
-        } else if (PyErr_Occurred()) {
-            PyErr_Clear();
-        }
-    }
-    Py_DECREF(owner);
-    return result;
+    pxr_boost::python::extract<UsdStagePtr> stage(obj.ptr());
+    return stage.check() ? UsdStageRefPtr(stage()) : UsdStageRefPtr();
 }
 
 // Value conversion helpers.
@@ -797,7 +773,7 @@ PYBIND11_MODULE(_rigexec, m) {
                  auto s = _ExtractStage(stageObj);
                  if (!s) {
                      throw py::type_error(
-                         "Rig() needs a pxr.Usd.Stage instance (got an object without a usable __owner capsule)");
+                         "Rig() needs a live pxr.Usd.Stage instance");
                  }
                  return std::make_unique<_Rig>(std::move(s), SdfPath(rigPath));
              }),

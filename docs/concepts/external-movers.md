@@ -39,6 +39,74 @@ finished publication.
 
 ## Build a mover repository
 
+`rigexec_add_mover` builds a registered module with a separate USD-free kernel
+archive and USD adapter plugin. The kernel definition supplies a `State` type,
+`Prepare` returning `std::shared_ptr<const State>`, and `Apply` taking
+`const State &` followed by the arguments of `RigExecExternalKernel::apply`.
+Definitions receiving provider values implement `ApplyWithProviders` instead.
+Windowed definitions also implement `CaptureWindow` and `ApplyWindow` with
+typed state references. `RigExecMakeMoverKernel<Definition>()` generates the
+ABI adapters. The prepared state is immutable; per-run work stays local to
+the graph body. The decoder validates the mover's own payload version.
+
+```cmake
+rigexec_add_mover(MyMover
+    DEFINITION kernel.h
+    TYPE my::MoverDefinition
+    KERNEL kernel.cpp
+    USD_ADAPTER moverUsd.cpp
+    FACTORY MakeMyMoverUsdAdapter
+    SCHEMA schema.usda
+    SCHEMA_TYPE MyMover)
+```
+
+The adapter exports `rigExec::MakeMyMoverUsdAdapter(const char *schemaType)`
+returning a `RigExecMoverHandler`. It supplies scene binding, declared inputs,
+payload assembly, encoding, and native application through the shared kernel.
+Generated code supplies the schema name, installs the typed runtime kernel,
+and registers the handler when the plugin loads. The adapter does not call
+`RIGEXEC_REGISTER_MOVER` for that same type. Existing manually registered
+plugins continue to work.
+
+The build runs `generateMoverSchema.py` with the Python interpreter selected
+by `Python3_EXECUTABLE`, which must match the OpenUSD install. It reads
+`schema.usda` and generates `MyMoverSchema.h`: the schema type, attribute
+names/types/variability, and typed default constants. A property's `:` becomes
+`_`, so `inputs:gain` becomes `MyMoverSchema::inputs_gain`. Adapters consume
+these defaults when declaring leaves. Read time, read phase, provider binding,
+and computational semantics remain explicit adapter contracts. Scalars,
+tokens, numeric vectors, matrices, and their supported arrays are emitted as
+USD-free constants; unsupported defaults fail generation. Use `SCHEMA_DEPENDS`
+for additional local schema layers. Schema plugins must set
+`skipCodeGeneration = true`; the helper runs `usdGenSchema` and packages its
+codeless resources beside the adapter plugin.
+
+The generated `MyMoverRegistration.h` declares `RigExecDefineMyMover()`.
+Standalone hosts link `MyMoverKernel` and pass an array of these definitions
+to the `RigExecRuntimeReader::Open(bytes, size, definitions, count, error)`
+overload. The runtime binds definitions once at Open, permits unused module
+definitions, and rejects duplicate names or failed preparation. It retains
+the existing per-reader replacement API. Keep module code loaded while its
+readers exist. USD hosts discover the adapter through normal plugin metadata.
+
+Within RigExec, `BUILTIN` adds the adapter to the USD library and the kernel to
+the runtime. Direct factory references in the generated catalog retain the
+kernel objects in static links. Registration and discovery occur before
+execution; graph bodies perform no registry lookup. Existing binary opcodes
+and payloads retain their meanings. The typed module contract currently uses
+the external mover's full-strength whole-buffer execution and common envelope;
+built-ins with specialized range or weighting semantics retain their existing
+operation contracts.
+
+`NO_INSTALL`, `PLUGIN_ROOT`, and `LIBRARIES` apply to the USD plugin;
+`KERNEL_LIBRARIES` supplies USD-free kernel dependencies. Installation includes
+the kernel archive, generated public headers, schema resources, and a
+`MyMover` CMake package exporting `rigExecMovers::MyMoverKernel`. The complete
+[test module](../../tests/externalMovers/CMakeLists.txt) exercises separate
+sources, generated schema defaults, automatic discovery, native/frozen parity,
+and standalone playback. Its optional exporter output regenerates
+`tests/fixtures/registeredMover.rigexec` for the USD-free playback test.
+
 In the external repository, create a `CMakeLists.txt`:
 
 ```cmake
@@ -352,6 +420,15 @@ whose type has no kernel in the runtime is a no-op: its points pass through
 unchanged, and every `Execute` adds a `warning:` line naming the mover to the
 reader's diagnostics. A runtime built without USD carries a kernel only if it
 links one in; RigExec itself ships none.
+
+Kernels may be installed or replaced after execution. The next `Execute`
+updates the affected revisions and their consumers, even when inputs are
+unchanged; independent operations retain their cached results. If a replacement
+cannot prepare a revision, that revision returns to passing its points through
+on the next execution. A later successful registration restores its evaluation.
+Replacing a windowed revision clears its own retained history packets, whose
+layout belongs to the previous kernel. Refill its history before evaluating a
+frame that needs earlier ticks.
 
 ## Windowed movers
 

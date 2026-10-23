@@ -16,7 +16,8 @@ struct RigExecRigPose;
 /// A process-completion index checks total evaluator/generation counts and
 /// capture inventory; each evaluator's file checks its own exact visit order.
 /// The recorder lives in the test oracle library. Create returns null when
-/// the suite is disabled. Record is virtual so the shared library does not
+/// the suite is disabled, and throws std::runtime_error if enabled without
+/// rigExecOracle registration. Record is virtual so the shared library does not
 /// contain the capture.
 class RigExecGoldenSuiteObserver {
 public:

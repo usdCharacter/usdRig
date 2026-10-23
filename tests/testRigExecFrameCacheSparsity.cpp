@@ -1402,7 +1402,7 @@ TestRecomposedVersionSeedsSparseReuse()
     context.frozen = frozen.get();
     context.workspace = workspace.get();
     context.compiledRigSignature = uint64_t(evaluator.GetCompiledRigSignature());
-    context.slotCount = frozen->program.paths.size();
+    context.slotCount = frozen->program->paths.size();
     const auto run = [&](const std::vector<RigExecValueOverride> &overrides) {
         evaluator.SetInteractiveOverrides(overrides);
         RigExecFrameInputs inputs;

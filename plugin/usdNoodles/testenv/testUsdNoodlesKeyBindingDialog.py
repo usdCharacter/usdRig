@@ -10,64 +10,16 @@
 Tests the find_shortcut_conflicts logic that detects duplicate key sequences
 across remappable shortcuts and hardcoded non-remappable keys.
 
-The production function lives in widgets/keyBindingDialog.py. This test
-mirrors it as a shim (same pattern as testUsdNoodlesGraphViewShortcut.py)
-because importing the widget module triggers PySide6/GL initialization
-which is unavailable in headless CI.
+Calls the production conflict detector without constructing the dialog.
 """
 
 import unittest
 
 
-_NON_REMAPPABLE_KEYS = [
-    "Tab",
-    "Space",
-    "Ctrl+Z",
-    "Ctrl+Shift+Z",
-    "Ctrl+Y",
-    "Delete",
-    "Backspace",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "Shift+1",
-    "Shift+2",
-    "Shift+3",
-    "Shift+4",
-    "Shift+5",
-    "Shift+6",
-    "Shift+7",
-    "Shift+8",
-    "Shift+9",
-]
-
-
-def _find_shortcut_conflicts(bindings, non_remappable_keys):
-    """Mirror of keyBindingDialog.find_shortcut_conflicts.
-
-    Kept as a thin shim so the test exercises the same logic.
-    If the production function changes, update this shim to match.
-    """
-    key_to_actions = {}
-
-    for _configKey, display_name, key_str in bindings:
-        if not key_str:
-            continue
-        if key_str not in key_to_actions:
-            key_to_actions[key_str] = []
-        key_to_actions[key_str].append(display_name)
-
-    for non_remap_key in non_remappable_keys:
-        if non_remap_key in key_to_actions:
-            key_to_actions[non_remap_key].append(f"(hardcoded: {non_remap_key})")
-
-    return {k: v for k, v in key_to_actions.items() if len(v) > 1}
+from UsdNoodles.widgets.keyBindingDialog import (
+    NON_REMAPPABLE_KEYS as _NON_REMAPPABLE_KEYS,
+    find_shortcut_conflicts as _find_shortcut_conflicts,
+)
 
 
 class TestFindShortcutConflicts(unittest.TestCase):

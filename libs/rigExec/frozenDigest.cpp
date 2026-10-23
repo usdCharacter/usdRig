@@ -378,8 +378,9 @@ RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
     if (!out) {
         return fail("no snapshot to patch into");
     }
+    if (!base.program || !base.bindings) return fail("empty frozen snapshot");
     const RigExecBakedProgramImpl &L = live.GetStepGraph();
-    const RigExecBakedProgramImpl &S = base.program;
+    const RigExecBakedProgramImpl &S = *base.program;
     // Live's avar slots, carried below, hold the upstream values its last
     // run placed; the copy keeps the snapshot's table as its history, so
     // the two must name the same table.
@@ -418,7 +419,11 @@ RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
     const RigExecFrozenAvarPatch &patch,
     std::shared_ptr<const RigExecFrozenProgram> *out, std::string *error)
 {
-    const auto &S = base.program;
+    if (!base.program || !base.bindings) {
+        if (error) *error = "empty frozen snapshot";
+        return false;
+    }
+    const auto &S = *base.program;
     if (!out || patch.basis != &base ||
         patch.avars.size() != S.avarConstantBindings.size() ||
         patch.constants.size() != S.avarConstants.size()) {
@@ -426,61 +431,11 @@ RigExecApplyFrozenAvarPatch(const RigExecFrozenProgram &base,
         return false;
     }
     auto snapshot = std::make_shared<RigExecFrozenProgram>();
-    _CloneImpl(S, &snapshot->program, _CloneVerdict::Defer);
-    RigExecBakedProgramImpl &P = snapshot->program;
-    for (size_t i = 0; i < patch.avars.size(); ++i) {
-        auto &binding = P.avarConstantBindings[i];
-        binding.input.constant = patch.avars[i].constant;
-        binding.input.varying = patch.avars[i].varying;
-        binding.input.query = UsdAttributeQuery();
-        binding.input.resolvedAttr = UsdAttribute();
-        P.avars[binding.slot] = patch.avars[i].value;
-    }
-    P.promotedAvars = patch.promoted;
-    P.varyingInputs = patch.varyingInputs;
-    P.avarConstants = patch.constants;
-    ++P.avarConstantSerial;
-    // And every value edit routed since the snapshot was taken or last
-    // patched, added to the copy's own pending ones: the copy's first run
-    // owes them all. Asked of the per-index edit counts, not of the live
-    // program's pending flags, because a live run consumes those -- an edit
-    // the live program has already answered is one the snapshot's history
-    // has still never seen.
-    if (patch.valueEditSerial != S.valueEditSerial) {
-        P.edited.resize(std::max(P.edited.size(), patch.editSerial.size()), 0);
-        for (size_t i = 0; i < patch.editSerial.size(); ++i) {
-            if (patch.editSerial[i] > S.valueEditSerial) {
-                P.edited[i] = 1;
-                P.anyEdited = true;
-            }
-        }
-        P.valueEditSerial = patch.valueEditSerial;
-        P.editSerial = patch.editSerial;
-    }
-    // And a stamp bumped since: a notice the index could not place, which
-    // the live program answered by running whole once. The copy owes the
-    // same run -- its stamp moves past the one its last run recorded.
-    if (patch.programStamp != S.programStamp) {
-        P.programStamp = patch.programStamp;
-    }
-    // The compiled rig's side-tables, unchanged by a constant patch.
-    snapshot->jointSolverBinding = base.jointSolverBinding;
-    snapshot->solverGuidesPresent = base.solverGuidesPresent;
-    snapshot->inputHeadPaths = base.inputHeadPaths;
-    _ForEachPatchableInput(P,[&](const auto &input) {
-        snapshot->inputConstants.push_back(VtValue(
-            input.sourceBacked ? input.sourceFallback : input.constant));
-    }, /*includeIntervening=*/false);
-    snapshot->arrayKeys = base.arrayKeys;
-    snapshot->chainBaseQueryValid = base.chainBaseQueryValid;
-    snapshot->derivedBaseQueryValid = base.derivedBaseQueryValid;
-    snapshot->ribbonQueryValid = base.ribbonQueryValid;
-    snapshot->moverHasEnabled = base.moverHasEnabled;
-    snapshot->moverHasDefaultWeight = base.moverHasDefaultWeight;
-    snapshot->moverHasMethod = base.moverHasMethod;
-    snapshot->moverDefaultWeightKeys = base.moverDefaultWeightKeys;
-    snapshot->weightArrayKeys = base.weightArrayKeys;
-    _SettleCloneVerdict(&P);
+    snapshot->program = base.program;
+    snapshot->bindings = base.bindings;
+    auto edits = std::make_shared<RigExecFrozenAvarPatch>(patch);
+    edits->basis = snapshot.get();
+    snapshot->avarPatch = std::move(edits);
     *out = std::move(snapshot);
     return true;
 }

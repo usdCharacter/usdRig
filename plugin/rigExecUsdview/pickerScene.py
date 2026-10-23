@@ -1,4 +1,4 @@
-"""Read control pickers out of the stage.
+"""Read control pickers and manage their controls' session visibility.
 
 The picker used to be a sidecar JSON file found by guessing at the
 stage's filename. Now it is scene data: `RigExecPicker` prims composed
@@ -17,7 +17,7 @@ This module turns those prims into the same `Panel` and `Button` objects
 `pickerModel` already builds from JSON, so the drawing, hit-testing and
 selection code has exactly one path through it.
 """
-from pxr import Ar, Sdf, Tf, Usd
+from pxr import Ar, Sdf, Tf, Usd, UsdGeom
 
 import pickerModel
 
@@ -200,8 +200,7 @@ def read(picker_prim, live_paths=None):
     picker.name = (str(_v(picker_prim, "ui:label", ""))
                    or picker_prim.GetName())
     picker.path = str(picker_prim.GetPath())
-    rig = rig_for(picker_prim)
-    picker.rig_path = str(rig.GetPath()) if rig else ""
+    picker.rig_path = rig_path_for(picker_prim)
     return picker
 
 
@@ -249,14 +248,98 @@ def _IsRigGraph(prim):
         "RigExec") and not str(name).startswith("RigExecPicker")
 
 
-def rig_for(picker_prim):
-    """The RigExecRoot a picker drives, or None for "the whole stage"."""
+def rig_path_for(picker_prim):
+    """The authored rig target, including a target that no longer resolves."""
     rel = picker_prim.GetRelationship("rigExec:picker:rig")
     targets = rel.GetTargets() if rel else []
-    if not targets:
+    return str(targets[0]) if targets else ""
+
+
+def rig_for(picker_prim):
+    """The rig a picker names, or None when absent or unresolved."""
+    path = rig_path_for(picker_prim)
+    if not path:
         return None
-    prim = picker_prim.GetStage().GetPrimAtPath(targets[0])
+    prim = picker_prim.GetStage().GetPrimAtPath(path)
     return prim if prim and prim.IsValid() else None
+
+
+def control_prims(stage, rig_path=""):
+    """Active controls under the named scope; an absent scope means the stage."""
+    if stage is None:
+        return []
+    root = stage.GetPrimAtPath(rig_path) if rig_path else stage.GetPseudoRoot()
+    if not root or not root.IsActive():
+        return []
+    return [prim for prim in Usd.PrimRange(root) if prim.IsA(CONTROL_TYPE)]
+
+
+def _session_visibility_spec(prim):
+    """Whether the session layer holds a visibility value for `prim`.
+
+    A cleared opinion can leave an empty spec behind; that is no opinion.
+    """
+    session = prim.GetStage().GetSessionLayer()
+    path = prim.GetPath().AppendProperty(UsdGeom.Tokens.visibility)
+    spec = session.GetAttributeAtPath(path)
+    return bool(spec) and (spec.HasDefaultValue() or
+                           session.GetNumTimeSamplesForPath(path) > 0)
+
+
+def rig_hidden(prim, time=Usd.TimeCode.Default()):
+    """True for a control the rig itself authors invisible.
+
+    Ctrl Vis toggles only session opinions, so such a control stays hidden
+    when shown and does not count against the toggle's tick.
+    """
+    if _session_visibility_spec(prim):
+        return False
+    attr = UsdGeom.Imageable(prim).GetVisibilityAttr()
+    return attr.Get(time) == UsdGeom.Tokens.invisible
+
+
+def controls_visible(controls, time=Usd.TimeCode.Default()):
+    """True when every control Ctrl Vis governs is effectively visible.
+
+    Controls the rig authors invisible are left out; a collection with
+    no governed control is not visible.
+    """
+    governed = [prim for prim in controls if not rig_hidden(prim, time)]
+    return bool(governed) and all(
+        UsdGeom.Imageable(prim).ComputeVisibility(time) != UsdGeom.Tokens.invisible
+        for prim in governed)
+
+
+def control_visibility_attributes(controls):
+    """Visibility dependencies, including ancestors outside the rig's scope."""
+    attributes, seen = [], set()
+    for control in controls:
+        prim = control
+        while prim and not prim.IsPseudoRoot():
+            path = prim.GetPath()
+            if path in seen:
+                break
+            seen.add(path)
+            imageable = UsdGeom.Imageable(prim)
+            if imageable:
+                attributes.append(imageable.GetVisibilityAttr())
+            prim = prim.GetParent()
+    return attributes
+
+
+def set_controls_visible(stage, controls, visible):
+    """Hide with a session opinion on each control; show by clearing it.
+
+    Only the session layer changes, so the rig's own invisible opinions on a
+    control or an ancestor still hold after a show.
+    """
+    attributes = [UsdGeom.Imageable(prim).GetVisibilityAttr() for prim in controls]
+    with Usd.EditContext(stage, stage.GetSessionLayer()), Sdf.ChangeBlock():
+        for attr in attributes:
+            if visible:
+                attr.Clear()
+            else:
+                attr.Set(UsdGeom.Tokens.invisible)
 
 
 def _live_under(root):
@@ -286,9 +369,10 @@ def load_all(stage):
     pickers = []
     for prim in prims:
         rig = rig_for(prim)
-        key = str(rig.GetPath()) if rig else ""
+        key = rig_path_for(prim)
         if key not in live_by_rig:
             live_by_rig[key] = (_live_under(rig) if rig
+                                else set() if key
                                 else pickerModel.live_control_paths(stage))
         pickers.append(read(prim, live_by_rig[key]))
     return pickers

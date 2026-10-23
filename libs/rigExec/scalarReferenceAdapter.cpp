@@ -2,8 +2,6 @@
 #include "oracleDispatch.h"
 #include "bakedProgramImpl.h"
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 
 namespace rigExec {
 void RigExecOraclePublicationContext::Begin(uint64_t generation,RigExecOracleScene source,
@@ -62,11 +60,12 @@ void RigExecBakedBeginOracleReference(RigExecBakedProgramImpl *program, uint64_t
 bool RigExecBakedRunScalarReference(RigExecBakedProgramImpl *program, UsdTimeCode time, RigExecRigPose *pose)
 {
     if (!program || !program->oraclePublications) return true;
-    const auto run = RigExecOracleInstalledHooks().run;
-    if (!run) {
-        RigExecOracleMissing("cpu reference");
+    std::string error;
+    if (!RigExecOracleAvailable(&error)) {
+        pose->valid = false;
+        pose->diagnostics.push_back(std::move(error));
         return false;
     }
-    return run(program, time, pose);
+    return RigExecOracleInstalledHooks().run(program, time, pose);
 }
 } // namespace rigExec

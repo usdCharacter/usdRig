@@ -3511,7 +3511,7 @@ RigExecResultsSceneIndex::_IsTimeTriggerDirty(
     }
     const RigExecImagingRegistry::Ptr context =
         RigExecImagingRegistry::ForKey(GetContextKey());
-    return context && context->IsActiveRigRoot(entry.primPath);
+    return context && context->IsDisplayedRigRoot(entry.primPath);
 }
 
 void

@@ -3719,6 +3719,191 @@ TestDrivenXformResetBoundaries(const std::string &examplesDir)
 // snapshot: exec invalidation must still run before the retained registry
 // listener evaluates an edit at the same time.
 static void
+TestAuthoredGuidesAfterCompileFailure()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+def Xform "Asset" {
+    def RigExecRoot "Rig" {
+        def RigExecControl "Handle" {
+            double rest:tx = 2
+            double rest:tx.timeSamples = { 1: 2, 2: 4 }
+            double avars:tx = 20
+            def Scope "Grouping" {
+                def RigExecJoint "Joint" {
+                    double rest:ty = 3
+                    def Scope "MoreGrouping" {
+                        def RigExecJoint "Tip" {
+                            double rest:ty = 2
+                        }
+                    }
+                    def RigExecSphereWeight "Sphere" {
+                        float inputs:falloffMax = 0.3
+                        rel rigExec:sampleSource = [</Asset/Curve>, </Asset/Curve.points>]
+                    }
+                    def RigExecPlaneWeight "Plane" {
+                        float inputs:extentU = 0.4
+                    }
+                    def RigExecCurveWeight "Curve" {
+                        rel rigExec:curve = </Asset/Curve>
+                    }
+                }
+            }
+        }
+        def RigExecMatrixMover "Broken" (apiSchemas = ["RigExecMoverAPI"]) {
+            rel rigExec:moves = </Asset/Missing.points>
+            rel rigExec:transform = </Asset/Rig/Handle>
+        }
+        def RigExecJoint "ReaderJoint" {
+            double rest:tx = 7
+        }
+    }
+    def BasisCurves "Curve" {
+        point3f[] points = [(0, 0, 0), (1, 0, 0)]
+        int[] curveVertexCounts = [2]
+    }
+}
+)USD"));
+    const SdfPath root("/Asset/Rig"), control("/Asset/Rig/Handle");
+    const SdfPath joint("/Asset/Rig/Handle/Grouping/Joint");
+    const SdfPath tip = joint.AppendPath(SdfPath("MoreGrouping/Tip"));
+    const auto stageId = UsdUtilsStageCache::Get().Insert(stage);
+    const auto context = RigExecImagingRegistry::ForStage(stage);
+    auto upstream = HdRetainedSceneIndex::New();
+    const auto data = HdRetainedContainerDataSource::New(
+        HdXformSchemaTokens->xform, HdRetainedContainerDataSource::New(
+            HdXformSchemaTokens->matrix,
+            HdRetainedTypedSampledDataSource<GfMatrix4d>::New(GfMatrix4d(1.0))));
+    upstream->AddPrims({{control, TfToken(), data}, {joint, TfToken(), data},
+        {tip, TfToken(), data}, {joint.AppendChild(TfToken("Sphere")), TfToken(), data},
+        {joint.AppendChild(TfToken("Plane")), TfToken(), data},
+        {joint.AppendChild(TfToken("Curve")), TfToken(), data}});
+    auto results = RigExecResultsSceneIndex::New(upstream, context->GetStore());
+    context->RegisterChain(nullptr, nullptr, results);
+    _RecordingObserver observer;
+    results->AddObserver(HdSceneIndexObserverPtr(&observer));
+    std::string before, sessionBefore;
+    stage->GetRootLayer()->ExportToString(&before);
+    stage->GetSessionLayer()->ExportToString(&sessionBefore);
+    std::vector<std::string> errors;
+    CHECK(!context->Activate(stage, root, UsdTimeCode(1), &errors));
+    CHECK(!errors.empty() && !context->IsActive());
+    CHECK(!context->IsActiveRigRoot(root) && context->IsDisplayedRigRoot(root));
+    auto snapshot = context->GetStore()->Get();
+    CHECK(snapshot && snapshot->Describes(stage, UsdTimeCode(1)));
+    if (!snapshot) return;
+    CHECK(snapshot->assetRoot == SdfPath("/Asset"));
+    CHECK(snapshot->prims.at(control).hasControlGuide);
+    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() == GfVec3d(2, 0, 0));
+    CHECK(snapshot->prims.at(joint).hasGuides);
+    CHECK(snapshot->prims.at(joint).guideLengths == std::vector<double>{2.0});
+    CHECK(snapshot->prims.at(joint).guideFrames[0].ExtractTranslation() == GfVec3d(2, 3, 0));
+    CHECK(snapshot->prims.at(SdfPath("/Asset/Rig/ReaderJoint")).hasGuides);
+    for (const char *name : {"Sphere", "Plane", "Curve"}) {
+        const SdfPath path = joint.AppendChild(TfToken(name));
+        CHECK(snapshot->prims.at(path).hasVolumeGuides);
+        const auto children = results->GetChildPrimPaths(path);
+        CHECK(!children.empty());
+        for (const SdfPath &child : children) CHECK(!results->GetPrim(child).primType.IsEmpty());
+    }
+    CHECK(results->GetPrim(control.AppendChild(TfToken("rigGuideCtrl"))).primType == HdPrimTypeTokens->basisCurves);
+    CHECK(results->GetPrim(joint.AppendChild(TfToken("rigGuideCone_0"))).primType == HdPrimTypeTokens->cone);
+    for (const auto &[path, prim] : snapshot->prims) {
+        CHECK(!prim.hasControlFrame && !prim.hasXform && !prim.hasPoints && !prim.hasWeightOverlay);
+        CHECK(prim.shaderMatrices.empty() && prim.shaderFloats.empty());
+    }
+    double unpublishedFrame[16] = {};
+    unpublishedFrame[0] = -99.0;
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
+        "/Asset/Rig/ReaderJoint", 1.0, 0, unpublishedFrame) == 0);
+    CHECK(unpublishedFrame[0] == -99.0);
+    std::string after, sessionAfter;
+    stage->GetRootLayer()->ExportToString(&after);
+    stage->GetSessionLayer()->ExportToString(&sessionAfter);
+    CHECK(before == after && sessionBefore == sessionAfter);
+    CHECK(!context->SetTime(UsdTimeCode(2)));
+    snapshot = context->GetStore()->Get();
+    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() == GfVec3d(4, 0, 0));
+    const uint64_t generation = snapshot->generation;
+    CHECK(!context->SetTime(UsdTimeCode(2)));
+    CHECK(context->GetStore()->Get()->generation == generation);
+    CHECK(context->GetSessionEvaluationCount(root) == 0);
+    CHECK(context->GetBackgroundStats().running == 0);
+    const auto color = stage->GetPrimAtPath(control).GetAttribute(TfToken("guide:displayColor"));
+    CHECK(color.Set(GfVec3f(0, 1, 0)));
+    CHECK(context->GetStore()->Get()->prims.at(control).guideColor == GfVec3f(0, 1, 0));
+    CHECK(!context->IsActive());
+    // Complete the endpoint and repair the invalid weight sampling binding.
+    const auto points = stage->DefinePrim(SdfPath("/Asset/Missing"), TfToken("Points"));
+    CHECK(points.GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)}));
+    const auto sampling = stage->GetPrimAtPath(joint.AppendChild(TfToken("Sphere")))
+        .GetRelationship(TfToken("rigExec:sampleSource"));
+    CHECK(sampling.SetTargets({}));
+    CHECK(context->IsActive());
+    CHECK(context->SetTime(UsdTimeCode(2)));
+    CHECK(context->GetStore()->Get()->prims.at(control).hasControlFrame);
+    CHECK(context->GetStore()->Get()->prims.count(SdfPath("/Asset/Missing")));
+    // A later evaluation failure removes driven data but retains rest guides.
+    CHECK(sampling.SetTargets({SdfPath("/Asset/Curve"), SdfPath("/Asset/Curve.points")}));
+    CHECK(!context->SetTime(UsdTimeCode(2)));
+    snapshot = context->GetStore()->Get();
+    CHECK(snapshot && snapshot->prims.at(control).hasControlGuide);
+    CHECK(snapshot && !snapshot->prims.at(control).hasControlFrame);
+    CHECK(snapshot && !snapshot->prims.count(SdfPath("/Asset/Missing")));
+    context->Deactivate();
+    CHECK(!context->GetStore()->Get());
+    CHECK(!context->IsDisplayedRigRoot(root));
+    UsdUtilsStageCache::Get().Erase(stageId);
+    results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+
+    const auto removed = UsdStage::CreateInMemory();
+    CHECK(removed->GetRootLayer()->ImportFromString(before));
+    const auto removalContext = RigExecImagingRegistry::ForStage(removed);
+    CHECK(!removalContext->Activate(removed, root, UsdTimeCode(1), &errors));
+    CHECK(removed->RemovePrim(root));
+    CHECK(!removalContext->IsDisplayedRigRoot(root));
+    CHECK(removalContext->GetStore()->Get()->prims.empty());
+    removalContext->Deactivate();
+}
+
+static void
+TestPublishedJointFrames()
+{
+    const auto stage = UsdStage::CreateInMemory();
+    CHECK(stage->GetRootLayer()->ImportFromString(R"USD(#usda 1.0
+def Xform "Asset" {
+    def RigExecRoot "Rig" {
+        def RigExecJoint "Parent" {
+            double rest:tx = 5
+            def Scope "Grouping" {
+                def RigExecJoint "Driver" {
+                    double rest:ty = 3
+                }
+            }
+        }
+    }
+}
+)USD"));
+    const SdfPath root("/Asset/Rig"), parent("/Asset/Rig/Parent");
+    const SdfPath driver("/Asset/Rig/Parent/Grouping/Driver");
+    const auto stageId = UsdUtilsStageCache::Get().Insert(stage);
+    const auto context = RigExecImagingRegistry::ForStage(stage);
+    std::vector<std::string> errors;
+    CHECK(context->Activate(stage, root, UsdTimeCode(1), &errors));
+    const size_t evaluations = context->GetSessionEvaluationCount(root);
+    for (const SdfPath &path : {parent, driver}) {
+        double matrix[16] = {};
+        CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
+            path.GetText(), 1.0, 0, matrix) == 1);
+        CHECK(matrix[12] == 5.0 && matrix[13] == (path == driver ? 3.0 : 0.0));
+        CHECK(matrix[0] == 1.0 && matrix[5] == 1.0 && matrix[10] == 1.0);
+    }
+    CHECK(context->GetSessionEvaluationCount(root) == evaluations);
+    context->Deactivate();
+    UsdUtilsStageCache::Get().Erase(stageId);
+}
+
+static void
 TestFailedActivationKeepsLiveNoticeOrdering()
 {
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
@@ -7805,6 +7990,8 @@ main(int argc, char **argv)
     TestLegacyRenderIndexPickup(examplesDir);
     TestMultiRigAtomicActivation(examplesDir);
     TestEditTriggeredReevaluation(examplesDir);
+    TestAuthoredGuidesAfterCompileFailure();
+    TestPublishedJointFrames();
     TestFailedActivationKeepsLiveNoticeOrdering();
     TestExternalReadEditsRepublish();
     TestConstraintDrivenXformPublishes(examplesDir);

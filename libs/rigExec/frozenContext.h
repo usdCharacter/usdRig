@@ -69,7 +69,7 @@ struct RigExecFrozenProgram;
 struct RigExecFrozenAvarPatch;
 
 /// Capture live edit values on the owner thread. Applying the captured patch
-/// clones only detached state and may run on an existing warming worker.
+/// shares the immutable program and bindings and may run on a warming worker.
 bool RigExecCaptureFrozenAvarPatch(const RigExecFrozenProgram &base,
     const RigExecBakedProgram &live,
     std::shared_ptr<const RigExecFrozenAvarPatch> *out, std::string *error);
@@ -406,10 +406,10 @@ uint64_t RigExecFrameCacheCompiledRigSignature(const RigExecRigEvaluator &evalua
 bool RigExecFrozenSnapshotOwesLiveEdits(const RigExecFrozenProgram &base,
                                         const RigExecBakedProgram &live);
 
-/// Carries \p live's patched avar region onto a copy of \p base, for a
-/// session whose snapshot still pins the program it was cloned from.
-/// Copy-on-write: \p base is never mutated, so jobs already holding it run
-/// on, and \p out pins the same compiled rig and history with the new constants.
+/// Captures \p live's patched avar region in a new snapshot sharing \p base's
+/// immutable program, bindings, and history. Workers place the captured values
+/// into their private arenas through the existing input path. The base remains
+/// unchanged, so jobs already holding it continue with their original constants.
 /// The copy also owes every value edit and stamp bump \p live has taken
 /// since \p base (RigExecFrozenSnapshotOwesLiveEdits): its first run
 /// re-runs the steps those edits reached, or everything after a bump.

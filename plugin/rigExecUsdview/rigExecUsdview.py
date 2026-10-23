@@ -1383,6 +1383,12 @@ class RigExecUsdviewContainer(PluginContainer):
         if not (rigPaths != self._rigPaths or
                 (rigPaths and not self._active)):
             return
+        if (rigPaths == self._rigPaths and not self._active and
+                stage == getattr(self, "_cachedStage", None)):
+            # Same roots, failed activation: the native context retries on
+            # this edit itself. Re-activating here would compile twice.
+            self._ScheduleNativeAdoption()
+            return
         if rigPaths and not self._RootsHaveActivationCandidates(
                 stage, rigPaths):
             return
@@ -1474,35 +1480,70 @@ class RigExecUsdviewContainer(PluginContainer):
 
             UsdUtils.StageCache.Get().Insert(stage)
             self._cachedStage = stage
+            # Authored joint and weight guides remain drawable when rig
+            # activation fails, and still require guide purpose enabled.
+            try:
+                self._api.dataModel.viewSettings.displayGuide = True
+            except Exception:
+                pass
             status = self._Imaging().Activate(b"", self._FrameValue())
             if status == 0:
-                self._active = True
-                # Activate() installs the native evaluator's stage notice.
-                # Re-register ours afterwards so root removal/addition reaches
-                # this root-set guard before the evaluator tries to recompile
-                # a session whose root has just disappeared. Ordinary edits
-                # fall through here and are then handled by the native notice.
-                self._ObserveStage(stage)
-                # RigExec controls/joints/guides are purpose=guide — Storm only
-                # draws them when the viewer has guide purpose enabled.
-                try:
-                    vs = self._api.dataModel.viewSettings
-                    if not vs.displayGuide:
-                        vs.displayGuide = True
-                except Exception:
-                    pass
-                self._PushWarmRangeFromStage()
-                self._EnsureTimelineOverlay()
-                self._WakeWarmingDriver()
+                self._OnActivated(stage)
             else:
                 Tf.Warn("rigExecUsdview: activation failed (%d)" % status)
                 # The cache is the current stage's strong owner. Retain it so
                 # a malformed rig disables RigExec without invalidating
                 # usdview's stage; replacement or _Shutdown eventually erases
-                # it. A later edit notice retries the compile.
+                # it. The native context keeps drawing authored guides and
+                # retries the compile on later edits; _AdoptNativeActivation
+                # picks up its success.
         finally:
             self._activating = False
             self._NotifyStripTick(False)
+
+    def _OnActivated(self, stage):
+        """Plugin-side setup once the native context is active on `stage`."""
+        self._active = True
+        # Activation installs the native evaluator's stage notice.
+        # Re-register ours afterwards so root removal/addition reaches
+        # this root-set guard before the evaluator tries to recompile
+        # a session whose root has just disappeared. Ordinary edits
+        # fall through here and are then handled by the native notice.
+        self._ObserveStage(stage)
+        self._PushWarmRangeFromStage()
+        self._EnsureTimelineOverlay()
+        self._WakeWarmingDriver()
+
+    def _AdoptNativeActivation(self):
+        """Finish setup when the native edit-driven retry activated the rig.
+
+        Runs after the notice that triggered the retry has been delivered to
+        every listener, since this plugin's listener may run first.
+        """
+        self._adoptPending = False
+        if self._active or getattr(self, "_activating", False):
+            return
+        stage = self._api.dataModel.stage
+        if (not stage or stage != getattr(self, "_cachedStage", None)
+                or self._lib is None):
+            return
+        try:
+            active = self._Imaging().IsActive()
+        except Exception:
+            return
+        if active:
+            self._OnActivated(stage)
+
+    def _ScheduleNativeAdoption(self):
+        if getattr(self, "_adoptPending", False):
+            return
+        self._adoptPending = True
+        try:
+            from pxr.Usdviewq.qt import QtCore
+            QtCore.QTimer.singleShot(0, self._AdoptNativeActivation)
+        except Exception:
+            # Without Qt the next frame change adopts it.
+            pass
 
     def _ScheduleWarmingFlush(self):
         # Coalesced like the pending flag, and deferred past the gesture.
@@ -1906,6 +1947,8 @@ class RigExecUsdviewContainer(PluginContainer):
         # a no-op: the authoring panel writes a spline knot at the frame
         # the artist is LOOKING at, so an engine sitting one frame back
         # resolves the untouched value and the overlay appears frozen.
+        if not self._active and getattr(self, "_adoptPending", False):
+            self._AdoptNativeActivation()
         if not (self._active and self._lib):
             return
         imaging = self._Imaging()

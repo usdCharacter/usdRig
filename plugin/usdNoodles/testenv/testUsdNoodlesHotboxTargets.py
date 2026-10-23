@@ -295,10 +295,10 @@ class ApplyApiSchemaFromHotboxTest(unittest.TestCase):
         description, redo, undo = pushUndoCommand.call_args[0]
         self.assertEqual(description, "Apply CollectionAPI")
 
-        undo()
+        undo(view)
         self.assertEqual(list(self.alpha.GetAppliedSchemas()), [])
 
-        redo()
+        redo(view)
         self.assertEqual(
             list(self.alpha.GetAppliedSchemas()), ["CollectionAPI:collection"]
         )
@@ -356,7 +356,7 @@ class ApplyApiSchemaFromHotboxTest(unittest.TestCase):
         pushUndoCommand = self._apply(view, "PhysicsRigidBodyAPI")
 
         _, _, undo = pushUndoCommand.call_args[0]
-        undo()
+        undo(view)
 
         self.assertEqual(
             list(self.alpha.GetAppliedSchemas()), ["PhysicsRigidBodyAPI"]

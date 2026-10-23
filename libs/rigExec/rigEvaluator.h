@@ -340,6 +340,7 @@ public:
 
     /// Discovers joints and movers, validates targets, and prepares the
     /// exec tap set. Returns false with messages on validation failure.
+    /// Requires rigExecScene; a missing registration also returns false.
     ///
     /// Always compiles: a failure the settle path memoized (see
     /// _CompileUnlessKnownBroken) is forgotten, never replayed, here.

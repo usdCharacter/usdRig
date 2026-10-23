@@ -127,6 +127,19 @@ scene index binds through the same leaf.
 
 ## Activation lifetimes
 
+When initial compilation or evaluation fails, the context publishes authored
+rest guides for controls, joints, and sphere, plane, and curve weights.
+Activation still reports failure and `IsActive()` stays false. These guides
+follow authored rest and style edits and time samples; completing missing
+inputs retries normal activation. They publish no evaluated control frames,
+deformation, shader results, or computed weight overlays. Static weight maps
+need their target geometry to display an influence overlay.
+
+The display uses the existing guide drawing helpers and cold-bounds rest
+placement. It does not execute solvers or movers. An unsuccessful explicit
+reactivation preserves an already active generation. If an active rig later
+fails during evaluation, its driven results are replaced with authored guides.
+
 A context is activated in one of two ways, and the way it was activated
 decides who deactivates it.
 

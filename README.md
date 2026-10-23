@@ -86,12 +86,26 @@ ctest --test-dir build --parallel 4 --output-on-failure
 cmake --install build --prefix /path/to/rigexec-install
 ```
 
-The installed CMake package exposes targets such as `rigExec::rigExec`:
+Link the installed scene target when compiling rigs from USD stages:
 
 ```cmake
 find_package(rigExec CONFIG REQUIRED)
-target_link_libraries(myApplication PRIVATE rigExec::rigExec)
+target_link_libraries(myApplication PRIVATE rigExec::rigExecScene)
 ```
+
+This target retains and registers scene translation in build and installed
+consumers. With a manual linker setup, link `rigExecScene` and call
+`RigExecRegisterScene()` from `rigExecScene/registerScene.h` before compiling
+or evaluating. Once registered, keep that library loaded for the process
+lifetime. Missing scene support returns a compile error or an invalid pose with
+diagnostics. `rigExec::rigExec` alone supplies the evaluator core.
+
+For optional CPU reference checks or golden capture, also link
+`rigExec::rigExecOracle`. That target retains and registers oracle support in
+build and installed consumers. Manual linker users call `RigExecRegisterOracle()`
+from `rigExecOracle/registerOracle.h` and keep the library loaded for the process
+lifetime. Missing support reports an error; golden APIs without an error channel
+throw `std::runtime_error`.
 
 ## Examples and documentation
 

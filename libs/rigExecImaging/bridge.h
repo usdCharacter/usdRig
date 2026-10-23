@@ -34,6 +34,10 @@ namespace rigExec {
 
 class RigExecWarmFrameIndex;
 
+/// Authored rest placement for guide drawing and cold bounds. No rig evaluation.
+GfMatrix4d RigExecAuthoredGuideRestSpace(
+    const UsdPrim &prim, UsdTimeCode time, bool *rigid);
+
 /// Publishes one background warming completion into \p cache and the
 /// optional warm index, never into the snapshot store the viewport reads.
 ///
@@ -192,6 +196,11 @@ public:
 
     /// Compiles the rig; returns false with messages on failure.
     bool Compile(std::vector<std::string> *errors = nullptr);
+
+    /// Append authored rest guides only. Never publishes evaluated control or
+    /// joint frames, deformation, shader results or computed weight fields.
+    void AppendAuthoredGuides(
+        UsdTimeCode time, RigExecImagingSnapshot *snapshot);
 
     /// The store the results scene index reads from.
     const std::shared_ptr<RigExecSnapshotStore> &GetStore() const {
@@ -769,12 +778,6 @@ private:
     mutable std::unordered_map<SdfPath, _GuideInputs, SdfPath::Hash>
         _guideInputs;
     mutable std::map<SdfPath, std::vector<SdfPath>> _jointChildren;
-    /// Joint path -> whether a RigExecControl is above it (through joints): the
-    /// hidden pivots nested in a control hierarchy. Stage-edit scoped like
-    /// the other guide caches.
-    mutable std::unordered_map<SdfPath, bool, SdfPath::Hash>
-        _controlSpaceJoints;
-    bool _IsControlSpaceJoint(const SdfPath &path) const;
     mutable size_t _jointChildrenKey = 0;
     mutable bool _jointChildrenValid = false;
     /// The evaluator's stage-edit serial the guide caches were filled under.

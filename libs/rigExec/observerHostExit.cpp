@@ -3,10 +3,15 @@
 #include "observerHost.h"
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 namespace {
 void CompleteObservers() {
     rigExec::RigExecFinalizeInputReplay();
-    rigExec::RigExecFinalizeGoldenSuite();
+    try {
+        rigExec::RigExecFinalizeGoldenSuite();
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "observer completion: %s\n", error.what());
+    }
 }
 const bool registered = [] {
     const char *golden = std::getenv("RIGEXEC_GOLDEN_SUITE");

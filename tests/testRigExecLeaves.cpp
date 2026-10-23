@@ -3820,7 +3820,7 @@ TestEqualLatticeBindsShareOneBasis()
         std::string error;
         CHECK(RigExecFreezeProgram(*evaluator, &frozen, &error));
         if (frozen) {
-            shareOneIn(&frozen->program, GfVec3i(2, 2, 3),
+            shareOneIn(frozen->program.get(), GfVec3i(2, 2, 3),
                        "twin, frozen after the first frame");
         } else {
             std::printf("FAIL twin: freeze refused: %s\n", error.c_str());
@@ -4083,7 +4083,7 @@ TestAFrozenCloneKeepsSparseSourceKeys(const std::string &examples)
         CHECK(false);
         return;
     }
-    CHECK(frozen->program.verifySourceKeys);
+    CHECK(frozen->program->verifySourceKeys);
     TfErrorMark mark;
     // One job at \p time on \p lane, a workspace of \p snapshot: the keys
     // its worker built.
@@ -4481,7 +4481,7 @@ TestALaneWatchFollowsPatchedConstants(const std::string &examples)
         CHECK(false);
         return;
     }
-    CHECK(frozen->program.verifySourceKeys);
+    CHECK(frozen->program->verifySourceKeys);
     auto lane = RigExecCreateFrozenWorkspace(frozen);
     CHECK(lane);
     if (!lane) {

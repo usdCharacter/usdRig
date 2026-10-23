@@ -539,6 +539,7 @@ class NoodlesEditorWindow(QtWidgets.QDockWidget):
             if app:
                 app.removeEventFilter(self._clickFilter)
             self._clickFilter = None
+        self.graphView._initUndoTracking(None)
         self.windowClosed.emit(self._windowId)
         super().closeEvent(event)
 
