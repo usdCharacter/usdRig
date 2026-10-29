@@ -281,20 +281,32 @@ RigExecApplyWrinkleWithTopology(
         strengths.push_back(stiffness(constraint, length));
     }
 
+    // Per-constraint relaxation rate and move mask, fixed for the solve:
+    // the strengths and pins never change between iterations. The rate is
+    // the same quotient the loop divided per visit, so the correction is
+    // bit-identical; a fully pinned constraint keeps its skip.
+    std::vector<double> rates(constraints.size());
+    std::vector<char> moveMask(constraints.size());
+    for (size_t index = 0; index < constraints.size(); ++index) {
+        const auto &constraint = constraints[index];
+        const double weightA = pinned[constraint.a] ? 0.0 : 1.0;
+        const double weightB = pinned[constraint.b] ? 0.0 : 1.0;
+        moveMask[index] = char((weightA ? 1 : 0) | (weightB ? 2 : 0));
+        rates[index] = moveMask[index]
+            ? strengths[index] / (weightA + weightB) : 0.0;
+    }
     std::vector<Wide> current = incoming;
     for (int iteration = 0; iteration < settings.iterations; ++iteration) {
         for (size_t cursor = 0; cursor < constraints.size(); ++cursor) {
             const size_t index = iteration % 2 ? constraints.size() - 1 - cursor : cursor;
+            const char mask = moveMask[index];
+            if (!mask) continue;
             const auto &constraint = constraints[index];
             const int a = constraint.a, b = constraint.b;
-            const double weightA = pinned[a] ? 0.0 : 1.0;
-            const double weightB = pinned[b] ? 0.0 : 1.0;
-            if (weightA + weightB == 0) continue;
             const Wide edge = current[b] - current[a];
-            const Wide correction = (edge - targets[index]) *
-                (strengths[index] / (weightA + weightB));
-            if (weightA) current[a] += correction;
-            if (weightB) current[b] -= correction;
+            const Wide correction = (edge - targets[index]) * rates[index];
+            if (mask & 1) current[a] += correction;
+            if (mask & 2) current[b] -= correction;
         }
         for (size_t i = 0; i < pointCount; ++i) {
             if (!IsFinite(current[i])) return false;
