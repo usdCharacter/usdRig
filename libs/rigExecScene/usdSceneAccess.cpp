@@ -83,7 +83,7 @@ bool RigExecUsdSceneAccess::Attribute(const SdfPath &path, RigExecSceneAttribute
 UsdAttribute RigExecUsdSceneAccess::BindAttribute(const SdfPath &path) const {
     return _stage ? _stage->GetAttributeAtPath(path) : UsdAttribute();
 }
-bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result) const {
+bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result, bool clipped) const {
     if (!_stage || !result || !attribute) return false;
     *result = {attribute.GetPath(), attribute.GetTypeName(), Metadata(attribute), {}};
     // Composed connections are empty when nothing authors any, so the
@@ -106,7 +106,12 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     result->hasAuthoredValue = query.HasAuthoredValueOpinion();
     result->hasAuthoredReadableValue = query.HasAuthoredValue();
     result->mightBeTimeVarying = query.ValueMightBeTimeVarying();
-    query.GetTimeSamples(&result->sampleTimes);
+    // Time samples arrive only through authored opinions, splines, or value
+    // clips, so without all three the list is empty and the stack walk is
+    // skipped. A block is itself an opinion, so blocked attributes still
+    // walk; mightBeTimeVarying stays as a backstop for any other source.
+    if (result->hasAuthoredValue || spline || result->mightBeTimeVarying || clipped)
+        query.GetTimeSamples(&result->sampleTimes);
     // Any "default" field anywhere in the stack is an authored value
     // opinion, so without one (and without a spline, which walks anyway)
     // no spec carries a default and the flags below stay false.

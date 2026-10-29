@@ -16,7 +16,11 @@ public:
     bool Attribute(const SdfPath &, RigExecSceneAttribute *) const override;
     // Host-only, per-property capture binding. No handle enters descriptors.
     UsdAttribute BindAttribute(const SdfPath &) const;
-    bool Attribute(const UsdAttribute &, RigExecSceneAttribute *) const;
+    // Capture-only. \p clipped tells whether value clips above the prim
+    // could contribute opinions; callers that do not track it pass the
+    // default and always sample.
+    bool Attribute(const UsdAttribute &, RigExecSceneAttribute *,
+                   bool clipped = true) const;
     bool Resolve(const UsdAttribute &, UsdTimeCode, VtValue *) const;
     // Resolve where the caller already established the prim is active;
     // identical to Resolve otherwise. Capture-only.

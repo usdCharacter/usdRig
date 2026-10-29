@@ -204,6 +204,12 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     // Domain and schema facts are pure functions of the prim type name, so
     // each distinct type resolves once per capture instead of once per prim.
     std::map<TfToken,std::tuple<RigExecSceneDomain,bool,bool>> typeFacts;
+    // Prims carrying value-clip opinions, as a stack: paths arrive in
+    // lexical order, so a subtree's paths are contiguous and ancestors
+    // precede descendants. A prim is clip-affected exactly when the stack
+    // is non-empty after popping paths it sits outside of. Read from the
+    // already-captured prim metadata, so this costs no new stage query.
+    std::vector<SdfPath> clipStack;
     for (const auto &path : source.Prims(SdfPath::AbsoluteRootPath())) {
         RigExecSceneNodeDescriptor node;
         if (usd) {
@@ -214,6 +220,9 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             node.attributes = source.Attributes(path);
             node.relationships = source.Relationships(path);
         }
+        while (!clipStack.empty() && !path.HasPrefix(clipStack.back())) clipStack.pop_back();
+        if (node.fact.metadata.count("clips")) clipStack.push_back(path);
+        const bool clipped = !clipStack.empty();
         const auto known = typeFacts.find(node.fact.type);
         if (known != typeFacts.end()) {
             node.domain = std::get<0>(known->second);
@@ -229,13 +238,19 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         for (const auto &property : node.attributes) {
             RigExecSceneAttributeDescriptor attr;
             const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
-            if (!(usd ? usd->Attribute(attribute,&attr.fact) : source.Attribute(property,&attr.fact)) ||
+            if (!(usd ? usd->Attribute(attribute,&attr.fact,clipped) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
+            // With no authored value opinion and no clips above, nothing
+            // can block the value: a block is itself an opinion, and clips
+            // are the only other source of one. Answer clear without the
+            // resolve-info walk. Generic sources keep their stored lookup.
+            const bool clear = usd && !clipped && !attr.fact.hasAuthoredValue;
             for (const auto time : unique) {
                 RigExecSceneInput input;
                 if (node.fact.active && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
-                input.rawBlocked = usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time);
+                input.rawBlocked = clear ? false :
+                    (usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time));
                 attr.inputs.push_back(std::move(input));
             }
             scene.attributes.emplace(property,std::move(attr));
