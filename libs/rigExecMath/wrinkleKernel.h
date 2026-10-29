@@ -371,8 +371,14 @@ RigExecApplyWrinkleWithTopology(
             const double strain = reference > 0 ? std::max(0.0,
                 1.0 - Length(incoming[neighbor] - incoming[i]) / reference) : 0;
             const double localCompression = std::max(compression[i], compression[neighbor]);
-            row[j++] = std::pow(std::max(0.0,
-                1.0 - strain / (localCompression + .002)), 8);
+            // An exactly 0.0 or 1.0 base needs no libm call: pow(0,8) is
+            // +0.0 and pow(1,8) is 1.0, so storing the base is
+            // bit-identical. Unstrained edges land on 1.0 (a third of the
+            // weights on the probe grid); NaN cannot reach here (the max
+            // maps it to 0.0, whose pow is likewise +0.0).
+            const double base = std::max(0.0,
+                1.0 - strain / (localCompression + .002));
+            row[j++] = (base == 1.0 || base == 0.0) ? base : std::pow(base, 8);
         }
     }
     // One alternate buffer for all passes, swapped between them: each

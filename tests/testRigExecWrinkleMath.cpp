@@ -254,6 +254,15 @@ void TestUniformStiffnessSignedZero()
     }
 }
 
+void TestPhaseWeightPowExactCases()
+{
+    // The phase-weight fast path stores exactly 0.0/1.0 bases directly;
+    // these libm identities are what make that bit-identical.
+    CHECK(std::pow(0.0, 8) == 0.0);
+    CHECK(std::signbit(std::pow(0.0, 8)) == 0);
+    CHECK(std::pow(1.0, 8) == 1.0);
+}
+
 void TestRestRigidAndDisabled()
 {
     const Mesh mesh;
@@ -750,6 +759,7 @@ int main()
         TestChangingDirectionAndCurvatureContinuity();
         TestUnequalStiffnessZeroCrossing();
         TestUniformStiffnessSignedZero();
+        TestPhaseWeightPowExactCases();
         TestRestRigidAndDisabled();
         TestControlsAndFinalProjections();
         TestScaleOrientationAndDegenerate();
