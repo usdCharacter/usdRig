@@ -65,6 +65,18 @@
 #define RIGEXEC_RUNTIME_HAS_SSE2 0
 #endif
 
+// The NEON twin of the weighted-matrix kernel (simdKernels.cpp): the same
+// IEEE float operations in the same order, so native and runtime agree bit
+// for bit, which the native/runtime geometry check compares with memcmp.
+#if !defined(RIGEXEC_DISABLE_NEON)                                     \
+    && (defined(__aarch64__) || defined(__ARM_NEON)                    \
+        || defined(_M_ARM64) || defined(_M_ARM64EC))
+#define RIGEXEC_RUNTIME_HAS_NEON 1
+#include <arm_neon.h>
+#else
+#define RIGEXEC_RUNTIME_HAS_NEON 0
+#endif
+
 namespace rigExec {
 namespace {
 
@@ -923,6 +935,8 @@ RrGeoApplyLinearBlendSkin(const RrVec3f *in, RrVec3f *out,
 
 #if !RIGEXEC_RUNTIME_HAS_SSE2
 
+#if !RIGEXEC_RUNTIME_HAS_NEON
+
 void
 RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
                             const float *weights, size_t count,
@@ -933,6 +947,8 @@ RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
             RrGeoToVec3d(in[i]), transform, (weights ? weights[i] : 1.0f)));
     }
 }
+
+#endif  // RIGEXEC_RUNTIME_HAS_NEON
 
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
@@ -1039,6 +1055,48 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 }
 
 #endif  // RIGEXEC_RUNTIME_HAS_SSE2
+
+#if RIGEXEC_RUNTIME_HAS_NEON && !RIGEXEC_RUNTIME_HAS_SSE2
+
+void
+RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
+                            const float *weights, size_t count,
+                            const RrMat4d &transform)
+{
+    // Row-vector convention: p' = x*row0 + y*row1 + z*row2 + row3.
+    const float32x4_t row0 = {float(transform[0][0]), float(transform[0][1]),
+                              float(transform[0][2]), 0.0f};
+    const float32x4_t row1 = {float(transform[1][0]), float(transform[1][1]),
+                              float(transform[1][2]), 0.0f};
+    const float32x4_t row2 = {float(transform[2][0]), float(transform[2][1]),
+                              float(transform[2][2]), 0.0f};
+    const float32x4_t row3 = {float(transform[3][0]), float(transform[3][1]),
+                              float(transform[3][2]), 0.0f};
+
+    for (size_t i = 0; i < count; ++i) {
+        const float32x4_t q = {in[i][0], in[i][1], in[i][2], 0.0f};
+        const float32x4_t moved = vaddq_f32(
+            vaddq_f32(vmulq_f32(vdupq_n_f32(in[i][0]), row0),
+                      vmulq_f32(vdupq_n_f32(in[i][1]), row1)),
+            vaddq_f32(vmulq_f32(vdupq_n_f32(in[i][2]), row2), row3));
+        const float wi = weights ? weights[i] : 1.0f;
+        float32x4_t blended;
+        if (wi <= 0.0f) {
+            blended = q;
+        } else if (wi >= 1.0f) {
+            blended = moved;
+        } else {
+            const float32x4_t w = vdupq_n_f32(wi);
+            blended =
+                vaddq_f32(q, vmulq_f32(w, vsubq_f32(moved, q)));
+        }
+        alignas(16) float result[4];
+        vst1q_f32(result, blended);
+        out[i] = RrVec3f(result[0], result[1], result[2]);
+    }
+}
+
+#endif  // RIGEXEC_RUNTIME_HAS_NEON
 
 // \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
 // \p pts, which may be the same array: point i is written only after it is
