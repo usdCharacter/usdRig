@@ -2531,9 +2531,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // what makes seeding it generously safe.
     std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash>
         poseInfoPrefetch;
-    // Shared, not local: a deferred compiled rig hands it to
-    // _RealizeDeferredExecPrep, which materializes the attribute sets the
-    // solver-input index reads from it.
+    // Shared, not local: the baked program's BuildSpaces round extends this
+    // same graph instead of walking the stage a second time (it rides along
+    // through _RebuildBakedProgram below). A prim the prefetch listed whole
+    // is answered from the accumulated components; one it skipped for a
+    // bound joint is asked again under the round's own skip.
     const auto poseInputGraph = std::make_shared<_PoseInputGraph>();
     const std::function<bool(const SdfPath &)> isBoundJoint =
         [&](const SdfPath &path) { return newJointBinding.count(path) != 0; };
@@ -2565,7 +2567,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 auto warm = poseInfoPrefetch.find(path);
                 if (warm == poseInfoPrefetch.end()) {
                     poseInputGraph->Extend(
-                        _stage, {path}, isBoundJoint,
+                        _stage, {path}, isBoundJoint, &isBoundJoint,
                         RigExecParallelEvaluationEnabled(), _profiler,
                         &poseInfoPrefetch);
                     warm = poseInfoPrefetch.find(path);
@@ -2729,7 +2731,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         for (const SdfPath &path : newControlPaths) seed(path);
         // A joint-bound path stops the real walk without being read, so the
         // graph does not ask about it either.
-        poseInputGraph->Extend(_stage, seeds, isBoundJoint,
+        poseInputGraph->Extend(_stage, seeds, isBoundJoint, &isBoundJoint,
                                RigExecParallelEvaluationEnabled(), _profiler,
                                &poseInfoPrefetch);
     }
@@ -3672,9 +3674,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
     _structureDirty = false;
     // Compile the complete native domain graph for this compiled rig.
+    // The prefetch graph rides along: the BuildSpaces round extends it
+    // instead of walking the stage a second time, on this stage state.
     _RebuildBakedProgram(std::move(retiringBakedProgram),
                          compileSceneReusable?compileScene.get():nullptr,
-                         compileSceneStage,compileSceneSerial);
+                         compileSceneStage,compileSceneSerial,
+                         poseInputGraph.get());
     _restEditedProviders.clear();
     {
         // Join the digest task: from here on its result is read. Last, and

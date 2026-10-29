@@ -2681,7 +2681,8 @@ RigExecBakedProgram::Build(RigExecRigEvaluator *evaluator,
 std::unique_ptr<RigExecBakedProgram>
 RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
     std::vector<std::string> *reasons, const RigExecSceneDescriptors *scene,
-    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial)
+    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     // Every candidate remains unpublished. Normalize only actual canonical
     // SCC writer owners, then rebuild all frame bindings and version tables
@@ -2694,7 +2695,8 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
     for (;;) {
         auto candidate = _BuildWithSceneCaptureAttempt(evaluator, reasons,
             scene, sceneStage, sceneSerial, excludedPoseWriters,
-            excludedSolverBodies, exclusionProof, cycleSkipReasons);
+            excludedSolverBodies, exclusionProof, cycleSkipReasons,
+            poseInputGraph);
         if (!candidate) return nullptr;
         if (evaluator->_stageEditSerial != sourceSerial) {
             if (reasons) reasons->push_back("source changed during cycle writer normalization");
@@ -2855,7 +2857,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     const std::set<SdfPath> &excludedPoseWriters,
     const std::set<SdfPath> &excludedSolverBodies,
     const RigExecOpExclusionProof &exclusionProof,
-    const std::map<SdfPath, std::string> &cycleSkipReasons)
+    const std::map<SdfPath, std::string> &cycleSkipReasons,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     RigExecInputReplayComparisonScope replayComparison("RigExecBakedProgram::Build");
     if (!evaluator) {
@@ -3436,7 +3439,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     _SampleIntervening(&B, capture);
     {
         std::string error;
-        if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial)) {
+        if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial,poseInputGraph)) {
             refuse("provider expressions could not translate: "+error,E._rigPath);
             return nullptr;
         }

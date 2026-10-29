@@ -88,6 +88,8 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
+namespace evaluatorDetail { class _PoseInputGraph; }
+
 class RigExecRigEvaluator;
 struct RigExecRigPose;
 struct RigExecHeadLeafConstants;
@@ -4526,7 +4528,8 @@ const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &, siz
 GfMatrix4d RigExecBakedProviderParentRaw(const RigExecBakedProgramImpl &,int slot);
 bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program, UsdTimeCode capture,
     std::string *error, const RigExecSceneDescriptors *scene = nullptr,
-    const UsdStageWeakPtr &sceneStage = UsdStageWeakPtr(), uint64_t sceneSerial = 0);
+    const UsdStageWeakPtr &sceneStage = UsdStageWeakPtr(), uint64_t sceneSerial = 0,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph = nullptr);
 bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program, std::string *error);
 /// Build, once every non-provider step and cross-domain read is declared and
 /// before the provider leaves are numbered: binds the routed inputs' reads,

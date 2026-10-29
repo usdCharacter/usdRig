@@ -371,7 +371,7 @@ void
 RigExecRigEvaluator::_RebuildBakedProgram(
     std::unique_ptr<RigExecBakedProgram> outgoing,
     const RigExecSceneDescriptors *scene, const UsdStageWeakPtr &sceneStage,
-    uint64_t sceneSerial)
+    uint64_t sceneSerial, evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     // Read before anything can replace the program it describes, and cleared
     // here because from this line on no program of this evaluator has
@@ -386,7 +386,7 @@ RigExecRigEvaluator::_RebuildBakedProgram(
     // Preserve concrete compile-admission reasons for an invalid generation.
     std::vector<std::string> reasons;
     _bakedProgram = RigExecBakedProgram::_BuildWithSceneCapture(
-        this, &reasons, scene, sceneStage, sceneSerial);
+        this, &reasons, scene, sceneStage, sceneSerial, poseInputGraph);
     if (_bakedProgram) {
         ++_bakedProgramBuilds;
         std::map<SdfPath, SdfPath> switchOwners;

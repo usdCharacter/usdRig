@@ -411,15 +411,23 @@ _PoseInputGraph::_PushAttr(_Attr &&attr)
 
 void
 _PoseInputGraph::_Ask(uint32_t prim,
-                      const std::function<bool(const SdfPath &)> &skip)
+                      const std::function<bool(const SdfPath &)> &skip,
+                      const void *skipToken)
 {
-    if (_prims[prim].asked) {
+    _Prim &entry = _prims[prim];
+    // Listed whole already: its roots stand, whatever the skip is now. An
+    // unasked prim, or one skipped under another skip, is decided below.
+    if (entry.askState == 2 ||
+        (entry.askState == 1 && entry.askSkip == skipToken)) {
         return;
     }
-    _prims[prim].asked = true;
-    if (_prims[prim].path.IsEmpty() || skip(_prims[prim].path)) {
+    if (entry.path.IsEmpty() || skip(entry.path)) {
+        entry.askState = 1;
+        entry.askSkip = skipToken;
         return;
     }
+    entry.askState = 2;
+    entry.askSkip = skipToken;
     _askQueue.push_back(prim);
 }
 
@@ -463,7 +471,8 @@ _PoseInputGraph::_MarkRead(uint32_t attr, bool exists, SdfPathVector &&sources)
 
 void
 _PoseInputGraph::_ExpandNode(uint32_t node,
-                             const std::function<bool(const SdfPath &)> &skip)
+                             const std::function<bool(const SdfPath &)> &skip,
+                             const void *skipToken)
 {
     static const TfToken parentSpace("parent:space");
     static const TfToken parentDefaultSpace("parent:defaultSpace");
@@ -500,7 +509,7 @@ _PoseInputGraph::_ExpandNode(uint32_t node,
         // Native expression schemas declare frame reads that are carried by
         // Exec relationship inputs rather than USD attribute connections.
         for (size_t i = 0; i < _prims[owner].frameInputs.size(); ++i)
-            _Ask(_prims[owner].frameInputs[i], skip);
+            _Ask(_prims[owner].frameInputs[i], skip, skipToken);
         const TfToken &name = _attrs[attr].path.GetNameToken();
         const bool ruled = name == parentSpace ||
             name == parentDefaultSpace || name == posedDefaultSpace ||
@@ -514,7 +523,7 @@ _PoseInputGraph::_ExpandNode(uint32_t node,
             if (name == parentSpace) {
                 if (parent != _None) {
                     _nodeProvider[node] = parent;
-                    _Ask(parent, skip);
+                    _Ask(parent, skip, skipToken);
                 }
             } else if (name == parentDefaultSpace) {
                 if (parent != _None) {
@@ -698,16 +707,18 @@ _PoseInputGraph::_Reach(uint32_t prim, uint32_t stamp,
 void
 _PoseInputGraph::Extend(
     const UsdStageRefPtr &stage, const std::vector<SdfPath> &seeds,
-    const std::function<bool(const SdfPath &)> &skip, bool parallel,
+    const std::function<bool(const SdfPath &)> &skip, const void *skipToken,
+    bool parallel,
     RigExecProfiler &profiler,
     std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash> *infos)
 {
     std::vector<uint32_t> asked;
+    std::vector<uint32_t> extract;
     {
         RIGEXEC_PROFILE_SCOPE_CAT(profiler, "PoseInfoPrefetch.Read",
                                   "compile");
         for (const SdfPath &path : seeds) {
-            if (!path.IsEmpty()) _Ask(_PrimOf(path), skip);
+            if (!path.IsEmpty()) _Ask(_PrimOf(path), skip, skipToken);
         }
         while (!_askQueue.empty() || !_waiting.empty()) {
             // One task per prim: all of its attributes if it is asked for,
@@ -816,7 +827,7 @@ _PoseInputGraph::Extend(
                     asked.push_back(prim);
                     if (!_prims[prim].providerType &&
                         _prims[prim].nsProvider != _None) {
-                        _Ask(_prims[prim].nsProvider, skip);
+                        _Ask(_prims[prim].nsProvider, skip, skipToken);
                     }
                 }
                 for (size_t i = 0; i < tasks[t].attrs.size(); ++i) {
@@ -827,7 +838,7 @@ _PoseInputGraph::Extend(
             while (!_expand.empty()) {
                 const uint32_t node = _expand.back();
                 _expand.pop_back();
-                _ExpandNode(node, skip);
+                _ExpandNode(node, skip, skipToken);
             }
         }
     }
@@ -835,8 +846,25 @@ _PoseInputGraph::Extend(
     {
         RIGEXEC_PROFILE_SCOPE_CAT(profiler, "PoseInfoPrefetch.Scc", "compile");
         _Tarjan();
+        // Answered from the accumulated components: this round's newly
+        // listed prims, plus any seed an earlier round already listed. The
+        // added closures equal the walker's -- a merged component only folds
+        // providers the walker's own edges reach -- so re-answering an old
+        // seed repeats its first answer.
+        extract = asked;
+        for (const SdfPath &path : seeds) {
+            if (path.IsEmpty()) continue;
+            const auto found = _primIndex.find(path);
+            if (found == _primIndex.end() ||
+                _prims[found->second].askState != 2 ||
+                std::find(extract.begin(), extract.end(), found->second) !=
+                    extract.end()) {
+                continue;
+            }
+            extract.push_back(found->second);
+        }
         std::vector<uint32_t> sets;
-        for (const uint32_t prim : asked) {
+        for (const uint32_t prim : extract) {
             _PoseInputInfo info;
             info.graphPrim = static_cast<int32_t>(prim);
             sets.clear();
@@ -865,7 +893,7 @@ _PoseInputGraph::Extend(
         std::vector<uint32_t> attrMark(_attrs.size(), _None);
         std::vector<uint32_t> reached;
         uint32_t stamp = 0;
-        for (const uint32_t prim : asked) {
+        for (const uint32_t prim : extract) {
             const SdfPath &path = _prims[prim].path;
             const _PoseInputInfo &info = infos->at(path);
             reached.clear();

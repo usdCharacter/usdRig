@@ -20,6 +20,9 @@
 
 namespace rigExec {
 namespace {
+// Asks for everything: named, not a temporary, so its address is the stable
+// skip token of the BuildSpaces pose-input round.
+const auto kPoseInputNoSkip = [](const SdfPath &) { return false; };
 RigExecRevisionLeafType _Type(const SdfValueTypeName &type)
 {
     using T=RigExecRevisionLeafType;
@@ -385,7 +388,8 @@ size_t _ProviderPruneViolations(const RigExecBakedProgramImpl &B)
 }
 bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode capture,
     std::string *error,const RigExecSceneDescriptors *captured,
-    const UsdStageWeakPtr &capturedStage,uint64_t capturedSerial)
+    const UsdStageWeakPtr &capturedStage,uint64_t capturedSerial,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     auto &B=*program;
     auto sceneOwner=std::make_shared<RigExecSceneDescriptors>();
@@ -507,8 +511,14 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // other Build-time regions do.
     std::unordered_map<SdfPath,evaluatorDetail::_PoseInputInfo,SdfPath::Hash> poseInfos;
     {
-        evaluatorDetail::_PoseInputGraph graph;
-        graph.Extend(B.stage,B.paths,[](const SdfPath &){return false;},
+        // The compile's prefetch graph when one rode along: extending it
+        // answers the prims it already listed whole from the accumulated
+        // components and reads only the rest, instead of walking the stage
+        // a second time. Without one, a fresh graph walks as before.
+        evaluatorDetail::_PoseInputGraph fresh;
+        evaluatorDetail::_PoseInputGraph *graph =
+            poseInputGraph ? poseInputGraph : &fresh;
+        graph->Extend(B.stage,B.paths,kPoseInputNoSkip,&kPoseInputNoSkip,
             RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive(),*B.profiler,&poseInfos);
     }
     const evaluatorDetail::_PoseInputInfo noPoseInputs;

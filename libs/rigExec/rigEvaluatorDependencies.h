@@ -67,10 +67,14 @@ public:
     // `skip` names, which the closure walks do not read either -- and of
     // every prim they ask for in turn. Adds one entry to `*infos` per prim
     // newly asked for: its providers and connectedPose, with attributes left
-    // to MaterializeAttributes. A prim already asked for is not asked again.
+    // to MaterializeAttributes. A prim already listed whole is not asked
+    // again; a prim skipped under one skip is asked again under another,
+    // which `skipToken` tells apart -- one stable identity per skip the
+    // graph outlives, such as the address of the predicate it was given.
     void Extend(const UsdStageRefPtr &stage,
                 const std::vector<SdfPath> &seeds,
                 const std::function<bool(const SdfPath &)> &skip,
+                const void *skipToken,
                 bool parallel, RigExecProfiler &profiler,
                 std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash>
                     *infos);
@@ -87,7 +91,12 @@ private:
     struct _Prim {
         SdfPath path;
         bool read = false;
-        bool asked = false;         // asked for, or skipped, already
+        // Ask state: 0 unasked, 1 skipped, 2 listed whole. A skipped prim is
+        // asked again when the skip changes, which askSkip (the Extend's
+        // skipToken) detects; a listed prim's roots are already in _roots,
+        // so it never is.
+        uint8_t askState = 0;
+        const void *askSkip = nullptr;
         bool providerType = false;  // a joint, control or volume weight
         uint32_t nsProvider = _None;
         std::vector<uint32_t> frameInputs;
@@ -125,11 +134,13 @@ private:
     uint32_t _AttrOf(const SdfPath &path, uint32_t prim);
     void _PushAttr(_Attr &&attr);
     void _Reserve(size_t attrs);
-    void _Ask(uint32_t prim, const std::function<bool(const SdfPath &)> &skip);
+    void _Ask(uint32_t prim, const std::function<bool(const SdfPath &)> &skip,
+              const void *skipToken);
     void _CreateNode(uint32_t attr, uint32_t connected);
     void _MarkRead(uint32_t attr, bool exists, SdfPathVector &&sources);
     void _ExpandNode(uint32_t node,
-                     const std::function<bool(const SdfPath &)> &skip);
+                     const std::function<bool(const SdfPath &)> &skip,
+                     const void *skipToken);
     void _Tarjan();
     // Appends the attributes reachable from `prim`'s own attributes to
     // `*out`, each once; `compMark` and `attrMark` hold `stamp` for what is
