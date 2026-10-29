@@ -2,6 +2,7 @@
 #include "pxr/usd/usdGeom/metrics.h"
 #include "usdSceneAccess.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/attributeQuery.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/resolveInfo.h"
@@ -77,13 +78,19 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     result->hasAuthoredConnections = attribute.HasAuthoredConnections();
     if (result->hasAuthoredConnections)
         attribute.GetConnections(&result->connections);
-    result->hasValue = attribute.HasValue();
+    // One resolve for the value-source facts: each direct query below
+    // recomputes the same timeless resolve info (HasValue, the two authored
+    // flags, ValueMightBeTimeVarying, HasSpline, GetTimeSamples), while the
+    // query object resolves once and answers every one of them from it --
+    // USD documents each answer identical to its direct query.
+    const UsdAttributeQuery query(attribute);
+    result->hasValue = query.HasValue();
     result->variability = attribute.GetVariability();
-    if(attribute.HasSpline())result->spline=VtValue(attribute.GetSpline());
-    result->hasAuthoredValue = attribute.HasAuthoredValueOpinion();
-    result->hasAuthoredReadableValue = attribute.HasAuthoredValue();
-    result->mightBeTimeVarying = attribute.ValueMightBeTimeVarying();
-    attribute.GetTimeSamples(&result->sampleTimes);
+    if(query.HasSpline())result->spline=VtValue(query.GetSpline());
+    result->hasAuthoredValue = query.HasAuthoredValueOpinion();
+    result->hasAuthoredReadableValue = query.HasAuthoredValue();
+    result->mightBeTimeVarying = query.ValueMightBeTimeVarying();
+    query.GetTimeSamples(&result->sampleTimes);
     for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
         if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
         result->hasAuthoredDefault = true;
