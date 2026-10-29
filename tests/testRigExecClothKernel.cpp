@@ -428,6 +428,7 @@ void TestClearOfColliders()
                                      scene.ball.indices.size(), false, &colliders));
     RigExecClothGrid grid;
     std::vector<uint64_t> scratch;
+    std::vector<float> areas;
     // Behind the curtain, through it, and on the far side of it.
     for (int k = 0; k < PushThrough::kFrames; ++k) {
         const float z = PushThrough::BallZ(k);
@@ -437,6 +438,11 @@ void TestClearOfColliders()
                                                         &scratch);
         // Within a facet's sag of the radius either answer is right.
         if (std::fabs(std::fabs(z) - 6.0f) > 0.3f) CHECK(clear == !cuts);
+        // Caller-held area storage agrees with the call-local table.
+        const bool shared = RigExecClothClearOfColliders(mesh, colliders, scene.curtain.points.data(),
+                                                         scene.balls[size_t(k)].data(), &grid,
+                                                         &scratch, &areas);
+        CHECK(shared == clear);
     }
     // No colliders: always clear.
     CHECK(RigExecClothClearOfColliders(mesh, RigExecClothColliders(), scene.curtain.points.data(),

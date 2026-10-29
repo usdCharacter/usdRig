@@ -1486,12 +1486,14 @@ namespace cloth_detail {
 
 /// True when segment (p, q) crosses triangle (a, b, c): its ends lie strictly
 /// on opposite sides of the triangle's plane and the crossing point lies in
-/// the triangle (Ericson, Real-Time Collision Detection, 5.3.6).
-inline bool SegmentCrossesTriangle(const float *p, const float *q, const float *a,
-                                   const float *b, const float *c)
+/// the triangle (Ericson, Real-Time Collision Detection, 5.3.6). The area
+/// vector arrives precomputed so a caller testing many segments against one
+/// triangle derives it once; the value is the same.
+inline bool SegmentCrossesTriangleArea(const float *p, const float *q,
+                                       const float *a, const float *b,
+                                       const float *c, const float *n)
 {
-    float ab[3], ac[3], n[3], ap[3], aq[3];
-    Sub(b, a, ab); Sub(c, a, ac); Cross(ab, ac, n);
+    float ap[3], aq[3];
     Sub(p, a, ap); Sub(q, a, aq);
     const float dp = Dot(ap, n), dq = Dot(aq, n);
     if (!((dp > 0.0f && dq < 0.0f) || (dp < 0.0f && dq > 0.0f))) return false;
@@ -1514,12 +1516,16 @@ inline bool SegmentCrossesTriangle(const float *p, const float *q, const float *
 
 /// True when no edge of the cloth at points \p cloth crosses a collider
 /// triangle at points \p colliderPoints: the two surfaces do not cut through
-/// each other. \p grid and \p scratch are reused storage.
+/// each other. \p grid, \p scratch, and \p areaScratch are reused storage;
+/// a null \p areaScratch uses a call-local table. The table holds one area
+/// vector per collider triangle, derived once per call instead of once per
+/// edge pair; the values are the same.
 inline bool
 RigExecClothClearOfColliders(const RigExecClothMesh &mesh,
                              const RigExecClothColliders &colliders,
                              const float *cloth, const float *colliderPoints,
-                             RigExecClothGrid *grid, std::vector<uint64_t> *scratch)
+                             RigExecClothGrid *grid, std::vector<uint64_t> *scratch,
+                             std::vector<float> *areaScratch = nullptr)
 {
     using namespace cloth_detail;
     if (!cloth || !colliderPoints || colliders.triangles.empty()) return true;
@@ -1537,6 +1543,19 @@ RigExecClothClearOfColliders(const RigExecClothMesh &mesh,
     // in the bucket of the edge's midpoint, the one bucket read.
     RigExecBuildClothGrid(colliders, colliderPoints, colliderPoints, 0.5f * longest,
                           grid, scratch);
+    const size_t triangleCount = colliders.triangles.size() / 3;
+    std::vector<float> ownedAreas;
+    if (!areaScratch) areaScratch = &ownedAreas;
+    areaScratch->resize(3 * triangleCount);
+    const float *areas = areaScratch->data();
+    for (size_t tri = 0; tri < triangleCount; ++tri) {
+        const float *a = colliderPoints + 3 * size_t(colliders.triangles[3 * tri]);
+        const float *b = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 1]);
+        const float *c = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 2]);
+        float ab[3], ac[3];
+        Sub(b, a, ab); Sub(c, a, ac);
+        Cross(ab, ac, areaScratch->data() + 3 * tri);
+    }
     for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
         if (mesh.constraintKind[c] != stretch) continue;
         const float *p = cloth + 3 * size_t(mesh.constraintEnds[2 * c]);
@@ -1550,7 +1569,8 @@ RigExecClothClearOfColliders(const RigExecClothMesh &mesh,
             const float *a = colliderPoints + 3 * size_t(colliders.triangles[3 * tri]);
             const float *b = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 1]);
             const float *d = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 2]);
-            if (SegmentCrossesTriangle(p, q, a, b, d)) return false;
+            if (SegmentCrossesTriangleArea(p, q, a, b, d, areas + 3 * tri))
+                return false;
         }
     }
     return true;
@@ -1582,11 +1602,13 @@ RigExecClothWindowStart(const RigExecClothMesh &mesh,
     if (colliders.triangles.empty() || preferred <= oldest) return preferred;
     RigExecClothGrid grid;
     std::vector<uint64_t> scratch;
+    std::vector<float> areas;
     std::vector<int8_t> clear(tickCount, -1);
     const auto isClear = [&](size_t k) {
         if (clear[k] < 0) {
             clear[k] = RigExecClothClearOfColliders(mesh, colliders, ticks[k].entering,
-                                                    ticks[k].colliders, &grid, &scratch)
+                                                    ticks[k].colliders, &grid, &scratch,
+                                                    &areas)
                            ? 1 : 0;
         }
         return clear[k] == 1;
