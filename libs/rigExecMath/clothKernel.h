@@ -190,6 +190,21 @@ struct RigExecClothGrid {
     std::vector<int32_t> bucketTriangles;
 };
 
+/// One substep's interpolated collider triangles: the vertices at the
+/// substep fraction and their unit normals, derived once per substep
+/// instead of once per particle per candidate. Bit-identical to the
+/// per-particle derivation: the same lerps in the same order, then the
+/// same normal arithmetic with the same degenerate verdict.
+struct RigExecClothContactTris {
+    size_t triangleCount = 0;
+    /// Nine floats per collider triangle, three corners of three.
+    std::vector<float> verts;
+    /// Three floats per collider triangle, the unit normal.
+    std::vector<float> normals;
+    /// Whether the triangle's area vector failed the len > 0 verdict.
+    std::vector<char> degenerate;
+};
+
 /// Scratch a solve reuses. Owned by the one body that solves; never shared.
 struct RigExecClothWorkspace {
     std::vector<float> x, previous, velocity, lambda;
@@ -201,6 +216,7 @@ struct RigExecClothWorkspace {
     std::vector<uint64_t> selfScratch;
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
+    RigExecClothContactTris contacts;
 };
 
 namespace cloth_detail {
@@ -742,6 +758,47 @@ struct RigExecClothContact {
     float weights[3] = {0, 0, 0};
 };
 
+/// Interpolates every collider triangle of \p colliders at substep
+/// fraction \p t between \p before and \p after into \p out: the same
+/// corner lerps in the same order RigExecClothFindContact derives them,
+/// then the same area-vector arithmetic with the same verdict. A null
+/// point range leaves \p out empty, which covers no triangle.
+inline void
+RigExecClothContactTrisAt(const RigExecClothColliders &colliders,
+                           const float *before, const float *after, float t,
+                           RigExecClothContactTris *out)
+{
+    using namespace cloth_detail;
+    out->triangleCount = 0;
+    out->verts.clear();
+    out->normals.clear();
+    out->degenerate.clear();
+    if (!before || !after) return;
+    const size_t count = colliders.triangles.size() / 3;
+    out->verts.resize(9 * count);
+    out->normals.resize(3 * count);
+    out->degenerate.assign(count, 0);
+    out->triangleCount = count;
+    for (size_t tri = 0; tri < count; ++tri) {
+        float *v0 = out->verts.data() + 9 * tri;
+        float *v1 = v0 + 3;
+        float *v2 = v0 + 6;
+        for (int c = 0; c < 3; ++c) {
+            const size_t i = size_t(colliders.triangles[3 * tri + size_t(c)]);
+            Lerp(before + 3 * i, after + 3 * i, t, out->verts.data() + 9 * tri + 3 * c);
+        }
+        float e1[3], e2[3];
+        float *n = out->normals.data() + 3 * tri;
+        Sub(v1, v0, e1); Sub(v2, v0, e2); Cross(e1, e2, n);
+        const float len = Length(n);
+        if (!(len > 0.0f)) {
+            out->degenerate[tri] = 1;
+            continue;
+        }
+        n[0] /= len; n[1] /= len; n[2] /= len;
+    }
+}
+
 /// Finds the closest violated collider triangle for particle position \p p
 /// at substep fraction \p t between collider points \p before and \p after.
 /// A triangle is violated when its closest point lies within the reach,
@@ -756,6 +813,10 @@ struct RigExecClothContact {
 /// one bucket read. A bucket lists a triangle once; other triangles a hash
 /// collision lists there are out of reach, so the answer does not depend on
 /// the grid.
+///
+/// \p precomputed, when it covers a candidate, supplies the interpolated
+/// triangle and its normal instead of deriving them; a triangle it does
+/// not cover derives them as before. Either way the answer is the same.
 inline RigExecClothContact
 RigExecClothFindContact(const RigExecClothColliders &colliders,
                         const RigExecClothGrid &grid, const float *before,
@@ -764,7 +825,8 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                         float t0 = 0, size_t twoSidedBegin = 0,
                         size_t twoSidedEnd = std::numeric_limits<size_t>::max(),
                         bool filterCollider = false,
-                        const std::vector<float> *region = nullptr)
+                        const std::vector<float> *region = nullptr,
+                        const RigExecClothContactTris *precomputed = nullptr)
 {
     using namespace cloth_detail;
     RigExecClothContact best;
@@ -778,16 +840,27 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             const int32_t tri = grid.bucketTriangles[k];
             const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
             if (filterCollider && (firstVertex < twoSidedBegin || firstVertex >= twoSidedEnd)) continue;
-            float v[3][3];
-            for (int c = 0; c < 3; ++c) {
-                const size_t i = size_t(colliders.triangles[3 * size_t(tri) + size_t(c)]);
-                Lerp(before + 3 * i, after + 3 * i, t, v[c]);
+            float localV[3][3];
+            float n[3];
+            const float *v[3] = {localV[0], localV[1], localV[2]};
+            if (precomputed && size_t(tri) < precomputed->triangleCount) {
+                if (precomputed->degenerate[size_t(tri)]) continue;
+                const float *row = precomputed->verts.data() + 9 * size_t(tri);
+                v[0] = row; v[1] = row + 3; v[2] = row + 6;
+                const float *held = precomputed->normals.data() + 3 * size_t(tri);
+                n[0] = held[0]; n[1] = held[1]; n[2] = held[2];
+            } else {
+                for (int c = 0; c < 3; ++c) {
+                    const size_t i = size_t(colliders.triangles[3 * size_t(tri) + size_t(c)]);
+                    Lerp(before + 3 * i, after + 3 * i, t, localV[c]);
+                }
+                float e1[3], e2[3];
+                Sub(localV[1], localV[0], e1); Sub(localV[2], localV[0], e2);
+                Cross(e1, e2, n);
+                const float len = Length(n);
+                if (!(len > 0.0f)) continue;
+                n[0] /= len; n[1] /= len; n[2] /= len;
             }
-            float e1[3], e2[3], n[3];
-            Sub(v[1], v[0], e1); Sub(v[2], v[0], e2); Cross(e1, e2, n);
-            const float len = Length(n);
-            if (!(len > 0.0f)) continue;
-            n[0] /= len; n[1] /= len; n[2] /= len;
             float w[3];
             ClosestBarycentric(p, v[0], v[1], v[2], w);
             if (region && !region->empty()) {
@@ -926,7 +999,8 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
                          const float *to, const float *colliderFrom,
                          const float *colliderTo, bool firstIteration,
                          size_t i, float *x, const float *previous,
-                         float *contactLambda = nullptr, int32_t *contactTriangles = nullptr)
+                         float *contactLambda = nullptr, int32_t *contactTriangles = nullptr,
+                         const RigExecClothContactTris *contacts = nullptr)
 {
     using namespace cloth_detail;
     if (mesh.inverseMass[i] == 0.0f) return;
@@ -975,7 +1049,8 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         colliders, grid, colliderFrom, colliderTo, s.t, pi, thickness,
         s.depth, collisionProfile && collisionProfile->twoSided ? previous + 3 * i : nullptr,
         s.t0, twoSidedBegin, twoSidedEnd, collider >= 0,
-        collisionProfile && collisionProfile->targetCollider >= 0 ? &collisionProfile->targetMask : nullptr);
+        collisionProfile && collisionProfile->targetCollider >= 0 ? &collisionProfile->targetMask : nullptr,
+        contacts);
     if (contact.triangle < 0) return;
     float correction = contact.violation;
     float friction = s.friction;
@@ -1583,6 +1658,13 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
         for (int sub = 1; sub <= substeps; ++sub) {
             const RigExecClothStep s =
                 RigExecClothStepFor(to.parameters, substeps, sub, frame);
+            // The tick's collider triangles at this substep's fraction,
+            // once for every particle and iteration below.
+            if (collide)
+                RigExecClothContactTrisAt(colliders, from.colliders,
+                                           to.colliders, s.t, &ws->contacts);
+            const RigExecClothContactTris *contacts =
+                collide ? &ws->contacts : nullptr;
             for (size_t i = 0; i < n; ++i)
                 RigExecClothPredict(mesh, s, from.entering, to.entering, i, x, xp, v);
             std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
@@ -1603,7 +1685,8 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                              collide ? from.colliders : nullptr,
                                              collide ? to.colliders : nullptr,
                                              it == 0, i, x, xp,
-                                             ws->contactLambda.data(), ws->contactTriangles.data());
+                                             ws->contactLambda.data(), ws->contactTriangles.data(),
+                                             contacts);
                 }
                 if (!mesh.model.Empty()) RigExecClothSelfContacts(mesh, s, xp, ws, x);
             }
