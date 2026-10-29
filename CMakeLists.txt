@@ -1821,6 +1821,13 @@ target_include_directories(benchPlayback PRIVATE
 target_compile_definitions(benchPlayback PRIVATE
     ${_rigexec_schema_resource_define} ${_rigexec_imaging_resource_define})
 
+# Not a test: cold Compile() cost per example rig (see the file header).
+# Joins the scene list below; asserts nothing, not registered with ctest.
+add_executable(benchCompile tests/benchCompile.cpp)
+target_link_libraries(benchCompile PRIVATE rigExec rigExecBake rigExecStandalone)
+target_compile_definitions(benchCompile PRIVATE
+    ${_rigexec_schema_resource_define})
+
 add_executable(testRigExecInteractive tests/testRigExecInteractive.cpp)
 target_link_libraries(testRigExecInteractive PRIVATE rigExec)
 target_compile_definitions(testRigExecInteractive PRIVATE
@@ -2570,7 +2577,7 @@ endif()
 # the library and are not scene tests. testRigExecStandalone calls the
 # translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
-    benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
+    benchCompile benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
     rigExecPose rigExecBakeTool
     testRigExecAffineFrames testRigExecArm testRigExecBakedAttribute
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
