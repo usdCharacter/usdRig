@@ -210,10 +210,15 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     // is non-empty after popping paths it sits outside of. Read from the
     // already-captured prim metadata, so this costs no new stage query.
     std::vector<SdfPath> clipStack;
+    // Transient bound attributes parallel to the current prim's attribute
+    // paths: PrimProperties already holds every object, so per-attribute
+    // capture reuses them instead of rebinding each path through the
+    // stage. Local only; descriptors keep paths, never handles.
+    std::vector<UsdAttribute> bound;
     for (const auto &path : source.Prims(SdfPath::AbsoluteRootPath())) {
         RigExecSceneNodeDescriptor node;
         if (usd) {
-            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships))
+            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships,&bound))
                 return Fail(error,"scene prim unavailable: " + path.GetString());
         } else {
             if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
@@ -235,9 +240,10 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             node.pointBased=schemaType.IsA<UsdGeomPointBased>();
             typeFacts.emplace(node.fact.type,std::make_tuple(node.domain,node.transformProvider,node.pointBased));
         }
-        for (const auto &property : node.attributes) {
+        for (size_t k = 0; k < node.attributes.size(); ++k) {
+            const auto &property = node.attributes[k];
             RigExecSceneAttributeDescriptor attr;
-            const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
+            const auto attribute=usd ? bound[k] : UsdAttribute();
             if (!(usd ? usd->Attribute(attribute,&attr.fact,clipped) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
             // With no authored value opinion and no clips above, nothing

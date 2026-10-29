@@ -27,8 +27,11 @@ public:
     bool ResolveActive(const UsdAttribute &, UsdTimeCode, VtValue *) const;
     // Prim facts plus its property paths in one prim lookup; the same
     // queries Prim, Attributes, and Relationships run, in the same order.
+    // When boundAttributes is given, it receives the attribute objects
+    // parallel to the attribute paths, so capture binds no path twice.
+    // Transient handles for the caller; none enters descriptors.
     bool PrimProperties(const SdfPath &, RigExecScenePrim *, SdfPathVector *,
-        SdfPathVector *) const;
+        SdfPathVector *, std::vector<UsdAttribute> *boundAttributes = nullptr) const;
     bool ValueBlocked(const UsdAttribute &, UsdTimeCode) const;
     bool Relationship(const SdfPath &, RigExecSceneRelationship *) const override;
     bool Resolve(const SdfPath &, UsdTimeCode, VtValue *) const override;

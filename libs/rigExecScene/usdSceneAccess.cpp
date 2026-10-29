@@ -48,15 +48,32 @@ bool RigExecUsdSceneAccess::Prim(const SdfPath &path, RigExecScenePrim *result) 
     return true;
 }
 bool RigExecUsdSceneAccess::PrimProperties(const SdfPath &path, RigExecScenePrim *result,
-    SdfPathVector *attributes, SdfPathVector *relationships) const {
+    SdfPathVector *attributes, SdfPathVector *relationships,
+    std::vector<UsdAttribute> *boundAttributes) const {
     if (!_stage || !result || !attributes || !relationships) return false;
     const auto prim = _stage->GetPrimAtPath(path);
     if (!prim) return false;
     *result = {path, prim.GetTypeName(), prim.GetAppliedSchemas(), Metadata(prim), prim.IsActive()};
     for (const auto &child : prim.GetAllChildren()) result->children.push_back(child.GetPath());
-    attributes->clear();
-    for (const auto &attribute : prim.GetAttributes()) attributes->push_back(attribute.GetPath());
-    std::sort(attributes->begin(), attributes->end());
+    if (boundAttributes) {
+        // Bound objects stay parallel to the sorted paths: collect pairs,
+        // sort once on the materialized paths, then split.
+        std::vector<std::pair<SdfPath, UsdAttribute>> pairs;
+        for (const auto &attribute : prim.GetAttributes())
+            pairs.emplace_back(attribute.GetPath(), attribute);
+        std::sort(pairs.begin(), pairs.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+        attributes->clear();
+        boundAttributes->clear();
+        for (auto &entry : pairs) {
+            attributes->push_back(std::move(entry.first));
+            boundAttributes->push_back(std::move(entry.second));
+        }
+    } else {
+        attributes->clear();
+        for (const auto &attribute : prim.GetAttributes()) attributes->push_back(attribute.GetPath());
+        std::sort(attributes->begin(), attributes->end());
+    }
     relationships->clear();
     for (const auto &relationship : prim.GetRelationships()) relationships->push_back(relationship.GetPath());
     std::sort(relationships->begin(), relationships->end());
