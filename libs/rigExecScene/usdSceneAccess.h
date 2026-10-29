@@ -18,6 +18,13 @@ public:
     UsdAttribute BindAttribute(const SdfPath &) const;
     bool Attribute(const UsdAttribute &, RigExecSceneAttribute *) const;
     bool Resolve(const UsdAttribute &, UsdTimeCode, VtValue *) const;
+    // Resolve where the caller already established the prim is active;
+    // identical to Resolve otherwise. Capture-only.
+    bool ResolveActive(const UsdAttribute &, UsdTimeCode, VtValue *) const;
+    // Prim facts plus its property paths in one prim lookup; the same
+    // queries Prim, Attributes, and Relationships run, in the same order.
+    bool PrimProperties(const SdfPath &, RigExecScenePrim *, SdfPathVector *,
+        SdfPathVector *) const;
     bool ValueBlocked(const UsdAttribute &, UsdTimeCode) const;
     bool Relationship(const SdfPath &, RigExecSceneRelationship *) const override;
     bool Resolve(const SdfPath &, UsdTimeCode, VtValue *) const override;

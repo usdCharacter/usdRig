@@ -8,6 +8,7 @@
 #include "pxr/usd/usdGeom/xformable.h"
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include "pxr/base/tf/staticTokens.h"
 
 namespace rigExec {
@@ -200,15 +201,31 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     scene.upAxis = source.UpAxis();
     for (const auto time : identities)
         if (!source.HasIdentity(time)) return Fail(error,"scene capture identity unavailable");
+    // Domain and schema facts are pure functions of the prim type name, so
+    // each distinct type resolves once per capture instead of once per prim.
+    std::map<TfToken,std::tuple<RigExecSceneDomain,bool,bool>> typeFacts;
     for (const auto &path : source.Prims(SdfPath::AbsoluteRootPath())) {
         RigExecSceneNodeDescriptor node;
-        if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
-        node.domain = Domain(node.fact.type);
-        node.attributes = source.Attributes(path);
-        node.relationships = source.Relationships(path);
-        const auto schemaType=UsdSchemaRegistry::GetTypeFromSchemaTypeName(node.fact.type);
-        node.transformProvider=node.domain==RigExecSceneDomain::Provider || schemaType.IsA<UsdGeomXformable>();
-        node.pointBased=schemaType.IsA<UsdGeomPointBased>();
+        if (usd) {
+            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships))
+                return Fail(error,"scene prim unavailable: " + path.GetString());
+        } else {
+            if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
+            node.attributes = source.Attributes(path);
+            node.relationships = source.Relationships(path);
+        }
+        const auto known = typeFacts.find(node.fact.type);
+        if (known != typeFacts.end()) {
+            node.domain = std::get<0>(known->second);
+            node.transformProvider = std::get<1>(known->second);
+            node.pointBased = std::get<2>(known->second);
+        } else {
+            node.domain = Domain(node.fact.type);
+            const auto schemaType=UsdSchemaRegistry::GetTypeFromSchemaTypeName(node.fact.type);
+            node.transformProvider=node.domain==RigExecSceneDomain::Provider || schemaType.IsA<UsdGeomXformable>();
+            node.pointBased=schemaType.IsA<UsdGeomPointBased>();
+            typeFacts.emplace(node.fact.type,std::make_tuple(node.domain,node.transformProvider,node.pointBased));
+        }
         for (const auto &property : node.attributes) {
             RigExecSceneAttributeDescriptor attr;
             const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
@@ -216,7 +233,7 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
             for (const auto time : unique) {
                 RigExecSceneInput input;
-                if (node.fact.active && !(usd ? usd->Resolve(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
+                if (node.fact.active && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
                 input.rawBlocked = usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time);
                 attr.inputs.push_back(std::move(input));

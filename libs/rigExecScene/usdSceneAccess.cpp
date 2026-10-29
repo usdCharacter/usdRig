@@ -47,6 +47,21 @@ bool RigExecUsdSceneAccess::Prim(const SdfPath &path, RigExecScenePrim *result) 
     for (const auto &child : prim.GetAllChildren()) result->children.push_back(child.GetPath());
     return true;
 }
+bool RigExecUsdSceneAccess::PrimProperties(const SdfPath &path, RigExecScenePrim *result,
+    SdfPathVector *attributes, SdfPathVector *relationships) const {
+    if (!_stage || !result || !attributes || !relationships) return false;
+    const auto prim = _stage->GetPrimAtPath(path);
+    if (!prim) return false;
+    *result = {path, prim.GetTypeName(), prim.GetAppliedSchemas(), Metadata(prim), prim.IsActive()};
+    for (const auto &child : prim.GetAllChildren()) result->children.push_back(child.GetPath());
+    attributes->clear();
+    for (const auto &attribute : prim.GetAttributes()) attributes->push_back(attribute.GetPath());
+    std::sort(attributes->begin(), attributes->end());
+    relationships->clear();
+    for (const auto &relationship : prim.GetRelationships()) relationships->push_back(relationship.GetPath());
+    std::sort(relationships->begin(), relationships->end());
+    return true;
+}
 SdfPathVector RigExecUsdSceneAccess::Attributes(const SdfPath &path) const {
     SdfPathVector result;
     if (_stage) if (const auto prim = _stage->GetPrimAtPath(path))
@@ -86,16 +101,22 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     const UsdAttributeQuery query(attribute);
     result->hasValue = query.HasValue();
     result->variability = attribute.GetVariability();
-    if(query.HasSpline())result->spline=VtValue(query.GetSpline());
+    const bool spline = query.HasSpline();
+    if(spline)result->spline=VtValue(query.GetSpline());
     result->hasAuthoredValue = query.HasAuthoredValueOpinion();
     result->hasAuthoredReadableValue = query.HasAuthoredValue();
     result->mightBeTimeVarying = query.ValueMightBeTimeVarying();
     query.GetTimeSamples(&result->sampleTimes);
-    for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
-        if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
-        result->hasAuthoredDefault = true;
-        result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
-        break;
+    // Any "default" field anywhere in the stack is an authored value
+    // opinion, so without one (and without a spline, which walks anyway)
+    // no spec carries a default and the flags below stay false.
+    if (result->hasAuthoredValue || spline) {
+        for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
+            if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
+            result->hasAuthoredDefault = true;
+            result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
+            break;
+        }
     }
     return true;
 }
@@ -117,6 +138,13 @@ bool RigExecUsdSceneAccess::Resolve(const UsdAttribute &attribute, UsdTimeCode t
     if (!result) return false;
     *result = VtValue();
     if (!HasIdentity(time) || !attribute || !attribute.GetPrim().IsActive()) return false;
+    attribute.Get(result, time);
+    return true;
+}
+bool RigExecUsdSceneAccess::ResolveActive(const UsdAttribute &attribute, UsdTimeCode time, VtValue *result) const {
+    if (!result) return false;
+    *result = VtValue();
+    if (!HasIdentity(time) || !attribute) return false;
     attribute.Get(result, time);
     return true;
 }
