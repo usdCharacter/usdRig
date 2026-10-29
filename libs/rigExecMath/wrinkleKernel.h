@@ -109,10 +109,12 @@ RigExecApplyWrinkleWithTopology(
         incoming.push_back(Convert<Wide>((*points)[i]));
         restWide.push_back(Convert<Wide>(rest[i]));
     }
-    std::vector<bool> pinned(pointCount, false);
+    // Bytes, not bits: the packed probes of vector<bool> sit in the
+    // per-vertex projection hot path below.
+    std::vector<char> pinned(pointCount, 0);
     for (int index : settings.pinPoints) {
         if (index < 0 || size_t(index) >= pointCount || pinned[index]) return false;
-        pinned[index] = true;
+        pinned[index] = 1;
     }
     if (!topology.Covers(pointCount, counts, indices,
                          settings.topology, settings.neighborDistance)) {
@@ -137,12 +139,12 @@ RigExecApplyWrinkleWithTopology(
         offset += size_t(count);
     }
     if (settings.pinBorders) {
-        for (int index : topology.borderVertices) pinned[index] = true;
+        for (int index : topology.borderVertices) pinned[index] = 1;
     }
     for (size_t i = 0; i < pointCount; ++i) {
         const double length = Length(normals[i]);
         if (!std::isfinite(length)) return false;
-        if (length == 0) pinned[i] = true;
+        if (length == 0) pinned[i] = 1;
         else normals[i] /= length;
     }
     if (pointCount == 0 || settings.iterations == 0 || settings.maxDisplacement == 0 ||
