@@ -227,19 +227,25 @@ RigExecApplyWrinkleWithTopology(
 
     // Transport a material-index phase field along relatively uncompressed
     // edges. Smooth weights keep the field continuous at compression onset.
+    // One flat row per vertex: the same weights in the same order, without
+    // a heap block per vertex.
     std::vector<double> phase(pointCount);
-    std::vector<std::vector<double>> phaseWeights(pointCount);
+    std::vector<size_t> phaseOffsets(pointCount + 1, 0);
+    for (size_t i = 0; i < pointCount; ++i)
+        phaseOffsets[i + 1] = phaseOffsets[i] + neighbors[i].size();
+    std::vector<double> phaseWeights(phaseOffsets[pointCount]);
     for (size_t i = 0; i < pointCount; ++i) {
         phase[i] = Seed(i);
-        phaseWeights[i].reserve(neighbors[i].size());
+        double *row = phaseWeights.data() + phaseOffsets[i];
+        size_t j = 0;
         for (int neighbor : neighbors[i]) {
             const double reference = Length(restWide[neighbor] - restWide[i]) *
                 double(settings.restLengthScale);
             const double strain = reference > 0 ? std::max(0.0,
                 1.0 - Length(incoming[neighbor] - incoming[i]) / reference) : 0;
             const double localCompression = std::max(compression[i], compression[neighbor]);
-            phaseWeights[i].push_back(std::pow(std::max(0.0,
-                1.0 - strain / (localCompression + .002)), 8));
+            row[j++] = std::pow(std::max(0.0,
+                1.0 - strain / (localCompression + .002)), 8);
         }
     }
     // One alternate buffer for all passes, swapped between them: each
@@ -249,9 +255,10 @@ RigExecApplyWrinkleWithTopology(
     for (int pass = 0; pass < 10; ++pass) {
         for (size_t i = 0; i < pointCount; ++i) {
             double sum = 0, weight = 0;
+            const double *row = phaseWeights.data() + phaseOffsets[i];
             for (size_t j = 0; j < neighbors[i].size(); ++j) {
-                sum += phase[neighbors[i][j]] * phaseWeights[i][j];
-                weight += phaseWeights[i][j];
+                sum += phase[neighbors[i][j]] * row[j];
+                weight += row[j];
             }
             nextPhase[i] = weight > 0 ? .5 * (phase[i] + sum / weight)
                                       : phase[i];
