@@ -199,6 +199,16 @@ RigExecApplyWrinkleWithTopology(
     }
     if (!active) return true;
 
+    // Squared lengths at or below shortSquared need no hypot: they sit a
+    // 2^-20 band below maxDisplacement squared, far outside any rounding
+    // between the dot and the hypot, so the scale verdict is exact. Maxima
+    // below 1e-150 (whose square nears the subnormals) and
+    // squared-overflowing maxima never skip; NaN, infinite, band, and
+    // longer steps take the hypot path as before.
+    const double maxStep = double(settings.maxDisplacement);
+    const double stepSquared = maxStep * maxStep;
+    const double shortSquared = (maxStep < 1e-150 || !std::isfinite(stepSquared))
+        ? -1.0 : stepSquared * (1.0 - 0.00000095367431640625);
     const auto project = [&](size_t i, Wide value) {
         if (pinned[i]) return incoming[i];
         Wide delta = value - incoming[i];
@@ -207,9 +217,11 @@ RigExecApplyWrinkleWithTopology(
             if (height < -double(settings.tangentPlaneInset))
                 delta += (-double(settings.tangentPlaneInset) - height) * normals[i];
         }
-        const double length = Length(delta);
-        if (length > double(settings.maxDisplacement))
-            delta *= double(settings.maxDisplacement) / length;
+        if (!(Dot(delta, delta) <= shortSquared)) {
+            const double length = Length(delta);
+            if (length > maxStep)
+                delta *= maxStep / length;
+        }
         return incoming[i] + delta;
     };
 
