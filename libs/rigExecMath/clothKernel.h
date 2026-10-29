@@ -1010,11 +1010,22 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
                                               RigExecClothVertex(i))) {
         float d[3];
         Sub(pi, x + 3 * size_t(anchor), d);
-        const float len = Length(d);
         const float limit = mesh.tetherRest[i] * (1.0f + settings.tetherSlack);
-        if (len > limit && len > 0.0f) {
-            const float k = (len - limit) / len;
-            for (int a = 0; a < 3; ++a) pi[a] -= d[a] * k;
+        // A tether at or below shortSquared needs no root: a 2^-12 band
+        // under the squared limit, far outside any rounding between the
+        // dot and the root, so the slack verdict is exact. Limits below
+        // 1e-18 (whose square nears the subnormals), negative, and
+        // squared-overflowing limits never skip; NaN and infinite
+        // dots take the root path as before.
+        const float limitSquared = limit * limit;
+        const float shortSquared = (limit < 1e-18f || !std::isfinite(limitSquared))
+            ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
+        if (!(Dot(d, d) <= shortSquared)) {
+            const float len = Length(d);
+            if (len > limit && len > 0.0f) {
+                const float k = (len - limit) / len;
+                for (int a = 0; a < 3; ++a) pi[a] -= d[a] * k;
+            }
         }
     }
     if (firstIteration) {
