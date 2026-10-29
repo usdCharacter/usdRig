@@ -1814,6 +1814,11 @@ target_link_libraries(benchEditLatency PRIVATE rigExec)
 target_compile_definitions(benchEditLatency PRIVATE
     ${_rigexec_schema_resource_define})
 
+add_executable(benchMatrixMover tests/benchMatrixMover.cpp)
+target_link_libraries(benchMatrixMover PRIVATE rigExec rigExecMath)
+target_include_directories(benchMatrixMover PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/tests")
+
 add_executable(benchPlayback tests/benchPlayback.cpp)
 target_link_libraries(benchPlayback PRIVATE rigExecImaging rigExecBake)
 target_include_directories(benchPlayback PRIVATE
@@ -2570,7 +2575,8 @@ endif()
 # the library and are not scene tests. testRigExecStandalone calls the
 # translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
-    benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
+    benchEditLatency benchFrameCache benchFrameCacheWarm benchMatrixMover
+    probeCodingError
     rigExecPose rigExecBakeTool
     testRigExecAffineFrames testRigExecArm testRigExecBakedAttribute
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
@@ -2597,7 +2603,7 @@ endforeach()
 # Oracles are linked only where a test runs cpu-reference, golden capture,
 # or an exec cross-check. Imaging, playback, and runtime tests do not.
 foreach(_rigexec_oracle_exe IN ITEMS
-    rigExecPose benchEditLatency
+    rigExecPose benchEditLatency benchMatrixMover
     testRigExecArm testRigExecBakedAttribute testRigExecBakedMode
     testRigExecBakedSchedule testRigExecConstraints testRigExecDeltaMush
     testRigExecCompiledRigRests testRigExecExampleParity
