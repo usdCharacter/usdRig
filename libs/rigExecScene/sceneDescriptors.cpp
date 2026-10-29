@@ -83,11 +83,9 @@ bool Phase(const VtDictionary &metadata, TfToken *phase, std::string *error, con
     if(phase->IsEmpty())*phase=RigExecSceneBasePhase;
     return true;
 }
-bool Expression(const RigExecSceneDescriptors &scene, const SdfPath &path) {
-    const auto node = scene.nodes.find(path.GetPrimPath());
-    if (node == scene.nodes.end()) return false;
-    const auto type=node->second.fact.type;
-    if (node->second.domain != RigExecSceneDomain::Provider && type!="RigExecSphereWeight" &&
+bool Expression(const RigExecSceneNodeDescriptor &node, const SdfPath &path) {
+    const auto type=node.fact.type;
+    if (node.domain != RigExecSceneDomain::Provider && type!="RigExecSphereWeight" &&
         type!="RigExecPlaneWeight" && type!="RigExecCurveWeight") return false;
     const auto name = path.GetNameToken();
     return name == "default:space" || name == "avars:defaultSpace" || name == "posed:defaultSpace" ||
@@ -109,27 +107,57 @@ RigExecSceneInput Input(const RigExecSceneDescriptors &scene, const SdfPath &pat
     if (first == scene.attributes.end()) return result;
     result.raw = first->second.inputs[identity].raw;
     result.rawBlocked = first->second.inputs[identity].rawBlocked;
-    SdfPath current = path;
-    std::set<SdfPath> visited;
+    result.hops.push_back(path);
+    result.source = path;
+    const auto prim = scene.nodes.find(path.GetPrimPath());
+    if (prim == scene.nodes.end() || !prim->second.fact.active) return result;
+    if (Expression(prim->second,path)) { result.state = RigExecSceneInputState::Computed; return result; }
+    // The overwhelmingly common attribute is unconnected and answers from
+    // its own row: no visited set, no re-finds, no second hop. Only a
+    // followed connection pays for the walk below, which then starts past
+    // this first hop with the same visited set, hops and source the loop
+    // would have built reaching it.
+    const auto &connections = first->second.fact.connections;
+    SdfPath next;
+    if (connections.size() == 1) {
+        const auto input = scene.attributes.find(connections.front());
+        const auto provider = scene.nodes.find(connections.front().GetPrimPath());
+        if (input != scene.attributes.end() && provider != scene.nodes.end() && provider->second.fact.active &&
+            input->second.fact.type.GetType() == first->second.fact.type.GetType())
+            next = connections.front();
+    }
+    if (next.IsEmpty()) {
+        if (connections.size() > 1 && first->second.fact.type.IsArray() &&
+            prim->second.fact.type.GetString().rfind("RigExec",0) == 0) {
+            result.state = RigExecSceneInputState::Computed;
+            return result;
+        }
+        result.resolved = first->second.inputs[identity].raw;
+        result.resolvedBlocked = first->second.inputs[identity].rawBlocked;
+        result.state = result.resolved.IsEmpty() ? RigExecSceneInputState::Empty : RigExecSceneInputState::Raw;
+        return result;
+    }
+    SdfPath current = next;
+    std::set<SdfPath> visited{path};
     while (visited.insert(current).second) {
         result.hops.push_back(current);
         result.source = current;
         const auto attr = scene.attributes.find(current);
-        const auto prim = scene.nodes.find(current.GetPrimPath());
-        if (attr == scene.attributes.end() || prim == scene.nodes.end() || !prim->second.fact.active) return result;
-        if (Expression(scene,current)) { result.state = RigExecSceneInputState::Computed; return result; }
-        const auto &connections = attr->second.fact.connections;
-        if (connections.size() == 1) {
-            const auto input = scene.attributes.find(connections.front());
-            const auto provider = scene.nodes.find(connections.front().GetPrimPath());
+        const auto target = scene.nodes.find(current.GetPrimPath());
+        if (attr == scene.attributes.end() || target == scene.nodes.end() || !target->second.fact.active) return result;
+        if (Expression(target->second,current)) { result.state = RigExecSceneInputState::Computed; return result; }
+        const auto &followed = attr->second.fact.connections;
+        if (followed.size() == 1) {
+            const auto input = scene.attributes.find(followed.front());
+            const auto provider = scene.nodes.find(followed.front().GetPrimPath());
             if (input != scene.attributes.end() && provider != scene.nodes.end() && provider->second.fact.active &&
                 input->second.fact.type.GetType() == attr->second.fact.type.GetType()) {
-                current = connections.front();
+                current = followed.front();
                 continue;
             }
         }
-        if (connections.size() > 1 && attr->second.fact.type.IsArray() &&
-            prim->second.fact.type.GetString().rfind("RigExec",0) == 0) {
+        if (followed.size() > 1 && attr->second.fact.type.IsArray() &&
+            target->second.fact.type.GetString().rfind("RigExec",0) == 0) {
             result.state = RigExecSceneInputState::Computed;
             return result;
         }
