@@ -1,5 +1,6 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/wrinkleKernel.h"
+#include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecRuntime/runtimeMath.h"
 
 #include <cmath>
@@ -549,6 +550,177 @@ void TestWrinkleSplitMatchesSingleCall()
     }
 }
 
+void TestWrinkleRestDataMatchesPerFrame()
+{
+    // The retained rest tables answer the per-frame derivation
+    // bit-identically across bending rules and animated scales, and fail
+    // closed on the same rest verdicts.
+    const Mesh mesh;
+    const auto posed = Compress(mesh.rest);
+    for (const auto topology : {RigExecWrinkleTopology::Cloth, RigExecWrinkleTopology::SurfaceStruts}) {
+        for (int neighborDistance : {1, 2, 3}) {
+            RigExecWrinkleMesh cached;
+            CHECK(RigExecBuildWrinkleMesh(mesh.rest.size(), mesh.counts,
+                                          mesh.indices, topology,
+                                          neighborDistance, &cached));
+            RigExecWrinkleRestData restData;
+            const bool restOk1 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+                mesh.rest, cached, &restData);
+            CHECK(restOk1);
+            CHECK(restData.validated);
+            for (float scale : {0.5f, 1.0f, 2.0f}) {
+                RigExecWrinkleSettings settings;
+                settings.topology = topology;
+                settings.neighborDistance = neighborDistance;
+                settings.restLengthScale = scale;
+                settings.smoothingIterations = 1;
+                auto retained = posed, framed = posed;
+                const bool restOk2 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+                    &retained, mesh.rest, mesh.counts, mesh.indices,
+                    settings, cached, &restData);
+                CHECK(restOk2);
+                const bool restOk3 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+                    &framed, mesh.rest, mesh.counts, mesh.indices,
+                    settings, cached);
+                CHECK(restOk3);
+                CHECK(SameBits(retained, framed));
+                auto entry = posed;
+                CHECK(RigExecApplyWrinkle(&entry, mesh.rest, mesh.counts,
+                                          mesh.indices, settings, &cached,
+                                          &restData));
+                CHECK(SameBits(entry, framed));
+            }
+        }
+    }
+    // A duplicated rest point excludes its zero-length edges from the
+    // retained set exactly as the per-frame build excludes them.
+    {
+        const std::vector<GfVec3f> rest{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 0, 0}};
+        const std::vector<int> counts{4}, indices{0, 1, 2, 3};
+        RigExecWrinkleMesh cached;
+        CHECK(RigExecBuildWrinkleMesh(4, counts, indices,
+                                      RigExecWrinkleTopology::Cloth, 2,
+                                      &cached));
+        RigExecWrinkleRestData restData;
+        const bool restOk4 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            rest, cached, &restData);
+        CHECK(restOk4);
+        CHECK(restData.constraints.size() <
+              cached.edges.size() + cached.bendingPairs.size());
+        const auto quad = Compress(rest);
+        auto retained = quad, framed = quad;
+        const bool restOk5 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+            &retained, rest, counts, indices, RigExecWrinkleSettings(),
+            cached, &restData);
+        CHECK(restOk5);
+        const bool restOk6 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+            &framed, rest, counts, indices, RigExecWrinkleSettings(),
+            cached);
+        CHECK(restOk6);
+        CHECK(SameBits(retained, framed));
+    }
+    // The runtime instantiation retains the same way.
+    {
+        RigExecWrinkleSettings settings;
+        RigExecWrinkleMesh cached;
+        CHECK(RigExecBuildWrinkleMesh(mesh.rest.size(), mesh.counts,
+                                      mesh.indices, settings.topology,
+                                      settings.neighborDistance, &cached));
+        std::vector<RrVec3f> rest, retained, framed;
+        for (const auto &p : mesh.rest) rest.emplace_back(p[0], p[1], p[2]);
+        for (const auto &p : posed) {
+            retained.emplace_back(p[0], p[1], p[2]);
+            framed.emplace_back(p[0], p[1], p[2]);
+        }
+        RigExecWrinkleRestData restData;
+        const bool restOk7 = RigExecBuildWrinkleRestData<RrVec3f, RrVec3d>(
+            rest, cached, &restData);
+        CHECK(restOk7);
+        const bool restOk8 = RigExecApplyWrinkleWithTopology<RrVec3f, RrVec3d>(
+            &retained, rest, mesh.counts, mesh.indices, settings,
+            cached, &restData);
+        CHECK(restOk8);
+        const bool restOk9 = RigExecApplyWrinkleWithTopology<RrVec3f, RrVec3d>(
+            &framed, rest, mesh.counts, mesh.indices, settings, cached);
+        CHECK(restOk9);
+        CHECK(retained.size() == framed.size());
+        for (size_t i = 0; i < framed.size(); ++i)
+            CHECK(std::memcmp(retained[i].data(), framed[i].data(), 3 * sizeof(float)) == 0);
+    }
+    // The cache retains one entry per (rest, topology), rebuilds it when
+    // any rest bit differs, and fails closed on bad inputs.
+    {
+        RigExecSurfaceKernelCache<GfVec3f, GfVec3d> cache;
+        const auto *first = cache.WrinkleRestData(
+            mesh.rest, mesh.counts, mesh.indices,
+            RigExecWrinkleTopology::Cloth, 2);
+        CHECK(first && first->validated);
+        const auto *second = cache.WrinkleRestData(
+            mesh.rest, mesh.counts, mesh.indices,
+            RigExecWrinkleTopology::Cloth, 2);
+        CHECK(second == first);
+        auto moved = mesh.rest;
+        moved[5][0] += 1.0f;
+        const auto *third = cache.WrinkleRestData(
+            moved, mesh.counts, mesh.indices,
+            RigExecWrinkleTopology::Cloth, 2);
+        CHECK(third && third != first && third->validated);
+        CHECK(!cache.WrinkleRestData(mesh.rest, {2}, mesh.indices,
+                                     RigExecWrinkleTopology::Cloth, 2));
+        auto nan = mesh.rest;
+        nan[0][1] = std::numeric_limits<float>::quiet_NaN();
+        CHECK(!cache.WrinkleRestData(nan, mesh.counts, mesh.indices,
+                                     RigExecWrinkleTopology::Cloth, 2));
+    }
+    // Fail-closed: the builder rejects bad rest and bad topology, and
+    // the apply rejects unvalidated or truncated tables, all with the
+    // points untouched.
+    {
+        RigExecWrinkleMesh cached;
+        CHECK(RigExecBuildWrinkleMesh(mesh.rest.size(), mesh.counts,
+                                      mesh.indices,
+                                      RigExecWrinkleTopology::Cloth, 2,
+                                      &cached));
+        RigExecWrinkleRestData bad;
+        auto nan = mesh.rest;
+        nan[0][1] = std::numeric_limits<float>::quiet_NaN();
+        const bool restOk10 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            nan, cached, &bad);
+        CHECK(!restOk10);
+        CHECK(!bad.validated);
+        const auto shortRest = std::vector<GfVec3f>(
+            mesh.rest.begin(), mesh.rest.end() - 1);
+        const bool restOk11 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            shortRest, cached, &bad);
+        CHECK(!restOk11);
+        const RigExecWrinkleMesh empty;
+        const bool restOk12 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            mesh.rest, empty, &bad);
+        CHECK(!restOk12);
+        const bool restOk13 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            mesh.rest, cached, nullptr);
+        CHECK(!restOk13);
+        RigExecWrinkleRestData restData;
+        const bool restOk14 = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            mesh.rest, cached, &restData);
+        CHECK(restOk14);
+        restData.neighborRest.pop_back();
+        auto actual = posed;
+        const bool restOk15 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+            &actual, mesh.rest, mesh.counts, mesh.indices,
+            RigExecWrinkleSettings(), cached, &restData);
+        CHECK(!restOk15);
+        CHECK(SameBits(actual, posed));
+        restData.validated = false;
+        actual = posed;
+        const bool restOk16 = RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
+            &actual, mesh.rest, mesh.counts, mesh.indices,
+            RigExecWrinkleSettings(), cached, &restData);
+        CHECK(!restOk16);
+        CHECK(SameBits(actual, posed));
+    }
+}
+
 } // namespace
 
 int main()
@@ -564,6 +736,7 @@ int main()
         TestAtomicValidation();
         TestRuntimeTemplateParity();
         TestWrinkleSplitMatchesSingleCall();
+        TestWrinkleRestDataMatchesPerFrame();
         std::cout << "Wrinkle math tests passed\n";
         return 0;
     } catch (const std::exception &error) {

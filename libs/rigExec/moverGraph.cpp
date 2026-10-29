@@ -1170,8 +1170,12 @@ ApplyRevisionKernel(RigExecRevisionOp op,
             p.topologyCounts,p.topologyIndices,p.wrinkleSettings.topology,
             p.wrinkleSettings.neighborDistance) : nullptr;
         if(cache && !topology) return false;
+        const auto *rest=cache ? cache->WrinkleRestData(p.restPoints,
+            p.topologyCounts,p.topologyIndices,p.wrinkleSettings.topology,
+            p.wrinkleSettings.neighborDistance) : nullptr;
+        if(cache && !rest) return false;
         return RigExecApplyWrinkle(pts,p.restPoints,p.topologyCounts,
-            p.topologyIndices,p.wrinkleSettings,topology);
+            p.topologyIndices,p.wrinkleSettings,topology,rest);
     }
     case RigExecRevisionOp::Lattice:
         if(p.latticeSettings.regularGrid)

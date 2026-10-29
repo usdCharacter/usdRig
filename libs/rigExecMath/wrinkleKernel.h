@@ -80,6 +80,100 @@ struct Constraint {
 
 } // namespace wrinkleDetail
 
+/// The wrinkle kernel's retained rest side: unscaled rest lengths for one
+/// (rest, topology) pair, built once and shared across frames. The
+/// per-frame restLengthScale stays in the apply half, so an animated
+/// scale never invalidates the entry. Only the retainer's key (the rest
+/// bits it was built from) ties the tables to a rest pose; the apply
+/// half trusts a validated entry the way it trusts its topology entry.
+struct RigExecWrinkleRestData {
+    struct Entry {
+        int a = -1;
+        int b = -1;
+        bool bending = false;
+        double restLength = 0.0;
+    };
+    /// Constraint set in apply order (triangle edges, then bending
+    /// pairs), zero-length pairs excluded exactly as the per-frame build
+    /// excludes them. restLength is UNSCALED (times restLengthScale).
+    std::vector<Entry> constraints;
+    /// Flat unscaled rest lengths in (vertex, ring) order, parallel to
+    /// the apply half's phase-weight rows.
+    std::vector<double> neighborRest;
+    /// The builder established every entry; only the posed points, the
+    /// scale, and the stiffnesses are still frame business.
+    bool validated = false;
+};
+
+/// Derive the rest tables for \p rest over \p topology: the constraint
+/// set's unscaled lengths and every neighbor ring's unscaled lengths, in
+/// the order the apply half reads them. Fails closed (false,
+/// \p data unvalidated) on the same rest verdicts the per-frame build
+/// returns: a size mismatch, a non-finite rest coordinate, or a
+/// non-finite constraint length. Neighbor lengths are stored raw --
+/// the apply half never verdict-ed them -- so the cached path reads
+/// back exactly what the per-frame hypot computed.
+template<class Point, class Wide>
+bool
+RigExecBuildWrinkleRestData(
+    const std::vector<Point> &rest,
+    const RigExecWrinkleMesh &topology,
+    RigExecWrinkleRestData *data)
+{
+    using namespace wrinkleDetail;
+    if (!data) return false;
+    RigExecWrinkleRestData built;
+    if (!topology.valid || rest.size() != topology.pointCount ||
+        topology.neighbors.size() != topology.pointCount) {
+        *data = std::move(built);
+        return false;
+    }
+    std::vector<Wide> restWide;
+    restWide.reserve(rest.size());
+    for (const Point &point : rest) {
+        if (!IsFinite(point)) {
+            *data = std::move(built);
+            return false;
+        }
+        restWide.push_back(Convert<Wide>(point));
+    }
+    const auto inRange = [&](int index) {
+        return index >= 0 && size_t(index) < rest.size();
+    };
+    const auto addLength = [&](int a, int b, bool bending) {
+        if (!inRange(a) || !inRange(b)) return false;
+        const double length = Length(restWide[a] - restWide[b]);
+        if (!std::isfinite(length)) return false;
+        if (length > 0) built.constraints.push_back({a, b, bending, length});
+        return true;
+    };
+    for (const RigExecWrinkleEdge &edge : topology.edges) {
+        if (!addLength(edge.a, edge.b, false)) {
+            *data = std::move(built);
+            return false;
+        }
+    }
+    for (const auto &pair : topology.bendingPairs) {
+        if (!addLength(pair.first, pair.second, true)) {
+            *data = std::move(built);
+            return false;
+        }
+    }
+    for (size_t i = 0; i < rest.size(); ++i) {
+        for (int neighbor : topology.neighbors[i]) {
+            if (!inRange(neighbor)) {
+                *data = std::move(built);
+                return false;
+            }
+            built.neighborRest.push_back(
+                Length(restWide[neighbor] - restWide[i]));
+        }
+    }
+    built.validated = true;
+    *data = std::move(built);
+    return true;
+}
+
 /// Full 3D affine edge projections, bounded by incoming attachment balls and
 /// optional outward tangent halfspaces. Point/Wide provide storage
 /// and arithmetic only; this shared implementation has no USD dependency.
@@ -89,25 +183,29 @@ struct Constraint {
 /// bending pairs RigExecBuildWrinkleMesh derived from (counts, indices),
 /// and the same arithmetic the single-call kernel performs runs over it.
 /// A topology built from anything else fails closed, exactly as its own
-/// build would have verdict-ed.
+/// build would have verdict-ed. \p restData optionally supplies the
+/// retained rest lengths for this rest pose; null derives them
+/// per frame, bit-identically.
 template<class Point, class Wide>
 bool
 RigExecApplyWrinkleWithTopology(
     std::vector<Point> *points, const std::vector<Point> &rest,
     const std::vector<int> &counts, const std::vector<int> &indices,
     const RigExecWrinkleSettings &settings,
-    const RigExecWrinkleMesh &topology)
+    const RigExecWrinkleMesh &topology,
+    const RigExecWrinkleRestData *restData = nullptr)
 {
     using namespace wrinkleDetail;
     if (!points || points->size() != rest.size() || !ValidSettings(settings)) return false;
+    if (restData && !restData->validated) return false;
     const size_t pointCount = rest.size();
     std::vector<Wide> incoming, restWide;
     incoming.reserve(pointCount);
-    restWide.reserve(pointCount);
+    if (!restData) restWide.reserve(pointCount);
     for (size_t i = 0; i < pointCount; ++i) {
         if (!IsFinite(rest[i]) || !IsFinite((*points)[i])) return false;
         incoming.push_back(Convert<Wide>((*points)[i]));
-        restWide.push_back(Convert<Wide>(rest[i]));
+        if (!restData) restWide.push_back(Convert<Wide>(rest[i]));
     }
     // Bytes, not bits: the packed probes of vector<bool> sit in the
     // per-vertex projection hot path below.
@@ -151,8 +249,9 @@ RigExecApplyWrinkleWithTopology(
         settings.wrinkleScale == 0) return true;
 
     // The cached triangle edges supply stable solve order and the cached
-    // bending pairs the distance-based bending model; rest lengths stay
-    // per-frame, exactly as the single-call kernel derived them.
+    // bending pairs the distance-based bending model; rest lengths come
+    // from the retained tables when supplied, else per-frame, exactly as
+    // the single-call kernel derived them.
     const std::vector<std::vector<int>> &neighbors = topology.neighbors;
     std::vector<Constraint> constraints;
     const auto addConstraint = [&](int a, int b, bool bending) {
@@ -165,11 +264,22 @@ RigExecApplyWrinkleWithTopology(
         }
         return true;
     };
-    for (const RigExecWrinkleEdge &edge : topology.edges) {
-        if (!addConstraint(edge.a, edge.b, false)) return false;
-    }
-    for (const auto &pair : topology.bendingPairs) {
-        if (!addConstraint(pair.first, pair.second, true)) return false;
+    if (restData) {
+        constraints.reserve(restData->constraints.size());
+        for (const auto &cached : restData->constraints) {
+            const double scaledLength =
+                cached.restLength * double(settings.restLengthScale);
+            if (!std::isfinite(scaledLength)) return false;
+            constraints.push_back(
+                {cached.a, cached.b, scaledLength, cached.bending});
+        }
+    } else {
+        for (const RigExecWrinkleEdge &edge : topology.edges) {
+            if (!addConstraint(edge.a, edge.b, false)) return false;
+        }
+        for (const auto &pair : topology.bendingPairs) {
+            if (!addConstraint(pair.first, pair.second, true)) return false;
+        }
     }
 
     const auto stiffness = [&](const Constraint &constraint, double length) {
@@ -235,14 +345,19 @@ RigExecApplyWrinkleWithTopology(
     std::vector<size_t> phaseOffsets(pointCount + 1, 0);
     for (size_t i = 0; i < pointCount; ++i)
         phaseOffsets[i + 1] = phaseOffsets[i] + neighbors[i].size();
+    if (restData && restData->neighborRest.size() != phaseOffsets[pointCount])
+        return false;
     std::vector<double> phaseWeights(phaseOffsets[pointCount]);
     for (size_t i = 0; i < pointCount; ++i) {
         phase[i] = Seed(i);
         double *row = phaseWeights.data() + phaseOffsets[i];
+        const double *cachedRow = restData
+            ? restData->neighborRest.data() + phaseOffsets[i] : nullptr;
         size_t j = 0;
         for (int neighbor : neighbors[i]) {
-            const double reference = Length(restWide[neighbor] - restWide[i]) *
-                double(settings.restLengthScale);
+            const double unscaled = restData ? cachedRow[j]
+                : Length(restWide[neighbor] - restWide[i]);
+            const double reference = unscaled * double(settings.restLengthScale);
             const double strain = reference > 0 ? std::max(0.0,
                 1.0 - Length(incoming[neighbor] - incoming[i]) / reference) : 0;
             const double localCompression = std::max(compression[i], compression[neighbor]);
