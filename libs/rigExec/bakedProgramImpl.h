@@ -209,7 +209,12 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
                           SdfPathVector *walk = nullptr)
 {
     std::set<SdfPath> visiting;
-    std::vector<UsdAttribute> fallback;
+    struct Fallback {
+        UsdAttribute attribute;
+        size_t samples = 0;
+        bool spline = false;
+    };
+    std::vector<Fallback> fallback;
     UsdAttribute a = attribute;
     while (a && visiting.insert(a.GetPath()).second) {
         if (walk) {
@@ -228,12 +233,22 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
         // USD build while it varies. This is the same predicate
         // RigExecBakedAnimatedOrConnected applies further down, for the
         // same reason.
-        if (a.ValueMightBeTimeVarying() || a.GetNumTimeSamples() > 0) {
+        // One resolve for the per-hop questions: ValueMightBeTimeVarying,
+        // GetNumTimeSamples and HasSpline each recompute the same timeless
+        // resolve info, while the query answers all three from one. The
+        // counts below are also what the reverse pass probes with, so it
+        // does not recompute them. Connections compose only when authored:
+        // with no authored connection opinions there is nothing to compose.
+        const UsdAttributeQuery query(a);
+        const size_t samples = query.GetNumTimeSamples();
+        if (query.ValueMightBeTimeVarying() || samples > 0) {
             *varying = true;
         }
-        fallback.push_back(a);
+        fallback.push_back({a, samples, query.HasSpline()});
         SdfPathVector connections;
-        a.GetConnections(&connections);
+        if (a.HasAuthoredConnections()) {
+            a.GetConnections(&connections);
+        }
         if (connections.size() != 1) {
             break;
         }
@@ -244,10 +259,10 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
         // A keyed attribute with no default answers at every frame but not
         // at Default, so it is probed at its first key; otherwise the input
         // has no handle and every frame reads its fallback.
-        const bool keyed = it->GetNumTimeSamples() > 0 || it->HasSpline();
-        if (it->Get(&probe, time) ||
-            (keyed && it->Get(&probe, UsdTimeCode::EarliestTime()))) {
-            *selected = *it;
+        const bool keyed = it->samples > 0 || it->spline;
+        if (it->attribute.Get(&probe, time) ||
+            (keyed && it->attribute.Get(&probe, UsdTimeCode::EarliestTime()))) {
+            *selected = it->attribute;
             return;
         }
     }
@@ -5362,12 +5377,17 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
     if constexpr (std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>) {
         if (sourceValue && !input.varying && input.head &&
             input.head.GetTypeName().GetType()==TfType::Find<T>() && walk &&
-            walk->size()==1 && walk->front()==input.head.GetPath() &&
-            !input.head.ValueMightBeTimeVarying() &&
-            input.head.GetNumTimeSamples()==0 && !input.head.HasSpline()) {
-            input.sourceBacked=true;
-            input.sourceFallback=fallback;
-            input.query=UsdAttributeQuery(input.head);
+            walk->size()==1 && walk->front()==input.head.GetPath()) {
+            // One resolve for the steadiness questions, asked of the same
+            // query the binding keeps: ValueMightBeTimeVarying,
+            // GetNumTimeSamples and HasSpline each recompute it directly.
+            UsdAttributeQuery head(input.head);
+            if (!head.ValueMightBeTimeVarying() &&
+                head.GetNumTimeSamples()==0 && !head.HasSpline()) {
+                input.sourceBacked=true;
+                input.sourceFallback=fallback;
+                input.query=std::move(head);
+            }
         }
     }
     // A selection that moves with the time code is read the long way,
