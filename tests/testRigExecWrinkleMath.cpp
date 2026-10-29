@@ -235,6 +235,25 @@ void TestUnequalStiffnessZeroCrossing()
     }
 }
 
+void TestUniformStiffnessSignedZero()
+{
+    // -0.0 is a valid unit stiffness; the uniform-stiffness fast path must
+    // map it exactly as the blend does (+0.0), so -0.0 and +0.0 solve alike.
+    const Mesh mesh;
+    const auto posed = Compress(mesh.rest);
+    for (float bend : {0.0f, 0.1f}) {
+        RigExecWrinkleSettings positive, negative;
+        positive.stretchStiffness = positive.compressionStiffness = 0.0f;
+        negative.stretchStiffness = negative.compressionStiffness = -0.0f;
+        positive.bendStiffness = negative.bendStiffness = bend;
+        auto a = posed, b = posed;
+        CHECK(RigExecApplyWrinkle(&a, mesh.rest, mesh.counts, mesh.indices, positive));
+        CHECK(RigExecApplyWrinkle(&b, mesh.rest, mesh.counts, mesh.indices, negative));
+        CHECK(SameBits(a, b));
+        CheckBounds(mesh, posed, a, positive);
+    }
+}
+
 void TestRestRigidAndDisabled()
 {
     const Mesh mesh;
@@ -730,6 +749,7 @@ int main()
         TestPoseContinuity();
         TestChangingDirectionAndCurvatureContinuity();
         TestUnequalStiffnessZeroCrossing();
+        TestUniformStiffnessSignedZero();
         TestRestRigidAndDisabled();
         TestControlsAndFinalProjections();
         TestScaleOrientationAndDegenerate();

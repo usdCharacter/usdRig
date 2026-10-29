@@ -282,8 +282,18 @@ RigExecApplyWrinkleWithTopology(
         }
     }
 
+    // Equal stretch/compression stiffnesses make (selected - shared) an
+    // exact +0, so the blend term below vanishes: the slow path computes
+    // shared + 0.0 for every non-bending constraint. Return that directly.
+    // The +0.0 keeps the slow path's -0.0-to-+0.0 mapping bit-identical;
+    // unequal stiffnesses take the slow path as before.
+    const bool uniformStiffness =
+        settings.stretchStiffness == settings.compressionStiffness;
+    const double uniformShared = double(std::min(settings.compressionStiffness,
+                                                 settings.stretchStiffness));
     const auto stiffness = [&](const Constraint &constraint, double length) {
         if (constraint.bending) return double(settings.bendStiffness);
+        if (uniformStiffness) return uniformShared + 0.0;
         const double selected = length < constraint.restLength
             ? settings.compressionStiffness : settings.stretchStiffness;
         const double shared = std::min(settings.compressionStiffness, settings.stretchStiffness);
