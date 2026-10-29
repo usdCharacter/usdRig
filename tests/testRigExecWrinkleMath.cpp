@@ -263,6 +263,99 @@ void TestPhaseWeightPowExactCases()
     CHECK(std::pow(1.0, 8) == 1.0);
 }
 
+void TestIterationProjectionExtremes()
+{
+    // The iteration loop skips pinned vertices in its projection walk and
+    // verifies finiteness once at the end instead of once per iteration.
+    // Extreme-but-valid settings must still succeed deterministically,
+    // keep every result finite, and leave pins unmoved, on both the
+    // per-frame and the retained-rest paths.
+    const Mesh mesh;
+    const auto posed = Compress(mesh.rest);
+    RigExecWrinkleMesh topology;
+    CHECK(RigExecBuildWrinkleMesh(mesh.rest.size(), mesh.counts, mesh.indices,
+                                  RigExecWrinkleTopology::Cloth, 2, &topology));
+    RigExecWrinkleRestData restData;
+    const bool restOk = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+        mesh.rest, topology, &restData);
+    CHECK(restOk);
+    const auto finite = [](const std::vector<GfVec3f> &points) {
+        for (const auto &p : points)
+            if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
+                return false;
+        return true;
+    };
+    RigExecWrinkleSettings seed;
+    seed.pinPoints = {0, mesh.width / 2, int(mesh.rest.size()) - 1};
+    const auto run = [&](RigExecWrinkleSettings settings) {
+        for (bool borders : {true, false}) {
+            settings.pinBorders = borders;
+            auto a = posed, b = posed, c = posed;
+            CHECK(RigExecApplyWrinkle(&a, mesh.rest, mesh.counts, mesh.indices,
+                                      settings, &topology, nullptr));
+            CHECK(RigExecApplyWrinkle(&b, mesh.rest, mesh.counts, mesh.indices,
+                                      settings, &topology, nullptr));
+            CHECK(RigExecApplyWrinkle(&c, mesh.rest, mesh.counts, mesh.indices,
+                                      settings, &topology, &restData));
+            CHECK(SameBits(a, b));
+            CHECK(SameBits(a, c));
+            CHECK(finite(a));
+            CheckBounds(mesh, posed, a, settings);
+        }
+    };
+    run(seed);
+    for (int iterations : {1, 1000}) {
+        auto settings = seed;
+        settings.iterations = iterations;
+        run(settings);
+    }
+    for (float stiffness : {1e-30f, 1.0f}) {
+        auto settings = seed;
+        settings.stretchStiffness = settings.compressionStiffness =
+            settings.bendStiffness = stiffness;
+        run(settings);
+    }
+    for (float scale : {1e-20f, 1e20f}) {
+        auto rest = seed;
+        rest.restLengthScale = scale;
+        run(rest);
+        auto disp = seed;
+        disp.maxDisplacement = scale;
+        run(disp);
+        auto wrinkle = seed;
+        wrinkle.wrinkleScale = scale;
+        run(wrinkle);
+    }
+    {
+        auto settings = seed;
+        settings.tangentPlaneInset = 1e10f;
+        settings.smoothingIterations = 5;
+        settings.tangentPlaneCollisions = false;
+        run(settings);
+    }
+    {
+        auto settings = seed;
+        settings.topology = RigExecWrinkleTopology::SurfaceStruts;
+        settings.neighborDistance = 8;
+        RigExecWrinkleMesh struts;
+        CHECK(RigExecBuildWrinkleMesh(mesh.rest.size(), mesh.counts, mesh.indices,
+                                      settings.topology, settings.neighborDistance,
+                                      &struts));
+        RigExecWrinkleRestData strutRest;
+        const bool strutRestOk = RigExecBuildWrinkleRestData<GfVec3f, GfVec3d>(
+            mesh.rest, struts, &strutRest);
+        CHECK(strutRestOk);
+        auto a = posed, b = posed;
+        CHECK(RigExecApplyWrinkle(&a, mesh.rest, mesh.counts, mesh.indices,
+                                  settings, &struts, nullptr));
+        CHECK(RigExecApplyWrinkle(&b, mesh.rest, mesh.counts, mesh.indices,
+                                  settings, &struts, &strutRest));
+        CHECK(SameBits(a, b));
+        CHECK(finite(a));
+        CheckBounds(mesh, posed, a, settings);
+    }
+}
+
 void TestRestRigidAndDisabled()
 {
     const Mesh mesh;
@@ -760,6 +853,7 @@ int main()
         TestUnequalStiffnessZeroCrossing();
         TestUniformStiffnessSignedZero();
         TestPhaseWeightPowExactCases();
+        TestIterationProjectionExtremes();
         TestRestRigidAndDisabled();
         TestControlsAndFinalProjections();
         TestScaleOrientationAndDegenerate();

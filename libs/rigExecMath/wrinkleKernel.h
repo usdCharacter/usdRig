@@ -460,10 +460,19 @@ RigExecApplyWrinkleWithTopology(
             if (mask & 1) current[a] += correction;
             if (mask & 2) current[b] -= correction;
         }
+        // Pinned vertices never move (no constraint writes them) and
+        // project to themselves, so the per-iteration projection skips
+        // them; the finiteness walk runs once below instead of once per
+        // iteration. A non-finite value propagates deterministically
+        // through the remaining iterations (no operation heals it), so
+        // the deferred verdict matches the per-iteration one exactly.
         for (size_t i = 0; i < pointCount; ++i) {
-            if (!IsFinite(current[i])) return false;
+            if (pinned[i]) continue;
             current[i] = project(i, current[i]);
         }
+    }
+    for (size_t i = 0; i < pointCount; ++i) {
+        if (!IsFinite(current[i])) return false;
     }
 
     std::vector<Wide> deltas(pointCount);
