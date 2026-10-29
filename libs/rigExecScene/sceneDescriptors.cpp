@@ -151,6 +151,21 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     const auto *usd=dynamic_cast<const RigExecUsdSceneAccess *>(&source);
     scene.rigRoot = root;
     scene.identities = identities;
+    // A repeated identity resolves once: Build captures {Default, Default},
+    // and the second row would re-read every attribute for the same answer.
+    // Unique times in first-occurrence order; each requested identity maps
+    // to its unique slot for the replication after the connection walks.
+    std::vector<UsdTimeCode> unique;
+    std::vector<size_t> slot;
+    unique.reserve(identities.size());
+    slot.reserve(identities.size());
+    for (const auto time : identities) {
+        const auto found = std::find(unique.begin(), unique.end(), time);
+        if (found == unique.end()) {
+            slot.push_back(unique.size());
+            unique.push_back(time);
+        } else slot.push_back(size_t(found - unique.begin()));
+    }
     scene.timeCodesPerSecond = source.TimeCodesPerSecond();
     scene.framesPerSecond = source.FramesPerSecond();
     scene.interpolation = source.Interpolation();
@@ -171,7 +186,7 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
             if (!(usd ? usd->Attribute(attribute,&attr.fact) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
-            for (const auto time : identities) {
+            for (const auto time : unique) {
                 RigExecSceneInput input;
                 if (node.fact.active && !(usd ? usd->Resolve(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
@@ -244,8 +259,19 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
                 (target.IsPrimPath() || scene.attributes.count(target) || scene.relationships.count(target)));
         }
     }
+    // The connection walks run over the unique rows only: every attribute
+    // still holds unique-sized inputs while they run, so a walk that reads
+    // another attribute's row sees the same row the requested identity
+    // would have resolved. Replication below is then an exact copy.
     for (auto &[path, attr] : scene.attributes)
-        for (size_t i = 0; i < identities.size(); ++i) attr.inputs[i] = Input(scene,path,i);
+        for (size_t u = 0; u < unique.size(); ++u) attr.inputs[u] = Input(scene,path,u);
+    if (unique.size() != identities.size())
+        for (auto &[path, attr] : scene.attributes) {
+            std::vector<RigExecSceneInput> full;
+            full.reserve(identities.size());
+            for (size_t s : slot) full.push_back(attr.inputs[s]);
+            attr.inputs = std::move(full);
+        }
     for (const auto &[path, node] : scene.nodes) {
         if (node.stackOrdinal < 0 || !node.fact.active) continue;
         const auto moves = scene.relationships.find(path.AppendProperty(_tokens->rigExecMoves));
