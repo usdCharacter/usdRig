@@ -70,13 +70,18 @@ UsdAttribute RigExecUsdSceneAccess::BindAttribute(const SdfPath &path) const {
 bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result) const {
     if (!_stage || !result || !attribute) return false;
     *result = {attribute.GetPath(), attribute.GetTypeName(), Metadata(attribute), {}};
-    attribute.GetConnections(&result->connections);
+    // Composed connections are empty when nothing authors any, so the
+    // authored flag this fact already records gates the composition walk:
+    // the overwhelmingly common unconnected attribute skips it. Exact, and
+    // no new query: the flag read moves up from below.
+    result->hasAuthoredConnections = attribute.HasAuthoredConnections();
+    if (result->hasAuthoredConnections)
+        attribute.GetConnections(&result->connections);
     result->hasValue = attribute.HasValue();
     result->variability = attribute.GetVariability();
     if(attribute.HasSpline())result->spline=VtValue(attribute.GetSpline());
     result->hasAuthoredValue = attribute.HasAuthoredValueOpinion();
     result->hasAuthoredReadableValue = attribute.HasAuthoredValue();
-    result->hasAuthoredConnections = attribute.HasAuthoredConnections();
     result->mightBeTimeVarying = attribute.ValueMightBeTimeVarying();
     attribute.GetTimeSamples(&result->sampleTimes);
     for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
