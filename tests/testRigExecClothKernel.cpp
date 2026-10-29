@@ -5,14 +5,17 @@
 // rigid input motion is carried rigidly, repeated solves are bit-identical,
 // and a window whose first frame has a collider cutting through the cloth
 // starts before the contact, so a ball pushed through a curtain keeps it in
-// front frame after frame. A format-25 (RCL1) compiled rig plays as it was
-// exported. Header-only and USD-free.
+// front frame after frame. The swept-bounds broadphase agrees with the full
+// contact search. A format-25 (RCL1) compiled rig plays as it was exported.
+// Header-only and USD-free.
 #include "rigExecMath/clothKernel.h"
 #include "rigExecBinary/clothPlayback.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 using namespace rigExec;
@@ -551,6 +554,123 @@ void TestWindowStartsBeforeContact()
     CHECK(worstFixed < 0.5f);
 }
 
+bool SameContact(const RigExecClothContact &a, const RigExecClothContact &b)
+{
+    return a.triangle == b.triangle &&
+        std::memcmp(&a.violation, &b.violation, sizeof(float)) == 0 &&
+        std::memcmp(a.normal, b.normal, sizeof(a.normal)) == 0 &&
+        std::memcmp(a.weights, b.weights, sizeof(a.weights)) == 0;
+}
+
+void TestSweptBoundsAndBroadphase()
+{
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    // A grid that never went through the build covers everything, so the
+    // broadphase never skips on it; so does an empty build.
+    RigExecClothGrid fresh;
+    for (int a = 0; a < 3; ++a) {
+        CHECK(fresh.sweptLo[a] == -std::numeric_limits<float>::infinity());
+        CHECK(fresh.sweptHi[a] == std::numeric_limits<float>::infinity());
+    }
+    RigExecClothGrid empty;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(RigExecClothColliders(), nullptr, nullptr, 1.0f, &empty,
+                          &scratch);
+    for (int a = 0; a < 3; ++a) {
+        CHECK(empty.sweptLo[a] == -std::numeric_limits<float>::infinity());
+        CHECK(empty.sweptHi[a] == std::numeric_limits<float>::infinity());
+    }
+    const float thicknessDepth[][2] = {{0.5f, 2.0f}, {0.0f, 0.0f}, {0.0f, 5.0f},
+                                       {2.0f, 0.5f}, {1e-30f, 1e-30f}};
+    const float fractions[] = {0.0f, 0.37f, 1.0f};
+    size_t compared = 0;
+    for (float shift : {0.0f, 1e15f}) {
+        // The box swept from `before` to `after`; the second pass moves the
+        // scene to 1e15 units, where the bound rounding dwarfs the reach and
+        // only the margin keeps the broadphase sound.
+        float before[24], after[24];
+        for (int i = 0; i < 24; ++i) {
+            before[i] = box[i] + shift;
+            after[i] = box[i] + shift + (i % 3 == 0 ? 4.0f : (i % 3 == 1 ? -2.0f : 1.0f));
+        }
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(colliders, before, after, 8.0f, &grid, &scratch);
+        for (int a = 0; a < 3; ++a) {
+            float lo = std::numeric_limits<float>::infinity();
+            float hi = -std::numeric_limits<float>::infinity();
+            for (int v = 0; v < 8; ++v) {
+                lo = std::min(lo, std::min(before[3 * v + a], after[3 * v + a]));
+                hi = std::max(hi, std::max(before[3 * v + a], after[3 * v + a]));
+            }
+            CHECK(grid.sweptLo[a] == lo);
+            CHECK(grid.sweptHi[a] == hi);
+        }
+        // The same grid with the broadphase scrubbed off agrees bitwise.
+        RigExecClothGrid scrubbed = grid;
+        for (int a = 0; a < 3; ++a) {
+            scrubbed.sweptLo[a] = -std::numeric_limits<float>::infinity();
+            scrubbed.sweptHi[a] = std::numeric_limits<float>::infinity();
+        }
+        // Query lattice over the swept box plus the reach, boundary-adjacent
+        // points, far points, and non-finite ones.
+        std::vector<std::array<float, 3>> queries;
+        for (const auto &td : thicknessDepth) {
+            const float reach = std::max(td[0], td[1]);
+            for (int a = 0; a < 3; ++a) {
+                const float lo = grid.sweptLo[a] - reach;
+                const float hi = grid.sweptHi[a] + reach;
+                for (int k = 0; k <= 6; ++k) {
+                    std::array<float, 3> q = {{shift, shift + 8.0f, shift}};
+                    q[size_t(a)] = lo + (hi - lo) * float(k) / 6.0f;
+                    queries.push_back(q);
+                }
+                for (float edge : {lo, hi}) {
+                    for (float qv : {edge, std::nextafterf(edge, -1e30f),
+                                     std::nextafterf(edge, 1e30f)}) {
+                        std::array<float, 3> q = {{shift, shift + 8.0f, shift}};
+                        q[size_t(a)] = qv;
+                        queries.push_back(q);
+                    }
+                }
+            }
+        }
+        for (float far : {-1e6f, 1e6f}) queries.push_back({{far + shift, shift, shift}});
+        const float inf = std::numeric_limits<float>::infinity();
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        queries.push_back({{nan, shift, shift}});
+        queries.push_back({{shift, inf, shift}});
+        queries.push_back({{-inf, shift, shift}});
+        for (const auto &td : thicknessDepth) {
+            for (float t : fractions) {
+                RigExecClothContactTris tris;
+                RigExecClothContactTrisAt(colliders, before, after, t, &tris);
+                for (bool table : {false, true}) {
+                    for (const auto &q : queries) {
+                        const RigExecClothContact a = RigExecClothFindContact(
+                            colliders, grid, before, after, t, q.data(), td[0], td[1],
+                            nullptr, 0, 0, std::numeric_limits<size_t>::max(), false,
+                            nullptr, table ? &tris : nullptr);
+                        const RigExecClothContact b = RigExecClothFindContact(
+                            colliders, scrubbed, before, after, t, q.data(), td[0], td[1],
+                            nullptr, 0, 0, std::numeric_limits<size_t>::max(), false,
+                            nullptr, table ? &tris : nullptr);
+                        CHECK(SameContact(a, b));
+                        ++compared;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared > 10000);
+}
+
 void TestRefusals()
 {
     const Mesh m = Curtain(4, 3.0f, 1.0f);
@@ -914,6 +1034,7 @@ int main()
     TestFollowsInput();
     TestCarriedRigidly();
     TestClearOfColliders();
+    TestSweptBoundsAndBroadphase();
     TestWindowStartsBeforeContact();
     TestRefusals();
     TestForceResponseAndDirectionalMaterial();

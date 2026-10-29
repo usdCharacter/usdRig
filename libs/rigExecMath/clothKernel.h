@@ -188,6 +188,17 @@ struct RigExecClothGrid {
     uint32_t bucketMask = 0;
     std::vector<uint32_t> bucketStart;
     std::vector<int32_t> bucketTriangles;
+    /// Swept collider bounds over the (before, after) points the grid was
+    /// built from: every listed triangle at any substep fraction lies
+    /// inside, so the contact search skips particles outside them plus the
+    /// reach. A grid that never went through the build covers everything,
+    /// so the broadphase never skips on it.
+    float sweptLo[3] = {-std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity(),
+                        -std::numeric_limits<float>::infinity()};
+    float sweptHi[3] = {std::numeric_limits<float>::infinity(),
+                        std::numeric_limits<float>::infinity(),
+                        std::numeric_limits<float>::infinity()};
 };
 
 /// One substep's interpolated collider triangles: the vertices at the
@@ -673,6 +684,10 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     if (!triangleCount) {
         grid->bucketMask = 0;
         grid->bucketStart.assign(2, 0);
+        for (int a = 0; a < 3; ++a) {
+            grid->sweptLo[a] = -std::numeric_limits<float>::infinity();
+            grid->sweptHi[a] = std::numeric_limits<float>::infinity();
+        }
         return;
     }
     const auto bounds = [&](size_t t, float *lo, float *hi) {
@@ -693,11 +708,21 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         return finite;
     };
     // Cell size: the mean swept triangle extent, at least twice the pad.
+    // The same walk gathers the broadphase bounds over the same finite
+    // triangles the grid lists, so every candidate lies inside them.
     double extent = 0.0;
     size_t measured = 0;
+    for (int a = 0; a < 3; ++a) {
+        grid->sweptLo[a] = std::numeric_limits<float>::infinity();
+        grid->sweptHi[a] = -std::numeric_limits<float>::infinity();
+    }
     for (size_t t = 0; t < triangleCount; ++t) {
         float lo[3], hi[3];
         if (!bounds(t, lo, hi)) continue;
+        for (int a = 0; a < 3; ++a) {
+            grid->sweptLo[a] = std::min(grid->sweptLo[a], lo[a]);
+            grid->sweptHi[a] = std::max(grid->sweptHi[a], hi[a]);
+        }
         extent += double(std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2])));
         ++measured;
     }
@@ -833,6 +858,25 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     if (grid.bucketStart.size() < 2 || colliders.triangles.empty()) return best;
     const float reach = std::max(thickness, depth);
     float bestDistance = std::numeric_limits<float>::infinity();
+    // Broadphase: outside the swept collider bounds plus the reach, a
+    // particle is farther than the reach from every triangle, so the
+    // bucket search below would fail each candidate on the reach verdict
+    // and return empty. The 2^-20 relative margin dwarfs the bound
+    // arithmetic's double rounding (2^-53) by 2^33, so a flagged
+    // particle is truly outside; boundary, NaN, and infinite inputs
+    // fail the comparisons and take the full path as before.
+    {
+        bool outside = false;
+        for (int a = 0; a < 3; ++a) {
+            const double point = double(p[a]);
+            const double lo = double(grid.sweptLo[a]) - double(reach) -
+                (std::abs(double(grid.sweptLo[a])) + double(reach)) * 9.5367431640625e-07;
+            const double hi = double(grid.sweptHi[a]) + double(reach) +
+                (std::abs(double(grid.sweptHi[a])) + double(reach)) * 9.5367431640625e-07;
+            if (point < lo || point > hi) { outside = true; break; }
+        }
+        if (outside) return best;
+    }
     const uint32_t bucket = Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
                                  Cell(p[2], grid.cellSize), grid.bucketMask);
     {
