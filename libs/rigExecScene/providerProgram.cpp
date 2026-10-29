@@ -249,43 +249,101 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             xformPaths.insert(ancestor);for(const auto &attribute:captured->second.attributes)if(attribute.GetName()=="xformOpOrder" || attribute.GetName().rfind("xformOp:",0)==0)includeAttribute(attribute);
         }
     }
-    std::set<std::string> keys;
+    // Each value key is spelled once: the raw/attribute/routed keys per used
+    // attribute, resolved once after id assignment, then reused through side
+    // maps instead of rebuilt per lookup. The usedAttributes set iterates in
+    // the same SdfPath order the scene-attribute scans filtered to, so id
+    // assignment, leaves, sampled, routed and op order are unchanged; a key
+    // exists exactly when the old scans inserted it, so misses agree too.
+    struct _UsedAttribute {
+        SdfPath path;
+        const RigExecSceneAttributeDescriptor *attr=nullptr;
+        const RigExecSceneNodeDescriptor *node=nullptr;
+        std::string rawKey,attrKey,routedKey;
+        bool hasRouted=false;
+        RigExecValueId raw=RigExecNoProviderValue;
+        RigExecValueId value=RigExecNoProviderValue;
+        RigExecValueId routed=RigExecNoProviderValue;
+    };
+    std::vector<_UsedAttribute> used;
+    used.reserve(usedAttributes.size());
+    std::vector<std::string> keys;
+    keys.reserve(usedAttributes.size()*2+providerPaths.size()*9+nativeFrames.size()*9+xformPaths.size());
     std::map<SdfPath,RigExecValueId> routed;
-    for(const auto &[path,attr]:scene.attributes) {
-        if(!usedAttributes.count(path))continue;
+    for(const auto &path:usedAttributes) {
+        const auto found=scene.attributes.find(path);
+        if(found==scene.attributes.end())continue;
         const auto node=scene.nodes.find(path.GetPrimPath());
         if(node==scene.nodes.end() || !node->second.fact.active)continue;
-        keys.insert(RigExecProviderRawKey(path));keys.insert(RigExecProviderAttributeKey(path));
+        _UsedAttribute u;
+        u.path=path;u.attr=&found->second;u.node=&node->second;
+        u.rawKey=RigExecProviderRawKey(path);u.attrKey=RigExecProviderAttributeKey(path);
+        keys.push_back(u.rawKey);keys.push_back(u.attrKey);
+        const auto &attr=found->second;
         if(attr.readPhase!="base" && attr.fact.connections.size()==1) {
             const auto input=scene.attributes.find(attr.fact.connections.front());
             const auto inputNode=scene.nodes.find(attr.fact.connections.front().GetPrimPath());
             if(input!=scene.attributes.end() && inputNode!=scene.nodes.end() && inputNode->second.fact.active &&
-                input->second.fact.type.GetType()==attr.fact.type.GetType())keys.insert(RigExecProviderRoutedKey(path,attr.readPhase));
+                input->second.fact.type.GetType()==attr.fact.type.GetType()) {
+                u.routedKey=RigExecProviderRoutedKey(path,attr.readPhase);
+                u.hasRouted=true;
+                keys.push_back(u.routedKey);
+            }
         }
+        used.push_back(std::move(u));
     }
     for(const auto &[path,node]:scene.nodes)if(node.fact.active) {
         if(providerPaths.count(path) || nativeFrames.count(path))for(const auto *computation:computations)
-            keys.insert(RigExecProviderValueKey(path,computation));
+            keys.push_back(RigExecProviderValueKey(path,computation));
         if(xformPaths.count(path))
-            keys.insert(RigExecProviderValueKey(path,"localXform"));
+            keys.push_back(RigExecProviderValueKey(path,"localXform"));
     }
-    for(const auto &key:keys) {
+    std::sort(keys.begin(),keys.end());
+    keys.erase(std::unique(keys.begin(),keys.end()),keys.end());
+    for(auto &key:keys) {
         const auto id=RigExecValueId(program.valueKeys.size());
-        program.valueIds.emplace(key,id);program.valueKeys.push_back(key);
+        program.valueIds.emplace(key,id);program.valueKeys.push_back(std::move(key));
     }
-    for(const auto &path:usedAttributes) {
-        const auto &attr=scene.attributes.at(path);
-        const auto value=program.FindValue(RigExecProviderRoutedKey(path,attr.readPhase));
-        if(value!=RigExecNoProviderValue) {
-            routed.emplace(path,value);program.leaves.push_back(value);
-            program.routedInputs.push_back({value,path,attr.fact.connections.front(),attr.readPhase});
-        }
+    std::map<SdfPath,std::pair<RigExecValueId,RigExecValueId>> usedIds;
+    std::map<std::pair<SdfPath,TfToken>,RigExecValueId> attrIds;
+    for(auto &u:used) {
+        u.raw=program.FindValue(u.rawKey);
+        u.value=program.FindValue(u.attrKey);
+        if(u.hasRouted)u.routed=program.FindValue(u.routedKey);
+        usedIds.emplace(u.path,std::make_pair(u.raw,u.value));
+        attrIds.emplace(std::make_pair(u.path.GetPrimPath(),u.path.GetNameToken()),u.value);
+    }
+    std::map<std::pair<SdfPath,std::string>,RigExecValueId> compIds;
+    for(const auto &path:providerPaths)for(const auto *computation:computations)
+        compIds.emplace(std::make_pair(path,std::string(computation)),
+            program.FindValue(RigExecProviderValueKey(path,computation)));
+    for(const auto &path:nativeFrames)for(const auto *computation:computations)
+        compIds.emplace(std::make_pair(path,std::string(computation)),
+            program.FindValue(RigExecProviderValueKey(path,computation)));
+    for(const auto &path:xformPaths)
+        compIds.emplace(std::make_pair(path,std::string("localXform")),
+            program.FindValue(RigExecProviderValueKey(path,"localXform")));
+    for(const auto &u:used) {
+        if(u.routed==RigExecNoProviderValue)continue;
+        routed.emplace(u.path,u.routed);program.leaves.push_back(u.routed);
+        program.routedInputs.push_back({u.routed,u.path,u.attr->fact.connections.front(),u.attr->readPhase});
     }
     const auto attrId=[&](const SdfPath &path,const TfToken &name) {
-        return program.FindValue(RigExecProviderAttributeKey(path.AppendProperty(name)));
+        const auto found=attrIds.find(std::make_pair(path,name));
+        return found==attrIds.end()?RigExecNoProviderValue:found->second;
     };
     const auto compId=[&](const SdfPath &path,const char *name) {
-        return path.IsEmpty()?RigExecNoProviderValue:program.FindValue(RigExecProviderValueKey(path,name));
+        if(path.IsEmpty())return RigExecNoProviderValue;
+        const auto found=compIds.find(std::make_pair(path,std::string(name)));
+        return found==compIds.end()?RigExecNoProviderValue:found->second;
+    };
+    const auto rawId=[&](const SdfPath &path) {
+        const auto found=usedIds.find(path);
+        return found==usedIds.end()?RigExecNoProviderValue:found->second.first;
+    };
+    const auto valueId=[&](const SdfPath &path) {
+        const auto found=usedIds.find(path);
+        return found==usedIds.end()?RigExecNoProviderValue:found->second.second;
     };
     const auto connect=[&](const RigExecSceneAttribute &fact) {
         const auto route=routed.find(fact.path);
@@ -295,7 +353,8 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         const auto node=scene.nodes.find(fact.connections.front().GetPrimPath());
         if(found==scene.attributes.end() || node==scene.nodes.end() || !node->second.fact.active ||
             found->second.fact.type.GetType()!=fact.type.GetType())return RigExecNoProviderValue;
-        return program.FindValue(RigExecProviderAttributeKey(fact.connections.front()));
+        const auto id=usedIds.find(fact.connections.front());
+        return id==usedIds.end()?RigExecNoProviderValue:id->second.second;
     };
     const auto add=[&](RigExecProviderOp op,const std::string &key) {
         RigExecOpDescriptor descriptor;
@@ -306,15 +365,15 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         descriptor.reads.erase(std::unique(descriptor.reads.begin(),descriptor.reads.end()),descriptor.reads.end());
         program.ops.push_back(std::move(op));program.descriptors.push_back(std::move(descriptor));
     };
-    for(const auto &[path,attr]:scene.attributes) {
-        if(!usedAttributes.count(path))continue;
-        const auto node=scene.nodes.find(path.GetPrimPath());
-        if(node==scene.nodes.end() || !node->second.fact.active)continue;
-        const auto raw=program.FindValue(RigExecProviderRawKey(path));
-        const auto value=program.FindValue(RigExecProviderAttributeKey(path));
+    for(const auto &u:used) {
+        const SdfPath &path=u.path;
+        const auto &attr=*u.attr;
+        const auto node=u.node;
+        const auto raw=u.raw;
+        const auto value=u.value;
         program.rawInputs.emplace(path,raw);program.attributeValues.emplace(path,value);
         program.sampled.push_back({raw,path});program.leaves.push_back(raw);
-        if(Provider(node->second.fact.type) && Expression(path.GetName()))continue;
+        if(Provider(node->fact.type) && Expression(path.GetName()))continue;
         uint32_t affine=0;
         if(AffineOutput(scene,path,&affine)) {
             // Inputs in the table's order: the attributes, one frame per
@@ -343,13 +402,13 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             continue;
         }
         if(attr.fact.connections.size()>1 && attr.fact.type.IsArray() &&
-            node->second.fact.type.GetString().rfind("RigExec",0)==0)
+            node->fact.type.GetString().rfind("RigExec",0)==0)
             return Fail(error,"provider translation needs typed array connection concatenation: "+path.GetString());
         add({RigExecProviderOpKind::Attribute,path,value,{raw,connect(attr.fact)}},"attribute:"+path.GetString());
     }
     if(composeFrames)for(const auto &[path,node]:scene.nodes) {
         if(!xformPaths.count(path))continue;
-        const auto order=program.FindValue(RigExecProviderRawKey(path.AppendProperty(_tokens->xformOpOrder)));
+        const auto order=rawId(path.AppendProperty(_tokens->xformOpOrder));
         RigExecProviderOp op{RigExecProviderOpKind::LocalXform,path,compId(path,"localXform"),{order}};
         for(const auto &attribute:node.attributes) {
             const std::string name=attribute.GetName();
@@ -357,14 +416,14 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             const auto end=name.find(':',8);
             const auto type=XformOpType(name,8,end==std::string::npos?end:end-8);
             if(type==UsdGeomXformOp::TypeInvalid)return Fail(error,"unknown pure xform operation: "+attribute.GetString());
-            op.xforms.push_back({attribute.GetNameToken(),program.FindValue(RigExecProviderRawKey(attribute)),int(type)});
+            op.xforms.push_back({attribute.GetNameToken(),rawId(attribute),int(type)});
         }
         add(std::move(op),"localXform:"+path.GetString());
     }
     for(const auto &path:nativeFrames) {
         RigExecProviderOp relative{RigExecProviderOpKind::RelativeXform,path,compId(path,"computedDefaultSpace"),{}};
         for(auto ancestor=path;!ancestor.IsEmpty() && ancestor!=scene.rigRoot.GetParentPath();ancestor=ancestor.GetParentPath()) {
-            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));}
+            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(rawId(ancestor.AppendProperty(_tokens->xformOpOrder)));}
         }
         add(std::move(relative),"stageRelativeXform:"+path.GetString());
         add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computePointFrame"),{compId(path,"computedDefaultSpace")}},"stageFrame:"+path.GetString());
@@ -388,7 +447,7 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
                 const auto local=compId(ancestor,"localXform");
                 if(local!=RigExecNoProviderValue) {
                     ix.inputs.push_back(local);
-                    ix.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));
+                    ix.inputs.push_back(rawId(ancestor.AppendProperty(_tokens->xformOpOrder)));
                 }
             }
             add(std::move(ix),"interveningXform:"+path.GetString());
@@ -416,8 +475,8 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             else if(*expression==_tokens->parentSpace)fallback=compId(path,"computedParentSpace");
             else fallback=compId(path,"computedParentDefaultSpace");
             add({RigExecProviderOpKind::SpaceExpression,property,
-                program.FindValue(RigExecProviderAttributeKey(property)),
-                {program.FindValue(RigExecProviderRawKey(property)),connect(fact->second.fact),fallback}},
+                valueId(property),
+                {rawId(property),connect(fact->second.fact),fallback}},
                 "spaceExpression:"+property.GetString());
         }
         add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeDefaultFrame"),{attrId(path,_tokens->defaultSpace)}},
