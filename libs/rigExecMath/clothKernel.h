@@ -2052,6 +2052,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             const float target = RigExecClothRegion(p.targetMask, a);
             if (!(source > 0 || target > 0)) continue;
             const float thickness = p.thickness * RigExecClothMap(p, ClothThickness, i);
+            // The band and distance limits are fixed for the vertex: the
+            // same values the entry loop recomputes, derived once.
+            const float depthLimit = std::max(thickness, step.depth);
+            const float bandLimit = std::max(depthLimit, 0.0f);
             const float *point = x + 3 * i;
             const uint32_t bucket = Hash(Cell(point[0], grid.cellSize), Cell(point[1], grid.cellSize),
                                           Cell(point[2], grid.cellSize), grid.bucketMask);
@@ -2082,7 +2086,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 float tc[3], tr;
                 TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
                           b.vertices[1], b.vertices[2], x, tc, &tr);
-                const float reach = tr + std::max(std::max(thickness, step.depth), 0.0f);
+                const float reach = tr + bandLimit;
                 const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
                             dd2 = point[2] - tc[2];
                 if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 > reach * reach * 1.0009765625f)
@@ -2098,7 +2102,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 RigExecClothSamplePoint(b, x, q);
                 Sub(point, q, d);
                 const float distance = Length(d);
-                if (distance > std::max(thickness, step.depth)) continue;
+                if (distance > depthLimit) continue;
                 Sub(v1, v0, e1); Sub(v2, v0, e2); Cross(e1, e2, n);
                 const float nl = Length(n);
                 if (!(nl > 1e-12f)) continue;
