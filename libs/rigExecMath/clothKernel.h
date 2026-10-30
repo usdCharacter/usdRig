@@ -244,6 +244,8 @@ struct RigExecClothPairSet {
 
     /// An integer mix, deterministic across runs and platforms. Hash
     /// quality affects probe length only; verdicts are exact regardless.
+    /// Odd multipliers permute small vertex indices; keys that differ
+    /// only above the mask hash together but stay correct.
     static uint64_t Hash(const std::array<int32_t, 4> &key);
     size_t SlotCount() const;
     void Clear();
@@ -2129,16 +2131,9 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
 
 inline uint64_t RigExecClothPairSet::Hash(const std::array<int32_t, 4> &key)
 {
-    uint64_t h = uint64_t(uint32_t(key[0])) * 0x9E3779B97F4A7C15ull;
-    h ^= uint64_t(uint32_t(key[1])) * 0xC2B2AE3D27D4EB4Full;
-    h ^= uint64_t(uint32_t(key[2])) * 0x165667B19E3779F9ull;
-    h ^= uint64_t(uint32_t(key[3])) * 0xA24BAED4963EE407ull;
-    h ^= h >> 30;
-    h *= 0xBF58476D1CE4E5B9ull;
-    h ^= h >> 27;
-    h *= 0x94D049BB133111EBull;
-    h ^= h >> 31;
-    return h;
+    return uint64_t(uint32_t(key[0])) + uint64_t(uint32_t(key[1])) * 0x9E3779B97F4A7C15ull +
+           uint64_t(uint32_t(key[2])) * 0xC2B2AE3D27D4EB4Full +
+           uint64_t(uint32_t(key[3])) * 0x165667B19E3779F9ull;
 }
 
 inline size_t RigExecClothPairSet::SlotCount() const
