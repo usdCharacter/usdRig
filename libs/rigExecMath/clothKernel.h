@@ -352,7 +352,7 @@ struct RigExecClothPairSet64 {
     /// batch: the same probe and the same verdicts.
     bool InsertNoGrow(uint64_t key);
     /// Grows the table until a batch of \p batchKeys inserts fits under
-    /// the 50% load cap, so the batch needs no per-insert check. The
+    /// the 25% load cap, so the batch needs no per-insert check. The
     /// lower cap shortens probes; verdicts stay exact either way. Zero
     /// keys is a no-op, never a spurious grow.
     void ReserveForBatch(size_t batchKeys);
@@ -2881,14 +2881,14 @@ inline void RigExecClothPairSet64::Clear()
 
 inline bool RigExecClothPairSet64::Insert(uint64_t key)
 {
-    if ((count + 1) * 2 > slots.size()) Grow();
+    if ((count + 1) * 4 > slots.size()) Grow();
     return InsertNoGrow(key);
 }
 
 inline void RigExecClothPairSet64::ReserveForBatch(size_t batchKeys)
 {
     if (!batchKeys) return;
-    while ((count + batchKeys + 1) * 2 > slots.size()) Grow();
+    while ((count + batchKeys + 1) * 4 > slots.size()) Grow();
 }
 
 inline bool RigExecClothPairSet64::InsertNoGrow(uint64_t key)
