@@ -656,10 +656,11 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
     using Mode = RigExecSparseWalkMode;
     Mode mode = Mode::Compute;
     if (memo) {
-        // The arm, then the transform's sixteen doubles.
-        unsigned char params[1 + 16 * sizeof(double)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, p.transform.GetArray(), 16 * sizeof(double));
+        // The arm, then the transform's sixteen doubles: the one spelling
+        // the walks and the skip check share.
+        unsigned char params[kRigExecSparseWalkParamsSize];
+        RigExecSparseWalkSpellParams(p.radialWeight, p.transform.GetArray(),
+                                     params);
         mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
                                       last - first);
     }

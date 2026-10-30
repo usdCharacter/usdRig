@@ -1313,12 +1313,13 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
     using Mode = RigExecSparseWalkMode;
     Mode mode = Mode::Compute;
     if (memo) {
-        // The arm, then the transform's sixteen doubles.
+        // The arm, then the transform's sixteen doubles: the one spelling
+        // the walks and the skip check share.
         static_assert(sizeof(RrMat4d) == 16 * sizeof(double),
                       "the transform keys by its sixteen doubles");
-        unsigned char params[1 + sizeof(RrMat4d)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, &p.transform, sizeof(RrMat4d));
+        unsigned char params[kRigExecSparseWalkParamsSize];
+        RigExecSparseWalkSpellParams(p.radialWeight,
+                                     &p.transform._mtx[0][0], params);
         mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
                                       kEnd - kBegin);
     }

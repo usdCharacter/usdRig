@@ -3685,6 +3685,7 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     // This run's walk counts: zero unless the sparse walk below runs.
     state.walk.computed = 0;
     state.walk.reused = 0;
+    state.walk.skippedWhole = 0;
     if (revision->rangeSetAside) {
         // A cycle set the revision aside: it passes the base through, as an
         // excluded fuse does, and computes nothing.
@@ -3732,8 +3733,6 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         GatherChunkTransforms(B, *revision, &chunk);
         view = ChunkTransformsView(chunk, B.useSimd);
     }
-    const int k = RigExecGroupScratch(&state, end - begin);
-    bool untouched = false;
     // This group's sparse entry range while RevisionStatic's claim stands
     // (verified there this run; the packet's revision is final for the
     // run, so the flag is enough here). The arm searches when it is null.
@@ -3743,6 +3742,33 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         g < revision->matrixEntryRanges.size()) {
         entryRange = &revision->matrixEntryRanges[g];
     }
+    if (revision->op == RigExecRevisionOp::Matrix && entryRange &&
+        entryRange->second > entryRange->first) {
+        // A walk whose per-revision inputs, packet, entering group and
+        // count all hold, and whose result the group still publishes,
+        // skips whole: the published bytes already are the walk's result,
+        // so no scratch, seed, walk or publish runs. The counters report
+        // the walk the skip stands in for, which computed nothing and
+        // reused every entry, as a reusing walk does.
+        bool packetShared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+        if (RigExecSparseWalkSkipStands(
+                state.walk, revision->parameters.radialWeight,
+                revision->parameters.transform.GetArray(), packetShared,
+                packetRevision, from.slot, from.version, count,
+                state.version, state.ran,
+                entryRange->second - entryRange->first)) {
+            state.ok = true;
+            state.walk.computed = 0;
+            state.walk.reused =
+                uint32_t(entryRange->second - entryRange->first);
+            state.walk.skippedWhole = 1;
+            return;
+        }
+    }
+    const int k = RigExecGroupScratch(&state, end - begin);
+    bool untouched = false;
     // A sparse walk reuses what it last computed for this group's entries
     // whose inputs held their bits (`state.walk`).
     const bool ok = RigExecRunRevisionGroup(
@@ -3756,6 +3782,20 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         return;
     }
     RigExecPublishOwnGroup(&state, k);
+    // The sparse walk just published, keyed whole for its next run: its
+    // shared packet revision, entering group source, point count and
+    // published version. Only a walk that ran its entries notes one; any
+    // other arm leaves the counters the step zeroed.
+    if (revision->op == RigExecRevisionOp::Matrix &&
+        state.walk.computed + state.walk.reused > 0) {
+        bool packetShared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+        if (packetShared) {
+            RigExecSparseWalkSkipNote(&state.walk, packetRevision, from.slot,
+                                      from.version, count, state.version);
+        }
+    }
 }
 
 /// Speculative chunk \p g of the Whole keyed skin \p revision: group g of

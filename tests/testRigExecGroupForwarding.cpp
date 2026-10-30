@@ -606,6 +606,44 @@ TestAGatedChainForwards()
         }
     }
 
+    // A forced full re-run at unchanged values skips every sparse walk
+    // whole: nothing recomputes, every entry reuses, the walks stay
+    // recorded, and the groups keep their bytes and versions.
+    {
+        const Snapshot rerunBefore(chain);
+        std::vector<uint64_t> versions;
+        for (size_t g = 0; g < 3; ++g) {
+            versions.push_back(mover.groups[g].version);
+        }
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        const WalkTotals rerun =
+            CheckWalks(B, c, rerunBefore, "Gated", "full re-run");
+        CHECK(rerun.steps == 3);
+        CHECK(rerun.computed == 0);
+        if (rerun.reused != 200) {
+            std::printf("  full re-run: reused %zu entries, expected 200\n",
+                        rerun.reused);
+        }
+        CHECK(rerun.reused == 200);
+        for (size_t g = 0; g < 3; ++g) {
+            CHECK(mover.groups[g].walk.skippedWhole == 1);
+            CHECK(mover.groups[g].version == versions[g]);
+        }
+        CHECK(B.rangeVerifyMismatches == 0);
+        const GatedValues &last = steps.back().values;
+        const UsdStageRefPtr authored =
+            MakeGatedStage(last.raise, last.lift, last.moving);
+        RigExecRigEvaluator reference(authored, SdfPath(kRig));
+        const bool referenceCompiled = reference.Compile(&errors);
+        CHECK(referenceCompiled);
+        if (referenceCompiled) {
+            CHECK(reference.Evaluate(time).valid);
+            CHECK(SameResult(reference.GetBakedProgram()->GetStepGraph(), B,
+                             c));
+        }
+    }
+
     // A frame-cache worker over a copy of the program, memos included,
     // at the authored values again.
     evaluator.ClearInteractiveOverrides();
