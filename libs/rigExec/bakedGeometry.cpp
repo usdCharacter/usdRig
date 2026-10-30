@@ -3219,6 +3219,66 @@ ResolveEnvelope(RigExecBakedProgramImpl::GeomRevision *revision, size_t count)
     }
 }
 
+/// The shared packet revision naming a matrix revision's envelope exactly:
+/// the weightValuesHeld key, which an equal revision makes an equal packet.
+/// Answered false for a current-phase revision or an unshared packet, which
+/// take the validating path every run.
+uint64_t
+MatrixEnvelopePacketRevision(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, bool *shared)
+{
+    const bool named = !revision.weightCurrentPhase &&
+        revision.weightPacketValue >= 0 &&
+        size_t(revision.weightPacketValue) < B.opAdapter.values.size();
+    *shared = named;
+    return named
+        ? B.opAdapter.values[size_t(revision.weightPacketValue)].revision
+        : 0;
+}
+
+/// Whether the revision holds its envelope verdict over \p count points: the
+/// packet the claim names and the count both stand. The claim is the weights
+/// half of the acceptance only; the caller ANDs the packet check in.
+bool
+MatrixEnvelopeHeldVerdict(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, size_t count,
+    bool *verdict)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &shared);
+    if (!shared || !revision.matrixEnvelopeHeld ||
+        revision.matrixEnvelopePacketRevision != packetRevision ||
+        revision.matrixEnvelopeCount != count) {
+        return false;
+    }
+    *verdict = revision.matrixEnvelopeVerdict;
+    return true;
+}
+
+/// Notes the verdict the validating call just answered for the packet and
+/// count now standing, dropping the claim where no packet names it.
+void
+MatrixEnvelopeNoteVerdict(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t count,
+    bool verdict)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &shared);
+    if (!shared) {
+        revision->matrixEnvelopeHeld = false;
+        return;
+    }
+    revision->matrixEnvelopeHeld = true;
+    revision->matrixEnvelopePacketRevision = packetRevision;
+    revision->matrixEnvelopeCount = count;
+    revision->matrixEnvelopeVerdict = verdict;
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -5010,9 +5070,33 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 if (!revision.fullStrength) ResolveEnvelope(&revision, count);
                 revision.acceptance = SkinAcceptance(revision);
             } else {
-                revision.acceptance = RigExecRevisionKernelAcceptance(
-                    revision.op, revision.parameters, count,
-                    &revision.envelopeOk);
+                // A matrix revision's held envelope verdict when the packet
+                // and count stand, else the validating call, whose weights
+                // verdict is then noted: the same acceptance either way.
+                const bool packetMatches =
+                    revision.parameters.valid &&
+                    revision.parameters.kind ==
+                        RigExecRevisionKindToken(revision.op);
+                bool heldVerdict = false;
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches &&
+                    MatrixEnvelopeHeldVerdict(B, revision, count,
+                                              &heldVerdict)) {
+                    revision.acceptance = heldVerdict
+                        ? RigExecRevisionAcceptance::Applies
+                        : RigExecRevisionAcceptance::Refuses;
+                } else {
+                    revision.acceptance = RigExecRevisionKernelAcceptance(
+                        revision.op, revision.parameters, count,
+                        &revision.envelopeOk);
+                    if (revision.op == RigExecRevisionOp::Matrix &&
+                        packetMatches) {
+                        MatrixEnvelopeNoteVerdict(
+                            B, &revision, count,
+                            revision.acceptance ==
+                                RigExecRevisionAcceptance::Applies);
+                    }
+                }
             }
             return;
         }
@@ -5076,10 +5160,36 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     ResolveEnvelope(&revision, count);
                 }
             }
-            revision.acceptance = RigExecPrepareRevisionRanges(
-                revision.op, revision.parameters, count, &revision.wireBasis,
-                &revision.surfaceCache, &revision.rangeInputs,
-                revision.restBaseHeld ? revision.restBaseVersion : 0);
+            // A matrix revision's held envelope verdict when the packet
+            // and count stand, else the validating call, whose weights
+            // verdict is then noted: the same acceptance either way. A
+            // held dense resolve stands with the key in
+            // `rangeInputs.matrixWeights`, which only that call writes.
+            const bool packetMatches =
+                revision.parameters.valid &&
+                revision.parameters.kind ==
+                    RigExecRevisionKindToken(revision.op);
+            bool heldVerdict = false;
+            if (revision.op == RigExecRevisionOp::Matrix && packetMatches &&
+                MatrixEnvelopeHeldVerdict(B, revision, count,
+                                          &heldVerdict)) {
+                revision.acceptance = heldVerdict
+                    ? RigExecRevisionAcceptance::Applies
+                    : RigExecRevisionAcceptance::Refuses;
+            } else {
+                revision.acceptance = RigExecPrepareRevisionRanges(
+                    revision.op, revision.parameters, count,
+                    &revision.wireBasis, &revision.surfaceCache,
+                    &revision.rangeInputs,
+                    revision.restBaseHeld ? revision.restBaseVersion : 0);
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches) {
+                    MatrixEnvelopeNoteVerdict(
+                        B, &revision, count,
+                        revision.acceptance ==
+                            RigExecRevisionAcceptance::Applies);
+                }
+            }
             noteGate();
             return;
         }
@@ -5100,10 +5210,32 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             // count it is applied to. A wire's envelope validation is the
             // resolve above: wherever the acceptance asks for it, the wire
             // branch took the same predicates and `envelopeOk` holds its
-            // answer.
-            revision.acceptance = RigExecRevisionKernelAcceptance(
-                revision.op, revision.parameters, count,
-                &revision.envelopeOk);
+            // answer. A matrix revision's held envelope verdict when the
+            // packet and count stand, else the validating call, whose
+            // weights verdict is then noted.
+            const bool packetMatches =
+                revision.parameters.valid &&
+                revision.parameters.kind ==
+                    RigExecRevisionKindToken(revision.op);
+            bool heldVerdict = false;
+            if (revision.op == RigExecRevisionOp::Matrix && packetMatches &&
+                MatrixEnvelopeHeldVerdict(B, revision, count,
+                                          &heldVerdict)) {
+                revision.acceptance = heldVerdict
+                    ? RigExecRevisionAcceptance::Applies
+                    : RigExecRevisionAcceptance::Refuses;
+            } else {
+                revision.acceptance = RigExecRevisionKernelAcceptance(
+                    revision.op, revision.parameters, count,
+                    &revision.envelopeOk);
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches) {
+                    MatrixEnvelopeNoteVerdict(
+                        B, &revision, count,
+                        revision.acceptance ==
+                            RigExecRevisionAcceptance::Applies);
+                }
+            }
             return;
         }
         // Every skin, Legacy, Whole or Range: a Range skin's group steps

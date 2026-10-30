@@ -3518,6 +3518,21 @@ struct RigExecBakedProgramImpl {
         bool weightValuesHeld = false;
         uint64_t weightValuesPacketRevision = 0;
         size_t weightValuesCount = 0;
+        /// A matrix revision's envelope verdict, held while the shared
+        /// packet and the count stand: whether the packet at WeightPacket
+        /// op value `weightPacketValue`'s revision
+        /// `matrixEnvelopePacketRevision` validates over
+        /// `matrixEnvelopeCount` points (`matrixEnvelopeHeld`). The weights
+        /// half of the acceptance only -- the packet check (valid, kind) is
+        /// fresh assembly each run and ANDed in by RevisionStatic -- and a
+        /// dense resolve is a pure function of the packet and the count, so
+        /// `rangeInputs.matrixWeights` stands with the key. Never held for
+        /// a current-phase revision or an unshared packet. The value id is
+        /// set at compile, which drops the claim.
+        bool matrixEnvelopeHeld = false;
+        uint64_t matrixEnvelopePacketRevision = 0;
+        size_t matrixEnvelopeCount = 0;
+        bool matrixEnvelopeVerdict = false;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;
@@ -6218,6 +6233,10 @@ struct RigExecBakedRunShadow {
         bool weightValuesHeld = false;
         uint64_t weightValuesPacketRevision = 0;
         size_t weightValuesCount = 0;
+        bool matrixEnvelopeHeld = false;
+        uint64_t matrixEnvelopePacketRevision = 0;
+        size_t matrixEnvelopeCount = 0;
+        bool matrixEnvelopeVerdict = false;
         std::vector<uint64_t> joinSeen;
         uint32_t rangeRefusals = 0;
         /// Copied as states (refs and own[] handles), never as bytes.

@@ -449,6 +449,11 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     state->weightValuesHeld = revision.weightValuesHeld;
     state->weightValuesPacketRevision = revision.weightValuesPacketRevision;
     state->weightValuesCount = revision.weightValuesCount;
+    state->matrixEnvelopeHeld = revision.matrixEnvelopeHeld;
+    state->matrixEnvelopePacketRevision =
+        revision.matrixEnvelopePacketRevision;
+    state->matrixEnvelopeCount = revision.matrixEnvelopeCount;
+    state->matrixEnvelopeVerdict = revision.matrixEnvelopeVerdict;
     state->layoutUsable = revision.layoutUsable;
     state->topology = revision.topology;
     state->partitionTopology = revision.partitionTopology;
@@ -540,6 +545,11 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->weightValuesHeld = state.weightValuesHeld;
     revision->weightValuesPacketRevision = state.weightValuesPacketRevision;
     revision->weightValuesCount = state.weightValuesCount;
+    revision->matrixEnvelopeHeld = state.matrixEnvelopeHeld;
+    revision->matrixEnvelopePacketRevision =
+        state.matrixEnvelopePacketRevision;
+    revision->matrixEnvelopeCount = state.matrixEnvelopeCount;
+    revision->matrixEnvelopeVerdict = state.matrixEnvelopeVerdict;
     revision->layoutUsable = state.layoutUsable;
     revision->topology = state.topology;
     revision->partitionTopology = state.partitionTopology;
