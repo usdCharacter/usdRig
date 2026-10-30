@@ -9,7 +9,9 @@
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usdGeom/xformOp.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <set>
 #include <string_view>
@@ -282,7 +284,6 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     struct _CompEntry { SdfPath path; uint32_t comp; };
     struct _KeySlot { std::string key; uint32_t index; uint8_t kind; };
     constexpr uint32_t compCount=uint32_t(sizeof(computations)/sizeof(computations[0]));
-    const auto compName=[&](uint32_t c)->const char * { return c<compCount?computations[c]:"localXform"; };
     std::vector<_UsedAttribute> used;
     used.reserve(usedAttributes.size());
     std::vector<_CompEntry> compEntries;
@@ -331,7 +332,16 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         slots.push_back({RigExecProviderValueKey(path,"localXform"),uint32_t(compEntries.size())-1,3});
     }
     std::sort(slots.begin(),slots.end(),[](const auto &a,const auto &b) { return a.key<b.key; });
-    std::map<std::pair<SdfPath,std::string>,RigExecValueId> compIds;
+    // Computation ids by owner: one row per path, one slot per computation,
+    // with localXform past compCount. A lookup descends once on the path it
+    // is given and indexes the row, filing no pair and no name string per
+    // call; rows start at RigExecNoProviderValue, so a missing computation
+    // answers exactly what the old map's miss answered. Each (path,
+    // computation) pair is filed once -- provider, native-frame and xform
+    // paths carry disjoint computation sets -- so positional filing agrees
+    // with the old emplace on every entry.
+    using _CompRow=std::array<RigExecValueId,compCount+1>;
+    std::map<SdfPath,_CompRow> compIds;
     for(auto &slot:slots) {
         RigExecValueId id;
         if(!program.valueKeys.empty() && slot.key==program.valueKeys.back())
@@ -346,7 +356,13 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             if(slot.kind==0)u.raw=id;else if(slot.kind==1)u.value=id;else u.routed=id;
         } else {
             const auto &entry=compEntries[slot.index];
-            compIds.emplace(std::make_pair(entry.path,std::string(compName(entry.comp))),id);
+            const auto row=compIds.find(entry.path);
+            if(row==compIds.end()) {
+                _CompRow fresh;
+                fresh.fill(RigExecNoProviderValue);
+                fresh[entry.comp]=id;
+                compIds.emplace(entry.path,std::move(fresh));
+            } else row->second[entry.comp]=id;
         }
     }
     std::map<SdfPath,std::pair<RigExecValueId,RigExecValueId>> usedIds;
@@ -366,8 +382,13 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     };
     const auto compId=[&](const SdfPath &path,const char *name) {
         if(path.IsEmpty())return RigExecNoProviderValue;
-        const auto found=compIds.find(std::make_pair(path,std::string(name)));
-        return found==compIds.end()?RigExecNoProviderValue:found->second;
+        uint32_t c=compCount+1;
+        for(uint32_t k=0;k<compCount;++k)
+            if(!std::strcmp(computations[k],name)) { c=k; break; }
+        if(c>compCount && !std::strcmp(name,"localXform"))c=compCount;
+        if(c>compCount)return RigExecNoProviderValue;
+        const auto found=compIds.find(path);
+        return found==compIds.end()?RigExecNoProviderValue:found->second[c];
     };
     const auto rawId=[&](const SdfPath &path) {
         const auto found=usedIds.find(path);
