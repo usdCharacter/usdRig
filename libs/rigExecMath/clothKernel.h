@@ -258,6 +258,20 @@ struct RigExecClothPairSet {
 // this model-path-only code lands after the hot loop in .text instead of
 // shifting it.
 
+/// Lazily fresh edge spheres for the self edge/edge band, over caller-
+/// retained storage. Slots [0, constraints) mirror the constraints and the
+/// rest mirror the triangle edges in grid order. A sphere is fresh when its
+/// compute tick covers both endpoint touch ticks; a correction retires
+/// every sphere over a vertex it moves by advancing that vertex past them.
+/// Ticks only grow within a solve, so the version test is exact.
+struct RigExecClothEdgeSpheres {
+    std::vector<float> centers;
+    std::vector<float> radii;
+    std::vector<uint64_t> edgeTick;
+    std::vector<uint64_t> vertTick;
+    uint64_t clock = 0;
+};
+
 /// Scratch a solve reuses. Owned by the one body that solves; never shared.
 struct RigExecClothWorkspace {
     std::vector<float> x, previous, velocity, lambda;
@@ -272,6 +286,8 @@ struct RigExecClothWorkspace {
     RigExecClothColliders selfTopology;
     /// The edge-pair dedup set, cleared per self profile, its slots retained.
     RigExecClothPairSet selfPairs;
+    /// The self edge/edge spheres, sized per call, their storage retained.
+    RigExecClothEdgeSpheres selfSpheres;
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
     RigExecClothContactTris contacts;
@@ -1609,6 +1625,50 @@ inline void RigExecClothBindings(const RigExecClothMesh &mesh,
     }
 }
 
+namespace cloth_detail {
+
+// The midpoint sphere of an edge, cached until a correction moves an
+// endpoint. The caller passes the endpoints it already holds; the slot is
+// the constraint index, or past the constraints for a triangle edge.
+inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
+                       int32_t v, const float *x, float *center, float *radius)
+{
+    const uint64_t stamp = spheres->edgeTick[slot];
+    if (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)]) {
+        center[0] = spheres->centers[3 * slot];
+        center[1] = spheres->centers[3 * slot + 1];
+        center[2] = spheres->centers[3 * slot + 2];
+        *radius = spheres->radii[slot];
+        return;
+    }
+    const float *a = x + 3 * size_t(u), *b = x + 3 * size_t(v);
+    center[0] = (a[0] + b[0]) * 0.5f;
+    center[1] = (a[1] + b[1]) * 0.5f;
+    center[2] = (a[2] + b[2]) * 0.5f;
+    const float e0 = b[0] - a[0], e1 = b[1] - a[1], e2 = b[2] - a[2];
+    *radius = 0.5f * std::sqrt(e0 * e0 + e1 * e1 + e2 * e2);
+    spheres->centers[3 * slot] = center[0];
+    spheres->centers[3 * slot + 1] = center[1];
+    spheres->centers[3 * slot + 2] = center[2];
+    spheres->radii[slot] = *radius;
+    spheres->edgeTick[slot] = spheres->clock;
+}
+
+// Retires every cached sphere over four corrected vertices, after the
+// writes. No sphere is computed between a pair's projection and its
+// friction writes to the same vertices, so one touch covers both.
+inline void TouchVerts(RigExecClothEdgeSpheres *spheres, int32_t a, int32_t b,
+                       int32_t c, int32_t d)
+{
+    const uint64_t tick = ++spheres->clock;
+    spheres->vertTick[size_t(a)] = tick;
+    spheres->vertTick[size_t(b)] = tick;
+    spheres->vertTick[size_t(c)] = tick;
+    spheres->vertTick[size_t(d)] = tick;
+}
+
+} // namespace cloth_detail
+
 /// Two-sided vertex/triangle contact between selected cloth regions. The
 /// broad phase is rebuilt inside the existing constraint iteration; all
 /// corrections act on the same private particle arena as stretch and bend.
@@ -1623,6 +1683,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             for (size_t i = 0; i < mesh.pointCount; ++i)
                 pad = std::max(pad, p.thickness * RigExecClothMap(p, ClothThickness, i));
     if (!(pad > 0)) return;
+    // Size the sphere cache once per mesh; a fresh clock per call retires
+    // every sphere, since positions moved since the last call.
+    RigExecClothEdgeSpheres &spheres = ws->selfSpheres;
+    const size_t sphereEdges = mesh.constraintRest.size() + mesh.triangles.size();
+    if (spheres.centers.size() != 3 * sphereEdges ||
+        spheres.vertTick.size() != mesh.pointCount) {
+        spheres.centers.assign(3 * sphereEdges, 0.0f);
+        spheres.radii.assign(sphereEdges, 0.0f);
+        spheres.edgeTick.assign(sphereEdges, 0);
+        spheres.vertTick.assign(mesh.pointCount, 0);
+    }
+    std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
     // The triangle buffer persists in the workspace: assignment reuses it
     // instead of allocating per call, and a model without a running self
     // profile never copies it. Same values.
@@ -1690,6 +1762,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // excluding vertices solely because they are in target.
                 const float correction = RigExecClothProjectSamples(mesh, step, p,
                     a, &b, signedDistance - thickness, n, true, &lambda, x, false);
+                TouchVerts(&spheres, int32_t(i), b.vertices[0], b.vertices[1], b.vertices[2]);
                 const float mu = p.friction * RigExecClothMap(p, ClothFriction, i);
                 if (!(correction > 0 && mu > 0)) continue;
                 RigExecClothSamplePoint(b, x, q);
@@ -1743,6 +1816,28 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     std::array<int32_t,4> key{{i,j,k,l}};
                     if (std::make_pair(k,l) < std::make_pair(i,j)) key = {{k,l,i,j}};
                     if (!pairs.Insert(key)) continue;
+                    // The edge-sphere band: a pair whose midpoint spheres
+                    // plus contact reach cannot meet skips the
+                    // closest-segment tail. Each edge holds its points
+                    // within half its length of its midpoint, so separated
+                    // spheres imply a separated pair; the 2^-10 margin is far
+                    // outside float rounding, and a NaN input compares
+                    // false and skips nothing. ClosestSegments clamps its
+                    // parameters into [0,1], so the sample map is a convex
+                    // combination of the endpoint maps and the absolute
+                    // bound covers every thickness sign.
+                    float c1[3], c2[3], r1, r2;
+                    EdgeSphere(&spheres, c, i, j, x, c1, &r1);
+                    EdgeSphere(&spheres, mesh.constraintRest.size() + 3 * tri + edge,
+                               k, l, x, c2, &r2);
+                    const float dd0 = c1[0] - c2[0], dd1 = c1[1] - c2[1],
+                                dd2 = c1[2] - c2[2];
+                    const float reach = r1 + r2 + std::fabs(p.thickness) * std::max(
+                        std::fabs(RigExecClothMap(p, ClothThickness, size_t(i))),
+                        std::fabs(RigExecClothMap(p, ClothThickness, size_t(j))));
+                    if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
+                        reach * reach * 1.0009765625f)
+                        continue;
                     float u, v;
                     ClosestSegments(x+3*size_t(i), x+3*size_t(j), x+3*size_t(k), x+3*size_t(l), &u, &v);
                     RigExecClothSample a, b;
@@ -1770,6 +1865,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     float &lambda = ws->selfLambda[{{int32_t(profileIndex),key[0],key[1],key[2],key[3]}}];
                     const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
                         Dot(mid,d)-thickness,d,true,&lambda,x,false);
+                    TouchVerts(&spheres, i, j, k, l);
                     const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
                     if (!(correction > 0 && mu > 0)) continue;
                     RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);

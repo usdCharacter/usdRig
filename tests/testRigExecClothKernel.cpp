@@ -1408,6 +1408,55 @@ void TestPairSetMatchesOrderedSet()
     }
 }
 
+void TestEdgeSpheresRetireOnTouch()
+{
+    // The self edge/edge band caches midpoint spheres until a correction
+    // moves an endpoint: a first fetch computes from the positions, a
+    // touch elsewhere keeps the cached tick and values, and touching
+    // either endpoint retires the sphere so the next fetch recomputes.
+    Mesh m;
+    m.points = {-1,-1,0, 1,-1,0, 0,1,0, -1,-1,.5f, 1,-1,.5f, 0,1,.5f};
+    m.counts = {3,3}; m.indices = {0,1,2,3,4,5};
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    const size_t edges = mesh.constraintRest.size() + mesh.triangles.size();
+    RigExecClothEdgeSpheres spheres;
+    spheres.centers.assign(3 * edges, 0.0f);
+    spheres.radii.assign(edges, 0.0f);
+    spheres.edgeTick.assign(edges, 0);
+    spheres.vertTick.assign(m.Size(), 0);
+    std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    std::vector<float> x = m.points;
+    float c[3], r;
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), c, &r);
+    CHECK(c[0] == (x[0] + x[3]) * 0.5f && c[1] == (x[1] + x[4]) * 0.5f &&
+          c[2] == (x[2] + x[5]) * 0.5f);
+    const float e0 = x[3] - x[0], e1 = x[4] - x[1], e2 = x[5] - x[2];
+    CHECK(r == 0.5f * std::sqrt(e0 * e0 + e1 * e1 + e2 * e2));
+    const uint64_t first = spheres.edgeTick[0];
+    CHECK(first == spheres.clock);
+    // A touch that avoids both endpoints keeps the cached sphere, even
+    // when other positions move.
+    x[6] += 0.25f;
+    cloth_detail::TouchVerts(&spheres, 2, 3, 4, 5);
+    float kept[3], keptR;
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), kept, &keptR);
+    CHECK(spheres.edgeTick[0] == first);
+    CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
+    // Moving either endpoint and touching it retires the sphere.
+    for (int32_t v : {0, 1}) {
+        x[3 * size_t(v)] += 0.5f;
+        cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        float fresh[3], freshR;
+        cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), fresh, &freshR);
+        CHECK(spheres.edgeTick[0] != first);
+        CHECK(fresh[0] == (x[0] + x[3]) * 0.5f &&
+              fresh[1] == (x[1] + x[4]) * 0.5f &&
+              fresh[2] == (x[2] + x[5]) * 0.5f);
+    }
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -1877,6 +1926,7 @@ int main()
     TestHardSoftBarycentricAttachments();
     TestSelfContactKeepsAttachments();
     TestPairSetMatchesOrderedSet();
+    TestEdgeSpheresRetireOnTouch();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();
