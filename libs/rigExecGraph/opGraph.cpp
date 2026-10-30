@@ -95,6 +95,55 @@ std::vector<std::string> Loop(const std::vector<uint32_t> &component,
     }
     return {};
 }
+/// The value-to-producer table behind the compile, dense where the ids
+/// allow. Compiled values are dense from zero, so one row answers every
+/// registration and lookup in O(1) with a single allocation; wild ids
+/// (past the entry budget or too sparse to fill) spill to the map the
+/// compiler always used, answering exactly what it answered.
+class ProducerIndex {
+public:
+    static constexpr uint32_t kNone = ~uint32_t(0);
+    // The typed table's budgets, in the same spirit: real compiles stay
+    // orders of magnitude inside both, and past them the map is the
+    // original speed, never a failure.
+    static constexpr size_t kDenseEntries = size_t(1) << 20;
+    static constexpr size_t kDenseFillPerReference = 512;
+
+    void Reserve(RigExecValueId maxValue, size_t references)
+    {
+        if (maxValue >= kDenseEntries) return;
+        const size_t need = size_t(maxValue) + 1;
+        if (need <= references * kDenseFillPerReference)
+            _dense.assign(need, kNone);
+    }
+
+    /// The producer of \p value, or kNone. Reads back exactly what
+    /// Register filed, on either path.
+    uint32_t Producer(RigExecValueId value) const
+    {
+        if (!_dense.empty())
+            return size_t(value) < _dense.size() ? _dense[size_t(value)] : kNone;
+        const auto found = _spill.find(value);
+        return found == _spill.end() ? kNone : found->second;
+    }
+
+    /// Files \p op as a producer of \p value. The first producer wins,
+    /// exactly as the map's emplace: re-registering the same op changes
+    /// nothing, so the caller reports a conflict only for a different op.
+    void Register(RigExecValueId value, uint32_t op)
+    {
+        if (!_dense.empty()) {
+            uint32_t &slot = _dense[size_t(value)];
+            if (slot == kNone) slot = op;
+            return;
+        }
+        _spill.emplace(value, op);
+    }
+
+private:
+    std::vector<uint32_t> _dense;
+    std::map<RigExecValueId, uint32_t> _spill;
+};
 } // namespace
 
 bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
@@ -131,7 +180,19 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
     const auto isLeaf = [&](RigExecValueId value) {
         return std::binary_search(leafVec.begin(), leafVec.end(), value);
     };
-    std::map<RigExecValueId, uint32_t> producers;
+    ProducerIndex producers;
+    {
+        RigExecValueId maxValue = 0;
+        size_t references = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            references += descriptors[i].writes.size() + descriptors[i].reads.size();
+            for (RigExecValueId value : descriptors[i].writes)
+                maxValue = std::max(maxValue, value);
+            for (RigExecValueId value : descriptors[i].reads)
+                maxValue = std::max(maxValue, value);
+        }
+        producers.Reserve(maxValue, references);
+    }
     // Duplicate keys without copying one: views sort in the same byte
     // order the key set used, and every key but its lowest-indexed twin
     // is marked, so the loop below fails on exactly the index it failed
@@ -160,10 +221,11 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         if (descriptors[i].key.empty() || dupKey[i])
             return fail("empty or duplicate operation key: " + descriptors[i].key);
         for (RigExecValueId value : descriptors[i].writes) {
-            auto added = producers.emplace(value, i);
-            if (!added.second && added.first->second != i)
+            const uint32_t prior = producers.Producer(value);
+            if (prior != ProducerIndex::kNone && prior != i)
                 return fail("multiple producers for value " + std::to_string(value) + ": " +
-                    descriptors[added.first->second].key + " and " + descriptors[i].key);
+                    descriptors[prior].key + " and " + descriptors[i].key);
+            producers.Register(value, i);
             if (isLeaf(value)) return fail("operation writes a sampled leaf: " + descriptors[i].key);
         }
     }
@@ -173,8 +235,8 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for (uint32_t predecessor : preds[i])
             if (predecessor >= count) return fail("predecessor out of range: " + descriptors[i].key);
         for (RigExecValueId value : descriptors[i].reads) {
-            const auto producer = producers.find(value);
-            if (producer != producers.end()) preds[i].push_back(producer->second);
+            const uint32_t producer = producers.Producer(value);
+            if (producer != ProducerIndex::kNone) preds[i].push_back(producer);
             else if (!isLeaf(value)) return fail("read has no producer or sampled leaf: " + descriptors[i].key);
         }
         Unique(&preds[i]);
