@@ -1869,13 +1869,24 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     topology.triangles = mesh.triangles;
     // A padded triangle bucket at an edge midpoint covers every possible
     // edge/edge encounter along that edge, not just its endpoints.
-    float edgeReach = 0;
-    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
-        if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
-        float d[3];
-        Sub(x + 3 * size_t(mesh.constraintEnds[2*c]), x + 3 * size_t(mesh.constraintEnds[2*c+1]), d);
-        edgeReach = std::max(edgeReach, 0.5f * Length(d));
-    }
+    const auto measureReach = [&]() {
+        float reach = 0;
+        for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+            if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
+            float d[3];
+            Sub(x + 3 * size_t(mesh.constraintEnds[2*c]), x + 3 * size_t(mesh.constraintEnds[2*c+1]), d);
+            reach = std::max(reach, 0.5f * Length(d));
+        }
+        return reach;
+    };
+    const float edgeReach = measureReach();
+    // The triangle band's reach bound: every triangle edge is a stretch
+    // constraint, so the stretch half-length maximum covers each triangle
+    // edge's sphere radius. Re-derived when vertex/triangle corrections
+    // moved x since it was measured; the sphere clock only advances in
+    // TouchVerts, beside each projection.
+    float triReach = edgeReach;
+    uint64_t triReachClock = spheres.clock;
     RigExecBuildClothGrid(topology, previous, x, std::max(pad, step.depth),
                           &ws->selfGrid, &ws->selfScratch);
     const auto &grid = ws->selfGrid;
@@ -1987,6 +1998,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                                           std::max(pad, step.depth)))
             RigExecBuildClothGrid(topology, previous, x, std::max(std::max(pad, step.depth), edgeReach),
                                   &ws->selfGrid, &ws->selfScratch);
+        if (spheres.clock != triReachClock) {
+            triReach = measureReach();
+            triReachClock = spheres.clock;
+        }
+        // The triangle band stays on until an edge/edge correction moves
+        // x, which could grow a triangle edge past the reach bound.
+        bool triBandOn = true;
         // Flat dedup over retained storage: the same verdicts as an
         // ordered set (the discovery loops keep their order), with no
         // per-pair allocation.
@@ -2019,6 +2037,28 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             bool haveHeld = false;
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
+                // The triangle band: the centroid sphere holds every edge
+                // midpoint of the triangle within its radius, and the reach
+                // bound covers every triangle edge's sphere radius, so a
+                // separated triangle separates all three edge pairs and the
+                // per-pair band below would skip each of them. Same skips,
+                // decided once per triangle; a NaN input compares false and
+                // skips nothing.
+                if (triBandOn) {
+                    if (!haveHeld) {
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        haveHeld = true;
+                    }
+                    float ttc[3], ttr;
+                    TriSphere(&triSpheres, &spheres, tri, mesh.triangles[3*tri],
+                              mesh.triangles[3*tri+1], mesh.triangles[3*tri+2],
+                              x, ttc, &ttr);
+                    const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
+                                td2 = heldC1[2] - ttc[2];
+                    const float trr = ttr + heldR1 + triReach + heldThick;
+                    if (td0 * td0 + td1 * td1 + td2 * td2 > trr * trr * 1.0009765625f)
+                        continue;
+                }
                 for (size_t edge = 0; edge < 3; ++edge) {
                     const int32_t k = mesh.triEdges[6*tri+2*edge];
                     const int32_t l = mesh.triEdges[6*tri+2*edge+1];
@@ -2104,6 +2144,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         Dot(mid,d)-thickness,d,true,&lambda,x,false);
                     TouchVerts(&spheres, i, j, k, l);
                     haveHeld = false;
+                    triBandOn = false;
                     const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
                     if (!(correction > 0 && mu > 0)) continue;
                     RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);
