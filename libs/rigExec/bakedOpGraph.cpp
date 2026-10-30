@@ -349,6 +349,7 @@ void CopySkinBodyOutputs(RigExecBakedProgramImpl::GeomRevision *a,
     // The overlay's reuse claim names the outgoing program's op value and
     // is not carried.
     a->envelopeVersion=b.envelopeVersion;a->weightValuesVersion=b.weightValuesVersion;
+    a->matrixWeightsVersion=b.matrixWeightsVersion;
     // The serial the copied packet's layout is keyed by: it names the
     // outgoing layout object, which the new SkinTopology op hands back as
     // its candidate (AdoptGeometryStateFrom).
@@ -1028,6 +1029,7 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
             revision.matrixEnvelopeHeld=false;
             revision.matrixParamsHeld=false;
             revision.matrixEntryRangesHeld=false;
+            revision.matrixWeightsVersion=0;
         }
     }
     BuildSpaceLeafIndex(B);

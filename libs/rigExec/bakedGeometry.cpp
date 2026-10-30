@@ -3478,6 +3478,31 @@ MatrixEntryRangesNote(
     revision->matrixEntryRangesHeld = true;
 }
 
+/// Moves a bound matrix revision's weights version exactly on the runs
+/// its shared packet's own publication reported changed: the packet step
+/// runs before this one and compares bytes, so the version names the
+/// arrays the RevisionPacket key carries it for. A packet never
+/// published (excluded before its first run) also moves it, which is
+/// the conservative direction. Unbound, current-phase and unshared
+/// revisions key their arrays' bytes and note nothing.
+void
+MatrixWeightsNoteVersion(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision)
+{
+    if (revision->op != RigExecRevisionOp::Matrix ||
+        revision->weightObject < 0 || revision->weightCurrentPhase ||
+        revision->weightPacketValue < 0 ||
+        size_t(revision->weightPacketValue) >= B.opAdapter.values.size()) {
+        return;
+    }
+    const RigExecOpValueState &packet =
+        B.opAdapter.values[size_t(revision->weightPacketValue)];
+    if (!packet.initialized || packet.changed) {
+        ++revision->matrixWeightsVersion;
+    }
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -5177,6 +5202,12 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             if (revision.op == RigExecRevisionOp::Matrix) {
                 MatrixParamsNote(B, &revision);
             }
+        }
+        // A bound matrix revision's weights version, moved exactly when
+        // the shared packet it names changed: the RevisionPacket key
+        // carries the version instead of the arrays.
+        if (revision.op == RigExecRevisionOp::Matrix) {
+            MatrixWeightsNoteVersion(B, &revision);
         }
         if (rangeLattice) {
             // The lattice arm copies the base (or takes the held copy back)

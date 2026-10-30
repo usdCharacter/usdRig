@@ -385,7 +385,15 @@ void PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)
 {
     const RigExecMoverParameters &v=r.parameters;
     Put(out,v.kind); Put(out,v.enabled); Put(out,v.valid); Put(out,v.transform);
-    Put(out,v.radialWeight); Put(out,v.weights);
+    Put(out,v.radialWeight);
+    // An enabled matrix revision's weights are the shared packet copied
+    // verbatim, so the key carries the version RevisionStatic moves
+    // exactly when that packet's publication reported changed instead
+    // of the arrays. `enabled` above keeps an arm change a key change.
+    if (r.op==RigExecRevisionOp::Matrix && v.enabled && r.weightObject>=0 &&
+        !r.weightCurrentPhase && r.weightPacketValue>=0) {
+        Put(out,r.matrixWeightsVersion);
+    } else Put(out,v.weights);
     if(r.role!=RigExecBakedRevisionRole::Legacy && r.op==RigExecRevisionOp::BlendShape) {
         Put(out,uint8_t(1)); Put(out,r.deltasVersion);
     } else Array(out,v.blendDeltas);

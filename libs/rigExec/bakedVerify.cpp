@@ -473,6 +473,7 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
         revision.matrixEntryRangesPacketRevision;
     state->matrixEntryRangesCount = revision.matrixEntryRangesCount;
     state->matrixEntryRanges = revision.matrixEntryRanges;
+    state->matrixWeightsVersion = revision.matrixWeightsVersion;
     state->layoutUsable = revision.layoutUsable;
     state->topology = revision.topology;
     state->partitionTopology = revision.partitionTopology;
@@ -588,6 +589,7 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
         state.matrixEntryRangesPacketRevision;
     revision->matrixEntryRangesCount = state.matrixEntryRangesCount;
     revision->matrixEntryRanges = state.matrixEntryRanges;
+    revision->matrixWeightsVersion = state.matrixWeightsVersion;
     revision->layoutUsable = state.layoutUsable;
     revision->topology = state.topology;
     revision->partitionTopology = state.partitionTopology;

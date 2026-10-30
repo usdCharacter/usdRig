@@ -3571,6 +3571,14 @@ struct RigExecBakedProgramImpl {
         uint64_t matrixEntryRangesPacketRevision = 0;
         size_t matrixEntryRangesCount = 0;
         std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
+        /// The content version the RevisionPacket key carries in place of
+        /// a bound matrix revision's weight arrays: RevisionStatic bumps
+        /// it exactly on the runs the shared packet's own publication
+        /// reported changed (a byte comparison), so equal versions name
+        /// equal arrays. Read only for an enabled matrix revision bound
+        /// to a shared packet outside the current phase; anything else
+        /// keys the arrays' bytes.
+        uint64_t matrixWeightsVersion = 0;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;
@@ -6289,6 +6297,7 @@ struct RigExecBakedRunShadow {
         uint64_t matrixEntryRangesPacketRevision = 0;
         size_t matrixEntryRangesCount = 0;
         std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
+        uint64_t matrixWeightsVersion = 0;
         std::vector<uint64_t> joinSeen;
         uint32_t rangeRefusals = 0;
         /// Copied as states (refs and own[] handles), never as bytes.
