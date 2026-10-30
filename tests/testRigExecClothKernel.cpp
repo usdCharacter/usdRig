@@ -1776,6 +1776,73 @@ void TestEdgeBitsMatchVertices()
     }
 }
 
+void TestTriBitsMatchVertices()
+{
+    // Each triangle's union row reports the vertices neighboring any
+    // corner: the same verdict as the three vertex rows, or the three
+    // sorted lists, for every triangle and vertex. Past the size cap,
+    // or without a self-contact profile, Prepare leaves the union
+    // rows empty with the bitsets.
+    const Mesh curtains[] = {Curtain(4, 3.0f, 2.0f), Curtain(2, 2.0f, 2.0f)};
+    for (const Mesh &m : curtains) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.size() ==
+              mesh.triangles.size() / 3 * mesh.neighborBitStride);
+        if (mesh.triNeighborBits.empty()) continue;
+        size_t compared = 0;
+        for (size_t t = 0; t < mesh.triangles.size() / 3; ++t) {
+            const int32_t u = mesh.triangles[3 * t];
+            const int32_t v = mesh.triangles[3 * t + 1];
+            const int32_t w = mesh.triangles[3 * t + 2];
+            for (size_t x = 0; x < m.Size(); ++x) {
+                const bool want =
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(u)], int32_t(x)) ||
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(v)], int32_t(x)) ||
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(w)], int32_t(x));
+                CHECK(cloth_detail::AdjacentToTriBits(mesh, t, int32_t(x)) == want);
+                CHECK(want == (cloth_detail::AdjacentToBits(mesh, u, int32_t(x)) ||
+                               cloth_detail::AdjacentToBits(mesh, v, int32_t(x)) ||
+                               cloth_detail::AdjacentToBits(mesh, w, int32_t(x))));
+                ++compared;
+            }
+        }
+        CHECK(compared == mesh.triangles.size() / 3 * m.Size());
+    }
+    // A model without self contact builds no union rows either.
+    {
+        const Mesh m = Curtain(4, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothModel model;
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.empty());
+    }
+    // Either side of the size cap.
+    for (const int n : {45, 46}) {
+        const Mesh m = Curtain(n, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.empty() == (n == 46));
+    }
+}
+
 void TestSelfEdgeCanonicalization()
 {
     // Prepare stores each triangle edge sorted, and the discovery keys
@@ -2575,6 +2642,7 @@ int main()
     TestSelfPairDiscoveryOrder();
     TestNeighborBitsMatchLists();
     TestEdgeBitsMatchVertices();
+    TestTriBitsMatchVertices();
     TestSelfEdgeCanonicalization();
     TestSelfEdgeTwins();
     TestSelfTwinSkipMatchesNoSkip();

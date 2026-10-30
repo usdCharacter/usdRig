@@ -182,6 +182,10 @@ struct RigExecClothMesh {
     /// neighboring either endpoint. Built with the bitsets; the edge
     /// adjacency test reads one row instead of two.
     std::vector<uint64_t> edgeNeighborBits;
+    /// One union row per triangle over the same stride: the vertices
+    /// neighboring any corner. Built with the bitsets; the
+    /// vertex/triangle adjacency test reads one row instead of three.
+    std::vector<uint64_t> triNeighborBits;
     /// The three triangle edges as sorted endpoint pairs, two ints per
     /// edge in grid order. Built for self-contact meshes, like the
     /// bitsets; the discovery loads them instead of sorting per visit.
@@ -385,6 +389,9 @@ inline bool AdjacentToBits(const RigExecClothMesh &mesh, int32_t a, int32_t b);
 // True when either endpoint of constraint c neighbors v, from the
 // constraint's union row.
 inline bool AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_t c, int32_t v);
+// True when any corner of triangle t neighbors v, from the triangle's
+// union row.
+inline bool AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v);
 
 inline int64_t Cell(float v, float cell) { return int64_t(std::floor(v / cell)); }
 
@@ -802,6 +809,7 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
     mesh->neighborBits.clear();
     mesh->neighborBitStride = 0;
     mesh->edgeNeighborBits.clear();
+    mesh->triNeighborBits.clear();
     bool selfContact = false;
     for (const auto &p : model.profiles)
         selfContact = selfContact || p.kind == RigExecClothProfileKind::SelfCollision;
@@ -820,6 +828,18 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
                 mesh->edgeNeighborBits[c * mesh->neighborBitStride + w] =
                     mesh->neighborBits[a * mesh->neighborBitStride + w] |
                     mesh->neighborBits[b * mesh->neighborBitStride + w];
+        }
+        const size_t triCount = mesh->triangles.size() / 3;
+        mesh->triNeighborBits.assign(triCount * mesh->neighborBitStride, 0);
+        for (size_t t = 0; t < triCount; ++t) {
+            const size_t a = size_t(mesh->triangles[3 * t]);
+            const size_t b = size_t(mesh->triangles[3 * t + 1]);
+            const size_t d = size_t(mesh->triangles[3 * t + 2]);
+            for (size_t w = 0; w < mesh->neighborBitStride; ++w)
+                mesh->triNeighborBits[t * mesh->neighborBitStride + w] =
+                    mesh->neighborBits[a * mesh->neighborBitStride + w] |
+                    mesh->neighborBits[b * mesh->neighborBitStride + w] |
+                    mesh->neighborBits[d * mesh->neighborBitStride + w];
         }
     }
     mesh->triEdges.clear();
@@ -1934,11 +1954,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket + 1]; ++entry) {
                 const int32_t tri = grid.bucketTriangles[entry];
                 RigExecClothSample b;
-                bool adjacent = false;
-                for (size_t q = 0; q < 3; ++q) {
+                for (size_t q = 0; q < 3; ++q)
                     b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
-                    adjacent = adjacent || (useBits ? AdjacentToBits(mesh, int32_t(i), b.vertices[q])
-                                                    : AdjacentTo(mesh.neighbors[i], b.vertices[q]));
+                // The triangle union row holds the vertices neighboring any
+                // corner, so one bit test answers the three corner tests;
+                // adjacency is symmetric, the same verdicts. Past the size
+                // cap the linear scans keep their order.
+                bool adjacent;
+                if (useBits) adjacent = AdjacentToTriBits(mesh, size_t(tri), int32_t(i));
+                else {
+                    adjacent = false;
+                    for (size_t q = 0; q < 3; ++q)
+                        adjacent = adjacent || AdjacentTo(mesh.neighbors[i], b.vertices[q]);
                 }
                 if (adjacent) continue;
                 // The triangle-sphere band: the centroid holds every
@@ -2593,6 +2620,12 @@ inline bool cloth_detail::AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_
 {
     const size_t word = c * mesh.neighborBitStride + (size_t(v) >> 6);
     return ((mesh.edgeNeighborBits[word] >> (v & 63)) & 1ull) != 0;
+}
+
+inline bool cloth_detail::AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v)
+{
+    const size_t word = t * mesh.neighborBitStride + (size_t(v) >> 6);
+    return ((mesh.triNeighborBits[word] >> (v & 63)) & 1ull) != 0;
 }
 
 inline void RigExecClothPairSet::Grow()
