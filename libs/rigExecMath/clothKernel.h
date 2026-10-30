@@ -56,6 +56,9 @@ namespace rigExec {
 constexpr int RigExecClothMaxWindowFrames = 1024;
 constexpr int RigExecClothMaxSubsteps = 256;
 constexpr int RigExecClothMaxIterations = 64;
+/// Meshes past this size keep the linear neighbor scans: their bitsets
+/// would outgrow the fast caches they exist to serve.
+constexpr size_t RigExecClothMaxBitsetPoints = 2048;
 
 /// Constraint kinds in RigExecClothMesh::constraintKind.
 enum class RigExecClothConstraint : uint8_t { Stretch = 0, Bend = 1 };
@@ -169,6 +172,12 @@ struct RigExecClothMesh {
     RigExecClothModel model;
     std::vector<float> restPoints, materialFrames;
     std::vector<std::vector<int32_t>> incidentTriangles, neighbors;
+    /// One bit per vertex per vertex row, row-major, the same relation as
+    /// neighbors. Built for self-contact meshes within
+    /// RigExecClothMaxBitsetPoints; empty otherwise, selecting the linear
+    /// scans.
+    std::vector<uint64_t> neighborBits;
+    size_t neighborBitStride = 0;
     std::vector<size_t> colliderOffsets;
     std::vector<std::vector<float>> attachmentRest;
     bool valid = false;
@@ -335,6 +344,8 @@ inline void Lerp(const float *a, const float *b, float t, float *o)
 // AdjacentTo is declared here and defined at the end of the header, after
 // the solve, with the other model-path-only code.
 inline bool AdjacentTo(const std::vector<int32_t> &sorted, int32_t v);
+// The same verdict from the neighbor bitsets, for meshes that built them.
+inline bool AdjacentToBits(const RigExecClothMesh &mesh, int32_t a, int32_t b);
 
 inline int64_t Cell(float v, float cell) { return int64_t(std::floor(v / cell)); }
 
@@ -748,6 +759,19 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
     for (auto &neighbors : mesh->neighbors) {
         std::sort(neighbors.begin(), neighbors.end());
         neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+    }
+    mesh->neighborBits.clear();
+    mesh->neighborBitStride = 0;
+    bool selfContact = false;
+    for (const auto &p : model.profiles)
+        selfContact = selfContact || p.kind == RigExecClothProfileKind::SelfCollision;
+    if (selfContact && mesh->pointCount <= RigExecClothMaxBitsetPoints) {
+        mesh->neighborBitStride = (mesh->pointCount + 63) / 64;
+        mesh->neighborBits.assign(mesh->pointCount * mesh->neighborBitStride, 0);
+        for (size_t a = 0; a < mesh->pointCount; ++a)
+            for (int32_t b : mesh->neighbors[a])
+                mesh->neighborBits[a * mesh->neighborBitStride + (size_t(b) >> 6)] |=
+                    1ull << (b & 63);
     }
     mesh->materialFrames.resize(9 * mesh->pointCount);
     for (size_t i = 0; i < mesh->pointCount; ++i)
@@ -1728,6 +1752,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // While the vertex/triangle grid stays valid for the edge/edge pass,
     // the edge/edge discovery rereads it as is instead of rebuilding it.
     const uint64_t selfGridClock = spheres.clock;
+    // Bitset adjacency where the mesh built the sets, the linear scans
+    // past the size cap: the same verdicts either way.
+    const bool useBits = !mesh.neighborBits.empty();
     for (size_t profileIndex = 0; profileIndex < mesh.model.profiles.size(); ++profileIndex) {
         const auto &p = mesh.model.profiles[profileIndex];
         if (p.kind != RigExecClothProfileKind::SelfCollision) continue;
@@ -1747,7 +1774,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 bool adjacent = false;
                 for (size_t q = 0; q < 3; ++q) {
                     b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
-                    adjacent = adjacent || AdjacentTo(mesh.neighbors[i], b.vertices[q]);
+                    adjacent = adjacent || (useBits ? AdjacentToBits(mesh, int32_t(i), b.vertices[q])
+                                                    : AdjacentTo(mesh.neighbors[i], b.vertices[q]));
                 }
                 if (adjacent) continue;
                 const float *v0 = x + 3 * size_t(b.vertices[0]);
@@ -1833,7 +1861,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     if (!pairs.Insert(key)) continue;
                     bool adjacent = false;
                     for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
-                        adjacent = adjacent || AdjacentTo(mesh.neighbors[size_t(a)], b);
+                        adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
+                                                        : AdjacentTo(mesh.neighbors[size_t(a)], b));
                     }
                     if (adjacent) continue;
                     // The edge-sphere band: a pair whose midpoint spheres
@@ -2290,6 +2319,12 @@ inline bool cloth_detail::AdjacentTo(const std::vector<int32_t> &sorted, int32_t
         if (n > v) return false;
     }
     return false;
+}
+
+inline bool cloth_detail::AdjacentToBits(const RigExecClothMesh &mesh, int32_t a, int32_t b)
+{
+    const size_t word = size_t(a) * mesh.neighborBitStride + (size_t(b) >> 6);
+    return ((mesh.neighborBits[word] >> (b & 63)) & 1ull) != 0;
 }
 
 inline void RigExecClothPairSet::Grow()

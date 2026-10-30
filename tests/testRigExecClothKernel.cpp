@@ -1567,6 +1567,63 @@ void TestSelfPairDiscoveryOrder()
     CHECK(h == 0xc2fddc4fec45e38aull);
 }
 
+void TestNeighborBitsMatchLists()
+{
+    // The neighbor bitsets report the same relation as the sorted lists
+    // for every vertex pair; past the size cap, or without a self-contact
+    // profile, Prepare leaves them empty and the scans stay linear.
+    const Mesh curtains[] = {Curtain(4, 3.0f, 2.0f), Curtain(2, 2.0f, 2.0f)};
+    for (const Mesh &m : curtains) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(!mesh.neighborBits.empty());
+        if (mesh.neighborBits.empty()) continue;
+        CHECK(mesh.neighborBitStride == (m.Size() + 63) / 64);
+        size_t compared = 0;
+        for (size_t a = 0; a < m.Size(); ++a)
+            for (size_t b = 0; b < m.Size(); ++b) {
+                CHECK(cloth_detail::AdjacentToBits(mesh, int32_t(a), int32_t(b)) ==
+                      cloth_detail::AdjacentTo(mesh.neighbors[a], int32_t(b)));
+                ++compared;
+            }
+        CHECK(compared == m.Size() * m.Size());
+    }
+    // A model without self contact builds no sets either.
+    {
+        const Mesh m = Curtain(4, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothModel model;
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.neighborBits.empty());
+    }
+    // Either side of the size cap: 2025 points build the sets, 2116 do
+    // not (no solve: Prepare alone decides).
+    for (const int n : {45, 46}) {
+        const Mesh m = Curtain(n, 3.0f, 2.0f);
+        CHECK(m.Size() == size_t(n * n));
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.neighborBits.empty() == (n == 46));
+    }
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -2040,6 +2097,7 @@ int main()
     TestSelfGridReuseVerdict();
     TestClothGridDeterminism();
     TestSelfPairDiscoveryOrder();
+    TestNeighborBitsMatchLists();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();
