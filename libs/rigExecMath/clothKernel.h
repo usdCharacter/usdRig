@@ -1244,24 +1244,29 @@ RigExecClothVelocity(const RigExecClothMesh &mesh, const RigExecClothStep &s,
                      float *velocity)
 {
     if (mesh.inverseMass[i] == 0.0f) return;
-    if (const auto *profile = RigExecClothProfileFor(mesh, RigExecClothProfileKind::Damping,
-                                                   RigExecClothVertex(i))) {
-        float frame[9], v[3], delta[3];
-        RigExecClothMaterialFrame(mesh, x, i, frame);
-        for (size_t a = 0; a < 3; ++a) {
-            v[a] = (x[3 * i + a] - previous[3 * i + a]) / s.h;
-            delta[a] = (v[a] - velocity[3 * i + a]) / (s.h * mesh.inverseMass[i]);
+    // Hoisted: an empty model matches no damping profile, so the
+    // per-particle sample and profile lookup skip themselves here, as in
+    // the particle pass. Profile rigs take the lookup as before.
+    if (!mesh.model.Empty()) {
+        if (const auto *profile = RigExecClothProfileFor(mesh, RigExecClothProfileKind::Damping,
+                                                       RigExecClothVertex(i))) {
+            float frame[9], v[3], delta[3];
+            RigExecClothMaterialFrame(mesh, x, i, frame);
+            for (size_t a = 0; a < 3; ++a) {
+                v[a] = (x[3 * i + a] - previous[3 * i + a]) / s.h;
+                delta[a] = (v[a] - velocity[3 * i + a]) / (s.h * mesh.inverseMass[i]);
+            }
+            const float force = cloth_detail::Length(delta);
+            std::fill(velocity + 3 * i, velocity + 3 * i + 3, 0.0f);
+            for (size_t a = 0; a < 3; ++a) {
+                const float rate = RigExecClothStrength(*profile, RigExecClothVertex(i), force,
+                                                       frame + 3 * a, frame);
+                const float damp = profile->hard && rate > 0 ? 0 : std::exp(-rate * s.h);
+                const float along = cloth_detail::Dot(v, frame + 3 * a) * damp;
+                for (size_t q = 0; q < 3; ++q) velocity[3 * i + q] += along * frame[3 * a + q];
+            }
+            return;
         }
-        const float force = cloth_detail::Length(delta);
-        std::fill(velocity + 3 * i, velocity + 3 * i + 3, 0.0f);
-        for (size_t a = 0; a < 3; ++a) {
-            const float rate = RigExecClothStrength(*profile, RigExecClothVertex(i), force,
-                                                   frame + 3 * a, frame);
-            const float damp = profile->hard && rate > 0 ? 0 : std::exp(-rate * s.h);
-            const float along = cloth_detail::Dot(v, frame + 3 * a) * damp;
-            for (size_t q = 0; q < 3; ++q) velocity[3 * i + q] += along * frame[3 * a + q];
-        }
-        return;
     }
     for (int a = 0; a < 3; ++a) {
         const size_t k = 3 * i + size_t(a);
