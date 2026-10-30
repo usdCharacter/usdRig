@@ -1068,7 +1068,15 @@ void TestKinematicSkipPartition()
                 RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
             RigExecClothProjectColorSingle(mesh, step, mid, hi, y.data());
             CHECK(same(x, y));
-            compared += 2;
+            // The general arm skips the same run: it returns before any
+            // write, so positions and lambda come back untouched.
+            auto z = pose;
+            std::vector<float> lambda(mesh.constraintRest.size(), 0.0f);
+            for (uint32_t c = lo; c < mid; ++c)
+                RigExecClothProjectConstraint(mesh, step, c, z.data(), lambda.data());
+            CHECK(same(z, pose));
+            for (float l : lambda) CHECK(l == 0.0f);
+            compared += 3;
         }
     }
     CHECK(compared > 100);

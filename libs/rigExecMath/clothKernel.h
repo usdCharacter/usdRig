@@ -2008,8 +2008,9 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                     gravityStep);
             const bool single = iterations == 1;
             // Stretch kinematic pairs project to no-ops at zero alpha on
-            // an empty model, so the single-iteration pass starts past
-            // the partitioned leading run.
+            // an empty model (the zero denominator returns before any
+            // write, to positions or to lambda), so each pass starts
+            // past the partitioned leading run.
             const bool skipKk = mesh.model.Empty() && s.alphaStretch == 0.0f;
             if (!single) std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
             std::fill(ws->attachmentLambda.begin(), ws->attachmentLambda.end(), 0.0f);
@@ -2025,7 +2026,10 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                         RigExecClothProjectColorSingle(mesh, s, lo,
                                                        mesh.colorStart[color + 1], x);
                     } else {
-                        for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
+                        const uint32_t lo = skipKk ? mesh.colorStart[color] +
+                                                         mesh.colorKkSkip[color]
+                                                   : mesh.colorStart[color];
+                        for (uint32_t c = lo; c < mesh.colorStart[color + 1]; ++c)
                             RigExecClothProjectConstraint(mesh, s, c, x, ws->lambda.data());
                     }
                 }
