@@ -785,7 +785,9 @@ MatchesPairedCold(const UsdStageRefPtr &stage, const Program &B, int c,
 /// second mover aliases groups the first wrote and groups nobody wrote;
 /// a move of its control alone runs its join while the first join skips,
 /// so the join reads held notes, and every step still matches a cold
-/// evaluator's bits.
+/// evaluator's bits. The packet-version judge also runs: both revisions
+/// are matrix, and a matrix assembly writes only six parameters, which
+/// the short packet key's premise asserts outright every step.
 void
 TestAMatrixJoinReadsPredecessorIds()
 {
@@ -793,10 +795,12 @@ TestAMatrixJoinReadsPredecessorIds()
     const SdfPath target("/Asset/Shape.points");
     const UsdStageRefPtr stage = MakePairedStage(1.0, 1.0);
     TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+    TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "1");
     RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
     std::vector<std::string> errors;
     const bool compiled = evaluator.Compile(&errors);
     TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+    TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
     CHECK(compiled);
     if (!compiled) {
         for (const std::string &line : errors) {
@@ -808,6 +812,7 @@ TestAMatrixJoinReadsPredecessorIds()
     CHECK(evaluator.Evaluate(time).valid);
     const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
     CHECK(B.verifyRangeChains);
+    CHECK(B.verifyPacketVersions);
     const int c = FindChain(B, target);
     CHECK(c >= 0);
     if (c < 0) {
@@ -859,6 +864,21 @@ TestAMatrixJoinReadsPredecessorIds()
         return true;
     };
     CHECK(idsMatch());
+    // The short packet key's premise: a matrix assembly writes only
+    // kind, enabled, valid, transform, radialWeight and weights, so
+    // every other field is a fresh default.
+    const auto onlySix = [&](const Revision &revision) {
+        RigExecMoverParameters six;
+        six.kind = revision.parameters.kind;
+        six.enabled = revision.parameters.enabled;
+        six.valid = revision.parameters.valid;
+        six.transform = revision.parameters.transform;
+        six.radialWeight = revision.parameters.radialWeight;
+        six.weights = revision.parameters.weights;
+        return revision.parameters == six;
+    };
+    CHECK(onlySix(moverA));
+    CHECK(onlySix(moverB));
     const int idA = B.chainRevisionBegin[size_t(c)] + first;
     const int idB = B.chainRevisionBegin[size_t(c)] + second;
     // Forced full re-runs at rest hold every version and id.
@@ -875,6 +895,9 @@ TestAMatrixJoinReadsPredecessorIds()
         CHECK(moverB.groupIds == idsB);
         CHECK(idsMatch());
         CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
     }
     // Only the second control moves, unforced: its join runs while the
     // first join skips, so the join reads held notes.
@@ -885,6 +908,9 @@ TestAMatrixJoinReadsPredecessorIds()
             {Override(kPairedMovingB, "avars:tx", VtValue(2.0))});
         CHECK(evaluator.Evaluate(time).valid);
         CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
         const std::set<std::pair<int, int>> fuses =
             RanSteps(B, RigExecBakedStepKind::RevisionFuse);
         if (!RanFor(fuses, idB) || RanFor(fuses, idA)) {
@@ -927,6 +953,9 @@ TestAMatrixJoinReadsPredecessorIds()
              Override(kPairedMovingB, "avars:tx", VtValue(2.0))});
         CHECK(evaluator.Evaluate(time).valid);
         CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
         const std::set<std::pair<int, int>> fuses =
             RanSteps(B, RigExecBakedStepKind::RevisionFuse);
         CHECK(RanFor(fuses, idA));
@@ -946,10 +975,14 @@ TestAMatrixJoinReadsPredecessorIds()
          Override(kPairedMovingB, "avars:tx", VtValue(1.0))});
     CHECK(evaluator.Evaluate(time).valid);
     CHECK(B.rangeVerifyMismatches == 0);
+    CHECK(B.packetVersionMismatches == 0);
+    CHECK(onlySix(moverA));
+    CHECK(onlySix(moverB));
     CHECK(MatchesPairedCold(MakePairedStage(1.0, 1.0), B, c, &errors));
     evaluator.GetBakedProgram()->RequestFullRun();
     CHECK(evaluator.Evaluate(time).valid);
     CHECK(B.rangeVerifyMismatches == 0);
+    CHECK(B.packetVersionMismatches == 0);
     CHECK(idsMatch());
     std::printf("  a matrix join reads its predecessor's group ids\n");
 }
