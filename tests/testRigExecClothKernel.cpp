@@ -1595,9 +1595,10 @@ void TestClothGridDeterminism()
 void TestSelfPairDiscoveryOrder()
 {
     // A folded curtain layer over itself: vertex/triangle and edge/edge
-    // corrections both fire. Dedup runs before the adjacency scans, so
-    // the pair set also records adjacent pairs; the corrections that
-    // reach projection, and the solved points, are pinned bit for bit.
+    // corrections both fire. Adjacency runs before dedup where the mesh
+    // built the union rows, so the pair set records only non-adjacent
+    // pairs; the corrections that reach projection, and the solved
+    // points, are pinned bit for bit.
     const int n = 4;
     Mesh m;
     for (int j = 0; j < n; ++j)
@@ -1638,7 +1639,7 @@ void TestSelfPairDiscoveryOrder()
     CHECK(ve == 7);
     CHECK(ee == 6);
     CHECK(ws.selfLambda.size() == 13);
-    CHECK(ws.selfPairs.count == 351);
+    CHECK(ws.selfPairs.count == 144);
     uint64_t h = 1469598103934665603ull;
     const auto *p = reinterpret_cast<const uint8_t *>(x.data());
     for (size_t i = 0; i < x.size() * sizeof(float); ++i) {

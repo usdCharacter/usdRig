@@ -2070,28 +2070,30 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     const int32_t twin = mesh.triEdgeTwin[3*tri+edge];
                     if (twin >= 0 && twin < int32_t(tri) &&
                         twinStamp[size_t(twin)] == twinMark) continue;
-                    // Dedup before the adjacency scans: a rediscovered pair
-                    // skips them, and recording adjacent pairs too keeps
-                    // every verdict exact (presence is per key).
+                    // Adjacency before dedup where the mesh built the
+                    // union rows: the two bit tests are cheaper than the
+                    // insert, so adjacent pairs skip the insert and a
+                    // rediscovered adjacent pair re-tests instead of
+                    // hitting the set, with the same verdicts. Past the
+                    // size cap the linear scans stay behind the insert,
+                    // so a rediscovered pair still skips them.
+                    if (useEdgeBits) {
+                        if (AdjacentToEdgeBits(mesh, c, k) ||
+                            AdjacentToEdgeBits(mesh, c, l)) continue;
+                    }
                     // Both edges arrive sorted with four distinct
                     // endpoints, so the pair order is one compare.
                     std::array<int32_t,4> key{{i,j,k,l}};
                     if (k < i) key = {{k,l,i,j}};
                     if (!pairs.InsertNoGrow(key)) continue;
-                    // The union row answers both endpoints at once; past
-                    // the size cap the linear scans decide, as before.
-                    bool adjacent;
-                    if (useEdgeBits) {
-                        adjacent = AdjacentToEdgeBits(mesh, c, k) ||
-                                   AdjacentToEdgeBits(mesh, c, l);
-                    } else {
-                        adjacent = false;
+                    if (!useEdgeBits) {
+                        bool adjacent = false;
                         for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
                             adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
                                                             : AdjacentTo(mesh.neighbors[size_t(a)], b));
                         }
+                        if (adjacent) continue;
                     }
-                    if (adjacent) continue;
                     // The edge-sphere band: a pair whose midpoint spheres
                     // plus contact reach cannot meet skips the
                     // closest-segment tail. Each edge holds its points
