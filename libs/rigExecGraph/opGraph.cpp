@@ -9,6 +9,9 @@
 #include <queue>
 #include <set>
 #include <sstream>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace rigExec {
 namespace {
@@ -110,18 +113,49 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
     if (!out) return fail("null graph output");
     if (descriptors.size() > UINT32_MAX) return fail("too many operations");
     const size_t count = descriptors.size();
-    std::set<RigExecValueId> leafSet(leaves.begin(), leaves.end());
+    // Sorted leaves answer the same membership the set did, with one
+    // allocation instead of one node per leaf.
+    std::vector<RigExecValueId> leafVec(leaves.begin(), leaves.end());
+    std::sort(leafVec.begin(), leafVec.end());
+    leafVec.erase(std::unique(leafVec.begin(), leafVec.end()),
+                  leafVec.end());
+    const auto isLeaf = [&](RigExecValueId value) {
+        return std::binary_search(leafVec.begin(), leafVec.end(), value);
+    };
     std::map<RigExecValueId, uint32_t> producers;
-    std::set<std::string> keys;
+    // Duplicate keys without copying one: views sort in the same byte
+    // order the key set used, and every key but its lowest-indexed twin
+    // is marked, so the loop below fails on exactly the index it failed
+    // on. The order also serves the retained-exclusion check below.
+    std::vector<std::pair<std::string_view, uint32_t>> keyOrder;
+    keyOrder.reserve(count);
+    for (uint32_t i = 0; i < count; ++i)
+        keyOrder.emplace_back(std::string_view(descriptors[i].key), i);
+    std::sort(keyOrder.begin(), keyOrder.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    std::vector<char> dupKey(count, 0);
+    for (size_t k = 0; k < keyOrder.size();) {
+        size_t e = k + 1;
+        uint32_t first = keyOrder[k].second;
+        while (e < keyOrder.size() && keyOrder[e].first == keyOrder[k].first) {
+            first = std::min(first, keyOrder[e].second);
+            ++e;
+        }
+        if (e - k > 1)
+            for (size_t j = k; j < e; ++j)
+                if (keyOrder[j].second != first)
+                    dupKey[keyOrder[j].second] = 1;
+        k = e;
+    }
     for (uint32_t i = 0; i < count; ++i) {
-        if (descriptors[i].key.empty() || !keys.insert(descriptors[i].key).second)
+        if (descriptors[i].key.empty() || dupKey[i])
             return fail("empty or duplicate operation key: " + descriptors[i].key);
         for (RigExecValueId value : descriptors[i].writes) {
             auto added = producers.emplace(value, i);
             if (!added.second && added.first->second != i)
                 return fail("multiple producers for value " + std::to_string(value) + ": " +
                     descriptors[added.first->second].key + " and " + descriptors[i].key);
-            if (leafSet.count(value)) return fail("operation writes a sampled leaf: " + descriptors[i].key);
+            if (isLeaf(value)) return fail("operation writes a sampled leaf: " + descriptors[i].key);
         }
     }
     std::vector<std::vector<uint32_t>> preds(count), succs(count);
@@ -132,7 +166,7 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for (RigExecValueId value : descriptors[i].reads) {
             const auto producer = producers.find(value);
             if (producer != producers.end()) preds[i].push_back(producer->second);
-            else if (!leafSet.count(value)) return fail("read has no producer or sampled leaf: " + descriptors[i].key);
+            else if (!isLeaf(value)) return fail("read has no producer or sampled leaf: " + descriptors[i].key);
         }
         Unique(&preds[i]);
         for (uint32_t predecessor : preds[i]) succs[predecessor].push_back(i);
@@ -176,7 +210,15 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for(const auto &key:retainedExclusions->removedKeys) {
             if(!removedKeys.insert(key).second || retainedKeys.count(key) || !members.count(key))
                 return fail("duplicate, overlapping or unproved removed exclusion key: "+key);
-            if(keys.count(key))return fail("removed exclusion still has a descriptor: "+key);
+            const std::string_view view(key);
+            const auto ordered = std::lower_bound(
+                keyOrder.begin(), keyOrder.end(), view,
+                [](const auto &entry, std::string_view v) {
+                    return entry.first < v;
+                });
+            const bool stillHas =
+                ordered != keyOrder.end() && ordered->first == view;
+            if(stillHas)return fail("removed exclusion still has a descriptor: "+key);
         }
         for(const auto &key:members)if(!retainedKeys.count(key) && !removedKeys.count(key))
             return fail("retained SCC member has no exclusion mapping: "+key);

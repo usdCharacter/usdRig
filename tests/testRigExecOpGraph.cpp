@@ -77,6 +77,18 @@ void TestCompilerRefusals()
         RigExecCyclePolicy::Reject, &graph, &error));
     CHECK(!RigExecCompileOpGraph({Op("same", {}, {}), Op("same", {}, {})}, {},
         RigExecCyclePolicy::Reject, &graph, &error));
+    // Duplicate reports fire in descriptor order: the first index whose
+    // key appeared before, whatever sorts first, and an empty key beats
+    // a later duplicate exactly as the interleaved check did.
+    CHECK(!RigExecCompileOpGraph(
+        {Op("b", {}, {}), Op("a", {}, {}), Op("c", {}, {}), Op("a", {}, {}),
+         Op("b", {}, {})},
+        {}, RigExecCyclePolicy::Reject, &graph, &error));
+    CHECK(error == "empty or duplicate operation key: a");
+    CHECK(!RigExecCompileOpGraph(
+        {Op("a", {}, {}), Op("", {}, {}), Op("a", {}, {})}, {},
+        RigExecCyclePolicy::Reject, &graph, &error));
+    CHECK(error == "empty or duplicate operation key: ");
     auto bad = Op("badPredecessor", {}, {});
     bad.predecessors = {1};
     CHECK(!RigExecCompileOpGraph({bad}, {}, RigExecCyclePolicy::Reject,
