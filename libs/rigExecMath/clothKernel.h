@@ -1111,9 +1111,12 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     using namespace cloth_detail;
     if (mesh.inverseMass[i] == 0.0f) return;
     float *pi = x + 3 * i;
+    // Hoisted: every profile verdict below is uniformly false on an empty
+    // model, so the per-particle lookups skip themselves.
+    const bool modelEmpty = mesh.model.Empty();
     const int32_t anchor = mesh.tetherAnchor[i];
-    if (anchor >= 0 && !RigExecClothProfileFor(mesh, RigExecClothProfileKind::Tether,
-                                              RigExecClothVertex(i))) {
+    if (anchor >= 0 && (modelEmpty || !RigExecClothProfileFor(mesh, RigExecClothProfileKind::Tether,
+                                                              RigExecClothVertex(i)))) {
         float d[3];
         Sub(pi, x + 3 * size_t(anchor), d);
         const float limit = mesh.tetherRest[i] * (1.0f + settings.tetherSlack);
@@ -1220,7 +1223,7 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         for (int a = 0; a < 3; ++a) pi[a] -= tangent[a] * k;
     }
     };
-    if (mesh.model.Empty()) {
+    if (modelEmpty) {
         // Hot path: without profiles the search below runs with this
         // step's thickness and depth, so its broadphase verdict is known
         // here. Nearly every particle is outside the swept bounds; those
