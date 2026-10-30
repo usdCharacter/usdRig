@@ -34,6 +34,7 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecControl,"RigExecControl")) ((rigExecJoint,"RigExecJoint"))
     ((rigExecSphereWeight,"RigExecSphereWeight")) ((rigExecPlaneWeight,"RigExecPlaneWeight"))
     ((rigExecCurveWeight,"RigExecCurveWeight"))
+    ((outputsMatrix,"outputs:matrix"))
 );
 namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message; return false; }
@@ -68,7 +69,7 @@ uint32_t AffineTypeOf(const TfToken &type) {
     return affineTypeCount;
 }
 bool AffineOutput(const RigExecSceneDescriptors &scene,const SdfPath &attribute,uint32_t *kind) {
-    if(attribute.GetName()!="outputs:matrix")return false;
+    if(attribute.GetNameToken()!=_tokens->outputsMatrix)return false;
     const auto node=scene.nodes.find(attribute.GetPrimPath());
     if(node==scene.nodes.end() || !node->second.fact.active)return false;
     *kind=AffineTypeOf(node->second.fact.type);
@@ -289,7 +290,7 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         slots.push_back({RigExecProviderRawKey(path),ui,0});
         slots.push_back({RigExecProviderAttributeKey(path),ui,1});
         const auto &attr=found->second;
-        if(attr.readPhase!="base" && attr.fact.connections.size()==1) {
+        if(attr.readPhase!=RigExecSceneBasePhase && attr.fact.connections.size()==1) {
             const auto input=scene.attributes.find(attr.fact.connections.front());
             const auto inputNode=scene.nodes.find(attr.fact.connections.front().GetPrimPath());
             if(input!=scene.attributes.end() && inputNode!=scene.nodes.end() && inputNode->second.fact.active &&
