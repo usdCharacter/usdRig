@@ -827,6 +827,214 @@ void TestSweptBoundsAndBroadphase()
     CHECK(compared > 10000);
 }
 
+// Brute-force contact reference: every triangle, no bucket, no broadphase,
+// no swept-box pre-filter. It uses the same per-triangle primitives as
+// RigExecClothFindContact, so any disagreement pins the search (bucketing,
+// broadphase, pre-filter) rather than the per-triangle math.
+static RigExecClothContact BruteContact(const RigExecClothColliders &colliders,
+                                        const float *before, const float *after,
+                                        float t, const float *p, float thickness,
+                                        float depth,
+                                        const RigExecClothContactTris *precomputed)
+{
+    using namespace cloth_detail;
+    RigExecClothContact best;
+    if (colliders.triangles.empty()) return best;
+    const float reach = std::max(thickness, depth);
+    float bestDistance = std::numeric_limits<float>::infinity();
+    const size_t count = colliders.triangles.size() / 3;
+    for (size_t tri = 0; tri < count; ++tri) {
+        float localV[3][3];
+        float n[3];
+        const float *v[3] = {localV[0], localV[1], localV[2]};
+        if (precomputed && tri < precomputed->triangleCount) {
+            if (precomputed->degenerate[tri]) continue;
+            const float *row = precomputed->verts.data() + 9 * tri;
+            v[0] = row; v[1] = row + 3; v[2] = row + 6;
+            const float *held = precomputed->normals.data() + 3 * tri;
+            n[0] = held[0]; n[1] = held[1]; n[2] = held[2];
+        } else {
+            for (int c = 0; c < 3; ++c) {
+                const size_t i = size_t(colliders.triangles[3 * tri + size_t(c)]);
+                Lerp(before + 3 * i, after + 3 * i, t, localV[c]);
+            }
+            float e1[3], e2[3];
+            Sub(localV[1], localV[0], e1); Sub(localV[2], localV[0], e2);
+            Cross(e1, e2, n);
+            const float len = Length(n);
+            if (!(len > 0.0f)) continue;
+            n[0] /= len; n[1] /= len; n[2] /= len;
+        }
+        float w[3];
+        ClosestBarycentric(p, v[0], v[1], v[2], w);
+        float q[3];
+        for (int a = 0; a < 3; ++a)
+            q[a] = w[0] * v[0][a] + w[1] * v[1][a] + w[2] * v[2][a];
+        float d[3];
+        Sub(p, q, d);
+        const float signedDistance = Dot(d, n);
+        const float distance = Length(d);
+        if (distance > reach) continue;
+        if (signedDistance >= thickness || signedDistance < -depth) continue;
+        if (signedDistance >= 0.0f && distance >= thickness) continue;
+        if (distance < bestDistance ||
+            (distance == bestDistance && int32_t(tri) < best.triangle)) {
+            bestDistance = distance;
+            best.triangle = int32_t(tri);
+            best.violation = thickness - signedDistance;
+            best.normal[0] = n[0]; best.normal[1] = n[1]; best.normal[2] = n[2];
+            best.weights[0] = w[0]; best.weights[1] = w[1]; best.weights[2] = w[2];
+        }
+    }
+    return best;
+}
+
+void TestContactBoxPrefilterMatchesBruteForce()
+{
+    // The swept-box pre-filter in FindContact skips candidates provably
+    // beyond the reach. This pins it against the brute-force scan above:
+    // box scenes at unit and 1e15 scales (where bound rounding dwarfs the
+    // reach), a huge triangle with a tiny reach (the widest slop regime
+    // of the band), and a tiny-magnitude scene (where the absolute floor
+    // dominates the band). Queries cover the swept lattice, per-triangle
+    // box faces at ulp adjacency, far points, non-finite points, and a
+    // deterministic pseudo-random cloud, with and without the precomputed
+    // table.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int boxCounts[6] = {4, 4, 4, 4, 4, 4};
+    const int boxIndices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                                0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    const float huge[9] = {0, 0, 0, 200, 0, 0, 0, 200, 0};
+    const int hugeCounts[1] = {3};
+    const int hugeIndices[3] = {0, 1, 2};
+    struct Scene {
+        const float *points;
+        int pointCount;
+        const int *counts;
+        int countSize;
+        const int *indices;
+        int indexSize;
+        float shift;
+        float pointScale;
+        float motion[3];
+        float thickness;
+        float depth;
+        float pad;
+        float querySpan;
+    };
+    const Scene scenes[] = {
+        {box, 8, boxCounts, 6, boxIndices, 24, 0.0f, 1.0f, {4.0f, -2.0f, 1.0f},
+         0.5f, 2.0f, 8.0f, 40.0f},
+        {box, 8, boxCounts, 6, boxIndices, 24, 1e15f, 1.0f, {4.0f, -2.0f, 1.0f},
+         0.5f, 2.0f, 8.0f, 40.0f},
+        {huge, 3, hugeCounts, 1, hugeIndices, 3, 0.0f, 1.0f, {1.0f, 2.0f, 3.0f},
+         1e-3f, 1e-3f, 8.0f, 300.0f},
+        {box, 8, boxCounts, 6, boxIndices, 24, 0.0f, 1e-30f, {0.0f, 0.0f, 0.0f},
+         1e-30f, 1e-30f, 1.0f, 1e-28f},
+    };
+    const float fractions[] = {0.0f, 0.37f, 1.0f};
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    size_t compared = 0;
+    uint64_t rng = 0x9E3779B97F4A7C15ull;
+    const auto nextRandom = [&]() {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return uint32_t(rng >> 40);
+    };
+    for (size_t s = 0; s < sizeof(scenes) / sizeof(scenes[0]); ++s) {
+        const Scene &scene = scenes[s];
+        RigExecClothColliders colliders;
+        CHECK(RigExecAppendClothCollider(size_t(scene.pointCount), scene.counts,
+                                         size_t(scene.countSize), scene.indices,
+                                         size_t(scene.indexSize), false, &colliders));
+        const size_t points = size_t(scene.pointCount);
+        std::vector<float> before(3 * points), after(3 * points);
+        for (size_t v = 0; v < points; ++v) {
+            for (int a = 0; a < 3; ++a) {
+                const float p = scene.points[3 * v + size_t(a)] * scene.pointScale;
+                before[3 * v + size_t(a)] = p + scene.shift;
+                after[3 * v + size_t(a)] =
+                    p + scene.shift + scene.motion[a] * scene.pointScale;
+            }
+        }
+        std::vector<uint64_t> scratch;
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(colliders, before.data(), after.data(), scene.pad,
+                              &grid, &scratch);
+        const float reach = std::max(scene.thickness, scene.depth);
+        std::vector<std::array<float, 3>> queries;
+        for (int ix = 0; ix < 5; ++ix)
+            for (int iy = 0; iy < 5; ++iy)
+                for (int iz = 0; iz < 5; ++iz) {
+                    const int k[3] = {ix, iy, iz};
+                    std::array<float, 3> q;
+                    for (int a = 0; a < 3; ++a) {
+                        const float lo = grid.sweptLo[a] - reach;
+                        const float hi = grid.sweptHi[a] + reach;
+                        q[size_t(a)] = lo + (hi - lo) * float(k[a]) / 4.0f;
+                    }
+                    queries.push_back(q);
+                }
+        const size_t triCount = colliders.triangles.size() / 3;
+        for (size_t t = 0; t < triCount; ++t) {
+            const float *tb = grid.triBounds.data() + 6 * t;
+            std::array<float, 3> center = {{scene.shift, scene.shift, scene.shift}};
+            for (int c = 0; c < 3; ++c) {
+                const size_t v = size_t(colliders.triangles[3 * t + size_t(c)]);
+                for (int a = 0; a < 3; ++a)
+                    center[size_t(a)] +=
+                        (before[3 * v + size_t(a)] + after[3 * v + size_t(a)]) / 6.0f;
+            }
+            for (int a = 0; a < 3; ++a) {
+                for (int side = 0; side < 2; ++side) {
+                    const float face = side ? tb[size_t(a) + 3] + reach
+                                            : tb[size_t(a)] - reach;
+                    for (float qv : {face, std::nextafterf(face, face + 1.0f),
+                                     std::nextafterf(face, face - 1.0f)}) {
+                        std::array<float, 3> q = center;
+                        q[size_t(a)] = qv;
+                        queries.push_back(q);
+                    }
+                }
+            }
+        }
+        for (float far : {-1e6f, 1e6f})
+            queries.push_back({{far + scene.shift, scene.shift, scene.shift}});
+        queries.push_back({{nan, scene.shift, scene.shift}});
+        queries.push_back({{scene.shift, inf, scene.shift}});
+        queries.push_back({{-inf, scene.shift, scene.shift}});
+        for (int k = 0; k < 200; ++k) {
+            std::array<float, 3> q;
+            for (int a = 0; a < 3; ++a) {
+                const float f = float(nextRandom()) / float(1u << 24);
+                q[size_t(a)] = scene.shift + (f - 0.5f) * 2.0f * scene.querySpan;
+            }
+            queries.push_back(q);
+        }
+        for (float t : fractions) {
+            RigExecClothContactTris tris;
+            RigExecClothContactTrisAt(colliders, before.data(), after.data(), t, &tris);
+            for (bool table : {false, true}) {
+                for (const auto &q : queries) {
+                    const RigExecClothContact a = RigExecClothFindContact(
+                        colliders, grid, before.data(), after.data(), t, q.data(),
+                        scene.thickness, scene.depth, nullptr, 0, 0,
+                        std::numeric_limits<size_t>::max(), false, nullptr,
+                        table ? &tris : nullptr);
+                    const RigExecClothContact b = BruteContact(
+                        colliders, before.data(), after.data(), t, q.data(),
+                        scene.thickness, scene.depth, table ? &tris : nullptr);
+                    CHECK(SameContact(a, b));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared > 10000);
+}
+
 void TestMultiIterationSolves()
 {
     // The solve dispatches the general projection when iterations > 1;
@@ -3111,6 +3319,7 @@ int main()
     TestClearOfCollidersBroadphase();
     TestClearOfCollidersBandCrossing();
     TestSweptBoundsAndBroadphase();
+    TestContactBoxPrefilterMatchesBruteForce();
     TestSingleIterationMatchesMulti();
     TestColorSingleMatchesSerial();
     TestKinematicSkipPartition();

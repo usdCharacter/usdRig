@@ -1337,6 +1337,32 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             const int32_t tri = grid.bucketTriangles[k];
             const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
             if (filterCollider && (firstVertex < twoSidedBegin || firstVertex >= twoSidedEnd)) continue;
+            // Swept-box pre-filter: a candidate whose tick-swept bounds sit
+            // farther than the reach from p fails the reach verdict below,
+            // so it skips the fetch, the barycentric solve, and the distance.
+            // The interpolated triangle stays within the bound of its swept
+            // box: the corner lerps round by ~3ulp of the corner magnitudes,
+            // the bound forms with ~3ulp more, and the distance rounds by
+            // ~2.5ulp of itself (below twice the reach once the farther
+            // half is excluded), all far inside the 2^-19 relative band
+            // over the corners plus the reach. The 1e-30 floor covers
+            // subnormal scales, where the relative band underflows below the
+            // absolute rounding. NaN inputs compare false and take the full
+            // path as before.
+            {
+                const float *tb = grid.triBounds.data() + 6 * size_t(tri);
+                float shapes = reach;
+                for (int a = 0; a < 6; ++a) shapes += std::abs(tb[a]);
+                const float bound = reach + shapes * 1.9073486328125e-06f + 1e-30f;
+                bool outside = false;
+                for (int a = 0; a < 3; ++a) {
+                    if (p[a] < tb[a] - bound || p[a] > tb[a + 3] + bound) {
+                        outside = true;
+                        break;
+                    }
+                }
+                if (outside) continue;
+            }
             float localV[3][3];
             float n[3];
             const float *v[3] = {localV[0], localV[1], localV[2]};
