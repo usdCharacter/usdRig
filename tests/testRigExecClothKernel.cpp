@@ -1367,6 +1367,21 @@ void TestOutsideBoundsSkipsSearch()
                     queries.push_back(q);
                 }
             }
+            // Just outside the true box: a box derived with a larger
+            // reach still covers these, so they discriminate the reach
+            // the box was derived with.
+            for (int side = 0; side < 2; ++side) {
+                const double bound =
+                    double(side == 0 ? grid.sweptLo[a] : grid.sweptHi[a]);
+                const double margin =
+                    (std::abs(bound) + double(reach)) * 9.5367431640625e-07;
+                const double outside =
+                    side == 0 ? bound - double(reach) - 2.0 * margin
+                              : bound + double(reach) + 2.0 * margin;
+                std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                q[size_t(a)] = float(outside);
+                queries.push_back(q);
+            }
         }
     }
     for (float far : {-1e6f, 1e6f}) queries.push_back({{far, 0.0f, 0.0f}});
@@ -1379,11 +1394,18 @@ void TestOutsideBoundsSkipsSearch()
     bool sawOutside = false, sawInside = false;
     for (const auto &td : thicknessDepth) {
         const float reach = std::max(td[0], td[1]);
+        // The once-per-substep box agrees with the per-particle verdict
+        // on every query, including the unbuilt grid that covers all.
+        RigExecClothReachBounds built, unbuilt;
+        RigExecClothSweptReachBounds(grid, reach, &built);
+        RigExecClothSweptReachBounds(fresh, reach, &unbuilt);
         for (float t : {0.0f, 0.37f, 1.0f}) {
             for (const auto &q : queries) {
                 CHECK(!RigExecClothOutsideSweptBounds(fresh, q.data(), reach));
+                CHECK(!RigExecClothOutsideSweptReach(&unbuilt, q.data()));
                 const bool outside =
                     RigExecClothOutsideSweptBounds(grid, q.data(), reach);
+                CHECK(RigExecClothOutsideSweptReach(&built, q.data()) == outside);
                 sawOutside = sawOutside || outside;
                 sawInside = sawInside || !outside;
                 const RigExecClothContact c = RigExecClothFindContact(

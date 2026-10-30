@@ -798,6 +798,39 @@ struct RigExecClothContact {
     float weights[3] = {0, 0, 0};
 };
 
+/// The swept-collider-bounds-plus-reach box in doubles: the same
+/// per-axis box the broadphase verdict compares against, derived once
+/// per substep instead of once per particle.
+struct RigExecClothReachBounds {
+    double lo[3];
+    double hi[3];
+};
+
+/// Derives the broadphase box of \p grid plus \p reach.
+inline void
+RigExecClothSweptReachBounds(const RigExecClothGrid &grid, float reach,
+                             RigExecClothReachBounds *out)
+{
+    for (int a = 0; a < 3; ++a) {
+        out->lo[a] = double(grid.sweptLo[a]) - double(reach) -
+            (std::abs(double(grid.sweptLo[a])) + double(reach)) * 9.5367431640625e-07;
+        out->hi[a] = double(grid.sweptHi[a]) + double(reach) +
+            (std::abs(double(grid.sweptHi[a])) + double(reach)) * 9.5367431640625e-07;
+    }
+}
+
+/// The broadphase verdict against derived bounds.
+inline bool
+RigExecClothOutsideSweptReach(const RigExecClothReachBounds *bounds,
+                              const float *p)
+{
+    for (int a = 0; a < 3; ++a) {
+        const double point = double(p[a]);
+        if (point < bounds->lo[a] || point > bounds->hi[a]) return true;
+    }
+    return false;
+}
+
 /// True when particle position \p p lies outside the grid's swept collider
 /// bounds plus \p reach: farther than the reach from every triangle, so
 /// the contact search would fail each candidate on the reach verdict and
@@ -810,15 +843,9 @@ inline bool
 RigExecClothOutsideSweptBounds(const RigExecClothGrid &grid, const float *p,
                                float reach)
 {
-    for (int a = 0; a < 3; ++a) {
-        const double point = double(p[a]);
-        const double lo = double(grid.sweptLo[a]) - double(reach) -
-            (std::abs(double(grid.sweptLo[a])) + double(reach)) * 9.5367431640625e-07;
-        const double hi = double(grid.sweptHi[a]) + double(reach) +
-            (std::abs(double(grid.sweptHi[a])) + double(reach)) * 9.5367431640625e-07;
-        if (point < lo || point > hi) return true;
-    }
-    return false;
+    RigExecClothReachBounds bounds;
+    RigExecClothSweptReachBounds(grid, reach, &bounds);
+    return RigExecClothOutsideSweptReach(&bounds, p);
 }
 
 /// Interpolates every collider triangle of \p colliders at substep
@@ -1188,7 +1215,10 @@ RigExecClothProjectConstraint(const RigExecClothMesh &mesh,
 }
 
 /// The per-particle pass after the constraints of one iteration: tether,
-/// goal (first iteration only), then collision with friction.
+/// goal (first iteration only), then collision with friction. \p broad,
+/// when given, supplies the broadphase box for \p s's reach over \p grid,
+/// derived once by the caller; a null pointer derives it per particle as
+/// before.
 inline void
 RigExecClothParticlePass(const RigExecClothMesh &mesh,
                          const RigExecClothColliders &colliders,
@@ -1199,7 +1229,8 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
                          const float *colliderTo, bool firstIteration,
                          size_t i, float *x, const float *previous,
                          float *contactLambda = nullptr, int32_t *contactTriangles = nullptr,
-                         const RigExecClothContactTris *contacts = nullptr)
+                         const RigExecClothContactTris *contacts = nullptr,
+                         const RigExecClothReachBounds *broad = nullptr)
 {
     using namespace cloth_detail;
     if (mesh.inverseMass[i] == 0.0f) return;
@@ -1323,8 +1354,12 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         // here. Nearly every particle is outside the swept bounds; those
         // skip the search call itself, bit-identically (the search would
         // return empty on the same verdict). The reach arrives derived
-        // once per substep in the step.
-        if (RigExecClothOutsideSweptBounds(grid, pi, s.reach)) return;
+        // once per substep in the step, and the box over it arrives
+        // derived once per substep in the bounds, the same doubles the
+        // per-particle verdict formed.
+        if (broad ? RigExecClothOutsideSweptReach(broad, pi)
+                  : RigExecClothOutsideSweptBounds(grid, pi, s.reach))
+            return;
         solveContact(-1, nullptr);
         return;
     }
@@ -1919,6 +1954,13 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                            to.colliders, s.t, &ws->contacts);
             const RigExecClothContactTris *contacts =
                 collide ? &ws->contacts : nullptr;
+            // The broadphase box over this substep's reach, once for
+            // every particle below.
+            RigExecClothReachBounds broadBounds;
+            if (collide)
+                RigExecClothSweptReachBounds(ws->grid, s.reach, &broadBounds);
+            const RigExecClothReachBounds *broad =
+                collide ? &broadBounds : nullptr;
             const float gravityStep[3] =
                 {s.gravity[0] * s.h, s.gravity[1] * s.h, s.gravity[2] * s.h};
             for (size_t i = 0; i < n; ++i)
@@ -1949,7 +1991,7 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                              collide ? to.colliders : nullptr,
                                              it == 0, i, x, xp,
                                              ws->contactLambda.data(), ws->contactTriangles.data(),
-                                             contacts);
+                                             contacts, broad);
                 }
                 if (!mesh.model.Empty()) RigExecClothSelfContacts(mesh, s, xp, ws, x);
             }
