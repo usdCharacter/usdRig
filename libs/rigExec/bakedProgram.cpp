@@ -4013,11 +4013,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         return false;
     };
     for (const auto &[target, nativeRevisions] : E._graphChains) {
-        const auto chainIt = E._graphChains.find(target);
-        if (chainIt == E._graphChains.end()) continue;
         RigExecBakedChainSpec spec;
         spec.target = target;
-        for (const auto &revision : chainIt->second) {
+        for (const auto &revision : nativeRevisions) {
             if (keepRevision(revision)) spec.revisions.push_back(revisionSpec(revision));
         }
         const auto derivedIt = E._graphDerivedChains.find(target);

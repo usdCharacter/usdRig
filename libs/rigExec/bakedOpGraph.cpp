@@ -518,11 +518,14 @@ void BuildSourceLeafIndex(RigExecBakedProgramImpl *program)
     index->avarBindings=B.avarBindings.size();
     index->avarConstantBindings=B.avarConstantBindings.size();
     B.leaves.ForEach([&](auto &pool) { index->pools.push_back(pool.value.size()); });
-    std::map<std::tuple<uint8_t,uint8_t,uint32_t>,uint32_t> ids;
+    // Packed (kind, type, slot) keys: the packing is injective, and the
+    // map is only ever probed, never iterated, so entry ids answer
+    // exactly what the tuple map answered with one integer compare.
+    std::map<uint64_t,uint32_t> ids;
     std::vector<std::pair<uint32_t,uint32_t>> reads;
     const auto watch=[&](K kind,uint8_t type,uint32_t at,uint32_t c) {
-        const auto found=ids.emplace(std::make_tuple(uint8_t(kind),type,at),
-                                     uint32_t(index->entries.size()));
+        const uint64_t key=(uint64_t(uint8_t(kind))<<40)|(uint64_t(type)<<32)|at;
+        const auto found=ids.emplace(key,uint32_t(index->entries.size()));
         if(found.second) index->entries.push_back({kind,type,at});
         reads.emplace_back(found.first->second,c);
     };
