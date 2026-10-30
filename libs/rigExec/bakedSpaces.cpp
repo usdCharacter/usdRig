@@ -423,6 +423,13 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     B.providerLeafValues.clear();
     B.providerLeafBlocked.clear();
     B.providerFrozenKeys.clear();
+    // The capture's ValueMightBeTimeVarying answers, parallel to the decl
+    // keys: the bind below takes each Raw leaf's varying bit from them
+    // instead of re-querying the attribute it just bound. Same stage, read
+    // by the same Build, and USD documents the query's answer identical to
+    // the attribute's -- so the bits are the walk's, without its queries.
+    std::vector<char> leafVarying;
+    leafVarying.reserve(B.providerProgram.sampled.size());
     for(const auto &input:B.providerProgram.sampled) {
         const auto attribute=scene.attributes.find(input.attribute);
         if(attribute==scene.attributes.end()) continue;
@@ -430,13 +437,14 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         const VtValue fallback=fact.inputs.empty()?VtValue():fact.inputs[0].raw;
         B.providerLeaves.decl.Add({input.attribute,_Type(fact.fact.type),
             RigExecRevisionLeafTime::AtTime,RigExecRevisionLeafFlavour::Raw,fallback});
+        leafVarying.push_back(fact.fact.mightBeTimeVarying?1:0);
         B.providerLeafValues.push_back(input.value);
         B.providerLeafBlocked.push_back(!fact.inputs.empty() && fact.inputs[0].rawBlocked);
         B.providerFrozenKeys.push_back(input.attribute.GetPrimPath().AppendProperty(
             TfToken("rigExec:providerRaw:"+input.attribute.GetName())));
         B.named.insert(input.attribute); B.prims.insert(input.attribute.GetPrimPath());
     }
-    RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves);
+    RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves,&leafVarying);
     const char *names[]={"rest:space","default:space","posed:space","parent:space",
         "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
     // Connected consumers refresh an expression closure against native base

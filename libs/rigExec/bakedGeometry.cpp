@@ -5719,7 +5719,8 @@ RigExecBakedRunProjectorTarget(
 
 void
 RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
-                           RigExecBakedPathLeaves *leaves)
+                           RigExecBakedPathLeaves *leaves,
+                           const std::vector<char> *varying)
 {
     const size_t n = leaves->decl.keys.size();
     leaves->attributes.assign(n, UsdAttribute());
@@ -5727,15 +5728,30 @@ RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
     leaves->varying.assign(n, 0);
     leaves->values.clear();
     leaves->values.reserve(n);
+    const bool skipHops = varying && varying->size() == n;
     for (size_t k = 0; k < n; ++k) {
         const RigExecRevisionLeafKey &key = leaves->decl.keys[k];
         if (stage && key.path.IsPropertyPath()) {
             leaves->attributes[k] = stage->GetAttributeAtPath(key.path);
         }
-        bool varying = false;
-        RigExecRevisionLeafHops(key, leaves->attributes[k], &leaves->hops[k],
-                                &varying);
-        leaves->varying[k] = varying ? 1 : 0;
+        if (skipHops && key.flavour == RigExecRevisionLeafFlavour::Raw) {
+            // A Raw read reaches its own path only, and its varying bit is
+            // the attribute's ValueMightBeTimeVarying at an AtTime read, so
+            // the caller's answers reproduce the walk below hop for hop and
+            // bit for bit: the same single hop, and no varying bit without
+            // a bound attribute, a moving time, or a varying answer.
+            leaves->hops[k].push_back(key.path);
+            leaves->varying[k] =
+                (key.time == RigExecRevisionLeafTime::AtTime &&
+                 leaves->attributes[k] && (*varying)[k])
+                    ? 1
+                    : 0;
+        } else {
+            bool varies = false;
+            RigExecRevisionLeafHops(key, leaves->attributes[k],
+                                    &leaves->hops[k], &varies);
+            leaves->varying[k] = varies ? 1 : 0;
+        }
         leaves->values.push_back(key.fallback);
     }
     leaves->compiledRig.assign(n, 0);

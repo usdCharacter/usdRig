@@ -4559,9 +4559,13 @@ void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);
 
 /// Resolves \p leaves' keys on \p stage at Build: each key's attribute, the
 /// paths its read can reach and whether it can move with the time; seeds
-/// every value with its key's fallback. Owning thread.
+/// every value with its key's fallback. Owning thread. When \p varying
+/// answers every key, in decl order, with its attribute's
+/// ValueMightBeTimeVarying, Raw leaves take their hops and varying bit from
+/// it instead of re-querying the stage; other flavours walk as before.
 void RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
-                                RigExecBakedPathLeaves *leaves);
+                                RigExecBakedPathLeaves *leaves,
+                                const std::vector<char> *varying = nullptr);
 
 /// Restarts \p leaves' content versions at their current values: version
 /// 0, which no run has read yet.
