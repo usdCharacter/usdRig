@@ -1063,6 +1063,83 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
     }
 }
 
+/// Projects one color's constraints [begin, end) with the
+/// iterations==1 form, in two passes per chunk: the first derives each
+/// live constraint's direction and deltas with no stores to \p x, the
+/// second applies them. A color's members share no particle, so the
+/// chunk's first-pass reads see the same values the serial order saw
+/// and the second-pass writes land on disjoint particles; each
+/// constraint runs the same operations in the same order, so the pass
+/// writes the same bits while the root-and-divide chain overlaps
+/// across the chunk instead of serializing. The stashed endpoints keep
+/// their int32_t encoding so the pass-2 indexing matches the serial
+/// conversion exactly.
+inline void
+RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
+                               const RigExecClothStep &s, uint32_t begin,
+                               uint32_t end, float *x)
+{
+    using namespace cloth_detail;
+    constexpr uint32_t kChunk = 64;
+    const bool empty = mesh.model.Empty();
+    for (uint32_t base = begin; base < end;) {
+        const uint32_t n = end - base < kChunk ? end - base : kChunk;
+        float d[kChunk][3];
+        float ka[kChunk], kb[kChunk];
+        int32_t ends[kChunk][2];
+        char live[kChunk];
+        for (uint32_t k = 0; k < n; ++k) {
+            const size_t c = size_t(base + k);
+            ends[k][0] = mesh.constraintEnds[2 * c];
+            ends[k][1] = mesh.constraintEnds[2 * c + 1];
+            const size_t a = size_t(ends[k][0]);
+            const size_t b = size_t(ends[k][1]);
+            const float wa = mesh.inverseMass[a], wb = mesh.inverseMass[b];
+            float alpha = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                                    ? s.alphaStretch : s.alphaBend;
+            Sub(x + 3 * a, x + 3 * b, d[k]);
+            const float len = Length(d[k]);
+            if (!(len > 0.0f)) { live[k] = 0; continue; }
+            const float C = len - mesh.constraintRest[c];
+            if (!empty) {
+                RigExecClothSample sample;
+                sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
+                sample.weights = {{0.5f, 0.5f, 0}};
+                const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                    ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
+                if (const auto *profile = RigExecClothProfileFor(mesh, kind, sample)) {
+                    float restDirection[3];
+                    Sub(mesh.restPoints.data() + 3 * a,
+                        mesh.restPoints.data() + 3 * b, restDirection);
+                    const float rl = Length(restDirection);
+                    for (float &q : restDirection) q /= rl;
+                    const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                    const float strength = RigExecClothStrength(*profile, sample, force,
+                        restDirection, mesh.materialFrames.data() + 9 * a);
+                    if (!(strength > 0)) { live[k] = 0; continue; }
+                    alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
+                }
+            }
+            const float denom = wa + wb + alpha;
+            if (!(denom > 0.0f)) { live[k] = 0; continue; }
+            const float dl = -C / denom;
+            ka[k] = wa * dl / len;
+            kb[k] = wb * dl / len;
+            live[k] = 1;
+        }
+        for (uint32_t k = 0; k < n; ++k) {
+            if (!live[k]) continue;
+            const size_t a = size_t(ends[k][0]);
+            const size_t b = size_t(ends[k][1]);
+            for (int q = 0; q < 3; ++q) {
+                x[3 * a + size_t(q)] += d[k][q] * ka[k];
+                x[3 * b + size_t(q)] -= d[k][q] * kb[k];
+            }
+        }
+        base += n;
+    }
+}
+
 /// Projects constraint \p c (XPBD, in place). Within a color no two
 /// constraints share a particle.
 inline void
@@ -1856,8 +1933,8 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             for (int it = 0; it < iterations; ++it) {
                 for (size_t color = 0; color < colors; ++color) {
                     if (single) {
-                        for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
-                            RigExecClothProjectConstraintSingle(mesh, s, c, x);
+                        RigExecClothProjectColorSingle(mesh, s, mesh.colorStart[color],
+                                                       mesh.colorStart[color + 1], x);
                     } else {
                         for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
                             RigExecClothProjectConstraint(mesh, s, c, x, ws->lambda.data());

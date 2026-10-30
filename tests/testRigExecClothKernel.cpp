@@ -864,6 +864,130 @@ void TestSingleIterationMatchesMulti()
     CHECK(compared > 5000);
 }
 
+void TestColorSingleMatchesSerial()
+{
+    // The batched color projection runs each constraint's operations in
+    // the same order as the serial per-constraint loop over disjoint
+    // particles, so it must match bitwise: rest-length, stretched,
+    // extreme-scale, zero-length, and signed-zero poses, on the empty
+    // and material paths alike, across chunk-sized and multi-chunk
+    // colors, and across split ranges.
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    const auto posesFor = [](const Mesh &m, const RigExecClothMesh &mesh) {
+        std::vector<std::vector<float>> poses;
+        poses.push_back(m.points);
+        for (float scale : {0.5f, 1.5f}) {
+            auto x = m.points;
+            for (float &v : x) v *= scale;
+            poses.push_back(x);
+        }
+        for (float scale : {1e-20f, 1e20f}) {
+            auto x = m.points;
+            for (size_t i = 0; i < m.Size(); ++i) x[3 * i] = m.points[3 * i] * scale;
+            poses.push_back(x);
+        }
+        {
+            // One coincident pair exercises the zero-length early return.
+            auto x = m.points;
+            const size_t a = size_t(mesh.constraintEnds[0]);
+            const size_t b = size_t(mesh.constraintEnds[1]);
+            x[3 * b] = x[3 * a];
+            x[3 * b + 1] = x[3 * a + 1];
+            x[3 * b + 2] = x[3 * a + 2];
+            poses.push_back(x);
+        }
+        {
+            // Signed zeros: a skipped constraint must not touch them, and
+            // a zero-delta one must add the same signed zero both ways.
+            auto x = m.points;
+            const size_t b = size_t(mesh.constraintEnds[1]);
+            x[3 * b] = -0.0f;
+            x[3 * b + 1] = -0.0f;
+            x[3 * b + 2] = -0.0f;
+            poses.push_back(x);
+        }
+        return poses;
+    };
+    size_t compared = 0;
+    const auto run = [&](RigExecClothMesh &mesh,
+                         const std::vector<std::vector<float>> &poses) {
+        for (const auto &pose : poses) {
+            for (float alpha : {0.0f, 1e-6f, 1e6f}) {
+                for (float h : {1.0f / 24.0f, 1e-3f, 10.0f}) {
+                    RigExecClothStep step;
+                    step.h = h;
+                    step.alphaStretch = alpha;
+                    step.alphaBend = 0.5f * alpha;
+                    for (size_t color = 0; color < mesh.ColorCount(); ++color) {
+                        const uint32_t lo = mesh.colorStart[color];
+                        const uint32_t hi = mesh.colorStart[color + 1];
+                        auto x = pose, y = pose, z = pose;
+                        for (uint32_t c = lo; c < hi; ++c)
+                            RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+                        RigExecClothProjectColorSingle(mesh, step, lo, hi, y.data());
+                        CHECK(same(x, y));
+                        // Split ranges re-chunk the color; the writes agree.
+                        const uint32_t mid = lo + (hi - lo) / 2;
+                        RigExecClothProjectColorSingle(mesh, step, lo, mid, z.data());
+                        RigExecClothProjectColorSingle(mesh, step, mid, hi, z.data());
+                        CHECK(same(x, z));
+                        // An empty range writes nothing.
+                        RigExecClothProjectColorSingle(mesh, step, lo, lo, z.data());
+                        CHECK(same(x, z));
+                        compared += 3;
+                    }
+                }
+            }
+        }
+    };
+    {
+        const Mesh m = Curtain(3, 2.0f, 4.0f);
+        std::vector<float> pins(m.Size(), 0.0f);
+        pins[0] = pins[1] = pins[2] = 1.0f;
+        RigExecClothSettings settings;
+        RigExecClothMesh bare;
+        CHECK(Build(m, &pins, settings, &bare));
+        run(bare, posesFor(m, bare));
+        for (int hard = 0; hard < 2; ++hard) {
+            for (auto kind : {RigExecClothProfileKind::Stretch,
+                              RigExecClothProfileKind::Bend}) {
+                RigExecClothMesh mesh;
+                CHECK(Build(m, &pins, settings, &mesh));
+                RigExecClothProfile p;
+                p.kind = kind;
+                p.warp = 100;
+                p.weft = .01f;
+                p.compliance = .001f;
+                p.hard = hard != 0;
+                auto model = MaterialModel(mesh, m, p);
+                std::string why;
+                CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                               &why));
+                run(mesh, posesFor(m, mesh));
+            }
+        }
+    }
+    {
+        // A mesh wide enough that colors span several chunks.
+        const Mesh m = Curtain(17, 16.0f, 16.0f);
+        std::vector<float> pins(m.Size(), 0.0f);
+        for (int c = 0; c < 17; ++c) pins[size_t(c)] = 1.0f;
+        RigExecClothSettings settings;
+        RigExecClothMesh mesh;
+        CHECK(Build(m, &pins, settings, &mesh));
+        size_t widest = 0;
+        for (size_t color = 0; color < mesh.ColorCount(); ++color)
+            widest = std::max(widest, size_t(mesh.colorStart[color + 1] -
+                                             mesh.colorStart[color]));
+        CHECK(widest > 64);
+        run(mesh, posesFor(m, mesh));
+    }
+    CHECK(compared > 5000);
+}
+
 void TestHardSoftBarycentricAttachments()
 {
     const Mesh m = Curtain(2, 2, 2);
@@ -1371,6 +1495,7 @@ int main()
     TestClearOfColliders();
     TestSweptBoundsAndBroadphase();
     TestSingleIterationMatchesMulti();
+    TestColorSingleMatchesSerial();
     TestPredictUsesGravityStep();
     TestOutsideBoundsSkipsSearch();
     TestTetherLimitsPrecomputed();
