@@ -464,6 +464,8 @@ inline bool AdjacentToBits(const RigExecClothMesh &mesh, int32_t a, int32_t b);
 // True when either endpoint of constraint c neighbors v, from the
 // constraint's union row.
 inline bool AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_t c, int32_t v);
+// The same verdict from a held union row, for callers that hoisted it.
+inline bool AdjacentToRowBits(const uint64_t *row, int32_t v);
 // True when any corner of triangle t neighbors v, from the triangle's
 // union row.
 inline bool AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v);
@@ -2124,6 +2126,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     for (size_t profileIndex = 0; profileIndex < mesh.model.profiles.size(); ++profileIndex) {
         const auto &p = mesh.model.profiles[profileIndex];
         if (p.kind != RigExecClothProfileKind::SelfCollision) continue;
+        // The bucket bases stay fixed across the vertex loop: the only
+        // rebuild sits between this profile's vertex loop and its edge
+        // loop, so the entry loop rereads the same bases without
+        // reloading them per entry.
+        const uint32_t *vtBucketBounds = grid.bucketStart.data();
+        const int32_t *vtBucketTris = grid.bucketTriangles.data();
         for (size_t i = 0; i < mesh.pointCount; ++i) {
             const auto a = RigExecClothVertex(i);
             // Either region may supply the vertex; contact is symmetric.
@@ -2138,8 +2146,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             const float *point = x + 3 * i;
             const uint32_t bucket = Hash(Cell(point[0], grid.cellSize), Cell(point[1], grid.cellSize),
                                           Cell(point[2], grid.cellSize), grid.bucketMask);
-            for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket + 1]; ++entry) {
-                const int32_t tri = grid.bucketTriangles[entry];
+            for (uint32_t entry = vtBucketBounds[bucket]; entry < vtBucketBounds[bucket + 1]; ++entry) {
+                const int32_t tri = vtBucketTris[entry];
                 RigExecClothSample b;
                 for (size_t q = 0; q < 3; ++q)
                     b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
@@ -2253,12 +2261,23 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             const uint32_t bucket = Hash(Cell(mid[0], grid.cellSize), Cell(mid[1], grid.cellSize),
                                           Cell(mid[2], grid.cellSize), grid.bucketMask);
             ++twinMark;
+            // The bucket, twin, and adjacency bases stay fixed across
+            // the discovery batch: the grid rebuilds between passes
+            // only, the twin marks store without reallocating, and the
+            // constraint's union row is fixed here, so the entry loop
+            // rereads the same bases without reloading them per entry.
+            const uint32_t *eeBucketBounds = grid.bucketStart.data();
+            const int32_t *eeBucketTris = grid.bucketTriangles.data();
+            uint32_t *eeTwinBase = twinStamp.data();
+            const uint64_t *eeAdjRow = useEdgeBits
+                ? mesh.edgeNeighborBits.data() + c * mesh.neighborBitStride
+                : nullptr;
             // One load check per constraint covers its whole discovery
             // batch: at most three inserts per bucket entry, so the
             // table stays under the cap through the batch and the
             // inserts below skip their checks with the same verdicts.
             const size_t batchKeys =
-                3 * (grid.bucketStart[bucket + 1] - grid.bucketStart[bucket]);
+                3 * (eeBucketBounds[bucket + 1] - eeBucketBounds[bucket]);
             if (packPairs) pairs64.ReserveForBatch(batchKeys);
             else pairs.ReserveForBatch(batchKeys);
             // The constraint edge's band inputs are fixed for the bucket
@@ -2271,13 +2290,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 std::fabs(RigExecClothMap(p, ClothThickness, size_t(i))),
                 std::fabs(RigExecClothMap(p, ClothThickness, size_t(j))));
             bool haveHeld = false;
-            for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
-                const size_t tri = size_t(grid.bucketTriangles[entry]);
+            for (uint32_t entry = eeBucketBounds[bucket]; entry < eeBucketBounds[bucket+1]; ++entry) {
+                const size_t tri = size_t(eeBucketTris[entry]);
                 // The twin-skip mark lands with the visit: buckets list
                 // triangles ascending, so a twin below this triangle is
                 // already marked when the edge loop reads it, and the
                 // same marks are set without a second bucket pass.
-                twinStamp[tri] = twinMark;
+                eeTwinBase[tri] = twinMark;
                 // The triangle band: the centroid sphere holds every edge
                 // midpoint of the triangle within its radius, and the reach
                 // bound covers every triangle edge's sphere radius, so a
@@ -2313,8 +2332,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // of the insert, and the linear scans stay behind it so
                     // a rediscovered pair still skips them.
                     if (useEdgeBits) {
-                        if (AdjacentToEdgeBits(mesh, c, k) ||
-                            AdjacentToEdgeBits(mesh, c, l)) continue;
+                        if (AdjacentToRowBits(eeAdjRow, k) ||
+                            AdjacentToRowBits(eeAdjRow, l)) continue;
                     }
                     else if (i == k || i == l || j == k || j == l) continue;
                     // Twin skip: the edge's smallest twin triangle sits
@@ -2323,7 +2342,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // dedup set holds its key.
                     const int32_t twin = mesh.triEdgeTwin[3*tri+edge];
                     if (twin >= 0 && twin < int32_t(tri) &&
-                        twinStamp[size_t(twin)] == twinMark) continue;
+                        eeTwinBase[size_t(twin)] == twinMark) continue;
                     // Both edges arrive sorted with four distinct
                     // endpoints, so the pair order is one compare.
                     if (packPairs) {
@@ -2830,6 +2849,11 @@ inline bool cloth_detail::AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_
 {
     const size_t word = c * mesh.neighborBitStride + (size_t(v) >> 6);
     return ((mesh.edgeNeighborBits[word] >> (v & 63)) & 1ull) != 0;
+}
+
+inline bool cloth_detail::AdjacentToRowBits(const uint64_t *row, int32_t v)
+{
+    return ((row[size_t(v) >> 6] >> (v & 63)) & 1ull) != 0;
 }
 
 inline bool cloth_detail::AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v)
