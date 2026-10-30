@@ -572,33 +572,36 @@ _BlendMatrixFloatRows(const float *rows, const GfVec3f &q, float w)
 // painted falloff lists each weight several times but rarely twice in a
 // row, so the single cached weight the double loop keeps recomputes the
 // same partials over and over (80k transitions for 28k distinct weights
-// across the biped stack's 105 sparse radial revisions). The partial is a
-// pure function of the decomposition and the weight, so memoizing it by
-// bits is bit-identical. Stack-local to the walk: no retained state, no
-// invalidation, no lock.
+// across the biped stack's 105 sparse radial revisions). 256 direct-mapped
+// slots hold a walk's working set; validity is a 4-word bitmask, so
+// construction zeroes 32 bytes rather than the 17 KB of rows. The partial
+// is a pure function of the decomposition and the weight, so memoizing it
+// by bits is bit-identical at any size. Stack-local to the walk: no
+// retained state, no invalidation, no lock.
 class _RadialRowsCache {
 public:
     explicit _RadialRowsCache(const GfMatrix4d &transform)
         : _transform(transform)
     {
-        for (Entry &entry : _slots) {
-            entry.valid = false;
-        }
+        _valid[0] = _valid[1] = _valid[2] = _valid[3] = 0;
     }
 
     const float *Rows(float weight)
     {
         uint32_t bits;
         std::memcpy(&bits, &weight, sizeof(bits));
-        Entry &entry = _slots[(bits * 2654435761u) >> 28];
-        if (entry.valid && entry.bits == bits) {
-            return entry.rows;
+        const uint32_t slot = (bits * 2654435761u) >> 24;
+        const uint64_t bit = 1ull << (slot & 63);
+        uint64_t &word = _valid[slot >> 6];
+        if ((word & bit) && _bits[slot] == bits) {
+            return _rows[slot];
         }
+        float *rows = _rows[slot];
         const double clamped = GfClamp(double(weight), 0.0, 1.0);
         if (clamped <= 0.0) {
-            _NarrowMatrixFloatRows(GfMatrix4d(1.0), entry.rows);
+            _NarrowMatrixFloatRows(GfMatrix4d(1.0), rows);
         } else if (clamped >= 1.0) {
-            _NarrowMatrixFloatRows(_transform, entry.rows);
+            _NarrowMatrixFloatRows(_transform, rows);
         } else {
             if (!_haveDecomposition) {
                 _decomposition =
@@ -607,20 +610,17 @@ public:
             }
             _NarrowMatrixFloatRows(
                 RigExecApplyPartialDecomposition(_decomposition, clamped),
-                entry.rows);
+                rows);
         }
-        entry.bits = bits;
-        entry.valid = true;
-        return entry.rows;
+        _bits[slot] = bits;
+        word |= bit;
+        return rows;
     }
 
 private:
-    struct Entry {
-        uint32_t bits = 0;
-        bool valid = false;
-        float rows[16];
-    };
-    Entry _slots[16];
+    uint64_t _valid[4];
+    uint32_t _bits[256];
+    float _rows[256][16];
     const GfMatrix4d &_transform;
     RigExecPartialDecomposition _decomposition;
     bool _haveDecomposition = false;

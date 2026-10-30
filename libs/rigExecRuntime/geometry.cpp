@@ -1235,30 +1235,32 @@ RrGeoBlendMatrixFloatRows(const float *rows, const RrVec3f &q, float w)
 
 // The radial partials one float walk needs, keyed by exact weight bits,
 // as the native walk keys them: memoizing the pure weight-to-partial
-// function is bit-identical. Stack-local to the walk.
+// function is bit-identical at any size. 256 direct-mapped slots with a
+// 4-word validity bitmask, as natively. Stack-local to the walk.
 class RrGeoRadialRowsCache {
 public:
     explicit RrGeoRadialRowsCache(const RrMat4d &transform)
         : _transform(transform)
     {
-        for (Entry &entry : _slots) {
-            entry.valid = false;
-        }
+        _valid[0] = _valid[1] = _valid[2] = _valid[3] = 0;
     }
 
     const float *Rows(float weight)
     {
         uint32_t bits;
         std::memcpy(&bits, &weight, sizeof(bits));
-        Entry &entry = _slots[(bits * 2654435761u) >> 28];
-        if (entry.valid && entry.bits == bits) {
-            return entry.rows;
+        const uint32_t slot = (bits * 2654435761u) >> 24;
+        const uint64_t bit = 1ull << (slot & 63);
+        uint64_t &word = _valid[slot >> 6];
+        if ((word & bit) && _bits[slot] == bits) {
+            return _rows[slot];
         }
+        float *rows = _rows[slot];
         const double clamped = RrClamp(double(weight), 0.0, 1.0);
         if (clamped <= 0.0) {
-            RrGeoNarrowMatrixFloatRows(RrMat4d(1.0), entry.rows);
+            RrGeoNarrowMatrixFloatRows(RrMat4d(1.0), rows);
         } else if (clamped >= 1.0) {
-            RrGeoNarrowMatrixFloatRows(_transform, entry.rows);
+            RrGeoNarrowMatrixFloatRows(_transform, rows);
         } else {
             if (!_haveDecomposition) {
                 _decomposition =
@@ -1267,20 +1269,17 @@ public:
             }
             RrGeoNarrowMatrixFloatRows(
                 RrApplyPartialDecomposition(_decomposition, clamped),
-                entry.rows);
+                rows);
         }
-        entry.bits = bits;
-        entry.valid = true;
-        return entry.rows;
+        _bits[slot] = bits;
+        word |= bit;
+        return rows;
     }
 
 private:
-    struct Entry {
-        uint32_t bits = 0;
-        bool valid = false;
-        float rows[16];
-    };
-    Entry _slots[16];
+    uint64_t _valid[4];
+    uint32_t _bits[256];
+    float _rows[256][16];
     const RrMat4d &_transform;
     RrPartialDecomposition _decomposition;
     bool _haveDecomposition = false;
