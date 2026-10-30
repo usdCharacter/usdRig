@@ -21,6 +21,15 @@
 // steps sum past the frame. Run with RIGEXEC_BAKED_SCHEDULE=serial for
 // additive attribution.
 //
+// A second table splits matrix steps into memo/body/publish phases (needs
+// RIGEXEC_BAKED_STEP_TIMING=1 and RIGEXEC_BAKED_SCHEDULE_CALIBRATE=1 at
+// Compile), chunk time by revision role, sparse-walk computed/reused/
+// skippedWhole counters, and fold/fuse steps (supporting: outside the
+// headline matrix sum, which stays static+chunk+walk). Compute-only extras
+// (animated stages whose matrix inputs move every visited frame) print in
+// their own section with the same columns plus walk counters; they never
+// enter the headline sums.
+//
 // Built but deliberately NOT registered with ctest (like benchFrameCache):
 // it prints numbers and asserts nothing.
 #include "rigExec/bakedExecCrossCheck.h"
@@ -116,6 +125,46 @@ struct MatrixAttribution {
     double allStampedUs = 0.0;
     size_t matrixRevisions = 0;
     size_t matrixWalkOps = 0;
+    // Memo/body/publish split of the matrix static+chunk steps above, from
+    // the step stamps' inner intervals. Nonzero only with
+    // RIGEXEC_BAKED_STEP_TIMING=1 and RIGEXEC_BAKED_SCHEDULE_CALIBRATE=1 in
+    // the environment at Compile (forced runs are otherwise excluded from
+    // measurement). Scheduling gaps between the phases are in neither.
+    double matrixMemoUs = 0.0;
+    double matrixBodyUs = 0.0;
+    double matrixPublishUs = 0.0;
+    double matrixStaticMemoUs = 0.0;
+    double matrixStaticBodyUs = 0.0;
+    double matrixStaticPublishUs = 0.0;
+    double matrixChunkMemoUs = 0.0;
+    double matrixChunkBodyUs = 0.0;
+    double matrixChunkPublishUs = 0.0;
+    // Matrix chunk time by revision role: Range groups, Legacy wholes,
+    // Whole fuses.
+    double matrixChunkRangeUs = 0.0;
+    double matrixChunkLegacyUs = 0.0;
+    double matrixChunkWholeUs = 0.0;
+    size_t matrixRangeGroups = 0;
+    size_t matrixChunkSteps = 0;
+    size_t matrixChunkRangeSteps = 0;
+    size_t matrixChunkLegacySteps = 0;
+    // Last-run sparse-walk counts over matrix revisions: Range groups'
+    // walks plus Legacy/Whole revisions' own. Computed>0 means the
+    // attribution pass ran kernels; skippedWhole counts whole-walk skips.
+    uint64_t matrixWalkComputed = 0;
+    uint64_t matrixWalkReused = 0;
+    uint64_t matrixWalkSkipped = 0;
+    // A matrix revision's fold (influence table) and fuse (join/applied
+    // decision) steps. Supporting only: outside the headline matrix sum,
+    // which stays static+chunk+walk for round-over-round comparability.
+    double matrixFoldUs = 0.0;
+    double matrixFuseUs = 0.0;
+    double matrixFoldMemoUs = 0.0;
+    double matrixFoldBodyUs = 0.0;
+    double matrixFoldPublishUs = 0.0;
+    double matrixFuseMemoUs = 0.0;
+    double matrixFuseBodyUs = 0.0;
+    double matrixFusePublishUs = 0.0;
 };
 
 MatrixAttribution
@@ -126,6 +175,24 @@ AttributeMatrix(const RigExecBakedProgramImpl &B)
         for (const auto &revision : chain.revisions) {
             if (revision.op == RigExecRevisionOp::Matrix) {
                 ++attribution.matrixRevisions;
+                if (revision.role == RigExecBakedRevisionRole::Range) {
+                    attribution.matrixRangeGroups +=
+                        revision.groups.size();
+                    for (const auto &group : revision.groups) {
+                        attribution.matrixWalkComputed +=
+                            group.walk.computed;
+                        attribution.matrixWalkReused += group.walk.reused;
+                        attribution.matrixWalkSkipped +=
+                            group.walk.skippedWhole;
+                    }
+                } else {
+                    attribution.matrixWalkComputed +=
+                        revision.matrixWalk.computed;
+                    attribution.matrixWalkReused +=
+                        revision.matrixWalk.reused;
+                    attribution.matrixWalkSkipped +=
+                        revision.matrixWalk.skippedWhole;
+                }
             }
         }
     }
@@ -151,6 +218,10 @@ AttributeMatrix(const RigExecBakedProgramImpl &B)
             step.kind == RigExecBakedStepKind::RevisionStatic;
         const bool isChunk =
             step.kind == RigExecBakedStepKind::RevisionChunk;
+        const bool isFold =
+            step.kind == RigExecBakedStepKind::InfluenceFold;
+        const bool isFuse =
+            step.kind == RigExecBakedStepKind::RevisionFuse;
         const bool isWalk =
             step.kind == RigExecBakedStepKind::Constraint ||
             step.kind == RigExecBakedStepKind::CommitDelta ||
@@ -163,7 +234,7 @@ AttributeMatrix(const RigExecBakedProgramImpl &B)
             attribution.matrixWalkUs += us;
             continue;
         }
-        if (!isStatic && !isChunk) {
+        if (!isStatic && !isChunk && !isFold && !isFuse) {
             continue;
         }
         if (isChunk) {
@@ -180,12 +251,76 @@ AttributeMatrix(const RigExecBakedProgramImpl &B)
             size_t(revision) >= B.chains[size_t(chain)].revisions.size()) {
             continue;
         }
-        if (B.chains[size_t(chain)].revisions[size_t(revision)].op ==
-            RigExecRevisionOp::Matrix) {
+        const auto &geomRevision =
+            B.chains[size_t(chain)].revisions[size_t(revision)];
+        if (geomRevision.op == RigExecRevisionOp::Matrix) {
+            if (step.memoEndNs > step.memoStartNs &&
+                step.bodyEndNs > step.memoEndNs &&
+                step.publishEndNs > step.bodyEndNs) {
+                const double memoUs =
+                    double(step.memoEndNs - step.memoStartNs) / 1000.0;
+                const double bodyUs =
+                    double(step.bodyEndNs - step.memoEndNs) / 1000.0;
+                const double pubUs =
+                    double(step.publishEndNs - step.bodyEndNs) / 1000.0;
+                if (isFold) {
+                    attribution.matrixFoldMemoUs += memoUs;
+                    attribution.matrixFoldBodyUs += bodyUs;
+                    attribution.matrixFoldPublishUs += pubUs;
+                } else if (isFuse) {
+                    attribution.matrixFuseMemoUs += memoUs;
+                    attribution.matrixFuseBodyUs += bodyUs;
+                    attribution.matrixFusePublishUs += pubUs;
+                }
+            }
+            if (isFold) {
+                attribution.matrixFoldUs += us;
+                continue;
+            }
+            if (isFuse) {
+                attribution.matrixFuseUs += us;
+                continue;
+            }
             if (isChunk) {
                 attribution.matrixChunkUs += us;
+                ++attribution.matrixChunkSteps;
+                switch (geomRevision.role) {
+                case RigExecBakedRevisionRole::Range:
+                    attribution.matrixChunkRangeUs += us;
+                    ++attribution.matrixChunkRangeSteps;
+                    break;
+                case RigExecBakedRevisionRole::Legacy:
+                    attribution.matrixChunkLegacyUs += us;
+                    ++attribution.matrixChunkLegacySteps;
+                    break;
+                case RigExecBakedRevisionRole::Whole:
+                    attribution.matrixChunkWholeUs += us;
+                    break;
+                }
             } else {
                 attribution.matrixStaticUs += us;
+            }
+            if (step.memoEndNs > step.memoStartNs &&
+                step.bodyEndNs > step.memoEndNs &&
+                step.publishEndNs > step.bodyEndNs) {
+                const double memoUs =
+                    double(step.memoEndNs - step.memoStartNs) / 1000.0;
+                const double bodyUs =
+                    double(step.bodyEndNs - step.memoEndNs) / 1000.0;
+                const double pubUs =
+                    double(step.publishEndNs - step.bodyEndNs) / 1000.0;
+                attribution.matrixMemoUs += memoUs;
+                attribution.matrixBodyUs += bodyUs;
+                attribution.matrixPublishUs += pubUs;
+                if (isChunk) {
+                    attribution.matrixChunkMemoUs += memoUs;
+                    attribution.matrixChunkBodyUs += bodyUs;
+                    attribution.matrixChunkPublishUs += pubUs;
+                } else {
+                    attribution.matrixStaticMemoUs += memoUs;
+                    attribution.matrixStaticBodyUs += bodyUs;
+                    attribution.matrixStaticPublishUs += pubUs;
+                }
             }
         }
     }
@@ -205,6 +340,34 @@ struct RigResult {
     double allStampedUs = 0.0;
     size_t matrixRevisions = 0;
     size_t matrixWalkOps = 0;
+    double matrixMemoUs = 0.0;
+    double matrixBodyUs = 0.0;
+    double matrixPublishUs = 0.0;
+    double matrixStaticMemoUs = 0.0;
+    double matrixStaticBodyUs = 0.0;
+    double matrixStaticPublishUs = 0.0;
+    double matrixChunkMemoUs = 0.0;
+    double matrixChunkBodyUs = 0.0;
+    double matrixChunkPublishUs = 0.0;
+    double matrixChunkRangeUs = 0.0;
+    double matrixChunkLegacyUs = 0.0;
+    double matrixChunkWholeUs = 0.0;
+    size_t matrixRangeGroups = 0;
+    size_t matrixChunkSteps = 0;
+    size_t matrixChunkRangeSteps = 0;
+    size_t matrixChunkLegacySteps = 0;
+    uint64_t matrixWalkComputed = 0;
+    uint64_t matrixWalkReused = 0;
+    uint64_t matrixWalkSkipped = 0;
+    double matrixFoldUs = 0.0;
+    double matrixFuseUs = 0.0;
+    double matrixFoldMemoUs = 0.0;
+    double matrixFoldBodyUs = 0.0;
+    double matrixFoldPublishUs = 0.0;
+    double matrixFuseMemoUs = 0.0;
+    double matrixFuseBodyUs = 0.0;
+    double matrixFusePublishUs = 0.0;
+    bool computeOnly = false;
     size_t clusters = 0;
     size_t minClustersRun = 0;
     double dynamicFrameUs = 0.0;
@@ -303,8 +466,38 @@ BenchRig(const std::string &examplesDir, const char *stage,
         total.matrixWalkUs += attribution.matrixWalkUs;
         total.allChunkUs += attribution.allChunkUs;
         total.allStampedUs += attribution.allStampedUs;
+        total.matrixMemoUs += attribution.matrixMemoUs;
+        total.matrixBodyUs += attribution.matrixBodyUs;
+        total.matrixPublishUs += attribution.matrixPublishUs;
+        total.matrixStaticMemoUs += attribution.matrixStaticMemoUs;
+        total.matrixStaticBodyUs += attribution.matrixStaticBodyUs;
+        total.matrixStaticPublishUs += attribution.matrixStaticPublishUs;
+        total.matrixChunkMemoUs += attribution.matrixChunkMemoUs;
+        total.matrixChunkBodyUs += attribution.matrixChunkBodyUs;
+        total.matrixChunkPublishUs += attribution.matrixChunkPublishUs;
+        total.matrixChunkRangeUs += attribution.matrixChunkRangeUs;
+        total.matrixChunkLegacyUs += attribution.matrixChunkLegacyUs;
+        total.matrixChunkWholeUs += attribution.matrixChunkWholeUs;
         total.matrixRevisions = attribution.matrixRevisions;
         total.matrixWalkOps = attribution.matrixWalkOps;
+        total.matrixRangeGroups = attribution.matrixRangeGroups;
+        total.matrixChunkSteps =
+            std::max(total.matrixChunkSteps, attribution.matrixChunkSteps);
+        total.matrixChunkRangeSteps = std::max(total.matrixChunkRangeSteps,
+                                              attribution.matrixChunkRangeSteps);
+        total.matrixChunkLegacySteps = std::max(
+            total.matrixChunkLegacySteps, attribution.matrixChunkLegacySteps);
+        total.matrixWalkComputed += attribution.matrixWalkComputed;
+        total.matrixWalkReused += attribution.matrixWalkReused;
+        total.matrixWalkSkipped += attribution.matrixWalkSkipped;
+        total.matrixFoldUs += attribution.matrixFoldUs;
+        total.matrixFuseUs += attribution.matrixFuseUs;
+        total.matrixFoldMemoUs += attribution.matrixFoldMemoUs;
+        total.matrixFoldBodyUs += attribution.matrixFoldBodyUs;
+        total.matrixFoldPublishUs += attribution.matrixFoldPublishUs;
+        total.matrixFuseMemoUs += attribution.matrixFuseMemoUs;
+        total.matrixFuseBodyUs += attribution.matrixFuseBodyUs;
+        total.matrixFusePublishUs += attribution.matrixFusePublishUs;
     }
     rig.SetOpTimingEnabled(false);
     const double framesCount = double(frames.size());
@@ -313,8 +506,35 @@ BenchRig(const std::string &examplesDir, const char *stage,
     result.matrixWalkUs = total.matrixWalkUs / framesCount;
     result.allChunkUs = total.allChunkUs / framesCount;
     result.allStampedUs = total.allStampedUs / framesCount;
+    result.matrixMemoUs = total.matrixMemoUs / framesCount;
+    result.matrixBodyUs = total.matrixBodyUs / framesCount;
+    result.matrixPublishUs = total.matrixPublishUs / framesCount;
+    result.matrixStaticMemoUs = total.matrixStaticMemoUs / framesCount;
+    result.matrixStaticBodyUs = total.matrixStaticBodyUs / framesCount;
+    result.matrixStaticPublishUs = total.matrixStaticPublishUs / framesCount;
+    result.matrixChunkMemoUs = total.matrixChunkMemoUs / framesCount;
+    result.matrixChunkBodyUs = total.matrixChunkBodyUs / framesCount;
+    result.matrixChunkPublishUs = total.matrixChunkPublishUs / framesCount;
+    result.matrixChunkRangeUs = total.matrixChunkRangeUs / framesCount;
+    result.matrixChunkLegacyUs = total.matrixChunkLegacyUs / framesCount;
+    result.matrixChunkWholeUs = total.matrixChunkWholeUs / framesCount;
     result.matrixRevisions = total.matrixRevisions;
     result.matrixWalkOps = total.matrixWalkOps;
+    result.matrixRangeGroups = total.matrixRangeGroups;
+    result.matrixChunkSteps = total.matrixChunkSteps;
+    result.matrixChunkRangeSteps = total.matrixChunkRangeSteps;
+    result.matrixChunkLegacySteps = total.matrixChunkLegacySteps;
+    result.matrixWalkComputed = total.matrixWalkComputed;
+    result.matrixWalkReused = total.matrixWalkReused;
+    result.matrixWalkSkipped = total.matrixWalkSkipped;
+    result.matrixFoldUs = total.matrixFoldUs / framesCount;
+    result.matrixFuseUs = total.matrixFuseUs / framesCount;
+    result.matrixFoldMemoUs = total.matrixFoldMemoUs / framesCount;
+    result.matrixFoldBodyUs = total.matrixFoldBodyUs / framesCount;
+    result.matrixFoldPublishUs = total.matrixFoldPublishUs / framesCount;
+    result.matrixFuseMemoUs = total.matrixFuseMemoUs / framesCount;
+    result.matrixFuseBodyUs = total.matrixFuseBodyUs / framesCount;
+    result.matrixFusePublishUs = total.matrixFusePublishUs / framesCount;
     // Dynamic path: the Exec-network cross-check rows, which evaluate the
     // VDF mover callbacks (including the matrix point-array expression)
     // rather than the baked program. A fresh evaluator mimics the
@@ -459,11 +679,20 @@ main(int argc, char **argv)
     struct ExtraStage {
         std::string stage;
         std::string frames;
+        // Compute-only extras animate their matrix inputs every visited
+        // frame, so their matrix steps run kernels rather than skips.
+        // They print in their own section and never enter the headline
+        // sums, which stay comparable across rounds.
+        bool computeOnly = false;
     };
     std::vector<ExtraStage> extras;
     // The matrix mover's own doc example is not in the fixture table.
     extras.push_back({"docs/examples/matrix_mover.usda",
-                      "1001,1008,1016"});
+                      "1001,1008,1016", false});
+    // The animated stack layers timeSamples over the resting stack, so
+    // consecutive visits move every matrix input: the compute path.
+    extras.push_back({"examples/biped/Biped_stack_anim.usda",
+                      "1,50,100,150,200", true});
 
     std::vector<RigResult> results;
     const std::string lowerFilter = TfStringToLower(filter);
@@ -495,6 +724,7 @@ main(int argc, char **argv)
                 : root.substr(0, at) + "/" + extra.stage;
         RigResult result;
         result.stage = extra.stage;
+        result.computeOnly = extra.computeOnly;
         const UsdStageRefPtr usdStage = UsdStage::Open(stagePath);
         if (usdStage) {
             const SdfPath rigPath = FindRig(usdStage);
@@ -508,6 +738,7 @@ main(int argc, char **argv)
                 result = BenchRig(dir, file.c_str(),
                                   extra.frames.c_str(), reps);
                 result.stage = extra.stage;
+                result.computeOnly = extra.computeOnly;
             }
         }
         results.push_back(result);
@@ -523,6 +754,9 @@ main(int argc, char **argv)
     double logSum = 0.0, bakedSum = 0.0, matrixSum = 0.0;
     size_t bakedCount = 0;
     for (const RigResult &result : results) {
+        if (result.computeOnly) {
+            continue;
+        }
         std::printf(
             "%-38s %5s %8.2f %9.1f %9.2f %9.2f %9.2f %5zu %5zu "
             "%4zu/%-4zu %10s\n",
@@ -546,6 +780,123 @@ main(int argc, char **argv)
                 "us/frame, matrix %.1f us/frame (%.1f%%)\n",
                 bakedCount, bakedSum, geomean, matrixSum,
                 bakedSum > 0.0 ? 100.0 * matrixSum / bakedSum : 0.0);
+
+    // Matrix phase/role split for rigs with matrix revisions. Memo/body/
+    // publish are zero unless the step-timing environment above was set.
+    std::printf("%-38s %9s %9s %9s %9s %9s %9s %6s %6s\n", "stage",
+                "mtxMemo", "mtxBody", "mtxPub", "chkRange", "chkLegacy",
+                "chkWhole", "rGroups", "chkSteps");
+    std::printf("%-38s %9s %9s %9s %9s %9s %9s %6s %6s\n", "",
+                "us/frame", "us/frame", "us/frame", "us/frame", "us/frame",
+                "us/frame", "", "");
+    double memoSum = 0.0, bodySum = 0.0, pubSum = 0.0, rangeSum = 0.0,
+           legacySum = 0.0, wholeSum = 0.0, sMemoSum = 0.0, sBodySum = 0.0,
+           sPubSum = 0.0, cMemoSum = 0.0, cBodySum = 0.0, cPubSum = 0.0,
+           foldSum = 0.0, fuseSum = 0.0, foMemoSum = 0.0, foBodySum = 0.0,
+           foPubSum = 0.0, fuMemoSum = 0.0, fuBodySum = 0.0, fuPubSum = 0.0;
+    for (const RigResult &result : results) {
+        if (!result.baked || result.matrixRevisions == 0 ||
+            result.computeOnly) {
+            continue;
+        }
+        std::printf("%-38s %9.2f %9.2f %9.2f %9.2f %9.2f %9.2f %6zu %6zu\n",
+                    result.stage.c_str(), result.matrixMemoUs,
+                    result.matrixBodyUs, result.matrixPublishUs,
+                    result.matrixChunkRangeUs, result.matrixChunkLegacyUs,
+                    result.matrixChunkWholeUs, result.matrixRangeGroups,
+                    result.matrixChunkSteps);
+        std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6s\n", "",
+                    "static:", result.matrixStaticMemoUs,
+                    result.matrixStaticBodyUs, result.matrixStaticPublishUs,
+                    "", "", "", "");
+        std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6zu/%zu\n", "",
+                    "chunk:", result.matrixChunkMemoUs,
+                    result.matrixChunkBodyUs, result.matrixChunkPublishUs,
+                    "", "", "", result.matrixChunkRangeSteps,
+                    result.matrixChunkLegacySteps);
+        std::printf("%-38s walk computed %llu reused %llu skippedWhole "
+                    "%llu\n",
+                    "", (unsigned long long)result.matrixWalkComputed,
+                    (unsigned long long)result.matrixWalkReused,
+                    (unsigned long long)result.matrixWalkSkipped);
+        std::printf("%-38s fold %9.2f fuse %9.2f us/frame (supporting, "
+                    "outside headline)\n",
+                    "", result.matrixFoldUs, result.matrixFuseUs);
+        std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6s\n", "",
+                    "fold:", result.matrixFoldMemoUs,
+                    result.matrixFoldBodyUs, result.matrixFoldPublishUs,
+                    "", "", "", "");
+        std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6s\n", "",
+                    "fuse:", result.matrixFuseMemoUs,
+                    result.matrixFuseBodyUs, result.matrixFusePublishUs,
+                    "", "", "", "");
+        memoSum += result.matrixMemoUs;
+        bodySum += result.matrixBodyUs;
+        pubSum += result.matrixPublishUs;
+        sMemoSum += result.matrixStaticMemoUs;
+        sBodySum += result.matrixStaticBodyUs;
+        sPubSum += result.matrixStaticPublishUs;
+        cMemoSum += result.matrixChunkMemoUs;
+        cBodySum += result.matrixChunkBodyUs;
+        cPubSum += result.matrixChunkPublishUs;
+        rangeSum += result.matrixChunkRangeUs;
+        legacySum += result.matrixChunkLegacyUs;
+        wholeSum += result.matrixChunkWholeUs;
+        foldSum += result.matrixFoldUs;
+        fuseSum += result.matrixFuseUs;
+        foMemoSum += result.matrixFoldMemoUs;
+        foBodySum += result.matrixFoldBodyUs;
+        foPubSum += result.matrixFoldPublishUs;
+        fuMemoSum += result.matrixFuseMemoUs;
+        fuBodySum += result.matrixFuseBodyUs;
+        fuPubSum += result.matrixFusePublishUs;
+    }
+    std::printf("matrix phases total: memo %.1f body %.1f publish %.1f "
+                "us/frame; chunk range %.1f legacy %.1f whole %.1f\n",
+                memoSum, bodySum, pubSum, rangeSum, legacySum, wholeSum);
+    std::printf("matrix static phases: memo %.1f body %.1f publish %.1f; "
+                "chunk phases: memo %.1f body %.1f publish %.1f\n",
+                sMemoSum, sBodySum, sPubSum, cMemoSum, cBodySum, cPubSum);
+    std::printf("matrix fold %.1f fuse %.1f us/frame (supporting, outside "
+                "headline)\n",
+                foldSum, fuseSum);
+    std::printf("matrix fold phases: memo %.1f body %.1f publish %.1f; "
+                "fuse phases: memo %.1f body %.1f publish %.1f\n",
+                foMemoSum, foBodySum, foPubSum, fuMemoSum, fuBodySum,
+                fuPubSum);
+
+    // Compute-frame matrix: animated inputs, so kernels run. Supporting
+    // metric only; excluded from every sum above.
+    bool anyCompute = false;
+    for (const RigResult &result : results) {
+        if (result.computeOnly && result.baked) {
+            anyCompute = true;
+            break;
+        }
+    }
+    if (anyCompute) {
+        std::printf("compute-frame matrix (supporting, excluded from "
+                    "sums):\n");
+        std::printf("%-38s %9s %9s %9s %9s %9s %12s %12s %9s\n", "stage",
+                    "baked", "mtxStatic", "mtxChunk", "chkRange",
+                    "chkLegacy", "computed", "reused", "skipped");
+        std::printf("%-38s %9s %9s %9s %9s %9s %12s %12s %9s\n", "",
+                    "us/frame", "us/frame", "us/frame", "us/frame",
+                    "us/frame", "entries", "entries", "walks");
+        for (const RigResult &result : results) {
+            if (!result.computeOnly || !result.baked) {
+                continue;
+            }
+            std::printf("%-38s %9.1f %9.2f %9.2f %9.2f %9.2f %12llu "
+                        "%12llu %9llu\n",
+                        result.stage.c_str(), result.bakedFrameUs,
+                        result.matrixStaticUs, result.matrixChunkUs,
+                        result.matrixChunkRangeUs, result.matrixChunkLegacyUs,
+                        (unsigned long long)result.matrixWalkComputed,
+                        (unsigned long long)result.matrixWalkReused,
+                        (unsigned long long)result.matrixWalkSkipped);
+        }
+    }
 
     std::printf("kernel RigExecApplyWeightedMatrixSimd ns/point "
                 "(median):\n");
