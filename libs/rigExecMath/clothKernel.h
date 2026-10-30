@@ -985,6 +985,7 @@ struct RigExecClothStep {
     float thickness = 0.0f;
     float depth = 0.0f;
     float friction = 0.0f;
+    float reach = 0.0f;
     float gravity[3] = {0, 0, 0};
 };
 
@@ -1242,9 +1243,9 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         // step's thickness and depth, so its broadphase verdict is known
         // here. Nearly every particle is outside the swept bounds; those
         // skip the search call itself, bit-identically (the search would
-        // return empty on the same verdict).
-        const float reach = std::max(s.thickness, s.depth);
-        if (RigExecClothOutsideSweptBounds(grid, pi, reach)) return;
+        // return empty on the same verdict). The reach arrives derived
+        // once per substep in the step.
+        if (RigExecClothOutsideSweptBounds(grid, pi, s.reach)) return;
         solveContact(-1);
         return;
     }
@@ -1304,6 +1305,7 @@ RigExecClothStepFor(const RigExecClothParameters &P, int substeps, int substep,
     s.attract = std::min(1.0f, std::max(0.0f, P.attract));
     s.thickness = std::max(0.0f, P.thickness);
     s.depth = std::max(0.0f, P.collisionDepth);
+    s.reach = std::max(s.thickness, s.depth);
     s.friction = std::max(0.0f, P.friction);
     for (int a = 0; a < 3; ++a) s.gravity[a] = P.gravity[a];
     return s;
