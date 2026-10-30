@@ -314,6 +314,9 @@ inline void Lerp(const float *a, const float *b, float t, float *o)
     o[1] = a[1] + (b[1] - a[1]) * t;
     o[2] = a[2] + (b[2] - a[2]) * t;
 }
+// AdjacentTo is declared here and defined at the end of the header, after
+// the solve, with the other model-path-only code.
+inline bool AdjacentTo(const std::vector<int32_t> &sorted, int32_t v);
 
 inline int64_t Cell(float v, float cell) { return int64_t(std::floor(v / cell)); }
 
@@ -1655,8 +1658,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 bool adjacent = false;
                 for (size_t q = 0; q < 3; ++q) {
                     b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
-                    const auto &neighbors = mesh.neighbors[i];
-                    adjacent = adjacent || std::binary_search(neighbors.begin(), neighbors.end(), b.vertices[q]);
+                    adjacent = adjacent || AdjacentTo(mesh.neighbors[i], b.vertices[q]);
                 }
                 if (adjacent) continue;
                 const float *v0 = x + 3 * size_t(b.vertices[0]);
@@ -1733,8 +1735,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     if (i == k || i == l || j == k || j == l) continue;
                     bool adjacent = false;
                     for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
-                        const auto &neighbors = mesh.neighbors[size_t(a)];
-                        adjacent = adjacent || std::binary_search(neighbors.begin(), neighbors.end(), b);
+                        adjacent = adjacent || AdjacentTo(mesh.neighbors[size_t(a)], b);
                     }
                     if (adjacent) continue;
                     std::array<int32_t,4> key{{i,j,k,l}};
@@ -2167,6 +2168,17 @@ inline bool RigExecClothPairSet::Insert(const std::array<int32_t, 4> &key)
         if (slots[i] == key) return false;
         i = (i + 1) & mask;
     }
+}
+
+inline bool cloth_detail::AdjacentTo(const std::vector<int32_t> &sorted, int32_t v)
+{
+    // Membership in a short sorted neighbor list: a linear scan with a
+    // sorted early-out, fewer branches than a binary search here.
+    for (int32_t n : sorted) {
+        if (n == v) return true;
+        if (n > v) return false;
+    }
+    return false;
 }
 
 inline void RigExecClothPairSet::Grow()
