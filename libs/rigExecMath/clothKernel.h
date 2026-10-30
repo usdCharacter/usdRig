@@ -1852,12 +1852,32 @@ RigExecClothClearOfColliders(const RigExecClothMesh &mesh,
         Sub(b, a, ab); Sub(c, a, ac);
         Cross(ab, ac, areaScratch->data() + 3 * tri);
     }
+    // The swept collider bounds plus half the longest edge: an edge that
+    // crosses a listed triangle holds its midpoint within half its own
+    // length, hence within half the longest, of the crossing point on the
+    // triangle, so an edge outside this box cannot cross and skips the
+    // bucket test. The 2^-10 outward margin is far outside the few ulps of
+    // rounding between the midpoint, the longest edge, and the segment
+    // test. Non-finite bounds (no finite triangle) form NaN pads, which
+    // compare false and skip nothing; overflowing pads only widen the box.
+    const float half = 0.5f * longest;
+    float padLo[3], padHi[3];
+    for (int a = 0; a < 3; ++a) {
+        const float margin =
+            (std::max(std::fabs(grid->sweptLo[a]), std::fabs(grid->sweptHi[a])) + half) *
+            0.0009765625f;
+        padLo[a] = grid->sweptLo[a] - half - margin;
+        padHi[a] = grid->sweptHi[a] + half + margin;
+    }
     for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
         if (mesh.constraintKind[c] != stretch) continue;
         const float *p = cloth + 3 * size_t(mesh.constraintEnds[2 * c]);
         const float *q = cloth + 3 * size_t(mesh.constraintEnds[2 * c + 1]);
         float mid[3];
         Lerp(p, q, 0.5f, mid);
+        if (mid[0] < padLo[0] || mid[0] > padHi[0] || mid[1] < padLo[1] ||
+            mid[1] > padHi[1] || mid[2] < padLo[2] || mid[2] > padHi[2])
+            continue;
         const uint32_t bucket = Hash(Cell(mid[0], grid->cellSize), Cell(mid[1], grid->cellSize),
                                      Cell(mid[2], grid->cellSize), grid->bucketMask);
         for (uint32_t k = grid->bucketStart[bucket]; k < grid->bucketStart[bucket + 1]; ++k) {

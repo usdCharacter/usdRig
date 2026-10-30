@@ -452,6 +452,161 @@ void TestClearOfColliders()
                                        nullptr, &grid, &scratch));
 }
 
+// Brute force: every stretch edge against every collider triangle, the same
+// segment test the grid path runs once it lists a pair.
+bool BruteForceClear(const RigExecClothMesh &mesh, const RigExecClothColliders &colliders,
+                     const float *cloth, const float *colliderPoints)
+{
+    const auto stretch = uint8_t(RigExecClothConstraint::Stretch);
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        if (mesh.constraintKind[c] != stretch) continue;
+        const float *p = cloth + 3 * size_t(mesh.constraintEnds[2 * c]);
+        const float *q = cloth + 3 * size_t(mesh.constraintEnds[2 * c + 1]);
+        for (size_t tri = 0; tri < colliders.triangles.size() / 3; ++tri) {
+            const float *a = colliderPoints + 3 * size_t(colliders.triangles[3 * tri]);
+            const float *b = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 1]);
+            const float *d = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 2]);
+            float ab[3], ac[3], n[3];
+            cloth_detail::Sub(b, a, ab);
+            cloth_detail::Sub(d, a, ac);
+            cloth_detail::Cross(ab, ac, n);
+            if (cloth_detail::SegmentCrossesTriangleArea(p, q, a, b, d, n)) return false;
+        }
+    }
+    return true;
+}
+
+void TestClearOfCollidersBroadphase()
+{
+    const Mesh curtain = Curtain(9, 16.0f, 20.0f);
+    std::vector<float> pins(curtain.Size(), 0.0f);
+    for (int c = 0; c < 9; ++c) pins[size_t(c)] = 1.0f;
+    RigExecClothMesh mesh;
+    CHECK(Build(curtain, &pins, RigExecClothSettings(), &mesh));
+    if (!mesh.valid) return;
+    const Mesh ball = Sphere(4.0f, 8, 12);
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(ball.Size(), ball.counts.data(), ball.counts.size(),
+                                     ball.indices.data(), ball.indices.size(), false,
+                                     &colliders));
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    // Seeded placements from far away to straight through; the grid and
+    // scratch are reused across calls as the window start reuses them.
+    uint64_t state = 0x9e3779b97f4a7c15ULL;
+    const auto rnd = [&]() {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return double(state >> 33) / double(1ULL << 31) - 0.5;
+    };
+    int blocked = 0, clear = 0;
+    for (int seed = 0; seed < 600; ++seed) {
+        const float scale = seed % 3 == 0 ? 0.5f : (seed % 3 == 1 ? 1.0f : 2.0f);
+        std::vector<float> at = ball.points;
+        const float ox = float(40.0 * rnd()), oy = float(12.0 + 30.0 * rnd()),
+                    oz = float(30.0 * rnd());
+        for (size_t i = 0; i < ball.Size(); ++i) {
+            at[3 * i] = at[3 * i] * scale + ox;
+            at[3 * i + 1] = at[3 * i + 1] * scale + oy;
+            at[3 * i + 2] = at[3 * i + 2] * scale + oz;
+        }
+        const bool want = BruteForceClear(mesh, colliders, curtain.points.data(), at.data());
+        const bool got = RigExecClothClearOfColliders(mesh, colliders, curtain.points.data(),
+                                                      at.data(), &grid, &scratch);
+        if (got != want) {
+            std::printf("seed %d: broadphase %d, brute force %d\n", seed, int(got),
+                        int(want));
+            CHECK(false);
+        }
+        blocked += !want;
+        clear += want;
+    }
+    CHECK(blocked > 0 && clear > 0);
+    // Edges snapped to the padded box: from two margins inside to half an
+    // edge past it, on both x sides. Near-boundary skips must still agree.
+    float longest = 0.0f;
+    const auto stretch = uint8_t(RigExecClothConstraint::Stretch);
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        if (mesh.constraintKind[c] != stretch) continue;
+        const float *p = curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * c]);
+        const float *q = curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * c + 1]);
+        float d[3];
+        cloth_detail::Sub(p, q, d);
+        longest = std::max(longest, cloth_detail::Length(d));
+    }
+    const float half = 0.5f * longest;
+    float sweptLo = std::numeric_limits<float>::infinity(),
+          sweptHi = -std::numeric_limits<float>::infinity();
+    for (size_t i = 0; i < ball.Size(); ++i) {
+        sweptLo = std::min(sweptLo, ball.points[3 * i]);
+        sweptHi = std::max(sweptHi, ball.points[3 * i]);
+    }
+    const float margin = (std::max(std::fabs(sweptLo), std::fabs(sweptHi)) + half) *
+                             0.0009765625f;
+    size_t firstStretch = 0;
+    while (firstStretch < mesh.constraintRest.size() &&
+           mesh.constraintKind[firstStretch] != stretch)
+        ++firstStretch;
+    CHECK(firstStretch < mesh.constraintRest.size());
+    const float *e0 =
+        curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * firstStretch]);
+    const float *e1 =
+        curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * firstStretch + 1]);
+    const float midX = 0.5f * (e0[0] + e1[0]);
+    for (float delta : {-2.0f * margin, -0.5f * margin, 0.0f, 0.5f * margin, 2.0f * margin,
+                        half}) {
+        for (int side = 0; side < 2; ++side) {
+            std::vector<float> at = ball.points;
+            const float edge = side == 0 ? sweptHi + half + margin : sweptLo - half - margin;
+            const float tx = side == 0 ? midX - edge + delta : midX - edge - delta;
+            for (size_t i = 0; i < ball.Size(); ++i) at[3 * i] += tx;
+            const bool want =
+                BruteForceClear(mesh, colliders, curtain.points.data(), at.data());
+            const bool got = RigExecClothClearOfColliders(mesh, colliders,
+                                                          curtain.points.data(), at.data(),
+                                                          &grid, &scratch);
+            if (got != want) {
+                std::printf("snap delta %g side %d: broadphase %d, brute force %d\n",
+                            double(delta), side, int(got), int(want));
+                CHECK(false);
+            }
+        }
+    }
+}
+
+// A crossing whose midpoint sits outside the collider's swept box but
+// within half the longest edge of it: the broadphase must test it, not
+// skip it. A pads-hug-the-box mutation reports clear here.
+void TestClearOfCollidersBandCrossing()
+{
+    const Mesh m = Curtain(2, 2.0f, 1.0f);
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, RigExecClothSettings(), &mesh));
+    if (!mesh.valid) return;
+    RigExecClothColliders colliders;
+    const int counts[] = {3}, indices[] = {0, 1, 2};
+    CHECK(RigExecAppendClothCollider(3, counts, 1, indices, 3, false, &colliders));
+    // Edge (0, 1) pierces the triangle's interior at (9.9, 0.5, 0.5) with
+    // its midpoint at x = 10.1, past the box face at x = 10 but within
+    // half the longest edge of it; the other points sit clear of the box.
+    std::vector<float> cloth = {9.6f, 0.47f, 0.53f, 10.6f, 0.57f, 0.43f,
+                                20.0f, 0.0f, 0.0f, 20.0f, 1.0f, 0.0f};
+    const std::vector<float> tri = {9.0f, 0.0f, 0.0f, 10.0f, 0.0f, 0.0f,
+                                    9.9f, 1.0f, 1.0f};
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    CHECK(!BruteForceClear(mesh, colliders, cloth.data(), tri.data()));
+    CHECK(!RigExecClothClearOfColliders(mesh, colliders, cloth.data(), tri.data(), &grid,
+                                        &scratch));
+    // The same edge shifted half an edge past the padded box: clear by both.
+    for (int a = 0; a < 3; ++a) {
+        cloth[a] += 6.0f;
+        cloth[3 + a] += 6.0f;
+    }
+    CHECK(BruteForceClear(mesh, colliders, cloth.data(), tri.data()));
+    CHECK(RigExecClothClearOfColliders(mesh, colliders, cloth.data(), tri.data(), &grid,
+                                       &scratch));
+}
+
 // Fraction of the curtain points within reach of the ball that lie on its
 // far (+z) side: the side the ball pushed them to.
 float AheadOfBall(const std::vector<float> &x, float z)
@@ -1609,6 +1764,8 @@ int main()
     TestFollowsInput();
     TestCarriedRigidly();
     TestClearOfColliders();
+    TestClearOfCollidersBroadphase();
+    TestClearOfCollidersBandCrossing();
     TestSweptBoundsAndBroadphase();
     TestSingleIterationMatchesMulti();
     TestColorSingleMatchesSerial();
