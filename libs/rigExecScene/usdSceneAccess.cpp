@@ -140,17 +140,10 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     // walk; mightBeTimeVarying stays as a backstop for any other source.
     if (result->hasAuthoredValue || spline || result->mightBeTimeVarying || clipped)
         query.GetTimeSamples(&result->sampleTimes);
-    // Any "default" field anywhere in the stack is an authored value
-    // opinion, so without one (and without a spline, which walks anyway)
-    // no spec carries a default and the flags below stay false.
-    if (result->hasAuthoredValue || spline) {
-        for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
-            if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
-            result->hasAuthoredDefault = true;
-            result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
-            break;
-        }
-    }
+    // No default-opinion walk: no scene translation reads the captured
+    // hasAuthoredDefault/defaultBlocked facts (only the standalone Db
+    // carries them, populated separately from the stage specs), so the
+    // fields keep their defaults. Re-add the walk if one ever does.
     return true;
 }
 bool RigExecUsdSceneAccess::Relationship(const SdfPath &path, RigExecSceneRelationship *result) const {
