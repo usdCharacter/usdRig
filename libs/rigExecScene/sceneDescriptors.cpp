@@ -258,9 +258,18 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             // are the only other source of one. Answer clear without the
             // resolve-info walk. Generic sources keep their stored lookup.
             const bool clear = usd && !clipped && !attr.fact.hasAuthoredValue;
+            // Without clips above, a valueless live attribute resolves empty
+            // at every identity: the query reports a value for an authored
+            // default, authored samples, an authored spline, or a schema
+            // fallback, so false leaves no source a resolve could find. The
+            // input starts empty, so the resolve is skipped outright; the
+            // blocked row below still runs, since a block without a fallback
+            // reads valueless yet blocked. USD sources only, like clear:
+            // generic facts do not promise the same HasValue/Get agreement.
+            const bool valueless = usd && !clipped && !attr.fact.hasValue;
             for (const auto time : unique) {
                 RigExecSceneInput input;
-                if (node.fact.active && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
+                if (node.fact.active && !valueless && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
                 input.rawBlocked = clear ? false :
                     (usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time));
