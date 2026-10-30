@@ -1825,14 +1825,17 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     const int32_t k = std::min(mesh.triangles[3*tri+edge], mesh.triangles[3*tri+(edge+1)%3]);
                     const int32_t l = std::max(mesh.triangles[3*tri+edge], mesh.triangles[3*tri+(edge+1)%3]);
                     if (i == k || i == l || j == k || j == l) continue;
+                    // Dedup before the adjacency scans: a rediscovered pair
+                    // skips them, and recording adjacent pairs too keeps
+                    // every verdict exact (presence is per key).
+                    std::array<int32_t,4> key{{i,j,k,l}};
+                    if (std::make_pair(k,l) < std::make_pair(i,j)) key = {{k,l,i,j}};
+                    if (!pairs.Insert(key)) continue;
                     bool adjacent = false;
                     for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
                         adjacent = adjacent || AdjacentTo(mesh.neighbors[size_t(a)], b);
                     }
                     if (adjacent) continue;
-                    std::array<int32_t,4> key{{i,j,k,l}};
-                    if (std::make_pair(k,l) < std::make_pair(i,j)) key = {{k,l,i,j}};
-                    if (!pairs.Insert(key)) continue;
                     // The edge-sphere band: a pair whose midpoint spheres
                     // plus contact reach cannot meet skips the
                     // closest-segment tail. Each edge holds its points

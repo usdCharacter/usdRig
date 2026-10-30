@@ -1511,6 +1511,62 @@ void TestClothGridDeterminism()
     CHECK(wide.cellSize > first.cellSize);
 }
 
+void TestSelfPairDiscoveryOrder()
+{
+    // A folded curtain layer over itself: vertex/triangle and edge/edge
+    // corrections both fire. Dedup runs before the adjacency scans, so
+    // the pair set also records adjacent pairs; the corrections that
+    // reach projection, and the solved points, are pinned bit for bit.
+    const int n = 4;
+    Mesh m;
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const bool top = j < n / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(n - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < n; ++j)
+        for (int i = 0; i + 1 < n; ++i) {
+            const int a = j * n + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + n});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + n, a + n});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 7);
+    CHECK(ee == 6);
+    CHECK(ws.selfLambda.size() == 13);
+    CHECK(ws.selfPairs.count == 351);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xc2fddc4fec45e38aull);
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -1983,6 +2039,7 @@ int main()
     TestEdgeSpheresRetireOnTouch();
     TestSelfGridReuseVerdict();
     TestClothGridDeterminism();
+    TestSelfPairDiscoveryOrder();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();
