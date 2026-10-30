@@ -716,15 +716,31 @@ void PutSmall(SmallKey *out,const RigExecPointFrame &v)
 {
     out->Append(v.flags); for(const auto &point:v.points) out->Append(point);
 }
+// Put's bytes for a string and a token: the length, then the text.
+void PutSmall(SmallKey *out,const std::string &v)
+{
+    out->Append(uint64_t(v.size())); out->AppendBytes(v.data(),v.size());
+}
+void PutSmall(SmallKey *out,const TfToken &v)
+{
+    out->Append(uint64_t(v.size())); out->AppendBytes(v.GetText(),v.size());
+}
+// Put's bytes for a mover status: its state token, then the address.
+void PutSmall(SmallKey *out,const RigExecMoverStatus &v)
+{
+    PutSmall(out,v.state); PutSmall(out,v.firstBadAddress);
+}
 }
 bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpValueState *value)
 {
     using D=RigExecBakedSlotDomain;
     const D domain=D(value->domain); const uint32_t slot=value->slot;
+    // A ChainDirty keys its revision's RevisionDone key, header included.
+    const D header=domain==D::ChainDirty ? D::RevisionDone : domain;
     // RigExecBakedOpValueKey's fields in its order, only for the slots it
     // keys without failing. Put writes each of these fields as its object
     // bytes (the vectors and the matrix are padding-free, asserted above).
-    SmallKey key; key.Append(uint8_t(1)); key.Append(domain);
+    SmallKey key; key.Append(uint8_t(1)); key.Append(header);
     const auto matrix=[&](const std::vector<GfMatrix4d> &values) {
         if(slot>=values.size()) return false;
         key.Append(values[slot]); return true;
@@ -762,6 +778,33 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         if(slot<B.frameMatrix.size() && slot<B.frameMatrixValid.size()) {
             key.Append(B.frameMatrixValid[slot]); key.Append(B.frameMatrix[slot]); keyed=true;
         } break;
+    case D::RevisionOut: {
+        // Only the version-keyed group parts: a Legacy chunk or a Whole
+        // revision's one chunk keys its point bytes and stays on the key.
+        const RigExecBakedProgramImpl::GeomRevision *v=nullptr;
+        size_t part=0;
+        if(!RevisionOutPart(B,slot,&v,&part)) break;
+        bool published=false;
+        const auto *g=GroupPart(*v,part,&published);
+        if(!g) break;
+        if(published) {
+            key.Append(uint64_t(g->published.count)); key.Append(g->version); keyed=true;
+        } else if(v->role==RigExecBakedRevisionRole::Range) {
+            key.Append(g->ok); key.Append(uint64_t(g->published.count));
+            key.Append(g->version); keyed=true;
+        } else {
+            key.Append(g->ok); key.Append(uint64_t(ComputedCount(*g)));
+            key.Append(g->computedVersion); keyed=true;
+        }
+        break;
+    }
+    case D::RevisionDone:
+    case D::ChainDirty:
+        if(const auto *v=Revision(B,slot)) {
+            PutSmall(&key,v->resultStatus); PutSmall(&key,v->status);
+            key.Append(v->doneVersion); keyed=true;
+        }
+        break;
     case D::SpaceValue: {
         // Error text, a token and a boxed value key by length or box: they
         // go through the key.

@@ -1288,8 +1288,13 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
         const int32_t window=c<B.windowOfOp.size()?B.windowOfOp[c]:-1;
         for(auto id:B.opGraph.ops[c].descriptor.writes) {
             auto &v=state.values[size_t(id)];
-            // A fixed-size value compares in place: never RevisionDone or ChainDirty.
-            if(RigExecBakedPublishSmallValue(B,&v)) continue;
+            // A fixed-size or version-keyed value compares in place. A
+            // windowed op's ring serial joins only the slow key, so a
+            // version-keyed value of a windowed op stays slow.
+            const bool versioned=v.domain==uint32_t(RigExecBakedSlotDomain::RevisionOut) ||
+                v.domain==uint32_t(RigExecBakedSlotDomain::RevisionDone) ||
+                v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty);
+            if((window<0 || !versioned) && RigExecBakedPublishSmallValue(B,&v)) continue;
             const RigExecOpValueState *reuse=done && v.slot==done->slot &&
                 v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty) ? done : nullptr;
             bool exact=true;

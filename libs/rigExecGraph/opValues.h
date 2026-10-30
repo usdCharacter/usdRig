@@ -311,6 +311,12 @@ template <size_t N> struct RigExecOpSmallKey {
         if (sizeof(T) > N - size) { overflow = true; return; }
         std::memcpy(bytes + size, &v, sizeof(T)); size += sizeof(T);
     }
+    void AppendBytes(const void *data, size_t count)
+    {
+        if (count > N - size) { overflow = true; return; }
+        if (count) std::memcpy(bytes + size, data, count);
+        size += count;
+    }
 };
 
 /// Publishes \p size key bytes compared in place against the stored key:
