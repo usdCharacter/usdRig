@@ -1273,6 +1273,37 @@ void TestOutsideBoundsSkipsSearch()
     CHECK(sawOutside && sawInside);
 }
 
+void TestTetherLimitsPrecomputed()
+{
+    // The mesh carries the tether limit and its short-circuit bound
+    // derived at build, and the particle pass reads them instead of
+    // forming them per substep. Both must equal the documented formula
+    // bitwise, on tethered and untethered builds alike.
+    const Mesh m = Curtain(5, 4.0f, 8.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    for (int c = 0; c < 5; ++c) pins[size_t(c)] = 1.0f;
+    for (float slack : {0.0f, 0.05f, 1.0f}) {
+        for (bool tethers : {true, false}) {
+            RigExecClothSettings settings;
+            settings.tetherSlack = slack;
+            settings.tethers = tethers;
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            CHECK(mesh.tetherLimit.size() == m.Size());
+            CHECK(mesh.tetherShortSquared.size() == m.Size());
+            for (size_t i = 0; i < m.Size(); ++i) {
+                const float limit = mesh.tetherRest[i] * (1.0f + settings.tetherSlack);
+                const float limitSquared = limit * limit;
+                const float shortSquared = (limit < 1e-18f || !std::isfinite(limitSquared))
+                    ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
+                CHECK(std::memcmp(&limit, &mesh.tetherLimit[i], sizeof(float)) == 0);
+                CHECK(std::memcmp(&shortSquared, &mesh.tetherShortSquared[i],
+                                  sizeof(float)) == 0);
+            }
+        }
+    }
+}
+
 int main()
 {
     TestTopology();
@@ -1286,6 +1317,7 @@ int main()
     TestSingleIterationMatchesMulti();
     TestPredictUsesGravityStep();
     TestOutsideBoundsSkipsSearch();
+    TestTetherLimitsPrecomputed();
     TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();

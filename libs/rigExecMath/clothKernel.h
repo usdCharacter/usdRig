@@ -155,6 +155,12 @@ struct RigExecClothMesh {
     /// distance.
     std::vector<int32_t> tetherAnchor;
     std::vector<float> tetherRest;
+    /// The tether limit and its short-circuit bound, derived once at build:
+    /// limit[i] is tetherRest[i] * (1 + tetherSlack) and shortSquared[i]
+    /// the 2^-12 band below its square, the same values the particle pass
+    /// formed per substep.
+    std::vector<float> tetherLimit;
+    std::vector<float> tetherShortSquared;
     RigExecClothModel model;
     std::vector<float> restPoints, materialFrames;
     std::vector<std::vector<int32_t>> incidentTriangles, neighbors;
@@ -506,6 +512,15 @@ RigExecBuildClothMesh(size_t pointCount, const int *counts, size_t countSize,
                 built.tetherRest[i] = best;
             }
         }
+    }
+    built.tetherLimit.assign(pointCount, 0.0f);
+    built.tetherShortSquared.assign(pointCount, -1.0f);
+    for (size_t i = 0; i < pointCount; ++i) {
+        const float limit = built.tetherRest[i] * (1.0f + settings.tetherSlack);
+        const float limitSquared = limit * limit;
+        built.tetherLimit[i] = limit;
+        built.tetherShortSquared[i] = (limit < 1e-18f || !std::isfinite(limitSquared))
+            ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
     }
     built.valid = true;
     *out = std::move(built);
@@ -1119,16 +1134,15 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
                                                               RigExecClothVertex(i)))) {
         float d[3];
         Sub(pi, x + 3 * size_t(anchor), d);
-        const float limit = mesh.tetherRest[i] * (1.0f + settings.tetherSlack);
+        // The limit and its short-circuit bound arrive derived at build.
         // A tether at or below shortSquared needs no root: a 2^-12 band
         // under the squared limit, far outside any rounding between the
         // dot and the root, so the slack verdict is exact. Limits below
         // 1e-18 (whose square nears the subnormals), negative, and
         // squared-overflowing limits never skip; NaN and infinite
         // dots take the root path as before.
-        const float limitSquared = limit * limit;
-        const float shortSquared = (limit < 1e-18f || !std::isfinite(limitSquared))
-            ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
+        const float limit = mesh.tetherLimit[i];
+        const float shortSquared = mesh.tetherShortSquared[i];
         if (!(Dot(d, d) <= shortSquared)) {
             const float len = Length(d);
             if (len > limit && len > 0.0f) {
