@@ -1162,14 +1162,16 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         }
     }
     if (!colliderFrom || colliders.triangles.empty()) return;
-    const auto sample = RigExecClothVertex(i);
-    const auto solveContact = [&](int collider) {
+    // The sample arrives as a pointer: the empty-model path passes null
+    // and never reads it (no profile matches), so the per-particle sample
+    // construction happens only where profiles exist.
+    const auto solveContact = [&](int collider, const RigExecClothSample *sample) {
     const RigExecClothProfile *collisionProfile = nullptr;
     for (size_t k = mesh.model.profiles.size(); k-- > 0;) {
         const auto &profile = mesh.model.profiles[k];
         if (profile.kind == RigExecClothProfileKind::Collision &&
             (profile.targetCollider < 0 || profile.targetCollider == collider) &&
-            RigExecClothRegion(profile.sourceMask, sample) > 0) {
+            RigExecClothRegion(profile.sourceMask, *sample) > 0) {
             collisionProfile = &profile;
             break;
         }
@@ -1201,7 +1203,7 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
             float lambda = contactLambda && contactTriangles && contactTriangles[i] == contact.triangle
                 ? contactLambda[i] : 0;
             const float force = (lambda + correction / wi) / (s.h * s.h);
-            const float strength = RigExecClothStrength(*profile, sample, force, contact.normal, frame);
+            const float strength = RigExecClothStrength(*profile, *sample, force, contact.normal, frame);
             if (!(strength > 0)) return;
             const float alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
             const float dl = std::max(-lambda, (correction - alpha * lambda) / (wi + alpha));
@@ -1246,10 +1248,12 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         // return empty on the same verdict). The reach arrives derived
         // once per substep in the step.
         if (RigExecClothOutsideSweptBounds(grid, pi, s.reach)) return;
-        solveContact(-1);
+        solveContact(-1, nullptr);
         return;
     }
-    for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c) solveContact(int(c));
+    const auto sample = RigExecClothVertex(i);
+    for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c)
+        solveContact(int(c), &sample);
 }
 
 /// Velocity pass for particle \p i: the substep's displacement, damped.

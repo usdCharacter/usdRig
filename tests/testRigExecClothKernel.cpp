@@ -1304,6 +1304,62 @@ void TestTetherLimitsPrecomputed()
     }
 }
 
+void TestCollisionProfileContact()
+{
+    // A Collision profile drives the model contact path: the per-particle
+    // sample selects the profile (Region reads it) and scales the response
+    // (Strength reads it). A particle resting behind a collider plane is
+    // pushed out; one beyond the reach is untouched.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile p;
+    p.kind = RigExecClothProfileKind::Collision;
+    p.sourceMask.assign(m.Size(), 1.0f);
+    auto model = MaterialModel(mesh, m, p);
+    const Mesh plane = Sheet(2, 10.0f, -0.05f);
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(),
+                                   {plane.Size()}, &why));
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(plane.Size(), plane.counts.data(),
+                                     plane.counts.size(), plane.indices.data(),
+                                     plane.indices.size(), false, &colliders));
+    RigExecClothParameters params;
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, plane.points.data(), plane.points.data(),
+                          std::max(params.thickness, params.collisionDepth),
+                          &grid, &scratch);
+    const RigExecClothStep step =
+        RigExecClothStepFor(params, settings.substeps, 1, 1.0f / 24.0f);
+    std::vector<float> x = m.points, previous = m.points;
+    std::vector<float> contactLambda(m.Size(), 0.0f);
+    std::vector<int32_t> contactTriangles(m.Size(), -1);
+    // Row 1 sits at y = 0, just in front of the plane: contact pushes it up.
+    const size_t near = 5;
+    RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                             m.points.data(), m.points.data(),
+                             plane.points.data(), plane.points.data(), true,
+                             near, x.data(), previous.data(),
+                             contactLambda.data(), contactTriangles.data(),
+                             nullptr);
+    CHECK(x[3 * near + 1] > 0.0f);
+    // Row 3 sits at y = -2, deep behind the plane: outside the violated
+    // slab, so the pass leaves it alone.
+    const size_t far = 13;
+    RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                             m.points.data(), m.points.data(),
+                             plane.points.data(), plane.points.data(), true,
+                             far, x.data(), previous.data(),
+                             contactLambda.data(), contactTriangles.data(),
+                             nullptr);
+    CHECK(x[3 * far] == m.points[3 * far]);
+    CHECK(x[3 * far + 1] == m.points[3 * far + 1]);
+    CHECK(x[3 * far + 2] == m.points[3 * far + 2]);
+}
+
 int main()
 {
     TestTopology();
@@ -1318,6 +1374,7 @@ int main()
     TestPredictUsesGravityStep();
     TestOutsideBoundsSkipsSearch();
     TestTetherLimitsPrecomputed();
+    TestCollisionProfileContact();
     TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();
