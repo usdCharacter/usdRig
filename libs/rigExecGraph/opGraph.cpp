@@ -329,7 +329,12 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         }
         return fail(message);
     }
-    const auto after = [&](uint32_t a, uint32_t b) { return descriptors[a].key > descriptors[b].key; };
+    // Key ranks from the duplicate check's order: keys are unique past it,
+    // so ranks order the ready queue exactly as the key strings did, with
+    // integer compares instead of string compares per push and pop.
+    std::vector<uint32_t> keyRank(count, 0);
+    for (uint32_t k = 0; k < keyOrder.size(); ++k) keyRank[keyOrder[k].second] = k;
+    const auto after = [&](uint32_t a, uint32_t b) { return keyRank[a] > keyRank[b]; };
     std::priority_queue<uint32_t, std::vector<uint32_t>, decltype(after)> ready(after);
     std::vector<uint32_t> unresolved(count, 0), order;
     for (uint32_t i = 0; i < count; ++i) if (!excluded[i]) {
