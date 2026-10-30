@@ -33,6 +33,7 @@
 #include "movers/moverRegistry.h"
 #include "movers/pathOperation.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorInternal.h"
 #include "types.h"
@@ -57,6 +58,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -67,6 +69,7 @@
 #include <numeric>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -4260,11 +4263,17 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     };
     // Keys describe authored owners and domain-local revisions, independently
     // of the descriptor emission or eventual execution order.
+    // Path texts are memoized across steps: chains share targets, groups
+    // share owners, and every step spells both without touching the
+    // registry-locked GetString.
+    RigExecPathText keyTexts;
     for (auto &step : B.steps) {
         using K=RigExecBakedStepKind;
         SdfPath owner,target;
         int revision=-1,ordinal=-1;
-        std::string expression;
+        // A view: every source below (stored keys, value keys, the one
+        // literal) outlives the iteration that spells from it.
+        std::string_view expression;
         switch(step.kind) {
         case K::ComposeSubtree: case K::RestCompose: case K::LadderCompose:
             owner=B.paths[size_t(B.composeGroups[size_t(step.object)].begin)]; break;
@@ -4364,10 +4373,42 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         const auto position=E._nativePoseOrdinals.find(owner);
         if(position!=E._nativePoseOrdinals.end()) ordinal=position->second;
-        step.label=expression.empty()?owner.GetString():expression;
-        step.descriptorKey=step.label+"/category:"+std::to_string(int(step.kind))+
-            "/stack:"+std::to_string(ordinal)+"/target:"+target.GetString()+
-            "/revision:"+std::to_string(revision)+"/subindex:"+std::to_string(step.part);
+        // One allocation per key instead of a chain of temporaries: the
+        // numbers render into stack buffers (to_chars spells integers
+        // exactly as to_string does) so the reserve is exact, and the
+        // texts come from the memo above. Byte-identical to the
+        // concatenation this replaces.
+        const std::string &ownerText = keyTexts(owner);
+        const std::string &targetText = keyTexts(target);
+        const std::string_view head =
+            expression.empty() ? std::string_view(ownerText) : expression;
+        step.label = std::string(head);
+        char rendered[4][32];
+        const int numbers[4] = {int(step.kind), ordinal, revision,
+                                step.part};
+        std::string_view digits[4];
+        for (int d = 0; d < 4; ++d) {
+            const auto last = std::to_chars(
+                rendered[d], rendered[d] + sizeof(rendered[d]),
+                numbers[d]).ptr;
+            digits[d] = std::string_view(rendered[d], size_t(last - rendered[d]));
+        }
+        std::string key;
+        key.reserve(head.size() + targetText.size() + digits[0].size() +
+                    digits[1].size() + digits[2].size() + digits[3].size() +
+                    sizeof("/category:/stack:/target:/revision:/subindex:") - 1);
+        key += head;
+        key += "/category:";
+        key += digits[0];
+        key += "/stack:";
+        key += digits[1];
+        key += "/target:";
+        key += targetText;
+        key += "/revision:";
+        key += digits[2];
+        key += "/subindex:";
+        key += digits[3];
+        step.descriptorKey = std::move(key);
     }
     if (!ctx.ok) return nullptr;
     // Bind declared solver relationship prerequisites to canonical identities
