@@ -102,22 +102,14 @@ bool Forward(const RigExecSceneDescriptors &scene, const SdfPath &path,
     visiting->erase(path);
     return true;
 }
-RigExecSceneInput Input(const RigExecSceneDescriptors &scene, const SdfPath &path, size_t identity) {
-    RigExecSceneInput result;
-    const auto first = scene.attributes.find(path);
-    if (first == scene.attributes.end()) return result;
-    result.raw = first->second.inputs[identity].raw;
-    result.rawBlocked = first->second.inputs[identity].rawBlocked;
-    result.hops.push_back(path);
-    result.source = path;
-    const auto prim = scene.nodes.find(path.GetPrimPath());
-    if (prim == scene.nodes.end() || !prim->second.fact.active) return result;
-    if (Expression(prim->second,path)) { result.state = RigExecSceneInputState::Computed; return result; }
+SdfPath FirstHop(const RigExecSceneDescriptors &scene,
+    std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator first) {
     // The overwhelmingly common attribute is unconnected and answers from
     // its own row: no visited set, no re-finds, no second hop. Only a
     // followed connection pays for the walk below, which then starts past
     // this first hop with the same visited set, hops and source the loop
-    // would have built reaching it.
+    // would have built reaching it. Decided per attribute: connections and
+    // types do not vary by identity.
     const auto &connections = first->second.fact.connections;
     SdfPath next;
     if (connections.size() == 1) {
@@ -127,6 +119,21 @@ RigExecSceneInput Input(const RigExecSceneDescriptors &scene, const SdfPath &pat
             input->second.fact.type.GetType() == first->second.fact.type.GetType())
             next = connections.front();
     }
+    return next;
+}
+RigExecSceneInput Input(const RigExecSceneDescriptors &scene,
+    std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator first,
+    std::map<SdfPath, RigExecSceneNodeDescriptor>::const_iterator prim,
+    bool computed, const SdfPath &next, size_t identity) {
+    RigExecSceneInput result;
+    const SdfPath &path = first->first;
+    result.raw = first->second.inputs[identity].raw;
+    result.rawBlocked = first->second.inputs[identity].rawBlocked;
+    result.hops.push_back(path);
+    result.source = path;
+    if (prim == scene.nodes.end() || !prim->second.fact.active) return result;
+    if (computed) { result.state = RigExecSceneInputState::Computed; return result; }
+    const auto &connections = first->second.fact.connections;
     if (next.IsEmpty()) {
         if (connections.size() > 1 && first->second.fact.type.IsArray() &&
             prim->second.fact.type.GetString().rfind("RigExec",0) == 0) {
@@ -329,8 +336,34 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     // still holds unique-sized inputs while they run, so a walk that reads
     // another attribute's row sees the same row the requested identity
     // would have resolved. Replication below is then an exact copy.
-    for (auto &[path, attr] : scene.attributes)
-        for (size_t u = 0; u < unique.size(); ++u) attr.inputs[u] = Input(scene,path,u);
+    // The walk takes the rows it runs over as iterators: the attribute row
+    // is the loop's own, and the prim row rides a one-entry cache, since
+    // rows arrive in path order with each prim's own rows together. The
+    // per-attribute head -- active prim, expression test, first hop -- is
+    // decided once per row rather than once per identity; only the raw and
+    // resolved reads vary by identity. The followed-connection walks below
+    // keep their own finds.
+    auto primIt = scene.nodes.end();
+    SdfPath primPath;
+    bool primCached = false;
+    for (auto it = scene.attributes.begin(); it != scene.attributes.end(); ++it) {
+        const SdfPath owner = it->first.GetPrimPath();
+        if (!primCached || owner != primPath) {
+            primPath = owner;
+            primIt = scene.nodes.find(owner);
+            primCached = true;
+        }
+        const bool active =
+            primIt != scene.nodes.end() && primIt->second.fact.active;
+        const bool computed =
+            active && Expression(primIt->second, it->first);
+        // The first hop is walked only past the two early returns, as
+        // before: inactive and expression rows never pay for it.
+        const SdfPath next =
+            active && !computed ? FirstHop(scene, it) : SdfPath();
+        for (size_t u = 0; u < unique.size(); ++u)
+            it->second.inputs[u] = Input(scene, it, primIt, computed, next, u);
+    }
     if (unique.size() != identities.size())
         for (auto &[path, attr] : scene.attributes) {
             std::vector<RigExecSceneInput> full;
