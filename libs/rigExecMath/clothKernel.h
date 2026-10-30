@@ -2284,12 +2284,17 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             // loop: its sphere and thickness factor derive once, lazily
             // at the first band test, and a correction retires the
             // sphere beside its touch. The same values the per-pair
-            // derivation reads, without re-reading them per pair.
+            // derivation reads, without re-reading them per pair. The
+            // reach bases fold the fixed addends once: reassociating
+            // the band sums moves each by a few ulps, far inside the
+            // 2^-10 margin, so every skip stays conservative and the
+            // exact tails decide the same corrections.
             float heldC1[3] = {0, 0, 0}, heldR1 = 0;
             const float heldThick = std::fabs(p.thickness) * std::max(
                 std::fabs(RigExecClothMap(p, ClothThickness, size_t(i))),
                 std::fabs(RigExecClothMap(p, ClothThickness, size_t(j))));
             bool haveHeld = false;
+            float triBandBase = 0, pairBandBase = 0;
             for (uint32_t entry = eeBucketBounds[bucket]; entry < eeBucketBounds[bucket+1]; ++entry) {
                 const size_t tri = size_t(eeBucketTris[entry]);
                 // The twin-skip mark lands with the visit: buckets list
@@ -2307,6 +2312,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 if (triBandOn) {
                     if (!haveHeld) {
                         EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
+                        triBandBase = heldR1 + triReach + heldThick;
+                        pairBandBase = heldR1 + heldThick;
                         haveHeld = true;
                     }
                     float ttc[3], ttr;
@@ -2315,7 +2322,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                               x, ttc, &ttr, tickNow);
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
-                    const float trr = ttr + heldR1 + triReach + heldThick;
+                    const float trr = ttr + triBandBase;
                     if (td0 * td0 + td1 * td1 + td2 * td2 > trr * trr * 1.0009765625f)
                         continue;
                 }
@@ -2376,6 +2383,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // bound covers every thickness sign.
                     if (!haveHeld) {
                         EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
+                        triBandBase = heldR1 + triReach + heldThick;
+                        pairBandBase = heldR1 + heldThick;
                         haveHeld = true;
                     }
                     float c2[3], r2;
@@ -2383,7 +2392,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                                k, l, x, c2, &r2, tickNow);
                     const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
                                 dd2 = heldC1[2] - c2[2];
-                    const float reach = heldR1 + r2 + heldThick;
+                    const float reach = pairBandBase + r2;
                     if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
                         reach * reach * 1.0009765625f)
                         continue;
