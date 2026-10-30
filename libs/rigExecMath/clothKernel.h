@@ -966,10 +966,14 @@ struct RigExecClothStep {
 
 /// Predict pass for particle \p i: gravity and inertia for a free particle;
 /// a kinematic one is placed on its entering points at the substep.
+/// \p gravityStep is the substep's gravity times its length, derived once
+/// by the caller: the values are the same products the per-particle loop
+/// formed, but the compiler cannot hoist them itself because the stores
+/// below could alias the step it reads them from.
 inline void
 RigExecClothPredict(const RigExecClothMesh &mesh, const RigExecClothStep &s,
                     const float *from, const float *to, size_t i, float *x,
-                    float *previous, float *velocity)
+                    float *previous, float *velocity, const float *gravityStep)
 {
     float *pi = x + 3 * i;
     float *qi = previous + 3 * i;
@@ -980,7 +984,7 @@ RigExecClothPredict(const RigExecClothMesh &mesh, const RigExecClothStep &s,
     }
     float *vi = velocity + 3 * i;
     for (int a = 0; a < 3; ++a) {
-        vi[a] += s.gravity[a] * s.h;
+        vi[a] += gravityStep[a];
         pi[a] += vi[a] * s.h;
     }
 }
@@ -1791,8 +1795,11 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                            to.colliders, s.t, &ws->contacts);
             const RigExecClothContactTris *contacts =
                 collide ? &ws->contacts : nullptr;
+            const float gravityStep[3] =
+                {s.gravity[0] * s.h, s.gravity[1] * s.h, s.gravity[2] * s.h};
             for (size_t i = 0; i < n; ++i)
-                RigExecClothPredict(mesh, s, from.entering, to.entering, i, x, xp, v);
+                RigExecClothPredict(mesh, s, from.entering, to.entering, i, x, xp, v,
+                                    gravityStep);
             const bool single = iterations == 1;
             if (!single) std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
             std::fill(ws->attachmentLambda.begin(), ws->attachmentLambda.end(), 0.0f);

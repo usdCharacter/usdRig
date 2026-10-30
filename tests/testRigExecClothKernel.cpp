@@ -1132,6 +1132,72 @@ void TestEdgeContactAndModelValidation()
 
 }  // namespace
 
+void TestPredictUsesGravityStep()
+{
+    // The predict pass takes the substep's gravity times its length from
+    // the caller: a free particle gains exactly that step in velocity and
+    // then moves by the new velocity times the length, a kinematic one is
+    // placed on its entering points at the substep fraction, and both
+    // record their previous position first.
+    const Mesh m = Curtain(3, 2.0f, 4.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    pins[0] = pins[1] = pins[2] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, &pins, settings, &mesh));
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    const float gravities[][3] = {{0.0f, 0.0f, 0.0f},
+                                  {0.0f, -9.81f, 0.0f},
+                                  {1.5f, -2.5f, 3.75f}};
+    size_t compared = 0;
+    for (const auto &g : gravities) {
+        for (float h : {1.0f / 240.0f, 1e-6f, 2.0f}) {
+            for (float t : {0.0f, 0.3f, 1.0f}) {
+                RigExecClothStep step;
+                step.h = h;
+                step.t = t;
+                step.gravity[0] = g[0];
+                step.gravity[1] = g[1];
+                step.gravity[2] = g[2];
+                const float gravityStep[3] = {g[0] * h, g[1] * h, g[2] * h};
+                auto from = m.points, to = m.points;
+                for (size_t i = 0; i < m.Size(); ++i) to[3 * i] += 1.0f;
+                for (size_t i = 0; i < m.Size(); ++i) {
+                    auto x = m.points, wantX = m.points;
+                    std::vector<float> xp(3 * m.Size(), 0.0f), wantXp(3 * m.Size(), 0.0f);
+                    std::vector<float> v(3 * m.Size(), 0.0f), wantV(3 * m.Size(), 0.0f);
+                    for (size_t k = 0; k < v.size(); ++k) {
+                        v[k] = 0.25f * float(int(k) - 3);
+                        wantV[k] = v[k];
+                    }
+                    for (int a = 0; a < 3; ++a)
+                        wantXp[3 * i + size_t(a)] = m.points[3 * i + size_t(a)];
+                    if (mesh.inverseMass[i] == 0.0f) {
+                        for (int a = 0; a < 3; ++a)
+                            wantX[3 * i + size_t(a)] = from[3 * i + size_t(a)] +
+                                (to[3 * i + size_t(a)] - from[3 * i + size_t(a)]) * t;
+                    } else {
+                        for (int a = 0; a < 3; ++a) {
+                            wantV[3 * i + size_t(a)] += gravityStep[a];
+                            wantX[3 * i + size_t(a)] += wantV[3 * i + size_t(a)] * h;
+                        }
+                    }
+                    RigExecClothPredict(mesh, step, from.data(), to.data(), i,
+                                        x.data(), xp.data(), v.data(), gravityStep);
+                    CHECK(same(x, wantX));
+                    CHECK(same(xp, wantXp));
+                    CHECK(same(v, wantV));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared > 200);
+}
+
 int main()
 {
     TestTopology();
@@ -1143,6 +1209,7 @@ int main()
     TestClearOfColliders();
     TestSweptBoundsAndBroadphase();
     TestSingleIterationMatchesMulti();
+    TestPredictUsesGravityStep();
     TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();
