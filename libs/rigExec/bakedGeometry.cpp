@@ -3279,6 +3279,137 @@ MatrixEnvelopeNoteVerdict(
     revision->matrixEnvelopeVerdict = verdict;
 }
 
+/// Whether one matrix leaf's content version keys its value: the role's
+/// declared index, whose version stands only while its bytes do. A leaf a
+/// walk or a produced value answers carries no version, as the blend-layout
+/// keys hold; an undeclared role reads a fixed fallback. The declaration
+/// is build state, so a moved index drops the key.
+bool
+_MatrixLeafVersionStands(const RigExecBakedPathLeaves &sources,
+                         RigExecRevisionLeafRole role, int heldIndex,
+                         uint64_t heldVersion)
+{
+    const int k = sources.decl.Role(role);
+    if (k != heldIndex) {
+        return false;
+    }
+    if (k < 0) {
+        return true;
+    }
+    const auto at = [k](const std::vector<int> &v) {
+        return size_t(k) < v.size() ? v[size_t(k)] : -1;
+    };
+    return size_t(k) < sources.versions.size() && at(sources.walks) < 0 &&
+        at(sources.exactVersions) < 0 && at(sources.exactRecordIndices) < 0 &&
+        sources.versions[size_t(k)] == heldVersion;
+}
+
+/// Whether the revision holds its assembled matrix parameters: every input
+/// the leaf assembly reads stands -- the scalar leaves by content version,
+/// the folded transform bit for bit, and the bound packet by shared
+/// revision (an unbound revision reads the DefaultWeight leaf instead).
+/// Answered false for a current-phase revision, an unshared packet, or a
+/// revision with blend channels, which assemble every run.
+bool
+MatrixParamsHeld(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision)
+{
+    if (!revision.matrixParamsHeld || revision.weightCurrentPhase ||
+        !revision.blendChannels.empty()) {
+        return false;
+    }
+    const bool packetBound = revision.weightObject >= 0;
+    if (packetBound) {
+        bool shared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, revision, &shared);
+        if (!shared ||
+            packetRevision != revision.matrixParamsPacketRevision) {
+            return false;
+        }
+    }
+    if (revision.haveTransform != revision.matrixParamsHaveTransform) {
+        return false;
+    }
+    if (revision.haveTransform &&
+        std::memcmp(&revision.transform, &revision.matrixParamsTransform,
+                    sizeof(GfMatrix4d)) != 0) {
+        return false;
+    }
+    const RigExecBakedPathLeaves &sources = revision.leaves;
+    return _MatrixLeafVersionStands(
+               sources, RigExecRevisionLeafRole::WeightBlend,
+               revision.matrixParamsWeightBlendIndex,
+               revision.matrixParamsWeightBlendVersion) &&
+        _MatrixLeafVersionStands(sources, RigExecRevisionLeafRole::Enabled,
+                                 revision.matrixParamsEnabledIndex,
+                                 revision.matrixParamsEnabledVersion) &&
+        _MatrixLeafVersionStands(
+            sources, RigExecRevisionLeafRole::DefaultWeight,
+            revision.matrixParamsDefaultWeightIndex,
+            revision.matrixParamsDefaultWeightVersion);
+}
+
+/// Notes the key the fresh assembly just read: the scalar leaves' role
+/// indices and content versions, the folded transform, and the bound
+/// packet's shared revision. Drops the claim where no key covers the
+/// inputs: a current-phase revision, an unshared packet, blend channels,
+/// or leaves no version tracks.
+void
+MatrixParamsNote(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision)
+{
+    revision->matrixParamsHeld = false;
+    if (revision->weightCurrentPhase || !revision->blendChannels.empty()) {
+        return;
+    }
+    const bool packetBound = revision->weightObject >= 0;
+    uint64_t packetRevision = 0;
+    if (packetBound) {
+        bool shared = false;
+        packetRevision = MatrixEnvelopePacketRevision(B, *revision, &shared);
+        if (!shared) {
+            return;
+        }
+    }
+    const RigExecBakedPathLeaves &sources = revision->leaves;
+    const auto key = [&sources](RigExecRevisionLeafRole role, int *index,
+                                uint64_t *version) {
+        const int k = sources.decl.Role(role);
+        *index = k;
+        if (k < 0) {
+            return true;
+        }
+        const auto at = [k](const std::vector<int> &v) {
+            return size_t(k) < v.size() ? v[size_t(k)] : -1;
+        };
+        if (!(size_t(k) < sources.versions.size() &&
+              at(sources.walks) < 0 && at(sources.exactVersions) < 0 &&
+              at(sources.exactRecordIndices) < 0)) {
+            return false;
+        }
+        *version = sources.versions[size_t(k)];
+        return true;
+    };
+    if (!key(RigExecRevisionLeafRole::WeightBlend,
+             &revision->matrixParamsWeightBlendIndex,
+             &revision->matrixParamsWeightBlendVersion) ||
+        !key(RigExecRevisionLeafRole::Enabled,
+             &revision->matrixParamsEnabledIndex,
+             &revision->matrixParamsEnabledVersion) ||
+        !key(RigExecRevisionLeafRole::DefaultWeight,
+             &revision->matrixParamsDefaultWeightIndex,
+             &revision->matrixParamsDefaultWeightVersion)) {
+        return;
+    }
+    revision->matrixParamsHaveTransform = revision->haveTransform;
+    revision->matrixParamsTransform = revision->transform;
+    revision->matrixParamsPacketRevision = packetRevision;
+    revision->matrixParamsHeld = true;
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -4939,24 +5070,37 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             (!rangeLattice || revision.restBaseVersion != chain.baseVersion)) {
             revision.restBaseHeld = false;
         }
-        RigExecMoverParameters assembled =
-            AssembleRevision(B, &revision, chain.lastBase.cdata(),
-                             chain.lastBase.size(), time, step,chain.lastBase.size());
-        // A range-chain blend keys its deltas by a content version moved
-        // exactly when their bytes do, not by the bytes.
-        if (rangeChain && revision.op == RigExecRevisionOp::BlendShape &&
-            !RigExecBakedSamePoints(assembled.blendDeltas.data(),
-                                    assembled.blendDeltas.size(),
-                                    revision.parameters.blendDeltas.data(),
-                                    revision.parameters.blendDeltas.size())) {
-            ++revision.deltasVersion;
+        // A matrix revision's held parameters while every input the
+        // assembly reads stands, else the fresh assembly, whose key is
+        // then noted: the same parameters either way.
+        if (revision.op == RigExecRevisionOp::Matrix &&
+            MatrixParamsHeld(B, revision)) {
+            // Held: revision.parameters stands as assembled.
+        } else {
+            RigExecMoverParameters assembled = AssembleRevision(
+                B, &revision, chain.lastBase.cdata(), chain.lastBase.size(),
+                time, step, chain.lastBase.size());
+            // A range-chain blend keys its deltas by a content version
+            // moved exactly when their bytes do, not by the bytes.
+            if (rangeChain && revision.op == RigExecRevisionOp::BlendShape &&
+                !RigExecBakedSamePoints(
+                    assembled.blendDeltas.data(), assembled.blendDeltas.size(),
+                    revision.parameters.blendDeltas.data(),
+                    revision.parameters.blendDeltas.size())) {
+                ++revision.deltasVersion;
+            }
+            // The replaced packet's delta buffer becomes the next
+            // assembly's (RigExecBakedAssembleFromLeaves); nothing reads it
+            // before then.
+            if (revision.op == RigExecRevisionOp::BlendShape) {
+                revision.deltasSpare =
+                    std::move(revision.parameters.blendDeltas);
+            }
+            revision.parameters = std::move(assembled);
+            if (revision.op == RigExecRevisionOp::Matrix) {
+                MatrixParamsNote(B, &revision);
+            }
         }
-        // The replaced packet's delta buffer becomes the next assembly's
-        // (RigExecBakedAssembleFromLeaves); nothing reads it before then.
-        if (revision.op == RigExecRevisionOp::BlendShape) {
-            revision.deltasSpare = std::move(revision.parameters.blendDeltas);
-        }
-        revision.parameters = std::move(assembled);
         if (rangeLattice) {
             // The lattice arm copies the base (or takes the held copy back)
             // into a valid packet's rest points and leaves them empty

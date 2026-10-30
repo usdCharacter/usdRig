@@ -3533,6 +3533,29 @@ struct RigExecBakedProgramImpl {
         uint64_t matrixEnvelopePacketRevision = 0;
         size_t matrixEnvelopeCount = 0;
         bool matrixEnvelopeVerdict = false;
+        /// A matrix revision's assembled parameters, held while every
+        /// input the leaf assembly reads stands: the WeightBlend, Enabled
+        /// and DefaultWeight leaf content versions at their role indices,
+        /// the folded transform bit for bit, and the shared packet's
+        /// revision when a packet is bound (an unbound revision reads the
+        /// DefaultWeight leaf instead). The assembly is a pure function
+        /// of those inputs, so the retained parameters are the assembled
+        /// ones while the key stands, and RevisionStatic skips the
+        /// assembly, its packet copy and the move. Never held for a
+        /// current-phase revision, an unshared packet, a revision with
+        /// blend channels, or leaves a walk or a produced value answers
+        /// (those carry no content version). The value id is set at
+        /// compile, which drops the claim.
+        bool matrixParamsHeld = false;
+        int matrixParamsWeightBlendIndex = -1;
+        int matrixParamsEnabledIndex = -1;
+        int matrixParamsDefaultWeightIndex = -1;
+        uint64_t matrixParamsWeightBlendVersion = 0;
+        uint64_t matrixParamsEnabledVersion = 0;
+        uint64_t matrixParamsDefaultWeightVersion = 0;
+        bool matrixParamsHaveTransform = false;
+        GfMatrix4d matrixParamsTransform{1.0};
+        uint64_t matrixParamsPacketRevision = 0;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;
@@ -6237,6 +6260,16 @@ struct RigExecBakedRunShadow {
         uint64_t matrixEnvelopePacketRevision = 0;
         size_t matrixEnvelopeCount = 0;
         bool matrixEnvelopeVerdict = false;
+        bool matrixParamsHeld = false;
+        int matrixParamsWeightBlendIndex = -1;
+        int matrixParamsEnabledIndex = -1;
+        int matrixParamsDefaultWeightIndex = -1;
+        uint64_t matrixParamsWeightBlendVersion = 0;
+        uint64_t matrixParamsEnabledVersion = 0;
+        uint64_t matrixParamsDefaultWeightVersion = 0;
+        bool matrixParamsHaveTransform = false;
+        GfMatrix4d matrixParamsTransform{1.0};
+        uint64_t matrixParamsPacketRevision = 0;
         std::vector<uint64_t> joinSeen;
         uint32_t rangeRefusals = 0;
         /// Copied as states (refs and own[] handles), never as bytes.

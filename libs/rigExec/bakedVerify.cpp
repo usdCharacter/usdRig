@@ -454,6 +454,20 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
         revision.matrixEnvelopePacketRevision;
     state->matrixEnvelopeCount = revision.matrixEnvelopeCount;
     state->matrixEnvelopeVerdict = revision.matrixEnvelopeVerdict;
+    state->matrixParamsHeld = revision.matrixParamsHeld;
+    state->matrixParamsWeightBlendIndex =
+        revision.matrixParamsWeightBlendIndex;
+    state->matrixParamsEnabledIndex = revision.matrixParamsEnabledIndex;
+    state->matrixParamsDefaultWeightIndex =
+        revision.matrixParamsDefaultWeightIndex;
+    state->matrixParamsWeightBlendVersion =
+        revision.matrixParamsWeightBlendVersion;
+    state->matrixParamsEnabledVersion = revision.matrixParamsEnabledVersion;
+    state->matrixParamsDefaultWeightVersion =
+        revision.matrixParamsDefaultWeightVersion;
+    state->matrixParamsHaveTransform = revision.matrixParamsHaveTransform;
+    state->matrixParamsTransform = revision.matrixParamsTransform;
+    state->matrixParamsPacketRevision = revision.matrixParamsPacketRevision;
     state->layoutUsable = revision.layoutUsable;
     state->topology = revision.topology;
     state->partitionTopology = revision.partitionTopology;
@@ -550,6 +564,20 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
         state.matrixEnvelopePacketRevision;
     revision->matrixEnvelopeCount = state.matrixEnvelopeCount;
     revision->matrixEnvelopeVerdict = state.matrixEnvelopeVerdict;
+    revision->matrixParamsHeld = state.matrixParamsHeld;
+    revision->matrixParamsWeightBlendIndex =
+        state.matrixParamsWeightBlendIndex;
+    revision->matrixParamsEnabledIndex = state.matrixParamsEnabledIndex;
+    revision->matrixParamsDefaultWeightIndex =
+        state.matrixParamsDefaultWeightIndex;
+    revision->matrixParamsWeightBlendVersion =
+        state.matrixParamsWeightBlendVersion;
+    revision->matrixParamsEnabledVersion = state.matrixParamsEnabledVersion;
+    revision->matrixParamsDefaultWeightVersion =
+        state.matrixParamsDefaultWeightVersion;
+    revision->matrixParamsHaveTransform = state.matrixParamsHaveTransform;
+    revision->matrixParamsTransform = state.matrixParamsTransform;
+    revision->matrixParamsPacketRevision = state.matrixParamsPacketRevision;
     revision->layoutUsable = state.layoutUsable;
     revision->topology = state.topology;
     revision->partitionTopology = state.partitionTopology;

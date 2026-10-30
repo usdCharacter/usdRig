@@ -1026,6 +1026,7 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
                 ? packetValue[size_t(revision.weightObject)] : -1;
             revision.weightValuesHeld=false;
             revision.matrixEnvelopeHeld=false;
+            revision.matrixParamsHeld=false;
         }
     }
     BuildSpaceLeafIndex(B);
