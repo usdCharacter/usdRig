@@ -2221,7 +2221,20 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 for (size_t edge = 0; edge < 3; ++edge) {
                     const int32_t k = mesh.triEdges[6*tri+2*edge];
                     const int32_t l = mesh.triEdges[6*tri+2*edge+1];
-                    if (i == k || i == l || j == k || j == l) continue;
+                    // Adjacency first where the mesh built the union rows: every
+                    // neighbor list holds its own vertex, so the constraint
+                    // row holds both endpoints and every endpoint-sharing
+                    // pair tests adjacent. The share test would skip nothing
+                    // more, and the twin skip and the dedup order see the
+                    // same survivors in the same order, with the same
+                    // verdicts. Past the size cap the share test stays ahead
+                    // of the insert, and the linear scans stay behind it so
+                    // a rediscovered pair still skips them.
+                    if (useEdgeBits) {
+                        if (AdjacentToEdgeBits(mesh, c, k) ||
+                            AdjacentToEdgeBits(mesh, c, l)) continue;
+                    }
+                    else if (i == k || i == l || j == k || j == l) continue;
                     // Twin skip: the edge's smallest twin triangle sits
                     // earlier in this ascending bucket, so the same pair
                     // was already visited from this constraint and the
@@ -2229,17 +2242,6 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     const int32_t twin = mesh.triEdgeTwin[3*tri+edge];
                     if (twin >= 0 && twin < int32_t(tri) &&
                         twinStamp[size_t(twin)] == twinMark) continue;
-                    // Adjacency before dedup where the mesh built the
-                    // union rows: the two bit tests are cheaper than the
-                    // insert, so adjacent pairs skip the insert and a
-                    // rediscovered adjacent pair re-tests instead of
-                    // hitting the set, with the same verdicts. Past the
-                    // size cap the linear scans stay behind the insert,
-                    // so a rediscovered pair still skips them.
-                    if (useEdgeBits) {
-                        if (AdjacentToEdgeBits(mesh, c, k) ||
-                            AdjacentToEdgeBits(mesh, c, l)) continue;
-                    }
                     // Both edges arrive sorted with four distinct
                     // endpoints, so the pair order is one compare.
                     std::array<int32_t,4> key{{i,j,k,l}};

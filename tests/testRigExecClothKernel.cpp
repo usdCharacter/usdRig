@@ -1840,6 +1840,52 @@ void TestEdgeBitsMatchVertices()
     }
 }
 
+void TestSharedEndpointsTestAdjacent()
+{
+    // The edge/edge discovery tests union-row adjacency before the twin
+    // skip, with no endpoint-sharing test: every neighbor list holds its
+    // own vertex, so the constraint row holds both endpoints and every
+    // endpoint-sharing pair tests adjacent. Exhausted here over every
+    // stretch constraint against every triangle edge, on an open curtain
+    // and a closed sphere.
+    const Mesh meshes[] = {Curtain(4, 3.0f, 2.0f), Sphere(1.0f, 4, 6)};
+    for (const Mesh &m : meshes) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(!mesh.edgeNeighborBits.empty());
+        if (mesh.edgeNeighborBits.empty()) continue;
+        size_t shared = 0, checked = 0, stretch = 0;
+        const size_t triCount = mesh.triangles.size() / 3;
+        for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+            if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch))
+                continue;
+            ++stretch;
+            const int32_t i = mesh.constraintEnds[2 * c];
+            const int32_t j = mesh.constraintEnds[2 * c + 1];
+            for (size_t t = 0; t < triCount; ++t) {
+                for (size_t e = 0; e < 3; ++e) {
+                    const int32_t k = mesh.triEdges[6 * t + 2 * e];
+                    const int32_t l = mesh.triEdges[6 * t + 2 * e + 1];
+                    ++checked;
+                    if (!(i == k || i == l || j == k || j == l)) continue;
+                    ++shared;
+                    CHECK(cloth_detail::AdjacentToEdgeBits(mesh, c, k) ||
+                          cloth_detail::AdjacentToEdgeBits(mesh, c, l));
+                }
+            }
+        }
+        CHECK(shared > 0);
+        CHECK(checked == stretch * triCount * 3);
+    }
+}
+
 void TestTriBitsMatchVertices()
 {
     // Each triangle's union row reports the vertices neighboring any
@@ -2896,6 +2942,7 @@ int main()
     TestSelfPairDiscoveryOrder();
     TestNeighborBitsMatchLists();
     TestEdgeBitsMatchVertices();
+    TestSharedEndpointsTestAdjacent();
     TestTriBitsMatchVertices();
     TestStrengthCacheMatchesDirect();
     TestSelfEdgeCanonicalization();
