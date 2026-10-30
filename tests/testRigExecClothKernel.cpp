@@ -1663,6 +1663,52 @@ void TestSelfEdgeCanonicalization()
     CHECK(compared == 90);
 }
 
+void TestTriSpheresRetireOnTouch()
+{
+    // The vertex/triangle band caches centroid spheres until a correction
+    // moves a corner: a first fetch computes from the positions, a touch
+    // elsewhere keeps the cached tick and values, and touching any of the
+    // three corners retires the sphere so the next fetch recomputes.
+    // Freshness reuses the edge spheres' ticks and clock.
+    Mesh m;
+    m.points = {-1,-1,0, 1,-1,0, 0,1,0, -1,-1,.5f, 1,-1,.5f, 0,1,.5f};
+    m.counts = {3,3}; m.indices = {0,1,2,3,4,5};
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothEdgeSpheres spheres;
+    spheres.vertTick.assign(m.Size(), 0);
+    std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    RigExecClothTriSpheres tris;
+    tris.centers.assign(6, 0.0f);
+    tris.radii.assign(2, 0.0f);
+    tris.triTick.assign(2, 0);
+    std::vector<float> x = m.points;
+    float c[3], r;
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), c, &r);
+    CHECK(c[0] == (x[0] + x[3] + x[6]) / 3.0f &&
+          c[1] == (x[1] + x[4] + x[7]) / 3.0f &&
+          c[2] == (x[2] + x[5] + x[8]) / 3.0f);
+    const uint64_t first = tris.triTick[0];
+    CHECK(first == spheres.clock);
+    x[9] += 0.25f;
+    cloth_detail::TouchVerts(&spheres, 3, 4, 5, 3);
+    float kept[3], keptR;
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), kept, &keptR);
+    CHECK(tris.triTick[0] == first);
+    CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
+    for (int32_t v : {0, 1, 2}) {
+        x[3 * size_t(v)] += 0.5f;
+        cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        float fresh[3], freshR;
+        cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), fresh, &freshR);
+        CHECK(tris.triTick[0] != first);
+        CHECK(fresh[0] == (x[0] + x[3] + x[6]) / 3.0f &&
+              fresh[1] == (x[1] + x[4] + x[7]) / 3.0f &&
+              fresh[2] == (x[2] + x[5] + x[8]) / 3.0f);
+    }
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -2138,6 +2184,7 @@ int main()
     TestSelfPairDiscoveryOrder();
     TestNeighborBitsMatchLists();
     TestSelfEdgeCanonicalization();
+    TestTriSpheresRetireOnTouch();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();

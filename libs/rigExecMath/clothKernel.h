@@ -285,6 +285,17 @@ struct RigExecClothEdgeSpheres {
     uint64_t clock = 0;
 };
 
+/// Lazily fresh triangle spheres for the self vertex/triangle band, over
+/// caller-retained storage. Freshness reuses the edge spheres' vertex
+/// ticks and clock: a sphere is fresh when its compute tick covers all
+/// three corner touch ticks, so a correction retires every sphere over a
+/// vertex it moves with no new clock.
+struct RigExecClothTriSpheres {
+    std::vector<float> centers;
+    std::vector<float> radii;
+    std::vector<uint64_t> triTick;
+};
+
 /// Scratch a solve reuses. Owned by the one body that solves; never shared.
 struct RigExecClothWorkspace {
     std::vector<float> x, previous, velocity, lambda;
@@ -301,6 +312,8 @@ struct RigExecClothWorkspace {
     RigExecClothPairSet selfPairs;
     /// The self edge/edge spheres, sized per call, their storage retained.
     RigExecClothEdgeSpheres selfSpheres;
+    /// The self vertex/triangle spheres, sized per call, retained alike.
+    RigExecClothTriSpheres selfTriSpheres;
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
     RigExecClothContactTris contacts;
@@ -1693,6 +1706,39 @@ inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
     spheres->edgeTick[slot] = spheres->clock;
 }
 
+// The centroid sphere of a triangle, cached until a correction moves a
+// corner. Freshness reuses the edge spheres' ticks: the caller passes
+// the corners it already holds.
+inline void TriSphere(RigExecClothTriSpheres *tris, RigExecClothEdgeSpheres *spheres,
+                      size_t tri, int32_t u, int32_t v, int32_t w,
+                      const float *x, float *center, float *radius)
+{
+    const uint64_t stamp = tris->triTick[tri];
+    if (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)] &&
+        stamp >= spheres->vertTick[size_t(w)]) {
+        center[0] = tris->centers[3 * tri];
+        center[1] = tris->centers[3 * tri + 1];
+        center[2] = tris->centers[3 * tri + 2];
+        *radius = tris->radii[tri];
+        return;
+    }
+    const float *a = x + 3 * size_t(u), *b = x + 3 * size_t(v), *c = x + 3 * size_t(w);
+    center[0] = (a[0] + b[0] + c[0]) / 3.0f;
+    center[1] = (a[1] + b[1] + c[1]) / 3.0f;
+    center[2] = (a[2] + b[2] + c[2]) / 3.0f;
+    const float d0 = a[0] - center[0], d1 = a[1] - center[1], d2 = a[2] - center[2];
+    const float e0 = b[0] - center[0], e1 = b[1] - center[1], e2 = b[2] - center[2];
+    const float f0 = c[0] - center[0], f1 = c[1] - center[1], f2 = c[2] - center[2];
+    *radius = std::sqrt(std::max(d0 * d0 + d1 * d1 + d2 * d2,
+                                 std::max(e0 * e0 + e1 * e1 + e2 * e2,
+                                          f0 * f0 + f1 * f1 + f2 * f2)));
+    tris->centers[3 * tri] = center[0];
+    tris->centers[3 * tri + 1] = center[1];
+    tris->centers[3 * tri + 2] = center[2];
+    tris->radii[tri] = *radius;
+    tris->triTick[tri] = spheres->clock;
+}
+
 // Retires every cached sphere over four corrected vertices, after the
 // writes. No sphere is computed between a pair's projection and its
 // friction writes to the same vertices, so one touch covers both.
@@ -1746,6 +1792,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         spheres.vertTick.assign(mesh.pointCount, 0);
     }
     std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    RigExecClothTriSpheres &triSpheres = ws->selfTriSpheres;
+    const size_t sphereTris = mesh.triangles.size() / 3;
+    if (triSpheres.centers.size() != 3 * sphereTris) {
+        triSpheres.centers.assign(3 * sphereTris, 0.0f);
+        triSpheres.radii.assign(sphereTris, 0.0f);
+        triSpheres.triTick.assign(sphereTris, 0);
+    }
     // The triangle buffer persists in the workspace: assignment reuses it
     // instead of allocating per call, and a model without a running self
     // profile never copies it. Same values.
@@ -1793,6 +1846,21 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                                                     : AdjacentTo(mesh.neighbors[i], b.vertices[q]));
                 }
                 if (adjacent) continue;
+                // The triangle-sphere band: the centroid holds every
+                // triangle point within the radius, so a point further
+                // than radius plus reach from the centroid dies at the
+                // distance test below. The 2^-10 margin is far outside
+                // float rounding, a NaN input compares false and skips
+                // nothing, and clamping a negative reach at zero stays
+                // conservative. Skips the barycentric weights.
+                float tc[3], tr;
+                TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
+                          b.vertices[1], b.vertices[2], x, tc, &tr);
+                const float reach = tr + std::max(std::max(thickness, step.depth), 0.0f);
+                const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
+                            dd2 = point[2] - tc[2];
+                if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 > reach * reach * 1.0009765625f)
+                    continue;
                 const float *v0 = x + 3 * size_t(b.vertices[0]);
                 const float *v1 = x + 3 * size_t(b.vertices[1]);
                 const float *v2 = x + 3 * size_t(b.vertices[2]);
