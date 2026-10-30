@@ -1833,9 +1833,10 @@ void TestEdgeSpheresRetireOnTouch()
     spheres.edgeTick.assign(edges, 0);
     spheres.vertTick.assign(m.Size(), 0);
     std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    uint64_t now = spheres.clock;
     std::vector<float> x = m.points;
     float c[3], r;
-    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), c, &r);
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), c, &r, now);
     CHECK(c[0] == (x[0] + x[3]) * 0.5f && c[1] == (x[1] + x[4]) * 0.5f &&
           c[2] == (x[2] + x[5]) * 0.5f);
     const float e0 = x[3] - x[0], e1 = x[4] - x[1], e2 = x[5] - x[2];
@@ -1844,23 +1845,23 @@ void TestEdgeSpheresRetireOnTouch()
     CHECK(first == spheres.clock);
     // While no touch has landed, a second fetch hits on the stamp alone.
     float clean[3], cleanR;
-    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), clean, &cleanR);
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), clean, &cleanR, now);
     CHECK(spheres.edgeTick[0] == first);
     CHECK(clean[0] == c[0] && clean[1] == c[1] && clean[2] == c[2] && cleanR == r);
     // A touch that avoids both endpoints keeps the cached sphere, even
     // when other positions move.
     x[6] += 0.25f;
-    cloth_detail::TouchVerts(&spheres, 2, 3, 4, 5);
+    now = cloth_detail::TouchVerts(&spheres, 2, 3, 4, 5);
     float kept[3], keptR;
-    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), kept, &keptR);
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), kept, &keptR, now);
     CHECK(spheres.edgeTick[0] == first);
     CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
     // Moving either endpoint and touching it retires the sphere.
     for (int32_t v : {0, 1}) {
         x[3 * size_t(v)] += 0.5f;
-        cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        now = cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
         float fresh[3], freshR;
-        cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), fresh, &freshR);
+        cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), fresh, &freshR, now);
         CHECK(spheres.edgeTick[0] != first);
         CHECK(fresh[0] == (x[0] + x[3]) * 0.5f &&
               fresh[1] == (x[1] + x[4]) * 0.5f &&
@@ -2701,33 +2702,34 @@ void TestTriSpheresRetireOnTouch()
     RigExecClothEdgeSpheres spheres;
     spheres.vertTick.assign(m.Size(), 0);
     std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    uint64_t now = spheres.clock;
     RigExecClothTriSpheres tris;
     tris.centers.assign(6, 0.0f);
     tris.radii.assign(2, 0.0f);
     tris.triTick.assign(2, 0);
     std::vector<float> x = m.points;
     float c[3], r;
-    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), c, &r);
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), c, &r, now);
     CHECK(c[0] == (x[0] + x[3] + x[6]) / 3.0f &&
           c[1] == (x[1] + x[4] + x[7]) / 3.0f &&
           c[2] == (x[2] + x[5] + x[8]) / 3.0f);
     const uint64_t first = tris.triTick[0];
     CHECK(first == spheres.clock);
     float clean[3], cleanR;
-    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), clean, &cleanR);
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), clean, &cleanR, now);
     CHECK(tris.triTick[0] == first);
     CHECK(clean[0] == c[0] && clean[1] == c[1] && clean[2] == c[2] && cleanR == r);
     x[9] += 0.25f;
-    cloth_detail::TouchVerts(&spheres, 3, 4, 5, 3);
+    now = cloth_detail::TouchVerts(&spheres, 3, 4, 5, 3);
     float kept[3], keptR;
-    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), kept, &keptR);
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), kept, &keptR, now);
     CHECK(tris.triTick[0] == first);
     CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
     for (int32_t v : {0, 1, 2}) {
         x[3 * size_t(v)] += 0.5f;
-        cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        now = cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
         float fresh[3], freshR;
-        cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), fresh, &freshR);
+        cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), fresh, &freshR, now);
         CHECK(tris.triTick[0] != first);
         CHECK(fresh[0] == (x[0] + x[3] + x[6]) / 3.0f &&
               fresh[1] == (x[1] + x[4] + x[7]) / 3.0f &&

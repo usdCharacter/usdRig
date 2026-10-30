@@ -1952,11 +1952,14 @@ namespace cloth_detail {
 // the constraint index, or past the constraints for a triangle edge. A
 // stamp from the current clock computed after every touch so far, so it
 // covers this edge's touches too; otherwise the endpoint ticks decide.
+// The clock arrives as the caller's held tick: it only advances in
+// TouchVerts beside a correction, so the caller refreshes one copy at
+// each touch instead of every fetch reloading it, with the same verdicts.
 inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
-                       int32_t v, const float *x, float *center, float *radius)
+                       int32_t v, const float *x, float *center, float *radius,
+                       uint64_t now)
 {
     const uint64_t stamp = spheres->edgeTick[slot];
-    const uint64_t now = spheres->clock;
     if (stamp == now || (stamp >= spheres->vertTick[size_t(u)] &&
                          stamp >= spheres->vertTick[size_t(v)])) {
         center[0] = spheres->centers[3 * slot];
@@ -1975,19 +1978,20 @@ inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
     spheres->centers[3 * slot + 1] = center[1];
     spheres->centers[3 * slot + 2] = center[2];
     spheres->radii[slot] = *radius;
-    spheres->edgeTick[slot] = spheres->clock;
+    spheres->edgeTick[slot] = now;
 }
 
 // The centroid sphere of a triangle, cached until a correction moves a
 // corner. Freshness reuses the edge spheres' ticks: the caller passes
 // the corners it already holds. A stamp from the current clock covers
-// every corner's ticks; otherwise the three tick reads decide.
+// every corner's ticks; otherwise the three tick reads decide. The clock
+// arrives as the caller's held tick, refreshed at each touch.
 inline void TriSphere(RigExecClothTriSpheres *tris, RigExecClothEdgeSpheres *spheres,
                       size_t tri, int32_t u, int32_t v, int32_t w,
-                      const float *x, float *center, float *radius)
+                      const float *x, float *center, float *radius,
+                      uint64_t now)
 {
     const uint64_t stamp = tris->triTick[tri];
-    const uint64_t now = spheres->clock;
     if (stamp == now || (stamp >= spheres->vertTick[size_t(u)] &&
                          stamp >= spheres->vertTick[size_t(v)] &&
                          stamp >= spheres->vertTick[size_t(w)])) {
@@ -2011,20 +2015,22 @@ inline void TriSphere(RigExecClothTriSpheres *tris, RigExecClothEdgeSpheres *sph
     tris->centers[3 * tri + 1] = center[1];
     tris->centers[3 * tri + 2] = center[2];
     tris->radii[tri] = *radius;
-    tris->triTick[tri] = spheres->clock;
+    tris->triTick[tri] = now;
 }
 
 // Retires every cached sphere over four corrected vertices, after the
 // writes. No sphere is computed between a pair's projection and its
 // friction writes to the same vertices, so one touch covers both.
-inline void TouchVerts(RigExecClothEdgeSpheres *spheres, int32_t a, int32_t b,
-                       int32_t c, int32_t d)
+// Returns the advanced tick so the caller refreshes its held copy.
+inline uint64_t TouchVerts(RigExecClothEdgeSpheres *spheres, int32_t a, int32_t b,
+                           int32_t c, int32_t d)
 {
     const uint64_t tick = ++spheres->clock;
     spheres->vertTick[size_t(a)] = tick;
     spheres->vertTick[size_t(b)] = tick;
     spheres->vertTick[size_t(c)] = tick;
     spheres->vertTick[size_t(d)] = tick;
+    return tick;
 }
 
 } // namespace cloth_detail
@@ -2063,6 +2069,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         spheres.vertTick.assign(mesh.pointCount, 0);
     }
     std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    // The held sphere tick: the clock only advances in TouchVerts beside
+    // a correction, so every freshness check below reads this copy and
+    // each touch refreshes it; the same values fresh loads would read.
+    uint64_t tickNow = spheres.clock;
     RigExecClothTriSpheres &triSpheres = ws->selfTriSpheres;
     const size_t sphereTris = mesh.triangles.size() / 3;
     if (triSpheres.centers.size() != 3 * sphereTris) {
@@ -2154,7 +2164,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // conservative. Skips the barycentric weights.
                 float tc[3], tr;
                 TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
-                          b.vertices[1], b.vertices[2], x, tc, &tr);
+                          b.vertices[1], b.vertices[2], x, tc, &tr, tickNow);
                 const float reach = tr + bandLimit;
                 const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
                             dd2 = point[2] - tc[2];
@@ -2187,7 +2197,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // excluding vertices solely because they are in target.
                 const float correction = RigExecClothProjectSamples(mesh, step, p,
                     a, &b, signedDistance - thickness, n, true, &lambda, x, false);
-                TouchVerts(&spheres, int32_t(i), b.vertices[0], b.vertices[1], b.vertices[2]);
+                tickNow = TouchVerts(&spheres, int32_t(i), b.vertices[0], b.vertices[1], b.vertices[2]);
                 const float mu = p.friction * RigExecClothMap(p, ClothFriction, i);
                 if (!(correction > 0 && mu > 0)) continue;
                 RigExecClothSamplePoint(b, x, q);
@@ -2277,13 +2287,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // skips nothing.
                 if (triBandOn) {
                     if (!haveHeld) {
-                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
                         haveHeld = true;
                     }
                     float ttc[3], ttr;
                     TriSphere(&triSpheres, &spheres, tri, mesh.triangles[3*tri],
                               mesh.triangles[3*tri+1], mesh.triangles[3*tri+2],
-                              x, ttc, &ttr);
+                              x, ttc, &ttr, tickNow);
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
                     const float trr = ttr + heldR1 + triReach + heldThick;
@@ -2346,12 +2356,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // combination of the endpoint maps and the absolute
                     // bound covers every thickness sign.
                     if (!haveHeld) {
-                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
                         haveHeld = true;
                     }
                     float c2[3], r2;
                     EdgeSphere(&spheres, mesh.constraintRest.size() + 3 * tri + edge,
-                               k, l, x, c2, &r2);
+                               k, l, x, c2, &r2, tickNow);
                     const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
                                 dd2 = heldC1[2] - c2[2];
                     const float reach = heldR1 + r2 + heldThick;
@@ -2390,7 +2400,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     float &lambda = ws->selfLambda[{{int32_t(profileIndex),lkey[0],lkey[1],lkey[2],lkey[3]}}];
                     const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
                         Dot(mid,d)-thickness,d,true,&lambda,x,false);
-                    TouchVerts(&spheres, i, j, k, l);
+                    tickNow = TouchVerts(&spheres, i, j, k, l);
                     haveHeld = false;
                     triBandOn = false;
                     const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
