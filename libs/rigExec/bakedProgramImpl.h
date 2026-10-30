@@ -4540,6 +4540,12 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program, std::st
 bool RigExecBakedPruneProviderProgram(RigExecBakedProgramImpl *program, std::string *error);
 void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program);
 void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program, UsdTimeCode time, bool all);
+/// When \p captured holds \p time among its identities, the leaves it
+/// already resolved there are answered from those rows instead of being
+/// read off the stage a second time; anything the rows do not cover reads
+/// live as before.
+void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program, UsdTimeCode time, bool all,
+    const RigExecSceneDescriptors *captured);
 void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step);
 void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program);
 bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t index,

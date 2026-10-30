@@ -551,7 +551,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     }
     RigExecSpellProviderOwners(&B.providerProgram);
     B.providerValues.values.resize(B.providerProgram.valueKeys.size());
-    RigExecBakedSampleSpaces(&B,capture,true);
+    RigExecBakedSampleSpaces(&B,capture,true,&scene);
     return true;
 }
 const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &B,size_t k)
@@ -595,11 +595,24 @@ GfMatrix4d RigExecBakedProviderParentRaw(const RigExecBakedProgramImpl &B,int sl
 }
 void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,bool all)
 {
+    RigExecBakedSampleSpaces(program,time,all,nullptr);
+}
+void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,bool all,
+    const RigExecSceneDescriptors *captured)
+{
     auto &B=*program;
     auto &leaves=B.providerLeaves;
     const bool full=all || !leaves.sampled || leaves.stamp!=B.programStamp;
     const bool timeMoved=!leaves.sampled || time!=leaves.time;
     const bool defaultMoved=timeMoved && (time.IsDefault() || leaves.time.IsDefault());
+    // The capture's row for this same time, when one rode along: Build
+    // samples its space leaves at the capture time on the unchanged stage
+    // the capture just resolved, so those rows ARE this sample's Gets and
+    // resolve infos, answered without issuing them again.
+    size_t slot=0;
+    bool haveSlot=false;
+    if(captured) for(size_t s=0;s<captured->identities.size();++s)
+        if(captured->identities[s]==time){slot=s;haveSlot=true;break;}
     for(size_t k=0;k<leaves.attributes.size();++k) {
         leaves.changed[k]=0;
         if(!full && !leaves.mustSample[k] &&
@@ -608,8 +621,23 @@ void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,
         ++B.pathLeafSamples;
         const auto &attribute=leaves.attributes[k];
         VtValue value;
-        const bool blocked=attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
-        if(attribute) attribute.Get(&value,time);
+        bool blocked=false,sourced=false;
+        // Active prims only: the capture leaves inactive rows empty while a
+        // live read answers them, so those keep the live read, exactly as
+        // before, as does anything the rows do not cover.
+        if(haveSlot && attribute && attribute.GetPrim().IsActive() &&
+           k<leaves.decl.keys.size()) {
+            const auto row=captured->attributes.find(leaves.decl.keys[k].path);
+            if(row!=captured->attributes.end() && slot<row->second.inputs.size()) {
+                value=row->second.inputs[slot].raw;
+                blocked=row->second.inputs[slot].rawBlocked;
+                sourced=true;
+            }
+        }
+        if(!sourced) {
+            blocked=attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
+            if(attribute) attribute.Get(&value,time);
+        }
         leaves.changed[k]=!RigExecBakedHeadValueSame(value,leaves.values[k]) ||
             bool(B.providerLeafBlocked[k])!=blocked;
         if(leaves.changed[k]) RigExecBakedNoteSpaceLeafSampled(&B,k);
