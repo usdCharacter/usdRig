@@ -3717,6 +3717,76 @@ BaseGroupSource(const RigExecBakedProgramImpl::GeomChain &chain, size_t g)
     return source;
 }
 
+/// Group \p g of point version \p version of \p chain (chain index
+/// \p chainIndex of \p B, which \p chain is): the ref its writer published,
+/// and its content id through \p from, from ONE writer lookup. Answers
+/// exactly what RigExecBakedGroupAt plus RigExecBakedGroupSourceAt answer --
+/// the base group when no revision writes \p g, or a set-aside revision lies
+/// between, else the writer revision's group -- without scanning the chain
+/// twice, and without routing the writer's own slot back through the
+/// revision index: revision ids run contiguously chain by chain, so the
+/// writer's id names this chain and writer, and the revision in hand is the
+/// one the index would find. The caller passes the chain and index of one
+/// revision step, where the two always agree.
+const RigExecPointsRef<GfVec3f> &
+GroupEnteringAt(const RigExecBakedProgramImpl &B, int chainIndex,
+                const RigExecBakedProgramImpl::GeomChain &chain,
+                size_t version, size_t g, RigExecGroupSource *from)
+{
+    const bool chainOk =
+        chainIndex >= 0 && size_t(chainIndex) < B.chains.size();
+    const int writer = GroupWriter(chain, version, g);
+    const RigExecPointsRef<GfVec3f> *entering = &kNoGroup;
+    if (writer < 0) {
+        if (g < chain.baseGroups.size()) {
+            entering = &chain.baseGroups[g].published;
+        }
+        if (!chainOk) {
+            *from = RigExecGroupSource();
+        } else if (g < chain.baseGroups.size()) {
+            from->slot = -1 - int64_t(g);
+            from->version = chain.baseGroups[g].version;
+        } else {
+            from->slot = -1 - int64_t(g);
+            from->version = 0;
+        }
+        return *entering;
+    }
+    const RigExecBakedProgramImpl::GeomRevision &wrote =
+        chain.revisions[size_t(writer)];
+    if (g < wrote.groups.size()) {
+        entering = &wrote.groups[g].published;
+        from->version = wrote.groups[g].version;
+    } else {
+        from->version = 0;
+    }
+    // The writer's own RevisionOut slot, direct from its Build state: what
+    // RigExecBakedGroupSlot answers for its revision id, with the same
+    // bounds checks and the same arms. An index that names no chain answers
+    // the default id, as RigExecBakedGroupSourceAt does.
+    if (!chainOk) {
+        *from = RigExecGroupSource();
+        return *entering;
+    }
+    const int id = B.chainRevisionBegin[size_t(chainIndex)] + writer;
+    int slot = -1;
+    if (id >= 0 && size_t(id) < B.revisionIndex.size() &&
+        g < wrote.groupWritten.size()) {
+        switch (wrote.role) {
+        case RigExecBakedRevisionRole::Range:
+            slot = wrote.groupWritten[g] ? wrote.chunkBase + int(g) : -1;
+            break;
+        case RigExecBakedRevisionRole::Whole:
+            slot = wrote.chunkBase + int(wrote.chunks.size()) + int(g);
+            break;
+        case RigExecBakedRevisionRole::Legacy:
+            break;
+        }
+    }
+    from->slot = int64_t(slot);
+    return *entering;
+}
+
 /// Makes \p revision's `groupIds[g]` \p source and returns whether it moved.
 bool
 NoteGroupId(RigExecBakedProgramImpl::GeomRevision *revision, size_t g,
@@ -3794,10 +3864,10 @@ RunGroupStep(RigExecBakedProgramImpl &B,
                                   BaseGroupSource(chain, g));
         return;
     }
+    // The entering group and its content id from one writer lookup.
+    RigExecGroupSource from;
     const RigExecPointsRef<GfVec3f> &entering =
-        RigExecBakedGroupAt(chain, revisionIndex, g);
-    const RigExecGroupSource from =
-        RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
+        GroupEnteringAt(B, chainIndex, chain, revisionIndex, g, &from);
     const size_t begin = size_t(chain.groupBounds[g]);
     const size_t end = size_t(chain.groupBounds[g + 1]);
     const size_t count = revision->precedingCount;
