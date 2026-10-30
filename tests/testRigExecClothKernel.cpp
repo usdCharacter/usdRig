@@ -1198,6 +1198,81 @@ void TestPredictUsesGravityStep()
     CHECK(compared > 200);
 }
 
+void TestOutsideBoundsSkipsSearch()
+{
+    // The particle pass skips the contact search itself when the shared
+    // broadphase flags the particle outside the swept bounds. That verdict
+    // must imply an empty search (the direction the skip relies on): on and
+    // off the boundary, far away, and for non-finite points. A grid that
+    // never went through the build covers everything, so the precheck
+    // never fires on it and the search runs as before.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    float before[24], after[24];
+    for (int i = 0; i < 24; ++i) {
+        before[i] = box[i];
+        after[i] = box[i] + (i % 3 == 0 ? 4.0f : (i % 3 == 1 ? -2.0f : 1.0f));
+    }
+    RigExecClothGrid grid, fresh;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, before, after, 8.0f, &grid, &scratch);
+    const float thicknessDepth[][2] = {{0.5f, 2.0f}, {0.0f, 0.0f}, {2.0f, 0.5f}};
+    std::vector<std::array<float, 3>> queries;
+    queries.push_back({{0.0f, 8.0f, 0.0f}});
+    for (const auto &td : thicknessDepth) {
+        const float reach = std::max(td[0], td[1]);
+        for (int a = 0; a < 3; ++a) {
+            const float lo = grid.sweptLo[a] - reach;
+            const float hi = grid.sweptHi[a] + reach;
+            for (int k = 0; k <= 6; ++k) {
+                std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                q[size_t(a)] = lo + (hi - lo) * float(k) / 6.0f;
+                queries.push_back(q);
+            }
+            for (float edge : {lo, hi}) {
+                for (float qv : {edge, std::nextafterf(edge, -1e30f),
+                                 std::nextafterf(edge, 1e30f)}) {
+                    std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                    q[size_t(a)] = qv;
+                    queries.push_back(q);
+                }
+            }
+        }
+    }
+    for (float far : {-1e6f, 1e6f}) queries.push_back({{far, 0.0f, 0.0f}});
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    queries.push_back({{nan, 0.0f, 0.0f}});
+    queries.push_back({{0.0f, inf, 0.0f}});
+    queries.push_back({{-inf, 0.0f, 0.0f}});
+    size_t compared = 0;
+    bool sawOutside = false, sawInside = false;
+    for (const auto &td : thicknessDepth) {
+        const float reach = std::max(td[0], td[1]);
+        for (float t : {0.0f, 0.37f, 1.0f}) {
+            for (const auto &q : queries) {
+                CHECK(!RigExecClothOutsideSweptBounds(fresh, q.data(), reach));
+                const bool outside =
+                    RigExecClothOutsideSweptBounds(grid, q.data(), reach);
+                sawOutside = sawOutside || outside;
+                sawInside = sawInside || !outside;
+                const RigExecClothContact c = RigExecClothFindContact(
+                    colliders, grid, before, after, t, q.data(), td[0], td[1]);
+                if (outside) CHECK(c.triangle < 0);
+                ++compared;
+            }
+        }
+    }
+    CHECK(compared > 1000);
+    CHECK(sawOutside && sawInside);
+}
+
 int main()
 {
     TestTopology();
@@ -1210,6 +1285,7 @@ int main()
     TestSweptBoundsAndBroadphase();
     TestSingleIterationMatchesMulti();
     TestPredictUsesGravityStep();
+    TestOutsideBoundsSkipsSearch();
     TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();

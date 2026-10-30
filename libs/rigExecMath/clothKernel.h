@@ -783,6 +783,29 @@ struct RigExecClothContact {
     float weights[3] = {0, 0, 0};
 };
 
+/// True when particle position \p p lies outside the grid's swept collider
+/// bounds plus \p reach: farther than the reach from every triangle, so
+/// the contact search would fail each candidate on the reach verdict and
+/// return empty. The 2^-20 relative margin dwarfs the bound arithmetic's
+/// double rounding (2^-53) by 2^33, so a flagged particle is truly
+/// outside; boundary, NaN, and infinite inputs fail the comparisons and
+/// take the full path. The contact search's broadphase, shared so the
+/// particle pass skips the search itself on the verdict.
+inline bool
+RigExecClothOutsideSweptBounds(const RigExecClothGrid &grid, const float *p,
+                               float reach)
+{
+    for (int a = 0; a < 3; ++a) {
+        const double point = double(p[a]);
+        const double lo = double(grid.sweptLo[a]) - double(reach) -
+            (std::abs(double(grid.sweptLo[a])) + double(reach)) * 9.5367431640625e-07;
+        const double hi = double(grid.sweptHi[a]) + double(reach) +
+            (std::abs(double(grid.sweptHi[a])) + double(reach)) * 9.5367431640625e-07;
+        if (point < lo || point > hi) return true;
+    }
+    return false;
+}
+
 /// Interpolates every collider triangle of \p colliders at substep
 /// fraction \p t between \p before and \p after into \p out: the same
 /// corner lerps in the same order RigExecClothFindContact derives them,
@@ -861,22 +884,8 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     // Broadphase: outside the swept collider bounds plus the reach, a
     // particle is farther than the reach from every triangle, so the
     // bucket search below would fail each candidate on the reach verdict
-    // and return empty. The 2^-20 relative margin dwarfs the bound
-    // arithmetic's double rounding (2^-53) by 2^33, so a flagged
-    // particle is truly outside; boundary, NaN, and infinite inputs
-    // fail the comparisons and take the full path as before.
-    {
-        bool outside = false;
-        for (int a = 0; a < 3; ++a) {
-            const double point = double(p[a]);
-            const double lo = double(grid.sweptLo[a]) - double(reach) -
-                (std::abs(double(grid.sweptLo[a])) + double(reach)) * 9.5367431640625e-07;
-            const double hi = double(grid.sweptHi[a]) + double(reach) +
-                (std::abs(double(grid.sweptHi[a])) + double(reach)) * 9.5367431640625e-07;
-            if (point < lo || point > hi) { outside = true; break; }
-        }
-        if (outside) return best;
-    }
+    // and return empty.
+    if (RigExecClothOutsideSweptBounds(grid, p, reach)) return best;
     const uint32_t bucket = Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
                                  Cell(p[2], grid.cellSize), grid.bucketMask);
     {
@@ -1211,8 +1220,18 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         for (int a = 0; a < 3; ++a) pi[a] -= tangent[a] * k;
     }
     };
-    if (mesh.model.Empty()) solveContact(-1);
-    else for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c) solveContact(int(c));
+    if (mesh.model.Empty()) {
+        // Hot path: without profiles the search below runs with this
+        // step's thickness and depth, so its broadphase verdict is known
+        // here. Nearly every particle is outside the swept bounds; those
+        // skip the search call itself, bit-identically (the search would
+        // return empty on the same verdict).
+        const float reach = std::max(s.thickness, s.depth);
+        if (RigExecClothOutsideSweptBounds(grid, pi, reach)) return;
+        solveContact(-1);
+        return;
+    }
+    for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c) solveContact(int(c));
 }
 
 /// Velocity pass for particle \p i: the substep's displacement, damped.
