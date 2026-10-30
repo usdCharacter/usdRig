@@ -1087,7 +1087,12 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     while (buckets < 2 * triangleCount && buckets < (1u << 24)) buckets <<= 1;
     grid->bucketMask = buckets - 1;
     // Each triangle's buckets, once each, in triangle order; then a counting
-    // sort by bucket, which keeps the triangles of a bucket ascending.
+    // sort by bucket, which keeps the triangles of a bucket ascending. The
+    // counting sort is stable over triangle order, so each bucket lists the
+    // same triangles ascending whether one triangle's pairs arrive sorted
+    // or in span order; the per-triangle dedup runs on stamps instead of
+    // a sort, over the starts the counting sort clears next.
+    grid->bucketStart.assign(size_t(buckets) + 1, 0);
     scratch->clear();
     for (size_t t = 0; t < triangleCount; ++t) {
         float lo[3], hi[3];
@@ -1107,15 +1112,16 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
                 scratch->push_back((uint64_t(t) << 32) | uint64_t(b));
             continue;
         }
-        const size_t first = scratch->size();
+        const uint32_t mark = uint32_t(t) + 1;
         for (int64_t x = c0[0]; x <= c1[0]; ++x)
             for (int64_t y = c0[1]; y <= c1[1]; ++y)
-                for (int64_t z = c0[2]; z <= c1[2]; ++z)
-                    scratch->push_back((uint64_t(t) << 32) |
-                                       uint64_t(Hash(x, y, z, grid->bucketMask)));
-        std::sort(scratch->begin() + std::ptrdiff_t(first), scratch->end());
-        scratch->erase(std::unique(scratch->begin() + std::ptrdiff_t(first), scratch->end()),
-                       scratch->end());
+                for (int64_t z = c0[2]; z <= c1[2]; ++z) {
+                    const uint32_t b = Hash(x, y, z, grid->bucketMask);
+                    if (grid->bucketStart[b] != mark) {
+                        grid->bucketStart[b] = mark;
+                        scratch->push_back((uint64_t(t) << 32) | uint64_t(b));
+                    }
+                }
     }
     grid->bucketStart.assign(size_t(buckets) + 1, 0);
     for (uint64_t e : *scratch) ++grid->bucketStart[size_t(e & 0xffffffffull) + 1];

@@ -1596,6 +1596,70 @@ void TestClothGridDeterminism()
     RigExecClothGrid wide;
     RigExecBuildClothGrid(colliders, box, after, 20.0f, &wide, &scratch);
     CHECK(wide.cellSize > first.cellSize);
+    // Each bucket lists exactly its triangles, ascending: a brute-force
+    // rehash of every cell in every triangle's span, deduped through a
+    // set, agrees with the stamp-deduped build bucket by bucket.
+    const Mesh cm = Curtain(6, 4.0f, 3.0f);
+    RigExecClothColliders cc;
+    CHECK(RigExecAppendClothCollider(cm.Size(), cm.counts.data(), cm.counts.size(),
+                                     cm.indices.data(), cm.indices.size(), false, &cc));
+    std::vector<float> moved = cm.points;
+    for (size_t i = 0; i < moved.size(); ++i) moved[i] += 0.125f * float(int(i) % 5 - 2);
+    for (const float pad : {0.0f, 0.5f, 3.0f}) {
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(cc, cm.points.data(), moved.data(), pad, &grid, &scratch);
+        const size_t tris = cc.triangles.size() / 3;
+        const uint32_t buckets = grid.bucketMask + 1;
+        std::vector<std::set<int32_t>> want(buckets);
+        for (size_t t = 0; t < tris; ++t) {
+            float lo[3], hi[3];
+            bool finite = true;
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::numeric_limits<float>::infinity();
+                hi[a] = -std::numeric_limits<float>::infinity();
+            }
+            for (int k = 0; k < 3; ++k) {
+                const size_t v = size_t(cc.triangles[3 * t + size_t(k)]);
+                for (int a = 0; a < 3; ++a) {
+                    const float p = cm.points[3 * v + size_t(a)];
+                    const float q = moved[3 * v + size_t(a)];
+                    finite = finite && std::isfinite(p) && std::isfinite(q);
+                    lo[a] = std::min(lo[a], std::min(p, q));
+                    hi[a] = std::max(hi[a], std::max(p, q));
+                }
+            }
+            if (!finite) continue;
+            int64_t c0[3], c1[3];
+            for (int a = 0; a < 3; ++a) {
+                c0[a] = cloth_detail::Cell(lo[a] - pad, grid.cellSize);
+                c1[a] = cloth_detail::Cell(hi[a] + pad, grid.cellSize);
+            }
+            const uint64_t span = uint64_t(c1[0] - c0[0] + 1) *
+                                  uint64_t(c1[1] - c0[1] + 1) *
+                                  uint64_t(c1[2] - c0[2] + 1);
+            if (span >= buckets) {
+                for (uint32_t b = 0; b < buckets; ++b) want[b].insert(int32_t(t));
+                continue;
+            }
+            for (int64_t x = c0[0]; x <= c1[0]; ++x)
+                for (int64_t y = c0[1]; y <= c1[1]; ++y)
+                    for (int64_t z = c0[2]; z <= c1[2]; ++z)
+                        want[cloth_detail::Hash(x, y, z, grid.bucketMask)].insert(int32_t(t));
+        }
+        CHECK(grid.bucketStart.size() == size_t(buckets) + 1);
+        for (uint32_t b = 0; b < buckets; ++b) {
+            const uint32_t lo = grid.bucketStart[b], hi = grid.bucketStart[b + 1];
+            CHECK(hi - lo == want[b].size());
+            size_t k = lo;
+            int32_t prev = -1;
+            for (int32_t t : want[b]) {
+                CHECK(k < hi && grid.bucketTriangles[k] == t);
+                CHECK(t > prev);
+                prev = t;
+                ++k;
+            }
+        }
+    }
 }
 
 void TestSelfPairDiscoveryOrder()
