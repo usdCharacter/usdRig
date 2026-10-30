@@ -266,14 +266,19 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
                     (usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time));
                 attr.inputs.push_back(std::move(input));
             }
-            scene.attributes.emplace(property,std::move(attr));
+            // Prims arrive in sorted order with each prim's properties
+            // sorted, so every map grows in ascending key order; the end
+            // hint turns each descent into a constant-time append. A hint
+            // is advisory -- a frontend that lists another order only loses
+            // the shortcut, never correctness.
+            scene.attributes.emplace_hint(scene.attributes.end(),property,std::move(attr));
         }
         for (const auto &property : node.relationships) {
             RigExecSceneRelationshipDescriptor rel;
             if (!source.Relationship(property,&rel.fact) || !Phase(rel.fact.metadata,&rel.readPhase,error,property)) return false;
-            scene.relationships.emplace(property,std::move(rel));
+            scene.relationships.emplace_hint(scene.relationships.end(),property,std::move(rel));
         }
-        scene.nodes.emplace(path,std::move(node));
+        scene.nodes.emplace_hint(scene.nodes.end(),path,std::move(node));
     }
     // Primvar names translation publishes to: an animated map's authored
     // rigExec:primvarName or its prim name, a projector's authored shader
