@@ -273,6 +273,13 @@ struct RigExecClothPairSet {
     void Clear();
     /// True when the key was absent (now recorded), false for a duplicate.
     bool Insert(const std::array<int32_t, 4> &key);
+    /// Insert without the load check, after ReserveForBatch covered the
+    /// batch: the same probe and the same verdicts.
+    bool InsertNoGrow(const std::array<int32_t, 4> &key);
+    /// Grows the table until a batch of \p batchKeys inserts fits under
+    /// the 70% load cap, so the batch needs no per-insert check. Zero
+    /// keys is a no-op, never a spurious grow.
+    void ReserveForBatch(size_t batchKeys);
     /// Doubles the slots and rehashes, preserving the recorded set.
     void Grow();
 };
@@ -1994,6 +2001,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             ++twinMark;
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry)
                 twinStamp[size_t(grid.bucketTriangles[entry])] = twinMark;
+            // One load check per constraint covers its whole discovery
+            // batch: at most three inserts per bucket entry, so the
+            // table stays under the cap through the batch and the
+            // inserts below skip their checks with the same verdicts.
+            pairs.ReserveForBatch(
+                3 * (grid.bucketStart[bucket + 1] - grid.bucketStart[bucket]));
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
                 for (size_t edge = 0; edge < 3; ++edge) {
@@ -2014,7 +2027,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // endpoints, so the pair order is one compare.
                     std::array<int32_t,4> key{{i,j,k,l}};
                     if (k < i) key = {{k,l,i,j}};
-                    if (!pairs.Insert(key)) continue;
+                    if (!pairs.InsertNoGrow(key)) continue;
                     // The union row answers both endpoints at once; past
                     // the size cap the linear scans decide, as before.
                     bool adjacent;
@@ -2459,6 +2472,17 @@ inline void RigExecClothPairSet::Clear()
 inline bool RigExecClothPairSet::Insert(const std::array<int32_t, 4> &key)
 {
     if ((count + 1) * 10 > slots.size() * 7) Grow();
+    return InsertNoGrow(key);
+}
+
+inline void RigExecClothPairSet::ReserveForBatch(size_t batchKeys)
+{
+    if (!batchKeys) return;
+    while ((count + batchKeys + 1) * 10 > slots.size() * 7) Grow();
+}
+
+inline bool RigExecClothPairSet::InsertNoGrow(const std::array<int32_t, 4> &key)
+{
     uint32_t i = uint32_t(Hash(key)) & mask;
     for (;;) {
         const uint32_t word = i >> 6;

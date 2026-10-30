@@ -1408,6 +1408,87 @@ void TestPairSetMatchesOrderedSet()
     }
 }
 
+void TestPairSetPreGrownBatch()
+{
+    // A batch covered by ReserveForBatch inserts with the same verdicts
+    // as an ordered set, needs no grow mid-batch, and stays under the
+    // 70% load cap throughout; reserving zero keys never grows. The
+    // stream crosses growth with clustered duplicates.
+    uint64_t state = 0x9e3779b9u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<PairKey> stream;
+    for (int round = 0; round < 60; ++round)
+        for (int32_t i = 0; i < 150; ++i)
+            stream.push_back({{i, -i, round % 7, round % 3}});
+    for (size_t i = stream.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(stream[i], stream[j]);
+    }
+    RigExecClothPairSet set;
+    CHECK(set.SlotCount() == 0);
+    set.ReserveForBatch(0);
+    CHECK(set.SlotCount() == 0);
+    CHECK(set.count == 0);
+    std::set<PairKey> ref;
+    size_t dups = 0;
+    const size_t batch = 700;
+    for (size_t lo = 0; lo < stream.size(); lo += batch) {
+        const size_t hi = std::min(lo + batch, stream.size());
+        set.ReserveForBatch(hi - lo);
+        const size_t slots = set.SlotCount();
+        CHECK(slots > 0);
+        for (size_t k = lo; k < hi; ++k) {
+            const bool want = ref.insert(stream[k]).second;
+            dups += !want;
+            CHECK(set.InsertNoGrow(stream[k]) == want);
+            CHECK(set.SlotCount() == slots);
+            CHECK(set.count * 10 <= set.SlotCount() * 7);
+        }
+    }
+    CHECK(dups > 4000);
+    CHECK(set.count == ref.size());
+    // Sequential unique keys stress the reserve margin itself: every
+    // batch key is new, so an under-sized reserve breaches the cap.
+    set.Clear();
+    ref.clear();
+    std::vector<PairKey> sequential;
+    for (int32_t i = 0; i < 5000; ++i)
+        sequential.push_back({{i, i + 1, i + 2, i + 3}});
+    for (size_t lo = 0; lo < sequential.size(); lo += batch) {
+        const size_t hi = std::min(lo + batch, sequential.size());
+        set.ReserveForBatch(hi - lo);
+        const size_t slots = set.SlotCount();
+        for (size_t k = lo; k < hi; ++k) {
+            const bool want = ref.insert(sequential[k]).second;
+            CHECK(want);
+            CHECK(set.InsertNoGrow(sequential[k]) == want);
+            CHECK(set.SlotCount() == slots);
+            CHECK(set.count * 10 <= set.SlotCount() * 7);
+        }
+    }
+    CHECK(set.count == ref.size());
+    // One large batch pins the reserve size itself: an under-sized
+    // reserve fits the batch but breaches the cap.
+    set.Clear();
+    ref.clear();
+    std::vector<PairKey> bulk;
+    for (int32_t i = 0; i < 6000; ++i)
+        bulk.push_back({{i * 3, i * 3 + 1, -i, i}});
+    set.ReserveForBatch(bulk.size());
+    const size_t bulkSlots = set.SlotCount();
+    for (const PairKey &key : bulk) {
+        const bool want = ref.insert(key).second;
+        CHECK(want);
+        CHECK(set.InsertNoGrow(key) == want);
+        CHECK(set.SlotCount() == bulkSlots);
+        CHECK(set.count * 10 <= set.SlotCount() * 7);
+    }
+    CHECK(set.count == ref.size());
+}
+
 void TestEdgeSpheresRetireOnTouch()
 {
     // The self edge/edge band caches midpoint spheres until a correction
@@ -2348,6 +2429,7 @@ int main()
     TestHardSoftBarycentricAttachments();
     TestSelfContactKeepsAttachments();
     TestPairSetMatchesOrderedSet();
+    TestPairSetPreGrownBatch();
     TestEdgeSpheresRetireOnTouch();
     TestSelfGridReuseVerdict();
     TestClothGridDeterminism();
