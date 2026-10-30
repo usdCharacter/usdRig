@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <set>
 #include <vector>
 
 using namespace rigExec;
@@ -1332,6 +1333,81 @@ void TestSelfContactKeepsAttachments()
     }
 }
 
+using PairKey = std::array<int32_t, 4>;
+
+void TestPairSetMatchesOrderedSet()
+{
+    // The self-contact dedup set must give the same insert-or-duplicate
+    // verdicts as an ordered set on every stream: sequential (crossing
+    // growth), clustered duplicates, bench-scale, extreme values, and
+    // brute-forced hash collisions that chain the probe and wrap the
+    // mask. Replaying each stream after Clear must repeat the verdicts
+    // exactly (stale slots stay unread).
+    auto check = [](const std::vector<PairKey> &stream) {
+        RigExecClothPairSet set;
+        std::set<PairKey> ref;
+        for (const PairKey &key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        for (const PairKey &key : stream) CHECK(!set.Insert(key));
+        set.Clear();
+        ref.clear();
+        for (const PairKey &key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+    };
+    check({{{1, 2, 3, 4}}, {{1, 2, 3, 4}}, {{4, 3, 2, 1}}});
+    std::vector<PairKey> sequential;
+    for (int32_t i = 0; i < 40000; ++i)
+        sequential.push_back({{i, i + 1, i + 2, i + 3}});
+    check(sequential);
+    // Clustered duplicates in a deterministic shuffle: a set that never
+    // reports duplicates fails here.
+    uint64_t state = 0x12345678u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<PairKey> clustered;
+    for (int round = 0; round < 50; ++round)
+        for (int32_t i = 0; i < 100; ++i) clustered.push_back({{i, -i, 7, round % 5}});
+    for (size_t i = clustered.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(clustered[i], clustered[j]);
+    }
+    size_t dups = 0;
+    {
+        std::set<PairKey> ref;
+        for (const PairKey &key : clustered) dups += !ref.insert(key).second;
+    }
+    CHECK(dups > 4000);
+    check(clustered);
+    check({{{0, 0, 0, 0}},
+           {{std::numeric_limits<int32_t>::min(), -1, 0, 1}},
+           {{std::numeric_limits<int32_t>::max(), 1, 0, -1}},
+           {{std::numeric_limits<int32_t>::min(), -1, 0, 1}}});
+    // Brute-forced collisions on one bucket, then on the last bucket so
+    // the probe wraps: a broken probe or mask fails these.
+    for (const uint32_t bucket : {uint32_t(0), uint32_t(4095)}) {
+        std::vector<PairKey> colliding;
+        for (int32_t i = 0; colliding.size() < 32; ++i) {
+            const PairKey key = {{i, i * 31 + 7, -i, bucket}};
+            if ((uint32_t(RigExecClothPairSet::Hash(key)) & 4095u) == bucket)
+                colliding.push_back(key);
+        }
+        RigExecClothPairSet set;
+        std::set<PairKey> ref;
+        for (const PairKey &key : colliding) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        CHECK(ref.size() == colliding.size());
+        for (const PairKey &key : colliding) CHECK(!set.Insert(key));
+    }
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -1800,6 +1876,7 @@ int main()
     TestForceResponseAndDirectionalMaterial();
     TestHardSoftBarycentricAttachments();
     TestSelfContactKeepsAttachments();
+    TestPairSetMatchesOrderedSet();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();

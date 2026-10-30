@@ -46,7 +46,6 @@
 #include <cstdint>
 #include <limits>
 #include <map>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -228,6 +227,35 @@ struct RigExecClothContactTris {
     std::vector<char> degenerate;
 };
 
+/// A flat set of normalized edge pairs for self-contact dedup: the same
+/// insert-or-duplicate verdicts as the ordered set it replaces (the
+/// discovery loops keep their order, so every impulse is unchanged), but
+/// open-addressed over caller-retained storage with no per-pair work
+/// beyond the probe. Slots are a power of two; occupancy is a bitmap, so
+/// clearing touches words, not keys. Past 70% load the table doubles and
+/// rehashes, so probing always terminates. Occupancy only grows between
+/// clears and the hash is deterministic, so a recorded key is always
+/// found: verdicts are exact set membership either way.
+struct RigExecClothPairSet {
+    std::vector<std::array<int32_t, 4>> slots;
+    std::vector<uint64_t> occupied;
+    uint32_t mask = 0;
+    size_t count = 0;
+
+    /// An integer mix, deterministic across runs and platforms. Hash
+    /// quality affects probe length only; verdicts are exact regardless.
+    static uint64_t Hash(const std::array<int32_t, 4> &key);
+    size_t SlotCount() const;
+    void Clear();
+    /// True when the key was absent (now recorded), false for a duplicate.
+    bool Insert(const std::array<int32_t, 4> &key);
+    /// Doubles the slots and rehashes, preserving the recorded set.
+    void Grow();
+};
+// The method bodies live at the end of the header, after the solve, so
+// this model-path-only code lands after the hot loop in .text instead of
+// shifting it.
+
 /// Scratch a solve reuses. Owned by the one body that solves; never shared.
 struct RigExecClothWorkspace {
     std::vector<float> x, previous, velocity, lambda;
@@ -240,6 +268,8 @@ struct RigExecClothWorkspace {
     /// The cloth as its own collider set for the self-contact grids,
     /// assigned per call, its triangle buffer retained.
     RigExecClothColliders selfTopology;
+    /// The edge-pair dedup set, cleared per self profile, its slots retained.
+    RigExecClothPairSet selfPairs;
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
     RigExecClothContactTris contacts;
@@ -1684,7 +1714,11 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         }
         RigExecBuildClothGrid(topology, previous, x, std::max(std::max(pad, step.depth), edgeReach),
                               &ws->selfGrid, &ws->selfScratch);
-        std::set<std::array<int32_t, 4>> pairs;
+        // Flat dedup over retained storage: the same verdicts as an
+        // ordered set (the discovery loops keep their order), with no
+        // per-pair allocation.
+        RigExecClothPairSet &pairs = ws->selfPairs;
+        pairs.Clear();
         for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
             if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
             const int32_t i = mesh.constraintEnds[2*c], j = mesh.constraintEnds[2*c+1];
@@ -1705,7 +1739,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     if (adjacent) continue;
                     std::array<int32_t,4> key{{i,j,k,l}};
                     if (std::make_pair(k,l) < std::make_pair(i,j)) key = {{k,l,i,j}};
-                    if (!pairs.insert(key).second) continue;
+                    if (!pairs.Insert(key)) continue;
                     float u, v;
                     ClosestSegments(x+3*size_t(i), x+3*size_t(j), x+3*size_t(k), x+3*size_t(l), &u, &v);
                     RigExecClothSample a, b;
@@ -2090,6 +2124,67 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
     }
     std::copy(x, x + 3 * n, out);
     return true;
+}
+
+inline uint64_t RigExecClothPairSet::Hash(const std::array<int32_t, 4> &key)
+{
+    uint64_t h = uint64_t(uint32_t(key[0])) * 0x9E3779B97F4A7C15ull;
+    h ^= uint64_t(uint32_t(key[1])) * 0xC2B2AE3D27D4EB4Full;
+    h ^= uint64_t(uint32_t(key[2])) * 0x165667B19E3779F9ull;
+    h ^= uint64_t(uint32_t(key[3])) * 0xA24BAED4963EE407ull;
+    h ^= h >> 30;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 27;
+    h *= 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    return h;
+}
+
+inline size_t RigExecClothPairSet::SlotCount() const
+{
+    return slots.size();
+}
+
+inline void RigExecClothPairSet::Clear()
+{
+    std::fill(occupied.begin(), occupied.end(), 0);
+    count = 0;
+}
+
+inline bool RigExecClothPairSet::Insert(const std::array<int32_t, 4> &key)
+{
+    if ((count + 1) * 10 > slots.size() * 7) Grow();
+    uint32_t i = uint32_t(Hash(key)) & mask;
+    for (;;) {
+        const uint32_t word = i >> 6;
+        const uint64_t bit = 1ull << (i & 63);
+        if (!(occupied[word] & bit)) {
+            occupied[word] |= bit;
+            slots[i] = key;
+            ++count;
+            return true;
+        }
+        if (slots[i] == key) return false;
+        i = (i + 1) & mask;
+    }
+}
+
+inline void RigExecClothPairSet::Grow()
+{
+    const size_t size = slots.empty() ? 4096 : slots.size() * 2;
+    std::vector<std::array<int32_t, 4>> fresh(size);
+    std::vector<uint64_t> bits(size / 64, 0);
+    const uint32_t next = uint32_t(size - 1);
+    for (size_t s = 0; s < slots.size(); ++s) {
+        if (!(occupied[s >> 6] & (1ull << (s & 63)))) continue;
+        uint32_t i = uint32_t(Hash(slots[s])) & next;
+        while (bits[i >> 6] & (1ull << (i & 63))) i = (i + 1) & next;
+        bits[i >> 6] |= 1ull << (i & 63);
+        fresh[i] = slots[s];
+    }
+    slots.swap(fresh);
+    occupied.swap(bits);
+    mask = next;
 }
 
 }  // namespace rigExec
