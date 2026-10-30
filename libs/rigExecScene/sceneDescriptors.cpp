@@ -387,11 +387,16 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             // One unique identity means every slot reads row zero -- the
             // Build {Default, Default} capture -- so extend that row in
             // place instead of building a second vector per attribute. The
-            // reservation above already sized the storage; the local keeps
-            // the source row alive independent of that sizing.
+            // reservation above already sized the storage, so the resize
+            // cannot move row zero while it is the copy source; each
+            // further slot takes its row from it directly. One copy per
+            // attribute instead of two (the spilled local plus the fill),
+            // with identical rows either way.
             for (auto &[path, attr] : scene.attributes) {
-                const RigExecSceneInput first = attr.inputs.front();
-                attr.inputs.resize(identities.size(), first);
+                (void)path;
+                attr.inputs.resize(identities.size());
+                for (size_t s = 1; s < identities.size(); ++s)
+                    attr.inputs[s] = attr.inputs[0];
             }
         } else for (auto &[path, attr] : scene.attributes) {
             std::vector<RigExecSceneInput> full;
