@@ -1960,6 +1960,66 @@ void TestTriSpheresRetireOnTouch()
     }
 }
 
+void TestHeldConstraintBandInputs()
+{
+    // The edge/edge band derives the constraint edge's sphere and
+    // thickness factor once per bucket loop and re-derives the sphere
+    // after a correction retires it. This fold's corrections land
+    // mid-bucket over repeated solves, so the answer pins both the
+    // held values and the re-derivation: dropping the retire, or
+    // halving the held thickness, changes the hash (both sabotages
+    // verified to fail).
+    const int w = 4, l = 16;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.37f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.1f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 2.0f;
+    contact.friction = 0.3f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.t = 1;
+    step.depth = 2.0f;
+    std::vector<float> x = m.points;
+    RigExecClothWorkspace ws;
+    for (int k = 0; k < 3; ++k)
+        RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t edgePairs = 0;
+    for (const auto &kv : ws.selfLambda)
+        if (!(kv.first[3] == -1 && kv.first[4] == -1)) ++edgePairs;
+    CHECK(ws.selfPairs.count > 0);
+    CHECK(edgePairs > 0);
+    uint64_t hash = 1469598103934665603ull;
+    const auto *bytes = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    CHECK(hash == 0xa7c3d3671e2050a8ull);
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -2440,6 +2500,7 @@ int main()
     TestSelfEdgeTwins();
     TestSelfTwinSkipMatchesNoSkip();
     TestTriSpheresRetireOnTouch();
+    TestHeldConstraintBandInputs();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();

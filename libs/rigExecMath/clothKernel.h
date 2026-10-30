@@ -2007,6 +2007,16 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             // inserts below skip their checks with the same verdicts.
             pairs.ReserveForBatch(
                 3 * (grid.bucketStart[bucket + 1] - grid.bucketStart[bucket]));
+            // The constraint edge's band inputs are fixed for the bucket
+            // loop: its sphere and thickness factor derive once, lazily
+            // at the first band test, and a correction retires the
+            // sphere beside its touch. The same values the per-pair
+            // derivation reads, without re-reading them per pair.
+            float heldC1[3] = {0, 0, 0}, heldR1 = 0;
+            const float heldThick = std::fabs(p.thickness) * std::max(
+                std::fabs(RigExecClothMap(p, ClothThickness, size_t(i))),
+                std::fabs(RigExecClothMap(p, ClothThickness, size_t(j))));
+            bool haveHeld = false;
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
                 for (size_t edge = 0; edge < 3; ++edge) {
@@ -2052,15 +2062,16 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // parameters into [0,1], so the sample map is a convex
                     // combination of the endpoint maps and the absolute
                     // bound covers every thickness sign.
-                    float c1[3], c2[3], r1, r2;
-                    EdgeSphere(&spheres, c, i, j, x, c1, &r1);
+                    if (!haveHeld) {
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        haveHeld = true;
+                    }
+                    float c2[3], r2;
                     EdgeSphere(&spheres, mesh.constraintRest.size() + 3 * tri + edge,
                                k, l, x, c2, &r2);
-                    const float dd0 = c1[0] - c2[0], dd1 = c1[1] - c2[1],
-                                dd2 = c1[2] - c2[2];
-                    const float reach = r1 + r2 + std::fabs(p.thickness) * std::max(
-                        std::fabs(RigExecClothMap(p, ClothThickness, size_t(i))),
-                        std::fabs(RigExecClothMap(p, ClothThickness, size_t(j))));
+                    const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
+                                dd2 = heldC1[2] - c2[2];
+                    const float reach = heldR1 + r2 + heldThick;
                     if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
                         reach * reach * 1.0009765625f)
                         continue;
@@ -2092,6 +2103,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
                         Dot(mid,d)-thickness,d,true,&lambda,x,false);
                     TouchVerts(&spheres, i, j, k, l);
+                    haveHeld = false;
                     const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
                     if (!(correction > 0 && mu > 0)) continue;
                     RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);
