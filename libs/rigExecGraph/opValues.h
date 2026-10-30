@@ -297,8 +297,11 @@ inline bool RigExecOpCompileAdapter(const std::vector<Step> &steps,
             }
         }
     }
+    // No reader index here: the canonical remap below renumbers every value
+    // id and rebuilds the index from the final ids, so the compile's own
+    // index would be cleared unread.
     state->compiled = RigExecCompileOpGraph(descriptors, state->leaves,
-        cyclePolicy, retainedExclusions, graph, error);
+        cyclePolicy, retainedExclusions, graph, error, false);
     if (state->compiled) {
         for(uint32_t i=0;i<descriptors.size();++i) if(graph->canonicalIndex[i]<0)
             for(auto id:descriptors[i].writes) state->excludedValues.push_back(id);

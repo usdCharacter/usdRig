@@ -267,6 +267,10 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             // reads valueless yet blocked. USD sources only, like clear:
             // generic facts do not promise the same HasValue/Get agreement.
             const bool valueless = usd && !clipped && !attr.fact.hasValue;
+            // The row count below is the requested identity count, whether
+            // the unique loop fills it directly or the replication after the
+            // connection walks extends it: size once, grow never.
+            attr.inputs.reserve(identities.size());
             for (const auto time : unique) {
                 RigExecSceneInput input;
                 if (node.fact.active && !valueless && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
@@ -378,13 +382,24 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         for (size_t u = 0; u < unique.size(); ++u)
             it->second.inputs[u] = Input(scene, it, primIt, computed, next, u);
     }
-    if (unique.size() != identities.size())
-        for (auto &[path, attr] : scene.attributes) {
+    if (unique.size() != identities.size()) {
+        if (unique.size() == 1) {
+            // One unique identity means every slot reads row zero -- the
+            // Build {Default, Default} capture -- so extend that row in
+            // place instead of building a second vector per attribute. The
+            // reservation above already sized the storage; the local keeps
+            // the source row alive independent of that sizing.
+            for (auto &[path, attr] : scene.attributes) {
+                const RigExecSceneInput first = attr.inputs.front();
+                attr.inputs.resize(identities.size(), first);
+            }
+        } else for (auto &[path, attr] : scene.attributes) {
             std::vector<RigExecSceneInput> full;
             full.reserve(identities.size());
             for (size_t s : slot) full.push_back(attr.inputs[s]);
             attr.inputs = std::move(full);
         }
+    }
     for (const auto &[path, node] : scene.nodes) {
         if (node.stackOrdinal < 0 || !node.fact.active) continue;
         const auto moves = scene.relationships.find(path.AppendProperty(_tokens->rigExecMoves));

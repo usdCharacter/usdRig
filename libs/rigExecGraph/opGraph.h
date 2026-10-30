@@ -69,6 +69,14 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
     const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy cyclePolicy,
     const RigExecOpExclusionProof *retainedExclusions,
     RigExecCompiledGraph *graph, std::string *error);
+/// The same compiler with the reader index optional. When \p buildReaders
+/// is false the index is left empty: the typed adapter remaps every value
+/// id after compiling and rebuilds the index itself, so building it here
+/// first is pure waste. Every other caller uses the overload above.
+bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
+    const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy cyclePolicy,
+    const RigExecOpExclusionProof *retainedExclusions,
+    RigExecCompiledGraph *graph, std::string *error, bool buildReaders);
 
 /// Coarsen only linear chains whose intermediate values have no outside
 /// readers and whose later members have no extra predecessors. Readiness at

@@ -109,6 +109,15 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
     const RigExecOpExclusionProof *retainedExclusions,
     RigExecCompiledGraph *out, std::string *error)
 {
+    return RigExecCompileOpGraph(descriptors, leaves, policy,
+        retainedExclusions, out, error, true);
+}
+
+bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
+    const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy policy,
+    const RigExecOpExclusionProof *retainedExclusions,
+    RigExecCompiledGraph *out, std::string *error, bool buildReaders)
+{
     const auto fail = [&](const std::string &message) { if (error) *error = message; return false; };
     if (!out) return fail("null graph output");
     if (descriptors.size() > UINT32_MAX) return fail("too many operations");
@@ -284,11 +293,13 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for (uint32_t next : succs[old]) if (!excluded[next])
             op.successors.push_back(uint32_t(graph.canonicalIndex[next]));
         Unique(&op.predecessors); Unique(&op.successors);
-        for (RigExecValueId value : op.descriptor.reads) graph.readers[value].push_back(i);
+        if (buildReaders)
+            for (RigExecValueId value : op.descriptor.reads) graph.readers[value].push_back(i);
         if (op.descriptor.volatileInput) graph.volatileOps.push_back(i);
         graph.longestPath = std::max(graph.longestPath, distance[i]);
     }
-    for (auto &reader : graph.readers) Unique(&reader.second);
+    if (buildReaders)
+        for (auto &reader : graph.readers) Unique(&reader.second);
     if (!RigExecTranslateOpClusters(&graph, {}, 0, error)) return false;
     *out = std::move(graph); return true;
 }
