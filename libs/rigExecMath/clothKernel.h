@@ -263,6 +263,11 @@ struct RigExecClothGrid {
     float sweptHi[3] = {std::numeric_limits<float>::infinity(),
                         std::numeric_limits<float>::infinity(),
                         std::numeric_limits<float>::infinity()};
+    /// Per-triangle swept bounds from the measure walk, six floats each,
+    /// and their finite verdicts: the span walk rereads these instead of
+    /// re-deriving the same bounds. Transient within a build.
+    std::vector<float> triBounds;
+    std::vector<char> triFinite;
 };
 
 /// One substep's interpolated collider triangles: the vertices at the
@@ -1062,16 +1067,26 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     };
     // Cell size: the mean swept triangle extent, at least twice the pad.
     // The same walk gathers the broadphase bounds over the same finite
-    // triangles the grid lists, so every candidate lies inside them.
+    // triangles the grid lists, so every candidate lies inside them, and
+    // keeps every triangle's bounds for the span walk below, which
+    // rereads them instead of re-deriving the same values.
     double extent = 0.0;
     size_t measured = 0;
     for (int a = 0; a < 3; ++a) {
         grid->sweptLo[a] = std::numeric_limits<float>::infinity();
         grid->sweptHi[a] = -std::numeric_limits<float>::infinity();
     }
+    grid->triBounds.resize(6 * triangleCount);
+    grid->triFinite.resize(triangleCount);
     for (size_t t = 0; t < triangleCount; ++t) {
         float lo[3], hi[3];
-        if (!bounds(t, lo, hi)) continue;
+        const bool finite = bounds(t, lo, hi);
+        grid->triFinite[t] = finite ? 1 : 0;
+        for (int a = 0; a < 3; ++a) {
+            grid->triBounds[6 * t + size_t(a)] = lo[a];
+            grid->triBounds[6 * t + size_t(a) + 3] = hi[a];
+        }
+        if (!finite) continue;
         for (int a = 0; a < 3; ++a) {
             grid->sweptLo[a] = std::min(grid->sweptLo[a], lo[a]);
             grid->sweptHi[a] = std::max(grid->sweptHi[a], hi[a]);
@@ -1094,13 +1109,14 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     // a sort, over the starts the counting sort clears next.
     grid->bucketStart.assign(size_t(buckets) + 1, 0);
     scratch->clear();
+    const float *kept = grid->triBounds.data();
+    const char *keptFinite = grid->triFinite.data();
     for (size_t t = 0; t < triangleCount; ++t) {
-        float lo[3], hi[3];
-        if (!bounds(t, lo, hi)) continue;
+        if (!keptFinite[t]) continue;
         int64_t c0[3], c1[3];
         for (int a = 0; a < 3; ++a) {
-            c0[a] = Cell(lo[a] - pad, cell);
-            c1[a] = Cell(hi[a] + pad, cell);
+            c0[a] = Cell(kept[6 * t + size_t(a)] - pad, cell);
+            c1[a] = Cell(kept[6 * t + size_t(a) + 3] + pad, cell);
         }
         // A triangle swept across more cells than the table holds is
         // listed in every bucket once.
