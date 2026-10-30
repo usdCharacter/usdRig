@@ -2017,8 +2017,6 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             const uint32_t bucket = Hash(Cell(mid[0], grid.cellSize), Cell(mid[1], grid.cellSize),
                                           Cell(mid[2], grid.cellSize), grid.bucketMask);
             ++twinMark;
-            for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry)
-                twinStamp[size_t(grid.bucketTriangles[entry])] = twinMark;
             // One load check per constraint covers its whole discovery
             // batch: at most three inserts per bucket entry, so the
             // table stays under the cap through the batch and the
@@ -2037,6 +2035,11 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             bool haveHeld = false;
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
+                // The twin-skip mark lands with the visit: buckets list
+                // triangles ascending, so a twin below this triangle is
+                // already marked when the edge loop reads it, and the
+                // same marks are set without a second bucket pass.
+                twinStamp[tri] = twinMark;
                 // The triangle band: the centroid sphere holds every edge
                 // midpoint of the triangle within its radius, and the reach
                 // bound covers every triangle edge's sphere radius, so a
