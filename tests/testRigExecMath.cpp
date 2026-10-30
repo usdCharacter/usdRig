@@ -5,6 +5,7 @@
 #include "rigExecMath/avarScale.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/partialRowsKernel.h"
 #include "rigExecMath/propertyMath.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
@@ -1661,6 +1662,57 @@ TestPartialDecompositionMatchesOneShot()
     const GfMatrix4d halfSlide = RigExecApplyPartialDecomposition(
         RigExecDecomposePartialTransform(slide), 0.5);
     CHECK(Near(halfSlide.ExtractTranslation(), GfVec3d(1, -0.5, 2), 1e-12));
+}
+
+static void
+TestPartialRowsFloatMatchesDouble()
+{
+    // The float rows kernel is the sparse walk's fast factorization: its
+    // rows hold the narrowed double partial to float noise. Rotation rows
+    // carry no cancellation, so they sit at rounding scale; the
+    // translation row solves pivot - R*pivot in float, so a distant pivot
+    // (the lid about its eyeball, 165 units up) widens it to pivot scale
+    // times float epsilon. Paddings are exact zeros.
+    GfMatrix4d spin(1.0);
+    spin.SetRotate(GfRotation(GfVec3d(0, 0, 1), 90.0));
+    GfMatrix4d shear(1.0);
+    shear[1][0] = 0.3;
+    const GfMatrix4d screw =
+        GfMatrix4d(1.0).SetScale(GfVec3d(1.5, 0.8, 2.0)) * shear *
+        GfMatrix4d(GfRotation(GfVec3d(1, 1, 0), 33.0), GfVec3d(2, -1, 4));
+    GfMatrix4d slide(1.0);
+    slide.SetTranslateOnly(GfVec3d(2, -1, 4));
+    const GfMatrix4d scale = GfMatrix4d(1.0).SetScale(GfVec3d(2, 3, 4));
+    GfMatrix4d toPivot(1.0);
+    toPivot.SetTranslateOnly(GfVec3d(0, -165, 0));
+    GfMatrix4d fromPivot(1.0);
+    fromPivot.SetTranslateOnly(GfVec3d(0, 165, 0));
+    const GfMatrix4d lid =
+        toPivot *
+        GfMatrix4d(GfRotation(GfVec3d(1, 0, 0), 2.0), GfVec3d(0, 0, 0)) *
+        fromPivot;
+    for (const GfMatrix4d &m :
+         {spin, screw, slide, scale, GfMatrix4d(1.0), lid}) {
+        const RigExecPartialDecomposition d =
+            RigExecDecomposePartialTransform(m);
+        for (const double w : {0.125, 0.5, 0.9}) {
+            const GfMatrix4d ref = RigExecApplyPartialDecomposition(d, w);
+            float rows[16];
+            RigExecPartialRowsFloat(d.scale.data(), d.axis.data(), d.angle,
+                                     d.translation.data(), float(w), rows);
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    CHECK(std::abs(double(rows[r * 4 + c]) - ref[r][c]) <=
+                          1e-5);
+                }
+                CHECK(rows[r * 4 + 3] == 0.0f);
+            }
+            for (int c = 0; c < 3; ++c) {
+                CHECK(std::abs(double(rows[12 + c]) - ref[3][c]) <= 1e-4);
+            }
+            CHECK(rows[15] == 0.0f);
+        }
+    }
 }
 
 static void
@@ -3913,6 +3965,7 @@ main()
     TestLaplacianSmoothBorrowMatchesCopy();
     TestWireRestEvalsMatchDirectEvaluation();
     TestPartialDecompositionMatchesOneShot();
+    TestPartialRowsFloatMatchesDouble();
     TestSurfaceProjectorBaseNormalsMemo();
     TestFanTriangulationBuilders();
     TestTriangleCandidatesCannotUseGeometricPruning();

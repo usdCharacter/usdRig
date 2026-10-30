@@ -18,6 +18,7 @@
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/partialRowsKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
@@ -1267,9 +1268,11 @@ public:
                     RrDecomposePartialTransform(_transform);
                 _haveDecomposition = true;
             }
-            RrGeoNarrowMatrixFloatRows(
-                RrApplyPartialDecomposition(_decomposition, clamped),
-                rows);
+            RigExecPartialRowsFloat(_decomposition.scale.data(),
+                                    _decomposition.axis.data(),
+                                    _decomposition.angle,
+                                    _decomposition.translation.data(),
+                                    float(clamped), rows);
         }
         _bits[slot] = bits;
         word |= bit;
@@ -1347,8 +1350,8 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
     if (p.radialWeight) {
         if (useSimd) {
             // The float twin of the loop below: each distinct weight's
-            // partial factored once in double and narrowed, each point
-            // the float affine.
+            // partial factored by the float rows kernel, each point the
+            // float affine.
             RrGeoRadialRowsCache cache(p.transform);
             for (size_t k = kBegin; k < kEnd; ++k) {
                 RrVec3f &point = data[size_t(w.Indices()[k]) - offset];

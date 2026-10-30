@@ -6,6 +6,7 @@
 #include "movers/moverRegistry.h"
 
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/partialRowsKernel.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/pointBlocks.h"
@@ -608,9 +609,11 @@ public:
                     RigExecDecomposePartialTransform(_transform);
                 _haveDecomposition = true;
             }
-            _NarrowMatrixFloatRows(
-                RigExecApplyPartialDecomposition(_decomposition, clamped),
-                rows);
+            RigExecPartialRowsFloat(_decomposition.scale.data(),
+                                    _decomposition.axis.data(),
+                                    _decomposition.angle,
+                                    _decomposition.translation.data(),
+                                    float(clamped), rows);
         }
         _bits[slot] = bits;
         word |= bit;
@@ -688,8 +691,8 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
     if (p.radialWeight) {
         if (useSimd) {
             // The float twin of the loop below: each distinct weight's
-            // partial factored once in double and narrowed, each point
-            // the float affine.
+            // partial factored by the float rows kernel, each point the
+            // float affine.
             _RadialRowsCache cache(p.transform);
             for (size_t k = first; k < last; ++k) {
                 GfVec3f &point = data[size_t(w.indices[k]) - offset];
