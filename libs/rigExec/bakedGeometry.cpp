@@ -3279,6 +3279,106 @@ MatrixEnvelopeNoteVerdict(
     revision->matrixEnvelopeVerdict = verdict;
 }
 
+/// The content version naming the points entering Legacy revision
+/// \p revisionIndex of \p chain: the base version for the first, else the
+/// preceding revision's done version, which a Legacy fuse moves exactly
+/// when the value it left does. A Legacy chain holds Legacy revisions
+/// alone, so no other role's versioning reaches this key.
+uint64_t
+LegacyMatrixEnteringVersion(
+    const RigExecBakedProgramImpl::GeomChain &chain, size_t revisionIndex)
+{
+    if (revisionIndex == 0) {
+        return chain.baseVersion;
+    }
+    return chain.revisions[revisionIndex - 1].doneVersion;
+}
+
+/// Whether the Legacy matrix \p revision's walk stands as published, so
+/// its chunk skips whole: the revision applied last run and holds its own
+/// output, its per-revision inputs, shared packet, entering points and
+/// count all hold the key's, and its done version is the key's. Then the
+/// walk would recompute the published bytes: the same kernel over the
+/// same packet, entering points and count, and the fuse would find them
+/// unmoved. Like the Range key it is self-validating, and a copy is
+/// independent; the recorded entries are never read by a skip. The
+/// caller predicts the fuse's applied decision beside this.
+bool
+LegacyMatrixSkipStands(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomChain &chain,
+    const RigExecBakedProgramImpl::GeomRevision &revision,
+    size_t revisionIndex, size_t count)
+{
+    // Cheapest first; the per-revision inputs spell their bytes last.
+    const RigExecSparseWalkMemo<GfVec3f> &memo = revision.matrixWalk;
+    if (!memo.skipArmed) {
+        return false;
+    }
+    if (!revision.ran ||
+        revision.currentSource != int(revisionIndex)) {
+        return false;
+    }
+    bool packetShared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &packetShared);
+    if (!packetShared || memo.skipPacketRevision != packetRevision) {
+        return false;
+    }
+    if (memo.skipCount != count || count != revision.precedingCount) {
+        return false;
+    }
+    if (memo.skipVersion != LegacyMatrixEnteringVersion(chain,
+                                                        revisionIndex)) {
+        return false;
+    }
+    if (memo.skipPublishedVersion != revision.doneVersion) {
+        return false;
+    }
+    unsigned char params[kRigExecSparseWalkParamsSize];
+    RigExecSparseWalkSpellParams(revision.parameters.radialWeight,
+                                 revision.parameters.transform.GetArray(),
+                                 params);
+    return RigExecSparseWalkParamsHold(memo, params, sizeof(params));
+}
+
+/// Arms \p revision's whole-walk skip over the result just published: its
+/// shared packet revision, entering content version, point count, done
+/// version and per-revision inputs. The inputs are spelled here rather
+/// than left to the walk's RigExecSparseWalkBegin bytes so a dense walk
+/// and an identity walk -- which never begin one -- key them too; over a
+/// sparse walk they are the bytes Begin spelled this run. Call only for
+/// an unchunked Legacy matrix revision whose fuse applied its own
+/// output -- a walk that ran its kernel, or a skip (or a sat-out chunk)
+/// over standing inputs -- never for one that publishes a result its
+/// chunk did not verify.
+void
+LegacyMatrixSkipNote(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomChain &chain,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t revisionIndex,
+    size_t count)
+{
+    bool packetShared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+    if (!packetShared || count != revision->precedingCount) {
+        revision->matrixWalk.skipArmed = false;
+        return;
+    }
+    revision->matrixWalk.skipPacketRevision = packetRevision;
+    revision->matrixWalk.skipVersion =
+        LegacyMatrixEnteringVersion(chain, revisionIndex);
+    revision->matrixWalk.skipCount = count;
+    revision->matrixWalk.skipPublishedVersion = revision->doneVersion;
+    revision->matrixWalk.params.resize(kRigExecSparseWalkParamsSize);
+    RigExecSparseWalkSpellParams(
+        revision->parameters.radialWeight,
+        revision->parameters.transform.GetArray(),
+        revision->matrixWalk.params.data());
+    revision->matrixWalk.skipArmed = true;
+}
+
 /// Whether one matrix leaf's content version keys its value: the role's
 /// declared index, whose version stands only while its bytes do. A leaf a
 /// walk or a produced value answers carries no version, as the blend-layout
@@ -5640,6 +5740,37 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 return;
             }
             if (!skin) {
+                // A Legacy matrix revision whose walk stands as published
+                // skips whole: no seed, walk or publish runs, and the fuse
+                // keeps the output it holds, as it does when the chunk sat
+                // out. The counters report the walk the skip stands in for,
+                // as a reusing walk does. Only what the fuse would apply:
+                // a windowed revision answers from its history, and a Whole
+                // one gathers its entering points from groups this key does
+                // not name.
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    revision.role == RigExecBakedRevisionRole::Legacy &&
+                    revision.window < 0 && revision.parameters.valid &&
+                    revision.acceptance ==
+                        RigExecRevisionAcceptance::Applies &&
+                    LegacyMatrixSkipStands(B, chain, revision,
+                                           size_t(revisionIndex), count)) {
+                    chunk.ok = true;
+                    revision.stagingFresh = false;
+                    revision.matrixWalk.computed = 0;
+                    revision.matrixWalk.reused = 0;
+                    revision.matrixWalk.skippedWhole = 1;
+                    const RigExecWeightPacket &weights =
+                        revision.parameters.weights;
+                    if (!RigExecEnvelopeIsFullStrength(weights) &&
+                        RigExecWireTakesSparseEnvelope(weights) &&
+                        revision.parameters.transform !=
+                            GfMatrix4d(1.0)) {
+                        revision.matrixWalk.reused =
+                            uint32_t(weights.indices.size());
+                    }
+                    return;
+                }
                 // The revision's OWN unpublished buffer, written out of
                 // place from the preceding points -- no seed copy before a
                 // kernel that rewrites every point -- and swapped in by the
@@ -5811,6 +5942,12 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     }
                 }
             }
+            // Whether the whole-walk skip notes this publication: the chunk
+            // verified the result it stands for -- a walk that ran its
+            // kernel, or a skip (or a sat-out chunk) over standing inputs --
+            // and not the arm below, which publishes a result the chunk did
+            // not verify.
+            bool noteSkip = false;
             if (applied) {
                 if (revision.chunked || whole) {
                     const std::vector<GfVec3f> &result =
@@ -5833,10 +5970,16 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     revision.output.swap(revision.stagingOutput);
                     revision.stagingOutput.resize(revision.output.size());
                     revision.stagingFresh = false;
+                    noteSkip = true;
                 } else if (!hadOwn) {
                     // The chunk's latest result is already `output`.
                     moved = moved || !SamePoints(revision.output,
                                                  revision.passedPoints);
+                } else {
+                    // The chunk's result is already `output`: a skip over
+                    // standing inputs, or a chunk that sat the run out while
+                    // its inputs stood.
+                    noteSkip = true;
                 }
                 revision.currentSource = int(revisionIndex);
             } else {
@@ -5866,6 +6009,17 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             }
             if (moved) {
                 ++revision.doneVersion;
+            }
+            if (noteSkip &&
+                revision.op == RigExecRevisionOp::Matrix &&
+                revision.window < 0) {
+                // The entering count the walk consumed, for the key.
+                const GfVec3f *entering = nullptr;
+                size_t enteringCount = 0;
+                PointsAt(chain, size_t(revisionIndex), &entering,
+                         &enteringCount);
+                LegacyMatrixSkipNote(B, chain, &revision,
+                                     size_t(revisionIndex), enteringCount);
             }
             // Keep the published RevisionPacket intact. Ordinary revisions
             // have no duplicate last-parameters snapshot; exact value keys

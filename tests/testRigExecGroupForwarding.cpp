@@ -813,6 +813,249 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
                 "its own\n");
 }
 
+// --- A Legacy chain ------------------------------------------------------------
+
+/// 600 points sit under the 1024-point group target, so the chain never
+/// pipelines: every revision stays Legacy. The test asserts that.
+constexpr size_t kLegacyPoints = 600;
+const SdfPath kLegacyTarget("/Asset/LegacyShape.points");
+const char *const kLegacyRaise = "/Asset/Rig/BlendInputs/LegacyRaise";
+const char *const kResting = "/Asset/Resting";
+
+/// One 600-point target under a blend shape and then two sparse linear
+/// Matrix movers: `Legacy`, posed by `Moving`, and `LegacyRest` at rest.
+/// \p raise and \p moving are the authored values; the rest control stays
+/// at zero, so its mover walks the identity shortcut and never begins a
+/// memo walk.
+UsdStageRefPtr
+MakeLegacyStage(float raise, double moving)
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath(kRig), TfToken("RigExecRoot"));
+    const UsdPrim control =
+        stage->DefinePrim(SdfPath(kMoving), TfToken("RigExecControl"));
+    control.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(moving);
+    const UsdPrim rest =
+        stage->DefinePrim(SdfPath(kResting), TfToken("RigExecControl"));
+    rest.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(0.0);
+    VtVec3fArray base(kLegacyPoints), raised(kLegacyPoints);
+    VtIntArray support;
+    VtFloatArray weights;
+    for (size_t i = 0; i < kLegacyPoints; ++i) {
+        base[i] = GfVec3f(float(i % 30), float(i / 30), 0.0f);
+        raised[i] = base[i];
+        if (i % 5 == 0) {
+            raised[i][2] += 1.0f;
+        }
+        if (i >= 100 && i < 500 && i % 11 == 4) {
+            support.push_back(int(i));
+            weights.push_back(float((i / 11) % 4) / 3.0f);
+        }
+    }
+    const auto points = [&](const char *path, const VtVec3fArray &values) {
+        stage->DefinePrim(SdfPath(path), TfToken("Points"))
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+            .Set(values);
+    };
+    points("/Asset/LegacyShape", base);
+    points("/Asset/LegacyRaised", raised);
+    const UsdPrim input = stage->DefinePrim(SdfPath(kLegacyRaise),
+                                            TfToken("RigExecBlendInput"));
+    input.CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float)
+        .Set(raise);
+    const UsdPrim sample = stage->DefinePrim(
+        SdfPath(kLegacyRaise).AppendChild(TfToken("Full")),
+        TfToken("RigExecBlendSample"));
+    sample.CreateAttribute(TfToken("rigExec:activation"),
+                           SdfValueTypeNames->Float)
+        .Set(1.0f);
+    sample.CreateRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets(
+            {SdfPath("/Asset/LegacyRaised").AppendProperty(TfToken("points"))});
+    input.CreateRelationship(TfToken("rigExec:samples"))
+        .SetTargets({sample.GetPath()});
+    const UsdPrim weight = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Weights/LegacySparse"),
+        TfToken("RigExecStaticWeight"));
+    weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+        .SetTargets({kLegacyTarget});
+    weight.CreateAttribute(TfToken("rigExec:representation"),
+                           SdfValueTypeNames->Token, false)
+        .Set(TfToken("sparse"));
+    weight.CreateAttribute(TfToken("rigExec:indices"),
+                           SdfValueTypeNames->IntArray, false)
+        .Set(support);
+    weight.CreateAttribute(TfToken("rigExec:values"),
+                           SdfValueTypeNames->FloatArray, false)
+        .Set(weights);
+    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
+                           SdfValueTypeNames->Float, false)
+        .Set(0.0f);
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto mover = [&](const char *name, const SdfPath &provider) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath(std::string("/Asset/Rig/Movers/") + name),
+            TfToken("RigExecMatrixMover"));
+        CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
+        prim.CreateRelationship(TfToken("rigExec:moves"))
+            .SetTargets({kLegacyTarget});
+        prim.CreateRelationship(TfToken("rigExec:transform"))
+            .SetTargets({provider});
+        prim.CreateRelationship(TfToken("rigExec:weightObject"), false)
+            .SetTargets({weight.GetPath()});
+        return prim;
+    };
+    // Movers run last sibling first: the blend, then the posed mover,
+    // then the resting one.
+    mover("LegacyRest", rest.GetPath());
+    mover("Legacy", control.GetPath());
+    const UsdPrim blend = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    CHECK(blend.ApplyAPI(TfToken("RigExecMoverAPI")));
+    blend.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({kLegacyTarget});
+    blend.CreateRelationship(TfToken("rigExec:blendInputs"))
+        .SetTargets({SdfPath(kLegacyRaise)});
+    blend.CreateAttribute(TfToken("inputs:defaultWeight"),
+                          SdfValueTypeNames->Float)
+        .Set(1.0f);
+    return stage;
+}
+
+/// Whether revision \p r of chain \p c holds the bytes \p reference left.
+bool
+SameLegacyResult(const Program &reference, const Program &B, int c, int r)
+{
+    const std::vector<GfVec3f> &left =
+        reference.chains[size_t(c)].revisions[size_t(r)].output;
+    const std::vector<GfVec3f> &right =
+        B.chains[size_t(c)].revisions[size_t(r)].output;
+    return RigExecPointsBitsEqual(left.data(), left.size(), right.data(),
+                                  right.size());
+}
+
+void
+TestALegacyChainSkipsWhole()
+{
+    const UsdTimeCode time(1.0);
+    const float raise = 0.5f;
+    const double moving = 1.0;
+    const UsdStageRefPtr stage = MakeLegacyStage(raise, moving);
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    CHECK(compiled);
+    if (!compiled) {
+        for (const std::string &line : errors) {
+            std::printf("  %s\n", line.c_str());
+        }
+        return;
+    }
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(evaluator.Evaluate(time).valid);
+    const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const int c = FindChain(B, kLegacyTarget);
+    CHECK(c >= 0);
+    if (c < 0) {
+        return;
+    }
+    const Chain &chain = B.chains[size_t(c)];
+    const int blend = FindRevision(chain, "Blend");
+    const int legacy = FindRevision(chain, "Legacy");
+    const int rest = FindRevision(chain, "LegacyRest");
+    CHECK(blend == 0 && legacy == 1 && rest == 2);
+    CHECK(chain.groupBounds.size() < 2);
+    if (blend != 0 || legacy != 1 || rest != 2) {
+        return;
+    }
+    const Revision &posed = chain.revisions[size_t(legacy)];
+    const Revision &resting = chain.revisions[size_t(rest)];
+    for (const Revision *revision : {&posed, &resting}) {
+        CHECK(revision->op == RigExecRevisionOp::Matrix);
+        CHECK(revision->role == RigExecBakedRevisionRole::Legacy);
+    }
+    CHECK(!(posed.parameters.transform == GfMatrix4d(1.0)));
+    CHECK(resting.parameters.transform == GfMatrix4d(1.0));
+    const size_t entries = posed.parameters.weights.indices.size();
+    CHECK(entries > 0 &&
+          entries == resting.parameters.weights.indices.size());
+    // A forced full re-run at unchanged values skips both walks whole:
+    // nothing seeds, walks or publishes, and the revisions keep their
+    // bytes, versions and sources. The posed walk reports its entries, as
+    // a reusing walk does; the resting one reports none, as the identity
+    // shortcut it stands in for does.
+    for (int round = 0; round < 2; ++round) {
+        const std::vector<GfVec3f> posedBefore = posed.output;
+        const std::vector<GfVec3f> restBefore = resting.output;
+        const uint64_t posedVersion = posed.doneVersion;
+        const uint64_t restVersion = resting.doneVersion;
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(posed.matrixWalk.skippedWhole == 1);
+        CHECK(posed.matrixWalk.computed == 0);
+        CHECK(posed.matrixWalk.reused == entries);
+        CHECK(resting.matrixWalk.skippedWhole == 1);
+        CHECK(resting.matrixWalk.computed == 0);
+        CHECK(resting.matrixWalk.reused == 0);
+        CHECK(posed.doneVersion == posedVersion);
+        CHECK(resting.doneVersion == restVersion);
+        CHECK(posed.currentSource == legacy);
+        CHECK(resting.currentSource == rest);
+        CHECK(RigExecPointsBitsEqual(posed.output.data(), posed.output.size(),
+                                     posedBefore.data(), posedBefore.size()));
+        CHECK(RigExecPointsBitsEqual(resting.output.data(),
+                                     resting.output.size(), restBefore.data(),
+                                     restBefore.size()));
+    }
+    // Moved inputs walk, and match a cold evaluator's bytes: the
+    // transform first, then the entering points under a held transform.
+    struct Step {
+        float raise;
+        double moving;
+        const char *what;
+    };
+    for (const Step &step :
+         {Step{raise, 2.0, "transform moves"},
+          Step{0.75f, 2.0, "entering moves"},
+          Step{raise, moving, "values back"}}) {
+        evaluator.SetInteractiveOverrides(
+            {Override(kLegacyRaise, "inputs:weight", VtValue(step.raise)),
+             Override(kMoving, "avars:tx", VtValue(step.moving))});
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(posed.matrixWalk.skippedWhole == 0);
+        const UsdStageRefPtr authored =
+            MakeLegacyStage(step.raise, step.moving);
+        RigExecRigEvaluator reference(authored, SdfPath(kRig));
+        const bool referenceCompiled = reference.Compile(&errors);
+        CHECK(referenceCompiled);
+        if (!referenceCompiled) {
+            continue;
+        }
+        CHECK(reference.Evaluate(time).valid);
+        const Program &R =
+            reference.GetBakedProgram()->GetStepGraph();
+        const bool same =
+            SameLegacyResult(R, B, c, legacy) && SameLegacyResult(R, B, c,
+                                                                  rest);
+        if (!same) {
+            std::printf("  %s: the warm chain differs from a cold "
+                        "evaluator's\n",
+                        step.what);
+        }
+        CHECK(same);
+    }
+    // Back at standing inputs the walks skip whole again.
+    evaluator.GetBakedProgram()->RequestFullRun();
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(posed.matrixWalk.skippedWhole == 1);
+    CHECK(resting.matrixWalk.skippedWhole == 1);
+    std::printf("  a legacy chain skips its matrix walks whole\n");
+}
+
 }  // namespace
 
 int
@@ -830,6 +1073,7 @@ main(int argc, char **argv)
         return 2;
     }
     TestAGatedChainForwards();
+    TestALegacyChainSkipsWhole();
     TestTheBipedArmEditForwards(argv[1]);
     if (failures) {
         std::printf("testRigExecGroupForwarding: %d failure(s)\n", failures);
