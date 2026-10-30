@@ -147,6 +147,12 @@ struct RigExecClothMesh {
     std::vector<float> constraintRest;
     std::vector<uint8_t> constraintKind;
     std::vector<uint32_t> colorStart;
+    /// Per color, the leading stretch constraints whose both endpoints
+    /// are kinematic, partitioned first within the color. At zero
+    /// stretch alpha on an empty model those project to no-ops (a zero
+    /// denominator returns before any write), so the solve starts past
+    /// them.
+    std::vector<uint32_t> colorKkSkip;
     /// Zero for a kinematic (fully pinned) particle.
     std::vector<float> inverseMass;
     /// Clamped to [0, 1]; 0 everywhere without pins.
@@ -521,6 +527,40 @@ RigExecBuildClothMesh(size_t pointCount, const int *counts, size_t countSize,
         built.tetherLimit[i] = limit;
         built.tetherShortSquared[i] = (limit < 1e-18f || !std::isfinite(limitSquared))
             ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
+    }
+    // Stable-partition each color's stretch kinematic pairs first: a
+    // reorder within the color, so the disjointness the colors promise
+    // still holds and every evaluator reads the same sets.
+    built.colorKkSkip.assign(built.ColorCount(), 0);
+    const auto skippable = [&](uint32_t c) {
+        const size_t a = size_t(built.constraintEnds[2 * c]);
+        const size_t b = size_t(built.constraintEnds[2 * c + 1]);
+        return built.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch) &&
+               built.inverseMass[a] == 0.0f && built.inverseMass[b] == 0.0f;
+    };
+    for (size_t k = 0; k < built.ColorCount(); ++k) {
+        const uint32_t lo = built.colorStart[k], hi = built.colorStart[k + 1];
+        std::vector<uint32_t> order;
+        for (uint32_t c = lo; c < hi; ++c)
+            if (skippable(c)) order.push_back(c);
+        built.colorKkSkip[k] = uint32_t(order.size());
+        for (uint32_t c = lo; c < hi; ++c)
+            if (!skippable(c)) order.push_back(c);
+        std::vector<int32_t> ends(2 * order.size());
+        std::vector<float> rest(order.size());
+        std::vector<uint8_t> kind(order.size());
+        for (size_t j = 0; j < order.size(); ++j) {
+            ends[2 * j] = built.constraintEnds[2 * order[j]];
+            ends[2 * j + 1] = built.constraintEnds[2 * order[j] + 1];
+            rest[j] = built.constraintRest[order[j]];
+            kind[j] = built.constraintKind[order[j]];
+        }
+        for (size_t j = 0; j < order.size(); ++j) {
+            built.constraintEnds[2 * (lo + j)] = ends[2 * j];
+            built.constraintEnds[2 * (lo + j) + 1] = ends[2 * j + 1];
+            built.constraintRest[lo + j] = rest[j];
+            built.constraintKind[lo + j] = kind[j];
+        }
     }
     built.valid = true;
     *out = std::move(built);
@@ -1967,6 +2007,10 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                 RigExecClothPredict(mesh, s, from.entering, to.entering, i, x, xp, v,
                                     gravityStep);
             const bool single = iterations == 1;
+            // Stretch kinematic pairs project to no-ops at zero alpha on
+            // an empty model, so the single-iteration pass starts past
+            // the partitioned leading run.
+            const bool skipKk = mesh.model.Empty() && s.alphaStretch == 0.0f;
             if (!single) std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
             std::fill(ws->attachmentLambda.begin(), ws->attachmentLambda.end(), 0.0f);
             std::fill(ws->contactLambda.begin(), ws->contactLambda.end(), 0.0f);
@@ -1975,7 +2019,10 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             for (int it = 0; it < iterations; ++it) {
                 for (size_t color = 0; color < colors; ++color) {
                     if (single) {
-                        RigExecClothProjectColorSingle(mesh, s, mesh.colorStart[color],
+                        const uint32_t lo = skipKk ? mesh.colorStart[color] +
+                                                         mesh.colorKkSkip[color]
+                                                   : mesh.colorStart[color];
+                        RigExecClothProjectColorSingle(mesh, s, lo,
                                                        mesh.colorStart[color + 1], x);
                     } else {
                         for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)

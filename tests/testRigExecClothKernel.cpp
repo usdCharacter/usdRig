@@ -988,6 +988,92 @@ void TestColorSingleMatchesSerial()
     CHECK(compared > 5000);
 }
 
+void TestKinematicSkipPartition()
+{
+    // Each color's leading colorKkSkip entries are exactly its stretch
+    // kinematic pairs, and projecting that leading run at zero stretch
+    // alpha on an empty model leaves any pose bitwise unchanged (the
+    // zero denominator returns before any write, NaN lengths included),
+    // so the solve may start past it.
+    const Mesh m = Curtain(9, 8.0f, 8.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    for (int c = 0; c < 9; ++c) pins[size_t(c)] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, &pins, settings, &mesh));
+    CHECK(mesh.model.Empty());
+    CHECK(mesh.colorKkSkip.size() == mesh.ColorCount());
+    const auto isKk = [&](uint32_t c) {
+        const size_t a = size_t(mesh.constraintEnds[2 * c]);
+        const size_t b = size_t(mesh.constraintEnds[2 * c + 1]);
+        return mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch) &&
+               mesh.inverseMass[a] == 0.0f && mesh.inverseMass[b] == 0.0f;
+    };
+    size_t skipped = 0;
+    for (size_t k = 0; k < mesh.ColorCount(); ++k) {
+        const uint32_t lo = mesh.colorStart[k], hi = mesh.colorStart[k + 1];
+        CHECK(mesh.colorKkSkip[k] <= hi - lo);
+        for (uint32_t c = lo; c < lo + mesh.colorKkSkip[k]; ++c) CHECK(isKk(c));
+        for (uint32_t c = lo + mesh.colorKkSkip[k]; c < hi; ++c) CHECK(!isKk(c));
+        skipped += mesh.colorKkSkip[k];
+    }
+    CHECK(skipped == 8);
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    std::vector<std::vector<float>> poses;
+    poses.push_back(m.points);
+    {
+        auto x = m.points;
+        for (float &v : x) v *= 0.5f;
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        const size_t a = size_t(mesh.constraintEnds[0]);
+        const size_t b = size_t(mesh.constraintEnds[1]);
+        x[3 * b] = x[3 * a];
+        x[3 * b + 1] = x[3 * a + 1];
+        x[3 * b + 2] = x[3 * a + 2];
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        x[0] = -0.0f;
+        x[1] = -0.0f;
+        x[2] = -0.0f;
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        x[0] = std::numeric_limits<float>::quiet_NaN();
+        poses.push_back(x);
+    }
+    RigExecClothStep step;
+    step.h = 1.0f / 24.0f;
+    step.alphaStretch = 0.0f;
+    step.alphaBend = 0.5f;
+    size_t compared = 0;
+    for (const auto &pose : poses) {
+        for (size_t color = 0; color < mesh.ColorCount(); ++color) {
+            const uint32_t lo = mesh.colorStart[color];
+            const uint32_t hi = mesh.colorStart[color + 1];
+            const uint32_t mid = lo + mesh.colorKkSkip[color];
+            auto x = pose, y = pose;
+            for (uint32_t c = lo; c < mid; ++c)
+                RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+            CHECK(same(x, pose));
+            for (uint32_t c = lo; c < hi; ++c)
+                RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+            RigExecClothProjectColorSingle(mesh, step, mid, hi, y.data());
+            CHECK(same(x, y));
+            compared += 2;
+        }
+    }
+    CHECK(compared > 100);
+}
+
 void TestHardSoftBarycentricAttachments()
 {
     const Mesh m = Curtain(2, 2, 2);
@@ -1518,6 +1604,7 @@ int main()
     TestSweptBoundsAndBroadphase();
     TestSingleIterationMatchesMulti();
     TestColorSingleMatchesSerial();
+    TestKinematicSkipPartition();
     TestPredictUsesGravityStep();
     TestOutsideBoundsSkipsSearch();
     TestTetherLimitsPrecomputed();
