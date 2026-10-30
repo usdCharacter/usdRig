@@ -1140,7 +1140,10 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
 /// writes the same bits while the root-and-divide chain overlaps
 /// across the chunk instead of serializing. The stashed endpoints keep
 /// their int32_t encoding so the pass-2 indexing matches the serial
-/// conversion exactly.
+/// conversion exactly. \p Model selects the material-profile path at
+/// compile time; the caller instantiates false for an empty model so
+/// the hot loop carries no model branch or dead code.
+template <bool Model>
 inline void
 RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
                                const RigExecClothStep &s, uint32_t begin,
@@ -1148,7 +1151,6 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
 {
     using namespace cloth_detail;
     constexpr uint32_t kChunk = 64;
-    const bool empty = mesh.model.Empty();
     for (uint32_t base = begin; base < end;) {
         const uint32_t n = end - base < kChunk ? end - base : kChunk;
         float d[kChunk][3];
@@ -1168,7 +1170,7 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
             const float len = Length(d[k]);
             if (!(len > 0.0f)) { live[k] = 0; continue; }
             const float C = len - mesh.constraintRest[c];
-            if (!empty) {
+            if constexpr (Model) {
                 RigExecClothSample sample;
                 sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
                 sample.weights = {{0.5f, 0.5f, 0}};
@@ -2043,8 +2045,16 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                         const uint32_t lo = skipKk ? mesh.colorStart[color] +
                                                          mesh.colorKkSkip[color]
                                                    : mesh.colorStart[color];
-                        RigExecClothProjectColorSingle(mesh, s, lo,
-                                                       mesh.colorStart[color + 1], x);
+                        // The empty-model instantiation carries no model
+                        // branch or dead profile code in the hot loop.
+                        if (mesh.model.Empty())
+                            RigExecClothProjectColorSingle<false>(mesh, s, lo,
+                                                                 mesh.colorStart[color + 1],
+                                                                 x);
+                        else
+                            RigExecClothProjectColorSingle<true>(mesh, s, lo,
+                                                                mesh.colorStart[color + 1],
+                                                                x);
                     } else {
                         const uint32_t lo = skipKk ? mesh.colorStart[color] +
                                                          mesh.colorKkSkip[color]

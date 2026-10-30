@@ -1067,6 +1067,16 @@ void TestColorSingleMatchesSerial()
         return poses;
     };
     size_t compared = 0;
+    // The solve's instantiation dispatch: the empty-model loop for an
+    // empty model, the profile path otherwise.
+    const auto projectColor = [](const RigExecClothMesh &mesh,
+                                 const RigExecClothStep &step, uint32_t lo,
+                                 uint32_t hi, float *x) {
+        if (mesh.model.Empty())
+            RigExecClothProjectColorSingle<false>(mesh, step, lo, hi, x);
+        else
+            RigExecClothProjectColorSingle<true>(mesh, step, lo, hi, x);
+    };
     const auto run = [&](RigExecClothMesh &mesh,
                          const std::vector<std::vector<float>> &poses) {
         for (const auto &pose : poses) {
@@ -1082,17 +1092,25 @@ void TestColorSingleMatchesSerial()
                         auto x = pose, y = pose, z = pose;
                         for (uint32_t c = lo; c < hi; ++c)
                             RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
-                        RigExecClothProjectColorSingle(mesh, step, lo, hi, y.data());
+                        projectColor(mesh, step, lo, hi, y.data());
                         CHECK(same(x, y));
                         // Split ranges re-chunk the color; the writes agree.
                         const uint32_t mid = lo + (hi - lo) / 2;
-                        RigExecClothProjectColorSingle(mesh, step, lo, mid, z.data());
-                        RigExecClothProjectColorSingle(mesh, step, mid, hi, z.data());
+                        projectColor(mesh, step, lo, mid, z.data());
+                        projectColor(mesh, step, mid, hi, z.data());
                         CHECK(same(x, z));
                         // An empty range writes nothing.
-                        RigExecClothProjectColorSingle(mesh, step, lo, lo, z.data());
+                        projectColor(mesh, step, lo, lo, z.data());
                         CHECK(same(x, z));
                         compared += 3;
+                        // On an empty model both instantiations agree.
+                        if (mesh.model.Empty()) {
+                            auto w = pose;
+                            RigExecClothProjectColorSingle<true>(mesh, step, lo, hi,
+                                                                w.data());
+                            CHECK(same(y, w));
+                            compared += 1;
+                        }
                     }
                 }
             }
@@ -1221,7 +1239,9 @@ void TestKinematicSkipPartition()
             CHECK(same(x, pose));
             for (uint32_t c = lo; c < hi; ++c)
                 RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
-            RigExecClothProjectColorSingle(mesh, step, mid, hi, y.data());
+            // The mesh is empty (checked above), so the solve takes the
+            // branch-free instantiation here.
+            RigExecClothProjectColorSingle<false>(mesh, step, mid, hi, y.data());
             CHECK(same(x, y));
             // The general arm skips the same run: it returns before any
             // write, so positions and lambda come back untouched.
