@@ -1457,6 +1457,60 @@ void TestEdgeSpheresRetireOnTouch()
     }
 }
 
+void TestSelfGridReuseVerdict()
+{
+    // The edge/edge pass reuses the vertex/triangle grid exactly when no
+    // projection moved x since it was built and the edge reach fits inside
+    // the vertex/triangle pad. Equal clocks with a reach at the pad reuse
+    // (both pads are that pad); any clock advance or overhang rebuilds.
+    // A NaN reach reuses: std::max keeps the pad, so the inputs match.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.5f, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 1.0f, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.0f, 0.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, nan, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.5f, inf));
+    CHECK(!RigExecClothSelfGridReusable(7, 7, 1.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(7, 7, inf, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(8, 7, 0.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(7, 8, 0.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(8, 7, 1.5f, 1.0f));
+}
+
+void TestClothGridDeterminism()
+{
+    // The grid-reuse verdict rests on the build being deterministic:
+    // identical inputs rebuild identical buckets, cells, and bounds,
+    // whatever the retained scratch held. A wider pad widens the cells.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    float after[24];
+    for (int i = 0; i < 24; ++i) after[i] = box[i] + 0.25f * float(i % 3 - 1);
+    const auto same = [](const RigExecClothGrid &a, const RigExecClothGrid &b) {
+        return a.cellSize == b.cellSize && a.bucketMask == b.bucketMask &&
+               a.bucketStart == b.bucketStart &&
+               a.bucketTriangles == b.bucketTriangles &&
+               std::memcmp(a.sweptLo, b.sweptLo, sizeof(a.sweptLo)) == 0 &&
+               std::memcmp(a.sweptHi, b.sweptHi, sizeof(a.sweptHi)) == 0;
+    };
+    RigExecClothGrid first, second;
+    std::vector<uint64_t> scratch(64, 0xdeadbeefull);
+    RigExecBuildClothGrid(colliders, box, after, 0.5f, &first, &scratch);
+    scratch.assign(64, 0x12345678ull);
+    RigExecBuildClothGrid(colliders, box, after, 0.5f, &second, &scratch);
+    CHECK(same(first, second));
+    RigExecClothGrid wide;
+    RigExecBuildClothGrid(colliders, box, after, 20.0f, &wide, &scratch);
+    CHECK(wide.cellSize > first.cellSize);
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -1927,6 +1981,8 @@ int main()
     TestSelfContactKeepsAttachments();
     TestPairSetMatchesOrderedSet();
     TestEdgeSpheresRetireOnTouch();
+    TestSelfGridReuseVerdict();
+    TestClothGridDeterminism();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();

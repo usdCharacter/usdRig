@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -584,6 +585,60 @@ TestExampleSettlesDuringContact()
     CHECK(worst < 0.35);
 }
 
+uint64_t
+HashPoints(const Points &points)
+{
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(points.data());
+    for (size_t i = 0; i < points.size() * sizeof(GfVec3f); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+void
+TestSelfContactGridReusePins()
+{
+    // The materials example at held contact (t63): vertex/triangle contact
+    // is quiet, so the edge/edge pass reuses its grid; at 20x self
+    // thickness both passes correct and the grid rebuilds. Both answers
+    // are pinned bit for bit: the reuse must be invisible, and a skipped
+    // rebuild where one is due changes the 20x answer.
+    const SdfPath rig("/ClothAsset/Rig");
+    const SdfPath curtain("/ClothAsset/Geom/Curtain.points");
+    const SdfPath contact("/ClothAsset/Rig/Movers/CurtainCloth/Contact");
+    UsdStageRefPtr stage = UsdStage::Open(RIGEXEC_CLOTH_MATERIALS);
+    CHECK(stage);
+    if (!stage) return;
+    {
+        RigExecRigEvaluator evaluator(stage, rig);
+        CHECK(Compile(evaluator));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(63));
+        CHECK(pose.valid);
+        const Points points = PointsOf(pose, curtain);
+        CHECK(points.size() == 17 * 17);
+        if (points.size() != 17 * 17) return;
+        CHECK(HashPoints(points) == 0x09ea5c70e6bf8278ull);
+    }
+    UsdStageRefPtr thick = UsdStage::Open(RIGEXEC_CLOTH_MATERIALS);
+    CHECK(thick);
+    if (!thick) return;
+    float thickness = 0.0f;
+    CHECK(thick->GetPrimAtPath(contact).GetAttribute(TfToken("inputs:thickness")).Get(&thickness));
+    CHECK(thick->GetPrimAtPath(contact).GetAttribute(TfToken("inputs:thickness")).Set(thickness * 20.0f));
+    {
+        RigExecRigEvaluator evaluator(thick, rig);
+        CHECK(Compile(evaluator));
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(63));
+        CHECK(pose.valid);
+        const Points points = PointsOf(pose, curtain);
+        CHECK(points.size() == 17 * 17);
+        if (points.size() != 17 * 17) return;
+        CHECK(HashPoints(points) == 0xbe502f4079e2ee21ull);
+    }
+}
+
 }  // namespace
 
 int
@@ -602,6 +657,7 @@ main()
     TestBindingAndMapTransfer();
     TestValidation();
     TestExampleSettlesDuringContact();
+    TestSelfContactGridReusePins();
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);
         return 1;

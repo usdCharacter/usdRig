@@ -1669,6 +1669,18 @@ inline void TouchVerts(RigExecClothEdgeSpheres *spheres, int32_t a, int32_t b,
 
 } // namespace cloth_detail
 
+/// True when the vertex/triangle self grid is still valid for the edge/edge
+/// pass: no projection has moved x since it was built (the sphere clock only
+/// advances in TouchVerts, beside each projection) and the edge reach fits
+/// inside the vertex/triangle pad, so the edge/edge grid would take identical
+/// inputs and build identical buckets. A NaN reach reuses: std::max keeps the
+/// pad then, so the inputs still match.
+inline bool RigExecClothSelfGridReusable(uint64_t clock, uint64_t gridClock,
+                                         float edgeReach, float pad)
+{
+    return clock == gridClock && !(edgeReach > pad);
+}
+
 /// Two-sided vertex/triangle contact between selected cloth regions. The
 /// broad phase is rebuilt inside the existing constraint iteration; all
 /// corrections act on the same private particle arena as stretch and bend.
@@ -1713,6 +1725,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     RigExecBuildClothGrid(topology, previous, x, std::max(pad, step.depth),
                           &ws->selfGrid, &ws->selfScratch);
     const auto &grid = ws->selfGrid;
+    // While the vertex/triangle grid stays valid for the edge/edge pass,
+    // the edge/edge discovery rereads it as is instead of rebuilding it.
+    const uint64_t selfGridClock = spheres.clock;
     for (size_t profileIndex = 0; profileIndex < mesh.model.profiles.size(); ++profileIndex) {
         const auto &p = mesh.model.profiles[profileIndex];
         if (p.kind != RigExecClothProfileKind::SelfCollision) continue;
@@ -1789,8 +1804,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 }
             }
         }
-        RigExecBuildClothGrid(topology, previous, x, std::max(std::max(pad, step.depth), edgeReach),
-                              &ws->selfGrid, &ws->selfScratch);
+        if (!RigExecClothSelfGridReusable(spheres.clock, selfGridClock, edgeReach,
+                                          std::max(pad, step.depth)))
+            RigExecBuildClothGrid(topology, previous, x, std::max(std::max(pad, step.depth), edgeReach),
+                                  &ws->selfGrid, &ws->selfScratch);
         // Flat dedup over retained storage: the same verdicts as an
         // ordered set (the discovery loops keep their order), with no
         // per-pair allocation.
