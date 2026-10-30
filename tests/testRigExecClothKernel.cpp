@@ -671,6 +671,30 @@ void TestSweptBoundsAndBroadphase()
     CHECK(compared > 10000);
 }
 
+void TestMultiIterationSolves()
+{
+    // The solve dispatches the general projection when iterations > 1;
+    // it must still succeed deterministically with finite results.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    RigExecClothSettings settings;
+    settings.iterations = 3;
+    settings.substeps = 2;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothParameters p;
+    std::vector<std::vector<float>> entering(3, m.points);
+    bool ok = false, ok2 = false;
+    const auto a = Solve(mesh, RigExecClothColliders(), settings, p, entering,
+                         NoColliders, &ok);
+    const auto b = Solve(mesh, RigExecClothColliders(), settings, p, entering,
+                         NoColliders, &ok2);
+    CHECK(ok);
+    CHECK(ok2);
+    CHECK(a.size() == 3 * mesh.pointCount);
+    for (float v : a) CHECK(std::isfinite(v));
+    CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+}
+
 void TestRefusals()
 {
     const Mesh m = Curtain(4, 3.0f, 1.0f);
@@ -755,6 +779,89 @@ void TestForceResponseAndDirectionalMaterial()
     RigExecClothVelocity(mesh, step, 0, x.data(), previous.data(), velocity.data());
     CHECK(std::abs(velocity[0] - 1) < 1e-5f);
     CHECK(std::abs(velocity[1] - std::exp(-1.0f)) < 1e-5f);
+}
+
+void TestSingleIterationMatchesMulti()
+{
+    // The iterations==1 projection drops the lambda traffic: every lambda
+    // read sees the substep fill (+0.0f). It must match the general form
+    // with a zeroed lambda bitwise, including C == +0 (rest-length edges),
+    // zero-length edges, and zero-denominator (kinematic-rigid) ones, on
+    // the empty and material paths alike.
+    const Mesh m = Curtain(3, 2.0f, 4.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    pins[0] = pins[1] = pins[2] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh bare;
+    CHECK(Build(m, &pins, settings, &bare));
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    std::vector<std::vector<float>> poses;
+    poses.push_back(m.points);
+    for (float scale : {0.5f, 1.5f}) {
+        auto x = m.points;
+        for (float &v : x) v *= scale;
+        poses.push_back(x);
+    }
+    for (float scale : {1e-20f, 1e20f}) {
+        auto x = m.points;
+        for (size_t i = 0; i < m.Size(); ++i) x[3 * i] = m.points[3 * i] * scale;
+        poses.push_back(x);
+    }
+    {
+        // One coincident pair exercises the zero-length early return.
+        auto x = m.points;
+        const size_t a = size_t(bare.constraintEnds[0]);
+        const size_t b = size_t(bare.constraintEnds[1]);
+        x[3 * b] = x[3 * a];
+        x[3 * b + 1] = x[3 * a + 1];
+        x[3 * b + 2] = x[3 * a + 2];
+        poses.push_back(x);
+    }
+    size_t compared = 0;
+    const auto run = [&](RigExecClothMesh &mesh) {
+        for (const auto &pose : poses) {
+            for (float alpha : {0.0f, 1e-6f, 1e6f}) {
+                for (float h : {1.0f / 24.0f, 1e-3f, 10.0f}) {
+                    RigExecClothStep step;
+                    step.h = h;
+                    step.alphaStretch = alpha;
+                    step.alphaBend = 0.5f * alpha;
+                    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+                        auto x = pose, y = pose;
+                        std::vector<float> lambda(mesh.constraintRest.size(), 0.0f);
+                        RigExecClothProjectConstraint(mesh, step, c, x.data(),
+                                                     lambda.data());
+                        RigExecClothProjectConstraintSingle(mesh, step, c, y.data());
+                        CHECK(same(x, y));
+                        ++compared;
+                    }
+                }
+            }
+        }
+    };
+    run(bare);
+    for (int hard = 0; hard < 2; ++hard) {
+        for (auto kind : {RigExecClothProfileKind::Stretch,
+                          RigExecClothProfileKind::Bend}) {
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = kind;
+            p.warp = 100;
+            p.weft = .01f;
+            p.compliance = .001f;
+            p.hard = hard != 0;
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh);
+        }
+    }
+    CHECK(compared > 5000);
 }
 
 void TestHardSoftBarycentricAttachments()
@@ -1035,6 +1142,8 @@ int main()
     TestCarriedRigidly();
     TestClearOfColliders();
     TestSweptBoundsAndBroadphase();
+    TestSingleIterationMatchesMulti();
+    TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();
     TestForceResponseAndDirectionalMaterial();

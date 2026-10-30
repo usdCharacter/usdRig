@@ -985,6 +985,55 @@ RigExecClothPredict(const RigExecClothMesh &mesh, const RigExecClothStep &s,
     }
 }
 
+/// Projects constraint \p c with no lambda traffic: the iterations==1
+/// form, where every lambda read sees the substep fill (+0.0f), so the
+/// alpha term and the write are dead. Bit-identical: -C - (+0.0f) is -C
+/// for every C including signed zeros, and the model path substitutes
+/// the same +0.0f the fill wrote.
+inline void
+RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
+                                    const RigExecClothStep &s, size_t c,
+                                    float *x)
+{
+    const size_t a = size_t(mesh.constraintEnds[2 * c]);
+    const size_t b = size_t(mesh.constraintEnds[2 * c + 1]);
+    const float wa = mesh.inverseMass[a], wb = mesh.inverseMass[b];
+    float alpha = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                            ? s.alphaStretch : s.alphaBend;
+    float d[3];
+    cloth_detail::Sub(x + 3 * a, x + 3 * b, d);
+    const float len = cloth_detail::Length(d);
+    if (!(len > 0.0f)) return;
+    const float C = len - mesh.constraintRest[c];
+    if (!mesh.model.Empty()) {
+        RigExecClothSample sample;
+        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
+        sample.weights = {{0.5f, 0.5f, 0}};
+        const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
+        if (const auto *profile = RigExecClothProfileFor(mesh, kind, sample)) {
+            float restDirection[3];
+            cloth_detail::Sub(mesh.restPoints.data() + 3 * a,
+                              mesh.restPoints.data() + 3 * b, restDirection);
+            const float rl = cloth_detail::Length(restDirection);
+            for (float &q : restDirection) q /= rl;
+            const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+            const float strength = RigExecClothStrength(*profile, sample, force,
+                restDirection, mesh.materialFrames.data() + 9 * a);
+            if (!(strength > 0)) return;
+            alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
+        }
+    }
+    const float denom = wa + wb + alpha;
+    if (!(denom > 0.0f)) return;
+    const float dl = -C / denom;
+    const float ka = wa * dl / len, kb = wb * dl / len;
+    for (int q = 0; q < 3; ++q) {
+        x[3 * a + size_t(q)] += d[q] * ka;
+        x[3 * b + size_t(q)] -= d[q] * kb;
+    }
+}
+
 /// Projects constraint \p c (XPBD, in place). Within a color no two
 /// constraints share a particle.
 inline void
@@ -1744,15 +1793,21 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                 collide ? &ws->contacts : nullptr;
             for (size_t i = 0; i < n; ++i)
                 RigExecClothPredict(mesh, s, from.entering, to.entering, i, x, xp, v);
-            std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
+            const bool single = iterations == 1;
+            if (!single) std::fill(ws->lambda.begin(), ws->lambda.end(), 0.0f);
             std::fill(ws->attachmentLambda.begin(), ws->attachmentLambda.end(), 0.0f);
             std::fill(ws->contactLambda.begin(), ws->contactLambda.end(), 0.0f);
             std::fill(ws->contactTriangles.begin(), ws->contactTriangles.end(), -1);
             ws->selfLambda.clear();
             for (int it = 0; it < iterations; ++it) {
                 for (size_t color = 0; color < colors; ++color) {
-                    for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
-                        RigExecClothProjectConstraint(mesh, s, c, x, ws->lambda.data());
+                    if (single) {
+                        for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
+                            RigExecClothProjectConstraintSingle(mesh, s, c, x);
+                    } else {
+                        for (uint32_t c = mesh.colorStart[color]; c < mesh.colorStart[color + 1]; ++c)
+                            RigExecClothProjectConstraint(mesh, s, c, x, ws->lambda.data());
+                    }
                 }
                 if (!mesh.model.Empty())
                     RigExecClothBindings(mesh, s, settings, from, to, x, ws->attachmentLambda.data());
