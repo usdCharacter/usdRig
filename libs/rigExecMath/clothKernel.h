@@ -178,6 +178,10 @@ struct RigExecClothMesh {
     /// scans.
     std::vector<uint64_t> neighborBits;
     size_t neighborBitStride = 0;
+    /// The three triangle edges as sorted endpoint pairs, two ints per
+    /// edge in grid order. Built for self-contact meshes, like the
+    /// bitsets; the discovery loads them instead of sorting per visit.
+    std::vector<int32_t> triEdges;
     std::vector<size_t> colliderOffsets;
     std::vector<std::vector<float>> attachmentRest;
     bool valid = false;
@@ -772,6 +776,17 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
             for (int32_t b : mesh->neighbors[a])
                 mesh->neighborBits[a * mesh->neighborBitStride + (size_t(b) >> 6)] |=
                     1ull << (b & 63);
+    }
+    mesh->triEdges.clear();
+    if (selfContact) {
+        mesh->triEdges.resize(2 * mesh->triangles.size());
+        for (size_t t = 0; t < mesh->triangles.size() / 3; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const int32_t p = mesh->triangles[3 * t + e];
+                const int32_t q = mesh->triangles[3 * t + (e + 1) % 3];
+                mesh->triEdges[6 * t + 2 * e] = std::min(p, q);
+                mesh->triEdges[6 * t + 2 * e + 1] = std::max(p, q);
+            }
     }
     mesh->materialFrames.resize(9 * mesh->pointCount);
     for (size_t i = 0; i < mesh->pointCount; ++i)
@@ -1850,14 +1865,16 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
                 for (size_t edge = 0; edge < 3; ++edge) {
-                    const int32_t k = std::min(mesh.triangles[3*tri+edge], mesh.triangles[3*tri+(edge+1)%3]);
-                    const int32_t l = std::max(mesh.triangles[3*tri+edge], mesh.triangles[3*tri+(edge+1)%3]);
+                    const int32_t k = mesh.triEdges[6*tri+2*edge];
+                    const int32_t l = mesh.triEdges[6*tri+2*edge+1];
                     if (i == k || i == l || j == k || j == l) continue;
                     // Dedup before the adjacency scans: a rediscovered pair
                     // skips them, and recording adjacent pairs too keeps
                     // every verdict exact (presence is per key).
+                    // Both edges arrive sorted with four distinct
+                    // endpoints, so the pair order is one compare.
                     std::array<int32_t,4> key{{i,j,k,l}};
-                    if (std::make_pair(k,l) < std::make_pair(i,j)) key = {{k,l,i,j}};
+                    if (k < i) key = {{k,l,i,j}};
                     if (!pairs.Insert(key)) continue;
                     bool adjacent = false;
                     for (int32_t a : {i,j}) for (int32_t b : {k,l}) {

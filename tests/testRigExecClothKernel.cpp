@@ -1624,6 +1624,45 @@ void TestNeighborBitsMatchLists()
     }
 }
 
+void TestSelfEdgeCanonicalization()
+{
+    // Prepare stores each triangle edge sorted, and the discovery keys
+    // them by one compare: with both edges sorted and four distinct
+    // endpoints, (k,l) < (i,j) is exactly k < i. Constraints arrive
+    // sorted from the build.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c)
+        CHECK(mesh.constraintEnds[2 * c] < mesh.constraintEnds[2 * c + 1]);
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    CHECK(mesh.triEdges.size() == 2 * mesh.triangles.size());
+    for (size_t t = 0; t < mesh.triangles.size() / 3; ++t)
+        for (size_t e = 0; e < 3; ++e) {
+            const int32_t p = mesh.triangles[3 * t + e];
+            const int32_t q = mesh.triangles[3 * t + (e + 1) % 3];
+            CHECK(mesh.triEdges[6 * t + 2 * e] == std::min(p, q));
+            CHECK(mesh.triEdges[6 * t + 2 * e + 1] == std::max(p, q));
+        }
+    size_t compared = 0;
+    for (int32_t i = 0; i < 6; ++i)
+        for (int32_t j = 0; j < 6; ++j)
+            for (int32_t k = 0; k < 6; ++k)
+                for (int32_t l = 0; l < 6; ++l) {
+                    if (!(i < j && k < l)) continue;
+                    if (i == k || i == l || j == k || j == l) continue;
+                    CHECK((k < i) == (std::make_pair(k, l) < std::make_pair(i, j)));
+                    ++compared;
+                }
+    CHECK(compared == 90);
+}
+
 void TestMaterialCompiledRigRoundTrip()
 {
     RigExecClothCompiledData compiledRig;
@@ -2098,6 +2137,7 @@ int main()
     TestClothGridDeterminism();
     TestSelfPairDiscoveryOrder();
     TestNeighborBitsMatchLists();
+    TestSelfEdgeCanonicalization();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();
