@@ -2196,6 +2196,14 @@ class "RigExecVolumeWeight" (
         resampled into, so there is exactly one remap path in the hot
         loop whether the author picked a preset or drew a curve."""
     )
+    float[] inputs:falloffSamples = [] (
+        doc = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1).
+        A nonempty array replaces falloffProfile and falloffCurve; an empty
+        array uses that authored profile. Editors may preview this input
+        without authoring it, then commit the custom spline on release."""
+    )
+
     float rigExec:falloffCurve = 0 (
         doc = """Falloff shape as an authored Ts spline over x in [0, 1],
         read when rigExec:falloffProfile is `curve`. x is the ramp

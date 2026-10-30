@@ -185,6 +185,16 @@ The presets are baked to the same lookup table the curve is
 resampled into, so there is exactly one remap path in the hot
 loop whether the author picked a preset or drew a curve.
 
+#### `inputs:falloffSamples`
+
+*Type:* `float[]`. *Default:* `[]`.
+
+Optional uniformly spaced samples of the normalized falloff
+profile, from the outer boundary (0) to the inner boundary (1).
+A nonempty array replaces falloffProfile and falloffCurve; an empty
+array uses that authored profile. Editors may preview this input
+without authoring it, then commit the custom spline on release.
+
 #### `rigExec:falloffCurve`
 
 *Type:* `float`. *Default:* `0`.

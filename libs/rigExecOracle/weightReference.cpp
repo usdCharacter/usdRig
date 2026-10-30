@@ -28,6 +28,7 @@ const TfToken _kGeoStrength("inputs:strength");
 const TfToken _kGeoInvert("inputs:invert");
 const TfToken _kGeoFalloffMin("inputs:falloffMin");
 const TfToken _kGeoFalloffMax("inputs:falloffMax");
+const TfToken _kGeoFalloffSamples("inputs:falloffSamples");
 const TfToken _kGeoExtentU("inputs:extentU");
 const TfToken _kGeoExtentV("inputs:extentV");
 const TfToken _kGeoScaleX("inputs:scaleX");
@@ -676,6 +677,11 @@ RigExecWeightReferenceContext RigExecCaptureWeightReference(
         }
         RigExecResolveReadPhase(prim.GetRelationship(_kGeoWeightTarget), &record.weightTargetPhase, &record.phaseError);
         record.falloff = evaluatorDetail::_BakeFalloffLut(prim);
+        VtFloatArray samples;
+        if (resolved.GetAttribute(prim.GetAttribute(_kGeoFalloffSamples), time, &samples) &&
+            !samples.empty()) {
+            record.falloff.assign(samples.cbegin(), samples.cend());
+        }
         if (const auto *matrix = placement(path)) context.placements[path] = *matrix;
         context.prims[path] = record;
         for (const auto &entry : record.relationships) {

@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <set>
 #include <utility>
@@ -75,6 +76,20 @@ const TfToken _tBrackets("brackets"), _tShell("shell");
 const TfToken _tFalloff("falloff");
 const TfToken _tWeightDisplay("guide:weightDisplay");
 const TfToken _tHeatmap("heatmap"), _tBands("bands");
+
+const TfToken _volumeInputsExtentU("inputs:extentU");
+const TfToken _volumeInputsExtentV("inputs:extentV");
+const TfToken _volumeInputsFalloffMax("inputs:falloffMax");
+const TfToken _volumeInputsFalloffMin("inputs:falloffMin");
+const TfToken _volumeInputsScaleX("inputs:scaleX");
+const TfToken _volumeInputsScaleXNeg("inputs:scaleXNeg");
+const TfToken _volumeInputsScaleXPos("inputs:scaleXPos");
+const TfToken _volumeInputsScaleY("inputs:scaleY");
+const TfToken _volumeInputsScaleYNeg("inputs:scaleYNeg");
+const TfToken _volumeInputsScaleYPos("inputs:scaleYPos");
+const TfToken _volumeInputsScaleZ("inputs:scaleZ");
+const TfToken _volumeInputsScaleZNeg("inputs:scaleZNeg");
+const TfToken _volumeInputsScaleZPos("inputs:scaleZPos");
 
 // The rigid ASSET-space placement matrix of one posed frame, or nothing
 // when the frame cannot supply one.
@@ -1915,6 +1930,19 @@ RigExecImagingBridge::_FillControlGuides(
 }
 
 
+void
+RigExecImagingBridge::SetInteractiveOverrides(std::vector<RigExecValueOverride> overrides)
+{
+    _interactiveOverrides = std::move(overrides);
+    _evaluationOverrides.clear();
+    // guide:* inputs are display-only: imaging reads them, the graph never does.
+    for (const auto &value : _interactiveOverrides) {
+        if (std::strncmp(value.attribute.GetText(), "guide:", 6) != 0)
+            _evaluationOverrides.push_back(value);
+    }
+    _evaluator->SetInteractiveOverrides(_evaluationOverrides);
+}
+
 // Every placed influence volume draws its falloffMin and falloffMax
 // iso-surfaces.
 // Driven by pose.weightFrames rather than by a second stage traversal: the
@@ -1963,9 +1991,9 @@ RigExecImagingBridge::_FillVolumeGuides(
             continue;
         }
 
-        auto readFloat = [&prim, &pose](const char *name, float fallback) {
+        auto readFloat = [this, &prim, &pose, &weightPath](const TfToken &name, float fallback) {
             float value = fallback;
-            if (UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+            if (UsdAttribute a = prim.GetAttribute(name)) {
                 // Property movers can drive volume dimensions. The field
                 // consumes these evaluated values, so its iso-surfaces must
                 // use the same values instead of the authored source.
@@ -1974,19 +2002,28 @@ RigExecImagingBridge::_FillVolumeGuides(
                     moved->second.IsHolding<float>()) {
                     return moved->second.UncheckedGet<float>();
                 }
-                a.Get(&value, pose.time);
+                for (const auto &override : _interactiveOverrides) {
+                    if (override.prim == weightPath && override.attribute == a.GetName()) {
+                        if (override.value.IsHolding<float>())
+                            return override.value.UncheckedGet<float>();
+                        if (override.value.IsHolding<double>())
+                            return float(override.value.UncheckedGet<double>());
+                    }
+                }
+                VtValue authored;
+                if (a.Get(&authored, pose.time)) {
+                    if (authored.IsHolding<float>()) value = authored.UncheckedGet<float>();
+                    else if (authored.IsHolding<double>()) value = float(authored.UncheckedGet<double>());
+                }
             }
             return value;
         };
-        const double falloffMin = readFloat("inputs:falloffMin", 0.0f);
-        const double falloffMax = readFloat("inputs:falloffMax", 1.0f);
+        const double falloffMin = readFloat(_volumeInputsFalloffMin, 0.0f);
+        const double falloffMax = readFloat(_volumeInputsFalloffMax, 1.0f);
         if (!std::isfinite(falloffMin) || !std::isfinite(falloffMax)) {
             continue;
         }
-        double wireWidth = 0.05;
-        if (UsdAttribute a = prim.GetAttribute(_tGuideWireWidth)) {
-            a.Get(&wireWidth, pose.time);
-        }
+        double wireWidth = readFloat(_tGuideWireWidth, 0.05f);
         // A non-positive width is not a reason to draw nothing: it
         // selects the hairline fallback, exactly as it does for a control.
         if (!wire || !std::isfinite(wireWidth) || wireWidth <= 0.0) {
@@ -1995,9 +2032,7 @@ RigExecImagingBridge::_FillVolumeGuides(
 
         const TfToken typeName = prim.GetTypeName();
         std::vector<RigExecVolumeGuideElement> elements;
-        float guideOpacity = 0.35f;
-        if (const UsdAttribute attr = prim.GetAttribute(_tGuideDisplayOpacity))
-            attr.Get(&guideOpacity, pose.time);
+        const float guideOpacity = readFloat(_tGuideDisplayOpacity, 0.35f);
         auto finishBoundary = [&](size_t first, bool outer) {
             if (!clean) return;
             for (size_t i = first; i < elements.size(); ++i) {
@@ -2027,8 +2062,8 @@ RigExecImagingBridge::_FillVolumeGuides(
             // Size from the authored extents ONLY. The band moves the two
             // surfaces apart along the axis; it must not change their
             // size (a max(1, |min|, |max|) half-size would, on every scrub).
-            const double extentU = readFloat("inputs:extentU", 1.0f);
-            const double extentV = readFloat("inputs:extentV", 1.0f);
+            const double extentU = readFloat(_volumeInputsExtentU, 1.0f);
+            const double extentV = readFloat(_volumeInputsExtentV, 1.0f);
             TfToken boundsToken("unbounded");
             if (UsdAttribute a =
                     prim.GetAttribute(_tRigExecPlaneBounds)) {
@@ -2053,9 +2088,9 @@ RigExecImagingBridge::_FillVolumeGuides(
             // Sphere and curve share the per-axis divisors, and reject the
             // same values the kernel rejects -- a volume whose packet is
             // invalid must not draw a shape suggesting it is fine.
-            const GfVec3d axisScale(readFloat("inputs:scaleX", 1.0f),
-                                    readFloat("inputs:scaleY", 1.0f),
-                                    readFloat("inputs:scaleZ", 1.0f));
+            const GfVec3d axisScale(readFloat(_volumeInputsScaleX, 1.0f),
+                                    readFloat(_volumeInputsScaleY, 1.0f),
+                                    readFloat(_volumeInputsScaleZ, 1.0f));
             bool scaleOk = true;
             for (int i = 0; i < 3; ++i) {
                 if (!std::isfinite(axisScale[i]) || axisScale[i] <= 0.0) {
@@ -2067,13 +2102,13 @@ RigExecImagingBridge::_FillVolumeGuides(
             }
             if (typeName == "RigExecSphereWeight") {
                 const GfVec3d positiveScales(
-                    readFloat("inputs:scaleXPos", 1.0f),
-                    readFloat("inputs:scaleYPos", 1.0f),
-                    readFloat("inputs:scaleZPos", 1.0f));
+                    readFloat(_volumeInputsScaleXPos, 1.0f),
+                    readFloat(_volumeInputsScaleYPos, 1.0f),
+                    readFloat(_volumeInputsScaleZPos, 1.0f));
                 const GfVec3d negativeScales(
-                    readFloat("inputs:scaleXNeg", 1.0f),
-                    readFloat("inputs:scaleYNeg", 1.0f),
-                    readFloat("inputs:scaleZNeg", 1.0f));
+                    readFloat(_volumeInputsScaleXNeg, 1.0f),
+                    readFloat(_volumeInputsScaleYNeg, 1.0f),
+                    readFloat(_volumeInputsScaleZNeg, 1.0f));
                 for (int axis = 0; axis < 3; ++axis) {
                     if (!std::isfinite(positiveScales[axis]) || positiveScales[axis] <= 0 ||
                         !std::isfinite(negativeScales[axis]) || negativeScales[axis] <= 0) scaleOk = false;
@@ -2154,6 +2189,8 @@ RigExecImagingBridge::_FillVolumeGuides(
         RigExecPublishedPrim &published = snapshot->prims[weightPath];
         published.assetRoot = _rigPath.GetParentPath();
         published.hasVolumeGuides = true;
+        published.hasControlFrame = true;
+        published.controlFrame = rigid;
         published.volumeGuides = std::move(elements);
         _ReadGuideStyle(prim, pose, &published);
     }
@@ -2384,7 +2421,7 @@ RigExecImagingBridge::NoteWarmingEnqueued(
     }
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
-        controlDigest, unfoldedDigest, &inputs, &_interactiveOverrides);
+        controlDigest, unfoldedDigest, &inputs, &_evaluationOverrides);
 }
 
 const RigExecOutputAffectedIndex *
@@ -2415,7 +2452,7 @@ RigExecImagingBridge::_SyncAffectedIndex()
     // A rebuild drops every admission with the old index: the standing
     // overrides re-admit against the new shape, so a drag straddling a
     // rebuild keeps its exact seeds.
-    AdmitOverrideControls(_interactiveOverrides);
+    AdmitOverrideControls(_evaluationOverrides);
     return _affectedIndex.get();
 }
 
@@ -2694,14 +2731,14 @@ RigExecImagingBridge::_SampleLive(
     // admitted as live admits them, so every digest of it folds them.
     if (_EnsureChainBindings() &&
         RigExecSampleFrameInputsWithTrustedChainBindings(
-            *_evaluator, time, _interactiveOverrides, _upstreamInputs,
+            *_evaluator, time, _evaluationOverrides, _upstreamInputs,
             _liveChainBindings, out)) {
         return true;
     }
     // The pinned route declined (a bind that failed, an override it cannot
     // place, a hook that refused): the self-binding sampler answers exactly
     // as it always has, at its own cost.
-    return RigExecSampleFrameInputs(*_evaluator, time, _interactiveOverrides,
+    return RigExecSampleFrameInputs(*_evaluator, time, _evaluationOverrides,
                                     _upstreamInputs, out);
 }
 
@@ -2748,7 +2785,7 @@ RigExecImagingBridge::_ComputePoseOnlyCacheKey(
     UsdTimeCode time, RigExecFrameCacheKey *key) const
 {
     if (!key || !_frameCache ||
-        !RigExecRefusalControlDigestible(_interactiveOverrides,
+        !RigExecRefusalControlDigestible(_evaluationOverrides,
                                          _upstreamInputs)) {
         return false;
     }
@@ -2757,7 +2794,7 @@ RigExecImagingBridge::_ComputePoseOnlyCacheKey(
     // per-operation input list or partial retained-state proof is needed.
     key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
     key->controlDigest = RigExecRefusalControlDigest(
-        time, _evaluator->GetStageEditSerial(), _interactiveOverrides,
+        time, _evaluator->GetStageEditSerial(), _evaluationOverrides,
         _upstreamInputs);
     return true;
 }
@@ -2896,7 +2933,7 @@ RigExecImagingBridge::_TrySparseServe(
             return false;
         }
         _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
-            key.controlDigest, unfolded, &inputs, &_interactiveOverrides);
+            key.controlDigest, unfolded, &inputs, &_evaluationOverrides);
         _warmIndex->NoteCompleted(
             _rigPath, stamped, key,
             _warmIndex->CurrentGeneration(_rigPath));
@@ -2936,7 +2973,7 @@ RigExecImagingBridge::_TrySparseServe(
         return false;
     }
     if (!RigExecCanReuseRetainedPose(*index, *retained, key.compiledRigSignature,
-                                    inputs, _interactiveOverrides)) {
+                                    inputs, _evaluationOverrides)) {
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
@@ -2959,7 +2996,7 @@ RigExecImagingBridge::_TrySparseServe(
             _warmIndex->CurrentGeneration(_rigPath));
     }
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
-        key.controlDigest, unfolded, &inputs, &_interactiveOverrides);
+        key.controlDigest, unfolded, &inputs, &_evaluationOverrides);
     MutableProfiler()->RecordCacheLookup(true, stamped);
     _ServeCachedPose(time, served, key, result);
     return true;
@@ -3071,10 +3108,10 @@ RigExecImagingBridge::_TryPublishCachedResult(
         RigExecProfileScope sampleScope(
             MutableProfiler(), "Imaging.LookupSampleDigest", "imaging");
         if (!_SampleLive(time, &inputs) ||
-            !RigExecControlStateDigestible(inputs, _interactiveOverrides)) {
+            !RigExecControlStateDigestible(inputs, _evaluationOverrides)) {
             return false;
         }
-        unfolded = RigExecControlStateDigest(inputs, _interactiveOverrides);
+        unfolded = RigExecControlStateDigest(inputs, _evaluationOverrides);
     }
     RigExecFrameCacheKey key;
     key.compiledRigSignature = compiledRig;
@@ -3141,11 +3178,11 @@ RigExecImagingBridge::_MemoizeLiveResult(
             _SampleLive(time, &memoInputs) &&
             !memoInputs.HasChainResolvedInputs() &&
             RigExecControlStateDigestible(memoInputs,
-                                          _interactiveOverrides)) {
+                                          _evaluationOverrides)) {
             key.compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
             const uint64_t unfolded =
                 RigExecControlStateDigest(memoInputs,
-                                          _interactiveOverrides);
+                                          _evaluationOverrides);
             key.controlDigest = RigExecFoldConstantDigest(
                 unfolded,
                 RigExecCompiledRigConstantDigest(
@@ -3167,7 +3204,7 @@ RigExecImagingBridge::_MemoizeLiveResult(
             const RigExecBakedProgramImpl &impl =
                 _evaluator->GetBakedProgram()->GetStepGraph();
             RigExecRetainedFrameState retainedState =
-                RigExecCaptureRetainedState(memoInputs, _interactiveOverrides,
+                RigExecCaptureRetainedState(memoInputs, _evaluationOverrides,
                                             key.compiledRigSignature,
                                             impl.clustering.clusters.size(),
                                             RigExecCompiledRigConstantDigest(
@@ -3203,7 +3240,7 @@ RigExecImagingBridge::_MemoizeLiveResult(
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
         key.controlDigest, memoUnfolded,
-        haveInputs ? &memoInputs : nullptr, &_interactiveOverrides);
+        haveInputs ? &memoInputs : nullptr, &_evaluationOverrides);
     // No override admission here: memoization runs only when no overrides
     // stand (the drag bypass), so the list is always empty. Admission
     // lives on the warming path, which samples under standing overrides.
@@ -3417,7 +3454,7 @@ RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
 {
     if (!RigExecBackgroundWarmingEnabled(
             _frameCacheMode, RigExecParallelEvaluationEnabled()) ||
-        !_interactiveOverrides.empty()) {
+        !_evaluationOverrides.empty()) {
         return false;
     }
     const uint64_t serial = _evaluator->GetStageEditSerial();
@@ -3487,7 +3524,7 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     _publishedSerial = serial;
     _publishedTimeValid = true;
     const bool useCache = cacheMode != RigExecFrameCacheMode::Off &&
-                          _interactiveOverrides.empty();
+                          _evaluationOverrides.empty();
     if (useCache && !editedHere && _TryPublishCachedResult(time, &result)) {
         return result;
     }

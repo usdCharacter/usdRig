@@ -2590,6 +2590,12 @@ class "RigExecVolumeWeight" (
             string userDocBrief = "Distance at which the field is fully ON."
         }
     )
+    float[] inputs:falloffSamples = [] (
+        customData = {
+            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1)."""
+        }
+    )
     float inputs:invert = 0 (
         customData = {
             string userDocBrief = "Exchanges the two ends of the band."
@@ -2797,6 +2803,12 @@ class RigExecSphereWeight "RigExecSphereWeight" (
     float inputs:falloffMin = 0 (
         customData = {
             string userDocBrief = "Distance at which the field is fully ON."
+        }
+    )
+    float[] inputs:falloffSamples = [] (
+        customData = {
+            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1)."""
         }
     )
     float inputs:invert = 0 (
@@ -3055,6 +3067,12 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
             string userDocBrief = "Distance at which the field is fully ON."
         }
     )
+    float[] inputs:falloffSamples = [] (
+        customData = {
+            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1)."""
+        }
+    )
     float inputs:invert = 0 (
         customData = {
             string userDocBrief = "Exchanges the two ends of the band."
@@ -3274,6 +3292,12 @@ class RigExecCurveWeight "RigExecCurveWeight" (
     float inputs:falloffMin = 0 (
         customData = {
             string userDocBrief = "Distance at which the field is fully ON."
+        }
+    )
+    float[] inputs:falloffSamples = [] (
+        customData = {
+            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1)."""
         }
     )
     float inputs:invert = 0 (

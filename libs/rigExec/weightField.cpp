@@ -28,6 +28,7 @@ TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
     ((sampleSource, "rigExec:sampleSource"))
     ((weightTarget, "rigExec:weightTarget"))
     ((curve, "rigExec:curve"))
+    ((falloffSamples, "inputs:falloffSamples"))
     ((weightObject, "rigExec:weightObject")));
 
 namespace rigExec {
@@ -53,11 +54,11 @@ SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const TfTok
     return paths[0];
 }
 // The frozen run's per-leaf sample keys, interned once at load. A weight
-// object declares five oracle leaves (three point sets, two tokens).
-const std::array<TfToken, 5> _oracleLeafKeys = {
+// Volumes also declare the sampled falloff input beside the point sets and tokens.
+const std::array<TfToken, 6> _oracleLeafKeys = {
     TfToken("rigExecFrozen:oracle:leaf0"), TfToken("rigExecFrozen:oracle:leaf1"),
     TfToken("rigExecFrozen:oracle:leaf2"), TfToken("rigExecFrozen:oracle:leaf3"),
-    TfToken("rigExecFrozen:oracle:leaf4")};
+    TfToken("rigExecFrozen:oracle:leaf4"), TfToken("rigExecFrozen:oracle:leaf5")};
 TfToken OracleLeafKey(size_t k)
 {
     return k < _oracleLeafKeys.size()
@@ -119,6 +120,13 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
             object.oracleLeaves.decl.Add({object.path.AppendProperty(*name),
                 RigExecRevisionLeafType::Token,RigExecRevisionLeafTime::AtTime,
                 RigExecRevisionLeafFlavour::Raw,VtValue()});
+        }
+        object.oracleFalloffSamplesLeaf = -1;
+        if (object.oracleKind >= 3 && object.oracleKind <= 5) {
+            object.oracleFalloffSamplesLeaf = int(object.oracleLeaves.decl.keys.size());
+            object.oracleLeaves.decl.Add({object.path.AppendProperty(_weightFieldTokens->falloffSamples),
+                RigExecRevisionLeafType::FloatArray, RigExecRevisionLeafTime::AtTime,
+                RigExecRevisionLeafFlavour::ResolvedOnly, VtValue(VtFloatArray())});
         }
         object.oracleFrozenKeys.clear();
         for (size_t k = 0; k < object.oracleLeaves.decl.keys.size(); ++k)
@@ -347,6 +355,14 @@ bool RigExecBakedCaptureWeightFieldInputs(const Baked &B,int index,
         const auto &object=B.weightObjects[id];auto &input=(*inputs)[id];
         input=RigExecWeightFieldInputs{};
         input.blocked=id<B.weightCycleBlocked.size() && B.weightCycleBlocked[id];
+        const int samplesLeaf = object.oracleFalloffSamplesLeaf;
+        if (samplesLeaf >= 0 && size_t(samplesLeaf) < object.oracleLeaves.values.size() &&
+            object.oracleLeaves.values[size_t(samplesLeaf)].IsHolding<VtFloatArray>()) {
+            const auto &samples =
+                object.oracleLeaves.values[size_t(samplesLeaf)].UncheckedGet<VtFloatArray>();
+            input.falloffSamples = samples.cdata();
+            input.falloffSampleCount = samples.size();
+        }
         for (int member=0;member<19;++member)
             input.scalars[size_t(member)]=Scalar(B,field,int(id),member,input.scalars[size_t(member)]);
         for (int key=0;key<3;++key) {

@@ -22,7 +22,7 @@
 import os
 import sys
 
-from pxr import Gf, Sdf, Tf, Ts, Usd, UsdGeom
+from pxr import Gf, Sdf, Tf, Ts, Usd, UsdGeom, Vt
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 try:
@@ -937,6 +937,111 @@ def _ClearLayout(layout):
             _ClearLayout(child)
 
 
+class SplineEdit:
+    """Detached curve edit; authoring is deferred until the gesture commits."""
+    def __init__(self, attr):
+        self.spline = attr.GetSpline()
+
+    def GetSpline(self):
+        return Ts.Spline(self.spline)
+
+    def SetSpline(self, spline):
+        self.spline = Ts.Spline(spline)
+
+
+_weightGestures = sessionRegistry.SessionRegistry("weight gestures")
+
+
+class WeightGesture:
+    """Owner-thread preview, followed by one queued authoring transaction."""
+
+    def __init__(self, api, attr):
+        import gizmoPreview
+        previous = _weightGestures.Get(api)
+        if previous is not None and not previous.closed:
+            previous.Cancel()
+        _weightGestures.Set(api, self)
+        self.api = api
+        self.stage = attr.GetStage()
+        self.time = api.dataModel.currentFrame
+        self.target = self.stage.GetEditTarget()
+        self.pending = {}
+        self.closed = False
+        self.preview = gizmoPreview
+        self._scheduled = False
+
+    def Update(self, attr, value):
+        if self.closed:
+            return
+        self.pending[attr.GetPath()] = value
+        if not self._scheduled:
+            self._scheduled = True
+            QtCore.QTimer.singleShot(16, self._Publish)
+
+    def _Publish(self):
+        self._scheduled = False
+        if self.closed or self.api.dataModel.stage != self.stage:
+            return
+        import gizmoMath
+        values = {}
+        for path, value in self.pending.items():
+            if isinstance(value, Ts.Spline):
+                # Match RigExecFalloffLutSize so release preserves the exact ramp.
+                values[path.GetPrimPath().AppendProperty("inputs:falloffSamples")] = Vt.FloatArray(
+                    [float(value.Eval(i / 256.0)) for i in range(257)])
+            else:
+                values[path] = value
+        gizmoMath.SetPreviewValues(values, stage=self.stage)
+        self.preview.Push(values, session=self.api, stage=self.stage)
+        self.api.UpdateViewport()
+
+    def Cancel(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.pending and _weightGestures.Get(self.api) is self:
+            self.preview.End(session=self.api, stage=self.stage)
+            self.api.UpdateViewport()
+
+    def Commit(self):
+        if self.closed:
+            return
+        self.closed = True
+        pending = dict(self.pending)
+        if not pending:
+            return
+        def finish():
+            if self.api.dataModel.stage != self.stage:
+                return
+            # Drop the preview without republishing: the commit's stage
+            # notice publishes once. Republish when nothing was authored.
+            owned = _weightGestures.Get(self.api) is self
+            if owned:
+                self.preview.End(session=self.api, stage=self.stage,
+                                 publish=False)
+            authored = False
+            try:
+                paths = list({p.GetPrimPath() for p in pending})
+                with Usd.EditContext(self.stage, self.target):
+                    with Recording(self.stage, paths, "Edit weight"):
+                        for path, value in pending.items():
+                            attr = self.stage.GetAttributeAtPath(path)
+                            if not attr:
+                                continue
+                            if isinstance(value, Ts.Spline):
+                                if attr.GetSpline() != value:
+                                    attr.SetSpline(value)
+                                    authored = True
+                            elif attr.Get(self.time) != value:
+                                SetVisibleAtTime(attr, value, self.time)
+                                authored = True
+            finally:
+                if owned and not authored:
+                    self.preview.Republish(session=self.api)
+                self.api.UpdateViewport()
+        QtCore.QTimer.singleShot(0, finish)
+
+
 class AttributeValueWidget(QtWidgets.QLineEdit):
     """
     A widget for displaying and authoring the value of a UsdAttribute.
@@ -971,6 +1076,7 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
         # the mouse and the initial value when the button is clicked.
         self._mungBaseMousePos = None
         self._mungBaseValue = None
+        self._gesture = None
 
         # Configure the widget for the attribute's value type.
         self._valueTypeName = self._usdAttribute.GetTypeName()
@@ -1000,12 +1106,34 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
             Usd.Notice.ObjectsChanged,
             self._onObjectsChanged,
             self._usdAttribute.GetStage())
+        import gizmoPreview
+        gizmoPreview.AddListener(self._onPreview)
+
+    def _onPreview(self, pending):
+        if self._usdAttribute.GetStage() != self._usdviewApi.dataModel.stage:
+            return
+        if pending is not None:
+            gesture = _weightGestures.Get(self._usdviewApi)
+            if gesture is None or gesture.closed:
+                return
+            value = pending.get(self._usdAttribute.GetPath())
+            if not isinstance(value, (int, float)):
+                return
+        else:
+            value = self._usdAttribute.Get(self._usdviewApi.dataModel.currentFrame)
+        self._cachedText = self._TypedValueToString(value)
+        self.setText(self._cachedText)
 
     def Detach(self):
-        """
-        Revokes the notice key and disconnects the frame signal so this
-        widget can be destroyed safely during a panel rebuild.
-        """
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
+        # Revoke notices before Qt deletes the widget.
+        import gizmoPreview
+        gizmoPreview.RemoveListener(self._onPreview)
+        if self._gesture is not None:
+            self._gesture.Cancel()
+            self._gesture = None
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -1091,8 +1219,13 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
         if AttributeValueWidget._IsNumericType(self._valueTypeName):
             newValue = self._ClampValue(newValue)
 
+        if self._gesture is not None:
+            self._gesture.Update(self._usdAttribute, newValue)
+            self._cachedText = self._TypedValueToString(newValue)
+            self.setText(self._cachedText)
+            return
         try:
-            SetAtTime(self._usdAttribute, newValue, currentTime)
+            SetVisibleAtTime(self._usdAttribute, newValue, currentTime)
         except Exception as err:
             Tf.Warn("Failed to set <%s> to value: %s : %s"
                     % (self._usdAttribute.GetPath(), newValue, err))
@@ -1101,6 +1234,9 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
         """
         Handler for changes to currentFrame: re-read and redisplay.
         """
+        if self._gesture is not None:
+            self._gesture.Cancel()
+            self._gesture = None
         self._cachedText = self._TypedValueToString(
             self._usdAttribute.Get(frame))
         self.setText(self._cachedText)
@@ -1144,6 +1280,7 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
         """
         if (event.buttons() == self.__mungButton and not self.isReadOnly()
                 and self._IsNumericType(self._valueTypeName)):
+            self._gesture = WeightGesture(self._usdviewApi, self._usdAttribute)
             self._mungBaseMousePos = _EventPos(event)
             self._mungBaseValue = self._StringToTypedValue(self.text())
             self.setCursor(QtGui.QCursor(QtCore.Qt.SizeHorCursor))
@@ -1156,6 +1293,9 @@ class AttributeValueWidget(QtWidgets.QLineEdit):
         Ends a mung operation.
         """
         if event.button() == self.__mungButton and not self.isReadOnly():
+            if self._gesture is not None:
+                self._gesture.Commit()
+                self._gesture = None
             self._mungBaseMousePos = None
             self._mungBaseValue = None
             self.setCursor(QtGui.QCursor(QtCore.Qt.IBeamCursor))
@@ -1232,6 +1372,9 @@ class AttributeValueSelectWidget(QtWidgets.QComboBox):
         """
         Revokes the notice key and disconnects the frame signal.
         """
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -1315,6 +1458,9 @@ class ReadPhaseSelectWidget(QtWidgets.QComboBox):
 
     def Detach(self):
         """Revokes the notice key."""
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -1405,12 +1551,7 @@ class AttributeValueSliderWidget(QtWidgets.QWidget):
         self._slider.setValue(self._ValueToSlider(
             usdAttribute.Get(usdviewApi.dataModel.currentFrame)))
         self._slider.valueChanged.connect(self._onSliderChanged)
-        # One undo entry per DRAG, not per sample: a slider pulled across
-        # its range emits valueChanged a hundred times, and a hundred
-        # entries means a hundred Ctrl+Zs to get back. Keyboard and wheel
-        # changes emit no press/release, so they fall through to
-        # SetAtTime's own per-write scope and are one entry each anyway.
-        self._gesture = None
+        # Drag samples preview; release queues one undoable commit.
         self._slider.sliderPressed.connect(self._onSliderPressed)
         self._slider.sliderReleased.connect(self._onSliderReleased)
         layout.addWidget(self._slider)
@@ -1421,10 +1562,13 @@ class AttributeValueSliderWidget(QtWidgets.QWidget):
             self._usdAttribute.GetStage())
 
     def Detach(self):
-        # A panel rebuilt mid-drag would otherwise leave the scope open
-        # and _OPEN stuck above zero, which silently stops every later
-        # edit on the stage from recording.
-        self._onSliderReleased()
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
+        # A selection change cancels an unfinished slider gesture.
+        if self._edit._gesture is not None:
+            self._edit._gesture.Cancel()
+            self._edit._gesture = None
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -1444,25 +1588,15 @@ class AttributeValueSliderWidget(QtWidgets.QWidget):
         return self._minimum + span * (float(position) / self.__resolution)
 
     def _onSliderPressed(self):
-        scope = Recording(self._usdAttribute.GetStage(),
-                          [self._usdAttribute.GetPath().GetPrimPath()],
-                          "Set %s" % self._usdAttribute.GetName())
-        scope.__enter__()
-        self._gesture = scope
+        self._edit._gesture = WeightGesture(self._usdviewApi, self._usdAttribute)
 
     def _onSliderReleased(self):
-        scope, self._gesture = self._gesture, None
-        if scope is not None:
-            scope.__exit__(None, None, None)
+        if self._edit._gesture is not None:
+            self._edit._gesture.Commit()
+            self._edit._gesture = None
 
     def _onSliderChanged(self, position):
-        value = self._SliderToValue(position)
-        try:
-            SetAtTime(self._usdAttribute, value,
-                      self._usdviewApi.dataModel.currentFrame)
-        except Exception as err:
-            Tf.Warn("Failed to set <%s> to value: %s : %s"
-                    % (self._usdAttribute.GetPath(), value, err))
+        self._edit._authorValue(self._SliderToValue(position))
 
     def _onObjectsChanged(self, notice, stage):
         if not AttributeValueMayHaveChanged(
@@ -1508,6 +1642,9 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         self._usdAttribute = None
         self._noticeKey = None
         self._dragKnotX = None
+        self._edit = None
+        self._gesture = None
+        self._profile = None
 
         self.setMinimumHeight(170)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
@@ -1535,6 +1672,8 @@ class FalloffCurveWidget(QtWidgets.QWidget):
             self._noticeKey.Revoke()
             self._noticeKey = None
 
+        self._CancelEdit()
+        self._detached = False
         self._usdAttribute = usdAttribute if (
             usdAttribute is not None and usdAttribute) else None
         self._dragKnotX = None
@@ -1548,6 +1687,10 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         self.update()
 
     def Detach(self):
+        if getattr(self, "_detached", False):
+            return
+        self._detached = True
+        self._CancelEdit()
         if self._noticeKey is not None:
             self._noticeKey.Revoke()
             self._noticeKey = None
@@ -1586,7 +1729,7 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         return (min(max(x, 0.0), 1.0), min(max(y, 0.0), 1.0))
 
     def _KnotPoints(self):
-        return GetSplineKnotPoints(self._usdAttribute)
+        return GetSplineKnotPoints(self._edit or self._usdAttribute)
 
     def _HitKnot(self, rect, position):
         """
@@ -1667,8 +1810,12 @@ class FalloffCurveWidget(QtWidgets.QWidget):
             painter.end()
             return
 
-        spline = self._usdAttribute.GetSpline()
+        spline = (self._edit or self._usdAttribute).GetSpline()
         knots = self._KnotPoints()
+        if self._profile in SPLINE_PROFILE_NAMES:
+            spline = _MakeProfileSpline(self._profile)
+            knots = [(float(t), float(spline.GetKnot(t).GetValue()))
+                     for t in spline.GetKnots()]
         if not spline or not knots:
             painter.setPen(QtGui.QPen(
                 QtGui.QColor(textColor.red(), textColor.green(),
@@ -1683,7 +1830,18 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         path = QtGui.QPainterPath()
         for index in range(self.__sampleCount + 1):
             x = float(index) / self.__sampleCount
-            y = float(spline.Eval(x))
+            if self._profile == "linear":
+                y = x
+            elif self._profile == "smooth":
+                y = x*x*(3-2*x)
+            elif self._profile == "easeIn":
+                y = x*x
+            elif self._profile == "easeOut":
+                y = 1-(1-x)*(1-x)
+            elif self._profile == "constant":
+                y = 1.0
+            else:
+                y = float(spline.Eval(x))
             point = self._ToPixels(rect, x, min(max(y, 0.0), 1.0))
             if index == 0:
                 path.moveTo(point)
@@ -1715,16 +1873,20 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         if self._usdAttribute is None:
             return
 
+        if event.button() not in (QtCore.Qt.LeftButton, QtCore.Qt.RightButton):
+            return
+        self._BeginEdit()
         rect = self._PlotRect()
         position = _EventPos(event)
         knotX = self._HitKnot(rect, position)
 
         if event.button() == QtCore.Qt.RightButton:
             if knotX is not None:
-                if not DeleteSplineKnot(self._usdAttribute, knotX):
+                if not DeleteSplineKnot(self._edit, knotX):
                     Tf.Warn("Refusing to delete: a falloff curve needs at "
                             "least two knots.")
                 self.update()
+            self._CommitEdit()
             return
 
         if event.button() != QtCore.Qt.LeftButton:
@@ -1737,10 +1899,12 @@ class FalloffCurveWidget(QtWidgets.QWidget):
             return
 
         if not rect.contains(position):
+            self._CancelEdit()
             return
 
         x, y = self._ToUnit(rect, position)
-        self._dragKnotX = InsertSplineKnot(self._usdAttribute, x, y)
+        self._dragKnotX = InsertSplineKnot(self._edit, x, y)
+        self._gesture.Update(self._usdAttribute, self._edit.GetSpline())
         self.update()
 
     def mouseMoveEvent(self, event):
@@ -1749,11 +1913,10 @@ class FalloffCurveWidget(QtWidgets.QWidget):
 
         rect = self._PlotRect()
         x, y = self._ToUnit(rect, _EventPos(event))
-        # Authoring live during the drag is what makes the viewport
-        # overlay follow the curve; the edit target absorbs the churn.
-        newX = MoveSplineKnot(self._usdAttribute, self._dragKnotX, x, y)
+        newX = MoveSplineKnot(self._edit, self._dragKnotX, x, y)
         if newX is not None:
             self._dragKnotX = newX
+            self._gesture.Update(self._usdAttribute, self._edit.GetSpline())
         self.update()
 
     def mouseReleaseEvent(self, event):
@@ -1762,23 +1925,46 @@ class FalloffCurveWidget(QtWidgets.QWidget):
         if self._usdAttribute is not None:
             rect = self._PlotRect()
             x, y = self._ToUnit(rect, _EventPos(event))
-            MoveSplineKnot(self._usdAttribute, self._dragKnotX, x, y)
+            MoveSplineKnot(self._edit, self._dragKnotX, x, y)
         self._dragKnotX = None
+        self._CommitEdit()
         self.update()
 
     def mouseDoubleClickEvent(self, event):
         if self._usdAttribute is None:
             return
+        self._BeginEdit()
         rect = self._PlotRect()
         knotX = self._HitKnot(rect, _EventPos(event))
         if knotX is None:
+            self._CancelEdit()
             return
-        if not DeleteSplineKnot(self._usdAttribute, knotX):
+        if not DeleteSplineKnot(self._edit, knotX):
             Tf.Warn("Refusing to delete: a falloff curve needs at least "
                     "two knots.")
         self._dragKnotX = None
+        self._CommitEdit()
         self.update()
 
+    def _BeginEdit(self):
+        if self._edit is None:
+            self._edit = SplineEdit(self._usdAttribute)
+            self._gesture = WeightGesture(self._usdviewApi, self._usdAttribute)
+
+    def _CommitEdit(self):
+        if self._gesture is not None:
+            self._gesture.pending[self._usdAttribute.GetPath()] = self._edit.GetSpline()
+            self._gesture.Commit()
+        self._edit = None
+        self._gesture = None
+
+    def _CancelEdit(self):
+        if getattr(self, "_gesture", None) is not None:
+            self._gesture.Cancel()
+        self._edit = None
+        self._gesture = None
+        self._dragKnotX = None
+        self.update()
 
 class VolumeWeightPanel(QtWidgets.QWidget):
     """
@@ -1815,11 +2001,17 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._setWeightOverlay = setWeightOverlay
         self._hasWeightOverlay = hasWeightOverlay
         self._currentPrim = None
+        self._lastOverlay = None
+        self._builtSelection = None
+        self._weightCache = None
+        self._stageNotice = None
 
         self.setWindowTitle("RigExec: Volume Weights")
-        self.setGeometry(0, 0, 460, 760)
+        self.setGeometry(0, 0, 500, 800)
 
         self._BuildUI()
+        from weightViewport import WeightViewportController
+        self._viewportController = WeightViewportController(self)
 
         # The prim selection lives on the selection data model, and the
         # signal it emits is signalPrimSelectionChanged(added, removed)
@@ -1853,11 +2045,28 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._BuildEditTargetLabel()
         self._BuildCreateSection()
         self._BuildSelectionLabel()
-        self._BuildParametersSection()
-        self._BuildPlacementSection()
-        self._BuildFalloffSection()
-        self._BuildCombineSection()
         self._BuildOverlaySection()
+        self._tabs = QtWidgets.QTabWidget()
+        self._rootLayout.addWidget(self._tabs)
+        rootLayout = self._rootLayout
+        for title in ("Weight", "Shape / placement", "Display / options"):
+            page = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(page)
+            self._tabs.addTab(page, title)
+            self._rootLayout = layout
+            if title == "Weight":
+                self._BuildParametersSection()
+                self._BuildFalloffSection()
+                self._BuildCombineSection()
+            elif title == "Shape / placement":
+                self._shapeLayout = QtWidgets.QFormLayout()
+                layout.addLayout(self._shapeLayout)
+                self._BuildPlacementSection()
+            else:
+                self._advancedLayout = QtWidgets.QFormLayout()
+                layout.addLayout(self._advancedLayout)
+            layout.addStretch(1)
+        self._rootLayout = rootLayout
         self._rootLayout.addStretch(1)
 
     def _BuildEditTargetLabel(self):
@@ -1879,7 +2088,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._rootLayout.addWidget(self._editTargetLabel)
 
     def _BuildCreateSection(self):
-        group = QtWidgets.QGroupBox("Create")
+        group = QtWidgets.QGroupBox()
         layout = QtWidgets.QHBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         group.setLayout(layout)
@@ -1895,6 +2104,12 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._rootLayout.addWidget(group)
 
     def _BuildSelectionLabel(self):
+        hint = QtWidgets.QLabel("Viewport: drag boundary | Shift-drag side | Esc cancels")
+        hint.setToolTip("Drag an inner shell or outer cage to resize. "
+                        "Shift-drag a sphere side to trim that half-axis, "
+                        "or a bounded plane to resize its extent.")
+        hint.setWordWrap(True)
+        self._rootLayout.addWidget(hint)
         self._selectionLabel = QtWidgets.QLabel()
         self._selectionLabel.setWordWrap(True)
         self._rootLayout.addWidget(self._selectionLabel)
@@ -2029,7 +2244,8 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         legend.setToolTip(
             "Colors use resolved vertex weights. Faces interpolate the colors; "
             "bands are approximate on coarse geometry. Display clamps to 0–1.")
-        layout.addWidget(legend)
+        self._overlayCheckBox.setToolTip(legend.text())
+        legend.hide()
 
         self._overlayStatusLabel = QtWidgets.QLabel("")
         self._overlayStatusLabel.setWordWrap(True)
@@ -2058,7 +2274,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         combo.clear()
         for prim in weights:
             path = str(prim.GetPath())
-            combo.addItem("%s  (%s)" % (prim.GetName(), prim.GetTypeName()),
+            combo.addItem("%s  (%s)" % (prim.GetName(), prim.GetTypeName().replace("RigExec", "")),
                           path)
         wanted = None
         if previous and previous in [str(p.GetPath()) for p in weights]:
@@ -2104,10 +2320,48 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         stage = self._usdviewApi.dataModel.stage
         if stage is None:
             return []
-        return [prim for prim in stage.TraverseAll()
-                if IsWeightObjectPrim(prim)]
+        if self._weightCache is None:
+            self._weightCache = [prim for prim in stage.TraverseAll()
+                                 if IsWeightObjectPrim(prim)]
+        return self._weightCache
 
     def _onStageReplaced(self):
+        self._weightCache = None
+        self._builtSelection = None
+        self._lastOverlay = None
+        self._WatchStage()
+        if self.isVisible():
+            self._RebuildForSelection()
+
+    def _WatchStage(self):
+        if self._stageNotice is not None:
+            self._stageNotice.Revoke()
+            self._stageNotice = None
+        stage = self._usdviewApi.dataModel.stage
+        if stage is not None:
+            self._stageNotice = Tf.Notice.Register(
+                Usd.Notice.ObjectsChanged, self._StageChanged, stage)
+
+    def _StageChanged(self, notice, stage):
+        if notice.GetResyncedPaths():
+            self._weightCache = None
+            self._builtSelection = None
+
+    def hideEvent(self, event):
+        self._viewportController.Cancel()
+        self._viewportController.Detach()
+        self._curveWidget.Detach()
+        for widget in self.findChildren(QtWidgets.QWidget):
+            detach = getattr(widget, "Detach", None)
+            if detach is not None:
+                detach()
+        self._builtSelection = None
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._viewportController.Attach()
+        self._WatchStage()
         self._RebuildForSelection()
 
     def _onPrimSelectionChanged(self, added, removed):
@@ -2115,26 +2369,34 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         Handler for
         selectionDataModel.signalPrimSelectionChanged(added, removed).
         """
-        self._RebuildForSelection()
+        if self.isVisible():
+            self._RebuildForSelection()
 
-    def _RebuildForSelection(self):
+    def _RebuildForSelection(self, force=False):
         stage = self._usdviewApi.dataModel.stage
         if stage is not None:
             layer = stage.GetEditTarget().GetLayer()
             isSession = layer == stage.GetSessionLayer()
             self._editTargetLabel.setText(
-                "Edit target: %s%s"
-                % (layer.GetDisplayName() or layer.identifier,
-                   "  (session layer -- not saved with the stage)"
-                   if isSession else ""))
+                "Editing session layer (temporary)" if isSession else
+                "Editing " + layer.GetDisplayName())
+            self._editTargetLabel.setToolTip(layer.identifier)
         else:
             self._editTargetLabel.setText("Edit target: no stage")
 
         prim = self._CurrentWeightPrim()
+        key = (stage, prim.GetPath() if prim else None)
+        if self._builtSelection == key and not force:
+            return
+        self._builtSelection = key
         self._currentPrim = prim
+        self._scrubScale = (ComputeScrubScale(prim, self._usdviewApi.frame)
+                            if prim else 1.0)
 
         _ClearLayout(self._parametersLayout)
         _ClearLayout(self._placementLayout)
+        _ClearLayout(self._shapeLayout)
+        _ClearLayout(self._advancedLayout)
         _ClearLayout(self._combineModeLayout)
         self._inputWeightsList.clear()
 
@@ -2151,7 +2413,8 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             return
 
         self._selectionLabel.setText(
-            "Editing <b>%s</b> (%s)" % (prim.GetPath(), prim.GetTypeName()))
+            "<b>%s</b> (%s)" % (prim.GetName(), prim.GetTypeName().replace("RigExec", "")))
+        self._selectionLabel.setToolTip(str(prim.GetPath()))
         self._parametersGroup.setEnabled(True)
 
         self._PopulateParameters(prim)
@@ -2175,6 +2438,11 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         attr = prim.GetAttribute(attrName)
         if not attr:
             return None
+        if layout is self._parametersLayout:
+            if attrName.startswith(("inputs:scale", "inputs:extent", "rigExec:plane")):
+                layout = self._shapeLayout
+            elif attrName.startswith("guide:") or attrName == "rigExec:rangePolicy":
+                layout = self._advancedLayout
 
         if (attr.GetTypeName() == Sdf.ValueTypeNames.Token and
                 attr.HasMetadata("allowedTokens")):
@@ -2193,23 +2461,23 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         # A falloff radius is measured in stage units and may be tens or
         # hundreds; the scale factors and the normalized parameters are
         # not.  Sensitivity is per-row for exactly that reason.
-        size = ComputeScrubScale(prim, self._usdviewApi.frame)
+        size = self._scrubScale
         radiusSensitivity = max(float(size), 1.0) / 200.0
 
         self._AddAttributeRow(
             self._parametersLayout, prim, "inputs:falloffMin",
-            "falloffMin", sensitivity=radiusSensitivity)
+            "Inner radius", sensitivity=radiusSensitivity)
         self._AddAttributeRow(
             self._parametersLayout, prim, "inputs:falloffMax",
-            "falloffMax", sensitivity=radiusSensitivity)
+            "Outer radius", sensitivity=radiusSensitivity)
         self._AddAttributeRow(
-            self._parametersLayout, prim, "inputs:invert", "invert",
+            self._parametersLayout, prim, "inputs:invert", "Invert",
             normalized=True)
         # strength is a final multiplier, not a normalized parameter: the
         # slider still travels 0..1 because that is the useful range, but
         # the edit is left open above it so an artist can over-drive.
         self._AddAttributeRow(
-            self._parametersLayout, prim, "inputs:strength", "strength",
+            self._parametersLayout, prim, "inputs:strength", "Strength",
             normalized=True, editMaximum=None)
         for axis in ("X", "Y", "Z"):
             self._AddAttributeRow(
@@ -2236,7 +2504,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
 
         profileWidget = self._AddAttributeRow(
             self._parametersLayout, prim, "rigExec:falloffProfile",
-            "falloffProfile")
+            "Profile")
         if isinstance(profileWidget, AttributeValueSelectWidget):
             # The curve editor is only meaningful when the profile
             # actually reads the spline, so track the token live.
@@ -2244,8 +2512,8 @@ class VolumeWeightPanel(QtWidgets.QWidget):
 
         # Which points the field measures: the read phase declared on
         # rigExec:weightTarget, base (static) or preceding (in flight).
-        self._parametersLayout.addRow(
-            "readPhase", ReadPhaseSelectWidget(
+        self._advancedLayout.addRow(
+            "Sample points", ReadPhaseSelectWidget(
                 prim.GetRelationship("rigExec:weightTarget"),
                 ("base", "preceding")))
         self._AddAttributeRow(
@@ -2269,7 +2537,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         targetLabel = QtWidgets.QLabel(
             ", ".join(targets) if targets else "<not bound>")
         targetLabel.setWordWrap(True)
-        self._parametersLayout.addRow("weightTarget", targetLabel)
+        self._parametersLayout.addRow("Surface", targetLabel)
 
     def _PopulatePlacement(self, prim):
         placed = prim.GetTypeName() in PLACED_WEIGHT_TYPE_NAMES
@@ -2277,7 +2545,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         if not placed:
             return
 
-        size = ComputeScrubScale(prim, self._usdviewApi.frame)
+        size = self._scrubScale
         translateSensitivity = max(float(size), 1.0) / 200.0
 
         for axis in ("tx", "ty", "tz"):
@@ -2308,16 +2576,17 @@ class VolumeWeightPanel(QtWidgets.QWidget):
 
     def _SetCurveEnabledForProfile(self, profile):
         isCurve = (profile == "curve")
+        self._curveWidget._profile = profile
         self._curveWidget.setEnabled(isCurve)
+        self._curveWidget.update()
         if isCurve:
             self._curveHint.setText(
-                "rigExec:falloffProfile is 'curve': this spline is what "
-                "the field evaluates.")
+                "Drag points to shape the transition. Click to add a point; "
+                "right-click to remove one. Surface influence previews while dragging.")
         else:
             self._curveHint.setText(
-                "rigExec:falloffProfile is '%s': the analytic profile is "
-                "in use and this spline is ignored. Press a preset to "
-                "bake it into the curve and switch."
+                "Using %s falloff. Choose a preset above to start editing "
+                "a custom curve."
                 % (profile if profile else "unset",))
 
     def _PopulateCombine(self, prim):
@@ -2368,7 +2637,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         self._usdviewApi.ClearPrimSelection()
         self._usdviewApi.AddPrimToSelection(prim)
         self._usdviewApi.UpdateGUI()
-        self._RebuildForSelection()
+        self._RebuildForSelection(force=True)
 
     def _onSnapToSelection(self):
         prim = self._currentPrim
@@ -2388,7 +2657,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         with Recording(prim.GetStage(), [prim.GetPath()],
                        "Snap %s" % prim.GetName()):
             SnapWeightToPrim(prim, source, self._usdviewApi.frame)
-        self._RebuildForSelection()
+        self._RebuildForSelection(force=True)
 
     def _onPreset(self, profile):
         prim = self._currentPrim
@@ -2419,7 +2688,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             if profileAttr:
                 profileAttr.Set("curve")
 
-        self._RebuildForSelection()
+        self._RebuildForSelection(force=True)
 
     def _onProfileChanged(self, value):
         self._SetCurveEnabledForProfile(value)
@@ -2438,7 +2707,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         with Recording(prim.GetStage(), [prim.GetPath()],
                        "Add input weights"):
             AddInputWeightPaths(prim, paths)
-        self._RebuildForSelection()
+        self._RebuildForSelection(force=True)
 
     def _onRemoveInputWeights(self):
         prim = self._currentPrim
@@ -2453,7 +2722,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         with Recording(prim.GetStage(), [prim.GetPath()],
                        "Remove input weights"):
             RemoveInputWeightPaths(prim, paths)
-        self._RebuildForSelection()
+        self._RebuildForSelection(force=True)
 
     # -- viewport overlay ---------------------------------------------
 
@@ -2494,8 +2763,7 @@ class VolumeWeightPanel(QtWidgets.QWidget):
                 "No weight objects on this stage yet. Create one above.")
         else:
             self._overlayStatusLabel.setText(
-                "A weight object is only painted once a MOVER consumes it "
-                "-- an unbound weight has no resolved field to show.")
+                "Influence appears on geometry bound to this weight.")
 
         # A checked box whose target changed must repoint rather than
         # keep painting the old one.
@@ -2508,8 +2776,12 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             return
         path = (self._OverlayTargetPath()
                 if self._overlayCheckBox.isChecked() else "")
+        key = (self._usdviewApi.dataModel.stage, path)
+        if self._lastOverlay == key:
+            return
         try:
             self._setWeightOverlay(path)
+            self._lastOverlay = key
         except Exception as err:
             Tf.Warn("RigExecImaging_SetWeightOverlay failed: %s" % err)
             return

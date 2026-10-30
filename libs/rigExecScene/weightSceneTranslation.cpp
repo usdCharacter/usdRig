@@ -4,6 +4,7 @@
 #include <set>
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((falloffSamples,"inputs:falloffSamples"))
     ((rigExecValues,"rigExec:values")) ((rigExecIndices,"rigExec:indices"))
     ((rigExecDefaultWeight,"rigExec:defaultWeight")) ((rigExecRepresentation,"rigExec:representation"))
     ((rigExecRangePolicy,"rigExec:rangePolicy")) (points) (constant) (strict) (multiply) (y) (unbounded)
@@ -147,6 +148,10 @@ bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,const SdfP
             const TsSpline *spline=curve && curve->fact.spline.IsHolding<TsSpline>()?
                 &curve->fact.spline.UncheckedGet<TsSpline>():nullptr;
             record.falloffCurve=RigExecBakeWeightFalloff(profile,spline);
+            const SdfPath samples = who.AppendProperty(_tokens->falloffSamples);
+            object.hasFalloffSamples = source.Attribute(samples) != nullptr;
+            if (object.hasFalloffSamples && !RigExecBindSceneTypedRead(
+                scene, samples, SdfValueTypeNames->FloatArray, &object.falloffSamples, error)) return -1;
         }
         if(record.kind==2 && record.combineMode<0)
             record.staticError=record.name+": unknown rigExec:combineMode "+record.combineToken.GetString();
@@ -197,8 +202,19 @@ bool RigExecResolveSceneWeight(const RigExecSceneDescriptors &scene,const RigExe
     const size_t count=program.objects.size();result.fields.resize(count);result.rawStorage.resize(count);
     result.phasedStorage.resize(count);result.packetPoints.resize(count);
     result.paintedValues.resize(count);result.paintedIndices.resize(count);
+    result.falloffSamples.resize(count);
     for(size_t id=0;id<count;++id) {
         const auto &object=program.objects[id];auto &input=result.fields[id];
+        if (object.hasFalloffSamples) {
+            VtValue value;
+            if (RigExecResolveSceneTypedRead(scene, object.falloffSamples, identity, delivered, &value, nullptr) &&
+                value.IsHolding<VtFloatArray>()) {
+                result.falloffSamples[id] = value.UncheckedGet<VtFloatArray>();
+                const auto &samples = result.falloffSamples[id];
+                input.falloffSamples = samples.cdata();
+                input.falloffSampleCount = samples.size();
+            }
+        }
         if(!object.paintedValues.IsEmpty() || !object.paintedIndices.IsEmpty()) {
             input.paintedArraysDeclared=true;
             auto readDefault=[&](const SdfPath &path,VtValue *value) {
@@ -290,6 +306,10 @@ bool RigExecMakeSceneWeightPacketInputs(const RigExecSceneWeightProgram &program
     if(frame!=baseFrames.end()){volume.hasPlacement=true;volume.placement=frame->second;}
     volume.params.falloffMin=input.scalars[6];volume.params.falloffMax=input.scalars[7];
     volume.params.invert=result.invert;volume.params.strength=result.strength;volume.params.curveData=record.falloffCurve.data();volume.params.curveCount=record.falloffCurve.size();
+    if (input.falloffSampleCount) {
+        volume.params.curveData = input.falloffSamples;
+        volume.params.curveCount = input.falloffSampleCount;
+    }
     volume.scales=GfVec3f(input.scalars[8],input.scalars[9],input.scalars[10]);
     volume.positiveScales=GfVec3f(input.scalars[11],input.scalars[12],input.scalars[13]);
     volume.negativeScales=GfVec3f(input.scalars[14],input.scalars[15],input.scalars[16]);

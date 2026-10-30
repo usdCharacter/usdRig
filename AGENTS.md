@@ -119,6 +119,14 @@ cycle handling, and native/frozen/runtime parity. See
   `Solvers`, `Controls`, `Joints`, and `Weights` scopes are authoring
   conventions. Never key discovery, validation, UI, or tooling on a scope
   name.
+- Non-tool systems must not depend on a prescribed stage hierarchy beyond
+  the hierarchy semantics explicitly defined by the graph-compilation rules.
+  Do not expect prims at hard-coded paths, under particular named parents,
+  at fixed nesting depths, or in a required sibling layout. Discover and bind
+  prims through schemas, authored relationships and connections, and the
+  rule-based graph compiler. Authoring tools may create conventional layouts;
+  those layouts must not become requirements for compilation, evaluation,
+  playback, or imaging.
 - Dependencies decide order. Do not let evaluator structure choose an order
   or which version of a value a consumer reads; a consumer that needs another
   version declares it with `rigExecReadPhase`. An undeclared connection or

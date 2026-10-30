@@ -237,9 +237,9 @@ def HasSink(session=None):
     return channel is not None and channel.HasSink()
 
 
-# The array values a slot carries: float2[] (2 floats per element) and
+# Array slots carry float[] (1 float per element), float2[] (2 per element), and
 # every type held as a VtVec3fArray, such as point3f[] (3 per element).
-_ARRAY_TYPES = (Vt.Vec2fArray, Vt.Vec3fArray)
+_ARRAY_TYPES = (Vt.FloatArray, Vt.Vec2fArray, Vt.Vec3fArray)
 
 
 def _Declaration(path, value):
@@ -256,7 +256,7 @@ def Flatten(value):
 
     The arity has to agree with what the C++ side derived from the
     ATTRIBUTE's type, so the shapes here are exactly the ones it accepts:
-    a scalar, a 3-vector, a 4x4 matrix, a float2[] array (two per element)
+    a scalar, a 3-vector, a 4x4 matrix, a float[] or float2[] array
     and a point3f[]-like array (three per element), an array's length
     declared with the slot.
     """

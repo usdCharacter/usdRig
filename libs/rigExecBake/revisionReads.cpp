@@ -574,6 +574,14 @@ _Weight(const RigExecResolvedInputs &overlay, _Enumeration E,
     } else if (weight.type == _readTokens->sphereWeight ||
                weight.type == _readTokens->planeWeight ||
                weight.type == _readTokens->curveWeight) {
+        if (weight.falloffSamplesLeaf >= 0) {
+            const UsdAttribute &a = weight.pointLeaves.attributes[size_t(weight.falloffSamplesLeaf)];
+            VtFloatArray samples;
+            if (E.resolved->GetAttribute(a, E.time, &samples)) {
+                E.Emit(a.GetPath(), E.time, /*resolved=*/true,
+                       VtValue(samples), E.Holds(a.GetPath()));
+            }
+        }
         // Gathered only once the volume can build, which its inputs decide.
         gather(weight.targetPoints);
         gather(weight.samplePoints);

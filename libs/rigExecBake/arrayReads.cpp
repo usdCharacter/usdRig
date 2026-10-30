@@ -310,7 +310,9 @@ struct _Lister {
     {
         for (const RigExecRevisionLeafKey &key : object.pointLeaves.decl.keys) {
             RigExecBakeArrayRead read;
-            if (!Hops(key, fb::InputTag::Vec3fArray, &read)) {
+            const auto tag = key.type == RigExecRevisionLeafType::FloatArray
+                ? fb::InputTag::FloatArray : fb::InputTag::Vec3fArray;
+            if (!Hops(key, tag, &read)) {
                 continue;
             }
             read.consumer = Consumer::Row;

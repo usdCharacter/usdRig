@@ -490,6 +490,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // This also folds in rigExec:falloffProfile, which is why that
         // token is not hashed separately.
         if (_IsVolumeWeightType(w.GetTypeName())) {
+            noteValueNamed(w, _falloffCurveAttr);
             const std::vector<float> lut = _BakeFalloffLut(w);
             digest += "lut=";
             digest.append(reinterpret_cast<const char *>(lut.data()),

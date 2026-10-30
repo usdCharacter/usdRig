@@ -255,8 +255,8 @@ public:
     const SdfPath &GetWeightOverlay() const { return _weightOverlay; }
 
     /// The standing uncommitted manipulation values (see
-    /// SetInteractiveOverrides), for the frame-cache key: a drag must never
-    /// be served a pre-drag pose, so the digest folds these explicitly.
+    /// SetInteractiveOverrides), including display-only values. Numerical
+    /// inputs are filtered separately for evaluation and cache keys.
     const std::vector<RigExecValueOverride> &GetInteractiveOverrides() const {
         return _interactiveOverrides;
     }
@@ -412,13 +412,11 @@ public:
     /// Uncommitted manipulation values for this rig, with nothing authored
     /// (RigExecRigEvaluator::SetInteractiveOverrides). Records only, like
     /// SetWeightOverlay: publishing is the caller's serialization point.
-    void SetInteractiveOverrides(std::vector<RigExecValueOverride> overrides) {
-        _interactiveOverrides = overrides;
-        _evaluator->SetInteractiveOverrides(std::move(overrides));
-    }
+    void SetInteractiveOverrides(std::vector<RigExecValueOverride> overrides);
 
     void ClearInteractiveOverrides() {
         _interactiveOverrides.clear();
+        _evaluationOverrides.clear();
         _evaluator->ClearInteractiveOverrides();
     }
 
@@ -730,10 +728,10 @@ private:
     /// from the current compiled rig evicts the old half eagerly -- its frames are
     /// unreachable by construction -- instead of waiting for LRU.
     std::atomic<uint64_t> _lastPublishedCompiledRig{0};
-    /// The standing overrides, as handed to SetInteractiveOverrides: the
-    /// digest folds them explicitly (a drag must never hit a pre-drag pose)
-    /// and warming jobs sample them at enqueue time.
+    /// Owner-thread manipulation values, including display-only styling.
     std::vector<RigExecValueOverride> _interactiveOverrides;
+    // Display inputs never enter the numerical graph or its cache key.
+    std::vector<RigExecValueOverride> _evaluationOverrides;
     /// The upstream values as handed to SetUpstreamInputs: the live sampler
     /// carries them and the pose-only key folds them.
     std::vector<RigExecUpstreamValue> _upstreamInputs;
