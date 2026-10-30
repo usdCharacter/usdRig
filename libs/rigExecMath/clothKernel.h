@@ -319,6 +319,45 @@ struct RigExecClothPairSet {
     /// Doubles the slots and rehashes, preserving the recorded set.
     void Grow();
 };
+
+/// The same edge-pair dedup set over packed 64-bit keys: four 16-bit
+/// endpoint fields, one slot word instead of four, so probes compare one
+/// word and the table fits twice the pairs per cache line. Packing is
+/// injective exactly while every endpoint fits 16 bits, which the caller
+/// guarantees with Packable; larger meshes keep the array set above, with
+/// the same verdicts either way.
+struct RigExecClothPairSet64 {
+    std::vector<uint64_t> slots;
+    std::vector<uint64_t> occupied;
+    uint32_t mask = 0;
+    size_t count = 0;
+
+    /// True when every mesh endpoint packs: endpoints run below the point
+    /// count, so a point count of 65536 or less fits every field.
+    static bool Packable(size_t pointCount) { return pointCount <= 65536; }
+    /// Packs four endpoints, each below 65536, into one key.
+    static uint64_t Pack(int32_t a, int32_t b, int32_t c, int32_t d)
+    {
+        return uint64_t(uint32_t(a)) | (uint64_t(uint32_t(b)) << 16) |
+               (uint64_t(uint32_t(c)) << 32) | (uint64_t(uint32_t(d)) << 48);
+    }
+    /// An integer mix, deterministic across runs and platforms. Hash
+    /// quality affects probe length only; verdicts are exact regardless.
+    static uint64_t Hash(uint64_t key);
+    size_t SlotCount() const;
+    void Clear();
+    /// True when the key was absent (now recorded), false for a duplicate.
+    bool Insert(uint64_t key);
+    /// Insert without the load check, after ReserveForBatch covered the
+    /// batch: the same probe and the same verdicts.
+    bool InsertNoGrow(uint64_t key);
+    /// Grows the table until a batch of \p batchKeys inserts fits under
+    /// the 70% load cap, so the batch needs no per-insert check. Zero
+    /// keys is a no-op, never a spurious grow.
+    void ReserveForBatch(size_t batchKeys);
+    /// Doubles the slots and rehashes, preserving the recorded set.
+    void Grow();
+};
 // The method bodies live at the end of the header, after the solve, so
 // this model-path-only code lands after the hot loop in .text instead of
 // shifting it.
@@ -362,6 +401,9 @@ struct RigExecClothWorkspace {
     RigExecClothColliders selfTopology;
     /// The edge-pair dedup set, cleared per self profile, its slots retained.
     RigExecClothPairSet selfPairs;
+    /// The packed-key dedup set for meshes whose endpoints fit 16 bits,
+    /// cleared per self profile like the array set, its slots retained.
+    RigExecClothPairSet64 selfPairs64;
     /// Per-triangle bucket marks for the self edge/edge twin skip,
     /// cleared per call, the storage retained.
     std::vector<uint32_t> selfTwinStamp;
@@ -2160,7 +2202,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // ordered set (the discovery loops keep their order), with no
         // per-pair allocation.
         RigExecClothPairSet &pairs = ws->selfPairs;
-        pairs.Clear();
+        RigExecClothPairSet64 &pairs64 = ws->selfPairs64;
+        // Packed keys where every endpoint fits 16 bits, the array set
+        // past that: packing is injective on packed meshes, so both sets
+        // reach the same verdicts on the same keys.
+        const bool packPairs = RigExecClothPairSet64::Packable(mesh.pointCount);
+        if (packPairs) pairs64.Clear();
+        else pairs.Clear();
         for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
             if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
             const int32_t i = mesh.constraintEnds[2*c], j = mesh.constraintEnds[2*c+1];
@@ -2172,8 +2220,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             // batch: at most three inserts per bucket entry, so the
             // table stays under the cap through the batch and the
             // inserts below skip their checks with the same verdicts.
-            pairs.ReserveForBatch(
-                3 * (grid.bucketStart[bucket + 1] - grid.bucketStart[bucket]));
+            const size_t batchKeys =
+                3 * (grid.bucketStart[bucket + 1] - grid.bucketStart[bucket]);
+            if (packPairs) pairs64.ReserveForBatch(batchKeys);
+            else pairs.ReserveForBatch(batchKeys);
             // The constraint edge's band inputs are fixed for the bucket
             // loop: its sphere and thickness factor derive once, lazily
             // at the first band test, and a correction retires the
@@ -2239,9 +2289,17 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         twinStamp[size_t(twin)] == twinMark) continue;
                     // Both edges arrive sorted with four distinct
                     // endpoints, so the pair order is one compare.
-                    std::array<int32_t,4> key{{i,j,k,l}};
-                    if (k < i) key = {{k,l,i,j}};
-                    if (!pairs.InsertNoGrow(key)) continue;
+                    if (packPairs) {
+                        uint64_t key64 =
+                            RigExecClothPairSet64::Pack(i, j, k, l);
+                        if (k < i)
+                            key64 = RigExecClothPairSet64::Pack(k, l, i, j);
+                        if (!pairs64.InsertNoGrow(key64)) continue;
+                    } else {
+                        std::array<int32_t,4> key{{i,j,k,l}};
+                        if (k < i) key = {{k,l,i,j}};
+                        if (!pairs.InsertNoGrow(key)) continue;
+                    }
                     if (!useEdgeBits) {
                         bool adjacent = false;
                         for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
@@ -2297,7 +2355,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     Sub(oldA,oldB,oldD);
                     if (Dot(oldD,d) < 0) for (float &q : d) q = -q;
                     Sub(pa,pb,mid);
-                    float &lambda = ws->selfLambda[{{int32_t(profileIndex),key[0],key[1],key[2],key[3]}}];
+                    // The dedup key, rebuilt for the impulse map: the same
+                    // normalized endpoints the discovery keyed on, whether
+                    // packed or array.
+                    std::array<int32_t,4> lkey{{i,j,k,l}};
+                    if (k < i) lkey = {{k,l,i,j}};
+                    float &lambda = ws->selfLambda[{{int32_t(profileIndex),lkey[0],lkey[1],lkey[2],lkey[3]}}];
                     const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
                         Dot(mid,d)-thickness,d,true,&lambda,x,false);
                     TouchVerts(&spheres, i, j, k, l);
@@ -2742,6 +2805,76 @@ inline void RigExecClothPairSet::Grow()
 {
     const size_t size = slots.empty() ? 4096 : slots.size() * 2;
     std::vector<std::array<int32_t, 4>> fresh(size);
+    std::vector<uint64_t> bits(size / 64, 0);
+    const uint32_t next = uint32_t(size - 1);
+    for (size_t s = 0; s < slots.size(); ++s) {
+        if (!(occupied[s >> 6] & (1ull << (s & 63)))) continue;
+        uint32_t i = uint32_t(Hash(slots[s])) & next;
+        while (bits[i >> 6] & (1ull << (i & 63))) i = (i + 1) & next;
+        bits[i >> 6] |= 1ull << (i & 63);
+        fresh[i] = slots[s];
+    }
+    slots.swap(fresh);
+    occupied.swap(bits);
+    mask = next;
+}
+
+inline uint64_t RigExecClothPairSet64::Hash(uint64_t key)
+{
+    // Unpacks the four fields and mixes them with the array set's
+    // multipliers, so probe lengths match it; verdicts stay exact.
+    const uint64_t k0 = key & 0xffffull;
+    const uint64_t k1 = (key >> 16) & 0xffffull;
+    const uint64_t k2 = (key >> 32) & 0xffffull;
+    const uint64_t k3 = key >> 48;
+    return k0 + k1 * 0x9E3779B97F4A7C15ull +
+           k2 * 0xC2B2AE3D27D4EB4Full + k3 * 0x165667B19E3779F9ull;
+}
+
+inline size_t RigExecClothPairSet64::SlotCount() const
+{
+    return slots.size();
+}
+
+inline void RigExecClothPairSet64::Clear()
+{
+    std::fill(occupied.begin(), occupied.end(), 0);
+    count = 0;
+}
+
+inline bool RigExecClothPairSet64::Insert(uint64_t key)
+{
+    if ((count + 1) * 10 > slots.size() * 7) Grow();
+    return InsertNoGrow(key);
+}
+
+inline void RigExecClothPairSet64::ReserveForBatch(size_t batchKeys)
+{
+    if (!batchKeys) return;
+    while ((count + batchKeys + 1) * 10 > slots.size() * 7) Grow();
+}
+
+inline bool RigExecClothPairSet64::InsertNoGrow(uint64_t key)
+{
+    uint32_t i = uint32_t(Hash(key)) & mask;
+    for (;;) {
+        const uint32_t word = i >> 6;
+        const uint64_t bit = 1ull << (i & 63);
+        if (!(occupied[word] & bit)) {
+            occupied[word] |= bit;
+            slots[i] = key;
+            ++count;
+            return true;
+        }
+        if (slots[i] == key) return false;
+        i = (i + 1) & mask;
+    }
+}
+
+inline void RigExecClothPairSet64::Grow()
+{
+    const size_t size = slots.empty() ? 4096 : slots.size() * 2;
+    std::vector<uint64_t> fresh(size);
     std::vector<uint64_t> bits(size / 64, 0);
     const uint32_t next = uint32_t(size - 1);
     for (size_t s = 0; s < slots.size(); ++s) {

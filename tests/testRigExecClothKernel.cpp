@@ -1489,6 +1489,123 @@ void TestPairSetPreGrownBatch()
     CHECK(set.count == ref.size());
 }
 
+void TestPairSet64MatchesOrderedSet()
+{
+    // The packed-key dedup set must give the same insert-or-duplicate
+    // verdicts as an ordered set on every stream, like the array set:
+    // sequential (crossing growth), clustered duplicates, field
+    // boundaries, and brute-forced hash collisions that chain the probe
+    // and wrap the mask. Replaying each stream after Clear must repeat
+    // the verdicts exactly.
+    auto check = [](const std::vector<uint64_t> &stream) {
+        RigExecClothPairSet64 set;
+        std::set<uint64_t> ref;
+        for (uint64_t key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        for (uint64_t key : stream) CHECK(!set.Insert(key));
+        set.Clear();
+        ref.clear();
+        for (uint64_t key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+    };
+    check({RigExecClothPairSet64::Pack(1, 2, 3, 4),
+           RigExecClothPairSet64::Pack(1, 2, 3, 4),
+           RigExecClothPairSet64::Pack(4, 3, 2, 1)});
+    std::vector<uint64_t> sequential;
+    for (int32_t i = 0; i < 40000; ++i)
+        sequential.push_back(RigExecClothPairSet64::Pack(i, i + 1, i + 2, i + 3));
+    check(sequential);
+    uint64_t state = 0x12345678u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<uint64_t> clustered;
+    for (int round = 0; round < 50; ++round)
+        for (int32_t i = 0; i < 100; ++i)
+            clustered.push_back(RigExecClothPairSet64::Pack(i, 7, 9, round % 5));
+    for (size_t i = clustered.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(clustered[i], clustered[j]);
+    }
+    size_t dups = 0;
+    {
+        std::set<uint64_t> ref;
+        for (uint64_t key : clustered) dups += !ref.insert(key).second;
+    }
+    CHECK(dups > 4000);
+    check(clustered);
+    check({RigExecClothPairSet64::Pack(0, 0, 0, 0),
+           RigExecClothPairSet64::Pack(65535, 65535, 65535, 65535),
+           RigExecClothPairSet64::Pack(0, 65535, 1, 65534),
+           RigExecClothPairSet64::Pack(0, 0, 0, 0)});
+    for (const uint32_t bucket : {uint32_t(0), uint32_t(4095)}) {
+        std::vector<uint64_t> colliding;
+        // Two-dimensional drive: a one-dimensional 16-bit field repeats
+        // before 32 buckets collide, but (i, j) pairs stay distinct.
+        for (int32_t i = 0; colliding.size() < 32 && i < 65536; ++i)
+            for (int32_t j = 0; j < 64 && colliding.size() < 32; ++j) {
+                const uint64_t key = RigExecClothPairSet64::Pack(
+                    i, j, (i * 31 + 7) & 0xffff, bucket);
+                if ((uint32_t(RigExecClothPairSet64::Hash(key)) & 4095u) == bucket)
+                    colliding.push_back(key);
+            }
+        CHECK(colliding.size() == 32);
+        RigExecClothPairSet64 set;
+        std::set<uint64_t> ref;
+        for (uint64_t key : colliding) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        CHECK(ref.size() == colliding.size());
+        for (uint64_t key : colliding) CHECK(!set.Insert(key));
+    }
+    // The packed and array sets agree key by key on packed meshes: the
+    // same discovery stream records the same set in both.
+    {
+        RigExecClothPairSet ref;
+        RigExecClothPairSet64 set;
+        for (int32_t i = 0; i < 5000; ++i) {
+            const PairKey array{{i, i + 1, i * 3 + 7, i * 7 + 1}};
+            const uint64_t packed = RigExecClothPairSet64::Pack(
+                array[0], array[1], array[2], array[3]);
+            CHECK(set.Insert(packed) == ref.Insert(array));
+        }
+        CHECK(set.count == ref.count);
+    }
+}
+
+void TestPairPackBoundaries()
+{
+    // Packing holds four 16-bit fields: boundary endpoints keep their
+    // identity, distinct quads pack distinctly, and Packable admits
+    // exactly the point counts whose endpoints fit.
+    CHECK(RigExecClothPairSet64::Packable(0));
+    CHECK(RigExecClothPairSet64::Packable(289));
+    CHECK(RigExecClothPairSet64::Packable(65536));
+    CHECK(!RigExecClothPairSet64::Packable(65537));
+    CHECK(!RigExecClothPairSet64::Packable(1000000));
+    const uint64_t lo = RigExecClothPairSet64::Pack(0, 0, 0, 0);
+    const uint64_t hi = RigExecClothPairSet64::Pack(65535, 65535, 65535, 65535);
+    CHECK(lo == 0ull);
+    CHECK(hi == 0xffffffffffffffffull);
+    CHECK(RigExecClothPairSet64::Pack(1, 2, 3, 4) !=
+          RigExecClothPairSet64::Pack(4, 3, 2, 1));
+    CHECK(RigExecClothPairSet64::Pack(0, 0, 0, 1) != lo);
+    CHECK(RigExecClothPairSet64::Pack(256, 1, 2, 3) !=
+          RigExecClothPairSet64::Pack(1, 256, 2, 3));
+    CHECK((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) & 0xffffull) == 0x12ull);
+    CHECK(((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 16) & 0xffffull) ==
+          0x3456ull);
+    CHECK(((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 32) & 0xffffull) ==
+          0x78ull);
+    CHECK((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 48) == 0x9abcull);
+}
+
 void TestEdgeSpheresRetireOnTouch()
 {
     // The self edge/edge band caches midpoint spheres until a correction
@@ -1708,10 +1825,81 @@ void TestSelfPairDiscoveryOrder()
     CHECK(ve == 7);
     CHECK(ee == 6);
     CHECK(ws.selfLambda.size() == 13);
-    CHECK(ws.selfPairs.count == 144);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 144);
     uint64_t h = 1469598103934665603ull;
     const auto *p = reinterpret_cast<const uint8_t *>(x.data());
     for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xc2fddc4fec45e38aull);
+}
+
+void TestSelfLargeMeshUsesArrayDedup()
+{
+    // Past 65536 points the endpoints no longer pack, so the edge/edge
+    // discovery keys the array set instead of the packed one. A folded
+    // curtain padded with far-away isolated points takes the array arm,
+    // records the same pairs, and solves the curtain identically: the
+    // padded points hash into buckets but die at the band, and add no
+    // constraints.
+    const int n = 4;
+    Mesh m;
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const bool top = j < n / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(n - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < n; ++j)
+        for (int i = 0; i + 1 < n; ++i) {
+            const int a = j * n + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + n});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + n, a + n});
+        }
+    const size_t curtainPoints = m.points.size() / 3;
+    while (m.points.size() / 3 < 66000) {
+        m.points.push_back(10000.0f);
+        m.points.push_back(-10000.0f);
+        m.points.push_back(5000.0f);
+    }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(mesh.pointCount == 66000);
+    CHECK(!RigExecClothPairSet64::Packable(mesh.pointCount));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    CHECK(ws.selfPairs64.count == 0);
+    // The linear path keys the share-live pairs (351) where the bitset
+    // path keys only the adjacency-live ones (144); the adjacency scans
+    // behind the insert retire the same pairs, so the same corrections
+    // survive either way.
+    CHECK(ws.selfPairs.count == 351);
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 7);
+    CHECK(ee == 6);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < 3 * curtainPoints * sizeof(float); ++i) {
         h ^= p[i];
         h *= 1099511628211ull;
     }
@@ -2279,10 +2467,12 @@ void TestSelfTwinSkipMatchesNoSkip()
     RigExecClothWorkspace withTwins, noTwins;
     std::vector<float> xTwins, xNoTwins;
     const uint64_t hashTwins = solve(&xTwins, &withTwins);
-    const size_t pairsTwins = withTwins.selfPairs.count;
+    const size_t pairsTwins = withTwins.selfPairs64.count;
+    CHECK(withTwins.selfPairs.count == 0);
     std::fill(mesh.triEdgeTwin.begin(), mesh.triEdgeTwin.end(), -1);
     const uint64_t hashNoTwins = solve(&xNoTwins, &noTwins);
-    CHECK(pairsTwins == noTwins.selfPairs.count);
+    CHECK(pairsTwins == noTwins.selfPairs64.count);
+    CHECK(noTwins.selfPairs.count == 0);
     CHECK(pairsTwins > 0);
     CHECK(hashTwins == hashNoTwins);
 }
@@ -2386,7 +2576,8 @@ void TestHeldConstraintBandInputs()
     size_t edgePairs = 0;
     for (const auto &kv : ws.selfLambda)
         if (!(kv.first[3] == -1 && kv.first[4] == -1)) ++edgePairs;
-    CHECK(ws.selfPairs.count > 0);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count > 0);
     CHECK(edgePairs > 0);
     uint64_t hash = 1469598103934665603ull;
     const auto *bytes = reinterpret_cast<const uint8_t *>(x.data());
@@ -2452,7 +2643,8 @@ void TestTriangleBandSkipsSeparatedTriangles()
             ++vertPairs;
         else
             ++edgePairs;
-    CHECK(ws.selfPairs.count > 0);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count > 0);
     CHECK(edgePairs > 0);
     CHECK(vertPairs > 0);
     uint64_t hash = 1469598103934665603ull;
@@ -2934,10 +3126,13 @@ int main()
     TestSelfContactKeepsAttachments();
     TestPairSetMatchesOrderedSet();
     TestPairSetPreGrownBatch();
+    TestPairSet64MatchesOrderedSet();
+    TestPairPackBoundaries();
     TestEdgeSpheresRetireOnTouch();
     TestSelfGridReuseVerdict();
     TestClothGridDeterminism();
     TestSelfPairDiscoveryOrder();
+    TestSelfLargeMeshUsesArrayDedup();
     TestNeighborBitsMatchLists();
     TestEdgeBitsMatchVertices();
     TestSharedEndpointsTestAdjacent();
