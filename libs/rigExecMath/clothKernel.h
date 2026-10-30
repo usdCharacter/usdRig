@@ -237,6 +237,9 @@ struct RigExecClothWorkspace {
     std::map<std::array<int32_t, 5>, float> selfLambda;
     RigExecClothGrid selfGrid;
     std::vector<uint64_t> selfScratch;
+    /// The cloth as its own collider set for the self-contact grids,
+    /// assigned per call, its triangle buffer retained.
+    RigExecClothColliders selfTopology;
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
     RigExecClothContactTris contacts;
@@ -1579,15 +1582,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     RigExecClothWorkspace *ws, float *x)
 {
     using namespace cloth_detail;
-    RigExecClothColliders topology;
-    topology.pointCount = mesh.pointCount;
-    topology.triangles = mesh.triangles;
     float pad = 0;
     for (const auto &p : mesh.model.profiles)
         if (p.kind == RigExecClothProfileKind::SelfCollision)
             for (size_t i = 0; i < mesh.pointCount; ++i)
                 pad = std::max(pad, p.thickness * RigExecClothMap(p, ClothThickness, i));
     if (!(pad > 0)) return;
+    // The triangle buffer persists in the workspace: assignment reuses it
+    // instead of allocating per call, and a model without a running self
+    // profile never copies it. Same values.
+    RigExecClothColliders &topology = ws->selfTopology;
+    topology.pointCount = mesh.pointCount;
+    topology.triangles = mesh.triangles;
     // A padded triangle bucket at an edge midpoint covers every possible
     // edge/edge encounter along that edge, not just its endpoints.
     float edgeReach = 0;
