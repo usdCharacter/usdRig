@@ -3556,6 +3556,21 @@ struct RigExecBakedProgramImpl {
         bool matrixParamsHaveTransform = false;
         GfMatrix4d matrixParamsTransform{1.0};
         uint64_t matrixParamsPacketRevision = 0;
+        /// A Range matrix revision's per-group sparse entry ranges, held
+        /// while the shared packet and the count stand: group g's
+        /// [first, last) entries over the packet at WeightPacket op value
+        /// `weightPacketValue`'s revision `matrixEntryRangesPacketRevision`
+        /// and `matrixEntryRangesCount` points (`matrixEntryRangesHeld`).
+        /// A pure function of the packet's indices and the chain's group
+        /// bounds -- the same [first, last) the group's own search answers
+        /// -- so the group steps skip their searches while the key stands.
+        /// Never held for a current-phase revision, an unshared packet, a
+        /// dense walk, or a revision the verdict refuses. The value id is
+        /// set at compile, which drops the claim.
+        bool matrixEntryRangesHeld = false;
+        uint64_t matrixEntryRangesPacketRevision = 0;
+        size_t matrixEntryRangesCount = 0;
+        std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;
@@ -6270,6 +6285,10 @@ struct RigExecBakedRunShadow {
         bool matrixParamsHaveTransform = false;
         GfMatrix4d matrixParamsTransform{1.0};
         uint64_t matrixParamsPacketRevision = 0;
+        bool matrixEntryRangesHeld = false;
+        uint64_t matrixEntryRangesPacketRevision = 0;
+        size_t matrixEntryRangesCount = 0;
+        std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
         std::vector<uint64_t> joinSeen;
         uint32_t rangeRefusals = 0;
         /// Copied as states (refs and own[] handles), never as bytes.

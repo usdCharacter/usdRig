@@ -1822,7 +1822,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         size_t begin, size_t end,
                         const float *separateEnvelope, bool useSimd,
                         bool *untouched,
-                        RigExecSparseWalkMemo<GfVec3f> *walk)
+                        RigExecSparseWalkMemo<GfVec3f> *walk,
+                        const std::pair<size_t, size_t> *entryRange)
 {
     if (untouched) {
         *untouched = false;
@@ -1860,7 +1861,12 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                 return passThrough();
             }
             size_t first = 0, last = 0;
-            _SparseEntriesIn(w.indices, begin, end, &first, &last);
+            if (entryRange) {
+                first = entryRange->first;
+                last = entryRange->second;
+            } else {
+                _SparseEntriesIn(w.indices, begin, end, &first, &last);
+            }
             if (first == last) {
                 return passThrough();
             }

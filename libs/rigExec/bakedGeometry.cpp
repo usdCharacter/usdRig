@@ -3410,6 +3410,74 @@ MatrixParamsNote(
     revision->matrixParamsHeld = true;
 }
 
+/// Whether the revision holds its sparse entry ranges over \p count points:
+/// the packet the claim names and the count both stand, and the ranges name
+/// one [first, last) per group of \p groupCount groups. The claim is the
+/// search half of the sparse group walk only; the verdict the groups run
+/// under is RevisionStatic's own.
+bool
+MatrixEntryRangesHeld(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, size_t count,
+    size_t groupCount)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &shared);
+    if (!shared || !revision.matrixEntryRangesHeld ||
+        revision.matrixEntryRangesPacketRevision != packetRevision ||
+        revision.matrixEntryRangesCount != count ||
+        revision.matrixEntryRanges.size() != groupCount) {
+        return false;
+    }
+    return true;
+}
+
+/// Notes the per-group sparse entry ranges just cut from the standing
+/// packet's indices over the chain's group bounds: group g's [first, last)
+/// entries, the same pair its own search answers. One ascending pass over
+/// both arrays -- the indices ascend (the verdict's validation proved it)
+/// and the bounds ascend by construction. Drops the claim where no packet
+/// names it.
+void
+MatrixEntryRangesNote(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t count,
+    const std::vector<int> &groupBounds)
+{
+    revision->matrixEntryRangesHeld = false;
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &shared);
+    if (!shared) {
+        return;
+    }
+    if (groupBounds.size() < 2) {
+        return;
+    }
+    const std::vector<int> &indices = revision->parameters.weights.indices;
+    const size_t groupCount = groupBounds.size() - 1;
+    revision->matrixEntryRanges.resize(groupCount);
+    size_t k = 0;
+    for (size_t g = 0; g < groupCount; ++g) {
+        const size_t begin = size_t(groupBounds[g]);
+        const size_t end = size_t(groupBounds[g + 1]);
+        while (k < indices.size() &&
+               (indices[k] < 0 || size_t(indices[k]) < begin)) {
+            ++k;
+        }
+        const size_t first = k;
+        while (k < indices.size() &&
+               (indices[k] < 0 || size_t(indices[k]) < end)) {
+            ++k;
+        }
+        revision->matrixEntryRanges[g] = {first, k};
+    }
+    revision->matrixEntryRangesPacketRevision = packetRevision;
+    revision->matrixEntryRangesCount = count;
+    revision->matrixEntryRangesHeld = true;
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -3641,13 +3709,22 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     }
     const int k = RigExecGroupScratch(&state, end - begin);
     bool untouched = false;
+    // This group's sparse entry range while RevisionStatic's claim stands
+    // (verified there this run; the packet's revision is final for the
+    // run, so the flag is enough here). The arm searches when it is null.
+    const std::pair<size_t, size_t> *entryRange = nullptr;
+    if (revision->op == RigExecRevisionOp::Matrix &&
+        revision->matrixEntryRangesHeld &&
+        g < revision->matrixEntryRanges.size()) {
+        entryRange = &revision->matrixEntryRanges[g];
+    }
     // A sparse walk reuses what it last computed for this group's entries
     // whose inputs held their bits (`state.walk`).
     const bool ok = RigExecRunRevisionGroup(
         revision->op, revision->parameters, revision->rangeInputs,
         skin ? &view : nullptr, entering.data, state.own[size_t(k)]->data(),
         count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched,
-        &state.walk);
+        &state.walk, entryRange);
     state.ok = ok;
     if (!ok || untouched) {
         RigExecPublishPassedGroup(&state, entering, from);
@@ -5332,6 +5409,25 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                         B, &revision, count,
                         revision.acceptance ==
                             RigExecRevisionAcceptance::Applies);
+                }
+            }
+            // A sparse matrix revision's per-group entry ranges while the
+            // packet and count stand, else the one ascending cut, whose key
+            // is then noted: the same [first, last) each group's own search
+            // answers. Only under an Applies verdict -- the validation it
+            // carries is what the ascending cut rests on -- and only for a
+            // sparse walk; anything else searches per group as before.
+            if (revision.op == RigExecRevisionOp::Matrix &&
+                revision.acceptance == RigExecRevisionAcceptance::Applies &&
+                RigExecWireTakesSparseEnvelope(
+                    revision.parameters.weights)) {
+                const size_t groupCount =
+                    chain.groupBounds.size() < 2
+                        ? 0
+                        : chain.groupBounds.size() - 1;
+                if (!MatrixEntryRangesHeld(B, revision, count, groupCount)) {
+                    MatrixEntryRangesNote(B, &revision, count,
+                                          chain.groupBounds);
                 }
             }
             noteGate();

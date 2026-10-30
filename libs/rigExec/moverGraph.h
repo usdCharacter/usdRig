@@ -38,6 +38,7 @@
 #include <thread>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -890,13 +891,18 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// its last walk's records its entries there, and takes from it each entry
 /// whose weight and entering point hold the bits recorded. The bits written
 /// are the same with and without it.
+/// \p entryRange, when given, is this group's [first, last) sparse entries
+/// (RevisionStatic's memo over the standing packet): the sparse Matrix arm
+/// walks those instead of searching the indices for them. The bits written
+/// are the same either way; null searches.
 bool RigExecRunRevisionGroup(
     RigExecRevisionOp op, const RigExecMoverParameters &p,
     const RigExecRevisionRangeInputs &prepared,
     const RigExecSkinTransformsView *skin, const GfVec3f *in, GfVec3f *out,
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
     bool useSimd, bool *untouched = nullptr,
-    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr,
+    const std::pair<size_t, size_t> *entryRange = nullptr);
 
 /// Points [begin, end) of a revision that applies: \p out (sized \p count)
 /// receives at those indices exactly what RigExecRunRevisionKernel writes

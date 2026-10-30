@@ -1027,6 +1027,7 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
             revision.weightValuesHeld=false;
             revision.matrixEnvelopeHeld=false;
             revision.matrixParamsHeld=false;
+            revision.matrixEntryRangesHeld=false;
         }
     }
     BuildSpaceLeafIndex(B);
