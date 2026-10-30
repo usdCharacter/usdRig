@@ -55,28 +55,37 @@ bool RigExecUsdSceneAccess::PrimProperties(const SdfPath &path, RigExecScenePrim
     if (!prim) return false;
     *result = {path, prim.GetTypeName(), prim.GetAppliedSchemas(), Metadata(prim), prim.IsActive()};
     for (const auto &child : prim.GetAllChildren()) result->children.push_back(child.GetPath());
+    // One property enumeration serves both lists: GetAttributes and
+    // GetRelationships each compose the prim's property names, while
+    // GetProperties composes them once. A property is exactly one of the
+    // two kinds, and both lists are sorted after, so the split answers
+    // the same sets in the same order.
+    std::vector<std::pair<SdfPath, UsdAttribute>> pairs;
+    SdfPathVector relPaths;
+    for (const auto &property : prim.GetProperties()) {
+        if (const auto attribute = property.As<UsdAttribute>())
+            pairs.emplace_back(attribute.GetPath(), attribute);
+        else
+            relPaths.push_back(property.GetPath());
+    }
+    std::sort(pairs.begin(), pairs.end(),
+        [](const auto &a, const auto &b) { return a.first < b.first; });
+    attributes->clear();
+    attributes->reserve(pairs.size());
     if (boundAttributes) {
         // Bound objects stay parallel to the sorted paths: collect pairs,
         // sort once on the materialized paths, then split.
-        std::vector<std::pair<SdfPath, UsdAttribute>> pairs;
-        for (const auto &attribute : prim.GetAttributes())
-            pairs.emplace_back(attribute.GetPath(), attribute);
-        std::sort(pairs.begin(), pairs.end(),
-            [](const auto &a, const auto &b) { return a.first < b.first; });
-        attributes->clear();
         boundAttributes->clear();
+        boundAttributes->reserve(pairs.size());
         for (auto &entry : pairs) {
             attributes->push_back(std::move(entry.first));
             boundAttributes->push_back(std::move(entry.second));
         }
     } else {
-        attributes->clear();
-        for (const auto &attribute : prim.GetAttributes()) attributes->push_back(attribute.GetPath());
-        std::sort(attributes->begin(), attributes->end());
+        for (auto &entry : pairs) attributes->push_back(std::move(entry.first));
     }
-    relationships->clear();
-    for (const auto &relationship : prim.GetRelationships()) relationships->push_back(relationship.GetPath());
-    std::sort(relationships->begin(), relationships->end());
+    std::sort(relPaths.begin(), relPaths.end());
+    *relationships = std::move(relPaths);
     return true;
 }
 SdfPathVector RigExecUsdSceneAccess::Attributes(const SdfPath &path) const {
