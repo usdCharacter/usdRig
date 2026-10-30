@@ -117,6 +117,7 @@ BindPointReads(RigExecBakedProgramImpl *program)
         [&](RigExecBakedProgramImpl::GeomRevision *revision, size_t chain,
             size_t before, bool afterStatus) {
             revision->pointBindings.clear();
+            revision->pointBindings.reserve(revision->binding.phases.size());
             for (const auto &[input, phase] : revision->binding.phases) {
                 RigExecBakedPointsBinding bound =
                     bind(input, phase, revision->moverPath, chain, before,
@@ -165,6 +166,9 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                           const std::vector<RigExecBakedChainSpec> &chains)
 {
     RigExecBakedProgramImpl &B = *ctx->program;
+    // Every push below appends a spec-sized run once: reserve the exact
+    // counts so the bake never grows these elementwise.
+    B.chains.reserve(B.chains.size() + chains.size());
     auto refuse = [&](const std::string &what, const SdfPath &where) {
         ctx->Refuse(what, where);
     };
@@ -278,6 +282,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         // channel weight and see it -- so the input and sample prims go into
         // `resolvedRoutedPrims` beside the mover's, where an override on one
         // of their properties places with nothing else to do.
+        out.blendChannels.reserve(r.binding.blendInputs.size());
         for (const SdfPath &input : r.binding.blendInputs) {
             RigExecBakedProgramImpl::GeomBlendChannel channel;
             B.prims.insert(input);
@@ -314,6 +319,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             }
             const auto samples = r.binding.blendSamples.find(input);
             if (samples != r.binding.blendSamples.end()) {
+                channel.samples.reserve(samples->second.size());
                 for (const RigExecBlendSampleBinding &binding :
                          samples->second) {
                     RigExecBakedProgramImpl::GeomBlendChannel::Sample sample;
@@ -395,6 +401,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                 out.driverFramesSolver = solver->second;
             }
         }
+        out.influenceSlots.reserve(r.binding.influences.size());
         for (const SdfPath &influence : r.binding.influences) {
             const int slot = slotOf(influence);
             if (slot < 0) refuse("skin influence is not a provider", influence);
@@ -530,6 +537,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         const SdfPath &target = spec.target;
         RigExecBakedProgramImpl::GeomChain chain;
         chain.target = target;
+        chain.revisions.reserve(spec.revisions.size());
+        chain.derived.reserve(spec.derived.size());
         // The base points are read per frame through a query, so only the
         // query's own validity depends on this surviving a resync.
         B.prims.insert(target.GetPrimPath());
