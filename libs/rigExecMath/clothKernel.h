@@ -178,6 +178,10 @@ struct RigExecClothMesh {
     /// scans.
     std::vector<uint64_t> neighborBits;
     size_t neighborBitStride = 0;
+    /// One union row per constraint over the same stride: the vertices
+    /// neighboring either endpoint. Built with the bitsets; the edge
+    /// adjacency test reads one row instead of two.
+    std::vector<uint64_t> edgeNeighborBits;
     /// The three triangle edges as sorted endpoint pairs, two ints per
     /// edge in grid order. Built for self-contact meshes, like the
     /// bitsets; the discovery loads them instead of sorting per visit.
@@ -371,6 +375,9 @@ inline void Lerp(const float *a, const float *b, float t, float *o)
 inline bool AdjacentTo(const std::vector<int32_t> &sorted, int32_t v);
 // The same verdict from the neighbor bitsets, for meshes that built them.
 inline bool AdjacentToBits(const RigExecClothMesh &mesh, int32_t a, int32_t b);
+// True when either endpoint of constraint c neighbors v, from the
+// constraint's union row.
+inline bool AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_t c, int32_t v);
 
 inline int64_t Cell(float v, float cell) { return int64_t(std::floor(v / cell)); }
 
@@ -787,6 +794,7 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
     }
     mesh->neighborBits.clear();
     mesh->neighborBitStride = 0;
+    mesh->edgeNeighborBits.clear();
     bool selfContact = false;
     for (const auto &p : model.profiles)
         selfContact = selfContact || p.kind == RigExecClothProfileKind::SelfCollision;
@@ -797,6 +805,15 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
             for (int32_t b : mesh->neighbors[a])
                 mesh->neighborBits[a * mesh->neighborBitStride + (size_t(b) >> 6)] |=
                     1ull << (b & 63);
+        mesh->edgeNeighborBits.assign(mesh->constraintRest.size() * mesh->neighborBitStride, 0);
+        for (size_t c = 0; c < mesh->constraintRest.size(); ++c) {
+            const size_t a = size_t(mesh->constraintEnds[2 * c]);
+            const size_t b = size_t(mesh->constraintEnds[2 * c + 1]);
+            for (size_t w = 0; w < mesh->neighborBitStride; ++w)
+                mesh->edgeNeighborBits[c * mesh->neighborBitStride + w] =
+                    mesh->neighborBits[a * mesh->neighborBitStride + w] |
+                    mesh->neighborBits[b * mesh->neighborBitStride + w];
+        }
     }
     mesh->triEdges.clear();
     mesh->triEdgeTwin.clear();
@@ -1861,6 +1878,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // Bitset adjacency where the mesh built the sets, the linear scans
     // past the size cap: the same verdicts either way.
     const bool useBits = !mesh.neighborBits.empty();
+    const bool useEdgeBits = !mesh.edgeNeighborBits.empty();
     // The twin-skip bucket marks, one per triangle, cleared per call;
     // the mark runs across profiles so every constraint's mark is new.
     std::vector<uint32_t> &twinStamp = ws->selfTwinStamp;
@@ -1997,10 +2015,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     std::array<int32_t,4> key{{i,j,k,l}};
                     if (k < i) key = {{k,l,i,j}};
                     if (!pairs.Insert(key)) continue;
-                    bool adjacent = false;
-                    for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
-                        adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
-                                                        : AdjacentTo(mesh.neighbors[size_t(a)], b));
+                    // The union row answers both endpoints at once; past
+                    // the size cap the linear scans decide, as before.
+                    bool adjacent;
+                    if (useEdgeBits) {
+                        adjacent = AdjacentToEdgeBits(mesh, c, k) ||
+                                   AdjacentToEdgeBits(mesh, c, l);
+                    } else {
+                        adjacent = false;
+                        for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
+                            adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
+                                                            : AdjacentTo(mesh.neighbors[size_t(a)], b));
+                        }
                     }
                     if (adjacent) continue;
                     // The edge-sphere band: a pair whose midpoint spheres
@@ -2463,6 +2489,12 @@ inline bool cloth_detail::AdjacentToBits(const RigExecClothMesh &mesh, int32_t a
 {
     const size_t word = size_t(a) * mesh.neighborBitStride + (size_t(b) >> 6);
     return ((mesh.neighborBits[word] >> (b & 63)) & 1ull) != 0;
+}
+
+inline bool cloth_detail::AdjacentToEdgeBits(const RigExecClothMesh &mesh, size_t c, int32_t v)
+{
+    const size_t word = c * mesh.neighborBitStride + (size_t(v) >> 6);
+    return ((mesh.edgeNeighborBits[word] >> (v & 63)) & 1ull) != 0;
 }
 
 inline void RigExecClothPairSet::Grow()
