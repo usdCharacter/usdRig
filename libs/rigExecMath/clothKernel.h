@@ -195,6 +195,33 @@ struct RigExecClothMesh {
     /// the edges; the discovery skips a proven duplicate pair when its
     /// twin was already visited from the same constraint.
     std::vector<int32_t> triEdgeTwin;
+    /// Per-constraint material inputs, built with a nonempty model; empty
+    /// without one. constraintProfile[c] is the Stretch/Bend profile
+    /// projecting the constraint's midpoint sample, or -1, and
+    /// constraintStrengthBase holds four floats per constraint (lo, hi,
+    /// mask, directional), the position-independent part of its strength.
+    /// The solve re-forms only the force curve over them, the same values.
+    /// A model mutated after prepare needs a fresh prepare, like any
+    /// other compiled input.
+    std::vector<int32_t> constraintProfile;
+    std::vector<float> constraintStrengthBase;
+    /// Per-vertex Damping verdicts and inputs, built with the model: the
+    /// damping profile index or -1, and six floats per vertex (lo, hi,
+    /// mask, warp, weft, normal). The velocity pass re-forms only the
+    /// force curve and the current-frame dots over them.
+    std::vector<int32_t> vertexDamping;
+    std::vector<float> vertexDampingBase;
+    /// Per-vertex Tether verdicts, built with the model: the tether
+    /// profile index or -1. The particle pass reads these instead of
+    /// scanning the profiles per particle per iteration.
+    std::vector<int32_t> vertexTether;
+    /// Per-collider per-vertex Collision verdicts, built with the model:
+    /// collider c holds [c * pointCount, (c + 1) * pointCount). The
+    /// particle pass reads these instead of scanning per particle.
+    std::vector<int32_t> vertexCollision;
+    /// The self-contact pad over all self profiles and vertices, the same
+    /// maximum the self pass formed per call.
+    float selfPad = 0;
     std::vector<size_t> colliderOffsets;
     std::vector<std::vector<float>> attachmentRest;
     bool valid = false;
@@ -790,6 +817,13 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
     if (!RigExecClothValidateModel(model, mesh->pointCount,
                                    mesh->triangles.size() / 3, colliderCounts, why)) return false;
     mesh->model = model;
+    mesh->constraintProfile.clear();
+    mesh->constraintStrengthBase.clear();
+    mesh->vertexDamping.clear();
+    mesh->vertexDampingBase.clear();
+    mesh->vertexTether.clear();
+    mesh->vertexCollision.clear();
+    mesh->selfPad = 0;
     if (model.Empty()) return true;
     mesh->restPoints.assign(rest, rest + 3 * mesh->pointCount);
     mesh->incidentTriangles.assign(mesh->pointCount, {});
@@ -888,6 +922,82 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
         RigExecClothMaterialFrame(*mesh, rest, i, mesh->materialFrames.data() + 9 * i);
     mesh->colliderOffsets.assign(1, 0);
     for (size_t n : colliderCounts) mesh->colliderOffsets.push_back(mesh->colliderOffsets.back() + n);
+    // Position-independent strength inputs, derived once: profile verdicts,
+    // sample maps, and rest-direction blends never see the solve's points,
+    // so the per-substep kernels re-form only the force curve and the
+    // current-frame dots over them. The same values, bit for bit.
+    mesh->constraintProfile.assign(mesh->constraintRest.size(), -1);
+    mesh->constraintStrengthBase.assign(4 * mesh->constraintRest.size(), 0);
+    for (size_t c = 0; c < mesh->constraintRest.size(); ++c) {
+        const size_t a = size_t(mesh->constraintEnds[2 * c]);
+        const size_t b = size_t(mesh->constraintEnds[2 * c + 1]);
+        RigExecClothSample sample;
+        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
+        sample.weights = {{0.5f, 0.5f, 0}};
+        const auto kind = mesh->constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
+        const RigExecClothProfile *profile = RigExecClothProfileFor(*mesh, kind, sample);
+        if (!profile) continue;
+        mesh->constraintProfile[c] = int32_t(profile - mesh->model.profiles.data());
+        float restDirection[3];
+        cloth_detail::Sub(mesh->restPoints.data() + 3 * a,
+                          mesh->restPoints.data() + 3 * b, restDirection);
+        const float rl = cloth_detail::Length(restDirection);
+        for (float &q : restDirection) q /= rl;
+        float *base = mesh->constraintStrengthBase.data() + 4 * c;
+        base[0] = profile->minStrength * RigExecClothSampleMap(*profile, ClothMinStrength, sample);
+        base[1] = profile->maxStrength * RigExecClothSampleMap(*profile, ClothMaxStrength, sample);
+        base[2] = RigExecClothSampleMap(*profile, ClothMask, sample);
+        const float warpMaps[3] = {
+            RigExecClothSampleMap(*profile, ClothWarp, sample),
+            RigExecClothSampleMap(*profile, ClothWeft, sample),
+            RigExecClothSampleMap(*profile, ClothNormal, sample)};
+        base[3] = RigExecClothDirectional(*profile, restDirection,
+                                           mesh->materialFrames.data() + 9 * a, warpMaps);
+    }
+    mesh->vertexDamping.assign(mesh->pointCount, -1);
+    mesh->vertexDampingBase.assign(6 * mesh->pointCount, 0);
+    mesh->vertexTether.assign(mesh->pointCount, -1);
+    for (size_t i = 0; i < mesh->pointCount; ++i) {
+        const RigExecClothSample vertex = RigExecClothVertex(i);
+        if (const RigExecClothProfile *profile =
+                RigExecClothProfileFor(*mesh, RigExecClothProfileKind::Damping, vertex)) {
+            mesh->vertexDamping[i] = int32_t(profile - mesh->model.profiles.data());
+            float *base = mesh->vertexDampingBase.data() + 6 * i;
+            base[0] = profile->minStrength *
+                RigExecClothSampleMap(*profile, ClothMinStrength, vertex);
+            base[1] = profile->maxStrength *
+                RigExecClothSampleMap(*profile, ClothMaxStrength, vertex);
+            base[2] = RigExecClothSampleMap(*profile, ClothMask, vertex);
+            base[3] = RigExecClothSampleMap(*profile, ClothWarp, vertex);
+            base[4] = RigExecClothSampleMap(*profile, ClothWeft, vertex);
+            base[5] = RigExecClothSampleMap(*profile, ClothNormal, vertex);
+        }
+        if (const RigExecClothProfile *profile =
+                RigExecClothProfileFor(*mesh, RigExecClothProfileKind::Tether, vertex))
+            mesh->vertexTether[i] = int32_t(profile - mesh->model.profiles.data());
+    }
+    const size_t colliderCount = mesh->colliderOffsets.size() - 1;
+    mesh->vertexCollision.assign(colliderCount * mesh->pointCount, -1);
+    for (size_t c = 0; c < colliderCount; ++c) {
+        for (size_t i = 0; i < mesh->pointCount; ++i) {
+            const RigExecClothSample vertex = RigExecClothVertex(i);
+            for (size_t k = mesh->model.profiles.size(); k-- > 0;) {
+                const auto &profile = mesh->model.profiles[k];
+                if (profile.kind == RigExecClothProfileKind::Collision &&
+                    (profile.targetCollider < 0 || profile.targetCollider == int32_t(c)) &&
+                    RigExecClothRegion(profile.sourceMask, vertex) > 0) {
+                    mesh->vertexCollision[c * mesh->pointCount + i] = int32_t(k);
+                    break;
+                }
+            }
+        }
+    }
+    for (const auto &p : mesh->model.profiles)
+        if (p.kind == RigExecClothProfileKind::SelfCollision)
+            for (size_t i = 0; i < mesh->pointCount; ++i)
+                mesh->selfPad = std::max(mesh->selfPad,
+                    p.thickness * RigExecClothMap(p, ClothThickness, i));
     mesh->attachmentRest.assign(model.profiles.size(), {});
     for (size_t k = 0; k < model.profiles.size(); ++k) {
         const auto &p = model.profiles[k];
@@ -1290,22 +1400,14 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
     if (!(len > 0.0f)) return;
     const float C = len - mesh.constraintRest[c];
     if (!mesh.model.Empty()) {
-        RigExecClothSample sample;
-        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
-        sample.weights = {{0.5f, 0.5f, 0}};
-        const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
-            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
-        if (const auto *profile = RigExecClothProfileFor(mesh, kind, sample)) {
-            float restDirection[3];
-            cloth_detail::Sub(mesh.restPoints.data() + 3 * a,
-                              mesh.restPoints.data() + 3 * b, restDirection);
-            const float rl = cloth_detail::Length(restDirection);
-            for (float &q : restDirection) q /= rl;
+        const int32_t pi = mesh.constraintProfile[c];
+        if (pi >= 0) {
+            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+            const float *base = mesh.constraintStrengthBase.data() + 4 * c;
             const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-            const float strength = RigExecClothStrength(*profile, sample, force,
-                restDirection, mesh.materialFrames.data() + 9 * a);
+            const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
             if (!(strength > 0)) return;
-            alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
+            alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
         }
     }
     const float denom = wa + wb + alpha;
@@ -1330,7 +1432,9 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
 /// their int32_t encoding so the pass-2 indexing matches the serial
 /// conversion exactly. \p Model selects the material-profile path at
 /// compile time; the caller instantiates false for an empty model so
-/// the hot loop carries no model branch or dead code.
+/// the hot loop carries no model branch or dead code. The true path
+/// reads the prepared strength cache behind one model check, so it
+/// still agrees with the false path on an empty model.
 template <bool Model>
 inline void
 RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
@@ -1359,22 +1463,20 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
             if (!(len > 0.0f)) { live[k] = 0; continue; }
             const float C = len - mesh.constraintRest[c];
             if constexpr (Model) {
-                RigExecClothSample sample;
-                sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
-                sample.weights = {{0.5f, 0.5f, 0}};
-                const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
-                    ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
-                if (const auto *profile = RigExecClothProfileFor(mesh, kind, sample)) {
-                    float restDirection[3];
-                    Sub(mesh.restPoints.data() + 3 * a,
-                        mesh.restPoints.data() + 3 * b, restDirection);
-                    const float rl = Length(restDirection);
-                    for (float &q : restDirection) q /= rl;
-                    const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-                    const float strength = RigExecClothStrength(*profile, sample, force,
-                        restDirection, mesh.materialFrames.data() + 9 * a);
-                    if (!(strength > 0)) { live[k] = 0; continue; }
-                    alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
+                // The strength cache exists exactly when the model is
+                // nonempty; without one every constraint keeps the default
+                // alpha, the same verdicts a profile scan over no profiles
+                // returned.
+                if (!mesh.model.Empty()) {
+                    const int32_t pi = mesh.constraintProfile[c];
+                    if (pi >= 0) {
+                        const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+                        const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+                        const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                        const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
+                        if (!(strength > 0)) { live[k] = 0; continue; }
+                        alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
+                    }
                 }
             }
             const float denom = wa + wb + alpha;
@@ -1415,22 +1517,14 @@ RigExecClothProjectConstraint(const RigExecClothMesh &mesh,
     if (!(len > 0.0f)) return;
     const float C = len - mesh.constraintRest[c];
     if (!mesh.model.Empty()) {
-        RigExecClothSample sample;
-        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
-        sample.weights = {{0.5f, 0.5f, 0}};
-        const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
-            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
-        if (const auto *profile = RigExecClothProfileFor(mesh, kind, sample)) {
-            float restDirection[3];
-            cloth_detail::Sub(mesh.restPoints.data() + 3 * a,
-                              mesh.restPoints.data() + 3 * b, restDirection);
-            const float rl = cloth_detail::Length(restDirection);
-            for (float &q : restDirection) q /= rl;
+        const int32_t pi = mesh.constraintProfile[c];
+        if (pi >= 0) {
+            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+            const float *base = mesh.constraintStrengthBase.data() + 4 * c;
             const float force = wa + wb > 0 ? std::abs(lambda[c] - C / (wa + wb)) / (s.h * s.h) : 0;
-            const float strength = RigExecClothStrength(*profile, sample, force,
-                restDirection, mesh.materialFrames.data() + 9 * a);
+            const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
             if (!(strength > 0)) { lambda[c] = 0; return; }
-            alpha = profile->hard ? 0 : profile->compliance / (strength * s.h * s.h);
+            alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
         }
     }
     const float denom = wa + wb + alpha;
@@ -1469,8 +1563,7 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     // model, so the per-particle lookups skip themselves.
     const bool modelEmpty = mesh.model.Empty();
     const int32_t anchor = mesh.tetherAnchor[i];
-    if (anchor >= 0 && (modelEmpty || !RigExecClothProfileFor(mesh, RigExecClothProfileKind::Tether,
-                                                              RigExecClothVertex(i)))) {
+    if (anchor >= 0 && (modelEmpty || mesh.vertexTether[i] < 0)) {
         float d[3];
         Sub(pi, x + 3 * size_t(anchor), d);
         // The limit and its short-circuit bound arrive derived at build.
@@ -1505,14 +1598,9 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     // construction happens only where profiles exist.
     const auto solveContact = [&](int collider, const RigExecClothSample *sample) {
     const RigExecClothProfile *collisionProfile = nullptr;
-    for (size_t k = mesh.model.profiles.size(); k-- > 0;) {
-        const auto &profile = mesh.model.profiles[k];
-        if (profile.kind == RigExecClothProfileKind::Collision &&
-            (profile.targetCollider < 0 || profile.targetCollider == collider) &&
-            RigExecClothRegion(profile.sourceMask, *sample) > 0) {
-            collisionProfile = &profile;
-            break;
-        }
+    if (!modelEmpty) {
+        const int32_t pi = mesh.vertexCollision[size_t(collider) * mesh.pointCount + i];
+        if (pi >= 0) collisionProfile = &mesh.model.profiles[size_t(pi)];
     }
     const float thickness = collisionProfile
         ? collisionProfile->thickness * RigExecClothMap(*collisionProfile, ClothThickness, i)
@@ -1609,8 +1697,9 @@ RigExecClothVelocity(const RigExecClothMesh &mesh, const RigExecClothStep &s,
     // per-particle sample and profile lookup skip themselves here, as in
     // the particle pass. Profile rigs take the lookup as before.
     if (!mesh.model.Empty()) {
-        if (const auto *profile = RigExecClothProfileFor(mesh, RigExecClothProfileKind::Damping,
-                                                       RigExecClothVertex(i))) {
+        const int32_t pi = mesh.vertexDamping[i];
+        if (pi >= 0) {
+            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
             float frame[9], v[3], delta[3];
             RigExecClothMaterialFrame(mesh, x, i, frame);
             for (size_t a = 0; a < 3; ++a) {
@@ -1618,11 +1707,17 @@ RigExecClothVelocity(const RigExecClothMesh &mesh, const RigExecClothStep &s,
                 delta[a] = (v[a] - velocity[3 * i + a]) / (s.h * mesh.inverseMass[i]);
             }
             const float force = cloth_detail::Length(delta);
+            // One sample, one force: the prepared isotropic part and warp
+            // maps are the same for all three axes, so each axis re-forms
+            // only its directional dots; the same rates the three full
+            // strength evaluations formed.
+            const float *base = mesh.vertexDampingBase.data() + 6 * i;
+            const float isotropic = RigExecClothCachedBase(profile, base, force);
             std::fill(velocity + 3 * i, velocity + 3 * i + 3, 0.0f);
             for (size_t a = 0; a < 3; ++a) {
-                const float rate = RigExecClothStrength(*profile, RigExecClothVertex(i), force,
-                                                       frame + 3 * a, frame);
-                const float damp = profile->hard && rate > 0 ? 0 : std::exp(-rate * s.h);
+                const float rate = isotropic * RigExecClothDirectional(profile, frame + 3 * a,
+                                                                       frame, base + 3);
+                const float damp = profile.hard && rate > 0 ? 0 : std::exp(-rate * s.h);
                 const float along = cloth_detail::Dot(v, frame + 3 * a) * damp;
                 for (size_t q = 0; q < 3; ++q) velocity[3 * i + q] += along * frame[3 * a + q];
             }
@@ -1869,11 +1964,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     RigExecClothWorkspace *ws, float *x)
 {
     using namespace cloth_detail;
-    float pad = 0;
-    for (const auto &p : mesh.model.profiles)
-        if (p.kind == RigExecClothProfileKind::SelfCollision)
-            for (size_t i = 0; i < mesh.pointCount; ++i)
-                pad = std::max(pad, p.thickness * RigExecClothMap(p, ClothThickness, i));
+    const float pad = mesh.selfPad;
     if (!(pad > 0)) return;
     // Size the sphere cache once per mesh; a fresh clock per call retires
     // every sphere, since positions moved since the last call.

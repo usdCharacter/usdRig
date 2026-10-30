@@ -1843,6 +1843,196 @@ void TestTriBitsMatchVertices()
     }
 }
 
+void TestStrengthCacheMatchesDirect()
+{
+    // Prepare derives the position-independent strength inputs once: the
+    // cached profile verdicts and lo/hi/mask/directional inputs match the
+    // per-call profile scans and strength evaluations bit for bit, over
+    // varied masks (including last-wins overlaps and unmatched -1s),
+    // painted maps, and force curves.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    const size_t n = m.Size();
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothModel model;
+    RigExecClothProfile stretch0, stretch1;
+    stretch0.kind = stretch1.kind = RigExecClothProfileKind::Stretch;
+    stretch0.minStrength = 0.5f; stretch0.maxStrength = 2.0f;
+    stretch0.forceCurve = {0, 0, 100, 1};
+    stretch0.warp = 2.0f; stretch0.weft = 0.5f;
+    stretch0.maps[ClothMask].assign(n, 0.25f);
+    stretch0.maps[ClothWarp].assign(n, 1.5f);
+    stretch0.sourceMask.assign(n, 0.0f);
+    stretch0.sourceMask[0] = stretch0.sourceMask[1] = 1.0f;
+    stretch1.minStrength = 1.0f; stretch1.maxStrength = 3.0f;
+    stretch1.forceCurve = {0, 1, 50, 0.25f, 200, 1};
+    stretch1.maps[ClothMinStrength].assign(n, 0.5f);
+    stretch1.maps[ClothMaxStrength].assign(n, 2.0f);
+    stretch1.sourceMask.assign(n, 0.0f);
+    stretch1.sourceMask[1] = stretch1.sourceMask[2] = 1.0f;
+    RigExecClothProfile bend;
+    bend.kind = RigExecClothProfileKind::Bend;
+    bend.compliance = 0.002f;
+    RigExecClothProfile damping;
+    damping.kind = RigExecClothProfileKind::Damping;
+    damping.minStrength = 2.0f; damping.maxStrength = 8.0f;
+    damping.forceCurve = {0, 0.5f, 10, 1};
+    damping.maps[ClothMask].assign(n, 0.75f);
+    damping.maps[ClothWeft].assign(n, 2.0f);
+    damping.sourceMask.assign(n, 0.0f);
+    for (size_t i = 0; i < n; i += 2) damping.sourceMask[i] = 1.0f;
+    RigExecClothProfile tether;
+    tether.kind = RigExecClothProfileKind::Tether;
+    tether.sourceMask.assign(n, 0.0f);
+    tether.sourceMask[3] = 1.0f;
+    RigExecClothProfile collision, collisionB;
+    collision.kind = collisionB.kind = RigExecClothProfileKind::Collision;
+    collision.thickness = 0.3f;
+    collision.sourceMask.assign(n, 1.0f);
+    collisionB.targetCollider = 0;
+    collisionB.sourceMask.assign(n, 0.0f);
+    for (size_t i = 1; i < n; i += 2) collisionB.sourceMask[i] = 1.0f;
+    RigExecClothProfile self;
+    self.kind = RigExecClothProfileKind::SelfCollision;
+    self.thickness = 0.2f;
+    self.maps[ClothThickness].assign(n, 0.5f);
+    self.maps[ClothThickness][5] = 3.0f;
+    model.profiles = {stretch0, stretch1, bend, damping, tether, collision,
+                      collisionB, self};
+    for (int32_t vertex : mesh.triangles) {
+        model.triangleUV.push_back(m.points[3 * size_t(vertex)]);
+        model.triangleUV.push_back(m.points[3 * size_t(vertex) + 1]);
+    }
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {4}, &why));
+    const float forces[] = {0.0f, 0.5f, 50.0f, 200.0f, 1e30f,
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN()};
+    const auto sameBits = [](float a, float b) {
+        return std::memcmp(&a, &b, sizeof(float)) == 0;
+    };
+    CHECK(mesh.constraintProfile.size() == mesh.constraintRest.size());
+    CHECK(mesh.constraintStrengthBase.size() == 4 * mesh.constraintRest.size());
+    size_t matched = 0, unmatched = 0;
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        const size_t a = size_t(mesh.constraintEnds[2 * c]);
+        const size_t b = size_t(mesh.constraintEnds[2 * c + 1]);
+        RigExecClothSample sample;
+        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
+        sample.weights = {{0.5f, 0.5f, 0}};
+        const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
+        const RigExecClothProfile *want = RigExecClothProfileFor(mesh, kind, sample);
+        const int32_t wi = want ? int32_t(want - mesh.model.profiles.data()) : -1;
+        CHECK(mesh.constraintProfile[c] == wi);
+        if (!want) { ++unmatched; continue; }
+        ++matched;
+        float restDirection[3];
+        cloth_detail::Sub(mesh.restPoints.data() + 3 * a,
+                          mesh.restPoints.data() + 3 * b, restDirection);
+        const float rl = cloth_detail::Length(restDirection);
+        for (float &q : restDirection) q /= rl;
+        const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+        CHECK(sameBits(base[0], want->minStrength *
+            RigExecClothSampleMap(*want, ClothMinStrength, sample)));
+        CHECK(sameBits(base[1], want->maxStrength *
+            RigExecClothSampleMap(*want, ClothMaxStrength, sample)));
+        CHECK(sameBits(base[2], RigExecClothSampleMap(*want, ClothMask, sample)));
+        const float warpMaps[3] = {
+            RigExecClothSampleMap(*want, ClothWarp, sample),
+            RigExecClothSampleMap(*want, ClothWeft, sample),
+            RigExecClothSampleMap(*want, ClothNormal, sample)};
+        CHECK(sameBits(base[3], RigExecClothDirectional(
+            *want, restDirection, mesh.materialFrames.data() + 9 * a, warpMaps)));
+        for (float force : forces) {
+            const float direct = RigExecClothStrength(*want, sample, force,
+                restDirection, mesh.materialFrames.data() + 9 * a);
+            const float cached = RigExecClothCachedBase(*want, base, force) * base[3];
+            CHECK(sameBits(direct, cached));
+        }
+    }
+    CHECK(matched > 0 && unmatched > 0);
+    CHECK(mesh.vertexDamping.size() == n);
+    CHECK(mesh.vertexDampingBase.size() == 6 * n);
+    CHECK(mesh.vertexTether.size() == n);
+    CHECK(mesh.vertexCollision.size() == n);
+    size_t dampMatched = 0, tetherMatched = 0, collideMatched = 0;
+    const float dirs[][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}, {1, 2, 3}};
+    for (size_t i = 0; i < n; ++i) {
+        const RigExecClothSample vertex = RigExecClothVertex(i);
+        const RigExecClothProfile *damp =
+            RigExecClothProfileFor(mesh, RigExecClothProfileKind::Damping, vertex);
+        const int32_t di = damp ? int32_t(damp - mesh.model.profiles.data()) : -1;
+        CHECK(mesh.vertexDamping[i] == di);
+        const RigExecClothProfile *teth =
+            RigExecClothProfileFor(mesh, RigExecClothProfileKind::Tether, vertex);
+        CHECK(mesh.vertexTether[i] ==
+              (teth ? int32_t(teth - mesh.model.profiles.data()) : -1));
+        if (teth) ++tetherMatched;
+        const RigExecClothProfile *hit = nullptr;
+        for (size_t k = mesh.model.profiles.size(); k-- > 0;) {
+            const auto &profile = mesh.model.profiles[k];
+            if (profile.kind == RigExecClothProfileKind::Collision &&
+                (profile.targetCollider < 0 || profile.targetCollider == 0) &&
+                RigExecClothRegion(profile.sourceMask, vertex) > 0) {
+                hit = &profile;
+                break;
+            }
+        }
+        CHECK(mesh.vertexCollision[i] ==
+              (hit ? int32_t(hit - mesh.model.profiles.data()) : -1));
+        if (hit) ++collideMatched;
+        if (!damp) continue;
+        ++dampMatched;
+        const float *base = mesh.vertexDampingBase.data() + 6 * i;
+        CHECK(sameBits(base[0], damp->minStrength *
+            RigExecClothSampleMap(*damp, ClothMinStrength, vertex)));
+        CHECK(sameBits(base[1], damp->maxStrength *
+            RigExecClothSampleMap(*damp, ClothMaxStrength, vertex)));
+        CHECK(sameBits(base[2], RigExecClothSampleMap(*damp, ClothMask, vertex)));
+        CHECK(sameBits(base[3], RigExecClothSampleMap(*damp, ClothWarp, vertex)));
+        CHECK(sameBits(base[4], RigExecClothSampleMap(*damp, ClothWeft, vertex)));
+        CHECK(sameBits(base[5], RigExecClothSampleMap(*damp, ClothNormal, vertex)));
+        const float *frame = mesh.materialFrames.data() + 9 * i;
+        for (float force : forces) {
+            const float isotropic = RigExecClothCachedBase(*damp, base, force);
+            CHECK(sameBits(isotropic, RigExecClothStrength(*damp, vertex, force)));
+            for (const auto &dir : dirs) {
+                const float direct =
+                    RigExecClothStrength(*damp, vertex, force, dir, frame);
+                const float cached =
+                    isotropic * RigExecClothDirectional(*damp, dir, frame, base + 3);
+                CHECK(sameBits(direct, cached));
+            }
+        }
+    }
+    CHECK(dampMatched > 0 && dampMatched < n);
+    CHECK(tetherMatched == 1 && collideMatched == n);
+    float wantPad = 0;
+    for (const auto &p : mesh.model.profiles)
+        if (p.kind == RigExecClothProfileKind::SelfCollision)
+            for (size_t i = 0; i < n; ++i)
+                wantPad = std::max(wantPad,
+                    p.thickness * RigExecClothMap(p, ClothThickness, i));
+    CHECK(sameBits(mesh.selfPad, wantPad));
+    CHECK(mesh.selfPad == 0.2f * 3.0f);
+    // An empty model builds no caches.
+    {
+        RigExecClothMesh bare;
+        CHECK(Build(m, nullptr, settings, &bare));
+        RigExecClothModel empty;
+        CHECK(RigExecPrepareClothModel(&bare, empty, m.points.data(), {}, &why));
+        CHECK(bare.constraintProfile.empty());
+        CHECK(bare.constraintStrengthBase.empty());
+        CHECK(bare.vertexDamping.empty());
+        CHECK(bare.vertexDampingBase.empty());
+        CHECK(bare.vertexTether.empty());
+        CHECK(bare.vertexCollision.empty());
+        CHECK(bare.selfPad == 0);
+    }
+}
+
 void TestSelfEdgeCanonicalization()
 {
     // Prepare stores each triangle edge sorted, and the discovery keys
@@ -2643,6 +2833,7 @@ int main()
     TestNeighborBitsMatchLists();
     TestEdgeBitsMatchVertices();
     TestTriBitsMatchVertices();
+    TestStrengthCacheMatchesDirect();
     TestSelfEdgeCanonicalization();
     TestSelfEdgeTwins();
     TestSelfTwinSkipMatchesNoSkip();
