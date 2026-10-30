@@ -4093,6 +4093,25 @@ RunJoin(const RigExecBakedProgramImpl &B,
     }
     bool moved = SizeGroupIds(revision);
     uint32_t refusals = 0;
+    // A matrix join takes an aliased group's entering source from the
+    // predecessor's join output instead of scanning for its writer. The
+    // predecessor noted exactly what the scan resolves: its own slot and
+    // version where it wrote the group, the entering source it resolved
+    // where it aliased it, the base source where a cycle set it aside.
+    // The entering-version declaration orders that join before this one,
+    // so its notes are fresh; a predecessor that skipped held every input
+    // its memo covers, so its notes still name the current sources. A
+    // first revision, a non-Range predecessor, or short ids resolve by
+    // the scan as before.
+    const std::vector<RigExecGroupSource> *previousIds = nullptr;
+    if (revision->op == RigExecRevisionOp::Matrix && revisionIndex > 0 &&
+        revisionIndex <= chain.revisions.size()) {
+        const RigExecBakedProgramImpl::GeomRevision &previous =
+            chain.revisions[revisionIndex - 1];
+        if (previous.role == RigExecBakedRevisionRole::Range) {
+            previousIds = &previous.groupIds;
+        }
+    }
     for (size_t g = 0; g < revision->groupIds.size(); ++g) {
         RigExecGroupSource source;
         if (g < revision->groupWritten.size() && revision->groupWritten[g] &&
@@ -4102,6 +4121,8 @@ RunJoin(const RigExecBakedProgramImpl &B,
             }
             source.slot = int64_t(RigExecBakedGroupSlot(B, id, g));
             source.version = revision->groups[g].version;
+        } else if (previousIds && g < previousIds->size()) {
+            source = (*previousIds)[g];
         } else {
             source = RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
         }
