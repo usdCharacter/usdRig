@@ -1744,11 +1744,19 @@ namespace cloth_detail {
 // The midpoint sphere of an edge, cached until a correction moves an
 // endpoint. The caller passes the endpoints it already holds; the slot is
 // the constraint index, or past the constraints for a triangle edge.
+// fillClock is the sphere clock right after the call's tick fill: while
+// the clock still equals it no correction has moved anything, so every
+// vertex tick equals it too and freshness is one stamp compare instead
+// of two tick reads. Past the first touch the tick reads decide.
 inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
-                       int32_t v, const float *x, float *center, float *radius)
+                       int32_t v, const float *x, float *center, float *radius,
+                       uint64_t fillClock)
 {
     const uint64_t stamp = spheres->edgeTick[slot];
-    if (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)]) {
+    const bool fresh = spheres->clock == fillClock
+        ? stamp == spheres->clock
+        : (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)]);
+    if (fresh) {
         center[0] = spheres->centers[3 * slot];
         center[1] = spheres->centers[3 * slot + 1];
         center[2] = spheres->centers[3 * slot + 2];
@@ -1770,14 +1778,19 @@ inline void EdgeSphere(RigExecClothEdgeSpheres *spheres, size_t slot, int32_t u,
 
 // The centroid sphere of a triangle, cached until a correction moves a
 // corner. Freshness reuses the edge spheres' ticks: the caller passes
-// the corners it already holds.
+// the corners it already holds. While the clock still equals the call's
+// fill clock, one stamp compare decides instead of three tick reads.
 inline void TriSphere(RigExecClothTriSpheres *tris, RigExecClothEdgeSpheres *spheres,
                       size_t tri, int32_t u, int32_t v, int32_t w,
-                      const float *x, float *center, float *radius)
+                      const float *x, float *center, float *radius,
+                      uint64_t fillClock)
 {
     const uint64_t stamp = tris->triTick[tri];
-    if (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)] &&
-        stamp >= spheres->vertTick[size_t(w)]) {
+    const bool fresh = spheres->clock == fillClock
+        ? stamp == spheres->clock
+        : (stamp >= spheres->vertTick[size_t(u)] && stamp >= spheres->vertTick[size_t(v)] &&
+           stamp >= spheres->vertTick[size_t(w)]);
+    if (fresh) {
         center[0] = tris->centers[3 * tri];
         center[1] = tris->centers[3 * tri + 1];
         center[2] = tris->centers[3 * tri + 2];
@@ -1854,6 +1867,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         spheres.vertTick.assign(mesh.pointCount, 0);
     }
     std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    // The sphere clock before any correction of this call: the sphere
+    // caches take the one-compare freshness path while it is current.
+    const uint64_t fillClock = spheres.clock;
     RigExecClothTriSpheres &triSpheres = ws->selfTriSpheres;
     const size_t sphereTris = mesh.triangles.size() / 3;
     if (triSpheres.centers.size() != 3 * sphereTris) {
@@ -1934,7 +1950,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // conservative. Skips the barycentric weights.
                 float tc[3], tr;
                 TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
-                          b.vertices[1], b.vertices[2], x, tc, &tr);
+                          b.vertices[1], b.vertices[2], x, tc, &tr, fillClock);
                 const float reach = tr + std::max(std::max(thickness, step.depth), 0.0f);
                 const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
                             dd2 = point[2] - tc[2];
@@ -2049,13 +2065,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // skips nothing.
                 if (triBandOn) {
                     if (!haveHeld) {
-                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, fillClock);
                         haveHeld = true;
                     }
                     float ttc[3], ttr;
                     TriSphere(&triSpheres, &spheres, tri, mesh.triangles[3*tri],
                               mesh.triangles[3*tri+1], mesh.triangles[3*tri+2],
-                              x, ttc, &ttr);
+                              x, ttc, &ttr, fillClock);
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
                     const float trr = ttr + heldR1 + triReach + heldThick;
@@ -2108,12 +2124,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // combination of the endpoint maps and the absolute
                     // bound covers every thickness sign.
                     if (!haveHeld) {
-                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1);
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, fillClock);
                         haveHeld = true;
                     }
                     float c2[3], r2;
                     EdgeSphere(&spheres, mesh.constraintRest.size() + 3 * tri + edge,
-                               k, l, x, c2, &r2);
+                               k, l, x, c2, &r2, fillClock);
                     const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
                                 dd2 = heldC1[2] - c2[2];
                     const float reach = heldR1 + r2 + heldThick;
