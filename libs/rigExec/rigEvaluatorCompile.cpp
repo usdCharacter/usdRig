@@ -2498,9 +2498,20 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Compile one pose DAG. Constraints retain authored preceding order;
     // solvers read the final constrained state of each declared frame input.
     // Bound joints replace their namespace callback, cutting ancestor edges.
+    // Frame-provider identity, memoized. The seed and closure walks below
+    // ask this once per ancestor of every input, so shared namespace
+    // ancestors are re-asked once per seed below them; the stage cannot
+    // change while a compile runs, so the first answer stands. Compile-local
+    // and asked only on the compiling thread.
+    std::unordered_map<SdfPath, bool, SdfPath::Hash> frameProviderMemo;
     auto isFrameProvider = [&](const SdfPath &path) {
+        const auto found = frameProviderMemo.find(path);
+        if (found != frameProviderMemo.end()) {
+            return found->second;
+        }
         const UsdPrim prim = _stage->GetPrimAtPath(path);
-        return _IsFrameProvider(prim);
+        return frameProviderMemo.emplace(path, _IsFrameProvider(prim))
+            .first->second;
     };
     std::map<SdfPath, _PoseInputInfo> newPoseInputInfo;
     // A stage closure that the schedule and request passes below ask for
