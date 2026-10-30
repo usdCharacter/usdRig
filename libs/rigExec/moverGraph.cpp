@@ -863,7 +863,8 @@ _WireKernelAcceptance(const RigExecMoverParameters &p, size_t count)
 
 bool
 RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
-                         std::vector<GfVec3f> *pts, bool useSimd)
+                         std::vector<GfVec3f> *pts, bool useSimd,
+                         RigExecSparseWalkMemo<GfVec3f> *walk)
 {
     const size_t count = pts->size();
     // Validated before any point is written; a dense envelope is resolved
@@ -887,7 +888,7 @@ RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
             return true;  // at rest every weighted point maps to itself
         }
         _ApplyMatrixSparseWalk(p, w, 0, w.indices.size(), pts->data(), 0,
-                                   useSimd);
+                               useSimd, walk);
         return true;
     }
     RigExecApplyMatrixKernelRange(p, weights.data(), 0, count, pts->data(),
@@ -1326,11 +1327,12 @@ ApplyRevisionKernel(RigExecRevisionOp op,
                            const RigExecMoverParameters &p,
                            std::vector<GfVec3f> *pts, bool useSimd,
                            RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable)
+    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr)
 {
     switch (op) {
     case RigExecRevisionOp::Matrix:
-        return RigExecApplyMatrixKernel(p, pts, useSimd);
+        return RigExecApplyMatrixKernel(p, pts, useSimd, walk);
     case RigExecRevisionOp::Skin:
         return RigExecApplySkinKernel(p, pts, useSimd);
     case RigExecRevisionOp::BlendShape:
@@ -1570,9 +1572,10 @@ ApplyRevisionKernel(RigExecRevisionOp op,
 
 bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
-    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache)
+    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
+    RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return ApplyRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false);
+    return ApplyRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,walk);
 }
 
 bool
@@ -2049,7 +2052,8 @@ RunRevisionKernel(RigExecRevisionOp op,
                          RigExecWireBasisCache *wireBasis,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable,
     const std::vector<float> *envelope,
-    const GfVec3f *source = nullptr, size_t sourceCount = 0)
+    const GfVec3f *source = nullptr, size_t sourceCount = 0,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr)
 {
     if (!_PacketMatches(op, p)) {
         return false;
@@ -2065,7 +2069,8 @@ RunRevisionKernel(RigExecRevisionOp op,
         pts->assign(source, source + sourceCount);
     }
     if (!RigExecRevisionTakesSeparateBlend(op, p.weights)) {
-        return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable);
+        return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable,
+                                   walk);
     }
 
     // A delta mush whose envelope covers a small part of the mesh only needs
@@ -2140,7 +2145,8 @@ RunRevisionKernel(RigExecRevisionOp op,
     if (!fullStrengthEnvelope && !source) {
         preceding = *pts;
     }
-    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable)) {
+    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable,
+                             walk)) {
         return false;
     }
     if (pts->size() != precedingSize) {
@@ -2170,32 +2176,36 @@ RunRevisionKernel(RigExecRevisionOp op,
 
 bool RigExecRunRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
-    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache)
+    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
+    RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,nullptr);
+    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,nullptr,
+                             nullptr,0,walk);
 }
 
 namespace geometryDetail {
 bool RunDiscardableRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
     RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
-    const std::vector<float> *envelope)
+    const std::vector<float> *envelope, RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,true,envelope);
+    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,true,envelope,
+                             nullptr,0,walk);
 }
 bool RunDiscardableRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, const GfVec3f *in, size_t count,
     std::vector<GfVec3f> *out, bool useSimd, RigExecWireBasisCache *wireBasis,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
-    const std::vector<float> *envelope)
+    const std::vector<float> *envelope, RigExecSparseWalkMemo<GfVec3f> *walk)
 {
     // An empty entering array may come with no storage at all.
     if (!in) {
         out->clear();
-        return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope);
+        return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope,
+                                 nullptr,0,walk);
     }
     return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope,
-                             in,count);
+                             in,count,walk);
 }
 } // namespace geometryDetail
 

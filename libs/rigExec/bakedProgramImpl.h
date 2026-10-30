@@ -3579,6 +3579,13 @@ struct RigExecBakedProgramImpl {
         /// to a shared packet outside the current phase; anything else
         /// keys the arrays' bytes.
         uint64_t matrixWeightsVersion = 0;
+        /// A Legacy (or unchunked Whole) matrix revision's sparse-walk
+        /// memo: the whole-array twin of a Range group's walk. The chunk
+        /// step is its only writer; the walk reuses an entry while its
+        /// weight and entering point hold the recorded bits, so a rerun
+        /// whose inputs stand recomputes nothing. Self-validating
+        /// scratch, like the Range memos: never verified or restored.
+        RigExecSparseWalkMemo<GfVec3f> matrixWalk;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;

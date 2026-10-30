@@ -4734,6 +4734,8 @@ ResolveWindowDevices(RigExecBakedProgramImpl &B, UsdTimeCode time)
         run.device = count >= B.windowDeviceMinPoints;
         revision.parameters.window = &run;
         solved.clear();
+        // No walk memo: the chunk step owns the revision's, and this solve
+        // runs at the boundary rather than in it.
         const bool ok = geometryDetail::RunDiscardableGeometry(
             revision.op, revision.parameters, points, count, &solved, B.useSimd,
             &revision.wireBasis, &revision.surfaceCache,
@@ -5672,12 +5674,20 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 // operation cannot mean one thing here and another there.
                 // This unpublished buffer is discarded by Fuse on failure.
                 // A wire blends with the envelope RevisionStatic resolved.
+                // A matrix revision walks sparse through its own memo, as a
+                // Range group's walk does; a rerun whose inputs stand
+                // reuses every entry instead of recomputing the walk.
+                revision.matrixWalk.computed = 0;
+                revision.matrixWalk.reused = 0;
+                revision.matrixWalk.skippedWhole = 0;
                 chunk.ok = geometryDetail::RunDiscardableGeometry(
                     revision.op, revision.parameters, points, count,
                     &revision.stagingOutput, B.useSimd, &revision.wireBasis,
                     &revision.surfaceCache,
                     !revision.fullStrength && revision.envelopeOk
-                        ? &revision.envelope : nullptr);
+                        ? &revision.envelope : nullptr,
+                    revision.op == RigExecRevisionOp::Matrix
+                        ? &revision.matrixWalk : nullptr);
                 if (revision.windowRun.deferred) {
                     revision.devicePending =
                         chunk.ok && !revision.deviceTicks.empty();
