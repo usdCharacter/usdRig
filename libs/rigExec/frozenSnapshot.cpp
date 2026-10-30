@@ -230,6 +230,15 @@ _CloneImpl(const RigExecBakedProgramImpl &src, RigExecBakedProgramImpl *dst,
     D.sourceKeyMismatches = 0;
     D.sourceKeysBuilt = 0;
     D.sourceWatchVisits = 0;
+    // The memo plans are indices, so they cross to the clone as they stand;
+    // the clone counts its own judge mismatches.
+    D.memoHoles = src.memoHoles;
+    D.memoHoleBegin = src.memoHoleBegin;
+    D.memoFast = src.memoFast;
+    D.memoKeySize = src.memoKeySize;
+    D.verifyFastMemo = src.verifyFastMemo;
+    D.fastMemoMismatches = 0;
+    D.fastMemoMismatch.assign(src.fastMemoMismatch.size(), 0);
     D.composeGroups = src.composeGroups;
     // The space switches, and the per-slot index the compose step
     // asks before it takes the switched branch. Left out, the

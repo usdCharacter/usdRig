@@ -1673,6 +1673,12 @@ target_link_libraries(testRigExecMoverGraph PRIVATE rigExec)
 target_compile_definitions(testRigExecMoverGraph PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecMoverGraph COMMAND testRigExecMoverGraph)
 
+add_executable(testRigExecFastMemo tests/testRigExecFastMemo.cpp)
+target_link_libraries(testRigExecFastMemo PRIVATE rigExec)
+target_compile_definitions(testRigExecFastMemo PRIVATE ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecFastMemo COMMAND testRigExecFastMemo
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+
 # The compiled rig skin layout: what has to invalidate it, and what Compile
 add_executable(testRigExecSkinTopology tests/testRigExecSkinTopology.cpp)
 target_link_libraries(testRigExecSkinTopology PRIVATE rigExec)
@@ -2596,7 +2602,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle
-    testRigExecStandalone testRigExecRigLogic)
+    testRigExecStandalone testRigExecRigLogic testRigExecFastMemo)
     target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
 endforeach()
 

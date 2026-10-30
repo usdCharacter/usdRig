@@ -1807,6 +1807,34 @@ struct RigExecBakedSparseInputs {
     uint64_t pass = 0;
 };
 
+/// What a RigExecBakedMemoHole compares the stored key against.
+enum class RigExecBakedMemoHoleSource : uint8_t {
+    Revision,       ///< opAdapter.values[id]'s revision (id: param0 + param1<<32)
+    PoolDouble,     ///< double pool value[param0]
+    PoolFloat,      ///< float pool value[param0]
+    PoolInt,        ///< int pool value[param0]
+    PoolBool,       ///< bool pool value[param0] (one stored byte)
+    PoolMatrix4d,   ///< matrix pool value[param0]
+    PoolVec3d,      ///< vec3d pool value[param0]
+    PoolVec3f,      ///< vec3f pool value[param0]
+    PathVersion,    ///< pathLeafRefs[param0]'s leaves versions[param1], plus
+                    ///< BoxExact(values[param1]) for the exact flag
+    Overlay,        ///< publishWeightFields (one byte, no params)
+};
+
+/// One live field of a planned effective memo: the stored key's bytes at
+/// [offset, offset + size) move exactly when the named value does, and every
+/// other byte of the key is Build-constant for the op. Indices, never
+/// pointers, so a clone carries its plans across (see _CloneImpl).
+struct RigExecBakedMemoHole {
+    uint32_t offset = 0;
+    uint32_t param0 = 0;
+    uint32_t param1 = 0;
+    uint16_t size = 0;
+    RigExecBakedMemoHoleSource source =
+        RigExecBakedMemoHoleSource::Revision;
+};
+
 struct RigExecBakedProgramImpl {
     RigExecRigEvaluator *evaluator = nullptr;
     UsdStageRefPtr stage;
@@ -4034,6 +4062,23 @@ struct RigExecBakedProgramImpl {
     /// exactness moved.
     bool verifySourceKeys = false;
     size_t sourceKeyMismatches = 0;
+    /// RIGEXEC_VERIFY_FAST_MEMO, read at compile: every fast effective memo
+    /// also runs the slow key builder and flags the op when bytes or
+    /// exactness disagree. Workers set their op's flag; the owner folds the
+    /// flags into fastMemoMismatches after the join.
+    bool verifyFastMemo = false;
+    size_t fastMemoMismatches = 0;
+    std::vector<char> fastMemoMismatch;
+    /// The effective-memo fast plans, one per compiled op, built once at
+    /// compile (RigExecBakedBuildMemoFastPlans): memoFast[c] tells whether
+    /// op c's key has a plan, memoHoleBegin[c]..memoHoleBegin[c+1] names its
+    /// holes in the arena, and memoKeySize[c] the key bytes a plan expects.
+    /// Steps, their lists and the op reads are fixed for the program's life,
+    /// so one classification serves every run and clone.
+    std::vector<RigExecBakedMemoHole> memoHoles;
+    std::vector<uint32_t> memoHoleBegin;
+    std::vector<char> memoFast;
+    std::vector<uint32_t> memoKeySize;
     /// How many keys of ops that read state the last run built.
     size_t sourceKeysBuilt = 0;
     std::shared_ptr<RigExecBakedExecCheckRows> execCheckRows;

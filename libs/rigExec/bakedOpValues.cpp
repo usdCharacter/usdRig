@@ -1417,4 +1417,297 @@ bool RigExecBakedOpEffectiveInputKey(const RigExecBakedProgramImpl &B,const RigE
     if(KeysWeightOverlay(B,step)) RigExecOpKeyAppend(out,B.publishWeightFields);
     return exact;
 }
+namespace {
+// A binding leaf's pool bytes per InputKey's plain arm, or 0 when the leaf
+// keys variable bytes (a token) or reads outside its pool.
+uint16_t MemoPoolWidth(const RigExecBakedProgramImpl &B,
+    const RigExecBakedLeafRef &ref)
+{
+    switch(ref.type) {
+    case RigExecBakedLeafType::Double:
+        if(ref.index>=B.leaves.Of<double>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<double>::Stored));
+    case RigExecBakedLeafType::Float:
+        if(ref.index>=B.leaves.Of<float>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<float>::Stored));
+    case RigExecBakedLeafType::Int:
+        if(ref.index>=B.leaves.Of<int>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<int>::Stored));
+    case RigExecBakedLeafType::Bool:
+        if(ref.index>=B.leaves.Of<bool>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<bool>::Stored));
+    case RigExecBakedLeafType::Token: return 0;
+    case RigExecBakedLeafType::Matrix4d:
+        if(ref.index>=B.leaves.Of<GfMatrix4d>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfMatrix4d>::Stored));
+    case RigExecBakedLeafType::Vec3d:
+        if(ref.index>=B.leaves.Of<GfVec3d>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfVec3d>::Stored));
+    case RigExecBakedLeafType::Vec3f:
+        if(ref.index>=B.leaves.Of<GfVec3f>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfVec3f>::Stored));
+    }
+    return 0;
+}
+RigExecBakedMemoHoleSource MemoPoolSource(RigExecBakedLeafType type)
+{
+    switch(type) {
+    case RigExecBakedLeafType::Double: return RigExecBakedMemoHoleSource::PoolDouble;
+    case RigExecBakedLeafType::Float: return RigExecBakedMemoHoleSource::PoolFloat;
+    case RigExecBakedLeafType::Int: return RigExecBakedMemoHoleSource::PoolInt;
+    case RigExecBakedLeafType::Bool: return RigExecBakedMemoHoleSource::PoolBool;
+    case RigExecBakedLeafType::Matrix4d: return RigExecBakedMemoHoleSource::PoolMatrix4d;
+    case RigExecBakedLeafType::Vec3d: return RigExecBakedMemoHoleSource::PoolVec3d;
+    case RigExecBakedLeafType::Vec3f: return RigExecBakedMemoHoleSource::PoolVec3f;
+    case RigExecBakedLeafType::Token: break;
+    }
+    return RigExecBakedMemoHoleSource::PoolDouble;
+}
+} // namespace
+void RigExecBakedBuildMemoFastPlans(RigExecBakedProgramImpl *program)
+{
+    RigExecBakedProgramImpl &B=*program;
+    B.memoHoles.clear();
+    const size_t opCount=B.opGraph.ops.size();
+    B.memoHoleBegin.assign(opCount+1,0);
+    B.memoFast.assign(opCount,0);
+    B.memoKeySize.assign(opCount,0);
+    B.fastMemoMismatch.assign(opCount,0);
+    // The widths MemoPoolWidth reports are the Put widths InputKey writes.
+    static_assert(sizeof(RigExecBakedLeafPool<double>::Stored)==8,"");
+    static_assert(sizeof(RigExecBakedLeafPool<float>::Stored)==4,"");
+    static_assert(sizeof(RigExecBakedLeafPool<int>::Stored)==4,"");
+    static_assert(sizeof(RigExecBakedLeafPool<bool>::Stored)==1,"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfMatrix4d>::Stored)==16*sizeof(double),"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfVec3d>::Stored)==3*sizeof(double),"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfVec3f>::Stored)==3*sizeof(float),"");
+    for(uint32_t c=0;c<opCount;++c) {
+        const auto &op=B.opGraph.ops[c];
+        bool planned=false;
+        uint32_t offset=0;
+        std::vector<RigExecBakedMemoHole> holes;
+        do {
+            if(op.originalIndex>=B.steps.size()) break;
+            const RigExecBakedStep &step=B.steps[op.originalIndex];
+            if(step.kind==RigExecBakedStepKind::ComposeSubtree ||
+               step.kind==RigExecBakedStepKind::PropertyRevision ||
+               step.kind==RigExecBakedStepKind::WeightField ||
+               step.kind==RigExecBakedStepKind::ProviderRefresh ||
+               step.kind==RigExecBakedStepKind::SpaceExpression ||
+               step.kind==RigExecBakedStepKind::AvarInputs ||
+               step.kind==RigExecBakedStepKind::Constraint) break;
+            if(!step.leaves.empty() || !step.overrideSlots.empty() ||
+               !step.readerWalks.empty() || !step.walkedBindingLeaves.empty()) break;
+            offset=uint32_t(sizeof(uint64_t)); // bindingLeaves count
+            bool leavesOk=true;
+            for(uint32_t id:step.bindingLeaves) {
+                if(id<B.leafRefs.size()) {
+                    const auto &ref=B.leafRefs[id];
+                    const uint16_t w=MemoPoolWidth(B,ref);
+                    if(!w) { leavesOk=false; break; }
+                    // id, type, index, tag, then the pool bytes.
+                    offset+=uint32_t(sizeof(uint32_t)+sizeof(RigExecBakedLeafType)+
+                                     sizeof(uint32_t)+sizeof(uint8_t));
+                    RigExecBakedMemoHole hole;
+                    hole.offset=offset; hole.param0=ref.index; hole.size=w;
+                    hole.source=MemoPoolSource(ref.type);
+                    holes.push_back(hole); offset+=w;
+                    continue;
+                }
+                const size_t pathOffset=size_t(id)-B.leafRefs.size();
+                if(pathOffset>=B.pathLeafRefs.size()) { leavesOk=false; break; }
+                const auto &ref=B.pathLeafRefs[pathOffset];
+                const RigExecBakedPathLeaves *leaves=RigExecBakedPathLeavesOf(B,ref);
+                if(!leaves || ref.key>=leaves->values.size() ||
+                   ref.key>=leaves->versions.size()) { leavesOk=false; break; }
+                // The Skin arm keys two bytes whatever the layout handle
+                // reads today, so any leaf it could claim stays slow.
+                if(step.kind==RigExecBakedStepKind::RevisionStatic &&
+                   step.object>=0 && size_t(step.object)<B.revisionIndex.size()) {
+                    if(const auto *revision=Revision(B,uint32_t(step.object))) {
+                        if(revision->op==RigExecRevisionOp::Skin &&
+                           leaves==&revision->leaves &&
+                           (int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::JointIndices) ||
+                            int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::JointWeights) ||
+                            int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::ElementSize))) {
+                            leavesOk=false; break;
+                        }
+                    }
+                }
+                // InputKey's versioned gate, with contentLeaves false.
+                const auto at=[](const std::vector<int> &v,uint32_t k) {
+                    return k<v.size()?v[k]:-1;
+                };
+                if(!RigExecBakedPathLeafVersioned(ref) ||
+                   ref.key>=leaves->decl.keys.size() ||
+                   at(leaves->walks,ref.key)>=0 ||
+                   at(leaves->exactVersions,ref.key)>=0 ||
+                   at(leaves->exactRecordIndices,ref.key)>=0) {
+                    leavesOk=false; break;
+                }
+                // id, tag, then the content version.
+                offset+=uint32_t(sizeof(uint32_t)+sizeof(uint8_t));
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.param0=uint32_t(pathOffset);
+                hole.param1=ref.key; hole.size=uint16_t(sizeof(uint64_t));
+                hole.source=RigExecBakedMemoHoleSource::PathVersion;
+                holes.push_back(hole); offset+=uint32_t(sizeof(uint64_t));
+            }
+            if(!leavesOk) break;
+            // The three empty list counts.
+            offset+=uint32_t(3*sizeof(uint64_t));
+            if(KeysWeightOverlay(B,step)) {
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.size=uint16_t(sizeof(bool));
+                hole.source=RigExecBakedMemoHoleSource::Overlay;
+                holes.push_back(hole); offset+=uint32_t(sizeof(bool));
+            }
+            bool readsOk=true;
+            for(RigExecValueId id:op.descriptor.reads) {
+                if(id>=B.opAdapter.values.size()) { readsOk=false; break; }
+                const auto &value=B.opAdapter.values[size_t(id)];
+                if(value.domain==
+                   uint32_t(RigExecBakedSlotDomain::PropertyResult)) {
+                    readsOk=false; break;
+                }
+                offset+=uint32_t(sizeof(RigExecValueId)); // id bytes
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.param0=uint32_t(id);
+                hole.param1=uint32_t(id>>32);
+                hole.size=uint16_t(sizeof(uint64_t));
+                hole.source=RigExecBakedMemoHoleSource::Revision;
+                holes.push_back(hole); offset+=uint32_t(sizeof(uint64_t));
+            }
+            if(!readsOk) break;
+            planned=true;
+        } while(false);
+        if(planned) {
+            B.memoFast[c]=1; B.memoKeySize[c]=offset;
+            B.memoHoleBegin[c+1]=uint32_t(B.memoHoles.size()+holes.size());
+            B.memoHoles.insert(B.memoHoles.end(),holes.begin(),holes.end());
+        } else {
+            B.memoHoleBegin[c+1]=uint32_t(B.memoHoles.size());
+        }
+    }
+}
+bool RigExecBakedFastEffectiveMemo(const RigExecBakedProgramImpl &B,uint32_t c,
+    std::string *stored,std::vector<uint32_t> *covered,
+    std::vector<std::pair<uint32_t,uint32_t>> *typed,
+    bool *changed,bool *exact)
+{
+    if(c>=B.memoFast.size() || !B.memoFast[c]) return false;
+    if(c>=B.memoKeySize.size() || !stored || stored->size()!=B.memoKeySize[c])
+        return false;
+    if(c+1>=B.memoHoleBegin.size()) return false;
+    const uint32_t begin=B.memoHoleBegin[c],end=B.memoHoleBegin[c+1];
+    if(begin>end || end>B.memoHoles.size()) return false;
+    char *bytes=stored->data();
+    bool moved=false,ok=true;
+    for(uint32_t h=begin;h<end;++h) {
+        const RigExecBakedMemoHole &hole=B.memoHoles[h];
+        char *slot=bytes+hole.offset;
+        switch(hole.source) {
+        case RigExecBakedMemoHoleSource::Revision: {
+            const uint64_t id=uint64_t(hole.param0)|(uint64_t(hole.param1)<<32);
+            if(id>=B.opAdapter.values.size()) return false;
+            const uint64_t live=B.opAdapter.values[size_t(id)].revision;
+            uint64_t was=0;
+            std::memcpy(&was,slot,sizeof(was));
+            if(was!=live) { std::memcpy(slot,&live,sizeof(live)); moved=true; }
+            break;
+        }
+        case RigExecBakedMemoHoleSource::PoolDouble:
+        case RigExecBakedMemoHoleSource::PoolFloat:
+        case RigExecBakedMemoHoleSource::PoolInt:
+        case RigExecBakedMemoHoleSource::PoolBool:
+        case RigExecBakedMemoHoleSource::PoolMatrix4d:
+        case RigExecBakedMemoHoleSource::PoolVec3d:
+        case RigExecBakedMemoHoleSource::PoolVec3f: {
+            const char *live=nullptr;
+            size_t count=0;
+            switch(hole.source) {
+            case RigExecBakedMemoHoleSource::PoolDouble: {
+                const auto &pool=B.leaves.Of<double>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolFloat: {
+                const auto &pool=B.leaves.Of<float>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolInt: {
+                const auto &pool=B.leaves.Of<int>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolBool: {
+                const auto &pool=B.leaves.Of<bool>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolMatrix4d: {
+                const auto &pool=B.leaves.Of<GfMatrix4d>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolVec3d: {
+                const auto &pool=B.leaves.Of<GfVec3d>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            default: {
+                const auto &pool=B.leaves.Of<GfVec3f>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            }
+            if(!live) return false;
+            if(std::memcmp(slot,live,hole.size)!=0) {
+                std::memcpy(slot,live,hole.size); moved=true;
+            }
+            break;
+        }
+        case RigExecBakedMemoHoleSource::PathVersion: {
+            if(hole.param0>=B.pathLeafRefs.size()) return false;
+            const RigExecBakedPathLeaves *leaves=
+                RigExecBakedPathLeavesOf(B,B.pathLeafRefs[hole.param0]);
+            if(!leaves || hole.param1>=leaves->versions.size() ||
+               hole.param1>=leaves->values.size()) return false;
+            const uint64_t live=leaves->versions[hole.param1];
+            uint64_t was=0;
+            std::memcpy(&was,slot,sizeof(was));
+            if(was!=live) { std::memcpy(slot,&live,sizeof(live)); moved=true; }
+            ok=BoxExact(leaves->values[hole.param1])&&ok;
+            break;
+        }
+        case RigExecBakedMemoHoleSource::Overlay: {
+            const char live=B.publishWeightFields?char(1):char(0);
+            if(*slot!=live) { *slot=live; moved=true; }
+            break;
+        }
+        }
+    }
+    if(covered) covered->clear();
+    if(typed) typed->clear();
+    *changed=moved; *exact=ok;
+    return true;
+}
 } // namespace rigExec

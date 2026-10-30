@@ -59,6 +59,23 @@ bool RigExecBakedOpEffectiveInputKey(const RigExecBakedProgramImpl &,
     const RigExecBakedStep &,std::string *key,std::vector<uint32_t> *coveredPropertyVersions,
     std::vector<std::pair<uint32_t,uint32_t>> *coveredTyped=nullptr,
     const RigExecBakedOpIdentityRemap *remap=nullptr, bool contentLeaves=false);
+/// Plans the effective-memo fast path for every compiled op: an op whose key
+/// the slow builder emits as Build-constant bytes plus per-read revisions,
+/// plain-pool values, path-leaf versions and the overlay toggle gets a hole
+/// per live field, and every other op keeps the slow path. Owner thread,
+/// once at compile; steps, lists and reads are fixed for the program's life.
+void RigExecBakedBuildMemoFastPlans(RigExecBakedProgramImpl *program);
+/// Compares op c's live memo fields against its stored key in place and
+/// patches the key where they moved: the flag, revision and key the slow
+/// publication leaves, for ops RigExecBakedBuildMemoFastPlans planned.
+/// False, with every argument untouched, when the op has no plan or the
+/// stored key is not a planned key (a first run, an adoption); the caller
+/// then runs the slow builder. No lock, no allocation, no shared write.
+bool RigExecBakedFastEffectiveMemo(const RigExecBakedProgramImpl &program,
+    uint32_t c, std::string *stored,
+    std::vector<uint32_t> *coveredPropertyVersions,
+    std::vector<std::pair<uint32_t,uint32_t>> *coveredTyped,
+    bool *changed, bool *exact);
 bool RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &,
     RigExecBakedSlotDomain, uint32_t slot);
 /// Whether two point arrays hold the same bytes: the equality the point
