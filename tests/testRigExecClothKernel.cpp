@@ -1663,6 +1663,112 @@ void TestSelfEdgeCanonicalization()
     CHECK(compared == 90);
 }
 
+void TestSelfEdgeTwins()
+{
+    // Prepare records each triangle edge's smallest other triangle, or
+    // -1 for a boundary edge: the twin skip's proof that the pair was
+    // already visited. Verified against the triangles directly, with
+    // both boundary and interior edges present.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    const size_t tris = mesh.triangles.size() / 3;
+    CHECK(mesh.triEdgeTwin.size() == 3 * tris);
+    if (mesh.triEdgeTwin.size() != 3 * tris) return;
+    size_t boundary = 0, interior = 0;
+    for (size_t t = 0; t < tris; ++t)
+        for (size_t e = 0; e < 3; ++e) {
+            const int32_t p = mesh.triangles[3 * t + e];
+            const int32_t q = mesh.triangles[3 * t + (e + 1) % 3];
+            const int32_t k = std::min(p, q), l = std::max(p, q);
+            int32_t want = -1;
+            for (size_t u = 0; u < tris; ++u) {
+                if (u == t) continue;
+                for (size_t f = 0; f < 3; ++f) {
+                    const int32_t a = mesh.triangles[3 * u + f];
+                    const int32_t b = mesh.triangles[3 * u + (f + 1) % 3];
+                    if (std::min(a, b) == k && std::max(a, b) == l) {
+                        if (want < 0 || int32_t(u) < want) want = int32_t(u);
+                    }
+                }
+            }
+            CHECK(mesh.triEdgeTwin[3 * t + e] == want);
+            if (want < 0) ++boundary;
+            else ++interior;
+        }
+    CHECK(boundary > 0);
+    CHECK(interior > 0);
+}
+
+void TestSelfTwinSkipMatchesNoSkip()
+{
+    // The twin skip only skips duplicate pairs: solving with the twins
+    // and with every twin forced to -1 (no skip possible) inserts the
+    // same keys and solves the same points. A skip of a new key would
+    // drop an insert or a correction here: the strip folds a long sheet
+    // back on itself so buckets discriminate along its length while the
+    // layers correct against each other.
+    const int w = 4, l = 16;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    const auto solve = [&](std::vector<float> *x, RigExecClothWorkspace *ws) {
+        *x = m.points;
+        RigExecClothSelfContacts(mesh, step, m.points.data(), ws, x->data());
+        uint64_t h = 1469598103934665603ull;
+        const auto *p = reinterpret_cast<const uint8_t *>(x->data());
+        for (size_t i = 0; i < x->size() * sizeof(float); ++i) {
+            h ^= p[i];
+            h *= 1099511628211ull;
+        }
+        return h;
+    };
+    RigExecClothWorkspace withTwins, noTwins;
+    std::vector<float> xTwins, xNoTwins;
+    const uint64_t hashTwins = solve(&xTwins, &withTwins);
+    const size_t pairsTwins = withTwins.selfPairs.count;
+    std::fill(mesh.triEdgeTwin.begin(), mesh.triEdgeTwin.end(), -1);
+    const uint64_t hashNoTwins = solve(&xNoTwins, &noTwins);
+    CHECK(pairsTwins == noTwins.selfPairs.count);
+    CHECK(pairsTwins > 0);
+    CHECK(hashTwins == hashNoTwins);
+}
+
 void TestTriSpheresRetireOnTouch()
 {
     // The vertex/triangle band caches centroid spheres until a correction
@@ -2184,6 +2290,8 @@ int main()
     TestSelfPairDiscoveryOrder();
     TestNeighborBitsMatchLists();
     TestSelfEdgeCanonicalization();
+    TestSelfEdgeTwins();
+    TestSelfTwinSkipMatchesNoSkip();
     TestTriSpheresRetireOnTouch();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();

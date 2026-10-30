@@ -182,6 +182,11 @@ struct RigExecClothMesh {
     /// edge in grid order. Built for self-contact meshes, like the
     /// bitsets; the discovery loads them instead of sorting per visit.
     std::vector<int32_t> triEdges;
+    /// Per triangle edge, the smallest other triangle sharing the edge,
+    /// or -1 for a boundary edge. Built for self-contact meshes with
+    /// the edges; the discovery skips a proven duplicate pair when its
+    /// twin was already visited from the same constraint.
+    std::vector<int32_t> triEdgeTwin;
     std::vector<size_t> colliderOffsets;
     std::vector<std::vector<float>> attachmentRest;
     bool valid = false;
@@ -310,6 +315,9 @@ struct RigExecClothWorkspace {
     RigExecClothColliders selfTopology;
     /// The edge-pair dedup set, cleared per self profile, its slots retained.
     RigExecClothPairSet selfPairs;
+    /// Per-triangle bucket marks for the self edge/edge twin skip,
+    /// cleared per call, the storage retained.
+    std::vector<uint32_t> selfTwinStamp;
     /// The self edge/edge spheres, sized per call, their storage retained.
     RigExecClothEdgeSpheres selfSpheres;
     /// The self vertex/triangle spheres, sized per call, retained alike.
@@ -791,6 +799,7 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
                     1ull << (b & 63);
     }
     mesh->triEdges.clear();
+    mesh->triEdgeTwin.clear();
     if (selfContact) {
         mesh->triEdges.resize(2 * mesh->triangles.size());
         for (size_t t = 0; t < mesh->triangles.size() / 3; ++t)
@@ -800,6 +809,35 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
                 mesh->triEdges[6 * t + 2 * e] = std::min(p, q);
                 mesh->triEdges[6 * t + 2 * e + 1] = std::max(p, q);
             }
+        // The twin of each triangle edge: group the edges by endpoints
+        // and record the smallest other triangle of each group.
+        struct TwinEdge { uint64_t key; int32_t tri; int32_t edge; };
+        std::vector<TwinEdge> order;
+        order.reserve(mesh->triangles.size());
+        for (size_t t = 0; t < mesh->triangles.size() / 3; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const uint64_t k = uint64_t(uint32_t(mesh->triEdges[6 * t + 2 * e]));
+                const uint64_t l = uint64_t(uint32_t(mesh->triEdges[6 * t + 2 * e + 1]));
+                order.push_back({(k << 32) | l, int32_t(t), int32_t(e)});
+            }
+        std::sort(order.begin(), order.end(), [](const TwinEdge &a, const TwinEdge &b) {
+            return a.key < b.key;
+        });
+        mesh->triEdgeTwin.assign(mesh->triangles.size(), -1);
+        for (size_t r = 0; r < order.size();) {
+            size_t s = r + 1;
+            while (s < order.size() && order[s].key == order[r].key) ++s;
+            int32_t lo = order[r].tri, next = -1;
+            for (size_t m = r; m < s; ++m) {
+                const int32_t t = order[m].tri;
+                if (t < lo) { next = lo; lo = t; }
+                else if (t != lo && (next < 0 || t < next)) next = t;
+            }
+            for (size_t m = r; m < s; ++m)
+                mesh->triEdgeTwin[3 * size_t(order[m].tri) + size_t(order[m].edge)] =
+                    (order[m].tri == lo) ? next : lo;
+            r = s;
+        }
     }
     mesh->materialFrames.resize(9 * mesh->pointCount);
     for (size_t i = 0; i < mesh->pointCount; ++i)
@@ -1823,6 +1861,11 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // Bitset adjacency where the mesh built the sets, the linear scans
     // past the size cap: the same verdicts either way.
     const bool useBits = !mesh.neighborBits.empty();
+    // The twin-skip bucket marks, one per triangle, cleared per call;
+    // the mark runs across profiles so every constraint's mark is new.
+    std::vector<uint32_t> &twinStamp = ws->selfTwinStamp;
+    twinStamp.assign(mesh.triangles.size() / 3, 0);
+    uint32_t twinMark = 0;
     for (size_t profileIndex = 0; profileIndex < mesh.model.profiles.size(); ++profileIndex) {
         const auto &p = mesh.model.profiles[profileIndex];
         if (p.kind != RigExecClothProfileKind::SelfCollision) continue;
@@ -1930,12 +1973,22 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             float mid[3]; Lerp(x + 3*size_t(i), x + 3*size_t(j), .5f, mid);
             const uint32_t bucket = Hash(Cell(mid[0], grid.cellSize), Cell(mid[1], grid.cellSize),
                                           Cell(mid[2], grid.cellSize), grid.bucketMask);
+            ++twinMark;
+            for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry)
+                twinStamp[size_t(grid.bucketTriangles[entry])] = twinMark;
             for (uint32_t entry = grid.bucketStart[bucket]; entry < grid.bucketStart[bucket+1]; ++entry) {
                 const size_t tri = size_t(grid.bucketTriangles[entry]);
                 for (size_t edge = 0; edge < 3; ++edge) {
                     const int32_t k = mesh.triEdges[6*tri+2*edge];
                     const int32_t l = mesh.triEdges[6*tri+2*edge+1];
                     if (i == k || i == l || j == k || j == l) continue;
+                    // Twin skip: the edge's smallest twin triangle sits
+                    // earlier in this ascending bucket, so the same pair
+                    // was already visited from this constraint and the
+                    // dedup set holds its key.
+                    const int32_t twin = mesh.triEdgeTwin[3*tri+edge];
+                    if (twin >= 0 && twin < int32_t(tri) &&
+                        twinStamp[size_t(twin)] == twinMark) continue;
                     // Dedup before the adjacency scans: a rediscovered pair
                     // skips them, and recording adjacent pairs too keeps
                     // every verdict exact (presence is per key).
