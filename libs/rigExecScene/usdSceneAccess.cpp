@@ -126,7 +126,9 @@ bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecScen
     // USD documents each answer identical to its direct query.
     const UsdAttributeQuery query(attribute);
     result->hasValue = query.HasValue();
-    result->variability = attribute.GetVariability();
+    // No variability query: no scene translation reads the captured fact
+    // (only the standalone Db carries variability, populated separately),
+    // so the field keeps its default. Re-add the query if one ever does.
     const bool spline = query.HasSpline();
     if(spline)result->spline=VtValue(query.GetSpline());
     result->hasAuthoredValue = query.HasAuthoredValueOpinion();
