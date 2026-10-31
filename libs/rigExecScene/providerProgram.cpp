@@ -210,15 +210,28 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     std::map<SdfPath,std::pair<const RigExecSceneAttributeDescriptor*,const RigExecSceneNodeDescriptor*>> usedAttributes;
     std::function<void(const SdfPath &)> includeAttribute,includeProvider;
     std::function<void(const SdfPath &,uint32_t)> includeAffine;
+    // The inclusion below, answered from rows the caller already holds: the
+    // membership test, the provider/affine checks and the connection walk
+    // read them instead of re-finding both. Same guards in the same order,
+    // so it files exactly what the path-taking entry files.
+    const auto includeKnown=[&](const SdfPath &path,
+        const RigExecSceneAttributeDescriptor *attribute,
+        const RigExecSceneNodeDescriptor *owner) {
+        if(!owner->fact.active ||
+            !usedAttributes.emplace(path,std::make_pair(attribute,owner)).second)return;
+        if(Provider(owner->fact.type) && Expression(path.GetNameToken()))includeProvider(path.GetPrimPath());
+        if(path.GetNameToken()==_tokens->outputsMatrix) {
+            const uint32_t kind=AffineTypeOf(owner->fact.type);
+            if(kind<affineTypeCount)includeAffine(path.GetPrimPath(),kind);
+        }
+        for(const auto &connection:attribute->fact.connections)includeAttribute(connection);
+    };
     includeAttribute=[&](const SdfPath &path) {
         const auto attribute=scene.attributes.find(path);
+        if(attribute==scene.attributes.end())return;
         const auto owner=scene.nodes.find(path.GetPrimPath());
-        if(attribute==scene.attributes.end() || owner==scene.nodes.end() || !owner->second.fact.active ||
-            !usedAttributes.emplace(path,std::make_pair(&attribute->second,&owner->second)).second)return;
-        if(Provider(owner->second.fact.type) && Expression(path.GetNameToken()))includeProvider(path.GetPrimPath());
-        uint32_t affine=0;
-        if(AffineOutput(scene,path,&affine))includeAffine(path.GetPrimPath(),affine);
-        for(const auto &connection:attribute->second.fact.connections)includeAttribute(connection);
+        if(owner==scene.nodes.end())return;
+        includeKnown(path,&attribute->second,&owner->second);
     };
     // An affine frame expression reads its input attributes and the point
     // frames of the providers its relationships name.
@@ -245,7 +258,27 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             &_tokens->defaultRx,&_tokens->defaultRy,&_tokens->defaultRz,&_tokens->avarsUnitScaleFactor,&_tokens->avarsTx,&_tokens->avarsTy,
             &_tokens->avarsTz,&_tokens->avarsSx,&_tokens->avarsSy,&_tokens->avarsSz,&_tokens->avarsRx,&_tokens->avarsRy,
             &_tokens->avarsRz,&_tokens->avarsRspin,&_tokens->avarsRotationOrder,&_tokens->avarsRotationSign};
-        for(const auto *input:inputs)includeAttribute(path.AppendProperty(*input));
+        // The node's own captured attributes, matched by interned name: the
+        // capture files every attribute a name probe could find, so a name
+        // outside the input list is skipped and a name inside is the same
+        // path AppendProperty would have spelled -- without spelling one
+        // path per name through the node table's lock, and with the owner
+        // row this lookup already holds instead of the walk's per-attribute
+        // re-find. A probed name the capture never saw was a find-miss
+        // no-op, so the included set is unchanged; the used map below sorts
+        // it either way.
+        const auto owner=scene.nodes.find(path);
+        if(owner==scene.nodes.end() || !owner->second.fact.active)return;
+        for(const SdfPath &attribute:owner->second.attributes) {
+            const TfToken name=attribute.GetNameToken();
+            for(const auto *input:inputs)
+                if(name==*input) {
+                    const auto row=scene.attributes.find(attribute);
+                    if(row!=scene.attributes.end())
+                        includeKnown(attribute,&row->second,&owner->second);
+                    break;
+                }
+        }
     };
     for(const auto &[path,node]:scene.nodes)
         if(node.fact.active && Provider(node.fact.type) && (!selectedProviders || selectedProviders->count(path)))includeProvider(path);
@@ -367,15 +400,21 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             } else row->second[entry.comp]=id;
         }
     }
-    std::map<SdfPath,std::pair<RigExecValueId,RigExecValueId>> usedIds;
     // (prim, name) to the used entry's index: one descent answers the
     // value, the raw id, and the captured row together.
     std::map<std::pair<SdfPath,TfToken>,uint32_t> attrIds;
     for(uint32_t i=0;i<used.size();++i) {
         auto &u=used[i];
-        usedIds.emplace_hint(usedIds.end(),u.path,std::make_pair(u.raw,u.value));
         attrIds.emplace_hint(attrIds.end(),std::make_pair(u.path.GetPrimPath(),u.path.GetNameToken()),i);
     }
+    // The used entries are in ascending path order (filed from the map
+    // above), so a path descent answers from them directly instead of a
+    // second map built for the same lookups. used.size() is the miss.
+    const auto usedAt=[&](const SdfPath &path) {
+        const auto at=std::lower_bound(used.begin(),used.end(),path,
+            [](const _UsedAttribute &u,const SdfPath &p) { return u.path<p; });
+        return at!=used.end() && at->path==path?uint32_t(at-used.begin()):uint32_t(used.size());
+    };
     for(const auto &u:used) {
         if(u.routed==RigExecNoProviderValue)continue;
         routed.emplace_hint(routed.end(),u.path,u.routed);program.leaves.push_back(u.routed);
@@ -401,20 +440,22 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         return found==compIds.end()?RigExecNoProviderValue:found->second[c];
     };
     const auto rawId=[&](const SdfPath &path) {
-        const auto found=usedIds.find(path);
-        return found==usedIds.end()?RigExecNoProviderValue:found->second.first;
+        const uint32_t i=usedAt(path);
+        return i==used.size()?RigExecNoProviderValue:used[i].raw;
     };
 
     const auto connect=[&](const RigExecSceneAttribute &fact) {
         const auto route=routed.find(fact.path);
         if(route!=routed.end())return route->second;
         if(fact.connections.size()!=1)return RigExecNoProviderValue;
-        const auto found=scene.attributes.find(fact.connections.front());
-        const auto node=scene.nodes.find(fact.connections.front().GetPrimPath());
-        if(found==scene.attributes.end() || node==scene.nodes.end() || !node->second.fact.active ||
-            found->second.fact.type.GetType()!=fact.type.GetType())return RigExecNoProviderValue;
-        const auto id=usedIds.find(fact.connections.front());
-        return id==usedIds.end()?RigExecNoProviderValue:id->second.second;
+        // The used entry carries the target's captured rows, which the
+        // inclusion already proved present with an active owner -- the same
+        // rows the scene lookups would find -- so the type check reads
+        // them, and a target outside the used set is the old miss.
+        const uint32_t i=usedAt(fact.connections.front());
+        if(i==used.size() ||
+            used[i].attr->fact.type.GetType()!=fact.type.GetType())return RigExecNoProviderValue;
+        return used[i].value;
     };
     const auto add=[&](RigExecProviderOp op,const std::string &key) {
         RigExecOpDescriptor descriptor;
