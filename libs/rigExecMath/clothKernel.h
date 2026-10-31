@@ -2861,6 +2861,50 @@ RigExecClothClearOfColliders(const RigExecClothMesh &mesh,
 {
     using namespace cloth_detail;
     if (!cloth || !colliderPoints || colliders.triangles.empty()) return true;
+    // Whole-surface box pretest: a crossing shares a point with both
+    // surfaces, so boxes that clear each other hold no crossing and skip
+    // the longest walk, the grid, the areas, and the edge walk below. The
+    // margin is far outside the few ulps of slack in the plane-side,
+    // lerp, and in-triangle tests. Non-finite bounds take the exact path,
+    // and NaN points never win a strict bound so they cannot forge
+    // disjointness (a NaN segment test is false either way).
+    {
+        const float inf = std::numeric_limits<float>::infinity();
+        float cloLo[3] = {inf, inf, inf}, cloHi[3] = {-inf, -inf, -inf};
+        float colLo[3] = {inf, inf, inf}, colHi[3] = {-inf, -inf, -inf};
+        for (size_t i = 0; i < mesh.pointCount; ++i) {
+            const float *p = cloth + 3 * i;
+            for (int a = 0; a < 3; ++a) {
+                if (p[a] < cloLo[a]) cloLo[a] = p[a];
+                if (p[a] > cloHi[a]) cloHi[a] = p[a];
+            }
+        }
+        for (size_t i = 0; i < colliders.pointCount; ++i) {
+            const float *p = colliderPoints + 3 * i;
+            for (int a = 0; a < 3; ++a) {
+                if (p[a] < colLo[a]) colLo[a] = p[a];
+                if (p[a] > colHi[a]) colHi[a] = p[a];
+            }
+        }
+        float maxAbs = 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            if (!std::isfinite(cloLo[a]) || !std::isfinite(cloHi[a]) ||
+                !std::isfinite(colLo[a]) || !std::isfinite(colHi[a])) {
+                maxAbs = -1.0f;
+                break;
+            }
+            maxAbs = std::max(maxAbs, std::fabs(cloLo[a]));
+            maxAbs = std::max(maxAbs, std::fabs(cloHi[a]));
+            maxAbs = std::max(maxAbs, std::fabs(colLo[a]));
+            maxAbs = std::max(maxAbs, std::fabs(colHi[a]));
+        }
+        if (maxAbs >= 0.0f) {
+            const float margin = (maxAbs + 1e-30f) * 0.0009765625f;
+            for (int a = 0; a < 3; ++a)
+                if (cloHi[a] + margin < colLo[a] || colHi[a] + margin < cloLo[a])
+                    return true;
+        }
+    }
     const auto stretch = uint8_t(RigExecClothConstraint::Stretch);
     float longest = 0.0f;
     for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
