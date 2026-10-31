@@ -771,6 +771,10 @@ TestStandaloneVolumeGuides()
         if (it != snapshot->prims.end()) {
             CHECK(it->second.hasVolumeGuides);
             CHECK(!it->second.volumeGuides.empty());
+            // Evaluated volumes carry their guide placement in the volume
+            // channel, never in the provider controlFrame channel.
+            CHECK(it->second.hasVolumeGuideFrame);
+            CHECK(!it->second.hasControlFrame);
         }
         const SdfPathVector children = results->GetChildPrimPaths(path);
         CHECK(!children.empty());

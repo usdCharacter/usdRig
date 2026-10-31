@@ -494,8 +494,8 @@ TestFloat2ArrayPreview()
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
     CHECK(_DialFrame(v->id, &restored) && _Close(restored, authored));
 
-    // A count is required on float2[], refused everywhere else, and must be
-    // a plain decimal of at most 1,048,576 elements.
+    // A count is required on float[] and float2[], refused everywhere
+    // else, and must be a plain decimal of at most 1,048,576 elements.
     const std::string weights = "/CurveAsset/Rig/Channels.weights";
     const std::string pairs = "/CurveAsset/Rig/Channels.pairs";
     for (const std::string &bad : {
@@ -503,8 +503,7 @@ TestFloat2ArrayPreview()
              keys + "\t2 ", keys + "\t2.0", keys + "\t0x2", keys + "\tabc",
              keys + "\t2\t2", keys + "\t1048577",
              keys + "\t99999999999999999999", dialTx + "\t1",
-             dialTx + "\t0", weights, weights + "\t2", pairs,
-             pairs + "\t1"}) {
+             dialTx + "\t0", weights, pairs, pairs + "\t1"}) {
         const int answer = begin(bad);
         if (answer != -1) {
             std::printf("  accepted (%d): %s\n", answer, bad.c_str());
@@ -513,6 +512,9 @@ TestFloat2ArrayPreview()
     }
     CHECK(begin(keys + "\t1048576") == 2 * 1048576);
     CHECK(begin(keys + "\t0") == 0);
+    // float[] declares one double per element, for the spline editor's
+    // falloffSamples preview.
+    CHECK(begin(weights + "\t2") == 2);
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
     CHECK(_DialFrame(v->id, &restored) && _Close(restored, authored));
 
@@ -672,15 +674,15 @@ TestPointArrayPreview()
     CHECK(_ControlFrame(v->id, kWalker, &restored) &&
           restored == authored);
 
-    // A count is required on every VtVec3fArray type and refused on other
-    // arrays; float3[] is accepted like point3f[].
+    // A count is required on every VtVec3fArray type and on float[],
+    // and refused on other arrays; float3[] is accepted like point3f[].
     const std::string offsets = "/PathAsset/Rig/Channels.offsets";
     const std::string doubles = "/PathAsset/Rig/Channels.doubles";
     const std::string weights = "/PathAsset/Rig/Channels.weights";
     for (const std::string &bad : {
              points, points + "\t", points + "\t-5", points + "\t5.0",
              points + "\t 5", points + "\t1048577", offsets, doubles,
-             doubles + "\t1", weights + "\t2", walkerTx + "\t1"}) {
+             doubles + "\t1", walkerTx + "\t1"}) {
         const int answer = begin(bad);
         if (answer != -1) {
             std::printf("  accepted (%d): %s\n", answer, bad.c_str());
@@ -688,6 +690,7 @@ TestPointArrayPreview()
         CHECK(answer == -1);
     }
     CHECK(begin(offsets + "\t2") == 6);
+    CHECK(begin(weights + "\t2") == 2);
     CHECK(begin(points + "\t1048576") == 3 * 1048576);
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
     CHECK(_ControlFrame(v->id, kWalker, &restored) &&

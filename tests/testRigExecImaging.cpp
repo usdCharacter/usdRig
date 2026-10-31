@@ -3881,11 +3881,15 @@ def Xform "Asset" {
                 }
             }
         }
+        def RigExecSphereWeight "Ball" {
+            float inputs:falloffMax = 1
+        }
     }
 }
 )USD"));
     const SdfPath root("/Asset/Rig"), parent("/Asset/Rig/Parent");
     const SdfPath driver("/Asset/Rig/Parent/Grouping/Driver");
+    const SdfPath volume("/Asset/Rig/Ball");
     const auto stageId = UsdUtilsStageCache::Get().Insert(stage);
     const auto context = RigExecImagingRegistry::ForStage(stage);
     std::vector<std::string> errors;
@@ -3897,6 +3901,19 @@ def Xform "Asset" {
             path.GetText(), 1.0, 0, matrix) == 1);
         CHECK(matrix[12] == 5.0 && matrix[13] == (path == driver ? 3.0 : 0.0));
         CHECK(matrix[0] == 1.0 && matrix[5] == 1.0 && matrix[10] == 1.0);
+    }
+    // A volume answers the frame getter from its guide placement.
+    {
+        double matrix[16] = {};
+        CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
+            volume.GetText(), 1.0, 0, matrix) == 1);
+        const auto published = context->GetStore()->Get()->prims.at(volume);
+        CHECK(!published.hasControlFrame && published.hasVolumeGuideFrame);
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                CHECK(matrix[r * 4 + c] == published.volumeGuideFrame[r][c]);
+            }
+        }
     }
     CHECK(context->GetSessionEvaluationCount(root) == evaluations);
     context->Deactivate();

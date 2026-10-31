@@ -561,7 +561,9 @@ set_tests_properties(testRigExecExternalMovers PROPERTIES ENVIRONMENT
 
 # The mover schema generator must work without USD Python (CI's OpenUSD
 # has none): the text reader is golden-tested on its own, and checked
-# against the pxr/usdGenSchema path wherever pxr imports.
+# against the pxr/usdGenSchema path wherever pxr imports. The interpreter
+# probe inside rigexec_add_mover stays function-local, so probe again here.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME testRigExecMoverSchemaGen COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecMoverSchemaGen.py"
     "${RIGEXEC_TEST_USD_DIR}")

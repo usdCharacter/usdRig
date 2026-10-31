@@ -300,26 +300,28 @@ main(int argc, char **argv)
         const GfRange3d sphereRange =
             volumeCache.ComputeWorldBound(sphere).ComputeAlignedRange();
         CHECK(!sphereRange.IsEmpty());
-        // Outer radius 3, X divisor 2, and a 0.05 wire widened by half in
-        // unit-sphere space: (6,3,3) * 1.025 about rest translation X=10.
-        CHECK(_Near(sphereRange.GetMin(), GfVec3d(3.85, -3.075, -3.075)));
-        CHECK(_Near(sphereRange.GetMax(), GfVec3d(16.15, 3.075, 3.075)));
+        // Outer radius 3, X divisor 2, and a 0.05 wire drawn at 30% in
+        // the default clean mode, widened by half of that in unit-sphere
+        // space: (6,3,3) * 1.0075 about rest translation X=10.
+        CHECK(_Near(sphereRange.GetMin(), GfVec3d(3.955, -3.0225, -3.0225)));
+        CHECK(_Near(sphereRange.GetMax(), GfVec3d(16.045, 3.0225, 3.0225)));
 
         CHECK(sphere.GetAttribute(TfToken("inputs:scaleXPos")).Set(2.0f));
         CHECK(sphere.GetAttribute(TfToken("inputs:scaleXNeg")).Set(0.5f));
         volumeCache.Clear();
         const GfRange3d asymmetricRange =
             volumeCache.ComputeWorldBound(sphere).ComputeAlignedRange();
-        CHECK(_Near(asymmetricRange.GetMin(), GfVec3d(6.85, -3.075, -3.075)));
-        CHECK(_Near(asymmetricRange.GetMax(), GfVec3d(22.15, 3.075, 3.075)));
+        CHECK(_Near(asymmetricRange.GetMin(), GfVec3d(6.955, -3.0225, -3.0225)));
+        CHECK(_Near(asymmetricRange.GetMax(), GfVec3d(22.045, 3.0225, 3.0225)));
 
         const GfRange3d planeRange =
             volumeCache.ComputeWorldBound(plane).ComputeAlignedRange();
         CHECK(!planeRange.IsEmpty());
-        // Default Y plane, unbounded marker ticks at 1.25 times U/V, and
-        // both signed-distance surfaces at Y=0 and Y=2.
-        CHECK(_Near(planeRange.GetMin(), GfVec3d(-3.775, -0.025, -2.525)));
-        CHECK(_Near(planeRange.GetMax(), GfVec3d(3.775, 2.025, 2.525)));
+        // Default Y plane, unbounded marker ticks at 1.25 times U/V, both
+        // signed-distance surfaces at Y=0 and Y=2, and the clean-mode wire
+        // widening of half of 30% of 0.05.
+        CHECK(_Near(planeRange.GetMin(), GfVec3d(-3.7575, -0.0075, -2.5075)));
+        CHECK(_Near(planeRange.GetMax(), GfVec3d(3.7575, 2.0075, 2.5075)));
 
         const GfRange3d curveRange =
             volumeCache.ComputeWorldBound(curveWeight).ComputeAlignedRange();
