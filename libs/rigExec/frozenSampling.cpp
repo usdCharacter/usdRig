@@ -916,7 +916,7 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
             if (!verify) continue;
         }
         const VtValue value = RigExecSampleRevisionLeaf(key,
-            object.oracleLeaves.attributes[k],nullptr,time,layer);
+            object.oracleLeaves.attributes[k],refreshed,time,layer);
         if (!served) {
             out->Add(object.oracleFrozenKeys[k],value,!value.IsEmpty());
             continue;
@@ -926,6 +926,13 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
         fresh.value = value;
         fresh.hasValue = !value.IsEmpty();
         _VerifyServedSample(out->values.back(), fresh);
+    }
+    if (object.falloffSamplesLeaf >= 0) {
+        const size_t k = size_t(object.falloffSamplesLeaf);
+        const auto &key = object.pointLeaves.decl.keys[k];
+        const VtValue value = RigExecSampleRevisionLeaf(key,
+            object.pointLeaves.attributes[k], refreshed, time, layer);
+        out->Add(key.path, value, !value.IsEmpty());
     }
     gatherPoints(object.targetPoints, _frozenWeightTokens->targetPointsKey);
     gatherPoints(object.samplePoints, _frozenWeightTokens->samplePointsKey);
@@ -1236,7 +1243,7 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
                                 oldOracleHops[o].size() == n;
         for (size_t k = 0; k < n; ++k) {
             const RigExecRevisionLeafKey &key = leaves.decl.keys[k];
-            if (key.path.IsEmpty()) {
+            if (key.path.IsEmpty() || key.flavour != RigExecRevisionLeafFlavour::Raw) {
                 continue;
             }
             if (keepObject && !_HopsTouched(oldOracleHops[o][k], edited)) {

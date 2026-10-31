@@ -3606,6 +3606,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         if (!_ParseOverlayPath(weightPrimPath, &resolved)) {
             return false;
         }
+        if (_weightOverlay == resolved) return true;
         _weightOverlay = resolved;
         if (_sessions.empty()) {
             // Remembered for whenever a rig is activated. Not a failure:
@@ -3647,6 +3648,7 @@ namespace {
 
 // The largest element count an array slot may declare.
 constexpr size_t kMaxPreviewElements = size_t(1) << 20;
+const TfToken kPreviewFloatArray("float[]");
 
 // A declaration line's element count: plain decimal digits only, at most
 // kMaxPreviewElements.
@@ -3688,6 +3690,11 @@ _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
     static const TfToken kFloat2Array("float2[]");
     static const TfToken kVec3fArray("vec3f[]");
     *arity = 0;
+    if (type == SdfValueTypeNames->FloatArray) {
+        if (!hasElementCount) return TfToken();
+        *arity = elementCount;
+        return kPreviewFloatArray;
+    }
     if (type == SdfValueTypeNames->Float2Array) {
         if (!hasElementCount) {
             return TfToken();
@@ -3739,6 +3746,12 @@ _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
 VtValue
 _PreviewValue(const TfToken &kind, const double *v, size_t arity)
 {
+    if (kind == kPreviewFloatArray) {
+        VtFloatArray array(arity);
+        float *out = array.data();
+        for (size_t i = 0; i < arity; ++i) out[i] = float(v[i]);
+        return VtValue(std::move(array));
+    }
     if (kind == "float2[]") {
         VtVec2fArray array(arity / 2);
         GfVec2f *out = array.data();

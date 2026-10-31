@@ -34,7 +34,7 @@ inline constexpr const char *kDigestWeightObjectFields[] = {
     "rigExec:values", "rigExec:indices", "rigExec:defaultWeight",
     "rigExec:representation", "rigExec:rangePolicy", "rigExec:operation",
     "inputs:driver", "inputs:scale", "inputs:bias", "inputs:falloffMin",
-    "inputs:falloffMax", "inputs:invert", "inputs:strength", "inputs:scaleX",
+    "inputs:falloffMax", "inputs:falloffSamples", "inputs:invert", "inputs:strength", "inputs:scaleX",
     "inputs:scaleXPos", "inputs:scaleYPos", "inputs:scaleZPos",
     "inputs:scaleXNeg", "inputs:scaleYNeg", "inputs:scaleZNeg",
     "inputs:scaleY", "inputs:scaleZ", "inputs:extentU", "inputs:extentV",

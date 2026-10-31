@@ -2586,12 +2586,65 @@ _TestS9ExportedPlacementCycle(const std::string &fixture)
     std::printf("S9 NoEquivalent: original exported Final placement SCC, invalid publication and independent Base property\n");
 }
 
+static void
+_TestFalloffSampleInputs()
+{
+    auto stage = UsdStage::CreateInMemory();
+    const SdfPath rig("/Rig"), weight("/Rig/Weight"), target("/Mesh.points");
+    stage->DefinePrim(rig, TfToken("RigExecRoot"));
+    stage->DefinePrim(target.GetPrimPath(), TfToken("Points"))
+        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(VtVec3fArray{GfVec3f(.5f, 0, 0)});
+    auto volume = stage->DefinePrim(weight, TfToken("RigExecSphereWeight"));
+    volume.CreateRelationship(TfToken("rigExec:weightTarget")).SetTargets({target});
+    volume.CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float).Set(0.f);
+    volume.CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float).Set(1.f);
+    auto joint = stage->DefinePrim(SdfPath("/Rig/Joint"), TfToken("RigExecJoint"));
+    joint.CreateAttribute(TfToken("avars:ty"), SdfValueTypeNames->Double).Set(2.0);
+    auto mover = stage->DefinePrim(SdfPath("/Rig/Mover"), TfToken("RigExecMatrixMover"));
+    CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
+    mover.CreateRelationship(TfToken("rigExec:moves")).SetTargets({target});
+    mover.CreateRelationship(TfToken("rigExec:transform")).SetTargets({joint.GetPath()});
+    mover.CreateRelationship(TfToken("rigExec:weightObject")).SetTargets({weight});
+    RigExecRigEvaluator native(stage, rig);
+    std::vector<uint8_t> bytes;
+    std::string why;
+    CHECK(RigExecTestBakeAt(native, 1, &bytes, &why));
+    auto wire = RigExecTestUnpack(bytes);
+    CHECK(wire);
+    if (!wire) return;
+    const int slot = RigExecTestSlotOf(*wire, "/Rig/Weight.inputs:falloffSamples");
+    CHECK(slot >= 0);
+    if (slot < 0) return;
+    auto reader = RigExecRuntimeReader::Open(bytes.data(), bytes.size(), &why);
+    CHECK(reader);
+    if (!reader) return;
+    size_t input = 0;
+    const bool found = reader->FindInput("/Rig/Weight.inputs:falloffSamples", &input);
+    CHECK(found);
+    if (!found) return;
+    for (const VtFloatArray samples : {VtFloatArray{.25f, .25f},
+                                     VtFloatArray{.75f, .75f}, VtFloatArray{}}) {
+        native.SetInteractiveOverrides({{weight, TfToken(), TfToken("inputs:falloffSamples"), VtValue(samples)}});
+        const bool set = reader->SetSampledInputArrayAt(input,
+            RigExecRuntimeArray{RrInputTag::FloatArray, samples.cdata(), samples.size()}, &why);
+        CHECK(set);
+        if (!set) std::printf("falloff input: %s\n", why.c_str());
+        CHECK(reader->Execute(&why));
+        std::vector<std::string> diffs;
+        CHECK(RigExecCompareRuntimeRun(native.Evaluate(UsdTimeCode(1)), *reader, &diffs));
+        for (const auto &line : diffs) std::printf("falloff samples: %s\n", line.c_str());
+    }
+    CHECK(!volume.GetAttribute(TfToken("inputs:falloffSamples")).HasAuthoredValueOpinion());
+}
+
 int
 main(int argc, char **argv)
 {
     PlugRegistry::GetInstance().RegisterPlugins(
         RIGEXEC_SCHEMA_RESOURCE_DIR);
     _TestS9VolumeEnvelope();
+    _TestFalloffSampleInputs();
     _TestSyntheticBuilders();
     _TestComputedReadsAndOracle();
     _TestPaintedEnvelopeSet();

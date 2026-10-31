@@ -3927,6 +3927,8 @@ struct RigExecBakedProgramImpl {
         RigExecWeightOracleFacts oracleFacts;
         RigExecBakedPathLeaves oracleLeaves;
         std::vector<SdfPath> oracleFrozenKeys;
+        /// oracleLeaves index of a volume's inputs:falloffSamples, else -1.
+        int oracleFalloffSamplesLeaf = -1;
         int oracleKind = -1, oracleRepresentation = -1, oracleCombineMode = -1;
         int oracleAxis = -1;
         bool oracleAxisAttribute = false, oracleBoundsAttribute = false;
@@ -3984,6 +3986,11 @@ struct RigExecBakedProgramImpl {
         std::vector<UsdAttribute> targetPoints, samplePoints, curvePoints;
         /// The compiled rig's resampled falloff remap, copied from falloffLuts.
         std::vector<float> falloffCurve;
+        /// pointLeaves index of a volume's inputs:falloffSamples, else -1.
+        /// Packets read this leaf; the field reads oracleFalloffSamplesLeaf,
+        /// because the property pass samples oracle leaves before the
+        /// geometry prologue samples point leaves.
+        int falloffSamplesLeaf = -1;
         std::array<VtVec3fArray,3> packetPointViews;
         std::array<std::vector<GfVec3f>,3> packetPointScratch;
         std::vector<GfVec3f> packetLocalCurve;

@@ -97,6 +97,11 @@ static bool BindWeightGraph(const RigExecSceneWeightProgram &program,const RigEx
         for(auto value:{binding.paintedValues,binding.paintedIndices}) {
             binding.fieldReads.push_back(value);binding.packetReads.push_back(value);
         }
+        if (object.hasFalloffSamples) {
+            if (!bindRead(object.falloffSamples, &binding.falloffSamples)) return false;
+            Add(binding.falloffSamples, &binding.fieldReads);
+            Add(binding.falloffSamples, &binding.packetReads);
+        }
         for(const auto &[member,read]:object.scalarReads) {
             RigExecWeightGraphRead bound;if(!bindRead(read,&bound))return false;
             Add(bound,&binding.fieldReads);Add(bound,&binding.packetReads);binding.scalars.emplace(member,std::move(bound));
@@ -189,6 +194,10 @@ bool RigExecRunBoundWeightField(const RigExecWeightGraphBinding &binding,const R
         if(const auto *indices=Read<VtIntArray>(store,bound.paintedIndices)) {
             input.paintedIndices=indices->data();input.paintedIndexCount=indices->size();
         }
+        if (const auto *samples = Resolve<VtFloatArray>(store, bound.falloffSamples)) {
+            input.falloffSamples = samples->cdata();
+            input.falloffSampleCount = samples->size();
+        }
         for(const auto &[member,read]:bound.scalars)input.scalars[size_t(member)]=Scalar(store,read,input.scalars[size_t(member)]);
         for(size_t k=0;k<3;++k){input.rawPoints[k]=Points(store,bound.rawPoints[k]);input.phasedPoints[k]=Points(store,bound.phasedPoints[k],bound.phaseDeclared[k]);}
         const auto *axis=Read<TfToken>(store,bound.axis),*bounds=Read<TfToken>(store,bound.bounds);
@@ -230,6 +239,12 @@ bool RigExecRunBoundWeightPacket(const RigExecWeightGraphBinding &binding,int id
     else if(const auto *matrix=Read<GfMatrix4d>(store,bound.baseFrame)){volume.placement=RigExecFrameFromMatrix(*matrix);volume.hasPlacement=true;}
     volume.params.falloffMin=current.scalars[6];volume.params.falloffMax=current.scalars[7];volume.params.invert=input.invert;
     volume.params.strength=input.strength;volume.params.curveData=record.falloffCurve.data();volume.params.curveCount=record.falloffCurve.size();
+    if (const auto *samples = Resolve<VtFloatArray>(store, bound.falloffSamples)) {
+        if (!samples->empty()) {
+            volume.params.curveData = samples->cdata();
+            volume.params.curveCount = samples->size();
+        }
+    }
     volume.scales=GfVec3f(current.scalars[8],current.scalars[9],current.scalars[10]);
     volume.positiveScales=GfVec3f(current.scalars[11],current.scalars[12],current.scalars[13]);
     volume.negativeScales=GfVec3f(current.scalars[14],current.scalars[15],current.scalars[16]);

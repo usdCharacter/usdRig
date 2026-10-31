@@ -552,7 +552,9 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// reads after the colliders. A format-25 file's cloth compiled rig is RCL1 and
 /// plays as exported: its inputs at their format-25 slots, no reach-back
 /// window and no material model. The tables are unchanged.
-inline constexpr uint32_t RigExecFormatVersion = 26;
+/// Format 27 admits volume falloff sample arrays through the existing typed
+/// path-read rows. Older files use their compiled falloff table.
+inline constexpr uint32_t RigExecFormatVersion = 27;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

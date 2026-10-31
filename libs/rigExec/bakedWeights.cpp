@@ -32,6 +32,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((sphereWeight, "RigExecSphereWeight"))
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
+    ((falloffSamples, "inputs:falloffSamples"))
 );
 
 namespace rigExec {
@@ -175,9 +176,8 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
         object.planeAxis = ctx->ReadToken(prim, "rigExec:planeAxis", "y");
         object.planeBounds =
             ctx->ReadToken(prim, "rigExec:planeBounds", "unbounded");
-        // The curve the remap was resampled from. Folded, not bound: there
-        // is no rebaking a lookup table mid-drag, so an override on it
-        // correctly reports NOT placeable and forces the dynamic path.
+        // The authored profile supplies the default table. A declared sample
+        // array can replace it without recompiling the profile during a drag.
         ctx->Fold(prim, "rigExec:falloffProfile");
         ctx->Fold(prim, "rigExec:falloffCurve");
         const auto lut = B.falloffLuts.find(path);
@@ -236,6 +236,15 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     object.sampleLeaves = declare(object.samplePoints);
     object.curveLeaves = declare(object.curvePoints);
     object.combineLeaves = declare(object.combineTargetPoints);
+    if (volumetric) {
+        const SdfPath samples = path.AppendProperty(_tokens->falloffSamples);
+        object.falloffSamplesLeaf = int(object.pointLeaves.decl.keys.size());
+        object.pointLeaves.decl.Add({samples, RigExecRevisionLeafType::FloatArray,
+            RigExecRevisionLeafTime::AtTime, RigExecRevisionLeafFlavour::ResolvedOnly,
+            VtValue(VtFloatArray())});
+        B.named.insert(samples);
+        B.resolvedRoutedPrims.insert(path);
+    }
     RigExecBakedBindPathLeaves(B.stage, &object.pointLeaves);
 
     B.weightObjects[size_t(index)]=std::move(object);
@@ -323,8 +332,10 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         inputs.params.falloffMax = rd(object.falloffMax);
         inputs.params.invert = rd(object.invert);
         inputs.params.strength = rd(object.strength);
-        inputs.params.curveData = object.falloffCurve.data();
-        inputs.params.curveCount = object.falloffCurve.size();
+        const VtFloatArray samples = object.pointLeaves.Value<VtFloatArray>(
+            object.falloffSamplesLeaf, VtFloatArray());
+        inputs.params.curveData = samples.empty() ? object.falloffCurve.data() : samples.cdata();
+        inputs.params.curveCount = samples.empty() ? object.falloffCurve.size() : samples.size();
         if (object.type != _tokens->planeWeight) {
             inputs.positiveScales = GfVec3f(
                 rd(object.scaleXPos),
