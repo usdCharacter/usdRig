@@ -3375,19 +3375,28 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         renumber(&out.rotationSign, first);
         ladder.rotationSign = std::move(out.rotationSign);
         const UsdPrim provider = B.stage->GetPrimAtPath(B.paths[size_t(i)]);
-        const auto connected = [&provider](const char *name) {
-            const UsdAttribute attribute = provider.GetAttribute(TfToken(name));
+        // Composed connections are empty when nothing authors any, so the
+        // authored flag gates the composition walk, the target rebinds and
+        // the type compares: the overwhelmingly common unconnected channel
+        // answers false from the flag alone. Same gate _AttributeIsIdentity
+        // uses above. The names are the load-interned channel tokens, not
+        // per-slot registry constructions.
+        const auto connected = [&provider](const TfToken &name) {
+            const UsdAttribute attribute = provider.GetAttribute(name);
+            if (!attribute || !attribute.HasAuthoredConnections()) {
+                return false;
+            }
             SdfPathVector sources;
-            return attribute && attribute.GetConnections(&sources) &&
+            return attribute.GetConnections(&sources) &&
                    sources.size() == 1 && attribute.GetStage()->GetAttributeAtPath(sources[0]) &&
                    attribute.GetStage()->GetAttributeAtPath(sources[0]).GetTypeName() == attribute.GetTypeName();
         };
-        ladder.posedSpaceConnected = connected("posed:space");
-        ladder.defaultSpaceConnected = connected("default:space");
-        ladder.parentSpaceConnected = connected("parent:space");
-        ladder.parentDefaultSpaceConnected = connected("parent:defaultSpace");
-        ladder.avarDefaultSpaceConnected = connected("avars:defaultSpace");
-        ladder.posedDefaultSpaceConnected = connected("posed:defaultSpace");
+        ladder.posedSpaceConnected = connected(kPosedSpace);
+        ladder.defaultSpaceConnected = connected(kDefaultSpace);
+        ladder.parentSpaceConnected = connected(kParentSpace);
+        ladder.parentDefaultSpaceConnected = connected(kParentDefaultSpace);
+        ladder.avarDefaultSpaceConnected = connected(kAvarDefaultSpace);
+        ladder.posedDefaultSpaceConnected = connected(kPosedDefaultSpace);
         renumber(&out.rotationOrder, first);
         ladder.rotationOrder = std::move(out.rotationOrder);
         for (int c = 0; c < 6; ++c) {
