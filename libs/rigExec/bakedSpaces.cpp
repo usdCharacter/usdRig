@@ -14,6 +14,7 @@
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
@@ -23,6 +24,13 @@ namespace {
 // Asks for everything: named, not a temporary, so its address is the stable
 // skip token of the BuildSpaces pose-input round.
 const auto kPoseInputNoSkip = [](const SdfPath &) { return false; };
+// The seven space channels the slot loop binds, interned at load: building
+// a TfToken from text takes the registry lock, and the loop would build
+// each one per slot.
+const std::array<TfToken,7> kSpaceChannelNames = {
+    TfToken("rest:space"), TfToken("default:space"), TfToken("posed:space"),
+    TfToken("parent:space"), TfToken("parent:defaultSpace"),
+    TfToken("avars:defaultSpace"), TfToken("posed:defaultSpace")};
 RigExecRevisionLeafType _Type(const SdfValueTypeName &type)
 {
     using T=RigExecRevisionLeafType;
@@ -430,6 +438,20 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // the attribute's -- so the bits are the walk's, without its queries.
     std::vector<char> leafVarying;
     leafVarying.reserve(B.providerProgram.sampled.size());
+    // The frozen key's property token spells "rigExec:providerRaw:<name>":
+    // one distinct token per property NAME, shared by every prim sampled
+    // for it. Memoized by the name token -- GetNameToken answers the
+    // interned token without touching the registry, and token equality is
+    // identity -- so the concatenation and the registry lock run once per
+    // name instead of once per leaf. A short vector: a handful of names,
+    // found by pointer compares.
+    std::vector<std::pair<TfToken,TfToken>> frozenTokens;
+    frozenTokens.reserve(32);
+    // Sampled inputs arrive grouped by prim; consecutive duplicates file
+    // nothing new, so each run's prim enters the set once, when its run
+    // starts. A repeated prim later files again, exactly as before.
+    SdfPath filedPrim;
+    bool haveFiledPrim=false;
     for(const auto &input:B.providerProgram.sampled) {
         const auto attribute=scene.attributes.find(input.attribute);
         if(attribute==scene.attributes.end()) continue;
@@ -440,13 +462,26 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         leafVarying.push_back(fact.fact.mightBeTimeVarying?1:0);
         B.providerLeafValues.push_back(input.value);
         B.providerLeafBlocked.push_back(!fact.inputs.empty() && fact.inputs[0].rawBlocked);
-        B.providerFrozenKeys.push_back(input.attribute.GetPrimPath().AppendProperty(
-            TfToken("rigExec:providerRaw:"+input.attribute.GetName())));
-        B.named.insert(input.attribute); B.prims.insert(input.attribute.GetPrimPath());
+        const TfToken nameToken=input.attribute.GetNameToken();
+        TfToken frozenToken;
+        for(const auto &memo:frozenTokens)
+            if(memo.first==nameToken) { frozenToken=memo.second; break; }
+        if(frozenToken.IsEmpty()) {
+            frozenToken=TfToken("rigExec:providerRaw:"+input.attribute.GetName());
+            frozenTokens.emplace_back(nameToken,frozenToken);
+        }
+        const SdfPath primPath=input.attribute.GetPrimPath();
+        B.providerFrozenKeys.push_back(primPath.AppendProperty(frozenToken));
+        // Sampled inputs arrive in ascending path order, so the named set
+        // grows at its end; the hint only advises, never decides.
+        B.named.emplace_hint(B.named.end(),input.attribute);
+        if(!haveFiledPrim || primPath!=filedPrim) {
+            filedPrim=primPath;
+            haveFiledPrim=true;
+            B.prims.emplace_hint(B.prims.end(),primPath);
+        }
     }
     RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves,&leafVarying);
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
     // Connected consumers refresh an expression closure against native base
     // versions. Unconnected namespace expressions keep their initial context.
     // These binding calls append ops without changing existing output IDs.
@@ -462,7 +497,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     for(size_t slot=0;slot<B.paths.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(kSpaceChannelNames[channel]);
             const auto found=B.providerProgram.attributeValues.find(consumer);
             if(found==B.providerProgram.attributeValues.end()) continue;
             RigExecValueId value=found->second;
@@ -835,12 +870,10 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
     std::string *error)
 {
     auto &B=*program;
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
     for(size_t slot=0;slot<B.ladders.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(kSpaceChannelNames[channel]);
             const auto chain=std::find_if(B.propertyChains.begin(),B.propertyChains.end(),
                 [&](const auto &item){return item.target==consumer &&
                     item.arm==RigExecBakedPropertyChain::Arm::Matrix4d && !item.revisions.empty();});
