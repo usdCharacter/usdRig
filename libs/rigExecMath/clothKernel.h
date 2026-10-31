@@ -1665,7 +1665,8 @@ RigExecClothProjectConstraint(const RigExecClothMesh &mesh,
 /// goal (first iteration only), then collision with friction. \p broad,
 /// when given, supplies the broadphase box for \p s's reach over \p grid,
 /// derived once by the caller; a null pointer derives it per particle as
-/// before.
+/// before. \p profileBroad, when given, supplies the same box over the
+/// tick's pad reach for the profile path's per-collider search.
 inline void
 RigExecClothParticlePass(const RigExecClothMesh &mesh,
                          const RigExecClothColliders &colliders,
@@ -1677,7 +1678,8 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
                          size_t i, float *x, const float *previous,
                          float *contactLambda = nullptr, int32_t *contactTriangles = nullptr,
                          const RigExecClothContactTris *contacts = nullptr,
-                         const RigExecClothReachBounds *broad = nullptr)
+                         const RigExecClothReachBounds *broad = nullptr,
+                         const RigExecClothReachBounds *profileBroad = nullptr)
 {
     using namespace cloth_detail;
     if (mesh.inverseMass[i] == 0.0f) return;
@@ -1804,6 +1806,13 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         solveContact(-1, nullptr);
         return;
     }
+    // The profile path's search pre-check: the pad reach covers every
+    // particle's collision reach (the tick's pad is the maximum over the
+    // profiles and particles), so a particle outside the pad box is
+    // outside every per-collider search's own broadphase verdict and each
+    // search would return empty before any write. Particles inside take
+    // the searches as before, with their own tighter boxes.
+    if (profileBroad && RigExecClothOutsideSweptReach(profileBroad, pi)) return;
     const auto sample = RigExecClothVertex(i);
     for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c)
         solveContact(int(c), &sample);
@@ -3073,6 +3082,10 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
         const RigExecClothTick &from = ticks[k - 1];
         const RigExecClothTick &to = ticks[k];
         const bool collide = colliders.pointCount && !colliders.triangles.empty();
+        // The profile search's pre-check box over this tick's pad reach,
+        // derived once per tick with the grid below.
+        RigExecClothReachBounds profileBounds;
+        const RigExecClothReachBounds *profileBroad = nullptr;
         // Skips the tick's per-substep triangle precompute while no
         // simulated particle starts the tick within the swept collider
         // reach. Every search then broadphase-rejects before any fetch,
@@ -3090,6 +3103,8 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             RigExecBuildClothGrid(colliders, from.colliders, to.colliders,
                                   pad,
                                   &ws->grid, &ws->cellScratch);
+            RigExecClothSweptReachBounds(ws->grid, pad, &profileBounds);
+            profileBroad = &profileBounds;
             // The verdict scans every particle, so it runs only when the
             // tick's precompute is worth skipping: a substep per collider
             // triangle against two box tests per particle.
@@ -3174,7 +3189,7 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                                              collide ? to.colliders : nullptr,
                                              it == 0, i, x, xp,
                                              ws->contactLambda.data(), ws->contactTriangles.data(),
-                                             contacts, broad);
+                                             contacts, broad, profileBroad);
                 }
                 if (!mesh.model.Empty()) RigExecClothSelfContacts(mesh, s, xp, ws, x);
             }

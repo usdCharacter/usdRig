@@ -3309,6 +3309,85 @@ void TestCollisionProfileContact()
     CHECK(x[3 * far + 2] == m.points[3 * far + 2]);
 }
 
+void TestProfileBroadphasePrefilter()
+{
+    // The profile path's search pre-check: over the tick's pad-reach box
+    // a particle outside it skips the per-collider searches and one
+    // inside takes them; either way the pass agrees bit for bit with the
+    // unchecked pass. Both arms must fire across the curtain.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    const Mesh plane = Sheet(2, 10.0f, -0.05f);
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(plane.Size(), plane.counts.data(),
+                                     plane.counts.size(), plane.indices.data(),
+                                     plane.indices.size(), false, &colliders));
+    bool sawSkip = false, sawSearch = false;
+    // A tight pad skips the far rows; a loose one searches everywhere.
+    // Either way the checked pass matches the unchecked pass bit for bit.
+    for (float thickness : {0.5f, 2.0f}) {
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile p;
+    p.kind = RigExecClothProfileKind::Collision;
+    p.thickness = thickness;
+    p.sourceMask.assign(m.Size(), 1.0f);
+    auto model = MaterialModel(mesh, m, p);
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(),
+                                   {plane.Size()}, &why));
+    RigExecClothParameters params;
+    params.thickness = 0.5f;
+    params.collisionDepth = 0.1f;
+    // The tick's pad, as the solve forms it: the step reach, plus the
+    // maximum Collision thickness over the profiles and particles.
+    float pad = std::max(std::max(0.0f, params.thickness),
+                         std::max(0.0f, params.collisionDepth));
+    for (const auto &prof : mesh.model.profiles)
+        if (prof.kind == RigExecClothProfileKind::Collision)
+            for (size_t i = 0; i < mesh.pointCount; ++i)
+                pad = std::max(pad, prof.thickness *
+                                        RigExecClothMap(prof, ClothThickness, i));
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, plane.points.data(), plane.points.data(),
+                          pad, &grid, &scratch);
+    RigExecClothReachBounds bounds;
+    RigExecClothSweptReachBounds(grid, pad, &bounds);
+    const RigExecClothStep step =
+        RigExecClothStepFor(params, settings.substeps, 1, 1.0f / 24.0f);
+    for (size_t i = 0; i < m.Size(); ++i) {
+        const bool outside = RigExecClothOutsideSweptReach(
+            &bounds, m.points.data() + 3 * i);
+        sawSkip = sawSkip || outside;
+        sawSearch = sawSearch || !outside;
+        std::vector<float> want = m.points, wantLambda(m.Size(), 0.0f);
+        std::vector<int32_t> wantTriangles(m.Size(), -1);
+        RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                                 m.points.data(), m.points.data(),
+                                 plane.points.data(), plane.points.data(), true,
+                                 i, want.data(), m.points.data(),
+                                 wantLambda.data(), wantTriangles.data(),
+                                 nullptr, nullptr, nullptr);
+        std::vector<float> got = m.points, gotLambda(m.Size(), 0.0f);
+        std::vector<int32_t> gotTriangles(m.Size(), -1);
+        RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                                 m.points.data(), m.points.data(),
+                                 plane.points.data(), plane.points.data(), true,
+                                 i, got.data(), m.points.data(),
+                                 gotLambda.data(), gotTriangles.data(),
+                                 nullptr, nullptr, &bounds);
+        CHECK(std::memcmp(want.data(), got.data(),
+                          want.size() * sizeof(float)) == 0);
+        CHECK(std::memcmp(wantLambda.data(), gotLambda.data(),
+                          wantLambda.size() * sizeof(float)) == 0);
+        CHECK(std::memcmp(wantTriangles.data(), gotTriangles.data(),
+                          wantTriangles.size() * sizeof(int32_t)) == 0);
+    }
+    }
+    CHECK(sawSkip && sawSearch);
+}
+
 int main()
 {
     TestTopology();
@@ -3329,6 +3408,7 @@ int main()
     TestOutsideBoundsSkipsSearch();
     TestTetherLimitsPrecomputed();
     TestCollisionProfileContact();
+    TestProfileBroadphasePrefilter();
     TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();
