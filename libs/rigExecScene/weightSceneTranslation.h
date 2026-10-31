@@ -21,6 +21,8 @@ struct RigExecSceneWeightObject {
     std::array<RigExecSceneWeightPointBinding,3> points;
     std::array<std::vector<RigExecSceneTypedRead>,3> packetReads;
     RigExecSceneBoundInput axis,bounds;
+    RigExecSceneTypedRead falloffSamples;
+    bool hasFalloffSamples=false;
     bool axisAttribute=false,boundsAttribute=false;
     SdfPathVector baseTargets,inputTargets;
     std::vector<char> baseExists,inputExists;
@@ -34,7 +36,7 @@ struct RigExecSceneWeightProgram {
 struct RigExecSceneWeightInputs {
     std::vector<RigExecWeightFieldInputs> fields;
     std::vector<std::array<VtVec3fArray,3>> rawStorage,phasedStorage;
-    std::vector<VtFloatArray> paintedValues;
+    std::vector<VtFloatArray> paintedValues, falloffSamples;
     std::vector<VtIntArray> paintedIndices;
     /// Ordinary packets concatenate only exact authored property targets.
     std::vector<std::array<std::vector<GfVec3f>,3>> packetPoints;

@@ -16,6 +16,7 @@ struct RigExecWeightGraphRead {
 };
 struct RigExecWeightGraphObject {
     std::map<int,RigExecWeightGraphRead> scalars;
+    RigExecWeightGraphRead falloffSamples;
     std::array<RigExecValueId,3> rawPoints{{UINT64_MAX,UINT64_MAX,UINT64_MAX}},
         phasedPoints{{UINT64_MAX,UINT64_MAX,UINT64_MAX}};
     std::array<bool,3> phaseDeclared{{false,false,false}};

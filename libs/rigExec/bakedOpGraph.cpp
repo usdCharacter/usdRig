@@ -349,6 +349,7 @@ void CopySkinBodyOutputs(RigExecBakedProgramImpl::GeomRevision *a,
     // The overlay's reuse claim names the outgoing program's op value and
     // is not carried.
     a->envelopeVersion=b.envelopeVersion;a->weightValuesVersion=b.weightValuesVersion;
+    a->matrixWeightsVersion=b.matrixWeightsVersion;
     // The serial the copied packet's layout is keyed by: it names the
     // outgoing layout object, which the new SkinTopology op hands back as
     // its candidate (AdoptGeometryStateFrom).
@@ -1025,6 +1026,15 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
                 size_t(revision.weightObject)<packetValue.size()
                 ? packetValue[size_t(revision.weightObject)] : -1;
             revision.weightValuesHeld=false;
+            revision.matrixEnvelopeHeld=false;
+            revision.matrixParamsHeld=false;
+            revision.matrixParamsVersion=0;
+            revision.matrixPacketHeld=false;
+            revision.matrixTransformsHeld=false;
+            revision.matrixChunkHeld=false;
+            revision.diagWeightHeld=false;
+            revision.matrixEntryRangesHeld=false;
+            revision.matrixWeightsVersion=0;
         }
     }
     BuildSpaceLeafIndex(B);
@@ -1043,6 +1053,10 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
     B->epilogue.verify=TfGetenvBool("RIGEXEC_VERIFY_EPILOGUE_LISTS",false);
     B->opWorkspace.verifyReset=TfGetenvBool("RIGEXEC_VERIFY_EXECUTION_RESET",false);
     RigExecBakedIndexEpilogue(B);
+    // Steps, lists and reads are final: plan the effective-memo fast path.
+    RigExecBakedBuildMemoFastPlans(B);
+    B->verifyFastMemo=TfGetenvBool("RIGEXEC_VERIFY_FAST_MEMO",false);
+    B->fastMemoMismatches=0;
     return true;
 }
 
@@ -1103,8 +1117,9 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
     }
     state.changedLeaves.clear(); state.seeds.clear(); state.candidateOps.clear();
     RigExecOpClearChanges(&state);
-    const auto sample=[&](uint32_t d,uint32_t slot,std::string *key) {
-        RigExecBakedOpValueKey(B,RigExecBakedSlotDomain(d),slot,key);
+    const auto sample=[&](uint32_t d,uint32_t slot,std::string *key,
+        const RigExecBakedStep *step) {
+        RigExecBakedOpValueKey(B,RigExecBakedSlotDomain(d),slot,key,step);
     };
     // A constant source key keeps the bytes and exactness of its last build,
     // so it yields what an equal-key compare does: exact and unchanged. Keys
@@ -1229,9 +1244,30 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
             changed=!adopted || input!=scratch;
             if(verifyVersions) state.contentInputKeys[c]=scratch;
         }
-        const bool exact=RigExecBakedEffectiveMemo(B,c,&scratch,
-            &state.coveredPropertyInputs[c],&state.coveredTypedInputs[c]);
-        if(!retained) changed=!exact || input!=scratch;
+        bool exact=true;
+        if(!retained && RigExecBakedFastEffectiveMemo(B,c,&input,
+            &state.coveredPropertyInputs[c],&state.coveredTypedInputs[c],
+            &changed,&exact)) {
+            changed=!exact || changed;
+            if(B.verifyFastMemo) {
+                std::string slow;
+                std::vector<uint32_t> slowCovered;
+                std::vector<std::pair<uint32_t,uint32_t>> slowTyped;
+                const bool slowExact=RigExecBakedEffectiveMemo(B,c,&slow,
+                    &slowCovered,&slowTyped);
+                if(slowExact!=exact || slow!=input || !slowCovered.empty() ||
+                   !slowTyped.empty()) {
+                    if(c<B.fastMemoMismatch.size()) B.fastMemoMismatch[c]=1;
+                }
+            }
+        } else {
+            exact=RigExecBakedEffectiveMemo(B,c,&scratch,
+                &state.coveredPropertyInputs[c],&state.coveredTypedInputs[c]);
+            if(!retained) changed=!exact || input!=scratch;
+            // The fast path patches the stored key in place; only the slow
+            // path's scratch holds a key to keep.
+            input.swap(scratch);
+        }
         if(verifyVersions && !retained) {
             std::string content; std::vector<uint32_t> property;
             std::vector<std::pair<uint32_t,uint32_t>> typed;
@@ -1243,7 +1279,6 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
         }
         state.inputExact[c]=exact?1:0;
         if(!exact) ++state.inputRevisions[c];
-        input.swap(scratch);
         if(measuring) step.memoEndNs=RigExecBakedNowNs();
         return changed;
     };
@@ -1259,13 +1294,18 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
         const int32_t window=c<B.windowOfOp.size()?B.windowOfOp[c]:-1;
         for(auto id:B.opGraph.ops[c].descriptor.writes) {
             auto &v=state.values[size_t(id)];
-            // A fixed-size value compares in place: never RevisionDone or ChainDirty.
-            if(RigExecBakedPublishSmallValue(B,&v)) continue;
+            // A fixed-size or version-keyed value compares in place. A
+            // windowed op's ring serial joins only the slow key, so a
+            // version-keyed value of a windowed op stays slow.
+            const bool versioned=v.domain==uint32_t(RigExecBakedSlotDomain::RevisionOut) ||
+                v.domain==uint32_t(RigExecBakedSlotDomain::RevisionDone) ||
+                v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty);
+            if((window<0 || !versioned) && RigExecBakedPublishSmallValue(B,&v,&step)) continue;
             const RigExecOpValueState *reuse=done && v.slot==done->slot &&
                 v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty) ? done : nullptr;
             bool exact=true;
             RigExecOpPublishValue(&v,[&](uint32_t d,uint32_t slot,std::string *key) {
-                if(reuse) key->append(reuse->key); else sample(d,slot,key);
+                if(reuse) key->append(reuse->key); else sample(d,slot,key,&step);
                 if(window>=0 && size_t(window)<B.windowRingSerial.size())
                     RigExecOpKeyAppend(key,B.windowRingSerial[size_t(window)]);
                 // API4 opaque packets are deterministic in their declared
@@ -1301,6 +1341,14 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
             callbacks.wait=[&]{dispatcher.Wait();}; execute();
         });
     } else execute();
+    // Joined: fold the fast-memo judge's per-op flags, then clear them for
+    // the next run. Owner thread, like every other verification fold.
+    if(B.verifyFastMemo) {
+        size_t mismatches=0;
+        for(char flag:B.fastMemoMismatch) if(flag) ++mismatches;
+        B.fastMemoMismatches+=mismatches;
+        std::fill(B.fastMemoMismatch.begin(),B.fastMemoMismatch.end(),char(0));
+    }
     // Only a candidate takes a stamp, failed run or not; the executor's
     // pending list holds this run's candidates, once each, in its order.
     if(stamping)

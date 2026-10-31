@@ -89,6 +89,7 @@ set(RIGEXEC_EXAMPLE_FIXTURES
     # Windowed: each frame reads the frames before it, so the frames sit
     # inside the rings after each stop as well as on the keys.
     "19_HarmonicsChain.usda|1001,1006,1009,1012,1015,1020,1030,1033,1036,1040,1054,1057,1060,1064,1072|/AntennaAsset/Rig/Controls/Base|avars:tx|/AntennaAsset/Rig/Movers/Pose/Jiggle/Jiggle4|inputs:amplitude|YES|-|inputs"
+    "20_MatrixSphere.usda|1001,1012,1024,1036,1048|/MatrixSphereAsset/Rig/Controls/Carrier|avars:tx|/MatrixSphereAsset/Rig/Movers/Skin|inputs:defaultWeight|YES|-|inputs"
     # -- the constraint stages: every one aims at a plain UsdGeomXformable --
     "aimtest.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"
     "aimtest_points.usda|1,25,50,75,100|-|-|/World/RigRoot/Movers/RigExecAimConstraint1|inputs:defaultWeight|YES|-|static"

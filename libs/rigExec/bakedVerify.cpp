@@ -449,6 +449,38 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     state->weightValuesHeld = revision.weightValuesHeld;
     state->weightValuesPacketRevision = revision.weightValuesPacketRevision;
     state->weightValuesCount = revision.weightValuesCount;
+    state->matrixEnvelopeHeld = revision.matrixEnvelopeHeld;
+    state->matrixEnvelopePacketRevision =
+        revision.matrixEnvelopePacketRevision;
+    state->matrixEnvelopeCount = revision.matrixEnvelopeCount;
+    state->matrixEnvelopeVerdict = revision.matrixEnvelopeVerdict;
+    state->matrixParamsHeld = revision.matrixParamsHeld;
+    state->matrixParamsWeightBlendIndex =
+        revision.matrixParamsWeightBlendIndex;
+    state->matrixParamsEnabledIndex = revision.matrixParamsEnabledIndex;
+    state->matrixParamsDefaultWeightIndex =
+        revision.matrixParamsDefaultWeightIndex;
+    state->matrixParamsWeightBlendVersion =
+        revision.matrixParamsWeightBlendVersion;
+    state->matrixParamsEnabledVersion = revision.matrixParamsEnabledVersion;
+    state->matrixParamsDefaultWeightVersion =
+        revision.matrixParamsDefaultWeightVersion;
+    state->matrixParamsHaveTransform = revision.matrixParamsHaveTransform;
+    state->matrixParamsRadial = revision.matrixParamsRadial;
+    state->matrixParamsEnabled = revision.matrixParamsEnabled;
+    state->matrixParamsWeightsValid = revision.matrixParamsWeightsValid;
+    state->matrixParamsTransform = revision.matrixParamsTransform;
+    state->matrixParamsPacketRevision = revision.matrixParamsPacketRevision;
+    state->matrixParamsVersion = revision.matrixParamsVersion;
+    state->diagWeightHeld = revision.diagWeightHeld;
+    state->diagWeightIndex = revision.diagWeightIndex;
+    state->diagWeightVersion = revision.diagWeightVersion;
+    state->matrixEntryRangesHeld = revision.matrixEntryRangesHeld;
+    state->matrixEntryRangesPacketRevision =
+        revision.matrixEntryRangesPacketRevision;
+    state->matrixEntryRangesCount = revision.matrixEntryRangesCount;
+    state->matrixEntryRanges = revision.matrixEntryRanges;
+    state->matrixWeightsVersion = revision.matrixWeightsVersion;
     state->layoutUsable = revision.layoutUsable;
     state->topology = revision.topology;
     state->partitionTopology = revision.partitionTopology;
@@ -540,6 +572,38 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->weightValuesHeld = state.weightValuesHeld;
     revision->weightValuesPacketRevision = state.weightValuesPacketRevision;
     revision->weightValuesCount = state.weightValuesCount;
+    revision->matrixEnvelopeHeld = state.matrixEnvelopeHeld;
+    revision->matrixEnvelopePacketRevision =
+        state.matrixEnvelopePacketRevision;
+    revision->matrixEnvelopeCount = state.matrixEnvelopeCount;
+    revision->matrixEnvelopeVerdict = state.matrixEnvelopeVerdict;
+    revision->matrixParamsHeld = state.matrixParamsHeld;
+    revision->matrixParamsWeightBlendIndex =
+        state.matrixParamsWeightBlendIndex;
+    revision->matrixParamsEnabledIndex = state.matrixParamsEnabledIndex;
+    revision->matrixParamsDefaultWeightIndex =
+        state.matrixParamsDefaultWeightIndex;
+    revision->matrixParamsWeightBlendVersion =
+        state.matrixParamsWeightBlendVersion;
+    revision->matrixParamsEnabledVersion = state.matrixParamsEnabledVersion;
+    revision->matrixParamsDefaultWeightVersion =
+        state.matrixParamsDefaultWeightVersion;
+    revision->matrixParamsHaveTransform = state.matrixParamsHaveTransform;
+    revision->matrixParamsRadial = state.matrixParamsRadial;
+    revision->matrixParamsEnabled = state.matrixParamsEnabled;
+    revision->matrixParamsWeightsValid = state.matrixParamsWeightsValid;
+    revision->matrixParamsTransform = state.matrixParamsTransform;
+    revision->matrixParamsPacketRevision = state.matrixParamsPacketRevision;
+    revision->matrixParamsVersion = state.matrixParamsVersion;
+    revision->diagWeightHeld = state.diagWeightHeld;
+    revision->diagWeightIndex = state.diagWeightIndex;
+    revision->diagWeightVersion = state.diagWeightVersion;
+    revision->matrixEntryRangesHeld = state.matrixEntryRangesHeld;
+    revision->matrixEntryRangesPacketRevision =
+        state.matrixEntryRangesPacketRevision;
+    revision->matrixEntryRangesCount = state.matrixEntryRangesCount;
+    revision->matrixEntryRanges = state.matrixEntryRanges;
+    revision->matrixWeightsVersion = state.matrixWeightsVersion;
     revision->layoutUsable = state.layoutUsable;
     revision->topology = state.topology;
     revision->partitionTopology = state.partitionTopology;

@@ -19,6 +19,7 @@
 #include "rigExec/frozenContext.h"
 #include "rigExecMath/pointFrame.h"
 #include "rigExecPoseCompare.h"
+#include "rigExecFrozenParity.h"
 #include <limits>
 #include <algorithm>
 
@@ -2446,6 +2447,41 @@ static void TestBorrowedDenseBlendInputs()
     CHECK(!RigExecSumBlendChannels(channels,nullptr,base.size(),&borrowed));
 }
 
+static void
+TestInteractiveFalloffSamples()
+{
+    Fixture f({GfVec3f(0.5f, 0, 0)}, GfVec3d(0, 2, 0));
+    const auto volume = f.MakeVolume("Sphere", TfToken("RigExecSphereWeight"),
+                                     GfVec3d(0), 0, 1);
+    f.MakeMover(SdfPath("/Asset/Rig/Mover"), volume.GetPath());
+    const SdfPath rig("/Asset/Rig");
+    RigExecRigEvaluator evaluator(f.stage, rig);
+    evaluator.SetPublishWeightFields(true);
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    const auto original = evaluator.Evaluate(UsdTimeCode(1));
+    CHECK(original.valid);
+    const auto points = [](const RigExecRigPose &pose) {
+        return pose.movedProperties.at(Fixture::Target()).Get<VtVec3fArray>();
+    };
+    CHECK(Near(points(original)[0], GfVec3f(.5f, 1, 0)));
+    for (float value : {.25f, .75f}) {
+        evaluator.SetInteractiveOverrides({{volume.GetPath(), TfToken(),
+            TfToken("inputs:falloffSamples"), VtValue(VtFloatArray{value, value})}});
+        const auto preview = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(preview.valid);
+        CHECK(Near(points(preview)[0], GfVec3f(.5f, 2 * value, 0)));
+        CHECK(Near(points(original)[0], GfVec3f(.5f, 1, 0)));
+        std::string why;
+        const bool parity = RigExecFrozenMatchesLive(&evaluator, rig, UsdTimeCode(1), &why);
+        CHECK(parity);
+        if (!parity) std::printf("falloff frozen: %s\n", why.c_str());
+        CHECK(!volume.GetAttribute(TfToken("inputs:falloffSamples")).HasAuthoredValueOpinion());
+    }
+    evaluator.ClearInteractiveOverrides();
+    CHECK(points(evaluator.Evaluate(UsdTimeCode(1))) == points(original));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2467,6 +2503,7 @@ main(int argc, char **argv)
     }
 
     TestSphereWeight();
+    TestInteractiveFalloffSamples();
     TestVolumePlacedByRestSpace();
     TestSphereAxisScales();
     TestSphereDirectionalScales();

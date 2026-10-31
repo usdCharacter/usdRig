@@ -1610,6 +1610,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.role = GeomRole::Legacy;
         revision.rangeRole = false;
         revision.groupWritten.clear();
+        revision.rangeGated = false;
         revision.enteringWriter.clear();
         revision.groups.clear();
         revision.groupIds.clear();
@@ -1653,6 +1654,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.role = candidate[r];
         revision.rangeRole = revision.role == GeomRole::Range;
         revision.groupWritten.assign(groups, 1);
+        revision.rangeGated = false;
         const bool skin = revision.op == RigExecRevisionOp::Skin;
         if (revision.rangeRole && skin &&
             !PartitionSkinGroups(&revision, chain->groupBounds)) {
@@ -1675,6 +1677,10 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             std::vector<char> written;
             if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
+                revision.rangeGated =
+                    std::find(revision.groupWritten.begin(),
+                              revision.groupWritten.end(),
+                              char(0)) != revision.groupWritten.end();
             }
             B.exportPinnedPaths.insert(pinned[r].begin(), pinned[r].end());
         } else if (skin && revision.skinTopologyFixed &&
@@ -3219,6 +3225,466 @@ ResolveEnvelope(RigExecBakedProgramImpl::GeomRevision *revision, size_t count)
     }
 }
 
+/// The shared packet revision naming a matrix revision's envelope exactly:
+/// the weightValuesHeld key, which an equal revision makes an equal packet.
+/// Answered false for a current-phase revision or an unshared packet, which
+/// take the validating path every run.
+uint64_t
+MatrixEnvelopePacketRevision(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, bool *shared)
+{
+    const bool named = !revision.weightCurrentPhase &&
+        revision.weightPacketValue >= 0 &&
+        size_t(revision.weightPacketValue) < B.opAdapter.values.size();
+    *shared = named;
+    return named
+        ? B.opAdapter.values[size_t(revision.weightPacketValue)].revision
+        : 0;
+}
+
+/// Whether the revision holds its envelope verdict over \p count points: the
+/// packet the claim names and the count both stand. The claim is the weights
+/// half of the acceptance only; the caller ANDs the packet check in.
+bool
+MatrixEnvelopeHeldVerdict(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, size_t count,
+    bool *verdict)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &shared);
+    if (!shared || !revision.matrixEnvelopeHeld ||
+        revision.matrixEnvelopePacketRevision != packetRevision ||
+        revision.matrixEnvelopeCount != count) {
+        return false;
+    }
+    *verdict = revision.matrixEnvelopeVerdict;
+    return true;
+}
+
+/// Notes the verdict the validating call just answered for the packet and
+/// count now standing, dropping the claim where no packet names it.
+void
+MatrixEnvelopeNoteVerdict(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t count,
+    bool verdict)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &shared);
+    if (!shared) {
+        revision->matrixEnvelopeHeld = false;
+        return;
+    }
+    revision->matrixEnvelopeHeld = true;
+    revision->matrixEnvelopePacketRevision = packetRevision;
+    revision->matrixEnvelopeCount = count;
+    revision->matrixEnvelopeVerdict = verdict;
+}
+
+/// The content version naming the points entering Legacy revision
+/// \p revisionIndex of \p chain: the base version for the first, else the
+/// preceding revision's done version, which a Legacy fuse moves exactly
+/// when the value it left does. A Legacy chain holds Legacy revisions
+/// alone, so no other role's versioning reaches this key.
+uint64_t
+LegacyMatrixEnteringVersion(
+    const RigExecBakedProgramImpl::GeomChain &chain, size_t revisionIndex)
+{
+    if (revisionIndex == 0) {
+        return chain.baseVersion;
+    }
+    return chain.revisions[revisionIndex - 1].doneVersion;
+}
+
+/// Whether the Legacy matrix \p revision's walk stands as published, so
+/// its chunk skips whole: the revision applied last run and holds its own
+/// output, its per-revision inputs, shared packet, entering points and
+/// count all hold the key's, and its done version is the key's. Then the
+/// walk would recompute the published bytes: the same kernel over the
+/// same packet, entering points and count, and the fuse would find them
+/// unmoved. Like the Range key it is self-validating, and a copy is
+/// independent; the recorded entries are never read by a skip. The
+/// caller predicts the fuse's applied decision beside this.
+bool
+LegacyMatrixSkipStands(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomChain &chain,
+    const RigExecBakedProgramImpl::GeomRevision &revision,
+    size_t revisionIndex, size_t count)
+{
+    // Cheapest first; the per-revision inputs spell their bytes last.
+    const RigExecSparseWalkMemo<GfVec3f> &memo = revision.matrixWalk;
+    if (!memo.skipArmed) {
+        return false;
+    }
+    if (!revision.ran ||
+        revision.currentSource != int(revisionIndex)) {
+        return false;
+    }
+    bool packetShared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &packetShared);
+    if (!packetShared || memo.skipPacketRevision != packetRevision) {
+        return false;
+    }
+    if (memo.skipCount != count || count != revision.precedingCount) {
+        return false;
+    }
+    if (memo.skipVersion != LegacyMatrixEnteringVersion(chain,
+                                                        revisionIndex)) {
+        return false;
+    }
+    if (memo.skipPublishedVersion != revision.doneVersion) {
+        return false;
+    }
+    if (revision.matrixParamsVersion != 0 &&
+        memo.skipParamsVersion == revision.matrixParamsVersion) {
+        return true;
+    }
+    unsigned char params[kRigExecSparseWalkParamsSize];
+    RigExecSparseWalkSpellParams(revision.parameters.radialWeight,
+                                 revision.parameters.transform.GetArray(),
+                                 params);
+    return RigExecSparseWalkParamsHold(memo, params, sizeof(params));
+}
+
+/// Arms \p revision's whole-walk skip over the result just published: its
+/// shared packet revision, entering content version, point count, done
+/// version and per-revision inputs. The inputs are spelled here rather
+/// than left to the walk's RigExecSparseWalkBegin bytes so a dense walk
+/// and an identity walk -- which never begin one -- key them too; over a
+/// sparse walk they are the bytes Begin spelled this run. Call only for
+/// an unchunked Legacy matrix revision whose fuse applied its own
+/// output -- a walk that ran its kernel, or a skip (or a sat-out chunk)
+/// over standing inputs -- never for one that publishes a result its
+/// chunk did not verify.
+void
+LegacyMatrixSkipNote(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomChain &chain,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t revisionIndex,
+    size_t count)
+{
+    bool packetShared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+    if (!packetShared || count != revision->precedingCount) {
+        revision->matrixWalk.skipArmed = false;
+        return;
+    }
+    revision->matrixWalk.skipPacketRevision = packetRevision;
+    revision->matrixWalk.skipVersion =
+        LegacyMatrixEnteringVersion(chain, revisionIndex);
+    revision->matrixWalk.skipCount = count;
+    revision->matrixWalk.skipPublishedVersion = revision->doneVersion;
+    revision->matrixWalk.skipParamsVersion = revision->matrixParamsVersion;
+    revision->matrixWalk.params.resize(kRigExecSparseWalkParamsSize);
+    RigExecSparseWalkSpellParams(
+        revision->parameters.radialWeight,
+        revision->parameters.transform.GetArray(),
+        revision->matrixWalk.params.data());
+    revision->matrixWalk.skipArmed = true;
+}
+
+/// Whether one matrix leaf's content version keys its value: the role's
+/// declared index, whose version stands only while its bytes do. A leaf a
+/// walk or a produced value answers carries no version, as the blend-layout
+/// keys hold; an undeclared role reads a fixed fallback. The declaration
+/// is build state, so a moved index drops the key.
+bool
+_MatrixLeafVersionStands(const RigExecBakedPathLeaves &sources,
+                         RigExecRevisionLeafRole role, int heldIndex,
+                         uint64_t heldVersion)
+{
+    const int k = sources.decl.Role(role);
+    if (k != heldIndex) {
+        return false;
+    }
+    if (k < 0) {
+        return true;
+    }
+    const auto at = [k](const std::vector<int> &v) {
+        return size_t(k) < v.size() ? v[size_t(k)] : -1;
+    };
+    return size_t(k) < sources.versions.size() && at(sources.walks) < 0 &&
+        at(sources.exactVersions) < 0 && at(sources.exactRecordIndices) < 0 &&
+        sources.versions[size_t(k)] == heldVersion;
+}
+
+/// Whether the revision holds its assembled matrix parameters: every input
+/// the leaf assembly reads stands -- the scalar leaves by content version,
+/// the folded transform bit for bit, and the bound packet by shared
+/// revision (an unbound revision reads the DefaultWeight leaf instead).
+/// Answered false for a current-phase revision, an unshared packet, or a
+/// revision with blend channels, which assemble every run.
+bool
+MatrixParamsHeld(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision)
+{
+    if (!revision.matrixParamsHeld || revision.weightCurrentPhase ||
+        !revision.blendChannels.empty()) {
+        return false;
+    }
+    const bool packetBound = revision.weightObject >= 0;
+    if (packetBound) {
+        bool shared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, revision, &shared);
+        if (!shared ||
+            packetRevision != revision.matrixParamsPacketRevision) {
+            return false;
+        }
+    }
+    if (revision.haveTransform != revision.matrixParamsHaveTransform) {
+        return false;
+    }
+    if (revision.haveTransform &&
+        std::memcmp(&revision.transform, &revision.matrixParamsTransform,
+                    sizeof(GfMatrix4d)) != 0) {
+        return false;
+    }
+    const RigExecBakedPathLeaves &sources = revision.leaves;
+    return _MatrixLeafVersionStands(
+               sources, RigExecRevisionLeafRole::WeightBlend,
+               revision.matrixParamsWeightBlendIndex,
+               revision.matrixParamsWeightBlendVersion) &&
+        _MatrixLeafVersionStands(sources, RigExecRevisionLeafRole::Enabled,
+                                 revision.matrixParamsEnabledIndex,
+                                 revision.matrixParamsEnabledVersion) &&
+        _MatrixLeafVersionStands(
+            sources, RigExecRevisionLeafRole::DefaultWeight,
+            revision.matrixParamsDefaultWeightIndex,
+            revision.matrixParamsDefaultWeightVersion);
+}
+
+/// Notes the key the fresh assembly just read: the scalar leaves' role
+/// indices and content versions, the folded transform, and the bound
+/// packet's shared revision. Drops the claim where no key covers the
+/// inputs: a current-phase revision, an unshared packet, blend channels,
+/// or leaves no version tracks.
+void
+MatrixParamsNote(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision)
+{
+    revision->matrixParamsHeld = false;
+    // A claim the key cannot cover drops the inputs version with it, so
+    // no skip check names stale bytes; the success path below keeps or
+    // moves it beside the note.
+    if (revision->weightCurrentPhase || !revision->blendChannels.empty()) {
+        revision->matrixParamsVersion = 0;
+        return;
+    }
+    const bool packetBound = revision->weightObject >= 0;
+    uint64_t packetRevision = 0;
+    if (packetBound) {
+        bool shared = false;
+        packetRevision = MatrixEnvelopePacketRevision(B, *revision, &shared);
+        if (!shared) {
+            revision->matrixParamsVersion = 0;
+            return;
+        }
+    }
+    const RigExecBakedPathLeaves &sources = revision->leaves;
+    const auto key = [&sources](RigExecRevisionLeafRole role, int *index,
+                                uint64_t *version) {
+        const int k = sources.decl.Role(role);
+        *index = k;
+        if (k < 0) {
+            return true;
+        }
+        const auto at = [k](const std::vector<int> &v) {
+            return size_t(k) < v.size() ? v[size_t(k)] : -1;
+        };
+        if (!(size_t(k) < sources.versions.size() &&
+              at(sources.walks) < 0 && at(sources.exactVersions) < 0 &&
+              at(sources.exactRecordIndices) < 0)) {
+            return false;
+        }
+        *version = sources.versions[size_t(k)];
+        return true;
+    };
+    if (!key(RigExecRevisionLeafRole::WeightBlend,
+             &revision->matrixParamsWeightBlendIndex,
+             &revision->matrixParamsWeightBlendVersion) ||
+        !key(RigExecRevisionLeafRole::Enabled,
+             &revision->matrixParamsEnabledIndex,
+             &revision->matrixParamsEnabledVersion) ||
+        !key(RigExecRevisionLeafRole::DefaultWeight,
+             &revision->matrixParamsDefaultWeightIndex,
+             &revision->matrixParamsDefaultWeightVersion)) {
+        revision->matrixParamsVersion = 0;
+        return;
+    }
+    // The sparse-walk inputs version over the fresh assembly: 1 on the
+    // first note, moved exactly when the noted bytes differ. A held run
+    // never reaches here, and holding proves the bytes, so the version
+    // stands then without comparing.
+    const RigExecMoverParameters &p = revision->parameters;
+    if (revision->matrixParamsVersion == 0) {
+        // The first note names these bytes 1. The drops above are
+        // build-fixed, so a success never follows one and no later note
+        // aliases this version.
+        revision->matrixParamsVersion = 1;
+    } else if (revision->matrixParamsHaveTransform != revision->haveTransform ||
+               revision->matrixParamsRadial != p.radialWeight ||
+               revision->matrixParamsEnabled != p.enabled ||
+               revision->matrixParamsWeightsValid != p.weights.valid ||
+               (revision->haveTransform &&
+                std::memcmp(&revision->matrixParamsTransform,
+                            &revision->transform,
+                            sizeof(GfMatrix4d)) != 0)) {
+        ++revision->matrixParamsVersion;
+    }
+    revision->matrixParamsHaveTransform = revision->haveTransform;
+    revision->matrixParamsRadial = p.radialWeight;
+    revision->matrixParamsEnabled = p.enabled;
+    revision->matrixParamsWeightsValid = p.weights.valid;
+    revision->matrixParamsTransform = revision->transform;
+    revision->matrixParamsPacketRevision = packetRevision;
+    revision->matrixParamsHeld = true;
+}
+
+/// Whether the revision holds its sparse entry ranges over \p count points:
+/// the packet the claim names and the count both stand, and the ranges name
+/// one [first, last) per group of \p groupCount groups. The claim is the
+/// search half of the sparse group walk only; the verdict the groups run
+/// under is RevisionStatic's own.
+bool
+MatrixEntryRangesHeld(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedProgramImpl::GeomRevision &revision, size_t count,
+    size_t groupCount)
+{
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, revision, &shared);
+    if (!shared || !revision.matrixEntryRangesHeld ||
+        revision.matrixEntryRangesPacketRevision != packetRevision ||
+        revision.matrixEntryRangesCount != count ||
+        revision.matrixEntryRanges.size() != groupCount) {
+        return false;
+    }
+    return true;
+}
+
+/// Notes the per-group sparse entry ranges just cut from the standing
+/// packet's indices over the chain's group bounds: group g's [first, last)
+/// entries, the same pair its own search answers. One ascending pass over
+/// both arrays -- the indices ascend (the verdict's validation proved it)
+/// and the bounds ascend by construction. Drops the claim where no packet
+/// names it.
+void
+MatrixEntryRangesNote(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision, size_t count,
+    const std::vector<int> &groupBounds)
+{
+    revision->matrixEntryRangesHeld = false;
+    bool shared = false;
+    const uint64_t packetRevision =
+        MatrixEnvelopePacketRevision(B, *revision, &shared);
+    if (!shared) {
+        return;
+    }
+    if (groupBounds.size() < 2) {
+        return;
+    }
+    const std::vector<int> &indices = revision->parameters.weights.indices;
+    const size_t groupCount = groupBounds.size() - 1;
+    revision->matrixEntryRanges.resize(groupCount);
+    size_t k = 0;
+    for (size_t g = 0; g < groupCount; ++g) {
+        const size_t begin = size_t(groupBounds[g]);
+        const size_t end = size_t(groupBounds[g + 1]);
+        while (k < indices.size() &&
+               (indices[k] < 0 || size_t(indices[k]) < begin)) {
+            ++k;
+        }
+        const size_t first = k;
+        while (k < indices.size() &&
+               (indices[k] < 0 || size_t(indices[k]) < end)) {
+            ++k;
+        }
+        revision->matrixEntryRanges[g] = {first, k};
+    }
+    revision->matrixEntryRangesPacketRevision = packetRevision;
+    revision->matrixEntryRangesCount = count;
+    revision->matrixEntryRangesHeld = true;
+}
+
+/// Moves a bound matrix revision's weights version exactly on the runs
+/// its shared packet's own publication reported changed: the packet step
+/// runs before this one and compares bytes, so the version names the
+/// arrays the RevisionPacket key carries it for. A packet never
+/// published (excluded before its first run) also moves it, which is
+/// the conservative direction. Unbound, current-phase and unshared
+/// revisions key their arrays' bytes and note nothing.
+void
+MatrixWeightsNoteVersion(
+    const RigExecBakedProgramImpl &B,
+    RigExecBakedProgramImpl::GeomRevision *revision)
+{
+    if (revision->op != RigExecRevisionOp::Matrix ||
+        revision->weightObject < 0 || revision->weightCurrentPhase ||
+        revision->weightPacketValue < 0 ||
+        size_t(revision->weightPacketValue) >= B.opAdapter.values.size()) {
+        return;
+    }
+    const RigExecOpValueState &packet =
+        B.opAdapter.values[size_t(revision->weightPacketValue)];
+    if (!packet.initialized || packet.changed) {
+        ++revision->matrixWeightsVersion;
+    }
+}
+
+/// The fuse diagnostic weight without the box: RevisionStatic reads the
+/// revision's `defaultWeightLeaf` only to unbox a float, and the shared
+/// resolve returns that box by value -- a heap allocation per static per
+/// run. The plain arm answers the sampled value itself, so where no walk,
+/// record or version arm is bound the float is read in place; anything
+/// else falls back to the shared resolve. The arm selection repeats that
+/// function's, so the answer is the same value.
+bool
+DiagnosticWeightDirect(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedPathLeaves &leaves, size_t k, float *out)
+{
+    if (k >= leaves.decl.keys.size()) {
+        *out = 1.0f;
+        return true;
+    }
+    const RigExecRevisionLeafKey &key = leaves.decl.keys[k];
+    if (key.flavour != RigExecRevisionLeafFlavour::ResolvedOnly) {
+        return false;
+    }
+    if (k < leaves.walks.size() && leaves.walks[k] >= 0) {
+        return false;
+    }
+    const int recordIndex = k < leaves.exactRecordIndices.size()
+        ? leaves.exactRecordIndices[k] : -1;
+    if (recordIndex >= 0 && size_t(recordIndex) < B.propertyRecords.size()) {
+        return false;
+    }
+    const int version = k < leaves.exactVersions.size()
+        ? leaves.exactVersions[k] : -1;
+    if (version >= 0 && size_t(version) < B.propertyVersionValid.size()) {
+        return false;
+    }
+    if (k >= leaves.values.size()) {
+        *out = 1.0f;
+        return true;
+    }
+    const VtValue &held = leaves.values[k];
+    *out = held.IsHolding<float>() ? held.UncheckedGet<float>() : 1.0f;
+    return true;
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -3333,6 +3799,76 @@ BaseGroupSource(const RigExecBakedProgramImpl::GeomChain &chain, size_t g)
     return source;
 }
 
+/// Group \p g of point version \p version of \p chain (chain index
+/// \p chainIndex of \p B, which \p chain is): the ref its writer published,
+/// and its content id through \p from, from ONE writer lookup. Answers
+/// exactly what RigExecBakedGroupAt plus RigExecBakedGroupSourceAt answer --
+/// the base group when no revision writes \p g, or a set-aside revision lies
+/// between, else the writer revision's group -- without scanning the chain
+/// twice, and without routing the writer's own slot back through the
+/// revision index: revision ids run contiguously chain by chain, so the
+/// writer's id names this chain and writer, and the revision in hand is the
+/// one the index would find. The caller passes the chain and index of one
+/// revision step, where the two always agree.
+const RigExecPointsRef<GfVec3f> &
+GroupEnteringAt(const RigExecBakedProgramImpl &B, int chainIndex,
+                const RigExecBakedProgramImpl::GeomChain &chain,
+                size_t version, size_t g, RigExecGroupSource *from)
+{
+    const bool chainOk =
+        chainIndex >= 0 && size_t(chainIndex) < B.chains.size();
+    const int writer = GroupWriter(chain, version, g);
+    const RigExecPointsRef<GfVec3f> *entering = &kNoGroup;
+    if (writer < 0) {
+        if (g < chain.baseGroups.size()) {
+            entering = &chain.baseGroups[g].published;
+        }
+        if (!chainOk) {
+            *from = RigExecGroupSource();
+        } else if (g < chain.baseGroups.size()) {
+            from->slot = -1 - int64_t(g);
+            from->version = chain.baseGroups[g].version;
+        } else {
+            from->slot = -1 - int64_t(g);
+            from->version = 0;
+        }
+        return *entering;
+    }
+    const RigExecBakedProgramImpl::GeomRevision &wrote =
+        chain.revisions[size_t(writer)];
+    if (g < wrote.groups.size()) {
+        entering = &wrote.groups[g].published;
+        from->version = wrote.groups[g].version;
+    } else {
+        from->version = 0;
+    }
+    // The writer's own RevisionOut slot, direct from its Build state: what
+    // RigExecBakedGroupSlot answers for its revision id, with the same
+    // bounds checks and the same arms. An index that names no chain answers
+    // the default id, as RigExecBakedGroupSourceAt does.
+    if (!chainOk) {
+        *from = RigExecGroupSource();
+        return *entering;
+    }
+    const int id = B.chainRevisionBegin[size_t(chainIndex)] + writer;
+    int slot = -1;
+    if (id >= 0 && size_t(id) < B.revisionIndex.size() &&
+        g < wrote.groupWritten.size()) {
+        switch (wrote.role) {
+        case RigExecBakedRevisionRole::Range:
+            slot = wrote.groupWritten[g] ? wrote.chunkBase + int(g) : -1;
+            break;
+        case RigExecBakedRevisionRole::Whole:
+            slot = wrote.chunkBase + int(wrote.chunks.size()) + int(g);
+            break;
+        case RigExecBakedRevisionRole::Legacy:
+            break;
+        }
+    }
+    from->slot = int64_t(slot);
+    return *entering;
+}
+
 /// Makes \p revision's `groupIds[g]` \p source and returns whether it moved.
 bool
 NoteGroupId(RigExecBakedProgramImpl::GeomRevision *revision, size_t g,
@@ -3401,6 +3937,10 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     // This run's walk counts: zero unless the sparse walk below runs.
     state.walk.computed = 0;
     state.walk.reused = 0;
+    state.walk.skippedWhole = 0;
+    // The publish claim starts dropped every run; only the whole-walk
+    // skip below re-attests it.
+    state.matrixSkipHeld = false;
     if (revision->rangeSetAside) {
         // A cycle set the revision aside: it passes the base through, as an
         // excluded fuse does, and computes nothing.
@@ -3409,10 +3949,10 @@ RunGroupStep(RigExecBakedProgramImpl &B,
                                   BaseGroupSource(chain, g));
         return;
     }
+    // The entering group and its content id from one writer lookup.
+    RigExecGroupSource from;
     const RigExecPointsRef<GfVec3f> &entering =
-        RigExecBakedGroupAt(chain, revisionIndex, g);
-    const RigExecGroupSource from =
-        RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
+        GroupEnteringAt(B, chainIndex, chain, revisionIndex, g, &from);
     const size_t begin = size_t(chain.groupBounds[g]);
     const size_t end = size_t(chain.groupBounds[g + 1]);
     const size_t count = revision->precedingCount;
@@ -3448,6 +3988,45 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         GatherChunkTransforms(B, *revision, &chunk);
         view = ChunkTransformsView(chunk, B.useSimd);
     }
+    // This group's sparse entry range while RevisionStatic's claim stands
+    // (verified there this run; the packet's revision is final for the
+    // run, so the flag is enough here). The arm searches when it is null.
+    const std::pair<size_t, size_t> *entryRange = nullptr;
+    if (revision->op == RigExecRevisionOp::Matrix &&
+        revision->matrixEntryRangesHeld &&
+        g < revision->matrixEntryRanges.size()) {
+        entryRange = &revision->matrixEntryRanges[g];
+    }
+    if (revision->op == RigExecRevisionOp::Matrix && entryRange &&
+        entryRange->second > entryRange->first) {
+        // A walk whose per-revision inputs, packet, entering group and
+        // count all hold, and whose result the group still publishes,
+        // skips whole: the published bytes already are the walk's result,
+        // so no scratch, seed, walk or publish runs. The counters report
+        // the walk the skip stands in for, which computed nothing and
+        // reused every entry, as a reusing walk does.
+        bool packetShared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+        if (RigExecSparseWalkSkipStands(
+                state.walk, revision->parameters.radialWeight,
+                revision->parameters.transform.GetArray(), packetShared,
+                packetRevision, from.slot, from.version, count,
+                state.version, state.ran,
+                entryRange->second - entryRange->first,
+                revision->matrixParamsVersion)) {
+            // Last run's ok, before the body overwrites it: the skip's
+            // held claim needs it, since the key spells the bit.
+            const bool groupWasOk = state.ok;
+            state.ok = true;
+            state.matrixSkipHeld = groupWasOk;
+            state.walk.computed = 0;
+            state.walk.reused =
+                uint32_t(entryRange->second - entryRange->first);
+            state.walk.skippedWhole = 1;
+            return;
+        }
+    }
     const int k = RigExecGroupScratch(&state, end - begin);
     bool untouched = false;
     // A sparse walk reuses what it last computed for this group's entries
@@ -3456,13 +4035,28 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         revision->op, revision->parameters, revision->rangeInputs,
         skin ? &view : nullptr, entering.data, state.own[size_t(k)]->data(),
         count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched,
-        &state.walk);
+        &state.walk, entryRange);
     state.ok = ok;
     if (!ok || untouched) {
         RigExecPublishPassedGroup(&state, entering, from);
         return;
     }
     RigExecPublishOwnGroup(&state, k);
+    // The sparse walk just published, keyed whole for its next run: its
+    // shared packet revision, entering group source, point count and
+    // published version. Only a walk that ran its entries notes one; any
+    // other arm leaves the counters the step zeroed.
+    if (revision->op == RigExecRevisionOp::Matrix &&
+        state.walk.computed + state.walk.reused > 0) {
+        bool packetShared = false;
+        const uint64_t packetRevision =
+            MatrixEnvelopePacketRevision(B, *revision, &packetShared);
+        if (packetShared) {
+            RigExecSparseWalkSkipNote(&state.walk, packetRevision, from.slot,
+                                      from.version, count, state.version,
+                                      revision->matrixParamsVersion);
+        }
+    }
 }
 
 /// Speculative chunk \p g of the Whole keyed skin \p revision: group g of
@@ -3660,6 +4254,25 @@ RunJoin(const RigExecBakedProgramImpl &B,
     }
     bool moved = SizeGroupIds(revision);
     uint32_t refusals = 0;
+    // A matrix join takes an aliased group's entering source from the
+    // predecessor's join output instead of scanning for its writer. The
+    // predecessor noted exactly what the scan resolves: its own slot and
+    // version where it wrote the group, the entering source it resolved
+    // where it aliased it, the base source where a cycle set it aside.
+    // The entering-version declaration orders that join before this one,
+    // so its notes are fresh; a predecessor that skipped held every input
+    // its memo covers, so its notes still name the current sources. A
+    // first revision, a non-Range predecessor, or short ids resolve by
+    // the scan as before.
+    const std::vector<RigExecGroupSource> *previousIds = nullptr;
+    if (revision->op == RigExecRevisionOp::Matrix && revisionIndex > 0 &&
+        revisionIndex <= chain.revisions.size()) {
+        const RigExecBakedProgramImpl::GeomRevision &previous =
+            chain.revisions[revisionIndex - 1];
+        if (previous.role == RigExecBakedRevisionRole::Range) {
+            previousIds = &previous.groupIds;
+        }
+    }
     for (size_t g = 0; g < revision->groupIds.size(); ++g) {
         RigExecGroupSource source;
         if (g < revision->groupWritten.size() && revision->groupWritten[g] &&
@@ -3669,6 +4282,8 @@ RunJoin(const RigExecBakedProgramImpl &B,
             }
             source.slot = int64_t(RigExecBakedGroupSlot(B, id, g));
             source.version = revision->groups[g].version;
+        } else if (previousIds && g < previousIds->size()) {
+            source = (*previousIds)[g];
         } else {
             source = RigExecBakedGroupSourceAt(B, chainIndex, revisionIndex, g);
         }
@@ -4401,6 +5016,8 @@ ResolveWindowDevices(RigExecBakedProgramImpl &B, UsdTimeCode time)
         run.device = count >= B.windowDeviceMinPoints;
         revision.parameters.window = &run;
         solved.clear();
+        // No walk memo: the chunk step owns the revision's, and this solve
+        // runs at the boundary rather than in it.
         const bool ok = geometryDetail::RunDiscardableGeometry(
             revision.op, revision.parameters, points, count, &solved, B.useSimd,
             &revision.wireBasis, &revision.surfaceCache,
@@ -4816,6 +5433,21 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     const bool skin = revision.op == RigExecRevisionOp::Skin;
     switch (step->kind) {
     case RigExecBakedStepKind::InfluenceFold: {
+        // The RevisionTransforms key's fields, stale-read for the held
+        // verdict the publish decides by: the fold overwrites them below,
+        // so these are last run's. Matrix only; anything else keys bytes.
+        const bool matrixFold = revision.op == RigExecRevisionOp::Matrix;
+        GfMatrix4d wasTransform(1.0);
+        bool wasHaveTransform = false, wasHaveCarry = false;
+        bool wasInfluencesValid = false;
+        size_t wasInfluencesCount = 0;
+        if (matrixFold) {
+            wasTransform = revision.transform;
+            wasHaveTransform = revision.haveTransform;
+            wasHaveCarry = revision.haveCarry;
+            wasInfluencesValid = revision.influencesValid;
+            wasInfluencesCount = revision.influences.size();
+        }
         revision.influencesChanged = FoldInfluences(B, &revision);
         if (revision.gpuOwned) revision.gpuTouched = true;
         // The finite/affine check the dynamic path's assembler makes over the
@@ -4836,10 +5468,48 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             revision.role != RigExecBakedRevisionRole::Range) {
             FoldTransformForms(&revision, B.useSimd);
         }
+        // The transforms verdict: the fold's own unchanged return covers
+        // the carry and influence bytes, the stale copy the folded
+        // transform, the stale scalars the rest. The transform compares
+        // by bytes, not operator==, so a sign flip on a zero still fails
+        // it exactly as the key's bytes would. Conservative by
+        // construction, since false only costs the spell it already paid.
+        if (matrixFold) {
+            revision.matrixTransformsHeld =
+                !revision.influencesChanged &&
+                std::memcmp(&wasTransform, &revision.transform,
+                            sizeof(GfMatrix4d)) == 0 &&
+                wasHaveTransform == revision.haveTransform &&
+                wasHaveCarry == revision.haveCarry &&
+                wasInfluencesValid == revision.influencesValid &&
+                wasInfluencesCount == revision.influences.size();
+        }
         return;
     }
 
     case RigExecBakedStepKind::RevisionStatic: {
+        // The RevisionPacket key's scalars, stale-read for the held verdict
+        // the publish decides by: the body overwrites them below, so these
+        // are last run's. The parameters ride `matrixParamsHeld` instead,
+        // and the status is a pure function of those and the static path.
+        const bool matrixStatic =
+            revision.op == RigExecRevisionOp::Matrix;
+        const bool wasVersionedArm = revision.parameters.enabled &&
+            revision.weightObject >= 0 && !revision.weightCurrentPhase &&
+            revision.weightPacketValue >= 0;
+        const uint64_t wasMatrixWeightsVersion = revision.matrixWeightsVersion;
+        const bool wasLayoutUsable = revision.layoutUsable;
+        const bool wasEnvelopeOk = revision.envelopeOk;
+        const uint64_t wasEnvelopeVersion = revision.envelopeVersion;
+        const bool wasFullStrength = revision.fullStrength;
+        const size_t wasPrecedingCount = revision.precedingCount;
+        const bool wasPartitionStale = revision.partitionStale;
+        const bool wasWeightFieldPublished = revision.weightFieldPublished;
+        const uint64_t wasWeightValuesVersion = revision.weightValuesVersion;
+        const RigExecRevisionAcceptance wasAcceptance = revision.acceptance;
+        const int wasWeightObject = revision.weightObject;
+        const bool wasWeightCurrentPhase = revision.weightCurrentPhase;
+        const int wasWeightPacketValue = revision.weightPacketValue;
         RigExecBakedAdoptRevisionLayout(&revision);
         // The field consumes the declared preceding point version. Preserve
         // the source packet's range policy when adopting its dense values.
@@ -4879,24 +5549,74 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             (!rangeLattice || revision.restBaseVersion != chain.baseVersion)) {
             revision.restBaseHeld = false;
         }
-        RigExecMoverParameters assembled =
-            AssembleRevision(B, &revision, chain.lastBase.cdata(),
-                             chain.lastBase.size(), time, step,chain.lastBase.size());
-        // A range-chain blend keys its deltas by a content version moved
-        // exactly when their bytes do, not by the bytes.
-        if (rangeChain && revision.op == RigExecRevisionOp::BlendShape &&
-            !RigExecBakedSamePoints(assembled.blendDeltas.data(),
-                                    assembled.blendDeltas.size(),
-                                    revision.parameters.blendDeltas.data(),
-                                    revision.parameters.blendDeltas.size())) {
-            ++revision.deltasVersion;
+        // A matrix revision's held parameters while every input the
+        // assembly reads stands, else the fresh assembly, whose key is
+        // then noted: the same parameters either way.
+        const bool paramsHeld =
+            matrixStatic && MatrixParamsHeld(B, revision);
+        if (paramsHeld) {
+            // Held: revision.parameters stands as assembled.
+        } else {
+            RigExecMoverParameters assembled = AssembleRevision(
+                B, &revision, chain.lastBase.cdata(), chain.lastBase.size(),
+                time, step, chain.lastBase.size());
+            // A range-chain blend keys its deltas by a content version
+            // moved exactly when their bytes do, not by the bytes.
+            if (rangeChain && revision.op == RigExecRevisionOp::BlendShape &&
+                !RigExecBakedSamePoints(
+                    assembled.blendDeltas.data(), assembled.blendDeltas.size(),
+                    revision.parameters.blendDeltas.data(),
+                    revision.parameters.blendDeltas.size())) {
+                ++revision.deltasVersion;
+            }
+            // The replaced packet's delta buffer becomes the next
+            // assembly's (RigExecBakedAssembleFromLeaves); nothing reads it
+            // before then.
+            if (revision.op == RigExecRevisionOp::BlendShape) {
+                revision.deltasSpare =
+                    std::move(revision.parameters.blendDeltas);
+            }
+            revision.parameters = std::move(assembled);
+            if (revision.op == RigExecRevisionOp::Matrix) {
+                MatrixParamsNote(B, &revision);
+            }
         }
-        // The replaced packet's delta buffer becomes the next assembly's
-        // (RigExecBakedAssembleFromLeaves); nothing reads it before then.
-        if (revision.op == RigExecRevisionOp::BlendShape) {
-            revision.deltasSpare = std::move(revision.parameters.blendDeltas);
+        // A bound matrix revision's weights version, moved exactly when
+        // the shared packet it names changed: the RevisionPacket key
+        // carries the version instead of the arrays.
+        if (revision.op == RigExecRevisionOp::Matrix) {
+            MatrixWeightsNoteVersion(B, &revision);
         }
-        revision.parameters = std::move(assembled);
+        // RevisionPacket's held verdict for the publish, from the head's
+        // parameters claim and the stale key scalars: true only while the
+        // versioned-array arm keyed both runs and no scalar moved. Called
+        // at every exit; conservative by construction, since false only
+        // costs the spell the publish already paid.
+        const auto notePacketHeld = [&] {
+            if (!matrixStatic) {
+                return;
+            }
+            const RigExecMoverParameters &p = revision.parameters;
+            const bool versionedArm = p.enabled &&
+                revision.weightObject >= 0 &&
+                !revision.weightCurrentPhase &&
+                revision.weightPacketValue >= 0;
+            revision.matrixPacketHeld = paramsHeld && wasVersionedArm &&
+                versionedArm &&
+                wasMatrixWeightsVersion == revision.matrixWeightsVersion &&
+                wasLayoutUsable == revision.layoutUsable &&
+                wasEnvelopeOk == revision.envelopeOk &&
+                wasEnvelopeVersion == revision.envelopeVersion &&
+                wasFullStrength == revision.fullStrength &&
+                wasPrecedingCount == revision.precedingCount &&
+                wasPartitionStale == revision.partitionStale &&
+                wasWeightFieldPublished == revision.weightFieldPublished &&
+                wasWeightValuesVersion == revision.weightValuesVersion &&
+                wasAcceptance == revision.acceptance &&
+                wasWeightObject == revision.weightObject &&
+                wasWeightCurrentPhase == revision.weightCurrentPhase &&
+                wasWeightPacketValue == revision.weightPacketValue;
+        };
         if (rangeLattice) {
             // The lattice arm copies the base (or takes the held copy back)
             // into a valid packet's rest points and leaves them empty
@@ -4927,10 +5647,52 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // can leave the packet identical, and the line the fuse emits is
         // about the weight rather than about the packet.
         // Read the same declared resolved source the effective memo compares.
-        const VtValue diagnosticWeight = RigExecBakedResolvePathLeaf(
-            B, revision.leaves, size_t(revision.defaultWeightLeaf));
-        revision.defaultWeight = diagnosticWeight.IsHolding<float>()
-            ? diagnosticWeight.UncheckedGet<float>() : 1.0f;
+        float diagnosticWeight = 1.0f;
+        // The scalar while its leaf stands: same noted index, standing
+        // content version, walks/exact guards re-checked. A stand is last
+        // run's value without the cold declaration and boxed reads; the
+        // note below takes the same key under a successful direct read.
+        const int diagWeightLeaf = revision.defaultWeightLeaf;
+        bool diagStands = revision.diagWeightHeld &&
+            revision.diagWeightIndex == diagWeightLeaf &&
+            diagWeightLeaf >= 0 &&
+            size_t(diagWeightLeaf) < revision.leaves.versions.size() &&
+            revision.leaves.versions[size_t(diagWeightLeaf)] ==
+                revision.diagWeightVersion;
+        if (diagStands) {
+            const size_t dwk = size_t(diagWeightLeaf);
+            const auto at = [dwk](const std::vector<int> &v) {
+                return dwk < v.size() ? v[dwk] : -1;
+            };
+            diagStands = at(revision.leaves.walks) < 0 &&
+                at(revision.leaves.exactVersions) < 0 &&
+                at(revision.leaves.exactRecordIndices) < 0;
+        }
+        if (diagStands) {
+            diagnosticWeight = revision.defaultWeight;
+        } else {
+            revision.diagWeightHeld = false;
+            if (!DiagnosticWeightDirect(
+                    B, revision.leaves, size_t(diagWeightLeaf),
+                    &diagnosticWeight)) {
+                const VtValue boxed = RigExecBakedResolvePathLeaf(
+                    B, revision.leaves, size_t(diagWeightLeaf));
+                diagnosticWeight = boxed.IsHolding<float>()
+                    ? boxed.UncheckedGet<float>() : 1.0f;
+            } else if (diagWeightLeaf >= 0 &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.decl.keys.size() &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.values.size() &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.versions.size()) {
+                revision.diagWeightIndex = diagWeightLeaf;
+                revision.diagWeightVersion =
+                    revision.leaves.versions[size_t(diagWeightLeaf)];
+                revision.diagWeightHeld = true;
+            }
+        }
+        revision.defaultWeight = diagnosticWeight;
         // Selection already compares the exact declared packet inputs.
         // This flag records actual current-generation assembly only; it is
         // not a second cache authority or a deep-copy packet fingerprint.
@@ -5010,10 +5772,35 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 if (!revision.fullStrength) ResolveEnvelope(&revision, count);
                 revision.acceptance = SkinAcceptance(revision);
             } else {
-                revision.acceptance = RigExecRevisionKernelAcceptance(
-                    revision.op, revision.parameters, count,
-                    &revision.envelopeOk);
+                // A matrix revision's held envelope verdict when the packet
+                // and count stand, else the validating call, whose weights
+                // verdict is then noted: the same acceptance either way.
+                const bool packetMatches =
+                    revision.parameters.valid &&
+                    revision.parameters.kind ==
+                        RigExecRevisionKindToken(revision.op);
+                bool heldVerdict = false;
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches &&
+                    MatrixEnvelopeHeldVerdict(B, revision, count,
+                                              &heldVerdict)) {
+                    revision.acceptance = heldVerdict
+                        ? RigExecRevisionAcceptance::Applies
+                        : RigExecRevisionAcceptance::Refuses;
+                } else {
+                    revision.acceptance = RigExecRevisionKernelAcceptance(
+                        revision.op, revision.parameters, count,
+                        &revision.envelopeOk);
+                    if (revision.op == RigExecRevisionOp::Matrix &&
+                        packetMatches) {
+                        MatrixEnvelopeNoteVerdict(
+                            B, &revision, count,
+                            revision.acceptance ==
+                                RigExecRevisionAcceptance::Applies);
+                    }
+                }
             }
+            notePacketHeld();
             return;
         }
         // Every revision of a chain is applied to the same number of points:
@@ -5049,9 +5836,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // that is a pin hole (counted, reported by the owner).
         const auto noteGate = [&B, &revision]() {
             if (revision.role != RigExecBakedRevisionRole::Range ||
-                std::find(revision.groupWritten.begin(),
-                          revision.groupWritten.end(),
-                          char(0)) == revision.groupWritten.end()) {
+                !revision.rangeGated) {
                 return;
             }
             if (revision.parameters.valid && revision.status.AllowsApply() &&
@@ -5076,11 +5861,57 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     ResolveEnvelope(&revision, count);
                 }
             }
-            revision.acceptance = RigExecPrepareRevisionRanges(
-                revision.op, revision.parameters, count, &revision.wireBasis,
-                &revision.surfaceCache, &revision.rangeInputs,
-                revision.restBaseHeld ? revision.restBaseVersion : 0);
+            // A matrix revision's held envelope verdict when the packet
+            // and count stand, else the validating call, whose weights
+            // verdict is then noted: the same acceptance either way. A
+            // held dense resolve stands with the key in
+            // `rangeInputs.matrixWeights`, which only that call writes.
+            const bool packetMatches =
+                revision.parameters.valid &&
+                revision.parameters.kind ==
+                    RigExecRevisionKindToken(revision.op);
+            bool heldVerdict = false;
+            if (revision.op == RigExecRevisionOp::Matrix && packetMatches &&
+                MatrixEnvelopeHeldVerdict(B, revision, count,
+                                          &heldVerdict)) {
+                revision.acceptance = heldVerdict
+                    ? RigExecRevisionAcceptance::Applies
+                    : RigExecRevisionAcceptance::Refuses;
+            } else {
+                revision.acceptance = RigExecPrepareRevisionRanges(
+                    revision.op, revision.parameters, count,
+                    &revision.wireBasis, &revision.surfaceCache,
+                    &revision.rangeInputs,
+                    revision.restBaseHeld ? revision.restBaseVersion : 0);
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches) {
+                    MatrixEnvelopeNoteVerdict(
+                        B, &revision, count,
+                        revision.acceptance ==
+                            RigExecRevisionAcceptance::Applies);
+                }
+            }
+            // A sparse matrix revision's per-group entry ranges while the
+            // packet and count stand, else the one ascending cut, whose key
+            // is then noted: the same [first, last) each group's own search
+            // answers. Only under an Applies verdict -- the validation it
+            // carries is what the ascending cut rests on -- and only for a
+            // sparse walk; anything else searches per group as before.
+            if (revision.op == RigExecRevisionOp::Matrix &&
+                revision.acceptance == RigExecRevisionAcceptance::Applies &&
+                RigExecWireTakesSparseEnvelope(
+                    revision.parameters.weights)) {
+                const size_t groupCount =
+                    chain.groupBounds.size() < 2
+                        ? 0
+                        : chain.groupBounds.size() - 1;
+                if (!MatrixEntryRangesHeld(B, revision, count, groupCount)) {
+                    MatrixEntryRangesNote(B, &revision, count,
+                                          chain.groupBounds);
+                }
+            }
             noteGate();
+            notePacketHeld();
             return;
         }
         if (!skin) {
@@ -5100,10 +5931,33 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             // count it is applied to. A wire's envelope validation is the
             // resolve above: wherever the acceptance asks for it, the wire
             // branch took the same predicates and `envelopeOk` holds its
-            // answer.
-            revision.acceptance = RigExecRevisionKernelAcceptance(
-                revision.op, revision.parameters, count,
-                &revision.envelopeOk);
+            // answer. A matrix revision's held envelope verdict when the
+            // packet and count stand, else the validating call, whose
+            // weights verdict is then noted.
+            const bool packetMatches =
+                revision.parameters.valid &&
+                revision.parameters.kind ==
+                    RigExecRevisionKindToken(revision.op);
+            bool heldVerdict = false;
+            if (revision.op == RigExecRevisionOp::Matrix && packetMatches &&
+                MatrixEnvelopeHeldVerdict(B, revision, count,
+                                          &heldVerdict)) {
+                revision.acceptance = heldVerdict
+                    ? RigExecRevisionAcceptance::Applies
+                    : RigExecRevisionAcceptance::Refuses;
+            } else {
+                revision.acceptance = RigExecRevisionKernelAcceptance(
+                    revision.op, revision.parameters, count,
+                    &revision.envelopeOk);
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    packetMatches) {
+                    MatrixEnvelopeNoteVerdict(
+                        B, &revision, count,
+                        revision.acceptance ==
+                            RigExecRevisionAcceptance::Applies);
+                }
+            }
+            notePacketHeld();
             return;
         }
         // Every skin, Legacy, Whole or Range: a Range skin's group steps
@@ -5145,11 +5999,13 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 count != revision.partitionPointCount;
         }
         noteGate();
+        notePacketHeld();
         return;
     }
 
     case RigExecBakedStepKind::RevisionChunk: {
         if (revision.gpuOwned) {
+            revision.matrixChunkHeld = false;
             return;
         }
         if (revision.role == RigExecBakedRevisionRole::Range) {
@@ -5182,10 +6038,14 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (!revision.chunked) {
             // One chunk is the whole array, so there is nothing to speculate
             // about: it knows everything the fuse knows.
+            // Last run's ok, before the body overwrites it: the whole-walk
+            // skip's held claim needs it, since the key spells the bit.
+            const bool chunkWasOk = chunk.ok;
             chunk.ok = false;
             revision.devicePending = false;
             if (!revision.status.AllowsApply()) {
                 revision.deviceTicks.clear();
+                revision.matrixChunkHeld = false;
                 // A disabled windowed revision captures nothing: the history
                 // after it starts at the next frame it runs.
                 if (revision.window >= 0 &&
@@ -5195,6 +6055,38 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 return;
             }
             if (!skin) {
+                // A Legacy matrix revision whose walk stands as published
+                // skips whole: no seed, walk or publish runs, and the fuse
+                // keeps the output it holds, as it does when the chunk sat
+                // out. The counters report the walk the skip stands in for,
+                // as a reusing walk does. Only what the fuse would apply:
+                // a windowed revision answers from its history, and a Whole
+                // one gathers its entering points from groups this key does
+                // not name.
+                if (revision.op == RigExecRevisionOp::Matrix &&
+                    revision.role == RigExecBakedRevisionRole::Legacy &&
+                    revision.window < 0 && revision.parameters.valid &&
+                    revision.acceptance ==
+                        RigExecRevisionAcceptance::Applies &&
+                    LegacyMatrixSkipStands(B, chain, revision,
+                                           size_t(revisionIndex), count)) {
+                    chunk.ok = true;
+                    revision.matrixChunkHeld = chunkWasOk;
+                    revision.stagingFresh = false;
+                    revision.matrixWalk.computed = 0;
+                    revision.matrixWalk.reused = 0;
+                    revision.matrixWalk.skippedWhole = 1;
+                    const RigExecWeightPacket &weights =
+                        revision.parameters.weights;
+                    if (!RigExecEnvelopeIsFullStrength(weights) &&
+                        RigExecWireTakesSparseEnvelope(weights) &&
+                        revision.parameters.transform !=
+                            GfMatrix4d(1.0)) {
+                        revision.matrixWalk.reused =
+                            uint32_t(weights.indices.size());
+                    }
+                    return;
+                }
                 // The revision's OWN unpublished buffer, written out of
                 // place from the preceding points -- no seed copy before a
                 // kernel that rewrites every point -- and swapped in by the
@@ -5229,12 +6121,22 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 // operation cannot mean one thing here and another there.
                 // This unpublished buffer is discarded by Fuse on failure.
                 // A wire blends with the envelope RevisionStatic resolved.
+                // A matrix revision walks sparse through its own memo, as a
+                // Range group's walk does; a rerun whose inputs stand
+                // reuses every entry instead of recomputing the walk.
+                revision.matrixWalk.computed = 0;
+                revision.matrixWalk.reused = 0;
+                revision.matrixWalk.skippedWhole = 0;
                 chunk.ok = geometryDetail::RunDiscardableGeometry(
                     revision.op, revision.parameters, points, count,
                     &revision.stagingOutput, B.useSimd, &revision.wireBasis,
                     &revision.surfaceCache,
                     !revision.fullStrength && revision.envelopeOk
-                        ? &revision.envelope : nullptr);
+                        ? &revision.envelope : nullptr,
+                    revision.op == RigExecRevisionOp::Matrix
+                        ? &revision.matrixWalk : nullptr);
+                // Fresh bytes (or a fresh failure): the publish keys them.
+                revision.matrixChunkHeld = false;
                 if (revision.windowRun.deferred) {
                     revision.devicePending =
                         chunk.ok && !revision.deviceTicks.empty();
@@ -5358,6 +6260,12 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     }
                 }
             }
+            // Whether the whole-walk skip notes this publication: the chunk
+            // verified the result it stands for -- a walk that ran its
+            // kernel, or a skip (or a sat-out chunk) over standing inputs --
+            // and not the arm below, which publishes a result the chunk did
+            // not verify.
+            bool noteSkip = false;
             if (applied) {
                 if (revision.chunked || whole) {
                     const std::vector<GfVec3f> &result =
@@ -5380,10 +6288,16 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     revision.output.swap(revision.stagingOutput);
                     revision.stagingOutput.resize(revision.output.size());
                     revision.stagingFresh = false;
+                    noteSkip = true;
                 } else if (!hadOwn) {
                     // The chunk's latest result is already `output`.
                     moved = moved || !SamePoints(revision.output,
                                                  revision.passedPoints);
+                } else {
+                    // The chunk's result is already `output`: a skip over
+                    // standing inputs, or a chunk that sat the run out while
+                    // its inputs stood.
+                    noteSkip = true;
                 }
                 revision.currentSource = int(revisionIndex);
             } else {
@@ -5413,6 +6327,17 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             }
             if (moved) {
                 ++revision.doneVersion;
+            }
+            if (noteSkip &&
+                revision.op == RigExecRevisionOp::Matrix &&
+                revision.window < 0) {
+                // The entering count the walk consumed, for the key.
+                const GfVec3f *entering = nullptr;
+                size_t enteringCount = 0;
+                PointsAt(chain, size_t(revisionIndex), &entering,
+                         &enteringCount);
+                LegacyMatrixSkipNote(B, chain, &revision,
+                                     size_t(revisionIndex), enteringCount);
             }
             // Keep the published RevisionPacket intact. Ordinary revisions
             // have no duplicate last-parameters snapshot; exact value keys

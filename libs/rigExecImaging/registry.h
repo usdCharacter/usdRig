@@ -1145,7 +1145,7 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGeneration();
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloats(
     const char *packedPaths, float *out, int count);
 
-/// Reads a complete evaluated control or final joint matrix from the exact
+/// Reads an evaluated control, final joint, or rigid volume placement matrix from the exact
 /// published stage/time. Authored guide placements never supply this value.
 /// Returns 1 on success, 0 without changing output otherwise. isDefault selects
 /// UsdTimeCode::Default; ordinary frames must be finite. Does not evaluate.

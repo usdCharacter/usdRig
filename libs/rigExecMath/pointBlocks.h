@@ -59,6 +59,13 @@ struct RigExecGroupSource {
 /// Entries are recorded only by a walk whose per-revision inputs are the
 /// last walk's: a mover whose inputs move on every run (playback) records
 /// nothing and pays one compare of those inputs per walk.
+///
+/// A walk whose per-revision inputs, packet, entering group and count all
+/// hold, and whose result the group still publishes, skips whole: the
+/// published bytes already are the walk's result, so no seed, walk or
+/// publish runs (RigExecSparseWalkSkipStands). The skip key below names
+/// that walk; like the entries it is self-validating, and a copy is
+/// independent.
 template <class Point>
 struct RigExecSparseWalkMemo {
     /// The last walk's per-revision inputs, as its kernel spells them.
@@ -69,7 +76,38 @@ struct RigExecSparseWalkMemo {
     std::vector<Point> in, out;
     /// Entries the last walk computed and reused. Observability only.
     uint32_t computed = 0, reused = 0;
+    /// Whether the skip key names a walk, and that walk's packet revision,
+    /// entering group source, point count and published version. The
+    /// per-revision inputs are `params` above, written by the same walk's
+    /// RigExecSparseWalkBegin.
+    bool skipArmed = false;
+    uint64_t skipPacketRevision = 0;
+    int64_t skipSlot = kRigExecNoGroupSource;
+    uint64_t skipVersion = 0;
+    size_t skipCount = 0;
+    uint64_t skipPublishedVersion = 0;
+    /// The skip key's per-revision inputs version, 0 until noted: while it
+    /// names the revision's current one, the inputs hold without spelling.
+    uint64_t skipParamsVersion = 0;
+    /// Whole walks the last step skipped (0 or 1). Observability only.
+    uint32_t skippedWhole = 0;
 };
+
+/// The bytes a sparse matrix walk keys its memo by: the arm bit, then the
+/// transform's sixteen doubles. ONE spelling for the native walk, the
+/// runtime's walk and the skip check, so the three cannot disagree about
+/// when the per-revision inputs held.
+inline constexpr size_t kRigExecSparseWalkParamsSize = 1 + 16 * sizeof(double);
+
+/// Spells \p radial and the sixteen doubles at \p transform into the
+/// kRigExecSparseWalkParamsSize bytes at \p params.
+inline void
+RigExecSparseWalkSpellParams(bool radial, const double *transform,
+                             unsigned char *params)
+{
+    params[0] = radial ? 1 : 0;
+    std::memcpy(params + 1, transform, 16 * sizeof(double));
+}
 
 /// What a walk does with its memo (RigExecSparseWalkBegin).
 enum class RigExecSparseWalkMode {
@@ -109,7 +147,25 @@ struct RigExecGroupState {
     bool computedRan = false;
     /// A group step's sparse walk over this group (RigExecSparseWalkMemo).
     RigExecSparseWalkMemo<Point> walk;
+    /// The chunk's verdict that this run's whole-walk skip of a Range
+    /// matrix group left every RevisionOut key field standing: the skip
+    /// proved the published bytes identical to last run's, the count and
+    /// version are untouched by the skip, and the ok bit (captured before
+    /// the body overwrote it) proves that bit identical too. The group
+    /// publish skips its key spell and reports unchanged while this
+    /// stands; the stored key already spells these fields, so skipping
+    /// the compare is unobservable. Set fresh by every group run (cleared
+    /// beside the walk counters, attested only on the skip), never read
+    /// or written by any other step.
+    bool matrixSkipHeld = false;
 };
+
+/// Whether \p memo's per-revision inputs are the \p size bytes at \p params:
+/// the compare RigExecSparseWalkBegin and the skip check both decide by, with
+/// no side effect.
+template <class Point>
+bool RigExecSparseWalkParamsHold(const RigExecSparseWalkMemo<Point> &memo,
+                                 const void *params, size_t size);
 
 /// Readies \p memo for a walk of \p entries entries whose per-revision
 /// inputs are the \p size bytes at \p params, and answers how the walk uses
@@ -119,6 +175,41 @@ template <class Point>
 RigExecSparseWalkMode RigExecSparseWalkBegin(
     RigExecSparseWalkMemo<Point> *memo, const void *params, size_t size,
     size_t entries);
+
+/// Whether the sparse walk of \p entries entries over \p count points skips
+/// whole: its per-revision inputs (\p radial, the sixteen doubles at
+/// \p transform), its shared packet (\p packetShared names \p packetRevision
+/// exactly), its entering group (\p slot, \p version) and the count all hold
+/// the skip key's, the group still publishes that walk's result (\p ran, and
+/// \p publishedVersion is the key's), and the recorded entries cover this
+/// walk's. Then the published bytes already are the walk's result: same
+/// per-revision inputs, same packet (so the same entry set and weights),
+/// same entering points (the source version moves exactly with its bytes),
+/// and the same publication. A stale key fails its own compares, so no
+/// disarm runs on any path the key does not name. A nonzero \p paramsVersion
+/// equal to the key's proves the inputs without spelling them; anything
+/// else spells and compares as before, so versions can only short-circuit
+/// an acceptance, never cause a rejection.
+template <class Point>
+bool RigExecSparseWalkSkipStands(const RigExecSparseWalkMemo<Point> &memo,
+                                 bool radial, const double *transform,
+                                 bool packetShared, uint64_t packetRevision,
+                                 int64_t slot, uint64_t version, size_t count,
+                                 uint64_t publishedVersion, bool ran,
+                                 size_t entries, uint64_t paramsVersion);
+
+/// Arms \p memo's skip key over the walk just published: its shared packet
+/// revision, entering group source, point count and published version. The
+/// per-revision inputs stay the walk's RigExecSparseWalkBegin bytes, and the
+/// recorded entries stay the walk's; \p paramsVersion names them for the
+/// spelling-free check. Call only for a walk that ran its
+/// sparse entries and published own.
+template <class Point>
+void RigExecSparseWalkSkipNote(RigExecSparseWalkMemo<Point> *memo,
+                               uint64_t packetRevision, int64_t slot,
+                               uint64_t version, size_t count,
+                               uint64_t publishedVersion,
+                               uint64_t paramsVersion);
 
 /// Whether entry \p j of a memo in the Reuse mode was computed for point
 /// \p index at \p weight from entering point \p point: then `out[j]` is the
@@ -196,15 +287,25 @@ void RigExecGatherGroups(const RigExecPointsRef<Point> *const *groups,
 // writer overwrites the buffer.
 
 template <class Point>
+bool
+RigExecSparseWalkParamsHold(const RigExecSparseWalkMemo<Point> &memo,
+                            const void *params, size_t size)
+{
+    const unsigned char *bytes = static_cast<const unsigned char *>(params);
+    return memo.params.size() == size &&
+           (size == 0 || std::memcmp(memo.params.data(), bytes, size) == 0);
+}
+
+template <class Point>
 RigExecSparseWalkMode
 RigExecSparseWalkBegin(RigExecSparseWalkMemo<Point> *memo, const void *params,
                        size_t size, size_t entries)
 {
     memo->computed = 0;
     memo->reused = 0;
+    memo->skippedWhole = 0;
     const unsigned char *bytes = static_cast<const unsigned char *>(params);
-    if (memo->params.size() != size ||
-        (size != 0 && std::memcmp(memo->params.data(), bytes, size) != 0)) {
+    if (!RigExecSparseWalkParamsHold(*memo, params, size)) {
         memo->params.assign(bytes, bytes + size);
         memo->indices.clear();
         memo->weights.clear();
@@ -243,6 +344,48 @@ RigExecSparseWalkNote(RigExecSparseWalkMemo<Point> *memo, size_t j, int index,
     memo->indices[j] = index;
     memo->weights[j] = weight;
     memo->in[j] = point;
+}
+
+template <class Point>
+bool
+RigExecSparseWalkSkipStands(const RigExecSparseWalkMemo<Point> &memo,
+                            bool radial, const double *transform,
+                            bool packetShared, uint64_t packetRevision,
+                            int64_t slot, uint64_t version, size_t count,
+                            uint64_t publishedVersion, bool ran,
+                            size_t entries, uint64_t paramsVersion)
+{
+    // Cheapest first; the per-revision inputs spell their bytes last.
+    if (!memo.skipArmed || entries == 0 || !packetShared || !ran ||
+        memo.skipPacketRevision != packetRevision || memo.skipSlot != slot ||
+        memo.skipVersion != version || memo.skipCount != count ||
+        memo.skipPublishedVersion != publishedVersion ||
+        memo.indices.size() != entries || memo.weights.size() != entries ||
+        memo.in.size() != entries || memo.out.size() != entries) {
+        return false;
+    }
+    if (paramsVersion != 0 && memo.skipParamsVersion == paramsVersion) {
+        return true;
+    }
+    unsigned char params[kRigExecSparseWalkParamsSize];
+    RigExecSparseWalkSpellParams(radial, transform, params);
+    return RigExecSparseWalkParamsHold(memo, params, sizeof(params));
+}
+
+template <class Point>
+void
+RigExecSparseWalkSkipNote(RigExecSparseWalkMemo<Point> *memo,
+                          uint64_t packetRevision, int64_t slot,
+                          uint64_t version, size_t count,
+                          uint64_t publishedVersion, uint64_t paramsVersion)
+{
+    memo->skipPacketRevision = packetRevision;
+    memo->skipSlot = slot;
+    memo->skipVersion = version;
+    memo->skipCount = count;
+    memo->skipPublishedVersion = publishedVersion;
+    memo->skipParamsVersion = paramsVersion;
+    memo->skipArmed = true;
 }
 
 template <class Point>

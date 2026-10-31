@@ -33,6 +33,8 @@ struct RigExecWeightFieldInputs {
     bool paintedArraysDeclared=false;
     const float *paintedValues=nullptr;
     size_t paintedValueCount=0;
+    const float *falloffSamples=nullptr;
+    size_t falloffSampleCount=0;
     const int *paintedIndices=nullptr;
     size_t paintedIndexCount=0;
     GfMatrix4d placement=GfMatrix4d(1.0);

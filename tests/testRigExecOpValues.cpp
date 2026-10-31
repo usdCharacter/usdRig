@@ -1260,6 +1260,91 @@ void TestSmallValuePublication()
         CHECK(PublishBothWays(B,&typed,&keyed,true) && typed.revision==2);
     }
 
+    // A revision's completion, its chain-dirty edge (the same bytes), and
+    // its version-keyed group outputs publish in place; each field moves
+    // the compare, and a failing status still fits the small key.
+    RigExecBakedProgramImpl G;
+    G.chains.resize(1); G.chains[0].revisions.resize(1); G.revisionIndex={{0,0}};
+    G.revisionChunkBase={0}; G.revisionChunkCount={2}; G.chunkRevision={0,0};
+    auto &revision=G.chains[0].revisions[0];
+    revision.role=RigExecBakedRevisionRole::Range;
+    revision.chunks.resize(1);
+    revision.chunks[0].begin=0; revision.chunks[0].end=4; revision.chunks[0].ok=true;
+    revision.groups.resize(1);
+    auto &group=revision.groups[0];
+    group.ok=true; group.published.count=4; group.version=7;
+    {
+        RigExecOpValueState typed,keyed;
+        typed.domain=keyed.domain=uint32_t(D::RevisionDone); typed.slot=keyed.slot=0;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        CHECK(PublishBothWays(G,&typed,&keyed,false));
+        revision.doneVersion=3;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        revision.resultStatus=TfToken("moverFailed");
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        revision.status.state=TfToken("moverFailed");
+        revision.status.firstBadAddress="mover[2].weights";
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        CHECK(PublishBothWays(G,&typed,&keyed,false) && typed.revision==4);
+    }
+    {
+        // The dirty edge carries the completion's bytes, header included.
+        RigExecOpValueState typed,keyed;
+        typed.domain=keyed.domain=uint32_t(D::ChainDirty); typed.slot=keyed.slot=0;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        CHECK(Key(G,D::ChainDirty)==Key(G,D::RevisionDone));
+        revision.doneVersion=4;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        CHECK(Key(G,D::ChainDirty)==Key(G,D::RevisionDone));
+    }
+    {
+        // A Range group's chunk keys its flag, count and version.
+        RigExecOpValueState typed,keyed;
+        typed.domain=keyed.domain=uint32_t(D::RevisionOut); typed.slot=keyed.slot=0;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        CHECK(PublishBothWays(G,&typed,&keyed,false));
+        group.version=8;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.ok=false;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.published.count=2;
+        CHECK(PublishBothWays(G,&typed,&keyed,true) && typed.revision==4);
+    }
+    {
+        // A Whole revision's speculative chunk and published group.
+        revision.role=RigExecBakedRevisionRole::Whole; revision.chunked=true;
+        group.ok=true; group.published.count=4; group.version=7;
+        group.ownComputed=-1; group.computedVersion=11;
+        RigExecOpValueState typed,keyed;
+        typed.domain=keyed.domain=uint32_t(D::RevisionOut); typed.slot=keyed.slot=0;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.computedVersion=12;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.version=9;
+        CHECK(PublishBothWays(G,&typed,&keyed,false));
+        typed.domain=keyed.domain=uint32_t(D::RevisionOut); typed.slot=keyed.slot=1;
+        typed.key.clear(); keyed.key.clear();
+        typed.initialized=keyed.initialized=false; typed.revision=keyed.revision=0;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.version=10;
+        CHECK(PublishBothWays(G,&typed,&keyed,true));
+        group.computedVersion=13;
+        CHECK(PublishBothWays(G,&typed,&keyed,false));
+    }
+    // A Legacy chunk keys its point bytes, an over-long status overflows
+    // the small key, and unknown slots go through the key.
+    revision.role=RigExecBakedRevisionRole::Legacy;
+    revision.stagingOutput={GfVec3f(1.0f),GfVec3f(2.0f)};
+    CHECK(RefusesSmall(G,D::RevisionOut,0));
+    revision.role=RigExecBakedRevisionRole::Range;
+    revision.status.firstBadAddress=std::string(300,'x');
+    CHECK(RefusesSmall(G,D::RevisionDone,0));
+    CHECK(RefusesSmall(G,D::ChainDirty,0));
+    revision.status.firstBadAddress.clear();
+    CHECK(RefusesSmall(G,D::RevisionDone,5));
+    CHECK(RefusesSmall(G,D::ChainDirty,5));
+    CHECK(RefusesSmall(G,D::RevisionOut,9));
+
     // What keys by length or box, an unconverted domain, and every slot
     // the key refuses, go through the key.
     space.value.emplace<TfToken>(TfToken("a"));

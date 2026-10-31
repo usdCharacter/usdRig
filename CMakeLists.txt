@@ -559,6 +559,15 @@ set_tests_properties(testRigExecRegisteredMover PROPERTIES LABELS "rigExecRuntim
 set_tests_properties(testRigExecExternalMovers PROPERTIES ENVIRONMENT
     "PXR_PLUGINPATH_NAME=${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 
+# The mover schema generator must work without USD Python (CI's OpenUSD
+# has none): the text reader is golden-tested on its own, and checked
+# against the pxr/usdGenSchema path wherever pxr imports. The interpreter
+# probe inside rigexec_add_mover stays function-local, so probe again here.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME testRigExecMoverSchemaGen COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecMoverSchemaGen.py"
+    "${RIGEXEC_TEST_USD_DIR}")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
@@ -1673,6 +1682,12 @@ target_link_libraries(testRigExecMoverGraph PRIVATE rigExec)
 target_compile_definitions(testRigExecMoverGraph PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecMoverGraph COMMAND testRigExecMoverGraph)
 
+add_executable(testRigExecFastMemo tests/testRigExecFastMemo.cpp)
+target_link_libraries(testRigExecFastMemo PRIVATE rigExec)
+target_compile_definitions(testRigExecFastMemo PRIVATE ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecFastMemo COMMAND testRigExecFastMemo
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+
 # The compiled rig skin layout: what has to invalidate it, and what Compile
 add_executable(testRigExecSkinTopology tests/testRigExecSkinTopology.cpp)
 target_link_libraries(testRigExecSkinTopology PRIVATE rigExec)
@@ -1813,6 +1828,11 @@ add_executable(benchEditLatency tests/benchEditLatency.cpp)
 target_link_libraries(benchEditLatency PRIVATE rigExec)
 target_compile_definitions(benchEditLatency PRIVATE
     ${_rigexec_schema_resource_define})
+
+add_executable(benchMatrixMover tests/benchMatrixMover.cpp)
+target_link_libraries(benchMatrixMover PRIVATE rigExec rigExecMath)
+target_include_directories(benchMatrixMover PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/tests")
 
 add_executable(benchPlayback tests/benchPlayback.cpp)
 target_link_libraries(benchPlayback PRIVATE rigExecImaging rigExecBake)
@@ -2570,7 +2590,8 @@ endif()
 # the library and are not scene tests. testRigExecStandalone calls the
 # translation functions from the test itself.
 foreach(_rigexec_scene_exe IN ITEMS
-    benchEditLatency benchFrameCache benchFrameCacheWarm probeCodingError
+    benchEditLatency benchFrameCache benchFrameCacheWarm benchMatrixMover
+    probeCodingError
     rigExecPose rigExecBakeTool
     testRigExecAffineFrames testRigExecArm testRigExecBakedAttribute
     testRigExecBakedMode testRigExecBakedSchedule testRigExecBinary
@@ -2590,14 +2611,14 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecSolverStacking testRigExecSurfaceBinding testRigExecSurfaceProjector
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle
-    testRigExecStandalone testRigExecRigLogic)
+    testRigExecStandalone testRigExecRigLogic testRigExecFastMemo)
     target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
 endforeach()
 
 # Oracles are linked only where a test runs cpu-reference, golden capture,
 # or an exec cross-check. Imaging, playback, and runtime tests do not.
 foreach(_rigexec_oracle_exe IN ITEMS
-    rigExecPose benchEditLatency
+    rigExecPose benchEditLatency benchMatrixMover
     testRigExecArm testRigExecBakedAttribute testRigExecBakedMode
     testRigExecBakedSchedule testRigExecConstraints testRigExecDeltaMush
     testRigExecCompiledRigRests testRigExecExampleParity

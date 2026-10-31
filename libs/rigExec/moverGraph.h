@@ -38,6 +38,7 @@
 #include <thread>
 #include <typeinfo>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -518,8 +519,11 @@ bool RigExecSimdEnabled();
 /// first on a worker.
 void RigExecRevisionKernelTouchTokens();
 
+/// \p walk, when given, is the caller's sparse-walk memo, written only by
+/// this call: a sparse walk reuses through it, as a group walk does.
 bool RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
-                              std::vector<GfVec3f> *pts, bool useSimd);
+                              std::vector<GfVec3f> *pts, bool useSimd,
+                              RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 
 /// Applies the skin operation of \p p to \p pts in place, returning false
 /// when the packet fails atomically (cardinality mismatch, unknown method).
@@ -701,11 +705,14 @@ bool RigExecApplyDerivedKernel(RigExecRevisionOp op,
 ///
 /// \p wireBasis is the caller's own memo for a sparse-envelope wire; null
 /// builds the basis for this call only.
+/// \p walk, when given, is the caller's sparse-walk memo for a Matrix
+/// revision, written only by this call; other operations ignore it.
 bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
                                 const RigExecMoverParameters &p,
                                 std::vector<GfVec3f> *pts, bool useSimd,
                                 RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 
 /// Runs one revision of \p op over \p pts in place, envelope included: the
 /// packet check, the full-strength fast path, RigExecApplyRevisionKernel and
@@ -717,27 +724,34 @@ bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
 /// geometry loop. Two hand-written wrappers would have to agree about which
 /// operations blend and which fold the envelope into their own arithmetic.
 /// \p wireBasis as for RigExecApplyRevisionKernel.
+/// \p walk, when given, is the caller's sparse-walk memo for a Matrix
+/// revision, written only by this call; other operations ignore it.
 bool RigExecRunRevisionKernel(RigExecRevisionOp op,
                               const RigExecMoverParameters &p,
                               std::vector<GfVec3f> *pts, bool useSimd,
                               RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr);
+    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 
 namespace geometryDetail {
 /// Internal owned staging only: failure may modify output; the caller must
 /// discard it and retain the preceding published version. Never borrowed points.
 /// \p envelope, when given, is the separate-blend envelope its caller already
 /// resolved from the packet over the points' count; null resolves it here.
+/// \p walk, when given, is the caller's sparse-walk memo for a Matrix
+/// revision, written only by this call; other operations ignore it.
 bool RunDiscardableRevisionKernel(RigExecRevisionOp,const RigExecMoverParameters &,
     std::vector<GfVec3f> *,bool,RigExecWireBasisCache *,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
+    const std::vector<float> *envelope = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 /// The same revision out of place: reads the \p count entering points at
 /// \p in, which must not alias \p out, and writes the result to \p out.
 bool RunDiscardableRevisionKernel(RigExecRevisionOp,const RigExecMoverParameters &,
     const GfVec3f *in,size_t count,std::vector<GfVec3f> *out,bool,
     RigExecWireBasisCache *,RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
+    const std::vector<float> *envelope = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 }
 
 /// Whether \p envelope makes the "apply once" blend the identity, so the
@@ -890,13 +904,18 @@ bool RigExecRevisionGateHolds(RigExecRevisionOp op,
 /// its last walk's records its entries there, and takes from it each entry
 /// whose weight and entering point hold the bits recorded. The bits written
 /// are the same with and without it.
+/// \p entryRange, when given, is this group's [first, last) sparse entries
+/// (RevisionStatic's memo over the standing packet): the sparse Matrix arm
+/// walks those instead of searching the indices for them. The bits written
+/// are the same either way; null searches.
 bool RigExecRunRevisionGroup(
     RigExecRevisionOp op, const RigExecMoverParameters &p,
     const RigExecRevisionRangeInputs &prepared,
     const RigExecSkinTransformsView *skin, const GfVec3f *in, GfVec3f *out,
     size_t count, size_t begin, size_t end, const float *separateEnvelope,
     bool useSimd, bool *untouched = nullptr,
-    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr,
+    const std::pair<size_t, size_t> *entryRange = nullptr);
 
 /// Points [begin, end) of a revision that applies: \p out (sized \p count)
 /// receives at those indices exactly what RigExecRunRevisionKernel writes

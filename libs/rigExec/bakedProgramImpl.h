@@ -1807,6 +1807,34 @@ struct RigExecBakedSparseInputs {
     uint64_t pass = 0;
 };
 
+/// What a RigExecBakedMemoHole compares the stored key against.
+enum class RigExecBakedMemoHoleSource : uint8_t {
+    Revision,       ///< opAdapter.values[id]'s revision (id: param0 + param1<<32)
+    PoolDouble,     ///< double pool value[param0]
+    PoolFloat,      ///< float pool value[param0]
+    PoolInt,        ///< int pool value[param0]
+    PoolBool,       ///< bool pool value[param0] (one stored byte)
+    PoolMatrix4d,   ///< matrix pool value[param0]
+    PoolVec3d,      ///< vec3d pool value[param0]
+    PoolVec3f,      ///< vec3f pool value[param0]
+    PathVersion,    ///< pathLeafRefs[param0]'s leaves versions[param1], plus
+                    ///< BoxExact(values[param1]) for the exact flag
+    Overlay,        ///< publishWeightFields (one byte, no params)
+};
+
+/// One live field of a planned effective memo: the stored key's bytes at
+/// [offset, offset + size) move exactly when the named value does, and every
+/// other byte of the key is Build-constant for the op. Indices, never
+/// pointers, so a clone carries its plans across (see _CloneImpl).
+struct RigExecBakedMemoHole {
+    uint32_t offset = 0;
+    uint32_t param0 = 0;
+    uint32_t param1 = 0;
+    uint16_t size = 0;
+    RigExecBakedMemoHoleSource source =
+        RigExecBakedMemoHoleSource::Revision;
+};
+
 struct RigExecBakedProgramImpl {
     RigExecRigEvaluator *evaluator = nullptr;
     UsdStageRefPtr stage;
@@ -3518,6 +3546,142 @@ struct RigExecBakedProgramImpl {
         bool weightValuesHeld = false;
         uint64_t weightValuesPacketRevision = 0;
         size_t weightValuesCount = 0;
+        /// A matrix revision's envelope verdict, held while the shared
+        /// packet and the count stand: whether the packet at WeightPacket
+        /// op value `weightPacketValue`'s revision
+        /// `matrixEnvelopePacketRevision` validates over
+        /// `matrixEnvelopeCount` points (`matrixEnvelopeHeld`). The weights
+        /// half of the acceptance only -- the packet check (valid, kind) is
+        /// fresh assembly each run and ANDed in by RevisionStatic -- and a
+        /// dense resolve is a pure function of the packet and the count, so
+        /// `rangeInputs.matrixWeights` stands with the key. Never held for
+        /// a current-phase revision or an unshared packet. The value id is
+        /// set at compile, which drops the claim.
+        bool matrixEnvelopeHeld = false;
+        uint64_t matrixEnvelopePacketRevision = 0;
+        size_t matrixEnvelopeCount = 0;
+        bool matrixEnvelopeVerdict = false;
+        /// A matrix revision's assembled parameters, held while every
+        /// input the leaf assembly reads stands: the WeightBlend, Enabled
+        /// and DefaultWeight leaf content versions at their role indices,
+        /// the folded transform bit for bit, and the shared packet's
+        /// revision when a packet is bound (an unbound revision reads the
+        /// DefaultWeight leaf instead). The assembly is a pure function
+        /// of those inputs, so the retained parameters are the assembled
+        /// ones while the key stands, and RevisionStatic skips the
+        /// assembly, its packet copy and the move. Never held for a
+        /// current-phase revision, an unshared packet, a revision with
+        /// blend channels, or leaves a walk or a produced value answers
+        /// (those carry no content version). The value id is set at
+        /// compile, which drops the claim.
+        bool matrixParamsHeld = false;
+        /// RevisionStatic's verdict that this run left every RevisionPacket
+        /// key field standing: the parameters (by `matrixParamsHeld`, whose
+        /// claim the assembly's pure-function contract backs), the
+        /// versioned-array arm both runs (a byte-keyed packet never holds),
+        /// and every scalar the key spells, stale-read before the body and
+        /// compared after. The packet publish skips its spell and reports
+        /// unchanged while this stands; the stored key already spells these
+        /// bytes, so skipping the compare is unobservable. Set fresh by
+        /// every static run, dropped at compile with the other claims.
+        /// Never mirrored into the run shadow: the body overwrites it on
+        /// every run, and no publish without a body run reads it.
+        bool matrixPacketHeld = false;
+        /// InfluenceFold's verdict that this run left every
+        /// RevisionTransforms key field standing: the carry and influence
+        /// bytes (by the fold's own unchanged return), the folded
+        /// transform (stale-copied and compared), and the count and flags.
+        /// The transforms publish skips its spell and reports unchanged
+        /// while this stands; the stored key already spells these bytes.
+        /// Set fresh by every fold run, dropped at compile with the other
+        /// claims, never mirrored into the run shadow.
+        bool matrixTransformsHeld = false;
+        /// RevisionChunk's verdict that this run's whole-walk skip of an
+        /// unchunked Legacy matrix revision left every RevisionOut key
+        /// field standing: the skip proved the staging content identical
+        /// to last run's, and the chunk's ok bit (captured before the body
+        /// overwrote it) proves that bit identical too, while the sizes
+        /// are the standing count. The chunk publish skips its point-byte
+        /// spell and reports unchanged while this stands; the stored key
+        /// already spells these bytes, so skipping the compare is
+        /// unobservable. Set fresh by every chunk run, dropped at compile
+        /// with the other claims, never mirrored into the run shadow.
+        bool matrixChunkHeld = false;
+        /// RevisionStatic's verdict that the fuse diagnostic's scalar read
+        /// a versioned leaf under a successful direct read: the leaf index
+        /// and the content version then standing. A standing version names
+        /// standing bytes (the memo's own property) and the index defends
+        /// a rebuild that shifts it; the walks/exact guards are re-checked
+        /// from warm dense arrays beside the version, while the
+        /// declaration's flavour rides the note (no post-build writer
+        /// touches a key). The cold
+        /// declaration and boxed value are what the skip avoids: the
+        /// static keeps last run's scalar without re-reading it while
+        /// this stands, and the read would answer the same float. Noted
+        /// only under a successful direct read of a real key, dropped at
+        /// compile with the other claims, and mirrored into the run
+        /// shadow with the other version notes (never compared): the note
+        /// names a generation, so a restore that rewinds the scalar must
+        /// rewind the note with it.
+        bool diagWeightHeld = false;
+        int diagWeightIndex = -1;
+        uint64_t diagWeightVersion = 0;
+        int matrixParamsWeightBlendIndex = -1;
+        int matrixParamsEnabledIndex = -1;
+        int matrixParamsDefaultWeightIndex = -1;
+        uint64_t matrixParamsWeightBlendVersion = 0;
+        uint64_t matrixParamsEnabledVersion = 0;
+        uint64_t matrixParamsDefaultWeightVersion = 0;
+        bool matrixParamsHaveTransform = false;
+        /// The fresh assembly's radial arm, enabled bit and weights
+        /// validity beside the transform note: the sparse-walk inputs
+        /// version below moves on them exactly as on the transform (an
+        /// invalid envelope leaves the default transform). They pack into
+        /// the matrix note's padding.
+        bool matrixParamsRadial = false;
+        bool matrixParamsEnabled = false;
+        bool matrixParamsWeightsValid = false;
+        GfMatrix4d matrixParamsTransform{1.0};
+        uint64_t matrixParamsPacketRevision = 0;
+        /// A Range matrix revision's per-group sparse entry ranges, held
+        /// while the shared packet and the count stand: group g's
+        /// [first, last) entries over the packet at WeightPacket op value
+        /// `weightPacketValue`'s revision `matrixEntryRangesPacketRevision`
+        /// and `matrixEntryRangesCount` points (`matrixEntryRangesHeld`).
+        /// A pure function of the packet's indices and the chain's group
+        /// bounds -- the same [first, last) the group's own search answers
+        /// -- so the group steps skip their searches while the key stands.
+        /// Never held for a current-phase revision, an unshared packet, a
+        /// dense walk, or a revision the verdict refuses. The value id is
+        /// set at compile, which drops the claim.
+        bool matrixEntryRangesHeld = false;
+        uint64_t matrixEntryRangesPacketRevision = 0;
+        size_t matrixEntryRangesCount = 0;
+        /// The sparse walks' per-revision inputs version, 0 until first
+        /// noted, bumped exactly when the noted transform, radial arm,
+        /// enabled bit or weights validity differ from the fresh
+        /// assembly's (a held static proves them without comparing). A
+        /// whole-walk skip whose key names this version skips spelling
+        /// the transform. It sits with the entry-ranges claim the group
+        /// step reads beside the skip check, so the read shares that hot
+        /// line.
+        uint64_t matrixParamsVersion = 0;
+        std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
+        /// The content version the RevisionPacket key carries in place of
+        /// a bound matrix revision's weight arrays: RevisionStatic bumps
+        /// it exactly on the runs the shared packet's own publication
+        /// reported changed (a byte comparison), so equal versions name
+        /// equal arrays. Read only for an enabled matrix revision bound
+        /// to a shared packet outside the current phase; anything else
+        /// keys the arrays' bytes.
+        uint64_t matrixWeightsVersion = 0;
+        /// A Legacy (or unchunked Whole) matrix revision's sparse-walk
+        /// memo: the whole-array twin of a Range group's walk. The chunk
+        /// step is its only writer; the walk reuses an entry while its
+        /// weight and entering point hold the recorded bits, so a rerun
+        /// whose inputs stand recomputes nothing. Self-validating
+        /// scratch, like the Range memos: never verified or restored.
+        RigExecSparseWalkMemo<GfVec3f> matrixWalk;
         /// RevisionStatic's resolve buffer: compared with the published
         /// array before it replaces it. Contents are not state.
         std::vector<float> resolveScratch;
@@ -3647,6 +3811,11 @@ struct RigExecBakedProgramImpl {
         /// passes the base through like an excluded fuse, `currentSource`
         /// -1, and its join publishes that version.
         bool rangeSetAside = false;
+        /// Whether `groupWritten` names an unwritten group: Build state, set
+        /// everywhere `groupWritten` is, so the static's gate check reads
+        /// one bool instead of scanning the array every run. Packed with
+        /// `rangeSetAside`, so it moves no later field.
+        bool rangeGated = false;
         RigExecBakedRevisionRole role = RigExecBakedRevisionRole::Legacy;
         /// Range/Whole: per chain group (size G), whether this revision
         /// publishes it (a Range revision's gated groups; every group of a
@@ -3831,6 +4000,8 @@ struct RigExecBakedProgramImpl {
         RigExecWeightOracleFacts oracleFacts;
         RigExecBakedPathLeaves oracleLeaves;
         std::vector<SdfPath> oracleFrozenKeys;
+        /// oracleLeaves index of a volume's inputs:falloffSamples, else -1.
+        int oracleFalloffSamplesLeaf = -1;
         int oracleKind = -1, oracleRepresentation = -1, oracleCombineMode = -1;
         int oracleAxis = -1;
         bool oracleAxisAttribute = false, oracleBoundsAttribute = false;
@@ -3888,6 +4059,11 @@ struct RigExecBakedProgramImpl {
         std::vector<UsdAttribute> targetPoints, samplePoints, curvePoints;
         /// The compiled rig's resampled falloff remap, copied from falloffLuts.
         std::vector<float> falloffCurve;
+        /// pointLeaves index of a volume's inputs:falloffSamples, else -1.
+        /// Packets read this leaf; the field reads oracleFalloffSamplesLeaf,
+        /// because the property pass samples oracle leaves before the
+        /// geometry prologue samples point leaves.
+        int falloffSamplesLeaf = -1;
         std::array<VtVec3fArray,3> packetPointViews;
         std::array<std::vector<GfVec3f>,3> packetPointScratch;
         std::vector<GfVec3f> packetLocalCurve;
@@ -3966,6 +4142,23 @@ struct RigExecBakedProgramImpl {
     /// exactness moved.
     bool verifySourceKeys = false;
     size_t sourceKeyMismatches = 0;
+    /// RIGEXEC_VERIFY_FAST_MEMO, read at compile: every fast effective memo
+    /// also runs the slow key builder and flags the op when bytes or
+    /// exactness disagree. Workers set their op's flag; the owner folds the
+    /// flags into fastMemoMismatches after the join.
+    bool verifyFastMemo = false;
+    size_t fastMemoMismatches = 0;
+    std::vector<char> fastMemoMismatch;
+    /// The effective-memo fast plans, one per compiled op, built once at
+    /// compile (RigExecBakedBuildMemoFastPlans): memoFast[c] tells whether
+    /// op c's key has a plan, memoHoleBegin[c]..memoHoleBegin[c+1] names its
+    /// holes in the arena, and memoKeySize[c] the key bytes a plan expects.
+    /// Steps, their lists and the op reads are fixed for the program's life,
+    /// so one classification serves every run and clone.
+    std::vector<RigExecBakedMemoHole> memoHoles;
+    std::vector<uint32_t> memoHoleBegin;
+    std::vector<char> memoFast;
+    std::vector<uint32_t> memoKeySize;
     /// How many keys of ops that read state the last run built.
     size_t sourceKeysBuilt = 0;
     std::shared_ptr<RigExecBakedExecCheckRows> execCheckRows;
@@ -6218,6 +6411,32 @@ struct RigExecBakedRunShadow {
         bool weightValuesHeld = false;
         uint64_t weightValuesPacketRevision = 0;
         size_t weightValuesCount = 0;
+        bool matrixEnvelopeHeld = false;
+        uint64_t matrixEnvelopePacketRevision = 0;
+        size_t matrixEnvelopeCount = 0;
+        bool matrixEnvelopeVerdict = false;
+        bool matrixParamsHeld = false;
+        int matrixParamsWeightBlendIndex = -1;
+        int matrixParamsEnabledIndex = -1;
+        int matrixParamsDefaultWeightIndex = -1;
+        uint64_t matrixParamsWeightBlendVersion = 0;
+        uint64_t matrixParamsEnabledVersion = 0;
+        uint64_t matrixParamsDefaultWeightVersion = 0;
+        bool matrixParamsHaveTransform = false;
+        bool matrixParamsRadial = false;
+        bool matrixParamsEnabled = false;
+        bool matrixParamsWeightsValid = false;
+        GfMatrix4d matrixParamsTransform{1.0};
+        uint64_t matrixParamsPacketRevision = 0;
+        uint64_t matrixParamsVersion = 0;
+        bool diagWeightHeld = false;
+        int diagWeightIndex = -1;
+        uint64_t diagWeightVersion = 0;
+        bool matrixEntryRangesHeld = false;
+        uint64_t matrixEntryRangesPacketRevision = 0;
+        size_t matrixEntryRangesCount = 0;
+        std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
+        uint64_t matrixWeightsVersion = 0;
         std::vector<uint64_t> joinSeen;
         uint32_t rangeRefusals = 0;
         /// Copied as states (refs and own[] handles), never as bytes.

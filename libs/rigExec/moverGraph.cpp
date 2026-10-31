@@ -6,6 +6,7 @@
 #include "movers/moverRegistry.h"
 
 #include "rigExecMath/geometryKernels.h"
+#include "rigExecMath/partialRowsKernel.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/pointBlocks.h"
@@ -25,6 +26,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -32,6 +35,27 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+
+// The sparse matrix walk's float arms use the same instruction sets as the
+// dense kernel (simdKernels.cpp), detected the same way.
+#if !defined(RIGEXEC_DISABLE_SSE2)                                       \
+    && (defined(__SSE2__) || (defined(_M_X64) && !defined(_M_ARM64EC))   \
+        || (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#  define RIGEXEC_MOVERGRAPH_HAS_SSE2 1
+#endif
+#if !defined(RIGEXEC_DISABLE_NEON)                                     \
+    && (defined(__aarch64__) || defined(__ARM_NEON)                    \
+        || defined(_M_ARM64) || defined(_M_ARM64EC))
+#  define RIGEXEC_MOVERGRAPH_HAS_NEON 1
+#endif
+#if defined(RIGEXEC_MOVERGRAPH_HAS_SSE2)
+#  include <emmintrin.h>
+#  include <xmmintrin.h>
+#endif
+#if defined(RIGEXEC_MOVERGRAPH_HAS_NEON)                                 \
+    && !defined(RIGEXEC_MOVERGRAPH_HAS_SSE2)
+#  include <arm_neon.h>
+#endif
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -474,6 +498,137 @@ _MatrixKernelAccepts(const RigExecMoverParameters &p, size_t count,
     return weights ? w.ResolveAll(count, weights) : w.ResolvesAll(count);
 }
 
+// A matrix narrowed once for the sparse walk's float arms: four rows of
+// three components, padded to four.
+void
+_NarrowMatrixFloatRows(const GfMatrix4d &transform, float *rows)
+{
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            rows[r * 4 + c] = float(transform[r][c]);
+        }
+        rows[r * 4 + 3] = 0.0f;
+    }
+}
+
+// The affine half of one sparse entry: moved = x*row0 + y*row1 + z*row2 +
+// row3, the same IEEE float operations in the same order as the dense
+// kernel, so a sparse walk agrees bit for bit with a dense walk over equal
+// weights and with the runtime's own walk.
+GfVec3f
+_AffineMatrixFloatRows(const float *rows, const GfVec3f &q)
+{
+#if defined(RIGEXEC_MOVERGRAPH_HAS_SSE2)
+    const __m128 vq = _mm_setr_ps(q[0], q[1], q[2], 0.0f);
+    const __m128 moved = _mm_add_ps(
+        _mm_add_ps(
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(0, 0, 0, 0)),
+                       _mm_loadu_ps(rows)),
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(1, 1, 1, 1)),
+                       _mm_loadu_ps(rows + 4))),
+        _mm_add_ps(
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(2, 2, 2, 2)),
+                       _mm_loadu_ps(rows + 8)),
+            _mm_loadu_ps(rows + 12)));
+    alignas(16) float result[4];
+    _mm_store_ps(result, moved);
+    return GfVec3f(result[0], result[1], result[2]);
+#elif defined(RIGEXEC_MOVERGRAPH_HAS_NEON)                               \
+    && !defined(RIGEXEC_MOVERGRAPH_HAS_SSE2)
+    const float32x4_t vq = {q[0], q[1], q[2], 0.0f};
+    const float32x4_t moved = vaddq_f32(
+        vaddq_f32(vmulq_f32(vdupq_n_f32(q[0]), vld1q_f32(rows)),
+                  vmulq_f32(vdupq_n_f32(q[1]), vld1q_f32(rows + 4))),
+        vaddq_f32(vmulq_f32(vdupq_n_f32(q[2]), vld1q_f32(rows + 8)),
+                  vld1q_f32(rows + 12)));
+    alignas(16) float result[4];
+    vst1q_f32(result, moved);
+    return GfVec3f(result[0], result[1], result[2]);
+#else
+    const float x = q[0], y = q[1], z = q[2];
+    return GfVec3f((x * rows[0] + y * rows[4]) + (z * rows[8] + rows[12]),
+                   (x * rows[1] + y * rows[5]) + (z * rows[9] + rows[13]),
+                   (x * rows[2] + y * rows[6]) + (z * rows[10] + rows[14]));
+#endif
+}
+
+// The blended entry: q + w*(moved-q) with the dense kernel's endpoint
+// selection, moved computed first as the dense kernel computes it.
+GfVec3f
+_BlendMatrixFloatRows(const float *rows, const GfVec3f &q, float w)
+{
+    const GfVec3f moved = _AffineMatrixFloatRows(rows, q);
+    if (w <= 0.0f) {
+        return q;
+    }
+    if (w >= 1.0f) {
+        return moved;
+    }
+    return GfVec3f(q[0] + (w * (moved[0] - q[0])),
+                   q[1] + (w * (moved[1] - q[1])),
+                   q[2] + (w * (moved[2] - q[2])));
+}
+
+// The radial partials one float walk needs, keyed by exact weight bits. A
+// painted falloff lists each weight several times but rarely twice in a
+// row, so the single cached weight the double loop keeps recomputes the
+// same partials over and over (80k transitions for 28k distinct weights
+// across the biped stack's 105 sparse radial revisions). 256 direct-mapped
+// slots hold a walk's working set; validity is a 4-word bitmask, so
+// construction zeroes 32 bytes rather than the 17 KB of rows. The partial
+// is a pure function of the decomposition and the weight, so memoizing it
+// by bits is bit-identical at any size. Stack-local to the walk: no
+// retained state, no invalidation, no lock.
+class _RadialRowsCache {
+public:
+    explicit _RadialRowsCache(const GfMatrix4d &transform)
+        : _transform(transform)
+    {
+        _valid[0] = _valid[1] = _valid[2] = _valid[3] = 0;
+    }
+
+    const float *Rows(float weight)
+    {
+        uint32_t bits;
+        std::memcpy(&bits, &weight, sizeof(bits));
+        const uint32_t slot = (bits * 2654435761u) >> 24;
+        const uint64_t bit = 1ull << (slot & 63);
+        uint64_t &word = _valid[slot >> 6];
+        if ((word & bit) && _bits[slot] == bits) {
+            return _rows[slot];
+        }
+        float *rows = _rows[slot];
+        const double clamped = GfClamp(double(weight), 0.0, 1.0);
+        if (clamped <= 0.0) {
+            _NarrowMatrixFloatRows(GfMatrix4d(1.0), rows);
+        } else if (clamped >= 1.0) {
+            _NarrowMatrixFloatRows(_transform, rows);
+        } else {
+            if (!_haveDecomposition) {
+                _decomposition =
+                    RigExecDecomposePartialTransform(_transform);
+                _haveDecomposition = true;
+            }
+            RigExecPartialRowsFloat(_decomposition.scale.data(),
+                                    _decomposition.axis.data(),
+                                    _decomposition.angle,
+                                    _decomposition.translation.data(),
+                                    float(clamped), rows);
+        }
+        _bits[slot] = bits;
+        word |= bit;
+        return rows;
+    }
+
+private:
+    uint64_t _valid[4];
+    uint32_t _bits[256];
+    float _rows[256][16];
+    const GfMatrix4d &_transform;
+    RigExecPartialDecomposition _decomposition;
+    bool _haveDecomposition = false;
+};
+
 // The matrix kernel's sparse walk over entries [first, last) of \p w, in
 // place on \p data, which holds point \p offset at 0 (the whole array: 0; a
 // group's own buffer: its first point): the per-entry body the whole kernel
@@ -488,19 +643,24 @@ _MatrixKernelAccepts(const RigExecMoverParameters &p, size_t count,
 // records its entries, and an entry whose weight and entering point hold the
 // bits recorded takes the recorded result; only the others are computed.
 // The same bits either way.
+//
+// Under \p useSimd both arms run in float, narrowed once per matrix as the
+// dense kernel narrows; without it they run the double reference, as the
+// dense kernel does.
 void
 _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
                        const RigExecWeightPacket &w, size_t first,
-                       size_t last, GfVec3f *data, size_t offset = 0,
+                       size_t last, GfVec3f *data, size_t offset, bool useSimd,
                        RigExecSparseWalkMemo<GfVec3f> *memo = nullptr)
 {
     using Mode = RigExecSparseWalkMode;
     Mode mode = Mode::Compute;
     if (memo) {
-        // The arm, then the transform's sixteen doubles.
-        unsigned char params[1 + 16 * sizeof(double)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, p.transform.GetArray(), 16 * sizeof(double));
+        // The arm, then the transform's sixteen doubles: the one spelling
+        // the walks and the skip check share.
+        unsigned char params[kRigExecSparseWalkParamsSize];
+        RigExecSparseWalkSpellParams(p.radialWeight, p.transform.GetArray(),
+                                     params);
         mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
                                       last - first);
     }
@@ -530,6 +690,22 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
         }
     };
     if (p.radialWeight) {
+        if (useSimd) {
+            // The float twin of the loop below: each distinct weight's
+            // partial factored by the float rows kernel, each point the
+            // float affine.
+            _RadialRowsCache cache(p.transform);
+            for (size_t k = first; k < last; ++k) {
+                GfVec3f &point = data[size_t(w.indices[k]) - offset];
+                if (reuse(k, &point)) {
+                    continue;
+                }
+                point = _AffineMatrixFloatRows(cache.Rows(w.values[k]),
+                                               point);
+                keep(k, point);
+            }
+            return;
+        }
         // The sparse walk must take the same arc the dense kernel
         // does. A painted cluster falloff is almost always sparse --
         // the upper blink weights 414 points of a 26276-point body --
@@ -565,6 +741,21 @@ _ApplyMatrixSparseWalk(const RigExecMoverParameters &p,
                 cachedWeight = value;
             }
             point = GfVec3f(partial.TransformAffine(GfVec3d(point)));
+            keep(k, point);
+        }
+        return;
+    }
+    if (useSimd) {
+        // The float twin of the loop below: the transform narrowed once,
+        // each entry the dense kernel's blend at its own weight.
+        float rows[16];
+        _NarrowMatrixFloatRows(p.transform, rows);
+        for (size_t k = first; k < last; ++k) {
+            GfVec3f &point = data[size_t(w.indices[k]) - offset];
+            if (reuse(k, &point)) {
+                continue;
+            }
+            point = _BlendMatrixFloatRows(rows, point, w.values[k]);
             keep(k, point);
         }
         return;
@@ -672,7 +863,8 @@ _WireKernelAcceptance(const RigExecMoverParameters &p, size_t count)
 
 bool
 RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
-                         std::vector<GfVec3f> *pts, bool useSimd)
+                         std::vector<GfVec3f> *pts, bool useSimd,
+                         RigExecSparseWalkMemo<GfVec3f> *walk)
 {
     const size_t count = pts->size();
     // Validated before any point is written; a dense envelope is resolved
@@ -695,7 +887,8 @@ RigExecApplyMatrixKernel(const RigExecMoverParameters &p,
         if (p.transform == GfMatrix4d(1.0)) {
             return true;  // at rest every weighted point maps to itself
         }
-        _ApplyMatrixSparseWalk(p, w, 0, w.indices.size(), pts->data());
+        _ApplyMatrixSparseWalk(p, w, 0, w.indices.size(), pts->data(), 0,
+                               useSimd, walk);
         return true;
     }
     RigExecApplyMatrixKernelRange(p, weights.data(), 0, count, pts->data(),
@@ -1134,11 +1327,12 @@ ApplyRevisionKernel(RigExecRevisionOp op,
                            const RigExecMoverParameters &p,
                            std::vector<GfVec3f> *pts, bool useSimd,
                            RigExecWireBasisCache *wireBasis,
-    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable)
+    RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr)
 {
     switch (op) {
     case RigExecRevisionOp::Matrix:
-        return RigExecApplyMatrixKernel(p, pts, useSimd);
+        return RigExecApplyMatrixKernel(p, pts, useSimd, walk);
     case RigExecRevisionOp::Skin:
         return RigExecApplySkinKernel(p, pts, useSimd);
     case RigExecRevisionOp::BlendShape:
@@ -1378,9 +1572,10 @@ ApplyRevisionKernel(RigExecRevisionOp op,
 
 bool RigExecApplyRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
-    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache)
+    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
+    RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return ApplyRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false);
+    return ApplyRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,walk);
 }
 
 bool
@@ -1631,7 +1826,8 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         size_t begin, size_t end,
                         const float *separateEnvelope, bool useSimd,
                         bool *untouched,
-                        RigExecSparseWalkMemo<GfVec3f> *walk)
+                        RigExecSparseWalkMemo<GfVec3f> *walk,
+                        const std::pair<size_t, size_t> *entryRange)
 {
     if (untouched) {
         *untouched = false;
@@ -1669,12 +1865,18 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                 return passThrough();
             }
             size_t first = 0, last = 0;
-            _SparseEntriesIn(w.indices, begin, end, &first, &last);
+            if (entryRange) {
+                first = entryRange->first;
+                last = entryRange->second;
+            } else {
+                _SparseEntriesIn(w.indices, begin, end, &first, &last);
+            }
             if (first == last) {
                 return passThrough();
             }
             seed();
-            _ApplyMatrixSparseWalk(p, w, first, last, out, begin, walk);
+            _ApplyMatrixSparseWalk(p, w, first, last, out, begin, useSimd,
+                                   walk);
             return true;
         }
         if (prepared.matrixWeights.size() != count) {
@@ -1850,7 +2052,8 @@ RunRevisionKernel(RigExecRevisionOp op,
                          RigExecWireBasisCache *wireBasis,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache, bool discardable,
     const std::vector<float> *envelope,
-    const GfVec3f *source = nullptr, size_t sourceCount = 0)
+    const GfVec3f *source = nullptr, size_t sourceCount = 0,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr)
 {
     if (!_PacketMatches(op, p)) {
         return false;
@@ -1866,7 +2069,8 @@ RunRevisionKernel(RigExecRevisionOp op,
         pts->assign(source, source + sourceCount);
     }
     if (!RigExecRevisionTakesSeparateBlend(op, p.weights)) {
-        return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable);
+        return ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable,
+                                   walk);
     }
 
     // A delta mush whose envelope covers a small part of the mesh only needs
@@ -1941,7 +2145,8 @@ RunRevisionKernel(RigExecRevisionOp op,
     if (!fullStrengthEnvelope && !source) {
         preceding = *pts;
     }
-    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable)) {
+    if (!ApplyRevisionKernel(op, p, pts, useSimd, wireBasis,cache,discardable,
+                             walk)) {
         return false;
     }
     if (pts->size() != precedingSize) {
@@ -1971,32 +2176,36 @@ RunRevisionKernel(RigExecRevisionOp op,
 
 bool RigExecRunRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
-    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache)
+    RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
+    RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,nullptr);
+    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,false,nullptr,
+                             nullptr,0,walk);
 }
 
 namespace geometryDetail {
 bool RunDiscardableRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, std::vector<GfVec3f> *pts, bool useSimd,
     RigExecWireBasisCache *wireBasis, RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
-    const std::vector<float> *envelope)
+    const std::vector<float> *envelope, RigExecSparseWalkMemo<GfVec3f> *walk)
 {
-    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,true,envelope);
+    return RunRevisionKernel(op,p,pts,useSimd,wireBasis,cache,true,envelope,
+                             nullptr,0,walk);
 }
 bool RunDiscardableRevisionKernel(RigExecRevisionOp op,
     const RigExecMoverParameters &p, const GfVec3f *in, size_t count,
     std::vector<GfVec3f> *out, bool useSimd, RigExecWireBasisCache *wireBasis,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *cache,
-    const std::vector<float> *envelope)
+    const std::vector<float> *envelope, RigExecSparseWalkMemo<GfVec3f> *walk)
 {
     // An empty entering array may come with no storage at all.
     if (!in) {
         out->clear();
-        return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope);
+        return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope,
+                                 nullptr,0,walk);
     }
     return RunRevisionKernel(op,p,out,useSimd,wireBasis,cache,true,envelope,
-                             in,count);
+                             in,count,walk);
 }
 } // namespace geometryDetail
 

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 namespace rigExec {
+template <class Point> struct RigExecSparseWalkMemo;
 /// Detached revision facts. Source/query handles remain in compiler adapters.
 struct RigExecGeometryRecord {
     RigExecRevisionOp op = RigExecRevisionOp::Matrix;
@@ -55,17 +56,21 @@ bool RigExecRunGeometry(RigExecRevisionOp,const RigExecMoverParameters &,
 namespace geometryDetail {
 /// Owned staging only; false leaves disposable output unspecified.
 /// \p envelope: the separate-blend envelope already resolved, or null.
+/// \p walk, when given, is the caller's sparse-walk memo for a Matrix
+/// revision, written only by this call; other operations ignore it.
 bool RunDiscardableGeometry(RigExecRevisionOp,const RigExecMoverParameters &,
     std::vector<GfVec3f> *,bool,RigExecWireBasisCache *,
     RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
+    const std::vector<float> *envelope = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 /// Out of place: reads \p count entering points at \p in (never \p out's
 /// storage) and writes the result to \p out; untouched points are copied
 /// bit for bit.
 bool RunDiscardableGeometry(RigExecRevisionOp,const RigExecMoverParameters &,
     const GfVec3f *in,size_t count,std::vector<GfVec3f> *out,bool,
     RigExecWireBasisCache *,RigExecSurfaceKernelCache<GfVec3f,GfVec3d> *,
-    const std::vector<float> *envelope = nullptr);
+    const std::vector<float> *envelope = nullptr,
+    RigExecSparseWalkMemo<GfVec3f> *walk = nullptr);
 }
 bool RigExecRunGeometryDerived(RigExecRevisionOp,const RigExecMoverParameters &,
     const GfVec3f *authored,size_t authoredCount,std::vector<GfVec3f> *result);

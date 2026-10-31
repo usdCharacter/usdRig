@@ -102,6 +102,7 @@ struct RrWeightScratch {
             curves;
     };
     std::vector<Gathers> gathers;
+    std::unordered_map<uint32_t, size_t> falloffRows;
     std::vector<RrWeightPacketScratch> packets;
     std::vector<RrWeightFieldScratch> fields;
     // Per weight object, its classified tokens.
@@ -201,6 +202,19 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
             gathers.samples = sources(object.samplePoints);
             gathers.curves = sources(object.curvePoints);
             scratch->gathers.push_back(std::move(gathers));
+        }
+    }
+    if (file.formatVersion >= 27) {
+        std::unordered_map<std::string, size_t> rows;
+        for (size_t i = 0; i < program->pathReads.size(); ++i) {
+            const auto &row = program->pathReads[i];
+            if (!row.rest && row.read && row.read->read &&
+                row.read->read->tag == RigExecWireInputTag::FloatArray)
+                rows.emplace(program->TextOrEmpty(row.path), i);
+        }
+        for (const auto &object : objects) {
+            const auto found = rows.find(program->TextOrEmpty(object.path) + ".inputs:falloffSamples");
+            if (found != rows.end()) scratch->falloffRows.emplace(object.path, found->second);
         }
     }
     scratch->oracleKinds.reserve(objects.size());
@@ -1013,6 +1027,18 @@ _RrApplyAxisScales(const RrMat4d &worldToLocal, const RrVec3f &scales)
     return worldToLocal * divide;
 }
 
+const std::vector<float> &
+_RrFalloffSamples(const RrProgram *program, const RigExecWireWeightObject &wire)
+{
+    const auto *scratch = _RrScratch(program);
+    const auto found = scratch->falloffRows.find(wire.path);
+    if (found != scratch->falloffRows.end()) {
+        const auto *samples = RrPathArray<float>(program, program->pathReads[found->second]);
+        if (samples && !samples->empty()) return *samples;
+    }
+    return wire.falloffCurve;
+}
+
 // A painted array (rigExec:values or rigExec:indices) as a read at the
 // given time takes it, from the object's input slot: at Default
 // (\p atDefault) its authored value, else its Default-time default; at the
@@ -1277,7 +1303,7 @@ _RrBuildSpherePacket(const RrProgram *program,
     _RrSphereWeightField(*points,
                          _RrApplyAxisScales(worldToLocal, scales),
                          falloffMin, falloffMax, invert, strength,
-                         wire.falloffCurve, &weights, positiveScales, negativeScales);
+                         _RrFalloffSamples(program, wire), &weights, positiveScales, negativeScales);
     RrWeightPacket out;
     if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
         return out;
@@ -1326,7 +1352,7 @@ _RrBuildPlanePacket(const RrProgram *program,
 
     std::vector<float> weights;
     _RrPlaneWeightField(*points, worldToLocal, axisIndex, falloffMin,
-                        falloffMax, invert, strength, wire.falloffCurve,
+                        falloffMax, invert, strength, _RrFalloffSamples(program, wire),
                         &weights, bounded, extentU, extentV);
     RrWeightPacket out;
     if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
@@ -1361,7 +1387,7 @@ _RrBuildCurvePacket(const RrProgram *program,
     _RrCurveWeightField(*points, curvePoints,
                         _RrApplyAxisScales(worldToLocal, scales),
                         falloffMin, falloffMax, invert, strength,
-                        wire.falloffCurve, &weights);
+                        _RrFalloffSamples(program, wire), &weights);
     RrWeightPacket out;
     if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
         return out;
@@ -1762,7 +1788,7 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
     const float falloffMax = read(wire.falloffMax, 1.0f);
     const float invert = read(wire.invert, 0.0f);
     const float strength = read(wire.strength, 1.0f);
-    const std::vector<float> &curve = wire.falloffCurve;
+    const std::vector<float> &curve = _RrFalloffSamples(program, wire);
 
     if (kind.type == Kind::Type::Plane) {
         const auto token = [&](int32_t slot, uint32_t captured) {
@@ -2138,6 +2164,9 @@ bool RrWeightFieldEffectiveInputMemo(const RrProgram *program,uint32_t fieldInde
     objects.erase(std::unique(objects.begin(),objects.end()),objects.end());
     for(int32_t object:objects) {
         const auto &wire=program->geometry->weightObjects[size_t(object)];
+        const auto falloff = scratch->falloffRows.find(wire.path);
+        if (falloff != scratch->falloffRows.end())
+            RrSourceReadMemo(program, *program->pathReads[falloff->second].read->read, key);
         for(int32_t slot:{wire.valuesSlot,wire.indicesSlot}) if(slot>=0) {
             RigExecWireInput raw; raw.tag=program->file->inputs[size_t(slot)].type();
             raw.mode=RigExecWireReadMode::Raw; raw.walk={uint32_t(slot)};

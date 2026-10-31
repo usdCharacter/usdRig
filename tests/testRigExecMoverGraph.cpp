@@ -2460,6 +2460,115 @@ TestSparseWalkReuseKeepsTheKernelBits()
                 walks);
 }
 
+// The whole-array twin of the group walk's memo: a Legacy matrix revision
+// walks its full support through one, so a rerun whose transform, arm,
+// weights and entering points stand recomputes nothing. Same contract as
+// the group form -- computed exactly the entries whose weight or entering
+// point moved, nothing recorded while the transform or arm moves -- against
+// the unmemoized whole kernel's bits.
+static void
+TestWholeMatrixWalkReuseKeepsTheKernelBits()
+{
+    using Memo = rigExec::RigExecSparseWalkMemo<GfVec3f>;
+    const RangeTestPackets packets;
+    const size_t count = RangeTestPackets::count;
+    const size_t entries = packets.sparseIndices.size();
+    size_t walks = 0;
+    for (const bool radial : {false, true}) {
+        for (const bool simd : {false, true}) {
+            RigExecMoverParameters p = packets.matrix;
+            p.radialWeight = radial;
+            p.weights = packets.sparse;
+            std::vector<GfVec3f> entering = MakeRangeEnteringPoints(count);
+            // A supported point that is a NaN payload: equal only by bits.
+            entering[10] = GfVec3f(NanWithPayload(0x51), 1.0f, -2.0f);
+            Memo memo;
+            const auto walk = [&](size_t computed, const char *what) {
+                std::vector<GfVec3f> plain = entering, reused = entering;
+                bool ok = rigExec::RigExecApplyMatrixKernel(p, &plain, simd);
+                ok = rigExec::RigExecApplyMatrixKernel(p, &reused, simd,
+                                                       &memo) && ok;
+                ok = ok && SameBits(plain, reused) &&
+                     memo.computed == computed &&
+                     memo.reused == entries - computed;
+                if (!ok) {
+                    std::printf("  whole walk reuse (radial %d simd %d): %s "
+                                "computed %u and reused %u, expected %zu "
+                                "and %zu\n",
+                                int(radial), int(simd), what, memo.computed,
+                                memo.reused, computed, entries - computed);
+                }
+                CHECK(ok);
+                ++walks;
+            };
+            const auto run = [&](size_t computed, const char *what) {
+                walk(computed, what);
+            };
+            run(entries, "the first walk");
+            CHECK(memo.indices.empty());
+            run(entries, "the second walk, which records");
+            CHECK(memo.indices.size() == entries);
+            run(0, "the same inputs");
+            // Index 2 is outside the support.
+            entering[2] += GfVec3f(1.0f, -2.0f, 0.5f);
+            run(0, "a point outside the support");
+            entering[17] = GfVec3f(0.0f, 1.0f, 2.0f);
+            run(1, "a supported point");
+            entering[17][0] = -0.0f;
+            run(1, "a supported point's signed zero");
+            entering[24][1] += 1.0f;
+            entering[352][2] -= 1.0f;
+            run(2, "two supported points");
+            // Entry 3 names index 17; another finite weight in [0, 1].
+            CHECK(p.weights.indices[3] == 17);
+            p.weights.values[3] = 0.7f;
+            run(1, "a weight");
+            p.transform[3][0] += 0.25;
+            run(entries, "the transform");
+            CHECK(memo.indices.empty());
+            run(entries, "the moved transform, recording");
+            run(0, "the moved transform, recorded");
+            p.radialWeight = !radial;
+            run(entries, "the blend arm");
+            p.radialWeight = radial;
+            run(entries, "the blend arm back");
+            CHECK(memo.indices.empty());
+            run(entries, "the blend arm back, recording");
+            // A copy stands alone: it reuses what its source held, and
+            // what it then computes is not the source's.
+            Memo copy = memo;
+            {
+                std::vector<GfVec3f> plain = entering, reused = entering;
+                bool ok = rigExec::RigExecApplyMatrixKernel(p, &plain, simd);
+                ok = rigExec::RigExecApplyMatrixKernel(p, &reused, simd,
+                                                       &copy) && ok;
+                CHECK(ok && SameBits(plain, reused) && copy.computed == 0 &&
+                      copy.reused == entries);
+                ++walks;
+            }
+            // A shorter packet forgets the recorded entries and records
+            // its own.
+            RigExecWeightPacket shorter = p.weights;
+            shorter.indices.resize(entries / 2);
+            shorter.values.resize(entries / 2);
+            p.weights = shorter;
+            {
+                std::vector<GfVec3f> plain = entering, reused = entering;
+                bool ok = rigExec::RigExecApplyMatrixKernel(p, &plain, simd);
+                ok = rigExec::RigExecApplyMatrixKernel(p, &reused, simd,
+                                                       &memo) && ok;
+                CHECK(ok && SameBits(plain, reused) &&
+                      memo.computed == entries / 2 &&
+                      memo.reused == 0 &&
+                      memo.indices.size() == entries / 2);
+                ++walks;
+            }
+        }
+    }
+    std::printf("whole walk reuse: %zu walk(s) kept the kernel's bits\n",
+                walks);
+}
+
 // A group gate's kernel half. Under a valid sparse envelope with a zero
 // default every point the envelope does not list leaves each gated op at
 // its entering bytes -- NaN payloads, signed zeros and infinities included,
@@ -2730,6 +2839,7 @@ main(int argc, char **argv)
     TestPrepareRevisionRangesDecidesAsTheKernel();
     TestRevisionGroupsMatchTheWholeKernel();
     TestSparseWalkReuseKeepsTheKernelBits();
+    TestWholeMatrixWalkReuseKeepsTheKernelBits();
     TestGatedOpsKeepUnlistedPoints();
     TestAssemblerLendsDeltasAndRest();
     TestLongResolvedInputConnections();

@@ -606,6 +606,44 @@ TestAGatedChainForwards()
         }
     }
 
+    // A forced full re-run at unchanged values skips every sparse walk
+    // whole: nothing recomputes, every entry reuses, the walks stay
+    // recorded, and the groups keep their bytes and versions.
+    {
+        const Snapshot rerunBefore(chain);
+        std::vector<uint64_t> versions;
+        for (size_t g = 0; g < 3; ++g) {
+            versions.push_back(mover.groups[g].version);
+        }
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        const WalkTotals rerun =
+            CheckWalks(B, c, rerunBefore, "Gated", "full re-run");
+        CHECK(rerun.steps == 3);
+        CHECK(rerun.computed == 0);
+        if (rerun.reused != 200) {
+            std::printf("  full re-run: reused %zu entries, expected 200\n",
+                        rerun.reused);
+        }
+        CHECK(rerun.reused == 200);
+        for (size_t g = 0; g < 3; ++g) {
+            CHECK(mover.groups[g].walk.skippedWhole == 1);
+            CHECK(mover.groups[g].version == versions[g]);
+        }
+        CHECK(B.rangeVerifyMismatches == 0);
+        const GatedValues &last = steps.back().values;
+        const UsdStageRefPtr authored =
+            MakeGatedStage(last.raise, last.lift, last.moving);
+        RigExecRigEvaluator reference(authored, SdfPath(kRig));
+        const bool referenceCompiled = reference.Compile(&errors);
+        CHECK(referenceCompiled);
+        if (referenceCompiled) {
+            CHECK(reference.Evaluate(time).valid);
+            CHECK(SameResult(reference.GetBakedProgram()->GetStepGraph(), B,
+                             c));
+        }
+    }
+
     // A frame-cache worker over a copy of the program, memos included,
     // at the authored values again.
     evaluator.ClearInteractiveOverrides();
@@ -617,6 +655,336 @@ TestAGatedChainForwards()
     }
     CHECK(frozen);
     std::printf("  a gated chain forwards without recomputing its support\n");
+}
+
+// --- A paired Range chain --------------------------------------------------
+
+const char *const kPairedMovingA = "/Asset/Rig/MovingA";
+const char *const kPairedMovingB = "/Asset/Rig/MovingB";
+
+/// Whether point \p i is in the first / second mover's support: every
+/// tenth point of [0, 5000) / [3000, 8000), so the second mover aliases
+/// groups the first wrote (0-2) and groups nobody wrote (8-9).
+bool
+PairedSupportedA(size_t i)
+{
+    return i < 5000 && i % 10 == 3;
+}
+
+/// Whether point \p i is in the second mover's support.
+bool
+PairedSupportedB(size_t i)
+{
+    return i >= 3000 && i < 8000 && i % 10 == 3;
+}
+
+/// One 10000-point target under two gated radial Matrix movers: `First`,
+/// posed by `MovingA`, then `Second`, posed by `MovingB`. \p movingA and
+/// \p movingB are the authored control values.
+UsdStageRefPtr
+MakePairedStage(double movingA, double movingB)
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath(kRig), TfToken("RigExecRoot"));
+    const auto control = [&](const char *path, double value) {
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(path), TfToken("RigExecControl"));
+        prim.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+            .Set(value);
+        return prim;
+    };
+    const UsdPrim controlA = control(kPairedMovingA, movingA);
+    const UsdPrim controlB = control(kPairedMovingB, movingB);
+    const SdfPath target("/Asset/Shape.points");
+    VtVec3fArray base(kPoints);
+    for (size_t i = 0; i < kPoints; ++i) {
+        base[i] = GfVec3f(float(i % 100), float(i / 100), 0.0f);
+    }
+    stage->DefinePrim(SdfPath("/Asset/Shape"), TfToken("Points"))
+        .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+        .Set(base);
+    const auto weight = [&](const char *path, bool (*supported)(size_t)) {
+        VtIntArray support;
+        VtFloatArray weights;
+        for (size_t i = 0; i < kPoints; ++i) {
+            if (!supported(i)) {
+                continue;
+            }
+            support.push_back(int(i));
+            weights.push_back(float((i / 10) % 5) / 4.0f);
+        }
+        const UsdPrim prim =
+            stage->DefinePrim(SdfPath(path), TfToken("RigExecStaticWeight"));
+        prim.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+            .SetTargets({target});
+        prim.CreateAttribute(TfToken("rigExec:representation"),
+                             SdfValueTypeNames->Token, false)
+            .Set(TfToken("sparse"));
+        prim.CreateAttribute(TfToken("rigExec:indices"),
+                             SdfValueTypeNames->IntArray, false)
+            .Set(support);
+        prim.CreateAttribute(TfToken("rigExec:values"),
+                             SdfValueTypeNames->FloatArray, false)
+            .Set(weights);
+        prim.CreateAttribute(TfToken("rigExec:defaultWeight"),
+                             SdfValueTypeNames->Float, false)
+            .Set(0.0f);
+        return prim;
+    };
+    const UsdPrim weightA =
+        weight("/Asset/Rig/Weights/SparseA", &PairedSupportedA);
+    const UsdPrim weightB =
+        weight("/Asset/Rig/Weights/SparseB", &PairedSupportedB);
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto mover = [&](const char *name, const UsdPrim &fromControl,
+                           const UsdPrim &fromWeight) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath(std::string("/Asset/Rig/Movers/") + name),
+            TfToken("RigExecMatrixMover"));
+        CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
+        prim.CreateRelationship(TfToken("rigExec:moves"))
+            .SetTargets({target});
+        prim.CreateRelationship(TfToken("rigExec:transform"))
+            .SetTargets({fromControl.GetPath()});
+        prim.CreateRelationship(TfToken("rigExec:weightObject"), false)
+            .SetTargets({fromWeight.GetPath()});
+        prim.CreateAttribute(TfToken("rigExec:weightBlend"),
+                             SdfValueTypeNames->Token)
+            .Set(TfToken("radial"));
+        return prim;
+    };
+    // Movers run last sibling first: First, then Second.
+    mover("Second", controlB, weightB);
+    mover("First", controlA, weightA);
+    return stage;
+}
+
+/// Whether chain \p c of \p stage, compiled and evaluated cold at its
+/// authored values, publishes the bits \p B holds.
+bool
+MatchesPairedCold(const UsdStageRefPtr &stage, const Program &B, int c,
+                  std::vector<std::string> *errors)
+{
+    RigExecRigEvaluator reference(stage, SdfPath(kRig));
+    if (!reference.Compile(errors)) {
+        return false;
+    }
+    if (!reference.Evaluate(UsdTimeCode(1.0)).valid) {
+        return false;
+    }
+    const int rc =
+        FindChain(reference.GetBakedProgram()->GetStepGraph(),
+                  SdfPath("/Asset/Shape.points"));
+    return rc == c &&
+           SameResult(reference.GetBakedProgram()->GetStepGraph(), B, c);
+}
+
+/// A Range matrix join takes an aliased group's entering source from the
+/// predecessor's join output rather than scanning for its writer. The
+/// second mover aliases groups the first wrote and groups nobody wrote;
+/// a move of its control alone runs its join while the first join skips,
+/// so the join reads held notes, and every step still matches a cold
+/// evaluator's bits. The packet-version judge also runs: both revisions
+/// are matrix, and a matrix assembly writes only six parameters, which
+/// the short packet key's premise asserts outright every step.
+void
+TestAMatrixJoinReadsPredecessorIds()
+{
+    const UsdTimeCode time(1.0);
+    const SdfPath target("/Asset/Shape.points");
+    const UsdStageRefPtr stage = MakePairedStage(1.0, 1.0);
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+    TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "1");
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+    TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
+    CHECK(compiled);
+    if (!compiled) {
+        for (const std::string &line : errors) {
+            std::printf("  %s\n", line.c_str());
+        }
+        return;
+    }
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(evaluator.Evaluate(time).valid);
+    const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
+    CHECK(B.verifyRangeChains);
+    CHECK(B.verifyPacketVersions);
+    const int c = FindChain(B, target);
+    CHECK(c >= 0);
+    if (c < 0) {
+        return;
+    }
+    const Chain &chain = B.chains[size_t(c)];
+    const int first = FindRevision(chain, "First");
+    const int second = FindRevision(chain, "Second");
+    CHECK(first == 0 && second == 1);
+    CHECK(chain.groupBounds.size() == 11);
+    if (first != 0 || second != 1 || chain.groupBounds.size() != 11) {
+        return;
+    }
+    const Revision &moverA = chain.revisions[size_t(first)];
+    const Revision &moverB = chain.revisions[size_t(second)];
+    CHECK(WalksSparse(B, moverA) && moverA.parameters.radialWeight);
+    CHECK(WalksSparse(B, moverB) && moverB.parameters.radialWeight);
+    CHECK(!(moverA.parameters.transform == GfMatrix4d(1.0)));
+    CHECK(!(moverB.parameters.transform == GfMatrix4d(1.0)));
+    // The test's engagement: the second mover aliases a group the first
+    // wrote and a group nobody wrote.
+    bool aliasedWritten = false, aliasedBase = false;
+    for (size_t g = 0; g < moverB.groupWritten.size(); ++g) {
+        if (bool(moverB.groupWritten[g])) {
+            continue;
+        }
+        if (g < moverA.groupWritten.size() && moverA.groupWritten[g]) {
+            aliasedWritten = true;
+        } else {
+            aliasedBase = true;
+        }
+    }
+    CHECK(aliasedWritten && aliasedBase);
+    if (!aliasedWritten || !aliasedBase) {
+        return;
+    }
+    // An aliased group's id is the predecessor's note: its own slot and
+    // version where it wrote, the entering source where it aliased.
+    const auto idsMatch = [&] {
+        for (size_t g = 0; g < moverB.groupIds.size(); ++g) {
+            if (g < moverB.groupWritten.size() && moverB.groupWritten[g]) {
+                continue;
+            }
+            if (g >= moverA.groupIds.size() ||
+                !(moverB.groupIds[g] == moverA.groupIds[g])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    CHECK(idsMatch());
+    // The short packet key's premise: a matrix assembly writes only
+    // kind, enabled, valid, transform, radialWeight and weights, so
+    // every other field is a fresh default.
+    const auto onlySix = [&](const Revision &revision) {
+        RigExecMoverParameters six;
+        six.kind = revision.parameters.kind;
+        six.enabled = revision.parameters.enabled;
+        six.valid = revision.parameters.valid;
+        six.transform = revision.parameters.transform;
+        six.radialWeight = revision.parameters.radialWeight;
+        six.weights = revision.parameters.weights;
+        return revision.parameters == six;
+    };
+    CHECK(onlySix(moverA));
+    CHECK(onlySix(moverB));
+    const int idA = B.chainRevisionBegin[size_t(c)] + first;
+    const int idB = B.chainRevisionBegin[size_t(c)] + second;
+    // Forced full re-runs at rest hold every version and id.
+    for (int round = 0; round < 2; ++round) {
+        const uint64_t versionA = moverA.doneVersion;
+        const uint64_t versionB = moverB.doneVersion;
+        const std::vector<RigExecGroupSource> idsA = moverA.groupIds;
+        const std::vector<RigExecGroupSource> idsB = moverB.groupIds;
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(moverA.doneVersion == versionA);
+        CHECK(moverB.doneVersion == versionB);
+        CHECK(moverA.groupIds == idsA);
+        CHECK(moverB.groupIds == idsB);
+        CHECK(idsMatch());
+        CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
+    }
+    // Only the second control moves, unforced: its join runs while the
+    // first join skips, so the join reads held notes.
+    {
+        const Snapshot before(chain);
+        const uint64_t versionB = moverB.doneVersion;
+        evaluator.SetInteractiveOverrides(
+            {Override(kPairedMovingB, "avars:tx", VtValue(2.0))});
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
+        const std::set<std::pair<int, int>> fuses =
+            RanSteps(B, RigExecBakedStepKind::RevisionFuse);
+        if (!RanFor(fuses, idB) || RanFor(fuses, idA)) {
+            std::printf("  second-only move: second fuse %s, first fuse %s\n",
+                        RanFor(fuses, idB) ? "ran" : "skipped",
+                        RanFor(fuses, idA) ? "ran" : "skipped");
+        }
+        CHECK(RanFor(fuses, idB));
+        CHECK(!RanFor(fuses, idA));
+        CHECK(moverB.doneVersion != versionB);
+        // Non-vacuous: a written group of the second mover moved bytes.
+        bool movedBytes = false;
+        for (size_t g = 0; g < moverB.groups.size(); ++g) {
+            if (g < moverB.groupWritten.size() && !moverB.groupWritten[g]) {
+                continue;
+            }
+            const std::vector<GfVec3f> &was = before.groups[size_t(second)][g];
+            const auto &now = moverB.groups[g].published;
+            if (!RigExecPointsBitsEqual(was.data(), was.size(), now.data,
+                                        now.count)) {
+                movedBytes = true;
+                break;
+            }
+        }
+        CHECK(movedBytes);
+        CHECK(idsMatch());
+        if (!MatchesPairedCold(MakePairedStage(1.0, 2.0), B, c, &errors)) {
+            std::printf("  second-only move: the warm chain differs from a "
+                        "cold evaluator's\n");
+        }
+        CHECK(MatchesPairedCold(MakePairedStage(1.0, 2.0), B, c, &errors));
+    }
+    // The first control moves too: both joins run, and every aliased id
+    // still matches the predecessor's note.
+    {
+        const uint64_t versionA = moverA.doneVersion;
+        const uint64_t versionB = moverB.doneVersion;
+        evaluator.SetInteractiveOverrides(
+            {Override(kPairedMovingA, "avars:tx", VtValue(3.0)),
+             Override(kPairedMovingB, "avars:tx", VtValue(2.0))});
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(B.rangeVerifyMismatches == 0);
+        CHECK(B.packetVersionMismatches == 0);
+        CHECK(onlySix(moverA));
+        CHECK(onlySix(moverB));
+        const std::set<std::pair<int, int>> fuses =
+            RanSteps(B, RigExecBakedStepKind::RevisionFuse);
+        CHECK(RanFor(fuses, idA));
+        CHECK(RanFor(fuses, idB));
+        CHECK(moverA.doneVersion != versionA);
+        CHECK(moverB.doneVersion != versionB);
+        CHECK(idsMatch());
+        if (!MatchesPairedCold(MakePairedStage(3.0, 2.0), B, c, &errors)) {
+            std::printf("  both move: the warm chain differs from a cold "
+                        "evaluator's\n");
+        }
+        CHECK(MatchesPairedCold(MakePairedStage(3.0, 2.0), B, c, &errors));
+    }
+    // Back at the authored values, then a forced full run.
+    evaluator.SetInteractiveOverrides(
+        {Override(kPairedMovingA, "avars:tx", VtValue(1.0)),
+         Override(kPairedMovingB, "avars:tx", VtValue(1.0))});
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(B.rangeVerifyMismatches == 0);
+    CHECK(B.packetVersionMismatches == 0);
+    CHECK(onlySix(moverA));
+    CHECK(onlySix(moverB));
+    CHECK(MatchesPairedCold(MakePairedStage(1.0, 1.0), B, c, &errors));
+    evaluator.GetBakedProgram()->RequestFullRun();
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(B.rangeVerifyMismatches == 0);
+    CHECK(B.packetVersionMismatches == 0);
+    CHECK(idsMatch());
+    std::printf("  a matrix join reads its predecessor's group ids\n");
 }
 
 // --- The biped ---------------------------------------------------------------
@@ -775,6 +1143,249 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
                 "its own\n");
 }
 
+// --- A Legacy chain ------------------------------------------------------------
+
+/// 600 points sit under the 1024-point group target, so the chain never
+/// pipelines: every revision stays Legacy. The test asserts that.
+constexpr size_t kLegacyPoints = 600;
+const SdfPath kLegacyTarget("/Asset/LegacyShape.points");
+const char *const kLegacyRaise = "/Asset/Rig/BlendInputs/LegacyRaise";
+const char *const kResting = "/Asset/Resting";
+
+/// One 600-point target under a blend shape and then two sparse linear
+/// Matrix movers: `Legacy`, posed by `Moving`, and `LegacyRest` at rest.
+/// \p raise and \p moving are the authored values; the rest control stays
+/// at zero, so its mover walks the identity shortcut and never begins a
+/// memo walk.
+UsdStageRefPtr
+MakeLegacyStage(float raise, double moving)
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath(kRig), TfToken("RigExecRoot"));
+    const UsdPrim control =
+        stage->DefinePrim(SdfPath(kMoving), TfToken("RigExecControl"));
+    control.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(moving);
+    const UsdPrim rest =
+        stage->DefinePrim(SdfPath(kResting), TfToken("RigExecControl"));
+    rest.CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(0.0);
+    VtVec3fArray base(kLegacyPoints), raised(kLegacyPoints);
+    VtIntArray support;
+    VtFloatArray weights;
+    for (size_t i = 0; i < kLegacyPoints; ++i) {
+        base[i] = GfVec3f(float(i % 30), float(i / 30), 0.0f);
+        raised[i] = base[i];
+        if (i % 5 == 0) {
+            raised[i][2] += 1.0f;
+        }
+        if (i >= 100 && i < 500 && i % 11 == 4) {
+            support.push_back(int(i));
+            weights.push_back(float((i / 11) % 4) / 3.0f);
+        }
+    }
+    const auto points = [&](const char *path, const VtVec3fArray &values) {
+        stage->DefinePrim(SdfPath(path), TfToken("Points"))
+            .CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+            .Set(values);
+    };
+    points("/Asset/LegacyShape", base);
+    points("/Asset/LegacyRaised", raised);
+    const UsdPrim input = stage->DefinePrim(SdfPath(kLegacyRaise),
+                                            TfToken("RigExecBlendInput"));
+    input.CreateAttribute(TfToken("inputs:weight"), SdfValueTypeNames->Float)
+        .Set(raise);
+    const UsdPrim sample = stage->DefinePrim(
+        SdfPath(kLegacyRaise).AppendChild(TfToken("Full")),
+        TfToken("RigExecBlendSample"));
+    sample.CreateAttribute(TfToken("rigExec:activation"),
+                           SdfValueTypeNames->Float)
+        .Set(1.0f);
+    sample.CreateRelationship(TfToken("rigExec:targetPoints"))
+        .SetTargets(
+            {SdfPath("/Asset/LegacyRaised").AppendProperty(TfToken("points"))});
+    input.CreateRelationship(TfToken("rigExec:samples"))
+        .SetTargets({sample.GetPath()});
+    const UsdPrim weight = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Weights/LegacySparse"),
+        TfToken("RigExecStaticWeight"));
+    weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+        .SetTargets({kLegacyTarget});
+    weight.CreateAttribute(TfToken("rigExec:representation"),
+                           SdfValueTypeNames->Token, false)
+        .Set(TfToken("sparse"));
+    weight.CreateAttribute(TfToken("rigExec:indices"),
+                           SdfValueTypeNames->IntArray, false)
+        .Set(support);
+    weight.CreateAttribute(TfToken("rigExec:values"),
+                           SdfValueTypeNames->FloatArray, false)
+        .Set(weights);
+    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
+                           SdfValueTypeNames->Float, false)
+        .Set(0.0f);
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto mover = [&](const char *name, const SdfPath &provider) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath(std::string("/Asset/Rig/Movers/") + name),
+            TfToken("RigExecMatrixMover"));
+        CHECK(prim.ApplyAPI(TfToken("RigExecMoverAPI")));
+        prim.CreateRelationship(TfToken("rigExec:moves"))
+            .SetTargets({kLegacyTarget});
+        prim.CreateRelationship(TfToken("rigExec:transform"))
+            .SetTargets({provider});
+        prim.CreateRelationship(TfToken("rigExec:weightObject"), false)
+            .SetTargets({weight.GetPath()});
+        return prim;
+    };
+    // Movers run last sibling first: the blend, then the posed mover,
+    // then the resting one.
+    mover("LegacyRest", rest.GetPath());
+    mover("Legacy", control.GetPath());
+    const UsdPrim blend = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Movers/Blend"), TfToken("RigExecBlendShapeMover"));
+    CHECK(blend.ApplyAPI(TfToken("RigExecMoverAPI")));
+    blend.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({kLegacyTarget});
+    blend.CreateRelationship(TfToken("rigExec:blendInputs"))
+        .SetTargets({SdfPath(kLegacyRaise)});
+    blend.CreateAttribute(TfToken("inputs:defaultWeight"),
+                          SdfValueTypeNames->Float)
+        .Set(1.0f);
+    return stage;
+}
+
+/// Whether revision \p r of chain \p c holds the bytes \p reference left.
+bool
+SameLegacyResult(const Program &reference, const Program &B, int c, int r)
+{
+    const std::vector<GfVec3f> &left =
+        reference.chains[size_t(c)].revisions[size_t(r)].output;
+    const std::vector<GfVec3f> &right =
+        B.chains[size_t(c)].revisions[size_t(r)].output;
+    return RigExecPointsBitsEqual(left.data(), left.size(), right.data(),
+                                  right.size());
+}
+
+void
+TestALegacyChainSkipsWhole()
+{
+    const UsdTimeCode time(1.0);
+    const float raise = 0.5f;
+    const double moving = 1.0;
+    const UsdStageRefPtr stage = MakeLegacyStage(raise, moving);
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    CHECK(compiled);
+    if (!compiled) {
+        for (const std::string &line : errors) {
+            std::printf("  %s\n", line.c_str());
+        }
+        return;
+    }
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(evaluator.Evaluate(time).valid);
+    const Program &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const int c = FindChain(B, kLegacyTarget);
+    CHECK(c >= 0);
+    if (c < 0) {
+        return;
+    }
+    const Chain &chain = B.chains[size_t(c)];
+    const int blend = FindRevision(chain, "Blend");
+    const int legacy = FindRevision(chain, "Legacy");
+    const int rest = FindRevision(chain, "LegacyRest");
+    CHECK(blend == 0 && legacy == 1 && rest == 2);
+    CHECK(chain.groupBounds.size() < 2);
+    if (blend != 0 || legacy != 1 || rest != 2) {
+        return;
+    }
+    const Revision &posed = chain.revisions[size_t(legacy)];
+    const Revision &resting = chain.revisions[size_t(rest)];
+    for (const Revision *revision : {&posed, &resting}) {
+        CHECK(revision->op == RigExecRevisionOp::Matrix);
+        CHECK(revision->role == RigExecBakedRevisionRole::Legacy);
+    }
+    CHECK(!(posed.parameters.transform == GfMatrix4d(1.0)));
+    CHECK(resting.parameters.transform == GfMatrix4d(1.0));
+    const size_t entries = posed.parameters.weights.indices.size();
+    CHECK(entries > 0 &&
+          entries == resting.parameters.weights.indices.size());
+    // A forced full re-run at unchanged values skips both walks whole:
+    // nothing seeds, walks or publishes, and the revisions keep their
+    // bytes, versions and sources. The posed walk reports its entries, as
+    // a reusing walk does; the resting one reports none, as the identity
+    // shortcut it stands in for does.
+    for (int round = 0; round < 2; ++round) {
+        const std::vector<GfVec3f> posedBefore = posed.output;
+        const std::vector<GfVec3f> restBefore = resting.output;
+        const uint64_t posedVersion = posed.doneVersion;
+        const uint64_t restVersion = resting.doneVersion;
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(posed.matrixWalk.skippedWhole == 1);
+        CHECK(posed.matrixWalk.computed == 0);
+        CHECK(posed.matrixWalk.reused == entries);
+        CHECK(resting.matrixWalk.skippedWhole == 1);
+        CHECK(resting.matrixWalk.computed == 0);
+        CHECK(resting.matrixWalk.reused == 0);
+        CHECK(posed.doneVersion == posedVersion);
+        CHECK(resting.doneVersion == restVersion);
+        CHECK(posed.currentSource == legacy);
+        CHECK(resting.currentSource == rest);
+        CHECK(RigExecPointsBitsEqual(posed.output.data(), posed.output.size(),
+                                     posedBefore.data(), posedBefore.size()));
+        CHECK(RigExecPointsBitsEqual(resting.output.data(),
+                                     resting.output.size(), restBefore.data(),
+                                     restBefore.size()));
+    }
+    // Moved inputs walk, and match a cold evaluator's bytes: the
+    // transform first, then the entering points under a held transform.
+    struct Step {
+        float raise;
+        double moving;
+        const char *what;
+    };
+    for (const Step &step :
+         {Step{raise, 2.0, "transform moves"},
+          Step{0.75f, 2.0, "entering moves"},
+          Step{raise, moving, "values back"}}) {
+        evaluator.SetInteractiveOverrides(
+            {Override(kLegacyRaise, "inputs:weight", VtValue(step.raise)),
+             Override(kMoving, "avars:tx", VtValue(step.moving))});
+        evaluator.GetBakedProgram()->RequestFullRun();
+        CHECK(evaluator.Evaluate(time).valid);
+        CHECK(posed.matrixWalk.skippedWhole == 0);
+        const UsdStageRefPtr authored =
+            MakeLegacyStage(step.raise, step.moving);
+        RigExecRigEvaluator reference(authored, SdfPath(kRig));
+        const bool referenceCompiled = reference.Compile(&errors);
+        CHECK(referenceCompiled);
+        if (!referenceCompiled) {
+            continue;
+        }
+        CHECK(reference.Evaluate(time).valid);
+        const Program &R =
+            reference.GetBakedProgram()->GetStepGraph();
+        const bool same =
+            SameLegacyResult(R, B, c, legacy) && SameLegacyResult(R, B, c,
+                                                                  rest);
+        if (!same) {
+            std::printf("  %s: the warm chain differs from a cold "
+                        "evaluator's\n",
+                        step.what);
+        }
+        CHECK(same);
+    }
+    // Back at standing inputs the walks skip whole again.
+    evaluator.GetBakedProgram()->RequestFullRun();
+    CHECK(evaluator.Evaluate(time).valid);
+    CHECK(posed.matrixWalk.skippedWhole == 1);
+    CHECK(resting.matrixWalk.skippedWhole == 1);
+    std::printf("  a legacy chain skips its matrix walks whole\n");
+}
+
 }  // namespace
 
 int
@@ -792,6 +1403,8 @@ main(int argc, char **argv)
         return 2;
     }
     TestAGatedChainForwards();
+    TestAMatrixJoinReadsPredecessorIds();
+    TestALegacyChainSkipsWhole();
     TestTheBipedArmEditForwards(argv[1]);
     if (failures) {
         std::printf("testRigExecGroupForwarding: %d failure(s)\n", failures);

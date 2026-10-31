@@ -46,3 +46,33 @@ view. The painting target remains independent of viewport selection.
 
 Style choices are authored by the editor and participate in undo. Evaluation
 and Hydra publication do not author results onto the stage.
+
+
+## Editing weights
+
+Open **RigExec > Volume Weight Authoring** to edit a weight. The Weight tab
+contains its inner and outer boundaries, strength, inversion and falloff
+profile. Shape / placement contains axis scales and placement. Display /
+options contains guide styling and surface coloring. The influence overlay
+remains independent of selection.
+
+While the editor is open, drag a drawn inner shell or outer cage with the left
+mouse button to expand or contract that boundary. Shift-drag a sphere to
+change the nearest positive or negative axis scale; Shift-drag a bounded
+plane to resize its nearest extent. These are the six half-axis controls
+supported by sphere weights. Alt and Meta remain camera gestures. Escape
+cancels an active drag.
+
+Numeric and viewport drags send uncommitted values through the Hydra preview
+channel, coalesced at 16 ms intervals. On release, one undoable stage commit
+is queued on the owning UI thread, using the edit target and time captured
+at the start of the drag. Closing the editor cancels active gestures.
+
+Custom curve knots are edited in a detached spline. During the drag, sampled
+falloff values update the surface influence through Hydra and the evaluation
+graph. Release commits the spline once; Escape restores the original influence.
+The temporary samples are never authored to the stage.
+
+The optional `inputs:falloffSamples` array also works as a sampled graph input.
+An empty array uses the authored profile. `.rigexec` format 27 carries it as a
+runtime input; a file from formats 20–26 plays with its compiled falloff table.

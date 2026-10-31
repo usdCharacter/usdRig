@@ -30,6 +30,10 @@
 
 namespace rigExec {
 
+namespace {
+const TfToken _falloffSamplesInput("inputs:falloffSamples");
+}
+
 bool
 RigExecUpstreamSlotType(const SdfValueTypeName &typeName)
 {
@@ -323,6 +327,10 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
                 evaluatorDetail::_IsVolumeWeightType(type);
             if (!volumetric && type != combineType) {
                 continue;
+            }
+            if (volumetric) {
+                add(path.AppendProperty(_falloffSamplesInput), Time::AtTime,
+                    "weight falloff");
             }
             const std::vector<TfToken> relationships =
                 volumetric ? std::vector<TfToken>{weightTargetRel,

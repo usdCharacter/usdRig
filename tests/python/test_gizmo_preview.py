@@ -355,6 +355,19 @@ class _ArraySink(_FakeSink):
 
 
 def TestFlattenArrays():
+    _Check(gizmoPreview.Flatten(Vt.FloatArray([0, .25, 1])) == [0, .25, 1],
+           "scalar falloff samples preserve their order")
+    sink = _FakeSink(expected=3)
+    gizmoPreview.SetSink(sink)
+    try:
+        path = Sdf.Path("/Asset/Rig/Weight.inputs:falloffSamples")
+        _Check(gizmoPreview.Push({path: Vt.FloatArray([0, .25, 1])}),
+               "the sampled falloff reaches the preview sink")
+        _Check(sink.declarations == [str(path) + "\t3"],
+               "scalar arrays declare their element count")
+        _Check(sink.samples == [[0, .25, 1]], "scalar array payload")
+    finally:
+        gizmoPreview.SetSink(None)
     pairs = [(1, 2), (3, 4), (5, 6), (7, 8)]
     _Check(gizmoPreview.Flatten(Vt.Vec2fArray(pairs[:3])) ==
            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],

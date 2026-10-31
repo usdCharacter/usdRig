@@ -18,6 +18,7 @@
 #include "rigExecMath/deltaMushKernel.h"
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
+#include "rigExecMath/partialRowsKernel.h"
 #include "rigExecMath/pointBlocks.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
@@ -63,6 +64,18 @@
 #include <xmmintrin.h>
 #else
 #define RIGEXEC_RUNTIME_HAS_SSE2 0
+#endif
+
+// The NEON twin of the weighted-matrix kernel (simdKernels.cpp): the same
+// IEEE float operations in the same order, so native and runtime agree bit
+// for bit, which the native/runtime geometry check compares with memcmp.
+#if !defined(RIGEXEC_DISABLE_NEON)                                     \
+    && (defined(__aarch64__) || defined(__ARM_NEON)                    \
+        || defined(_M_ARM64) || defined(_M_ARM64EC))
+#define RIGEXEC_RUNTIME_HAS_NEON 1
+#include <arm_neon.h>
+#else
+#define RIGEXEC_RUNTIME_HAS_NEON 0
 #endif
 
 namespace rigExec {
@@ -923,6 +936,8 @@ RrGeoApplyLinearBlendSkin(const RrVec3f *in, RrVec3f *out,
 
 #if !RIGEXEC_RUNTIME_HAS_SSE2
 
+#if !RIGEXEC_RUNTIME_HAS_NEON
+
 void
 RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
                             const float *weights, size_t count,
@@ -933,6 +948,8 @@ RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
             RrGeoToVec3d(in[i]), transform, (weights ? weights[i] : 1.0f)));
     }
 }
+
+#endif  // RIGEXEC_RUNTIME_HAS_NEON
 
 void
 RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
@@ -1040,6 +1057,48 @@ RrGeoApplyLinearBlendSkinSimd(const RrVec3f *in, RrVec3f *out,
 
 #endif  // RIGEXEC_RUNTIME_HAS_SSE2
 
+#if RIGEXEC_RUNTIME_HAS_NEON && !RIGEXEC_RUNTIME_HAS_SSE2
+
+void
+RrGeoApplyWeightedMatrixSimd(const RrVec3f *in, RrVec3f *out,
+                            const float *weights, size_t count,
+                            const RrMat4d &transform)
+{
+    // Row-vector convention: p' = x*row0 + y*row1 + z*row2 + row3.
+    const float32x4_t row0 = {float(transform[0][0]), float(transform[0][1]),
+                              float(transform[0][2]), 0.0f};
+    const float32x4_t row1 = {float(transform[1][0]), float(transform[1][1]),
+                              float(transform[1][2]), 0.0f};
+    const float32x4_t row2 = {float(transform[2][0]), float(transform[2][1]),
+                              float(transform[2][2]), 0.0f};
+    const float32x4_t row3 = {float(transform[3][0]), float(transform[3][1]),
+                              float(transform[3][2]), 0.0f};
+
+    for (size_t i = 0; i < count; ++i) {
+        const float32x4_t q = {in[i][0], in[i][1], in[i][2], 0.0f};
+        const float32x4_t moved = vaddq_f32(
+            vaddq_f32(vmulq_f32(vdupq_n_f32(in[i][0]), row0),
+                      vmulq_f32(vdupq_n_f32(in[i][1]), row1)),
+            vaddq_f32(vmulq_f32(vdupq_n_f32(in[i][2]), row2), row3));
+        const float wi = weights ? weights[i] : 1.0f;
+        float32x4_t blended;
+        if (wi <= 0.0f) {
+            blended = q;
+        } else if (wi >= 1.0f) {
+            blended = moved;
+        } else {
+            const float32x4_t w = vdupq_n_f32(wi);
+            blended =
+                vaddq_f32(q, vmulq_f32(w, vsubq_f32(moved, q)));
+        }
+        alignas(16) float result[4];
+        vst1q_f32(result, blended);
+        out[i] = RrVec3f(result[0], result[1], result[2]);
+    }
+}
+
+#endif  // RIGEXEC_RUNTIME_HAS_NEON
+
 // \p useSimd is the program's RrGeoSettings::useSimd. Reads \p in and writes
 // \p pts, which may be the same array: point i is written only after it is
 // read.
@@ -1107,6 +1166,128 @@ RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
     return weights ? w.ResolveAll(count, weights) : w.ResolvesAll(count);
 }
 
+// A matrix narrowed once for the sparse walk's float arms: four rows of
+// three components, padded to four.
+void
+RrGeoNarrowMatrixFloatRows(const RrMat4d &transform, float *rows)
+{
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            rows[r * 4 + c] = float(transform[r][c]);
+        }
+        rows[r * 4 + 3] = 0.0f;
+    }
+}
+
+// The affine half of one sparse entry, the same IEEE float operations in
+// the same order as the native walk, so the two agree bit for bit.
+RrVec3f
+RrGeoAffineMatrixFloatRows(const float *rows, const RrVec3f &q)
+{
+#if RIGEXEC_RUNTIME_HAS_SSE2
+    const __m128 vq = _mm_setr_ps(q[0], q[1], q[2], 0.0f);
+    const __m128 moved = _mm_add_ps(
+        _mm_add_ps(
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(0, 0, 0, 0)),
+                       _mm_loadu_ps(rows)),
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(1, 1, 1, 1)),
+                       _mm_loadu_ps(rows + 4))),
+        _mm_add_ps(
+            _mm_mul_ps(_mm_shuffle_ps(vq, vq, _MM_SHUFFLE(2, 2, 2, 2)),
+                       _mm_loadu_ps(rows + 8)),
+            _mm_loadu_ps(rows + 12)));
+    alignas(16) float result[4];
+    _mm_store_ps(result, moved);
+    return RrVec3f(result[0], result[1], result[2]);
+#elif RIGEXEC_RUNTIME_HAS_NEON
+    const float32x4_t vq = {q[0], q[1], q[2], 0.0f};
+    const float32x4_t moved = vaddq_f32(
+        vaddq_f32(vmulq_f32(vdupq_n_f32(q[0]), vld1q_f32(rows)),
+                  vmulq_f32(vdupq_n_f32(q[1]), vld1q_f32(rows + 4))),
+        vaddq_f32(vmulq_f32(vdupq_n_f32(q[2]), vld1q_f32(rows + 8)),
+                  vld1q_f32(rows + 12)));
+    alignas(16) float result[4];
+    vst1q_f32(result, moved);
+    return RrVec3f(result[0], result[1], result[2]);
+#else
+    const float x = q[0], y = q[1], z = q[2];
+    return RrVec3f((x * rows[0] + y * rows[4]) + (z * rows[8] + rows[12]),
+                   (x * rows[1] + y * rows[5]) + (z * rows[9] + rows[13]),
+                   (x * rows[2] + y * rows[6]) + (z * rows[10] + rows[14]));
+#endif
+}
+
+// The blended entry: q + w*(moved-q) with the dense kernel's endpoint
+// selection, moved computed first as the dense kernel computes it.
+RrVec3f
+RrGeoBlendMatrixFloatRows(const float *rows, const RrVec3f &q, float w)
+{
+    const RrVec3f moved = RrGeoAffineMatrixFloatRows(rows, q);
+    if (w <= 0.0f) {
+        return q;
+    }
+    if (w >= 1.0f) {
+        return moved;
+    }
+    return RrVec3f(q[0] + (w * (moved[0] - q[0])),
+                   q[1] + (w * (moved[1] - q[1])),
+                   q[2] + (w * (moved[2] - q[2])));
+}
+
+// The radial partials one float walk needs, keyed by exact weight bits,
+// as the native walk keys them: memoizing the pure weight-to-partial
+// function is bit-identical at any size. 256 direct-mapped slots with a
+// 4-word validity bitmask, as natively. Stack-local to the walk.
+class RrGeoRadialRowsCache {
+public:
+    explicit RrGeoRadialRowsCache(const RrMat4d &transform)
+        : _transform(transform)
+    {
+        _valid[0] = _valid[1] = _valid[2] = _valid[3] = 0;
+    }
+
+    const float *Rows(float weight)
+    {
+        uint32_t bits;
+        std::memcpy(&bits, &weight, sizeof(bits));
+        const uint32_t slot = (bits * 2654435761u) >> 24;
+        const uint64_t bit = 1ull << (slot & 63);
+        uint64_t &word = _valid[slot >> 6];
+        if ((word & bit) && _bits[slot] == bits) {
+            return _rows[slot];
+        }
+        float *rows = _rows[slot];
+        const double clamped = RrClamp(double(weight), 0.0, 1.0);
+        if (clamped <= 0.0) {
+            RrGeoNarrowMatrixFloatRows(RrMat4d(1.0), rows);
+        } else if (clamped >= 1.0) {
+            RrGeoNarrowMatrixFloatRows(_transform, rows);
+        } else {
+            if (!_haveDecomposition) {
+                _decomposition =
+                    RrDecomposePartialTransform(_transform);
+                _haveDecomposition = true;
+            }
+            RigExecPartialRowsFloat(_decomposition.scale.data(),
+                                    _decomposition.axis.data(),
+                                    _decomposition.angle,
+                                    _decomposition.translation.data(),
+                                    float(clamped), rows);
+        }
+        _bits[slot] = bits;
+        word |= bit;
+        return rows;
+    }
+
+private:
+    uint64_t _valid[4];
+    uint32_t _bits[256];
+    float _rows[256][16];
+    const RrMat4d &_transform;
+    RrPartialDecomposition _decomposition;
+    bool _haveDecomposition = false;
+};
+
 // The sparse walk's entries [kBegin, kEnd), applied in place to \p data: the
 // one loop the whole kernel runs over every entry and a group over the
 // entries whose indices fall in it, \p data[index - offset] holding point
@@ -1119,21 +1300,26 @@ RrGeoMatrixKernelAccepts(const RrGeoMoverParameters &p, size_t count,
 // its entries, and an entry whose weight and entering point hold the bits
 // recorded takes the recorded result, as _ApplyMatrixSparseWalk does: the
 // same bits either way.
+//
+// Under \p useSimd both arms run in float, narrowed once per matrix as the
+// dense kernel narrows; without it they run the double reference.
 void
 RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
-                           size_t kEnd, RrVec3f *data, size_t offset = 0,
+                           size_t kEnd, RrVec3f *data, size_t offset,
+                           bool useSimd,
                            RigExecSparseWalkMemo<RrVec3f> *memo = nullptr)
 {
     const RrGeoWeightPacket &w = p.weights;
     using Mode = RigExecSparseWalkMode;
     Mode mode = Mode::Compute;
     if (memo) {
-        // The arm, then the transform's sixteen doubles.
+        // The arm, then the transform's sixteen doubles: the one spelling
+        // the walks and the skip check share.
         static_assert(sizeof(RrMat4d) == 16 * sizeof(double),
                       "the transform keys by its sixteen doubles");
-        unsigned char params[1 + sizeof(RrMat4d)];
-        params[0] = p.radialWeight ? 1 : 0;
-        std::memcpy(params + 1, &p.transform, sizeof(RrMat4d));
+        unsigned char params[kRigExecSparseWalkParamsSize];
+        RigExecSparseWalkSpellParams(p.radialWeight,
+                                     &p.transform._mtx[0][0], params);
         mode = RigExecSparseWalkBegin(memo, params, sizeof(params),
                                       kEnd - kBegin);
     }
@@ -1163,6 +1349,22 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
         }
     };
     if (p.radialWeight) {
+        if (useSimd) {
+            // The float twin of the loop below: each distinct weight's
+            // partial factored by the float rows kernel, each point the
+            // float affine.
+            RrGeoRadialRowsCache cache(p.transform);
+            for (size_t k = kBegin; k < kEnd; ++k) {
+                RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
+                if (reuse(k, &point)) {
+                    continue;
+                }
+                point = RrGeoAffineMatrixFloatRows(
+                    cache.Rows(w.Values()[k]), point);
+                keep(k, point);
+            }
+            return;
+        }
         // The sparse walk takes the same arc the dense kernel does; a
         // painted cluster falloff is almost always sparse, so this is
         // the branch every radial cluster on a real rig reaches.
@@ -1195,6 +1397,21 @@ RrGeoApplyMatrixSparseWalk(const RrGeoMoverParameters &p, size_t kBegin,
         }
         return;
     }
+    if (useSimd) {
+        // The float twin of the loop below: the transform narrowed once,
+        // each entry the dense kernel's blend at its own weight.
+        float rows[16];
+        RrGeoNarrowMatrixFloatRows(p.transform, rows);
+        for (size_t k = kBegin; k < kEnd; ++k) {
+            RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
+            if (reuse(k, &point)) {
+                continue;
+            }
+            point = RrGeoBlendMatrixFloatRows(rows, point, w.Values()[k]);
+            keep(k, point);
+        }
+        return;
+    }
     for (size_t k = kBegin; k < kEnd; ++k) {
         RrVec3f &point = data[size_t(w.Indices()[k]) - offset];
         if (reuse(k, &point)) {
@@ -1220,7 +1437,8 @@ RrGeoApplyMatrixKernel(const RrGeoMoverParameters &p, std::vector<RrVec3f> *pts,
         if (p.transform == RrGeoIdentity()) {
             return true;  // at rest every weighted point maps to itself
         }
-        RrGeoApplyMatrixSparseWalk(p, 0, w.Indices().size(), pts->data());
+        RrGeoApplyMatrixSparseWalk(p, 0, w.Indices().size(), pts->data(), 0,
+                                        useSimd);
         return true;
     }
     if(RrGeoEnvelopeIsFullStrength(p.weights)) {
@@ -3770,7 +3988,8 @@ RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
                 return passThrough();
             }
             seed();
-            RrGeoApplyMatrixSparseWalk(p, kBegin, kEnd, out, begin, walk);
+            RrGeoApplyMatrixSparseWalk(p, kBegin, kEnd, out, begin, useSimd,
+                                        walk);
             return true;
         }
         if (prepared.matrixWeights.size() != count) {

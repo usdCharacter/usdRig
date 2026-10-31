@@ -340,6 +340,53 @@ bool RevisionOutPart(const RigExecBakedProgramImpl &B, uint32_t slot,
     }
     return false;
 }
+// RevisionOut \p slot's revision and part from the writing chunk step's own
+// identity, without the chunk table: a RevisionChunk step with object id
+// and part k writes exactly slot chunkBase + k (Build declares it so, and
+// the body just ran on that same part, so the revision is hot). Every guard
+// below is a conjunct of what RevisionOutPart checks on its chunkRevision
+// route for that same row, so a hit answers exactly what the table would;
+// anything else -- a fuse's group slots, a hand-assembled program, a table
+// that routes elsewhere -- falls back to the table.
+bool RevisionOutStepPart(const RigExecBakedProgramImpl &B, uint32_t slot,
+    const RigExecBakedStep *step,
+    const RigExecBakedProgramImpl::GeomRevision **revision, size_t *part)
+{
+    if(step && step->kind==RigExecBakedStepKind::RevisionChunk &&
+       step->object>=0 && step->part>=0 && slot<B.chunkRevision.size() &&
+       B.chunkRevision[slot]==step->object) {
+        const size_t r=size_t(step->object);
+        const size_t tables=std::min(B.revisionChunkBase.size(),B.revisionChunkCount.size());
+        if(r<tables) {
+            const int base=B.revisionChunkBase[r], count=B.revisionChunkCount[r];
+            // index == part: the table's row for this revision routes this
+            // slot to this part, as Build's write declaration does; that
+            // and part >= 0 are the slot-in-range check.
+            if(base>=0 && count>=0 &&
+               int64_t(base)==int64_t(slot)-int64_t(step->part) &&
+               int64_t(step->part)<int64_t(count)) {
+                const auto *v=Revision(B,uint32_t(r));
+                const size_t index=size_t(step->part);
+                if(v) {
+                    const size_t published=v->role==RigExecBakedRevisionRole::Whole ? v->groups.size() : 0;
+                    if(index<v->chunks.size()+published) {
+                        if(index<v->chunks.size()) {
+                            const auto &chunk=v->chunks[index];
+                            if(chunk.begin>=0 && chunk.end>=chunk.begin) {
+                                *revision=v; *part=index;
+                                return true;
+                            }
+                        } else {
+                            *revision=v; *part=index;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return RevisionOutPart(B,slot,revision,part);
+}
 // The RevisionOut key's body over \p points, the buffer holding the chunk's
 // result: only the chunk's own half-open range.
 void PutRevisionOut(std::string *out,
@@ -384,8 +431,28 @@ size_t ComputedCount(const RigExecGroupState<GfVec3f> &g)
 void PutPacket(std::string *out, const RigExecBakedProgramImpl::GeomRevision &r)
 {
     const RigExecMoverParameters &v=r.parameters;
+    // A matrix assembly writes only kind, enabled, valid, transform,
+    // radialWeight and weights (the leaf and stage assemblers, and the
+    // no-assembly invalid arm, all), so the key names only those: the
+    // forty-odd fields below stay default for a matrix revision, and a
+    // constant field cannot move the compare. The weights arm is the
+    // versioned one: an enabled matrix revision's weights are the shared
+    // packet copied verbatim, so the key carries the version
+    // RevisionStatic moves exactly when that packet's publication
+    // reported changed instead of the arrays. `enabled` above keeps an
+    // arm change a key change.
+    if (r.op==RigExecRevisionOp::Matrix) {
+        Put(out,v.kind); Put(out,v.enabled); Put(out,v.valid);
+        Put(out,v.transform); Put(out,v.radialWeight);
+        if (v.enabled && r.weightObject>=0 && !r.weightCurrentPhase &&
+            r.weightPacketValue>=0) {
+            Put(out,r.matrixWeightsVersion);
+        } else Put(out,v.weights);
+        return;
+    }
     Put(out,v.kind); Put(out,v.enabled); Put(out,v.valid); Put(out,v.transform);
-    Put(out,v.radialWeight); Put(out,v.weights);
+    Put(out,v.radialWeight);
+    Put(out,v.weights);
     if(r.role!=RigExecBakedRevisionRole::Legacy && r.op==RigExecRevisionOp::BlendShape) {
         Put(out,uint8_t(1)); Put(out,r.deltasVersion);
     } else Array(out,v.blendDeltas);
@@ -458,7 +525,8 @@ bool RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &B,
 }
 
 void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &B,
-    RigExecBakedSlotDomain domain, uint32_t slot, std::string *out)
+    RigExecBakedSlotDomain domain, uint32_t slot, std::string *out,
+    const RigExecBakedStep *step)
 {
     if (!TF_VERIFY(out)) return;
     out->clear(); Put(out,uint8_t(1)); Put(out,domain);
@@ -543,7 +611,7 @@ void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &B,
         // here would race the parallel writer and cause false change waves.
         const RigExecBakedProgramImpl::GeomRevision *v=nullptr;
         size_t part=0;
-        if(RevisionOutPart(B,slot,&v,&part)) {
+        if(RevisionOutStepPart(B,slot,step,&v,&part)) {
             // A range chain's group keys its bytes by the content version
             // its writer bumps exactly when they move (pointBlocks.h): a
             // Range group (ok, count, version), a keyed Whole skin's
@@ -696,15 +764,32 @@ void PutSmall(SmallKey *out,const RigExecPointFrame &v)
 {
     out->Append(v.flags); for(const auto &point:v.points) out->Append(point);
 }
+// Put's bytes for a string and a token: the length, then the text.
+void PutSmall(SmallKey *out,const std::string &v)
+{
+    out->Append(uint64_t(v.size())); out->AppendBytes(v.data(),v.size());
 }
-bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpValueState *value)
+void PutSmall(SmallKey *out,const TfToken &v)
+{
+    out->Append(uint64_t(v.size())); out->AppendBytes(v.GetText(),v.size());
+}
+// Put's bytes for a mover status: its state token, then the address.
+void PutSmall(SmallKey *out,const RigExecMoverStatus &v)
+{
+    PutSmall(out,v.state); PutSmall(out,v.firstBadAddress);
+}
+}
+bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpValueState *value,
+    const RigExecBakedStep *step)
 {
     using D=RigExecBakedSlotDomain;
     const D domain=D(value->domain); const uint32_t slot=value->slot;
+    // A ChainDirty keys its revision's RevisionDone key, header included.
+    const D header=domain==D::ChainDirty ? D::RevisionDone : domain;
     // RigExecBakedOpValueKey's fields in its order, only for the slots it
     // keys without failing. Put writes each of these fields as its object
     // bytes (the vectors and the matrix are padding-free, asserted above).
-    SmallKey key; key.Append(uint8_t(1)); key.Append(domain);
+    SmallKey key; key.Append(uint8_t(1)); key.Append(header);
     const auto matrix=[&](const std::vector<GfMatrix4d> &values) {
         if(slot>=values.size()) return false;
         key.Append(values[slot]); return true;
@@ -742,6 +827,81 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         if(slot<B.frameMatrix.size() && slot<B.frameMatrixValid.size()) {
             key.Append(B.frameMatrixValid[slot]); key.Append(B.frameMatrix[slot]); keyed=true;
         } break;
+    case D::RevisionOut: {
+        // Only the version-keyed group parts: a Legacy chunk or a Whole
+        // revision's one chunk keys its point bytes and stays on the key.
+        const RigExecBakedProgramImpl::GeomRevision *v=nullptr;
+        size_t part=0;
+        if(!RevisionOutStepPart(B,slot,step,&v,&part)) break;
+        bool published=false;
+        const auto *g=GroupPart(*v,part,&published);
+        if(!g) {
+            // An unchunked Legacy matrix revision's held chunk: the body
+            // proved every key field standing, so the stored key already
+            // spells these bytes and the compare is skipped, leaving the
+            // flag, revision and key the spell would have left. Anything
+            // else keys its bytes as before.
+            if(v->op==RigExecRevisionOp::Matrix &&
+               v->role==RigExecBakedRevisionRole::Legacy && !v->chunked &&
+               v->matrixChunkHeld && value->initialized) {
+                value->changed=0;
+                return true;
+            }
+            break;
+        }
+        if(published) {
+            key.Append(uint64_t(g->published.count)); key.Append(g->version); keyed=true;
+        } else if(v->role==RigExecBakedRevisionRole::Range) {
+            // A Range matrix group's held skip: the body proved every key
+            // field standing, so the stored key already spells these bytes
+            // and the compare is skipped, leaving the flag, revision and
+            // key the spell would have left. Anything else keys as before.
+            if(v->op==RigExecRevisionOp::Matrix &&
+               g->matrixSkipHeld && value->initialized) {
+                value->changed=0;
+                return true;
+            }
+            key.Append(g->ok); key.Append(uint64_t(g->published.count));
+            key.Append(g->version); keyed=true;
+        } else {
+            key.Append(g->ok); key.Append(uint64_t(ComputedCount(*g)));
+            key.Append(g->computedVersion); keyed=true;
+        }
+        break;
+    }
+    case D::RevisionPacket: {
+        // A matrix revision's held packet: the static body proved every
+        // key field standing, so the stored key already spells these bytes
+        // and the compare is skipped, leaving the flag, revision and key
+        // the spell would have left. Anything else keys its bytes as
+        // before; an inexact packet keys its inputs too.
+        const auto *v=Revision(B,slot);
+        if(v && v->op==RigExecRevisionOp::Matrix && v->matrixPacketHeld &&
+           value->initialized && v->parameters.externalData.IsEmpty()) {
+            value->changed=0;
+            return true;
+        }
+        break;
+    }
+    case D::RevisionTransforms: {
+        // A matrix revision's held transforms: the fold proved every key
+        // field standing, so the stored key already spells these bytes
+        // and the compare is skipped. Anything else keys its bytes.
+        const auto *v=Revision(B,slot);
+        if(v && v->op==RigExecRevisionOp::Matrix && v->matrixTransformsHeld &&
+           value->initialized) {
+            value->changed=0;
+            return true;
+        }
+        break;
+    }
+    case D::RevisionDone:
+    case D::ChainDirty:
+        if(const auto *v=Revision(B,slot)) {
+            PutSmall(&key,v->resultStatus); PutSmall(&key,v->status);
+            key.Append(v->doneVersion); keyed=true;
+        }
+        break;
     case D::SpaceValue: {
         // Error text, a token and a boxed value key by length or box: they
         // go through the key.
@@ -1396,5 +1556,298 @@ bool RigExecBakedOpEffectiveInputKey(const RigExecBakedProgramImpl &B,const RigE
     const bool exact=InputKey(B,step,out,true,covered,typed,remap,contentLeaves);
     if(KeysWeightOverlay(B,step)) RigExecOpKeyAppend(out,B.publishWeightFields);
     return exact;
+}
+namespace {
+// A binding leaf's pool bytes per InputKey's plain arm, or 0 when the leaf
+// keys variable bytes (a token) or reads outside its pool.
+uint16_t MemoPoolWidth(const RigExecBakedProgramImpl &B,
+    const RigExecBakedLeafRef &ref)
+{
+    switch(ref.type) {
+    case RigExecBakedLeafType::Double:
+        if(ref.index>=B.leaves.Of<double>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<double>::Stored));
+    case RigExecBakedLeafType::Float:
+        if(ref.index>=B.leaves.Of<float>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<float>::Stored));
+    case RigExecBakedLeafType::Int:
+        if(ref.index>=B.leaves.Of<int>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<int>::Stored));
+    case RigExecBakedLeafType::Bool:
+        if(ref.index>=B.leaves.Of<bool>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<bool>::Stored));
+    case RigExecBakedLeafType::Token: return 0;
+    case RigExecBakedLeafType::Matrix4d:
+        if(ref.index>=B.leaves.Of<GfMatrix4d>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfMatrix4d>::Stored));
+    case RigExecBakedLeafType::Vec3d:
+        if(ref.index>=B.leaves.Of<GfVec3d>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfVec3d>::Stored));
+    case RigExecBakedLeafType::Vec3f:
+        if(ref.index>=B.leaves.Of<GfVec3f>().value.size()) return 0;
+        return uint16_t(sizeof(RigExecBakedLeafPool<GfVec3f>::Stored));
+    }
+    return 0;
+}
+RigExecBakedMemoHoleSource MemoPoolSource(RigExecBakedLeafType type)
+{
+    switch(type) {
+    case RigExecBakedLeafType::Double: return RigExecBakedMemoHoleSource::PoolDouble;
+    case RigExecBakedLeafType::Float: return RigExecBakedMemoHoleSource::PoolFloat;
+    case RigExecBakedLeafType::Int: return RigExecBakedMemoHoleSource::PoolInt;
+    case RigExecBakedLeafType::Bool: return RigExecBakedMemoHoleSource::PoolBool;
+    case RigExecBakedLeafType::Matrix4d: return RigExecBakedMemoHoleSource::PoolMatrix4d;
+    case RigExecBakedLeafType::Vec3d: return RigExecBakedMemoHoleSource::PoolVec3d;
+    case RigExecBakedLeafType::Vec3f: return RigExecBakedMemoHoleSource::PoolVec3f;
+    case RigExecBakedLeafType::Token: break;
+    }
+    return RigExecBakedMemoHoleSource::PoolDouble;
+}
+} // namespace
+void RigExecBakedBuildMemoFastPlans(RigExecBakedProgramImpl *program)
+{
+    RigExecBakedProgramImpl &B=*program;
+    B.memoHoles.clear();
+    const size_t opCount=B.opGraph.ops.size();
+    B.memoHoleBegin.assign(opCount+1,0);
+    B.memoFast.assign(opCount,0);
+    B.memoKeySize.assign(opCount,0);
+    B.fastMemoMismatch.assign(opCount,0);
+    // The widths MemoPoolWidth reports are the Put widths InputKey writes.
+    static_assert(sizeof(RigExecBakedLeafPool<double>::Stored)==8,"");
+    static_assert(sizeof(RigExecBakedLeafPool<float>::Stored)==4,"");
+    static_assert(sizeof(RigExecBakedLeafPool<int>::Stored)==4,"");
+    static_assert(sizeof(RigExecBakedLeafPool<bool>::Stored)==1,"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfMatrix4d>::Stored)==16*sizeof(double),"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfVec3d>::Stored)==3*sizeof(double),"");
+    static_assert(sizeof(RigExecBakedLeafPool<GfVec3f>::Stored)==3*sizeof(float),"");
+    for(uint32_t c=0;c<opCount;++c) {
+        const auto &op=B.opGraph.ops[c];
+        bool planned=false;
+        uint32_t offset=0;
+        std::vector<RigExecBakedMemoHole> holes;
+        do {
+            if(op.originalIndex>=B.steps.size()) break;
+            const RigExecBakedStep &step=B.steps[op.originalIndex];
+            if(step.kind==RigExecBakedStepKind::ComposeSubtree ||
+               step.kind==RigExecBakedStepKind::PropertyRevision ||
+               step.kind==RigExecBakedStepKind::WeightField ||
+               step.kind==RigExecBakedStepKind::ProviderRefresh ||
+               step.kind==RigExecBakedStepKind::SpaceExpression ||
+               step.kind==RigExecBakedStepKind::AvarInputs ||
+               step.kind==RigExecBakedStepKind::Constraint) break;
+            if(!step.leaves.empty() || !step.overrideSlots.empty() ||
+               !step.readerWalks.empty() || !step.walkedBindingLeaves.empty()) break;
+            offset=uint32_t(sizeof(uint64_t)); // bindingLeaves count
+            bool leavesOk=true;
+            for(uint32_t id:step.bindingLeaves) {
+                if(id<B.leafRefs.size()) {
+                    const auto &ref=B.leafRefs[id];
+                    const uint16_t w=MemoPoolWidth(B,ref);
+                    if(!w) { leavesOk=false; break; }
+                    // id, type, index, tag, then the pool bytes.
+                    offset+=uint32_t(sizeof(uint32_t)+sizeof(RigExecBakedLeafType)+
+                                     sizeof(uint32_t)+sizeof(uint8_t));
+                    RigExecBakedMemoHole hole;
+                    hole.offset=offset; hole.param0=ref.index; hole.size=w;
+                    hole.source=MemoPoolSource(ref.type);
+                    holes.push_back(hole); offset+=w;
+                    continue;
+                }
+                const size_t pathOffset=size_t(id)-B.leafRefs.size();
+                if(pathOffset>=B.pathLeafRefs.size()) { leavesOk=false; break; }
+                const auto &ref=B.pathLeafRefs[pathOffset];
+                const RigExecBakedPathLeaves *leaves=RigExecBakedPathLeavesOf(B,ref);
+                if(!leaves || ref.key>=leaves->values.size() ||
+                   ref.key>=leaves->versions.size()) { leavesOk=false; break; }
+                // The Skin arm keys two bytes whatever the layout handle
+                // reads today, so any leaf it could claim stays slow.
+                if(step.kind==RigExecBakedStepKind::RevisionStatic &&
+                   step.object>=0 && size_t(step.object)<B.revisionIndex.size()) {
+                    if(const auto *revision=Revision(B,uint32_t(step.object))) {
+                        if(revision->op==RigExecRevisionOp::Skin &&
+                           leaves==&revision->leaves &&
+                           (int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::JointIndices) ||
+                            int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::JointWeights) ||
+                            int(ref.key)==leaves->decl.Role(
+                                RigExecRevisionLeafRole::ElementSize))) {
+                            leavesOk=false; break;
+                        }
+                    }
+                }
+                // InputKey's versioned gate, with contentLeaves false.
+                const auto at=[](const std::vector<int> &v,uint32_t k) {
+                    return k<v.size()?v[k]:-1;
+                };
+                if(!RigExecBakedPathLeafVersioned(ref) ||
+                   ref.key>=leaves->decl.keys.size() ||
+                   at(leaves->walks,ref.key)>=0 ||
+                   at(leaves->exactVersions,ref.key)>=0 ||
+                   at(leaves->exactRecordIndices,ref.key)>=0) {
+                    leavesOk=false; break;
+                }
+                // id, tag, then the content version.
+                offset+=uint32_t(sizeof(uint32_t)+sizeof(uint8_t));
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.param0=uint32_t(pathOffset);
+                hole.param1=ref.key; hole.size=uint16_t(sizeof(uint64_t));
+                hole.source=RigExecBakedMemoHoleSource::PathVersion;
+                holes.push_back(hole); offset+=uint32_t(sizeof(uint64_t));
+            }
+            if(!leavesOk) break;
+            // The three empty list counts.
+            offset+=uint32_t(3*sizeof(uint64_t));
+            if(KeysWeightOverlay(B,step)) {
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.size=uint16_t(sizeof(bool));
+                hole.source=RigExecBakedMemoHoleSource::Overlay;
+                holes.push_back(hole); offset+=uint32_t(sizeof(bool));
+            }
+            bool readsOk=true;
+            for(RigExecValueId id:op.descriptor.reads) {
+                if(id>=B.opAdapter.values.size()) { readsOk=false; break; }
+                const auto &value=B.opAdapter.values[size_t(id)];
+                if(value.domain==
+                   uint32_t(RigExecBakedSlotDomain::PropertyResult)) {
+                    readsOk=false; break;
+                }
+                offset+=uint32_t(sizeof(RigExecValueId)); // id bytes
+                RigExecBakedMemoHole hole;
+                hole.offset=offset; hole.param0=uint32_t(id);
+                hole.param1=uint32_t(id>>32);
+                hole.size=uint16_t(sizeof(uint64_t));
+                hole.source=RigExecBakedMemoHoleSource::Revision;
+                holes.push_back(hole); offset+=uint32_t(sizeof(uint64_t));
+            }
+            if(!readsOk) break;
+            planned=true;
+        } while(false);
+        if(planned) {
+            B.memoFast[c]=1; B.memoKeySize[c]=offset;
+            B.memoHoleBegin[c+1]=uint32_t(B.memoHoles.size()+holes.size());
+            B.memoHoles.insert(B.memoHoles.end(),holes.begin(),holes.end());
+        } else {
+            B.memoHoleBegin[c+1]=uint32_t(B.memoHoles.size());
+        }
+    }
+}
+bool RigExecBakedFastEffectiveMemo(const RigExecBakedProgramImpl &B,uint32_t c,
+    std::string *stored,std::vector<uint32_t> *covered,
+    std::vector<std::pair<uint32_t,uint32_t>> *typed,
+    bool *changed,bool *exact)
+{
+    if(c>=B.memoFast.size() || !B.memoFast[c]) return false;
+    if(c>=B.memoKeySize.size() || !stored || stored->size()!=B.memoKeySize[c])
+        return false;
+    if(c+1>=B.memoHoleBegin.size()) return false;
+    const uint32_t begin=B.memoHoleBegin[c],end=B.memoHoleBegin[c+1];
+    if(begin>end || end>B.memoHoles.size()) return false;
+    char *bytes=stored->data();
+    bool moved=false,ok=true;
+    for(uint32_t h=begin;h<end;++h) {
+        const RigExecBakedMemoHole &hole=B.memoHoles[h];
+        char *slot=bytes+hole.offset;
+        switch(hole.source) {
+        case RigExecBakedMemoHoleSource::Revision: {
+            const uint64_t id=uint64_t(hole.param0)|(uint64_t(hole.param1)<<32);
+            if(id>=B.opAdapter.values.size()) return false;
+            const uint64_t live=B.opAdapter.values[size_t(id)].revision;
+            uint64_t was=0;
+            std::memcpy(&was,slot,sizeof(was));
+            if(was!=live) { std::memcpy(slot,&live,sizeof(live)); moved=true; }
+            break;
+        }
+        case RigExecBakedMemoHoleSource::PoolDouble:
+        case RigExecBakedMemoHoleSource::PoolFloat:
+        case RigExecBakedMemoHoleSource::PoolInt:
+        case RigExecBakedMemoHoleSource::PoolBool:
+        case RigExecBakedMemoHoleSource::PoolMatrix4d:
+        case RigExecBakedMemoHoleSource::PoolVec3d:
+        case RigExecBakedMemoHoleSource::PoolVec3f: {
+            const char *live=nullptr;
+            size_t count=0;
+            switch(hole.source) {
+            case RigExecBakedMemoHoleSource::PoolDouble: {
+                const auto &pool=B.leaves.Of<double>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolFloat: {
+                const auto &pool=B.leaves.Of<float>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolInt: {
+                const auto &pool=B.leaves.Of<int>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolBool: {
+                const auto &pool=B.leaves.Of<bool>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolMatrix4d: {
+                const auto &pool=B.leaves.Of<GfMatrix4d>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            case RigExecBakedMemoHoleSource::PoolVec3d: {
+                const auto &pool=B.leaves.Of<GfVec3d>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            default: {
+                const auto &pool=B.leaves.Of<GfVec3f>().value;
+                count=pool.size();
+                if(hole.param0<count)
+                    live=reinterpret_cast<const char *>(pool.data()+hole.param0);
+                break;
+            }
+            }
+            if(!live) return false;
+            if(std::memcmp(slot,live,hole.size)!=0) {
+                std::memcpy(slot,live,hole.size); moved=true;
+            }
+            break;
+        }
+        case RigExecBakedMemoHoleSource::PathVersion: {
+            if(hole.param0>=B.pathLeafRefs.size()) return false;
+            const RigExecBakedPathLeaves *leaves=
+                RigExecBakedPathLeavesOf(B,B.pathLeafRefs[hole.param0]);
+            if(!leaves || hole.param1>=leaves->versions.size() ||
+               hole.param1>=leaves->values.size()) return false;
+            const uint64_t live=leaves->versions[hole.param1];
+            uint64_t was=0;
+            std::memcpy(&was,slot,sizeof(was));
+            if(was!=live) { std::memcpy(slot,&live,sizeof(live)); moved=true; }
+            ok=BoxExact(leaves->values[hole.param1])&&ok;
+            break;
+        }
+        case RigExecBakedMemoHoleSource::Overlay: {
+            const char live=B.publishWeightFields?char(1):char(0);
+            if(*slot!=live) { *slot=live; moved=true; }
+            break;
+        }
+        }
+    }
+    if(covered) covered->clear();
+    if(typed) typed->clear();
+    *changed=moved; *exact=ok;
+    return true;
 }
 } // namespace rigExec

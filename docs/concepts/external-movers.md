@@ -69,8 +69,8 @@ and registers the handler when the plugin loads. The adapter does not call
 plugins continue to work.
 
 The build runs `generateMoverSchema.py` with the Python interpreter selected
-by `Python3_EXECUTABLE`, which must match the OpenUSD install. It reads
-`schema.usda` and generates `MyMoverSchema.h`: the schema type, attribute
+by `Python3_EXECUTABLE`. It reads `schema.usda` and generates
+`MyMoverSchema.h`: the schema type, attribute
 names/types/variability, and typed default constants. A property's `:` becomes
 `_`, so `inputs:gain` becomes `MyMoverSchema::inputs_gain`. Adapters consume
 these defaults when declaring leaves. Read time, read phase, provider binding,
@@ -78,8 +78,13 @@ and computational semantics remain explicit adapter contracts. Scalars,
 tokens, numeric vectors, matrices, and their supported arrays are emitted as
 USD-free constants; unsupported defaults fail generation. Use `SCHEMA_DEPENDS`
 for additional local schema layers. Schema plugins must set
-`skipCodeGeneration = true`; the helper runs `usdGenSchema` and packages its
-codeless resources beside the adapter plugin.
+`skipCodeGeneration = true`; the helper runs `usdGenSchema` when the OpenUSD
+install has Python bindings and packages its codeless resources beside the
+adapter plugin. Against a Python-less install it reads the schema text
+directly instead: one concrete class inheriting `</Typed>`, emitting
+identical headers and documentation-free resources. Anything outside that
+shape fails naming the construct, so a richer schema still needs a
+Python-enabled OpenUSD.
 
 The generated `MyMoverRegistration.h` declares `RigExecDefineMyMover()`.
 Standalone hosts link `MyMoverKernel` and pass an array of these definitions

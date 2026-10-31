@@ -18,8 +18,9 @@ namespace rigExec {
 
 struct RigExecSkinLayout;
 
-/// SSE weighted-matrix movement kernel: out_i = in_i + w_i (T in_i - in_i)
-/// in float math. in/out may alias.
+/// Weighted-matrix movement kernel: out_i = in_i + w_i (T in_i - in_i)
+/// in float math, SSE2 on x86 and NEON on ARM (the two agree bit for bit).
+/// in/out may alias.
 void RigExecApplyWeightedMatrixSimd(
     const GfVec3f *in, GfVec3f *out, const float *weights, size_t count,
     const GfMatrix4d &transform);

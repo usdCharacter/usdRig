@@ -64,6 +64,10 @@ bool Volume(const std::vector<RigExecWeightRecord> &records, const std::vector<R
     RigExecFalloffParams params;
     params.falloffMin = read(6,0); params.falloffMax = read(7,1);
     params.invert = read(5,0); params.strength = read(4,1); params.curveData = object.falloffCurve.data(); params.curveCount = object.falloffCurve.size();
+    if (input.falloffSampleCount) {
+        params.curveData = input.falloffSamples;
+        params.curveCount = input.falloffSampleCount;
+    }
     const auto &axisName = input.axis;
     const auto &boundsName = input.bounds;
     const int axis = axisName == "x" ? 0 : axisName == "y" ? 1 : axisName == "z" ? 2 : -1;

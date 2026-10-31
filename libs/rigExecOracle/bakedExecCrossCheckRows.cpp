@@ -363,6 +363,11 @@ Input WeightInputs(const B &b, int index)
     } else if (w.type == "RigExecSphereWeight" || w.type == "RigExecPlaneWeight" || w.type == "RigExecCurveWeight") {
         if (w.providerSlot >= 0) Put(in,path,"computePointFrame",VtValue(b.base[b.baseLast[size_t(w.providerSlot)]]));
         RigExecFalloffLut lut; lut.samples = w.falloffCurve;
+        if (w.falloffSamplesLeaf >= 0) {
+            const VtFloatArray samples = w.pointLeaves.Value<VtFloatArray>(
+                size_t(w.falloffSamplesLeaf), {});
+            if (!samples.empty()) lut.samples.assign(samples.cbegin(), samples.cend());
+        }
         Put(in,path,"computeFalloffLut",VtValue(lut));
         Leaf(in,b,path,"inputs:falloffMin",w.falloffMin); Leaf(in,b,path,"inputs:falloffMax",w.falloffMax);
         Leaf(in,b,path,"inputs:strength",w.strength); Leaf(in,b,path,"inputs:invert",w.invert);
