@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <string>
@@ -3230,6 +3231,7 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
         // candidates with the same lerps, area vector, and verdict the
         // precompute ran, so the answers agree bit for bit either way.
         bool skipTris = false;
+        bool tickStatic = false;
         if (collide) {
             float pad = std::max(std::max(0.0f, to.parameters.thickness),
                                  std::max(0.0f, to.parameters.collisionDepth));
@@ -3258,14 +3260,26 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             // An empty precompute covers no triangle; the search derives
             // what it touches. The sized vectors stay for the next near tick.
             if (skipTris) ws->contacts.triangleCount = 0;
+            // A tick whose collider points do not move interpolates every
+            // substep to the same triangles: Lerp(a, a, t) is t-independent
+            // for every a including signed zeros and NaNs, so the first
+            // substep's precompute serves the rest bit for bit. Only without
+            // material profiles: their self-contact pass can evict the reused
+            // tables from the fast caches, which then costs more than the
+            // rewrite it skips.
+            tickStatic = mesh.model.Empty() && !skipTris && from.colliders && to.colliders &&
+                         (from.colliders == to.colliders ||
+                          std::memcmp(from.colliders, to.colliders,
+                                       3 * colliders.pointCount * sizeof(float)) == 0);
         }
         for (int sub = 1; sub <= substeps; ++sub) {
             const RigExecClothStep s =
                 RigExecClothStepFor(to.parameters, substeps, sub, frame);
             // The tick's collider triangles at this substep's fraction,
             // once for every particle and iteration below; far ticks skip
-            // the precompute above and derive on touch instead.
-            if (collide && !skipTris)
+            // the precompute above and derive on touch instead, and static
+            // ticks reuse the first substep's interpolation.
+            if (collide && !skipTris && (sub == 1 || !tickStatic))
                 RigExecClothContactTrisAt(colliders, from.colliders,
                                            to.colliders, s.t, &ws->contacts);
             const RigExecClothContactTris *contacts =
