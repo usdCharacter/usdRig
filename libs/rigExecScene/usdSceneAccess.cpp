@@ -3,6 +3,7 @@
 #include "usdSceneAccess.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/attributeQuery.h"
+#include "pxr/usd/usd/primDefinition.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/resolveInfo.h"
@@ -51,19 +52,37 @@ void Keep(VtDictionary *result, const char *name, const TfToken &key,
     VtValue value;
     if (object.GetMetadata(key, &value)) (*result)[name] = std::move(value);
 }
+// Authored-gated keep: a kept key with no authored opinion in any layer
+// resolves to the schema fallback alone, which the prim definition answers
+// without the layer walk. Same definition and same schematics read the
+// composer ends with: none of the kept keys is a disallowed fallback field
+// and property names are never empty, so the public lookup matches the
+// composer's internal one exactly. An authored key keeps the full compose.
+template <class Object>
+void KeepGated(VtDictionary *result, const char *name, const TfToken &key,
+    const Object &object) {
+    if (object.HasAuthoredMetadata(key)) {
+        Keep(result, name, key, object);
+        return;
+    }
+    VtValue value;
+    if (object.GetPrim().GetPrimDefinition().GetPropertyMetadata(
+            object.GetName(), key, &value))
+        (*result)[name] = std::move(value);
+}
 VtDictionary CapturedPrimMetadata(const UsdPrim &) {
     return VtDictionary();
 }
 VtDictionary CapturedAttributeMetadata(const UsdAttribute &attribute) {
     VtDictionary result;
-    Keep(&result, "rigExecReadPhase", _tokens->readPhase, attribute);
-    Keep(&result, "rigExecInputElement", _tokens->inputElement, attribute);
-    Keep(&result, "interpolation", _tokens->interpolation, attribute);
+    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, attribute);
+    KeepGated(&result, "rigExecInputElement", _tokens->inputElement, attribute);
+    KeepGated(&result, "interpolation", _tokens->interpolation, attribute);
     return result;
 }
 VtDictionary CapturedRelationshipMetadata(const UsdRelationship &relationship) {
     VtDictionary result;
-    Keep(&result, "rigExecReadPhase", _tokens->readPhase, relationship);
+    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, relationship);
     return result;
 }
 }
