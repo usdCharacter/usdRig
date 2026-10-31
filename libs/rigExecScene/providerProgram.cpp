@@ -782,18 +782,25 @@ bool RigExecSampleProviderProgram(const RigExecProviderProgram &program,
         if(attribute==scene.attributes.end() || (!value.IsEmpty() && value.GetType()!=attribute->second.fact.type.GetType()))
             return Fail(error,"provider overlay native type mismatch: "+path.GetString());
     }
+    // One find per leaf: the validation pass remembers each source row, so
+    // the publish pass below reuses it instead of finding it again. Failure
+    // order is unchanged -- every missing source still fails before any
+    // type check or publish, and changed is still cleared between them.
+    std::vector<const RigExecSceneAttributeDescriptor *> rows;
+    rows.reserve(program.sampled.size());
     for(const auto &leaf:program.sampled) {
         const auto attribute=scene.attributes.find(leaf.attribute);
         if(attribute==scene.attributes.end() || identity>=attribute->second.inputs.size())return Fail(error,"provider source state missing");
+        rows.push_back(&attribute->second);
     }
     changed->clear();
-    for(const auto &leaf:program.sampled) {
-        const auto attr=scene.attributes.find(leaf.attribute);
-        if(attr==scene.attributes.end() || identity>=attr->second.inputs.size())return Fail(error,"provider source state missing");
+    for(size_t i=0;i<program.sampled.size();++i) {
+        const auto &leaf=program.sampled[i];
+        const auto &attr=*rows[i];
         const auto overlay=overlays.find(leaf.attribute);
-        const auto &source=attr->second.inputs[identity];
+        const auto &source=attr.inputs[identity];
         const auto &value=overlay==overlays.end()?source.raw:overlay->second;
-        if(!value.IsEmpty() && value.GetType()!=attr->second.fact.type.GetType())
+        if(!value.IsEmpty() && value.GetType()!=attr.fact.type.GetType())
             return Fail(error,"provider overlay native type mismatch: "+leaf.attribute.GetString());
         if(store->PublishSource(leaf.value,value,overlay==overlays.end()?source.rawBlocked:false,overlay!=overlays.end()))
             changed->push_back(leaf.value);
