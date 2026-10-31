@@ -3794,6 +3794,11 @@ struct RigExecBakedProgramImpl {
         /// passes the base through like an excluded fuse, `currentSource`
         /// -1, and its join publishes that version.
         bool rangeSetAside = false;
+        /// Whether `groupWritten` names an unwritten group: Build state, set
+        /// everywhere `groupWritten` is, so the static's gate check reads
+        /// one bool instead of scanning the array every run. Packed with
+        /// `rangeSetAside`, so it moves no later field.
+        bool rangeGated = false;
         RigExecBakedRevisionRole role = RigExecBakedRevisionRole::Legacy;
         /// Range/Whole: per chain group (size G), whether this revision
         /// publishes it (a Range revision's gated groups; every group of a

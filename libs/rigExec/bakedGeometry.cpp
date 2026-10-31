@@ -1610,6 +1610,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.role = GeomRole::Legacy;
         revision.rangeRole = false;
         revision.groupWritten.clear();
+        revision.rangeGated = false;
         revision.enteringWriter.clear();
         revision.groups.clear();
         revision.groupIds.clear();
@@ -1653,6 +1654,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.role = candidate[r];
         revision.rangeRole = revision.role == GeomRole::Range;
         revision.groupWritten.assign(groups, 1);
+        revision.rangeGated = false;
         const bool skin = revision.op == RigExecRevisionOp::Skin;
         if (revision.rangeRole && skin &&
             !PartitionSkinGroups(&revision, chain->groupBounds)) {
@@ -1675,6 +1677,10 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             std::vector<char> written;
             if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
+                revision.rangeGated =
+                    std::find(revision.groupWritten.begin(),
+                              revision.groupWritten.end(),
+                              char(0)) != revision.groupWritten.end();
             }
             B.exportPinnedPaths.insert(pinned[r].begin(), pinned[r].end());
         } else if (skin && revision.skinTopologyFixed &&
@@ -5794,9 +5800,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // that is a pin hole (counted, reported by the owner).
         const auto noteGate = [&B, &revision]() {
             if (revision.role != RigExecBakedRevisionRole::Range ||
-                std::find(revision.groupWritten.begin(),
-                          revision.groupWritten.end(),
-                          char(0)) == revision.groupWritten.end()) {
+                !revision.rangeGated) {
                 return;
             }
             if (revision.parameters.valid && revision.status.AllowsApply() &&
