@@ -2972,7 +2972,7 @@ _LeafSame(const T &a, const T &b)
 }  // namespace
 
 void
-RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
+RigExecBakedNumberInputLeaves(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
     B.leaves = RigExecBakedLeafPools();
@@ -2998,6 +2998,13 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
             B.leafOfOverride[size_t(input.overrideIndex)] = int(id);
         }
     });
+}
+
+void
+RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
+{
+    RigExecBakedProgramImpl &B = *program;
+    RigExecBakedNumberInputLeaves(program);
     // RigExecBakedRecordBind files every hop of a registered binding's walk
     // (its head alone when the walk is empty) under the binding's number,
     // so the leaf's paths are exactly those entries.

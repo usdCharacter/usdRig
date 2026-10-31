@@ -4579,6 +4579,12 @@ bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t i
     const std::vector<std::vector<size_t>> &externalInputsBySlot);
 void RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,RigExecBakedStep *step);
 
+/// The patchable-input prefix of RigExecBakedNumberLeaves: the pools, the
+/// input leaf indices, and the override and source-backed rows the sampler
+/// reads. Path leaves, the by-path index, step bindings and head leaves
+/// are not numbered; the mid-build sample that feeds the rest and ladder
+/// compose reads none of them, and the end of Build numbers them all again.
+void RigExecBakedNumberInputLeaves(RigExecBakedProgramImpl *program);
 void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);
 
 /// Resolves \p leaves' keys on \p stage at Build: each key's attribute, the

@@ -3471,7 +3471,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.ladderVarying = true;
     }
     _SampleIntervening(&B, capture);
-    RigExecBakedNumberLeaves(&B);
+    // The sample below and the rest/ladder compose read only the
+    // patchable-input leaves; path leaves, the by-path index, step bindings
+    // and head leaves have no reader until the end of Build numbers them.
+    RigExecBakedNumberInputLeaves(&B);
     RigExecBakedSampleLeaves(&B, capture, /* all = */ true);
     // Every rest before any ladder: a ladder reads its own slot's rest and
     // its parent's, and a slot's parent is below it.
