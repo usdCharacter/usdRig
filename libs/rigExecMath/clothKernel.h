@@ -1500,9 +1500,15 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             float d[3];
             Sub(p, q, d);
             const float signedDistance = Dot(d, n);
+            // The slab test before the root: a candidate outside
+            // [-depth, thickness] along the normal is rejected with or
+            // without the distance, so two compares skip the root. The
+            // three verdicts are a conjunction of continues, so testing
+            // the slab first rejects the same candidates bit for bit,
+            // and NaN signed distances compare false either way.
+            if (signedDistance >= thickness || signedDistance < -depth) continue;
             const float distance = Length(d);
             if (distance > reach) continue;
-            if (signedDistance >= thickness || signedDistance < -depth) continue;
             if (signedDistance >= 0.0f && distance >= thickness) continue;
             if (distance < bestDistance ||
                 (distance == bestDistance && tri < best.triangle)) {
