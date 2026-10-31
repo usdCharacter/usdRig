@@ -303,15 +303,46 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
             [&](uint32_t at){return excluded[at]!=0;}),edges.end());};
         removeExcluded(preds[i]);removeExcluded(succs[i]);
     }
-    for (const auto &component : Components(succs, preds)) {
-        std::vector<std::string> members;
-        members.reserve(component.size());
-        for (uint32_t i : component) {
-            excluded[i] = 1;
-            members.push_back(descriptors[i].key);
+    // Key ranks from the duplicate check's order: keys are unique past it,
+    // so ranks order the ready queue exactly as the key strings did, with
+    // integer compares instead of string compares per push and pop.
+    std::vector<uint32_t> keyRank(count, 0);
+    for (uint32_t k = 0; k < keyOrder.size(); ++k) keyRank[keyOrder[k].second] = k;
+    const auto after = [&](uint32_t a, uint32_t b) { return keyRank[a] > keyRank[b]; };
+    std::vector<uint32_t> unresolved(count, 0), order;
+    const auto runKahn = [&] {
+        order.clear();
+        std::fill(unresolved.begin(), unresolved.end(), 0);
+        std::priority_queue<uint32_t, std::vector<uint32_t>, decltype(after)> ready(after);
+        for (uint32_t i = 0; i < count; ++i) if (!excluded[i]) {
+            for (uint32_t predecessor : preds[i]) if (!excluded[predecessor]) ++unresolved[i];
+            if (!unresolved[i]) ready.push(i);
         }
-        std::sort(members.begin(), members.end());
-        reports.emplace_back(Loop(component, succs, descriptors), std::move(members));
+        while (!ready.empty()) {
+            const uint32_t at = ready.top(); ready.pop(); order.push_back(at);
+            for (uint32_t next : succs[at]) if (!excluded[next] && --unresolved[next] == 0) ready.push(next);
+        }
+    };
+    // Kahn orders every op outside a cycle, so a complete first order proves
+    // the graph acyclic and the SCC discovery below -- which would find
+    // nothing -- is skipped. A partial order takes the slow path: discovery
+    // marks the cycle members excluded exactly as before, and Kahn runs
+    // again over the remainder, seeing what the single pass always saw.
+    runKahn();
+    size_t included = 0;
+    for (uint32_t i = 0; i < count; ++i) included += excluded[i] == 0;
+    if (order.size() != included) {
+        for (const auto &component : Components(succs, preds)) {
+            std::vector<std::string> members;
+            members.reserve(component.size());
+            for (uint32_t i : component) {
+                excluded[i] = 1;
+                members.push_back(descriptors[i].key);
+            }
+            std::sort(members.begin(), members.end());
+            reports.emplace_back(Loop(component, succs, descriptors), std::move(members));
+        }
+        runKahn();
     }
     std::sort(reports.begin(), reports.end());
     reports.erase(std::unique(reports.begin(),reports.end()),reports.end());
@@ -328,22 +359,6 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
             }
         }
         return fail(message);
-    }
-    // Key ranks from the duplicate check's order: keys are unique past it,
-    // so ranks order the ready queue exactly as the key strings did, with
-    // integer compares instead of string compares per push and pop.
-    std::vector<uint32_t> keyRank(count, 0);
-    for (uint32_t k = 0; k < keyOrder.size(); ++k) keyRank[keyOrder[k].second] = k;
-    const auto after = [&](uint32_t a, uint32_t b) { return keyRank[a] > keyRank[b]; };
-    std::priority_queue<uint32_t, std::vector<uint32_t>, decltype(after)> ready(after);
-    std::vector<uint32_t> unresolved(count, 0), order;
-    for (uint32_t i = 0; i < count; ++i) if (!excluded[i]) {
-        for (uint32_t predecessor : preds[i]) if (!excluded[predecessor]) ++unresolved[i];
-        if (!unresolved[i]) ready.push(i);
-    }
-    while (!ready.empty()) {
-        const uint32_t at = ready.top(); ready.pop(); order.push_back(at);
-        for (uint32_t next : succs[at]) if (!excluded[next] && --unresolved[next] == 0) ready.push(next);
     }
     graph.canonicalIndex.assign(count, -1);
     for (uint32_t i = 0; i < order.size(); ++i) graph.canonicalIndex[order[i]] = int32_t(i);
