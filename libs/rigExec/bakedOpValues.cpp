@@ -798,6 +798,20 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         }
         break;
     }
+    case D::RevisionPacket: {
+        // A matrix revision's held packet: the static body proved every
+        // key field standing, so the stored key already spells these bytes
+        // and the compare is skipped, leaving the flag, revision and key
+        // the spell would have left. Anything else keys its bytes as
+        // before; an inexact packet keys its inputs too.
+        const auto *v=Revision(B,slot);
+        if(v && v->op==RigExecRevisionOp::Matrix && v->matrixPacketHeld &&
+           value->initialized && v->parameters.externalData.IsEmpty()) {
+            value->changed=0;
+            return true;
+        }
+        break;
+    }
     case D::RevisionDone:
     case D::ChainDirty:
         if(const auto *v=Revision(B,slot)) {

@@ -3575,6 +3575,18 @@ struct RigExecBakedProgramImpl {
         /// (those carry no content version). The value id is set at
         /// compile, which drops the claim.
         bool matrixParamsHeld = false;
+        /// RevisionStatic's verdict that this run left every RevisionPacket
+        /// key field standing: the parameters (by `matrixParamsHeld`, whose
+        /// claim the assembly's pure-function contract backs), the
+        /// versioned-array arm both runs (a byte-keyed packet never holds),
+        /// and every scalar the key spells, stale-read before the body and
+        /// compared after. The packet publish skips its spell and reports
+        /// unchanged while this stands; the stored key already spells these
+        /// bytes, so skipping the compare is unobservable. Set fresh by
+        /// every static run, dropped at compile with the other claims.
+        /// Never mirrored into the run shadow: the body overwrites it on
+        /// every run, and no publish without a body run reads it.
+        bool matrixPacketHeld = false;
         int matrixParamsWeightBlendIndex = -1;
         int matrixParamsEnabledIndex = -1;
         int matrixParamsDefaultWeightIndex = -1;

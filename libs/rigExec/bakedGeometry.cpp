@@ -5366,6 +5366,28 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     }
 
     case RigExecBakedStepKind::RevisionStatic: {
+        // The RevisionPacket key's scalars, stale-read for the held verdict
+        // the publish decides by: the body overwrites them below, so these
+        // are last run's. The parameters ride `matrixParamsHeld` instead,
+        // and the status is a pure function of those and the static path.
+        const bool matrixStatic =
+            revision.op == RigExecRevisionOp::Matrix;
+        const bool wasVersionedArm = revision.parameters.enabled &&
+            revision.weightObject >= 0 && !revision.weightCurrentPhase &&
+            revision.weightPacketValue >= 0;
+        const uint64_t wasMatrixWeightsVersion = revision.matrixWeightsVersion;
+        const bool wasLayoutUsable = revision.layoutUsable;
+        const bool wasEnvelopeOk = revision.envelopeOk;
+        const uint64_t wasEnvelopeVersion = revision.envelopeVersion;
+        const bool wasFullStrength = revision.fullStrength;
+        const size_t wasPrecedingCount = revision.precedingCount;
+        const bool wasPartitionStale = revision.partitionStale;
+        const bool wasWeightFieldPublished = revision.weightFieldPublished;
+        const uint64_t wasWeightValuesVersion = revision.weightValuesVersion;
+        const RigExecRevisionAcceptance wasAcceptance = revision.acceptance;
+        const int wasWeightObject = revision.weightObject;
+        const bool wasWeightCurrentPhase = revision.weightCurrentPhase;
+        const int wasWeightPacketValue = revision.weightPacketValue;
         RigExecBakedAdoptRevisionLayout(&revision);
         // The field consumes the declared preceding point version. Preserve
         // the source packet's range policy when adopting its dense values.
@@ -5408,8 +5430,9 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // A matrix revision's held parameters while every input the
         // assembly reads stands, else the fresh assembly, whose key is
         // then noted: the same parameters either way.
-        if (revision.op == RigExecRevisionOp::Matrix &&
-            MatrixParamsHeld(B, revision)) {
+        const bool paramsHeld =
+            matrixStatic && MatrixParamsHeld(B, revision);
+        if (paramsHeld) {
             // Held: revision.parameters stands as assembled.
         } else {
             RigExecMoverParameters assembled = AssembleRevision(
@@ -5442,6 +5465,36 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (revision.op == RigExecRevisionOp::Matrix) {
             MatrixWeightsNoteVersion(B, &revision);
         }
+        // RevisionPacket's held verdict for the publish, from the head's
+        // parameters claim and the stale key scalars: true only while the
+        // versioned-array arm keyed both runs and no scalar moved. Called
+        // at every exit; conservative by construction, since false only
+        // costs the spell the publish already paid.
+        const auto notePacketHeld = [&] {
+            if (!matrixStatic) {
+                return;
+            }
+            const RigExecMoverParameters &p = revision.parameters;
+            const bool versionedArm = p.enabled &&
+                revision.weightObject >= 0 &&
+                !revision.weightCurrentPhase &&
+                revision.weightPacketValue >= 0;
+            revision.matrixPacketHeld = paramsHeld && wasVersionedArm &&
+                versionedArm &&
+                wasMatrixWeightsVersion == revision.matrixWeightsVersion &&
+                wasLayoutUsable == revision.layoutUsable &&
+                wasEnvelopeOk == revision.envelopeOk &&
+                wasEnvelopeVersion == revision.envelopeVersion &&
+                wasFullStrength == revision.fullStrength &&
+                wasPrecedingCount == revision.precedingCount &&
+                wasPartitionStale == revision.partitionStale &&
+                wasWeightFieldPublished == revision.weightFieldPublished &&
+                wasWeightValuesVersion == revision.weightValuesVersion &&
+                wasAcceptance == revision.acceptance &&
+                wasWeightObject == revision.weightObject &&
+                wasWeightCurrentPhase == revision.weightCurrentPhase &&
+                wasWeightPacketValue == revision.weightPacketValue;
+        };
         if (rangeLattice) {
             // The lattice arm copies the base (or takes the held copy back)
             // into a valid packet's rest points and leaves them empty
@@ -5583,6 +5636,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     }
                 }
             }
+            notePacketHeld();
             return;
         }
         // Every revision of a chain is applied to the same number of points:
@@ -5695,6 +5749,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 }
             }
             noteGate();
+            notePacketHeld();
             return;
         }
         if (!skin) {
@@ -5740,6 +5795,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                             RigExecRevisionAcceptance::Applies);
                 }
             }
+            notePacketHeld();
             return;
         }
         // Every skin, Legacy, Whole or Range: a Range skin's group steps
@@ -5781,6 +5837,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                 count != revision.partitionPointCount;
         }
         noteGate();
+        notePacketHeld();
         return;
     }
 
