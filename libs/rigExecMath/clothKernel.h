@@ -1439,6 +1439,9 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
         return best;
     const uint32_t bucket = Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
                                  Cell(p[2], grid.cellSize), grid.bucketMask);
+    // The normal flip below needs the previous point: without one no
+    // candidate flips, so the vertex-slab pre-test runs one-sided.
+    const bool mayFlip = previous != nullptr;
     {
         for (uint32_t k = grid.bucketStart[bucket]; k < grid.bucketStart[bucket + 1]; ++k) {
             const int32_t tri = grid.bucketTriangles[k];
@@ -1504,6 +1507,38 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                 const float len = Length(n);
                 if (!(len > 0.0f)) continue;
                 n[0] /= len; n[1] /= len; n[2] /= len;
+            }
+            // The vertex-slab pre-test: the closest point is a convex
+            // combination of the corners, so its slab distance sits
+            // between the corners' slab distances, and three dots over
+            // the fetched triangle and normal decide the slab verdict
+            // below without the barycentric solve, the point, or the
+            // distance. The 2^-15 band over the prefilter's shape sum
+            // plus the reach dwarfs the dots' and the slab's rounding
+            // (tens of ulps of the coordinates, which the swept box
+            // the survivor sits inside bounds), and the 1e-30 floor
+            // covers subnormal scales, so a skipped candidate fails
+            // the slab test bit for bit. Where the normal may flip,
+            // both outcomes kill past the reach on either side. NaN
+            // inputs compare false and take the full path as before.
+            {
+                const float np = Dot(n, p);
+                const float s0 = np - Dot(n, v[0]);
+                const float s1 = np - Dot(n, v[1]);
+                const float s2 = np - Dot(n, v[2]);
+                const float margin =
+                    (grid.triShapes[size_t(tri)] + reach + reach) * 3.0517578125e-05f + 1e-30f;
+                if (mayFlip && firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd) {
+                    const float front = reach + margin, back = -reach - margin;
+                    if ((s0 > front && s1 > front && s2 > front) ||
+                        (s0 < back && s1 < back && s2 < back))
+                        continue;
+                } else {
+                    const float front = thickness + margin, back = -depth - margin;
+                    if ((s0 > front && s1 > front && s2 > front) ||
+                        (s0 < back && s1 < back && s2 < back))
+                        continue;
+                }
             }
             float w[3];
             ClosestBarycentric(p, v[0], v[1], v[2], w);
