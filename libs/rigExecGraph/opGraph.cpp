@@ -383,6 +383,29 @@ bool RigExecTranslateOpClusters(RigExecCompiledGraph *graph,
     for (double cost : costs)
         if (!std::isfinite(cost) || cost < 0) return fail("invalid operation cost");
     const auto cost = [&](uint32_t op) { return costs.empty() ? 1.0 : costs[op]; };
+    // Zero grain coarsens nothing: every cluster is the singleton its start
+    // opened, so membership is the identity and each cluster's edges are
+    // its op's own edges in order -- ascending and unique already, never
+    // re-sorted. The check below is the general path's own, in its order;
+    // its chain-walk check is unreachable here, since the walk breaks
+    // before examining any successor.
+    if (grain == 0) {
+        for (uint32_t op = 0; op < count; ++op)
+            for (uint32_t predecessor : graph->ops[op].predecessors)
+                if (predecessor >= op)
+                    return fail("non-topological operation predecessor");
+        std::vector<uint32_t> singleton(count);
+        std::vector<RigExecOpCluster> groups(count);
+        for (uint32_t op = 0; op < count; ++op) {
+            singleton[op] = op;
+            groups[op].members.push_back(op);
+            groups[op].predecessors = graph->ops[op].predecessors;
+            groups[op].successors = graph->ops[op].successors;
+        }
+        graph->clusters = std::move(groups);
+        graph->opClusters = std::move(singleton);
+        return true;
+    }
     std::vector<uint32_t> membership(count, UINT32_MAX);
     std::vector<RigExecOpCluster> clusters;
     for (uint32_t start = 0; start < count; ++start) {
