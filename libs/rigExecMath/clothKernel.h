@@ -300,6 +300,15 @@ struct RigExecClothGrid {
     /// candidate; the regrouped sum differs by rounding only, far inside
     /// the margin, and the exact tail re-decides every survivor.
     std::vector<float> triShapes;
+    /// Per-triangle prefilter boxes over one tick's reach, six floats
+    /// each: the swept bounds widened by the tick's contact margin, in
+    /// the same arithmetic the prefilter runs per candidate. Filled per
+    /// tick where the reach is tick-fixed (the empty-model collider
+    /// path); other paths leave it alone and the prefilter derives its
+    /// boxes as before. Read only through an explicit pointer, never by
+    /// emptiness, so a stale table from another tick is never mistaken
+    /// for this tick's.
+    std::vector<float> triFilter;
 };
 
 /// One substep's interpolated collider triangles: the vertices at the
@@ -1397,6 +1406,10 @@ RigExecClothContactTrisAt(const RigExecClothColliders &colliders,
 /// \p precomputed, when it covers a candidate, supplies the interpolated
 /// triangle and its normal instead of deriving them; a triangle it does
 /// not cover derives them as before. Either way the answer is the same.
+/// \p filterBoxes, when given, holds the tick's prefilter boxes (six
+/// floats per triangle, the swept bounds widened by this search's
+/// reach in the prefilter's own arithmetic); the prefilter reads them
+/// instead of deriving them. A null pointer derives them as before.
 inline RigExecClothContact
 RigExecClothFindContact(const RigExecClothColliders &colliders,
                         const RigExecClothGrid &grid, const float *before,
@@ -1407,7 +1420,8 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                         bool filterCollider = false,
                         const std::vector<float> *region = nullptr,
                         const RigExecClothContactTris *precomputed = nullptr,
-                        bool broadphaseKnownInside = false)
+                        bool broadphaseKnownInside = false,
+                        const float *filterBoxes = nullptr)
 {
     using namespace cloth_detail;
     RigExecClothContact best;
@@ -1443,17 +1457,32 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             // absolute rounding. NaN inputs compare false and take the full
             // path as before.
             {
-                const float *tb = grid.triBounds.data() + 6 * size_t(tri);
-                const float shapes = reach + grid.triShapes[size_t(tri)];
-                const float bound = reach + shapes * 1.9073486328125e-06f + 1e-30f;
-                bool outside = false;
-                for (int a = 0; a < 3; ++a) {
-                    if (p[a] < tb[a] - bound || p[a] > tb[a + 3] + bound) {
-                        outside = true;
-                        break;
+                // The tick's prefilter boxes, where the caller derived
+                // them: the same widened bounds the block below forms,
+                // read instead of recomputed per candidate.
+                if (filterBoxes) {
+                    const float *fb = filterBoxes + 6 * size_t(tri);
+                    bool outside = false;
+                    for (int a = 0; a < 3; ++a) {
+                        if (p[a] < fb[a] || p[a] > fb[a + 3]) {
+                            outside = true;
+                            break;
+                        }
                     }
+                    if (outside) continue;
+                } else {
+                    const float *tb = grid.triBounds.data() + 6 * size_t(tri);
+                    const float shapes = reach + grid.triShapes[size_t(tri)];
+                    const float bound = reach + shapes * 1.9073486328125e-06f + 1e-30f;
+                    bool outside = false;
+                    for (int a = 0; a < 3; ++a) {
+                        if (p[a] < tb[a] - bound || p[a] > tb[a + 3] + bound) {
+                            outside = true;
+                            break;
+                        }
+                    }
+                    if (outside) continue;
                 }
-                if (outside) continue;
             }
             float localV[3][3];
             float n[3];
@@ -1799,12 +1828,17 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     const int targetCollider = collider;
     const size_t twoSidedBegin = targetCollider >= 0 ? mesh.colliderOffsets[size_t(targetCollider)] : 0;
     const size_t twoSidedEnd = targetCollider >= 0 ? mesh.colliderOffsets[size_t(targetCollider) + 1] : colliders.pointCount;
+    // The tick's prefilter boxes on the empty-model path: every search
+    // there runs this step's thickness and depth, the reach the tick
+    // block widened the boxes with. The profile path's reach varies per
+    // particle, so it derives its boxes as before.
     const RigExecClothContact contact = RigExecClothFindContact(
         colliders, grid, colliderFrom, colliderTo, s.t, pi, thickness,
         s.depth, collisionProfile && collisionProfile->twoSided ? previous + 3 * i : nullptr,
         s.t0, twoSidedBegin, twoSidedEnd, collider >= 0,
         collisionProfile && collisionProfile->targetCollider >= 0 ? &collisionProfile->targetMask : nullptr,
-        contacts, broadphaseKnownInside);
+        contacts, broadphaseKnownInside,
+        modelEmpty ? grid.triFilter.data() : nullptr);
     if (contact.triangle < 0) return;
     float correction = contact.violation;
     float friction = s.friction;
@@ -3242,6 +3276,30 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             RigExecBuildClothGrid(colliders, from.colliders, to.colliders,
                                   pad,
                                   &ws->grid, &ws->cellScratch);
+            // The tick's prefilter boxes on the empty-model path: the
+            // reach is tick-fixed there (every search runs this step's
+            // thickness and depth), so each triangle's widened bounds
+            // derive once per tick instead of once per candidate. The
+            // same arithmetic in the same order, so the boxes match the
+            // per-candidate derivation bit for bit.
+            if (mesh.model.Empty()) {
+                const float thickness = std::max(0.0f, to.parameters.thickness);
+                const float depth = std::max(0.0f, to.parameters.collisionDepth);
+                const float reach = std::max(thickness, depth);
+                const size_t triCount = colliders.triangles.size() / 3;
+                ws->grid.triFilter.resize(6 * triCount);
+                const float *tb = ws->grid.triBounds.data();
+                const float *shapeSums = ws->grid.triShapes.data();
+                float *fb = ws->grid.triFilter.data();
+                for (size_t t = 0; t < triCount; ++t) {
+                    const float shapeSum = reach + shapeSums[t];
+                    const float bound = reach + shapeSum * 1.9073486328125e-06f + 1e-30f;
+                    for (int a = 0; a < 3; ++a) {
+                        fb[6 * t + size_t(a)] = tb[6 * t + size_t(a)] - bound;
+                        fb[6 * t + size_t(a) + 3] = tb[6 * t + size_t(a) + 3] + bound;
+                    }
+                }
+            }
             RigExecClothSweptReachBounds(ws->grid, pad, &profileBounds);
             profileBroad = &profileBounds;
             // The verdict scans every particle, so it runs only when the
