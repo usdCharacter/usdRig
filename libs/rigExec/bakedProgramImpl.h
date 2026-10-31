@@ -5043,15 +5043,21 @@ void
 RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
                        RigExecBakedInput<T> *input, const SdfPathVector &walk)
 {
-    if (prim && prim.GetAttribute(name)) {
+    // `head` is prim's `name` attribute from the BindInput every caller
+    // resolved this input through: set exactly when that lookup found it.
+    // Its truthiness answers the existence probe without a second prim
+    // lookup, and its prim is prim itself, so the head-prim filing below
+    // is the prim filing here, and goes.
+    if (input->head) {
         sink->Bound(input->varying);
     }
     if (prim) {
-        sink->Prim(prim.GetPath());
+        const SdfPath primPath = prim.GetPath();
+        sink->Prim(primPath);
         // Named even when absent: a resync that CREATES this property is
         // an input appearing, and the bake captured the default it did
         // not find.
-        sink->Named(prim.GetPath().AppendProperty(name));
+        sink->Named(primPath.AppendProperty(name));
     }
     // The registration proper: an input with no head has nothing an
     // override could stand on, and no number.
@@ -5073,7 +5079,6 @@ RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
     if (walk.empty()) {
         sink->Overridable(input->head.GetPath(), input->overrideIndex);
     }
-    sink->Prim(input->head.GetPrim().GetPath());
     for (const SdfPath &path : walk) {
         sink->Named(path);
     }
