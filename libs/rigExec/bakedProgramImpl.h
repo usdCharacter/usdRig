@@ -208,7 +208,9 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
                           const std::set<SdfPath> &chainTargets,
                           bool *viaChain, bool *varying,
                           UsdAttribute *selected,
-                          SdfPathVector *walk = nullptr)
+                          SdfPathVector *walk = nullptr,
+                          T *selectedValue = nullptr,
+                          bool *selectedAtTime = nullptr)
 {
     std::set<SdfPath> visiting;
     struct Fallback {
@@ -262,8 +264,23 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
         // at Default, so it is probed at its first key; otherwise the input
         // has no handle and every frame reads its fallback.
         const bool keyed = it->samples > 0 || it->spline;
-        if (it->attribute.Get(&probe, time) ||
-            (keyed && it->attribute.Get(&probe, UsdTimeCode::EarliestTime()))) {
+        if (it->attribute.Get(&probe, time)) {
+            *selected = it->attribute;
+            // The reverse pass already read what an at-time caller Gets
+            // next, so hand the probe out and spare it the second resolve.
+            // A selection by earliest sample reads nothing at `time` and
+            // reports no value: its caller still Gets (and keeps the
+            // fallback that Get leaves behind).
+            if (selectedValue) {
+                *selectedValue = std::move(probe);
+            }
+            if (selectedAtTime) {
+                *selectedAtTime = true;
+            }
+            return;
+        }
+        if (keyed &&
+            it->attribute.Get(&probe, UsdTimeCode::EarliestTime())) {
             *selected = it->attribute;
             return;
         }
@@ -291,8 +308,11 @@ RigExecBakedBindInput(const UsdPrim &prim, const TfToken &name, T fallback,
     input.head = attribute;
     bool viaChain = false, varying = false;
     UsdAttribute selected;
+    T selectedValue{};
+    bool selectedAtTime = false;
     RigExecBakedClassifyInput<T>(attribute, time, chainTargets, &viaChain,
-                                 &varying, &selected, walk);
+                                 &varying, &selected, walk, &selectedValue,
+                                 &selectedAtTime);
     if (viaChain) {
         input.varying = true;
         input.resolvedAttr = attribute;
@@ -306,7 +326,11 @@ RigExecBakedBindInput(const UsdPrim &prim, const TfToken &name, T fallback,
         return input;
     }
     if (selected) {
-        selected.Get(&input.constant, time);
+        if (selectedAtTime) {
+            input.constant = std::move(selectedValue);
+        } else {
+            selected.Get(&input.constant, time);
+        }
     }
     return input;
 }
