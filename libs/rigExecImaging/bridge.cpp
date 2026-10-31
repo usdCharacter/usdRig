@@ -1126,7 +1126,10 @@ RigExecImagingBridge::AppendAuthoredGuides(
     _FillControlGuides(authored, snapshot);
     _FillVolumeGuides(authored, snapshot);
     // Manipulators must not mistake authored placements for evaluated frames.
-    for (auto &[path, prim] : snapshot->prims) prim.hasControlFrame = false;
+    for (auto &[path, prim] : snapshot->prims) {
+        prim.hasControlFrame = false;
+        prim.hasVolumeGuideFrame = false;
+    }
 }
 
 SdfPath
@@ -2189,8 +2192,8 @@ RigExecImagingBridge::_FillVolumeGuides(
         RigExecPublishedPrim &published = snapshot->prims[weightPath];
         published.assetRoot = _rigPath.GetParentPath();
         published.hasVolumeGuides = true;
-        published.hasControlFrame = true;
-        published.controlFrame = rigid;
+        published.hasVolumeGuideFrame = true;
+        published.volumeGuideFrame = rigid;
         published.volumeGuides = std::move(elements);
         _ReadGuideStyle(prim, pose, &published);
     }

@@ -3676,8 +3676,8 @@ _ParsePreviewElementCount(const std::string &text, size_t *count)
 // rebuild it. An unsupported type returns an empty token: a manipulation
 // cannot preview a value it cannot reconstruct, and saying so at declaration
 // time is better than guessing per sample. An element count is required for,
-// and only accepted on, an array slot: float2[], or any type held as a
-// VtVec3fArray (point3f[], float3[], vector3f[], normal3f[], ...).
+// and only accepted on, an array slot: float[], float2[], or any type held
+// as a VtVec3fArray (point3f[], float3[], vector3f[], normal3f[], ...).
 TfToken
 _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
                   size_t elementCount, size_t *arity)
@@ -5753,9 +5753,15 @@ RigExecImaging_GetControlFrameAssetSpace(
     const auto time = isDefault ? PXR_NS::UsdTimeCode::Default() : PXR_NS::UsdTimeCode(frame);
     if (!snapshot || !snapshot->Describes(stage, time)) return 0;
     const auto it = snapshot->prims.find(PXR_NS::SdfPath(primPath));
-    if (it == snapshot->prims.end() || !it->second.hasControlFrame) return 0;
+    if (it == snapshot->prims.end()) return 0;
+    // Provider frames first; volume weights carry their guide placement
+    // instead (live-only, like the guide elements themselves).
+    const PXR_NS::GfMatrix4d *found = nullptr;
+    if (it->second.hasControlFrame) found = &it->second.controlFrame;
+    else if (it->second.hasVolumeGuideFrame) found = &it->second.volumeGuideFrame;
+    if (!found) return 0;
     for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c)
-        outMatrix[r*4+c] = it->second.controlFrame[r][c];
+        outMatrix[r*4+c] = (*found)[r][c];
     return 1;
 }
 

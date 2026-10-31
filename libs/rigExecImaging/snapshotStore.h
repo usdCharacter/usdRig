@@ -270,6 +270,15 @@ struct RigExecPublishedPrim {
     /// joint or a control, never two of them.
     bool hasVolumeGuides = false;
     std::vector<RigExecVolumeGuideElement> volumeGuides;
+    /// The rigid ASSET-space placement the volume guide elements are drawn
+    /// in, for the weight editor's viewport dragging. Live-only, like the
+    /// elements themselves: playback publishes no guide synthesis, so this
+    /// never participates in live/playback parity the way provider
+    /// controlFrames do. Read through
+    /// RigExecImaging_GetControlFrameAssetSpace, which falls back to it
+    /// when a prim carries no provider frame.
+    bool hasVolumeGuideFrame = false;
+    GfMatrix4d volumeGuideFrame{1.0};
 };
 
 /// One complete immutable generation (consumers see complete
@@ -568,6 +577,7 @@ private:
             before->guideFrames.size() != after.guideFrames.size() ||
             before->hasControlGuide != after.hasControlGuide ||
             before->hasControlFrame != after.hasControlFrame ||
+            before->hasVolumeGuideFrame != after.hasVolumeGuideFrame ||
             // The overlay begins or ends owning a displayColor primvar,
             // which is a change to the owned leaf set and not to a value
             // in it -- the same rule points ownership follows above. It
@@ -724,6 +734,10 @@ private:
         if (after.hasVolumeGuides &&
             (before->volumeGuides != after.volumeGuides ||
              before->guidePurpose != after.guidePurpose || styleChanged)) {
+            changes |= RigExecChangeGuides;
+        }
+        if (after.hasVolumeGuideFrame &&
+            before->volumeGuideFrame != after.volumeGuideFrame) {
             changes |= RigExecChangeGuides;
         }
         if (after.hasWeightOverlay &&
