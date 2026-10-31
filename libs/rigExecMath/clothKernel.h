@@ -2386,9 +2386,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     if (td0 * td0 + td1 * td1 + td2 * td2 > trr * trr * 1.0009765625f)
                         continue;
                 }
-                for (size_t edge = 0; edge < 3; ++edge) {
-                    const int32_t k = meshTriEdges[6*tri+2*edge];
-                    const int32_t l = meshTriEdges[6*tri+2*edge+1];
+                // Unrolled over the triangle's three edges: the body is too
+                // large for the compiler's unroller, so the rolled loop
+                // serializes the three edge bodies' independent chains
+                // (adjacency tests, twin loads, dedup hashes, sphere
+                // fetches). The three blocks are identical except for the
+                // edge numeral and run in the same order as the rolled
+                // loop, and do/while plus break preserves its continue
+                // semantics, so discovery, dedup, and mutation order are
+                // unchanged.
+                do { // Triangle edge 0.
+                    const int32_t k = meshTriEdges[6*tri];
+                    const int32_t l = meshTriEdges[6*tri+1];
                     // Adjacency first where the mesh built the union rows: every
                     // neighbor list holds its own vertex, so the constraint
                     // row holds both endpoints and every endpoint-sharing
@@ -2400,30 +2409,30 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // a rediscovered pair still skips them.
                     if (useEdgeBits) {
                         if (AdjacentToRowBits(eeAdjRow, k) ||
-                            AdjacentToRowBits(eeAdjRow, l)) continue;
+                            AdjacentToRowBits(eeAdjRow, l)) break;
                     }
-                    else if (i == k || i == l || j == k || j == l) continue;
+                    else if (i == k || i == l || j == k || j == l) break;
                     // Twin skip: the edge's smallest twin triangle sits
                     // earlier in this ascending bucket, so the same pair
                     // was already visited from this constraint and the
                     // dedup set holds its key.
-                    const int32_t twin = meshTriTwin[3*tri+edge];
+                    const int32_t twin = meshTriTwin[3*tri];
                     if (twin >= 0 && twin < int32_t(tri) &&
-                        eeTwinBase[size_t(twin)] == twinMark) continue;
+                        eeTwinBase[size_t(twin)] == twinMark) break;
                     // Both edges arrive sorted with four distinct
                     // endpoints, so the pair order is one compare, and
                     // the insert hashes the ordered endpoints directly
                     // instead of packing and unpacking them first.
                     if (packPairs) {
                         if (k < i) {
-                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) continue;
+                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
                         } else {
-                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) continue;
+                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
                         }
                     } else {
                         std::array<int32_t,4> key{{i,j,k,l}};
                         if (k < i) key = {{k,l,i,j}};
-                        if (!pairs.InsertNoGrow(key)) continue;
+                        if (!pairs.InsertNoGrow(key)) break;
                     }
                     if (!useEdgeBits) {
                         bool adjacent = false;
@@ -2431,7 +2440,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
                                                             : AdjacentTo(mesh.neighbors[size_t(a)], b));
                         }
-                        if (adjacent) continue;
+                        if (adjacent) break;
                     }
                     // The edge-sphere band: a pair whose midpoint spheres
                     // plus contact reach cannot meet skips the
@@ -2450,32 +2459,32 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         haveHeld = true;
                     }
                     float c2[3], r2;
-                    EdgeSphere(&spheres, constraintCount + 3 * tri + edge,
+                    EdgeSphere(&spheres, constraintCount + 3 * tri,
                                k, l, x, c2, &r2, tickNow);
                     const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
                                 dd2 = heldC1[2] - c2[2];
                     const float reach = pairBandBase + r2;
                     if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
                         reach * reach * 1.0009765625f)
-                        continue;
+                        break;
                     float u, v;
                     ClosestSegments(x+3*size_t(i), x+3*size_t(j), x+3*size_t(k), x+3*size_t(l), &u, &v);
                     RigExecClothSample a, b;
                     a.vertices = {{i,j,j}}; a.weights = {{1-u,u,0}};
                     b.vertices = {{k,l,l}}; b.weights = {{1-v,v,0}};
                     if (!(RigExecClothRegion(p.sourceMask,a) * RigExecClothRegion(p.targetMask,b) > 0 ||
-                          RigExecClothRegion(p.targetMask,a) * RigExecClothRegion(p.sourceMask,b) > 0)) continue;
+                          RigExecClothRegion(p.targetMask,a) * RigExecClothRegion(p.sourceMask,b) > 0)) break;
                     float pa[3], pb[3], d[3], oldA[3], oldB[3], oldD[3];
                     RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb); Sub(pa,pb,d);
                     const float distance = Length(d);
                     const float thickness = p.thickness * RigExecClothSampleMap(p,ClothThickness,a);
-                    if (distance >= thickness) continue;
+                    if (distance >= thickness) break;
                     if (distance > 1e-10f) for (float &q : d) q /= distance;
                     else {
                         float e1[3], e2[3];
                         Sub(x+3*size_t(j),x+3*size_t(i),e1); Sub(x+3*size_t(l),x+3*size_t(k),e2);
                         Cross(e1,e2,d); const float len = Length(d);
-                        if (!(len > 1e-10f)) continue;
+                        if (!(len > 1e-10f)) break;
                         for (float &q : d) q /= len;
                     }
                     RigExecClothSamplePoint(a,previous,oldA); RigExecClothSamplePoint(b,previous,oldB);
@@ -2494,19 +2503,19 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     haveHeld = false;
                     triBandOn = false;
                     const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
-                    if (!(correction > 0 && mu > 0)) continue;
+                    if (!(correction > 0 && mu > 0)) break;
                     RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);
                     float tangent[3];
                     for (size_t q = 0; q < 3; ++q) tangent[q] = (pa[q]-oldA[q])-(pb[q]-oldB[q]);
                     const float along = Dot(tangent,d);
                     for (size_t q = 0; q < 3; ++q) tangent[q] -= along*d[q];
                     const float slide = Length(tangent);
-                    if (!(slide > 1e-12f)) continue;
+                    if (!(slide > 1e-12f)) break;
                     float mass = 0;
                     for (size_t q = 0; q < 3; ++q)
                         mass += mesh.inverseMass[size_t(a.vertices[q])]*a.weights[q]*a.weights[q] +
                                 mesh.inverseMass[size_t(b.vertices[q])]*b.weights[q]*b.weights[q];
-                    if (!(mass > 0)) continue;
+                    if (!(mass > 0)) break;
                     const float impulse = std::min(slide,mu*correction)/(mass*slide);
                     for (size_t q = 0; q < 3; ++q) for (size_t axis = 0; axis < 3; ++axis) {
                         x[3*size_t(a.vertices[q])+axis] -= mesh.inverseMass[size_t(a.vertices[q])]*
@@ -2514,7 +2523,266 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         x[3*size_t(b.vertices[q])+axis] += mesh.inverseMass[size_t(b.vertices[q])]*
                             b.weights[q]*impulse*tangent[axis];
                     }
-                }
+                } while (0);
+                do { // Triangle edge 1.
+                    const int32_t k = meshTriEdges[6*tri+2];
+                    const int32_t l = meshTriEdges[6*tri+3];
+                    // Adjacency first where the mesh built the union rows: every
+                    // neighbor list holds its own vertex, so the constraint
+                    // row holds both endpoints and every endpoint-sharing
+                    // pair tests adjacent. The share test would skip nothing
+                    // more, and the twin skip and the dedup order see the
+                    // same survivors in the same order, with the same
+                    // verdicts. Past the size cap the share test stays ahead
+                    // of the insert, and the linear scans stay behind it so
+                    // a rediscovered pair still skips them.
+                    if (useEdgeBits) {
+                        if (AdjacentToRowBits(eeAdjRow, k) ||
+                            AdjacentToRowBits(eeAdjRow, l)) break;
+                    }
+                    else if (i == k || i == l || j == k || j == l) break;
+                    // Twin skip: the edge's smallest twin triangle sits
+                    // earlier in this ascending bucket, so the same pair
+                    // was already visited from this constraint and the
+                    // dedup set holds its key.
+                    const int32_t twin = meshTriTwin[3*tri+1];
+                    if (twin >= 0 && twin < int32_t(tri) &&
+                        eeTwinBase[size_t(twin)] == twinMark) break;
+                    // Both edges arrive sorted with four distinct
+                    // endpoints, so the pair order is one compare, and
+                    // the insert hashes the ordered endpoints directly
+                    // instead of packing and unpacking them first.
+                    if (packPairs) {
+                        if (k < i) {
+                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
+                        } else {
+                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
+                        }
+                    } else {
+                        std::array<int32_t,4> key{{i,j,k,l}};
+                        if (k < i) key = {{k,l,i,j}};
+                        if (!pairs.InsertNoGrow(key)) break;
+                    }
+                    if (!useEdgeBits) {
+                        bool adjacent = false;
+                        for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
+                            adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
+                                                            : AdjacentTo(mesh.neighbors[size_t(a)], b));
+                        }
+                        if (adjacent) break;
+                    }
+                    // The edge-sphere band: a pair whose midpoint spheres
+                    // plus contact reach cannot meet skips the
+                    // closest-segment tail. Each edge holds its points
+                    // within half its length of its midpoint, so separated
+                    // spheres imply a separated pair; the 2^-10 margin is far
+                    // outside float rounding, and a NaN input compares
+                    // false and skips nothing. ClosestSegments clamps its
+                    // parameters into [0,1], so the sample map is a convex
+                    // combination of the endpoint maps and the absolute
+                    // bound covers every thickness sign.
+                    if (!haveHeld) {
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
+                        triBandBase = heldR1 + triReach + heldThick;
+                        pairBandBase = heldR1 + heldThick;
+                        haveHeld = true;
+                    }
+                    float c2[3], r2;
+                    EdgeSphere(&spheres, constraintCount + 3 * tri + 1,
+                               k, l, x, c2, &r2, tickNow);
+                    const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
+                                dd2 = heldC1[2] - c2[2];
+                    const float reach = pairBandBase + r2;
+                    if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
+                        reach * reach * 1.0009765625f)
+                        break;
+                    float u, v;
+                    ClosestSegments(x+3*size_t(i), x+3*size_t(j), x+3*size_t(k), x+3*size_t(l), &u, &v);
+                    RigExecClothSample a, b;
+                    a.vertices = {{i,j,j}}; a.weights = {{1-u,u,0}};
+                    b.vertices = {{k,l,l}}; b.weights = {{1-v,v,0}};
+                    if (!(RigExecClothRegion(p.sourceMask,a) * RigExecClothRegion(p.targetMask,b) > 0 ||
+                          RigExecClothRegion(p.targetMask,a) * RigExecClothRegion(p.sourceMask,b) > 0)) break;
+                    float pa[3], pb[3], d[3], oldA[3], oldB[3], oldD[3];
+                    RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb); Sub(pa,pb,d);
+                    const float distance = Length(d);
+                    const float thickness = p.thickness * RigExecClothSampleMap(p,ClothThickness,a);
+                    if (distance >= thickness) break;
+                    if (distance > 1e-10f) for (float &q : d) q /= distance;
+                    else {
+                        float e1[3], e2[3];
+                        Sub(x+3*size_t(j),x+3*size_t(i),e1); Sub(x+3*size_t(l),x+3*size_t(k),e2);
+                        Cross(e1,e2,d); const float len = Length(d);
+                        if (!(len > 1e-10f)) break;
+                        for (float &q : d) q /= len;
+                    }
+                    RigExecClothSamplePoint(a,previous,oldA); RigExecClothSamplePoint(b,previous,oldB);
+                    Sub(oldA,oldB,oldD);
+                    if (Dot(oldD,d) < 0) for (float &q : d) q = -q;
+                    Sub(pa,pb,mid);
+                    // The dedup key, rebuilt for the impulse map: the same
+                    // normalized endpoints the discovery keyed on, whether
+                    // packed or array.
+                    std::array<int32_t,4> lkey{{i,j,k,l}};
+                    if (k < i) lkey = {{k,l,i,j}};
+                    float &lambda = ws->selfLambda[{{int32_t(profileIndex),lkey[0],lkey[1],lkey[2],lkey[3]}}];
+                    const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
+                        Dot(mid,d)-thickness,d,true,&lambda,x,false);
+                    tickNow = TouchVerts(&spheres, i, j, k, l);
+                    haveHeld = false;
+                    triBandOn = false;
+                    const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
+                    if (!(correction > 0 && mu > 0)) break;
+                    RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);
+                    float tangent[3];
+                    for (size_t q = 0; q < 3; ++q) tangent[q] = (pa[q]-oldA[q])-(pb[q]-oldB[q]);
+                    const float along = Dot(tangent,d);
+                    for (size_t q = 0; q < 3; ++q) tangent[q] -= along*d[q];
+                    const float slide = Length(tangent);
+                    if (!(slide > 1e-12f)) break;
+                    float mass = 0;
+                    for (size_t q = 0; q < 3; ++q)
+                        mass += mesh.inverseMass[size_t(a.vertices[q])]*a.weights[q]*a.weights[q] +
+                                mesh.inverseMass[size_t(b.vertices[q])]*b.weights[q]*b.weights[q];
+                    if (!(mass > 0)) break;
+                    const float impulse = std::min(slide,mu*correction)/(mass*slide);
+                    for (size_t q = 0; q < 3; ++q) for (size_t axis = 0; axis < 3; ++axis) {
+                        x[3*size_t(a.vertices[q])+axis] -= mesh.inverseMass[size_t(a.vertices[q])]*
+                            a.weights[q]*impulse*tangent[axis];
+                        x[3*size_t(b.vertices[q])+axis] += mesh.inverseMass[size_t(b.vertices[q])]*
+                            b.weights[q]*impulse*tangent[axis];
+                    }
+                } while (0);
+                do { // Triangle edge 2.
+                    const int32_t k = meshTriEdges[6*tri+4];
+                    const int32_t l = meshTriEdges[6*tri+5];
+                    // Adjacency first where the mesh built the union rows: every
+                    // neighbor list holds its own vertex, so the constraint
+                    // row holds both endpoints and every endpoint-sharing
+                    // pair tests adjacent. The share test would skip nothing
+                    // more, and the twin skip and the dedup order see the
+                    // same survivors in the same order, with the same
+                    // verdicts. Past the size cap the share test stays ahead
+                    // of the insert, and the linear scans stay behind it so
+                    // a rediscovered pair still skips them.
+                    if (useEdgeBits) {
+                        if (AdjacentToRowBits(eeAdjRow, k) ||
+                            AdjacentToRowBits(eeAdjRow, l)) break;
+                    }
+                    else if (i == k || i == l || j == k || j == l) break;
+                    // Twin skip: the edge's smallest twin triangle sits
+                    // earlier in this ascending bucket, so the same pair
+                    // was already visited from this constraint and the
+                    // dedup set holds its key.
+                    const int32_t twin = meshTriTwin[3*tri+2];
+                    if (twin >= 0 && twin < int32_t(tri) &&
+                        eeTwinBase[size_t(twin)] == twinMark) break;
+                    // Both edges arrive sorted with four distinct
+                    // endpoints, so the pair order is one compare, and
+                    // the insert hashes the ordered endpoints directly
+                    // instead of packing and unpacking them first.
+                    if (packPairs) {
+                        if (k < i) {
+                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
+                        } else {
+                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
+                        }
+                    } else {
+                        std::array<int32_t,4> key{{i,j,k,l}};
+                        if (k < i) key = {{k,l,i,j}};
+                        if (!pairs.InsertNoGrow(key)) break;
+                    }
+                    if (!useEdgeBits) {
+                        bool adjacent = false;
+                        for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
+                            adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
+                                                            : AdjacentTo(mesh.neighbors[size_t(a)], b));
+                        }
+                        if (adjacent) break;
+                    }
+                    // The edge-sphere band: a pair whose midpoint spheres
+                    // plus contact reach cannot meet skips the
+                    // closest-segment tail. Each edge holds its points
+                    // within half its length of its midpoint, so separated
+                    // spheres imply a separated pair; the 2^-10 margin is far
+                    // outside float rounding, and a NaN input compares
+                    // false and skips nothing. ClosestSegments clamps its
+                    // parameters into [0,1], so the sample map is a convex
+                    // combination of the endpoint maps and the absolute
+                    // bound covers every thickness sign.
+                    if (!haveHeld) {
+                        EdgeSphere(&spheres, c, i, j, x, heldC1, &heldR1, tickNow);
+                        triBandBase = heldR1 + triReach + heldThick;
+                        pairBandBase = heldR1 + heldThick;
+                        haveHeld = true;
+                    }
+                    float c2[3], r2;
+                    EdgeSphere(&spheres, constraintCount + 3 * tri + 2,
+                               k, l, x, c2, &r2, tickNow);
+                    const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
+                                dd2 = heldC1[2] - c2[2];
+                    const float reach = pairBandBase + r2;
+                    if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 >
+                        reach * reach * 1.0009765625f)
+                        break;
+                    float u, v;
+                    ClosestSegments(x+3*size_t(i), x+3*size_t(j), x+3*size_t(k), x+3*size_t(l), &u, &v);
+                    RigExecClothSample a, b;
+                    a.vertices = {{i,j,j}}; a.weights = {{1-u,u,0}};
+                    b.vertices = {{k,l,l}}; b.weights = {{1-v,v,0}};
+                    if (!(RigExecClothRegion(p.sourceMask,a) * RigExecClothRegion(p.targetMask,b) > 0 ||
+                          RigExecClothRegion(p.targetMask,a) * RigExecClothRegion(p.sourceMask,b) > 0)) break;
+                    float pa[3], pb[3], d[3], oldA[3], oldB[3], oldD[3];
+                    RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb); Sub(pa,pb,d);
+                    const float distance = Length(d);
+                    const float thickness = p.thickness * RigExecClothSampleMap(p,ClothThickness,a);
+                    if (distance >= thickness) break;
+                    if (distance > 1e-10f) for (float &q : d) q /= distance;
+                    else {
+                        float e1[3], e2[3];
+                        Sub(x+3*size_t(j),x+3*size_t(i),e1); Sub(x+3*size_t(l),x+3*size_t(k),e2);
+                        Cross(e1,e2,d); const float len = Length(d);
+                        if (!(len > 1e-10f)) break;
+                        for (float &q : d) q /= len;
+                    }
+                    RigExecClothSamplePoint(a,previous,oldA); RigExecClothSamplePoint(b,previous,oldB);
+                    Sub(oldA,oldB,oldD);
+                    if (Dot(oldD,d) < 0) for (float &q : d) q = -q;
+                    Sub(pa,pb,mid);
+                    // The dedup key, rebuilt for the impulse map: the same
+                    // normalized endpoints the discovery keyed on, whether
+                    // packed or array.
+                    std::array<int32_t,4> lkey{{i,j,k,l}};
+                    if (k < i) lkey = {{k,l,i,j}};
+                    float &lambda = ws->selfLambda[{{int32_t(profileIndex),lkey[0],lkey[1],lkey[2],lkey[3]}}];
+                    const float correction = RigExecClothProjectSamples(mesh,step,p,a,&b,
+                        Dot(mid,d)-thickness,d,true,&lambda,x,false);
+                    tickNow = TouchVerts(&spheres, i, j, k, l);
+                    haveHeld = false;
+                    triBandOn = false;
+                    const float mu = p.friction * RigExecClothSampleMap(p,ClothFriction,a);
+                    if (!(correction > 0 && mu > 0)) break;
+                    RigExecClothSamplePoint(a,x,pa); RigExecClothSamplePoint(b,x,pb);
+                    float tangent[3];
+                    for (size_t q = 0; q < 3; ++q) tangent[q] = (pa[q]-oldA[q])-(pb[q]-oldB[q]);
+                    const float along = Dot(tangent,d);
+                    for (size_t q = 0; q < 3; ++q) tangent[q] -= along*d[q];
+                    const float slide = Length(tangent);
+                    if (!(slide > 1e-12f)) break;
+                    float mass = 0;
+                    for (size_t q = 0; q < 3; ++q)
+                        mass += mesh.inverseMass[size_t(a.vertices[q])]*a.weights[q]*a.weights[q] +
+                                mesh.inverseMass[size_t(b.vertices[q])]*b.weights[q]*b.weights[q];
+                    if (!(mass > 0)) break;
+                    const float impulse = std::min(slide,mu*correction)/(mass*slide);
+                    for (size_t q = 0; q < 3; ++q) for (size_t axis = 0; axis < 3; ++axis) {
+                        x[3*size_t(a.vertices[q])+axis] -= mesh.inverseMass[size_t(a.vertices[q])]*
+                            a.weights[q]*impulse*tangent[axis];
+                        x[3*size_t(b.vertices[q])+axis] += mesh.inverseMass[size_t(b.vertices[q])]*
+                            b.weights[q]*impulse*tangent[axis];
+                    }
+                } while (0);
+
             }
         }
     }
