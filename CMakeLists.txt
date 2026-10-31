@@ -559,6 +559,13 @@ set_tests_properties(testRigExecRegisteredMover PROPERTIES LABELS "rigExecRuntim
 set_tests_properties(testRigExecExternalMovers PROPERTIES ENVIRONMENT
     "PXR_PLUGINPATH_NAME=${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 
+# The mover schema generator must work without USD Python (CI's OpenUSD
+# has none): the text reader is golden-tested on its own, and checked
+# against the pxr/usdGenSchema path wherever pxr imports.
+add_test(NAME testRigExecMoverSchemaGen COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecMoverSchemaGen.py"
+    "${RIGEXEC_TEST_USD_DIR}")
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
