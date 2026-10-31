@@ -895,6 +895,17 @@ main(int argc, char **argv)
                         (unsigned long long)result.matrixWalkComputed,
                         (unsigned long long)result.matrixWalkReused,
                         (unsigned long long)result.matrixWalkSkipped);
+            std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6s\n", "",
+                        "static:", result.matrixStaticMemoUs,
+                        result.matrixStaticBodyUs,
+                        result.matrixStaticPublishUs, "", "", "", "");
+            std::printf("%-38s %9s %9.2f %9.2f %9.2f %9s %9s %6s %6s\n", "",
+                        "chunk:", result.matrixChunkMemoUs,
+                        result.matrixChunkBodyUs,
+                        result.matrixChunkPublishUs, "", "", "", "");
+            std::printf("%-38s fold %9.2f fuse %9.2f us/frame "
+                        "(supporting)\n",
+                        "", result.matrixFoldUs, result.matrixFuseUs);
         }
     }
 
