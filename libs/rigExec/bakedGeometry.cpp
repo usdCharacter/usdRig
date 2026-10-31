@@ -5342,6 +5342,21 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
     const bool skin = revision.op == RigExecRevisionOp::Skin;
     switch (step->kind) {
     case RigExecBakedStepKind::InfluenceFold: {
+        // The RevisionTransforms key's fields, stale-read for the held
+        // verdict the publish decides by: the fold overwrites them below,
+        // so these are last run's. Matrix only; anything else keys bytes.
+        const bool matrixFold = revision.op == RigExecRevisionOp::Matrix;
+        GfMatrix4d wasTransform(1.0);
+        bool wasHaveTransform = false, wasHaveCarry = false;
+        bool wasInfluencesValid = false;
+        size_t wasInfluencesCount = 0;
+        if (matrixFold) {
+            wasTransform = revision.transform;
+            wasHaveTransform = revision.haveTransform;
+            wasHaveCarry = revision.haveCarry;
+            wasInfluencesValid = revision.influencesValid;
+            wasInfluencesCount = revision.influences.size();
+        }
         revision.influencesChanged = FoldInfluences(B, &revision);
         if (revision.gpuOwned) revision.gpuTouched = true;
         // The finite/affine check the dynamic path's assembler makes over the
@@ -5361,6 +5376,22 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (skin && revision.influencesValid &&
             revision.role != RigExecBakedRevisionRole::Range) {
             FoldTransformForms(&revision, B.useSimd);
+        }
+        // The transforms verdict: the fold's own unchanged return covers
+        // the carry and influence bytes, the stale copy the folded
+        // transform, the stale scalars the rest. The transform compares
+        // by bytes, not operator==, so a sign flip on a zero still fails
+        // it exactly as the key's bytes would. Conservative by
+        // construction, since false only costs the spell it already paid.
+        if (matrixFold) {
+            revision.matrixTransformsHeld =
+                !revision.influencesChanged &&
+                std::memcmp(&wasTransform, &revision.transform,
+                            sizeof(GfMatrix4d)) == 0 &&
+                wasHaveTransform == revision.haveTransform &&
+                wasHaveCarry == revision.haveCarry &&
+                wasInfluencesValid == revision.influencesValid &&
+                wasInfluencesCount == revision.influences.size();
         }
         return;
     }

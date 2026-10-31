@@ -3587,6 +3587,15 @@ struct RigExecBakedProgramImpl {
         /// Never mirrored into the run shadow: the body overwrites it on
         /// every run, and no publish without a body run reads it.
         bool matrixPacketHeld = false;
+        /// InfluenceFold's verdict that this run left every
+        /// RevisionTransforms key field standing: the carry and influence
+        /// bytes (by the fold's own unchanged return), the folded
+        /// transform (stale-copied and compared), and the count and flags.
+        /// The transforms publish skips its spell and reports unchanged
+        /// while this stands; the stored key already spells these bytes.
+        /// Set fresh by every fold run, dropped at compile with the other
+        /// claims, never mirrored into the run shadow.
+        bool matrixTransformsHeld = false;
         int matrixParamsWeightBlendIndex = -1;
         int matrixParamsEnabledIndex = -1;
         int matrixParamsDefaultWeightIndex = -1;

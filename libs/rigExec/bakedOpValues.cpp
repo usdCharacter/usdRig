@@ -812,6 +812,18 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         }
         break;
     }
+    case D::RevisionTransforms: {
+        // A matrix revision's held transforms: the fold proved every key
+        // field standing, so the stored key already spells these bytes
+        // and the compare is skipped. Anything else keys its bytes.
+        const auto *v=Revision(B,slot);
+        if(v && v->op==RigExecRevisionOp::Matrix && v->matrixTransformsHeld &&
+           value->initialized) {
+            value->changed=0;
+            return true;
+        }
+        break;
+    }
     case D::RevisionDone:
     case D::ChainDirty:
         if(const auto *v=Revision(B,slot)) {
