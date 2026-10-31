@@ -2116,6 +2116,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         return reach;
     };
     const float edgeReach = measureReach();
+    // Loop-invariant mesh extents, held once per call: the same values
+    // the discovery loops re-derive per iteration.
+    const size_t constraintCount = mesh.constraintRest.size();
     // The triangle band's reach bound: every triangle edge is a stretch
     // constraint, so the stretch half-length maximum covers each triangle
     // edge's sphere radius. Re-derived when vertex/triangle corrections
@@ -2147,6 +2150,14 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // reloading them per entry.
         const uint32_t *vtBucketBounds = grid.bucketStart.data();
         const int32_t *vtBucketTris = grid.bucketTriangles.data();
+        // The mesh topology bases stay fixed across the discovery loops:
+        // the mesh is compiled input, so the edge/edge entries reread the
+        // same bases without reloading them per entry.
+        const int32_t *meshTriangles = mesh.triangles.data();
+        const int32_t *meshTriEdges = mesh.triEdges.data();
+        const int32_t *meshTriTwin = mesh.triEdgeTwin.data();
+        const int32_t *meshConstraintEnds = mesh.constraintEnds.data();
+        const uint8_t *meshConstraintKind = mesh.constraintKind.data();
         for (size_t i = 0; i < mesh.pointCount; ++i) {
             const auto a = RigExecClothVertex(i);
             // Either region may supply the vertex; contact is symmetric.
@@ -2269,9 +2280,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         const bool packPairs = RigExecClothPairSet64::Packable(mesh.pointCount);
         if (packPairs) pairs64.Clear();
         else pairs.Clear();
-        for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
-            if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
-            const int32_t i = mesh.constraintEnds[2*c], j = mesh.constraintEnds[2*c+1];
+        for (size_t c = 0; c < constraintCount; ++c) {
+            if (meshConstraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
+            const int32_t i = meshConstraintEnds[2*c], j = meshConstraintEnds[2*c+1];
             float mid[3]; Lerp(x + 3*size_t(i), x + 3*size_t(j), .5f, mid);
             const uint32_t bucket = Hash(Cell(mid[0], grid.cellSize), Cell(mid[1], grid.cellSize),
                                           Cell(mid[2], grid.cellSize), grid.bucketMask);
@@ -2332,8 +2343,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         haveHeld = true;
                     }
                     float ttc[3], ttr;
-                    TriSphere(&triSpheres, &spheres, tri, mesh.triangles[3*tri],
-                              mesh.triangles[3*tri+1], mesh.triangles[3*tri+2],
+                    TriSphere(&triSpheres, &spheres, tri, meshTriangles[3*tri],
+                              meshTriangles[3*tri+1], meshTriangles[3*tri+2],
                               x, ttc, &ttr, tickNow);
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
@@ -2342,8 +2353,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         continue;
                 }
                 for (size_t edge = 0; edge < 3; ++edge) {
-                    const int32_t k = mesh.triEdges[6*tri+2*edge];
-                    const int32_t l = mesh.triEdges[6*tri+2*edge+1];
+                    const int32_t k = meshTriEdges[6*tri+2*edge];
+                    const int32_t l = meshTriEdges[6*tri+2*edge+1];
                     // Adjacency first where the mesh built the union rows: every
                     // neighbor list holds its own vertex, so the constraint
                     // row holds both endpoints and every endpoint-sharing
@@ -2362,7 +2373,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // earlier in this ascending bucket, so the same pair
                     // was already visited from this constraint and the
                     // dedup set holds its key.
-                    const int32_t twin = mesh.triEdgeTwin[3*tri+edge];
+                    const int32_t twin = meshTriTwin[3*tri+edge];
                     if (twin >= 0 && twin < int32_t(tri) &&
                         eeTwinBase[size_t(twin)] == twinMark) continue;
                     // Both edges arrive sorted with four distinct
@@ -2405,7 +2416,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         haveHeld = true;
                     }
                     float c2[3], r2;
-                    EdgeSphere(&spheres, mesh.constraintRest.size() + 3 * tri + edge,
+                    EdgeSphere(&spheres, constraintCount + 3 * tri + edge,
                                k, l, x, c2, &r2, tickNow);
                     const float dd0 = heldC1[0] - c2[0], dd1 = heldC1[1] - c2[1],
                                 dd2 = heldC1[2] - c2[2];
