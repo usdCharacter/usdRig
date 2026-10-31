@@ -1298,16 +1298,23 @@ RigExecClothContactTrisAt(const RigExecClothColliders &colliders,
     out->normals.resize(3 * count);
     out->degenerate.assign(count, 0);
     out->triangleCount = count;
+    // The output and collider bases stay fixed across the triangle loop:
+    // the vectors are fully sized above and the loop only assigns
+    // elements, so no reallocation moves the bases and the loop rereads
+    // the same bases without reloading them per triangle.
+    float *ctVertsBase = out->verts.data();
+    float *ctNormalsBase = out->normals.data();
+    const int32_t *ctColliderTris = colliders.triangles.data();
     for (size_t tri = 0; tri < count; ++tri) {
-        float *v0 = out->verts.data() + 9 * tri;
+        float *v0 = ctVertsBase + 9 * tri;
         float *v1 = v0 + 3;
         float *v2 = v0 + 6;
         for (int c = 0; c < 3; ++c) {
-            const size_t i = size_t(colliders.triangles[3 * tri + size_t(c)]);
-            Lerp(before + 3 * i, after + 3 * i, t, out->verts.data() + 9 * tri + 3 * c);
+            const size_t i = size_t(ctColliderTris[3 * tri + size_t(c)]);
+            Lerp(before + 3 * i, after + 3 * i, t, ctVertsBase + 9 * tri + 3 * c);
         }
         float e1[3], e2[3];
-        float *n = out->normals.data() + 3 * tri;
+        float *n = ctNormalsBase + 3 * tri;
         Sub(v1, v0, e1); Sub(v2, v0, e2); Cross(e1, e2, n);
         const float len = Length(n);
         if (!(len > 0.0f)) {
