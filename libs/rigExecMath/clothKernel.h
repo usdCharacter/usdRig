@@ -2269,6 +2269,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // The triangle band stays on until an edge/edge correction moves
         // x, which could grow a triangle edge past the reach bound.
         bool triBandOn = true;
+        // The triangle-sphere bases stay fixed across the edge/edge pass:
+        // the cache is sized per call and only assigned within it, so the
+        // fast path below rereads the same bases without reloading them
+        // per entry.
+        const uint64_t *triTickBase = triSpheres.triTick.data();
+        const float *triCentersBase = triSpheres.centers.data();
+        const float *triRadiiBase = triSpheres.radii.data();
         // Flat dedup over retained storage: the same verdicts as an
         // ordered set (the discovery loops keep their order), with no
         // per-pair allocation.
@@ -2342,10 +2349,22 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         pairBandBase = heldR1 + heldThick;
                         haveHeld = true;
                     }
+                    // The fresh triangle sphere needs no corners: a stamp
+                    // from the held tick covers every corner's ticks, so the
+                    // fast path fetches the cached sphere over the held bases
+                    // without loading them; the slow path loads them for the
+                    // tick compares and the recompute. The same values.
                     float ttc[3], ttr;
-                    TriSphere(&triSpheres, &spheres, tri, meshTriangles[3*tri],
-                              meshTriangles[3*tri+1], meshTriangles[3*tri+2],
-                              x, ttc, &ttr, tickNow);
+                    if (triTickBase[tri] == tickNow) {
+                        ttc[0] = triCentersBase[3*tri];
+                        ttc[1] = triCentersBase[3*tri+1];
+                        ttc[2] = triCentersBase[3*tri+2];
+                        ttr = triRadiiBase[tri];
+                    } else {
+                        TriSphere(&triSpheres, &spheres, tri, meshTriangles[3*tri],
+                                  meshTriangles[3*tri+1], meshTriangles[3*tri+2],
+                                  x, ttc, &ttr, tickNow);
+                    }
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
                     const float trr = ttr + triBandBase;
