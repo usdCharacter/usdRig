@@ -351,6 +351,10 @@ struct RigExecClothPairSet64 {
     /// Insert without the load check, after ReserveForBatch covered the
     /// batch: the same probe and the same verdicts.
     bool InsertNoGrow(uint64_t key);
+    /// Insert from four endpoints, hashing them directly: the packed
+    /// fields all sit below 2^16, so the mix matches Hash(Pack(a, b,
+    /// c, d)) exactly and the probe takes the identical slots.
+    bool InsertNoGrowFields(int32_t a, int32_t b, int32_t c, int32_t d);
     /// Grows the table until a batch of \p batchKeys inserts fits under
     /// the 25% load cap, so the batch needs no per-insert check. The
     /// lower cap shortens probes; verdicts stay exact either way. Zero
@@ -2351,13 +2355,15 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     if (twin >= 0 && twin < int32_t(tri) &&
                         eeTwinBase[size_t(twin)] == twinMark) continue;
                     // Both edges arrive sorted with four distinct
-                    // endpoints, so the pair order is one compare.
+                    // endpoints, so the pair order is one compare, and
+                    // the insert hashes the ordered endpoints directly
+                    // instead of packing and unpacking them first.
                     if (packPairs) {
-                        uint64_t key64 =
-                            RigExecClothPairSet64::Pack(i, j, k, l);
-                        if (k < i)
-                            key64 = RigExecClothPairSet64::Pack(k, l, i, j);
-                        if (!pairs64.InsertNoGrow(key64)) continue;
+                        if (k < i) {
+                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) continue;
+                        } else {
+                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) continue;
+                        }
                     } else {
                         std::array<int32_t,4> key{{i,j,k,l}};
                         if (k < i) key = {{k,l,i,j}};
@@ -2927,6 +2933,31 @@ inline void RigExecClothPairSet64::ReserveForBatch(size_t batchKeys)
 inline bool RigExecClothPairSet64::InsertNoGrow(uint64_t key)
 {
     uint32_t i = uint32_t(Hash(key)) & mask;
+    for (;;) {
+        const uint32_t word = i >> 6;
+        const uint64_t bit = 1ull << (i & 63);
+        if (!(occupied[word] & bit)) {
+            occupied[word] |= bit;
+            slots[i] = key;
+            ++count;
+            return true;
+        }
+        if (slots[i] == key) return false;
+        i = (i + 1) & mask;
+    }
+}
+
+inline bool RigExecClothPairSet64::InsertNoGrowFields(int32_t a, int32_t b,
+                                                     int32_t c, int32_t d)
+{
+    // The same mix Hash applies to the unpacked packed key: every
+    // endpoint sits below 2^16, so packing then unpacking recovers
+    // these same four values and the hash matches bit for bit.
+    const uint64_t h = uint64_t(uint32_t(a)) + uint64_t(uint32_t(b)) * 0x9E3779B97F4A7C15ull +
+                       uint64_t(uint32_t(c)) * 0xC2B2AE3D27D4EB4Full +
+                       uint64_t(uint32_t(d)) * 0x165667B19E3779F9ull;
+    const uint64_t key = Pack(a, b, c, d);
+    uint32_t i = uint32_t(h) & mask;
     for (;;) {
         const uint32_t word = i >> 6;
         const uint64_t bit = 1ull << (i & 63);
