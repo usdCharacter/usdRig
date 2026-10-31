@@ -58,16 +58,21 @@ void Keep(VtDictionary *result, const char *name, const TfToken &key,
 // composer ends with: none of the kept keys is a disallowed fallback field
 // and property names are never empty, so the public lookup matches the
 // composer's internal one exactly. An authored key keeps the full compose.
+// The fallback arm reads through the caller's property entry: one prim
+// definition and one property lookup serve every key of the property,
+// instead of one pair per key. UsdPrimDefinition::GetPropertyMetadata is
+// exactly that pair (definition, then entry, then the entry's field), so
+// the answers agree key for key; an unknown property answers no fallback,
+// as the per-key lookup did.
 template <class Object>
 void KeepGated(VtDictionary *result, const char *name, const TfToken &key,
-    const Object &object) {
+    const Object &object, const UsdPrimDefinition::Property &fallbackProp) {
     if (object.HasAuthoredMetadata(key)) {
         Keep(result, name, key, object);
         return;
     }
     VtValue value;
-    if (object.GetPrim().GetPrimDefinition().GetPropertyMetadata(
-            object.GetName(), key, &value))
+    if (fallbackProp && fallbackProp.GetMetadata(key, &value))
         (*result)[name] = std::move(value);
 }
 VtDictionary CapturedPrimMetadata(const UsdPrim &) {
@@ -75,14 +80,24 @@ VtDictionary CapturedPrimMetadata(const UsdPrim &) {
 }
 VtDictionary CapturedAttributeMetadata(const UsdAttribute &attribute) {
     VtDictionary result;
-    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, attribute);
-    KeepGated(&result, "rigExecInputElement", _tokens->inputElement, attribute);
-    KeepGated(&result, "interpolation", _tokens->interpolation, attribute);
+    const UsdPrim prim = attribute.GetPrim();
+    const UsdPrimDefinition::Property fallbackProp =
+        prim.GetPrimDefinition().GetPropertyDefinition(attribute.GetName());
+    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, attribute,
+              fallbackProp);
+    KeepGated(&result, "rigExecInputElement", _tokens->inputElement, attribute,
+              fallbackProp);
+    KeepGated(&result, "interpolation", _tokens->interpolation, attribute,
+              fallbackProp);
     return result;
 }
 VtDictionary CapturedRelationshipMetadata(const UsdRelationship &relationship) {
     VtDictionary result;
-    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, relationship);
+    const UsdPrim prim = relationship.GetPrim();
+    const UsdPrimDefinition::Property fallbackProp =
+        prim.GetPrimDefinition().GetPropertyDefinition(relationship.GetName());
+    KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, relationship,
+              fallbackProp);
     return result;
 }
 }
