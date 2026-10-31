@@ -5606,13 +5606,49 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // about the weight rather than about the packet.
         // Read the same declared resolved source the effective memo compares.
         float diagnosticWeight = 1.0f;
-        if (!DiagnosticWeightDirect(
-                B, revision.leaves, size_t(revision.defaultWeightLeaf),
-                &diagnosticWeight)) {
-            const VtValue boxed = RigExecBakedResolvePathLeaf(
-                B, revision.leaves, size_t(revision.defaultWeightLeaf));
-            diagnosticWeight = boxed.IsHolding<float>()
-                ? boxed.UncheckedGet<float>() : 1.0f;
+        // The scalar while its leaf stands: same noted index, standing
+        // content version, walks/exact guards re-checked. A stand is last
+        // run's value without the cold declaration and boxed reads; the
+        // note below takes the same key under a successful direct read.
+        const int diagWeightLeaf = revision.defaultWeightLeaf;
+        bool diagStands = revision.diagWeightHeld &&
+            revision.diagWeightIndex == diagWeightLeaf &&
+            diagWeightLeaf >= 0 &&
+            size_t(diagWeightLeaf) < revision.leaves.versions.size() &&
+            revision.leaves.versions[size_t(diagWeightLeaf)] ==
+                revision.diagWeightVersion;
+        if (diagStands) {
+            const size_t dwk = size_t(diagWeightLeaf);
+            const auto at = [dwk](const std::vector<int> &v) {
+                return dwk < v.size() ? v[dwk] : -1;
+            };
+            diagStands = at(revision.leaves.walks) < 0 &&
+                at(revision.leaves.exactVersions) < 0 &&
+                at(revision.leaves.exactRecordIndices) < 0;
+        }
+        if (diagStands) {
+            diagnosticWeight = revision.defaultWeight;
+        } else {
+            revision.diagWeightHeld = false;
+            if (!DiagnosticWeightDirect(
+                    B, revision.leaves, size_t(diagWeightLeaf),
+                    &diagnosticWeight)) {
+                const VtValue boxed = RigExecBakedResolvePathLeaf(
+                    B, revision.leaves, size_t(diagWeightLeaf));
+                diagnosticWeight = boxed.IsHolding<float>()
+                    ? boxed.UncheckedGet<float>() : 1.0f;
+            } else if (diagWeightLeaf >= 0 &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.decl.keys.size() &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.values.size() &&
+                       size_t(diagWeightLeaf) <
+                           revision.leaves.versions.size()) {
+                revision.diagWeightIndex = diagWeightLeaf;
+                revision.diagWeightVersion =
+                    revision.leaves.versions[size_t(diagWeightLeaf)];
+                revision.diagWeightHeld = true;
+            }
         }
         revision.defaultWeight = diagnosticWeight;
         // Selection already compares the exact declared packet inputs.

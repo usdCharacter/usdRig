@@ -3607,6 +3607,25 @@ struct RigExecBakedProgramImpl {
         /// unobservable. Set fresh by every chunk run, dropped at compile
         /// with the other claims, never mirrored into the run shadow.
         bool matrixChunkHeld = false;
+        /// RevisionStatic's verdict that the fuse diagnostic's scalar read
+        /// a versioned leaf under a successful direct read: the leaf index
+        /// and the content version then standing. A standing version names
+        /// standing bytes (the memo's own property) and the index defends
+        /// a rebuild that shifts it; the walks/exact guards are re-checked
+        /// from warm dense arrays beside the version, while the
+        /// declaration's flavour rides the note (no post-build writer
+        /// touches a key). The cold
+        /// declaration and boxed value are what the skip avoids: the
+        /// static keeps last run's scalar without re-reading it while
+        /// this stands, and the read would answer the same float. Noted
+        /// only under a successful direct read of a real key, dropped at
+        /// compile with the other claims, and mirrored into the run
+        /// shadow with the other version notes (never compared): the note
+        /// names a generation, so a restore that rewinds the scalar must
+        /// rewind the note with it.
+        bool diagWeightHeld = false;
+        int diagWeightIndex = -1;
+        uint64_t diagWeightVersion = 0;
         int matrixParamsWeightBlendIndex = -1;
         int matrixParamsEnabledIndex = -1;
         int matrixParamsDefaultWeightIndex = -1;
@@ -6384,6 +6403,9 @@ struct RigExecBakedRunShadow {
         bool matrixParamsHaveTransform = false;
         GfMatrix4d matrixParamsTransform{1.0};
         uint64_t matrixParamsPacketRevision = 0;
+        bool diagWeightHeld = false;
+        int diagWeightIndex = -1;
+        uint64_t diagWeightVersion = 0;
         bool matrixEntryRangesHeld = false;
         uint64_t matrixEntryRangesPacketRevision = 0;
         size_t matrixEntryRangesCount = 0;

@@ -468,6 +468,9 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     state->matrixParamsHaveTransform = revision.matrixParamsHaveTransform;
     state->matrixParamsTransform = revision.matrixParamsTransform;
     state->matrixParamsPacketRevision = revision.matrixParamsPacketRevision;
+    state->diagWeightHeld = revision.diagWeightHeld;
+    state->diagWeightIndex = revision.diagWeightIndex;
+    state->diagWeightVersion = revision.diagWeightVersion;
     state->matrixEntryRangesHeld = revision.matrixEntryRangesHeld;
     state->matrixEntryRangesPacketRevision =
         revision.matrixEntryRangesPacketRevision;
@@ -584,6 +587,9 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->matrixParamsHaveTransform = state.matrixParamsHaveTransform;
     revision->matrixParamsTransform = state.matrixParamsTransform;
     revision->matrixParamsPacketRevision = state.matrixParamsPacketRevision;
+    revision->diagWeightHeld = state.diagWeightHeld;
+    revision->diagWeightIndex = state.diagWeightIndex;
+    revision->diagWeightVersion = state.diagWeightVersion;
     revision->matrixEntryRangesHeld = state.matrixEntryRangesHeld;
     revision->matrixEntryRangesPacketRevision =
         state.matrixEntryRangesPacketRevision;
