@@ -3596,6 +3596,17 @@ struct RigExecBakedProgramImpl {
         /// Set fresh by every fold run, dropped at compile with the other
         /// claims, never mirrored into the run shadow.
         bool matrixTransformsHeld = false;
+        /// RevisionChunk's verdict that this run's whole-walk skip of an
+        /// unchunked Legacy matrix revision left every RevisionOut key
+        /// field standing: the skip proved the staging content identical
+        /// to last run's, and the chunk's ok bit (captured before the body
+        /// overwrote it) proves that bit identical too, while the sizes
+        /// are the standing count. The chunk publish skips its point-byte
+        /// spell and reports unchanged while this stands; the stored key
+        /// already spells these bytes, so skipping the compare is
+        /// unobservable. Set fresh by every chunk run, dropped at compile
+        /// with the other claims, never mirrored into the run shadow.
+        bool matrixChunkHeld = false;
         int matrixParamsWeightBlendIndex = -1;
         int matrixParamsEnabledIndex = -1;
         int matrixParamsDefaultWeightIndex = -1;

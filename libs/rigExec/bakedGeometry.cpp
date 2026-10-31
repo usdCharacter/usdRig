@@ -5922,6 +5922,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
 
     case RigExecBakedStepKind::RevisionChunk: {
         if (revision.gpuOwned) {
+            revision.matrixChunkHeld = false;
             return;
         }
         if (revision.role == RigExecBakedRevisionRole::Range) {
@@ -5954,10 +5955,14 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         if (!revision.chunked) {
             // One chunk is the whole array, so there is nothing to speculate
             // about: it knows everything the fuse knows.
+            // Last run's ok, before the body overwrites it: the whole-walk
+            // skip's held claim needs it, since the key spells the bit.
+            const bool chunkWasOk = chunk.ok;
             chunk.ok = false;
             revision.devicePending = false;
             if (!revision.status.AllowsApply()) {
                 revision.deviceTicks.clear();
+                revision.matrixChunkHeld = false;
                 // A disabled windowed revision captures nothing: the history
                 // after it starts at the next frame it runs.
                 if (revision.window >= 0 &&
@@ -5983,6 +5988,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                     LegacyMatrixSkipStands(B, chain, revision,
                                            size_t(revisionIndex), count)) {
                     chunk.ok = true;
+                    revision.matrixChunkHeld = chunkWasOk;
                     revision.stagingFresh = false;
                     revision.matrixWalk.computed = 0;
                     revision.matrixWalk.reused = 0;
@@ -6046,6 +6052,8 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                         ? &revision.envelope : nullptr,
                     revision.op == RigExecRevisionOp::Matrix
                         ? &revision.matrixWalk : nullptr);
+                // Fresh bytes (or a fresh failure): the publish keys them.
+                revision.matrixChunkHeld = false;
                 if (revision.windowRun.deferred) {
                     revision.devicePending =
                         chunk.ok && !revision.deviceTicks.empty();

@@ -786,7 +786,20 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         if(!RevisionOutPart(B,slot,&v,&part)) break;
         bool published=false;
         const auto *g=GroupPart(*v,part,&published);
-        if(!g) break;
+        if(!g) {
+            // An unchunked Legacy matrix revision's held chunk: the body
+            // proved every key field standing, so the stored key already
+            // spells these bytes and the compare is skipped, leaving the
+            // flag, revision and key the spell would have left. Anything
+            // else keys its bytes as before.
+            if(v->op==RigExecRevisionOp::Matrix &&
+               v->role==RigExecBakedRevisionRole::Legacy && !v->chunked &&
+               v->matrixChunkHeld && value->initialized) {
+                value->changed=0;
+                return true;
+            }
+            break;
+        }
         if(published) {
             key.Append(uint64_t(g->published.count)); key.Append(g->version); keyed=true;
         } else if(v->role==RigExecBakedRevisionRole::Range) {
