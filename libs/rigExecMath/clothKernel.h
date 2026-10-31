@@ -186,6 +186,10 @@ struct RigExecClothMesh {
     /// neighboring any corner. Built with the bitsets; the
     /// vertex/triangle adjacency test reads one row instead of three.
     std::vector<uint64_t> triNeighborBits;
+    /// One row base per triangle into triNeighborBits: triangle times the
+    /// stride, derived once at build. The adjacency test loads it instead
+    /// of multiplying per visit; the same index either way.
+    std::vector<size_t> triRowBase;
     /// The three triangle edges as sorted endpoint pairs, two ints per
     /// edge in grid order. Built for self-contact meshes, like the
     /// bitsets; the discovery loads them instead of sorting per visit.
@@ -905,6 +909,7 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
     mesh->neighborBitStride = 0;
     mesh->edgeNeighborBits.clear();
     mesh->triNeighborBits.clear();
+    mesh->triRowBase.clear();
     bool selfContact = false;
     for (const auto &p : model.profiles)
         selfContact = selfContact || p.kind == RigExecClothProfileKind::SelfCollision;
@@ -926,6 +931,9 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
         }
         const size_t triCount = mesh->triangles.size() / 3;
         mesh->triNeighborBits.assign(triCount * mesh->neighborBitStride, 0);
+        mesh->triRowBase.resize(triCount);
+        for (size_t t = 0; t < triCount; ++t)
+            mesh->triRowBase[t] = t * mesh->neighborBitStride;
         for (size_t t = 0; t < triCount; ++t) {
             const size_t a = size_t(mesh->triangles[3 * t]);
             const size_t b = size_t(mesh->triangles[3 * t + 1]);
@@ -2914,7 +2922,7 @@ inline bool cloth_detail::AdjacentToRowBits(const uint64_t *row, int32_t v)
 
 inline bool cloth_detail::AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v)
 {
-    const size_t word = t * mesh.neighborBitStride + (size_t(v) >> 6);
+    const size_t word = mesh.triRowBase[t] + (size_t(v) >> 6);
     return ((mesh.triNeighborBits[word] >> (v & 63)) & 1ull) != 0;
 }
 
