@@ -1028,6 +1028,7 @@ bool RigExecBakedCompileOpGraph(RigExecBakedProgramImpl *B,std::string *error)
             revision.weightValuesHeld=false;
             revision.matrixEnvelopeHeld=false;
             revision.matrixParamsHeld=false;
+            revision.matrixParamsVersion=0;
             revision.matrixPacketHeld=false;
             revision.matrixTransformsHeld=false;
             revision.matrixChunkHeld=false;

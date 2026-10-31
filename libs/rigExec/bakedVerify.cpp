@@ -466,8 +466,12 @@ CaptureRevision(const RigExecBakedProgramImpl::GeomRevision &revision,
     state->matrixParamsDefaultWeightVersion =
         revision.matrixParamsDefaultWeightVersion;
     state->matrixParamsHaveTransform = revision.matrixParamsHaveTransform;
+    state->matrixParamsRadial = revision.matrixParamsRadial;
+    state->matrixParamsEnabled = revision.matrixParamsEnabled;
+    state->matrixParamsWeightsValid = revision.matrixParamsWeightsValid;
     state->matrixParamsTransform = revision.matrixParamsTransform;
     state->matrixParamsPacketRevision = revision.matrixParamsPacketRevision;
+    state->matrixParamsVersion = revision.matrixParamsVersion;
     state->diagWeightHeld = revision.diagWeightHeld;
     state->diagWeightIndex = revision.diagWeightIndex;
     state->diagWeightVersion = revision.diagWeightVersion;
@@ -585,8 +589,12 @@ RestoreRevision(const RigExecBakedRunShadow::RevisionState &state,
     revision->matrixParamsDefaultWeightVersion =
         state.matrixParamsDefaultWeightVersion;
     revision->matrixParamsHaveTransform = state.matrixParamsHaveTransform;
+    revision->matrixParamsRadial = state.matrixParamsRadial;
+    revision->matrixParamsEnabled = state.matrixParamsEnabled;
+    revision->matrixParamsWeightsValid = state.matrixParamsWeightsValid;
     revision->matrixParamsTransform = state.matrixParamsTransform;
     revision->matrixParamsPacketRevision = state.matrixParamsPacketRevision;
+    revision->matrixParamsVersion = state.matrixParamsVersion;
     revision->diagWeightHeld = state.diagWeightHeld;
     revision->diagWeightIndex = state.diagWeightIndex;
     revision->diagWeightVersion = state.diagWeightVersion;

@@ -3633,6 +3633,14 @@ struct RigExecBakedProgramImpl {
         uint64_t matrixParamsEnabledVersion = 0;
         uint64_t matrixParamsDefaultWeightVersion = 0;
         bool matrixParamsHaveTransform = false;
+        /// The fresh assembly's radial arm, enabled bit and weights
+        /// validity beside the transform note: the sparse-walk inputs
+        /// version below moves on them exactly as on the transform (an
+        /// invalid envelope leaves the default transform). They pack into
+        /// the matrix note's padding.
+        bool matrixParamsRadial = false;
+        bool matrixParamsEnabled = false;
+        bool matrixParamsWeightsValid = false;
         GfMatrix4d matrixParamsTransform{1.0};
         uint64_t matrixParamsPacketRevision = 0;
         /// A Range matrix revision's per-group sparse entry ranges, held
@@ -3649,6 +3657,15 @@ struct RigExecBakedProgramImpl {
         bool matrixEntryRangesHeld = false;
         uint64_t matrixEntryRangesPacketRevision = 0;
         size_t matrixEntryRangesCount = 0;
+        /// The sparse walks' per-revision inputs version, 0 until first
+        /// noted, bumped exactly when the noted transform, radial arm,
+        /// enabled bit or weights validity differ from the fresh
+        /// assembly's (a held static proves them without comparing). A
+        /// whole-walk skip whose key names this version skips spelling
+        /// the transform. It sits with the entry-ranges claim the group
+        /// step reads beside the skip check, so the read shares that hot
+        /// line.
+        uint64_t matrixParamsVersion = 0;
         std::vector<std::pair<size_t, size_t>> matrixEntryRanges;
         /// The content version the RevisionPacket key carries in place of
         /// a bound matrix revision's weight arrays: RevisionStatic bumps
@@ -6406,8 +6423,12 @@ struct RigExecBakedRunShadow {
         uint64_t matrixParamsEnabledVersion = 0;
         uint64_t matrixParamsDefaultWeightVersion = 0;
         bool matrixParamsHaveTransform = false;
+        bool matrixParamsRadial = false;
+        bool matrixParamsEnabled = false;
+        bool matrixParamsWeightsValid = false;
         GfMatrix4d matrixParamsTransform{1.0};
         uint64_t matrixParamsPacketRevision = 0;
+        uint64_t matrixParamsVersion = 0;
         bool diagWeightHeld = false;
         int diagWeightIndex = -1;
         uint64_t diagWeightVersion = 0;

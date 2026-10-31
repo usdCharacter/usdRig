@@ -86,6 +86,9 @@ struct RigExecSparseWalkMemo {
     uint64_t skipVersion = 0;
     size_t skipCount = 0;
     uint64_t skipPublishedVersion = 0;
+    /// The skip key's per-revision inputs version, 0 until noted: while it
+    /// names the revision's current one, the inputs hold without spelling.
+    uint64_t skipParamsVersion = 0;
     /// Whole walks the last step skipped (0 or 1). Observability only.
     uint32_t skippedWhole = 0;
 };
@@ -183,25 +186,30 @@ RigExecSparseWalkMode RigExecSparseWalkBegin(
 /// per-revision inputs, same packet (so the same entry set and weights),
 /// same entering points (the source version moves exactly with its bytes),
 /// and the same publication. A stale key fails its own compares, so no
-/// disarm runs on any path the key does not name.
+/// disarm runs on any path the key does not name. A nonzero \p paramsVersion
+/// equal to the key's proves the inputs without spelling them; anything
+/// else spells and compares as before, so versions can only short-circuit
+/// an acceptance, never cause a rejection.
 template <class Point>
 bool RigExecSparseWalkSkipStands(const RigExecSparseWalkMemo<Point> &memo,
                                  bool radial, const double *transform,
                                  bool packetShared, uint64_t packetRevision,
                                  int64_t slot, uint64_t version, size_t count,
                                  uint64_t publishedVersion, bool ran,
-                                 size_t entries);
+                                 size_t entries, uint64_t paramsVersion);
 
 /// Arms \p memo's skip key over the walk just published: its shared packet
 /// revision, entering group source, point count and published version. The
 /// per-revision inputs stay the walk's RigExecSparseWalkBegin bytes, and the
-/// recorded entries stay the walk's. Call only for a walk that ran its
+/// recorded entries stay the walk's; \p paramsVersion names them for the
+/// spelling-free check. Call only for a walk that ran its
 /// sparse entries and published own.
 template <class Point>
 void RigExecSparseWalkSkipNote(RigExecSparseWalkMemo<Point> *memo,
                                uint64_t packetRevision, int64_t slot,
                                uint64_t version, size_t count,
-                               uint64_t publishedVersion);
+                               uint64_t publishedVersion,
+                               uint64_t paramsVersion);
 
 /// Whether entry \p j of a memo in the Reuse mode was computed for point
 /// \p index at \p weight from entering point \p point: then `out[j]` is the
@@ -345,7 +353,7 @@ RigExecSparseWalkSkipStands(const RigExecSparseWalkMemo<Point> &memo,
                             bool packetShared, uint64_t packetRevision,
                             int64_t slot, uint64_t version, size_t count,
                             uint64_t publishedVersion, bool ran,
-                            size_t entries)
+                            size_t entries, uint64_t paramsVersion)
 {
     // Cheapest first; the per-revision inputs spell their bytes last.
     if (!memo.skipArmed || entries == 0 || !packetShared || !ran ||
@@ -355,6 +363,9 @@ RigExecSparseWalkSkipStands(const RigExecSparseWalkMemo<Point> &memo,
         memo.indices.size() != entries || memo.weights.size() != entries ||
         memo.in.size() != entries || memo.out.size() != entries) {
         return false;
+    }
+    if (paramsVersion != 0 && memo.skipParamsVersion == paramsVersion) {
+        return true;
     }
     unsigned char params[kRigExecSparseWalkParamsSize];
     RigExecSparseWalkSpellParams(radial, transform, params);
@@ -366,13 +377,14 @@ void
 RigExecSparseWalkSkipNote(RigExecSparseWalkMemo<Point> *memo,
                           uint64_t packetRevision, int64_t slot,
                           uint64_t version, size_t count,
-                          uint64_t publishedVersion)
+                          uint64_t publishedVersion, uint64_t paramsVersion)
 {
     memo->skipPacketRevision = packetRevision;
     memo->skipSlot = slot;
     memo->skipVersion = version;
     memo->skipCount = count;
     memo->skipPublishedVersion = publishedVersion;
+    memo->skipParamsVersion = paramsVersion;
     memo->skipArmed = true;
 }
 

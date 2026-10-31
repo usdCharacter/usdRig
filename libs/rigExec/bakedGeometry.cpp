@@ -3341,6 +3341,10 @@ LegacyMatrixSkipStands(
     if (memo.skipPublishedVersion != revision.doneVersion) {
         return false;
     }
+    if (revision.matrixParamsVersion != 0 &&
+        memo.skipParamsVersion == revision.matrixParamsVersion) {
+        return true;
+    }
     unsigned char params[kRigExecSparseWalkParamsSize];
     RigExecSparseWalkSpellParams(revision.parameters.radialWeight,
                                  revision.parameters.transform.GetArray(),
@@ -3377,6 +3381,7 @@ LegacyMatrixSkipNote(
         LegacyMatrixEnteringVersion(chain, revisionIndex);
     revision->matrixWalk.skipCount = count;
     revision->matrixWalk.skipPublishedVersion = revision->doneVersion;
+    revision->matrixWalk.skipParamsVersion = revision->matrixParamsVersion;
     revision->matrixWalk.params.resize(kRigExecSparseWalkParamsSize);
     RigExecSparseWalkSpellParams(
         revision->parameters.radialWeight,
@@ -3468,7 +3473,11 @@ MatrixParamsNote(
     RigExecBakedProgramImpl::GeomRevision *revision)
 {
     revision->matrixParamsHeld = false;
+    // A claim the key cannot cover drops the inputs version with it, so
+    // no skip check names stale bytes; the success path below keeps or
+    // moves it beside the note.
     if (revision->weightCurrentPhase || !revision->blendChannels.empty()) {
+        revision->matrixParamsVersion = 0;
         return;
     }
     const bool packetBound = revision->weightObject >= 0;
@@ -3477,6 +3486,7 @@ MatrixParamsNote(
         bool shared = false;
         packetRevision = MatrixEnvelopePacketRevision(B, *revision, &shared);
         if (!shared) {
+            revision->matrixParamsVersion = 0;
             return;
         }
     }
@@ -3508,9 +3518,33 @@ MatrixParamsNote(
         !key(RigExecRevisionLeafRole::DefaultWeight,
              &revision->matrixParamsDefaultWeightIndex,
              &revision->matrixParamsDefaultWeightVersion)) {
+        revision->matrixParamsVersion = 0;
         return;
     }
+    // The sparse-walk inputs version over the fresh assembly: 1 on the
+    // first note, moved exactly when the noted bytes differ. A held run
+    // never reaches here, and holding proves the bytes, so the version
+    // stands then without comparing.
+    const RigExecMoverParameters &p = revision->parameters;
+    if (revision->matrixParamsVersion == 0) {
+        // The first note names these bytes 1. The drops above are
+        // build-fixed, so a success never follows one and no later note
+        // aliases this version.
+        revision->matrixParamsVersion = 1;
+    } else if (revision->matrixParamsHaveTransform != revision->haveTransform ||
+               revision->matrixParamsRadial != p.radialWeight ||
+               revision->matrixParamsEnabled != p.enabled ||
+               revision->matrixParamsWeightsValid != p.weights.valid ||
+               (revision->haveTransform &&
+                std::memcmp(&revision->matrixParamsTransform,
+                            &revision->transform,
+                            sizeof(GfMatrix4d)) != 0)) {
+        ++revision->matrixParamsVersion;
+    }
     revision->matrixParamsHaveTransform = revision->haveTransform;
+    revision->matrixParamsRadial = p.radialWeight;
+    revision->matrixParamsEnabled = p.enabled;
+    revision->matrixParamsWeightsValid = p.weights.valid;
     revision->matrixParamsTransform = revision->transform;
     revision->matrixParamsPacketRevision = packetRevision;
     revision->matrixParamsHeld = true;
@@ -3979,7 +4013,8 @@ RunGroupStep(RigExecBakedProgramImpl &B,
                 revision->parameters.transform.GetArray(), packetShared,
                 packetRevision, from.slot, from.version, count,
                 state.version, state.ran,
-                entryRange->second - entryRange->first)) {
+                entryRange->second - entryRange->first,
+                revision->matrixParamsVersion)) {
             // Last run's ok, before the body overwrites it: the skip's
             // held claim needs it, since the key spells the bit.
             const bool groupWasOk = state.ok;
@@ -4018,7 +4053,8 @@ RunGroupStep(RigExecBakedProgramImpl &B,
             MatrixEnvelopePacketRevision(B, *revision, &packetShared);
         if (packetShared) {
             RigExecSparseWalkSkipNote(&state.walk, packetRevision, from.slot,
-                                      from.version, count, state.version);
+                                      from.version, count, state.version,
+                                      revision->matrixParamsVersion);
         }
     }
 }
