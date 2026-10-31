@@ -1656,8 +1656,20 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
         if (pi >= 0) {
             const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
             const float *base = mesh.constraintStrengthBase.data() + 4 * c;
-            const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-            const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
+            // A flat strength range needs no force estimate: the curve
+            // interpolates between equal endpoints, so the strength is
+            // the endpoint times the mask and the directional scalar,
+            // and the force quotient is dead. The +0.0f keeps the
+            // signed-zero behavior of the full form bit for bit;
+            // infinite endpoints and NaN take the full path.
+            float strength;
+            if (base[0] == base[1] && std::isfinite(base[0])) {
+                strength = (base[0] + 0.0f) * base[2] * base[3];
+            } else {
+                const float force =
+                    wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                strength = RigExecClothCachedBase(profile, base, force) * base[3];
+            }
             if (!(strength > 0)) return;
             alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
         }
@@ -1724,8 +1736,22 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
                     if (pi >= 0) {
                         const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
                         const float *base = mesh.constraintStrengthBase.data() + 4 * c;
-                        const float force = wa + wb > 0 ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-                        const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
+                        // A flat strength range needs no force estimate:
+                        // the curve interpolates between equal endpoints,
+                        // so the strength is the endpoint times the mask
+                        // and the directional scalar, and the force
+                        // quotient is dead. The +0.0f keeps the signed-zero
+                        // behavior of the full form bit for bit; infinite
+                        // endpoints and NaN take the full path.
+                        float strength;
+                        if (base[0] == base[1] && std::isfinite(base[0])) {
+                            strength = (base[0] + 0.0f) * base[2] * base[3];
+                        } else {
+                            const float force = wa + wb > 0
+                                ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                            strength =
+                                RigExecClothCachedBase(profile, base, force) * base[3];
+                        }
                         if (!(strength > 0)) { live[k] = 0; continue; }
                         alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
                     }
@@ -1773,8 +1799,20 @@ RigExecClothProjectConstraint(const RigExecClothMesh &mesh,
         if (pi >= 0) {
             const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
             const float *base = mesh.constraintStrengthBase.data() + 4 * c;
-            const float force = wa + wb > 0 ? std::abs(lambda[c] - C / (wa + wb)) / (s.h * s.h) : 0;
-            const float strength = RigExecClothCachedBase(profile, base, force) * base[3];
+            // A flat strength range needs no force estimate: the curve
+            // interpolates between equal endpoints, so the strength is
+            // the endpoint times the mask and the directional scalar,
+            // and the force quotient is dead. The +0.0f keeps the
+            // signed-zero behavior of the full form bit for bit;
+            // infinite endpoints and NaN take the full path.
+            float strength;
+            if (base[0] == base[1] && std::isfinite(base[0])) {
+                strength = (base[0] + 0.0f) * base[2] * base[3];
+            } else {
+                const float force = wa + wb > 0
+                    ? std::abs(lambda[c] - C / (wa + wb)) / (s.h * s.h) : 0;
+                strength = RigExecClothCachedBase(profile, base, force) * base[3];
+            }
             if (!(strength > 0)) { lambda[c] = 0; return; }
             alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
         }
@@ -1971,17 +2009,29 @@ RigExecClothVelocity(const RigExecClothMesh &mesh, const RigExecClothStep &s,
             const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
             float frame[9], v[3], delta[3];
             RigExecClothMaterialFrame(mesh, x, i, frame);
-            for (size_t a = 0; a < 3; ++a) {
+            for (size_t a = 0; a < 3; ++a)
                 v[a] = (x[3 * i + a] - previous[3 * i + a]) / s.h;
-                delta[a] = (v[a] - velocity[3 * i + a]) / (s.h * mesh.inverseMass[i]);
+            const float *base = mesh.vertexDampingBase.data() + 6 * i;
+            // A flat strength range needs no force estimate: the curve
+            // interpolates between equal endpoints, so the isotropic part
+            // is the endpoint times the mask, and the delta loop and its
+            // root are dead. The +0.0f keeps the signed-zero behavior of
+            // the full form bit for bit; infinite endpoints (an overflowed
+            // product, where the full form subtracts to NaN) and NaN take
+            // the full path. The same value the full path formed.
+            float isotropic;
+            if (base[0] == base[1] && std::isfinite(base[0])) {
+                isotropic = (base[0] + 0.0f) * base[2];
+            } else {
+                for (size_t a = 0; a < 3; ++a)
+                    delta[a] = (v[a] - velocity[3 * i + a]) / (s.h * mesh.inverseMass[i]);
+                isotropic = RigExecClothCachedBase(
+                    profile, base, cloth_detail::Length(delta));
             }
-            const float force = cloth_detail::Length(delta);
             // One sample, one force: the prepared isotropic part and warp
             // maps are the same for all three axes, so each axis re-forms
             // only its directional dots; the same rates the three full
             // strength evaluations formed.
-            const float *base = mesh.vertexDampingBase.data() + 6 * i;
-            const float isotropic = RigExecClothCachedBase(profile, base, force);
             std::fill(velocity + 3 * i, velocity + 3 * i + 3, 0.0f);
             for (size_t a = 0; a < 3; ++a) {
                 const float rate = isotropic * RigExecClothDirectional(profile, frame + 3 * a,
