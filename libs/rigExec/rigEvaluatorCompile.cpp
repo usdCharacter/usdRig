@@ -51,6 +51,7 @@ namespace {
 
 // Removed attributes the compile refuses, interned once at load: interning
 // takes the token registry's lock.
+const TfToken _inputElementName(RigExecInputElementMetadataName);
 const TfToken _removedSamplePhase("rigExec:samplePhase");
 const TfToken _removedRibbonPhases[] = {
     TfToken("rigExec:driverCurveReadPhase"),
@@ -77,9 +78,9 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     const UsdPrim inputRoot = _stage ? _stage->GetPrimAtPath(_rigPath) : UsdPrim();
     if (inputRoot) for (const auto &prim : UsdPrimRange(inputRoot)) {
         for (const auto &attribute : prim.GetAttributes()) {
-            if (!attribute.HasAuthoredMetadata(TfToken(RigExecInputElementMetadataName))) continue;
+            if (!attribute.HasAuthoredMetadata(_inputElementName)) continue;
             VtValue element;
-            attribute.GetMetadata(TfToken(RigExecInputElementMetadataName), &element);
+            attribute.GetMetadata(_inputElementName, &element);
             if (!element.IsHolding<int>() || element.UncheckedGet<int>() < 0 ||
                 attribute.GetTypeName().GetType() != TfType::Find<GfVec3f>()) {
                 if (errors) errors->push_back(attribute.GetPath().GetString() +
