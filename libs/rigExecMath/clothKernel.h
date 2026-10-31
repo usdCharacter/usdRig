@@ -2288,6 +2288,12 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // The mesh topology bases stay fixed across the discovery loops:
         // the mesh is compiled input, so the edge/edge entries reread the
         // same bases without reloading them per entry.
+        // The triangle union-row base and stride stay fixed too: every
+        // row base is its triangle times the stride, so the
+        // vertex/triangle adjacency reads the row directly instead of
+        // loading the base per entry, the same word either way.
+        const uint64_t *vtTriBase = mesh.triNeighborBits.data();
+        const size_t vtStride = mesh.neighborBitStride;
         const int32_t *meshTriangles = mesh.triangles.data();
         const int32_t *meshTriEdges = mesh.triEdges.data();
         const int32_t *meshTriTwin = mesh.triEdgeTwin.data();
@@ -2306,6 +2312,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             const float depthLimit = std::max(thickness, step.depth);
             const float bandLimit = std::max(depthLimit, 0.0f);
             const float *point = x + 3 * i;
+            // The vertex's union-row word and bit stay fixed across its
+            // bucket entries: the same shifts the per-entry test forms.
+            const size_t vtWord = i >> 6;
+            const uint64_t vtMask = 1ull << (i & 63);
             const uint32_t bucket = Hash(Cell(point[0], grid.cellSize), Cell(point[1], grid.cellSize),
                                           Cell(point[2], grid.cellSize), grid.bucketMask);
             for (uint32_t entry = vtBucketBounds[bucket]; entry < vtBucketBounds[bucket + 1]; ++entry) {
@@ -2318,7 +2328,9 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // adjacency is symmetric, the same verdicts. Past the size
                 // cap the linear scans keep their order.
                 bool adjacent;
-                if (useBits) adjacent = AdjacentToTriBits(mesh, size_t(tri), int32_t(i));
+                if (useBits)
+                    adjacent =
+                        (vtTriBase[size_t(tri) * vtStride + vtWord] & vtMask) != 0;
                 else {
                     adjacent = false;
                     for (size_t q = 0; q < 3; ++q)
