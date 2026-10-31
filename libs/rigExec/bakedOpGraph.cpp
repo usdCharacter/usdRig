@@ -1116,8 +1116,9 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
     }
     state.changedLeaves.clear(); state.seeds.clear(); state.candidateOps.clear();
     RigExecOpClearChanges(&state);
-    const auto sample=[&](uint32_t d,uint32_t slot,std::string *key) {
-        RigExecBakedOpValueKey(B,RigExecBakedSlotDomain(d),slot,key);
+    const auto sample=[&](uint32_t d,uint32_t slot,std::string *key,
+        const RigExecBakedStep *step) {
+        RigExecBakedOpValueKey(B,RigExecBakedSlotDomain(d),slot,key,step);
     };
     // A constant source key keeps the bytes and exactness of its last build,
     // so it yields what an equal-key compare does: exact and unchanged. Keys
@@ -1298,12 +1299,12 @@ bool RigExecBakedExecuteOpGraph(RigExecBakedProgramImpl *program,UsdTimeCode tim
             const bool versioned=v.domain==uint32_t(RigExecBakedSlotDomain::RevisionOut) ||
                 v.domain==uint32_t(RigExecBakedSlotDomain::RevisionDone) ||
                 v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty);
-            if((window<0 || !versioned) && RigExecBakedPublishSmallValue(B,&v)) continue;
+            if((window<0 || !versioned) && RigExecBakedPublishSmallValue(B,&v,&step)) continue;
             const RigExecOpValueState *reuse=done && v.slot==done->slot &&
                 v.domain==uint32_t(RigExecBakedSlotDomain::ChainDirty) ? done : nullptr;
             bool exact=true;
             RigExecOpPublishValue(&v,[&](uint32_t d,uint32_t slot,std::string *key) {
-                if(reuse) key->append(reuse->key); else sample(d,slot,key);
+                if(reuse) key->append(reuse->key); else sample(d,slot,key,&step);
                 if(window>=0 && size_t(window)<B.windowRingSerial.size())
                     RigExecOpKeyAppend(key,B.windowRingSerial[size_t(window)]);
                 // API4 opaque packets are deterministic in their declared

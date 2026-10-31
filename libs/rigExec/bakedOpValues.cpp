@@ -340,6 +340,53 @@ bool RevisionOutPart(const RigExecBakedProgramImpl &B, uint32_t slot,
     }
     return false;
 }
+// RevisionOut \p slot's revision and part from the writing chunk step's own
+// identity, without the chunk table: a RevisionChunk step with object id
+// and part k writes exactly slot chunkBase + k (Build declares it so, and
+// the body just ran on that same part, so the revision is hot). Every guard
+// below is a conjunct of what RevisionOutPart checks on its chunkRevision
+// route for that same row, so a hit answers exactly what the table would;
+// anything else -- a fuse's group slots, a hand-assembled program, a table
+// that routes elsewhere -- falls back to the table.
+bool RevisionOutStepPart(const RigExecBakedProgramImpl &B, uint32_t slot,
+    const RigExecBakedStep *step,
+    const RigExecBakedProgramImpl::GeomRevision **revision, size_t *part)
+{
+    if(step && step->kind==RigExecBakedStepKind::RevisionChunk &&
+       step->object>=0 && step->part>=0 && slot<B.chunkRevision.size() &&
+       B.chunkRevision[slot]==step->object) {
+        const size_t r=size_t(step->object);
+        const size_t tables=std::min(B.revisionChunkBase.size(),B.revisionChunkCount.size());
+        if(r<tables) {
+            const int base=B.revisionChunkBase[r], count=B.revisionChunkCount[r];
+            // index == part: the table's row for this revision routes this
+            // slot to this part, as Build's write declaration does; that
+            // and part >= 0 are the slot-in-range check.
+            if(base>=0 && count>=0 &&
+               int64_t(base)==int64_t(slot)-int64_t(step->part) &&
+               int64_t(step->part)<int64_t(count)) {
+                const auto *v=Revision(B,uint32_t(r));
+                const size_t index=size_t(step->part);
+                if(v) {
+                    const size_t published=v->role==RigExecBakedRevisionRole::Whole ? v->groups.size() : 0;
+                    if(index<v->chunks.size()+published) {
+                        if(index<v->chunks.size()) {
+                            const auto &chunk=v->chunks[index];
+                            if(chunk.begin>=0 && chunk.end>=chunk.begin) {
+                                *revision=v; *part=index;
+                                return true;
+                            }
+                        } else {
+                            *revision=v; *part=index;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return RevisionOutPart(B,slot,revision,part);
+}
 // The RevisionOut key's body over \p points, the buffer holding the chunk's
 // result: only the chunk's own half-open range.
 void PutRevisionOut(std::string *out,
@@ -478,7 +525,8 @@ bool RigExecBakedOpValueKeyIsExact(const RigExecBakedProgramImpl &B,
 }
 
 void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &B,
-    RigExecBakedSlotDomain domain, uint32_t slot, std::string *out)
+    RigExecBakedSlotDomain domain, uint32_t slot, std::string *out,
+    const RigExecBakedStep *step)
 {
     if (!TF_VERIFY(out)) return;
     out->clear(); Put(out,uint8_t(1)); Put(out,domain);
@@ -563,7 +611,7 @@ void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &B,
         // here would race the parallel writer and cause false change waves.
         const RigExecBakedProgramImpl::GeomRevision *v=nullptr;
         size_t part=0;
-        if(RevisionOutPart(B,slot,&v,&part)) {
+        if(RevisionOutStepPart(B,slot,step,&v,&part)) {
             // A range chain's group keys its bytes by the content version
             // its writer bumps exactly when they move (pointBlocks.h): a
             // Range group (ok, count, version), a keyed Whole skin's
@@ -731,7 +779,8 @@ void PutSmall(SmallKey *out,const RigExecMoverStatus &v)
     PutSmall(out,v.state); PutSmall(out,v.firstBadAddress);
 }
 }
-bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpValueState *value)
+bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpValueState *value,
+    const RigExecBakedStep *step)
 {
     using D=RigExecBakedSlotDomain;
     const D domain=D(value->domain); const uint32_t slot=value->slot;
@@ -783,7 +832,7 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         // revision's one chunk keys its point bytes and stays on the key.
         const RigExecBakedProgramImpl::GeomRevision *v=nullptr;
         size_t part=0;
-        if(!RevisionOutPart(B,slot,&v,&part)) break;
+        if(!RevisionOutStepPart(B,slot,step,&v,&part)) break;
         bool published=false;
         const auto *g=GroupPart(*v,part,&published);
         if(!g) {

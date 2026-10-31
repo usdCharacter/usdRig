@@ -25,7 +25,8 @@ struct RigExecBakedOpIdentityRemap {
 /// Opaque plugin payloads cannot be encoded; their packet outputs must use
 /// typed equality or conservative change propagation in the graph adapter.
 void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &,
-    RigExecBakedSlotDomain, uint32_t slot, std::string *key);
+    RigExecBakedSlotDomain, uint32_t slot, std::string *key,
+    const RigExecBakedStep *step = nullptr);
 /// Publishes a fixed-size value -- pose frames, matrices, avars, staged
 /// frames, unboxed space values -- by building RigExecBakedOpValueKey's
 /// bytes on the stack and comparing them in place with the stored key:
@@ -33,7 +34,7 @@ void RigExecBakedOpValueKey(const RigExecBakedProgramImpl &,
 /// RigExecBakedOpValueKeyIsExact calls exact. False, with \p value
 /// untouched, for any other value; the caller publishes it through its key.
 bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &,
-    RigExecOpValueState *value);
+    RigExecOpValueState *value, const RigExecBakedStep *step = nullptr);
 /// RigExecBakedOpValueKey of provider leaf \p slot, returning what
 /// RigExecBakedOpValueKeyIsExact answers for it, from one overlay lookup.
 bool RigExecBakedSpaceLeafKey(const RigExecBakedProgramImpl &, uint32_t slot,
