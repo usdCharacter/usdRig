@@ -222,10 +222,16 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     // capture reuses them instead of rebinding each path through the
     // stage. Local only; descriptors keep paths, never handles.
     std::vector<UsdAttribute> bound;
+    // Capture-subset metadata on the USD path: the capture and every scene
+    // translation read three keys (rigExecReadPhase, rigExecInputElement,
+    // interpolation; the clips probe never fires, since GetAllMetadata
+    // filters clip keys), so each fact keeps those alone instead of
+    // composing every field through GetAllMetadata. Generic frontends keep
+    // their complete facts; the kept keys agree exactly.
     for (const auto &path : source.Prims(SdfPath::AbsoluteRootPath())) {
         RigExecSceneNodeDescriptor node;
         if (usd) {
-            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships,&bound))
+            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships,&bound,true))
                 return Fail(error,"scene prim unavailable: " + path.GetString());
         } else {
             if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
@@ -251,7 +257,7 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
             const auto &property = node.attributes[k];
             RigExecSceneAttributeDescriptor attr;
             const auto attribute=usd ? bound[k] : UsdAttribute();
-            if (!(usd ? usd->Attribute(attribute,&attr.fact,clipped) : source.Attribute(property,&attr.fact)) ||
+            if (!(usd ? usd->Attribute(attribute,&attr.fact,clipped,true) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
             // With no authored value opinion and no clips above, nothing
             // can block the value: a block is itself an opinion, and clips
@@ -288,7 +294,8 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         }
         for (const auto &property : node.relationships) {
             RigExecSceneRelationshipDescriptor rel;
-            if (!source.Relationship(property,&rel.fact) || !Phase(rel.fact.metadata,&rel.readPhase,error,property)) return false;
+            if (!(usd ? usd->RelationshipCaptured(property,&rel.fact) : source.Relationship(property,&rel.fact)) ||
+                !Phase(rel.fact.metadata,&rel.readPhase,error,property)) return false;
             scene.relationships.emplace_hint(scene.relationships.end(),property,std::move(rel));
         }
         scene.nodes.emplace_hint(scene.nodes.end(),path,std::move(node));

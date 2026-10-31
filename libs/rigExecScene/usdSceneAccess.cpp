@@ -17,6 +17,9 @@ namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (held)
     (linear)
+    ((readPhase, "rigExecReadPhase"))
+    ((inputElement, "rigExecInputElement"))
+    (interpolation)
 );
 namespace {
 VtDictionary Metadata(const UsdObject &object) {
@@ -28,6 +31,39 @@ VtDictionary Metadata(const UsdObject &object) {
             name != "spline" && name != "connectionPaths" &&
             name != "targetPaths") result[name] = std::move(value);
     }
+    return result;
+}
+// Capture-subset metadata: the only keys scene translation reads from
+// captured facts. Attribute facts: "rigExecReadPhase" (Phase),
+// "rigExecInputElement" (sceneTypedReads), "interpolation" (cloth
+// inputs). Relationship facts: "rigExecReadPhase" (Phase). Prim facts
+// keep nothing: the capture's own clip-stack probe reads "clips", but
+// GetAllMetadata filters clip-related keys, so the complete facts never
+// carry it -- an empty subset matches them exactly. A new consumer of
+// another key extends these lists; until then GetAllMetadata's compose
+// of every other field is pure overhead -- each targeted read below
+// composes one field through the same _GetMetadataImpl, so a kept key is
+// present with the same composed value exactly when the complete facts
+// carry it.
+template <class Object>
+void Keep(VtDictionary *result, const char *name, const TfToken &key,
+    const Object &object) {
+    VtValue value;
+    if (object.GetMetadata(key, &value)) (*result)[name] = std::move(value);
+}
+VtDictionary CapturedPrimMetadata(const UsdPrim &) {
+    return VtDictionary();
+}
+VtDictionary CapturedAttributeMetadata(const UsdAttribute &attribute) {
+    VtDictionary result;
+    Keep(&result, "rigExecReadPhase", _tokens->readPhase, attribute);
+    Keep(&result, "rigExecInputElement", _tokens->inputElement, attribute);
+    Keep(&result, "interpolation", _tokens->interpolation, attribute);
+    return result;
+}
+VtDictionary CapturedRelationshipMetadata(const UsdRelationship &relationship) {
+    VtDictionary result;
+    Keep(&result, "rigExecReadPhase", _tokens->readPhase, relationship);
     return result;
 }
 }
@@ -49,11 +85,12 @@ bool RigExecUsdSceneAccess::Prim(const SdfPath &path, RigExecScenePrim *result) 
 }
 bool RigExecUsdSceneAccess::PrimProperties(const SdfPath &path, RigExecScenePrim *result,
     SdfPathVector *attributes, SdfPathVector *relationships,
-    std::vector<UsdAttribute> *boundAttributes) const {
+    std::vector<UsdAttribute> *boundAttributes, bool subsetMetadata) const {
     if (!_stage || !result || !attributes || !relationships) return false;
     const auto prim = _stage->GetPrimAtPath(path);
     if (!prim) return false;
-    *result = {path, prim.GetTypeName(), prim.GetAppliedSchemas(), Metadata(prim), prim.IsActive()};
+    *result = {path, prim.GetTypeName(), prim.GetAppliedSchemas(),
+        subsetMetadata ? CapturedPrimMetadata(prim) : Metadata(prim), prim.IsActive()};
     for (const auto &child : prim.GetAllChildren()) result->children.push_back(child.GetPath());
     // One property enumeration serves both lists: GetAttributes and
     // GetRelationships each compose the prim's property names, while
@@ -109,9 +146,10 @@ bool RigExecUsdSceneAccess::Attribute(const SdfPath &path, RigExecSceneAttribute
 UsdAttribute RigExecUsdSceneAccess::BindAttribute(const SdfPath &path) const {
     return _stage ? _stage->GetAttributeAtPath(path) : UsdAttribute();
 }
-bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result, bool clipped) const {
+bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result, bool clipped, bool subsetMetadata) const {
     if (!_stage || !result || !attribute) return false;
-    *result = {attribute.GetPath(), attribute.GetTypeName(), Metadata(attribute), {}};
+    *result = {attribute.GetPath(), attribute.GetTypeName(),
+        subsetMetadata ? CapturedAttributeMetadata(attribute) : Metadata(attribute), {}};
     // Composed connections are empty when nothing authors any, so the
     // authored flag this fact already records gates the composition walk:
     // the overwhelmingly common unconnected attribute skips it. Exact, and
@@ -151,6 +189,14 @@ bool RigExecUsdSceneAccess::Relationship(const SdfPath &path, RigExecSceneRelati
     const auto relationship = _stage->GetRelationshipAtPath(path);
     if (!relationship) return false;
     *result = {path, Metadata(relationship), {}};
+    relationship.GetTargets(&result->targets);
+    return true;
+}
+bool RigExecUsdSceneAccess::RelationshipCaptured(const SdfPath &path, RigExecSceneRelationship *result) const {
+    if (!_stage || !result) return false;
+    const auto relationship = _stage->GetRelationshipAtPath(path);
+    if (!relationship) return false;
+    *result = {path, CapturedRelationshipMetadata(relationship), {}};
     relationship.GetTargets(&result->targets);
     return true;
 }
