@@ -820,10 +820,13 @@ bool RigExecSampleProviderProgram(const RigExecProviderProgram &program,
     // the publish pass below reuses it instead of finding it again. Failure
     // order is unchanged -- every missing source still fails before any
     // type check or publish, and changed is still cleared between them.
+    // Sampled rows arrive in ascending path order, so the cursor walks the
+    // rows once instead of descending per leaf.
     std::vector<const RigExecSceneAttributeDescriptor *> rows;
     rows.reserve(program.sampled.size());
+    RigExecOrderedPathLookup<decltype(scene.attributes)> rowsByPath(scene.attributes);
     for(const auto &leaf:program.sampled) {
-        const auto attribute=scene.attributes.find(leaf.attribute);
+        const auto attribute=rowsByPath.Find(leaf.attribute);
         if(attribute==scene.attributes.end() || identity>=attribute->second.inputs.size())return Fail(error,"provider source state missing");
         rows.push_back(&attribute->second);
     }

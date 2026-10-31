@@ -452,8 +452,11 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // starts. A repeated prim later files again, exactly as before.
     SdfPath filedPrim;
     bool haveFiledPrim=false;
+    // Sampled inputs arrive in ascending path order (see the named-set
+    // hint below), so the capture rows are walked once, not found per leaf.
+    RigExecOrderedPathLookup<decltype(scene.attributes)> rowsByPath(scene.attributes);
     for(const auto &input:B.providerProgram.sampled) {
-        const auto attribute=scene.attributes.find(input.attribute);
+        const auto attribute=rowsByPath.Find(input.attribute);
         if(attribute==scene.attributes.end()) continue;
         const auto &fact=attribute->second;
         const VtValue fallback=fact.inputs.empty()?VtValue():fact.inputs[0].raw;
@@ -656,6 +659,12 @@ void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,
     bool haveSlot=false;
     if(captured) for(size_t s=0;s<captured->identities.size();++s)
         if(captured->identities[s]==time){slot=s;haveSlot=true;break;}
+    // Leaf keys ascend with the sampled rows they were filed from, and a
+    // skipped leaf only advances the walk further, so the capture rows are
+    // walked once instead of found per leaf.
+    const std::map<SdfPath,RigExecSceneAttributeDescriptor> noRows;
+    RigExecOrderedPathLookup<std::map<SdfPath,RigExecSceneAttributeDescriptor>> rowsByPath(
+        captured?captured->attributes:noRows);
     for(size_t k=0;k<leaves.attributes.size();++k) {
         leaves.changed[k]=0;
         if(!full && !leaves.mustSample[k] &&
@@ -670,7 +679,7 @@ void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,
         // before, as does anything the rows do not cover.
         if(haveSlot && attribute && attribute.GetPrim().IsActive() &&
            k<leaves.decl.keys.size()) {
-            const auto row=captured->attributes.find(leaves.decl.keys[k].path);
+            const auto row=rowsByPath.Find(leaves.decl.keys[k].path);
             if(row!=captured->attributes.end() && slot<row->second.inputs.size()) {
                 value=row->second.inputs[slot].raw;
                 blocked=row->second.inputs[slot].rawBlocked;

@@ -80,6 +80,40 @@ inline const TfToken *RigExecFindScenePrimvarName(const RigExecSceneDescriptors 
     const auto found = scene.primvarNames.find(name);
     return found == scene.primvarNames.end() ? nullptr : &found->second;
 }
+/// A cursor over a path-keyed ordered map for lookups that arrive in
+/// ascending key order: the provider program's sampled rows, the space
+/// leaves filed from them, and the per-frame resamples of those leaves are
+/// all ascending by construction, so each lookup resumes where the last one
+/// stopped instead of descending from the root. A lookup that steps back
+/// restarts at the beginning, so an unordered caller still finds what find
+/// finds, only without the shortcut. The map must not mutate while the
+/// cursor lives; lookups take no lock.
+template <class Map>
+class RigExecOrderedPathLookup {
+public:
+    explicit RigExecOrderedPathLookup(const Map &map)
+        : _map(&map), _at(map.begin())
+    {
+    }
+    typename Map::const_iterator Find(const SdfPath &path)
+    {
+        if (_at == _map->end() || path < _at->first) {
+            _at = _map->begin();
+        }
+        while (_at != _map->end() && _at->first < path) {
+            ++_at;
+        }
+        // find semantics: a positioned-but-unequal cursor is a miss, so
+        // callers that only test against end keep their exact behavior.
+        if (_at != _map->end() && path < _at->first) {
+            return _map->end();
+        }
+        return _at;
+    }
+private:
+    const Map *_map;
+    typename Map::const_iterator _at;
+};
 bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &scene,
     const SdfPath &rigRoot, const std::vector<UsdTimeCode> &identities,
     RigExecSceneDescriptors *result, std::string *error = nullptr);
