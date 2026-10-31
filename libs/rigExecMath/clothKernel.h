@@ -1405,7 +1405,8 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                         size_t twoSidedEnd = std::numeric_limits<size_t>::max(),
                         bool filterCollider = false,
                         const std::vector<float> *region = nullptr,
-                        const RigExecClothContactTris *precomputed = nullptr)
+                        const RigExecClothContactTris *precomputed = nullptr,
+                        bool broadphaseKnownInside = false)
 {
     using namespace cloth_detail;
     RigExecClothContact best;
@@ -1415,8 +1416,12 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     // Broadphase: outside the swept collider bounds plus the reach, a
     // particle is farther than the reach from every triangle, so the
     // bucket search below would fail each candidate on the reach verdict
-    // and return empty.
-    if (RigExecClothOutsideSweptBounds(grid, p, reach)) return best;
+    // and return empty. A caller that already tested the same box over
+    // the same reach passes broadphaseKnownInside and skips the
+    // re-derivation; the verdict would repeat bit for bit.
+    if (!broadphaseKnownInside &&
+        RigExecClothOutsideSweptBounds(grid, p, reach))
+        return best;
     const uint32_t bucket = Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
                                  Cell(p[2], grid.cellSize), grid.bucketMask);
     {
@@ -1774,7 +1779,8 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     // The sample arrives as a pointer: the empty-model path passes null
     // and never reads it (no profile matches), so the per-particle sample
     // construction happens only where profiles exist.
-    const auto solveContact = [&](int collider, const RigExecClothSample *sample) {
+    const auto solveContact = [&](int collider, const RigExecClothSample *sample,
+                                    bool broadphaseKnownInside) {
     const RigExecClothProfile *collisionProfile = nullptr;
     if (!modelEmpty) {
         const int32_t pi = mesh.vertexCollision[size_t(collider) * mesh.pointCount + i];
@@ -1791,7 +1797,7 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         s.depth, collisionProfile && collisionProfile->twoSided ? previous + 3 * i : nullptr,
         s.t0, twoSidedBegin, twoSidedEnd, collider >= 0,
         collisionProfile && collisionProfile->targetCollider >= 0 ? &collisionProfile->targetMask : nullptr,
-        contacts);
+        contacts, broadphaseKnownInside);
     if (contact.triangle < 0) return;
     float correction = contact.violation;
     float friction = s.friction;
@@ -1856,7 +1862,9 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
         if (broad ? RigExecClothOutsideSweptReach(broad, pi)
                   : RigExecClothOutsideSweptBounds(grid, pi, s.reach))
             return;
-        solveContact(-1, nullptr);
+        // The pre-check above tested this search's own box over the
+        // search's own reach, so the search skips its re-derivation.
+        solveContact(-1, nullptr, true);
         return;
     }
     // The profile path's search pre-check: the pad reach covers every
@@ -1868,7 +1876,7 @@ RigExecClothParticlePass(const RigExecClothMesh &mesh,
     if (profileBroad && RigExecClothOutsideSweptReach(profileBroad, pi)) return;
     const auto sample = RigExecClothVertex(i);
     for (size_t c = 0; c + 1 < mesh.colliderOffsets.size(); ++c)
-        solveContact(int(c), &sample);
+        solveContact(int(c), &sample, false);
 }
 
 /// Velocity pass for particle \p i: the substep's displacement, damped.
