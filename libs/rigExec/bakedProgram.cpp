@@ -4406,7 +4406,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         const std::string &targetText = keyTexts(target);
         const std::string_view head =
             expression.empty() ? std::string_view(ownerText) : expression;
-        step.label = std::string(head);
+        // Unlabeled: RigExecBakedAssignStepCosts derives each label from the
+        // descriptor key below, spelling this same head, so no reader ever
+        // sees an intermediate label.
         char rendered[4][32];
         const int numbers[4] = {int(step.kind), ordinal, revision,
                                 step.part};

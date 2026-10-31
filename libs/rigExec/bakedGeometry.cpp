@@ -6195,7 +6195,8 @@ RigExecBakedBuildLayoutSteps(RigExecBakedProgramImpl *program)
         step.part = 0;
         step.kind = RigExecBakedStepKind::SkinTopology;
         step.object = int(r);
-        step.label = "SkinTopology " + revision.moverPath.GetString();
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, after all step builders.
         step.writes.push_back(RigExecBakedOne(
             RigExecBakedSlotDomain::SkinTopology, uint32_t(r)));
         B.steps.push_back(std::move(step));

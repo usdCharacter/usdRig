@@ -580,8 +580,12 @@ RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program,
     RigExecPathText labels;
     for (int index = int(firstStep); index < int(B.steps.size()); ++index) {
         RigExecBakedStep &step = B.steps[size_t(index)];
-        // Compiled identity owns the label; handwritten diagnostics may
-        // still derive a label before the final descriptor is assigned.
+        // Compiled identity owns the label: step builders and the
+        // descriptor loop leave labels empty, and every reader below (the
+        // schedule report, validation, imaging, oracle) sees only what
+        // this loop derives from the descriptor key. A handwritten
+        // diagnostic may still derive a label before the final
+        // descriptor is assigned.
         const auto category = step.descriptorKey.rfind("/category:");
         step.label = category == std::string::npos
             ? StepLabel(B, step, labels) : step.descriptorKey.substr(0, category);

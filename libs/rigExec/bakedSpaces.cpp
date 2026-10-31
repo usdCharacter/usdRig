@@ -1032,7 +1032,8 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.sampled[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=2;
-        step.label="SpaceRaw "+input.attribute.GetString();
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, after all step builders.
         step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceLeaf,int(k)));
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(input.value)));
         B.steps.push_back(std::move(step));
@@ -1042,7 +1043,6 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.routedInputs[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=3;
-        step.label="SpaceConnection "+B.providerProgram.valueKeys[size_t(input.value)];
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(input.value)));
         B.steps.push_back(std::move(step));
     }
@@ -1050,7 +1050,6 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.externalInputs[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=1;
-        step.label="SpaceInput "+B.providerProgram.valueKeys[size_t(input.value)];
         const int slot=B.providerExternalSlots[k];
         if(slot>=0 && input.computation=="computeRestFrame")
             step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::Rest,slot));
@@ -1068,7 +1067,7 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for(size_t k=0;k<B.providerProgram.ops.size();++k) {
         const auto &descriptor=B.providerProgram.descriptors[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
-        step.object=int(k); step.part=0; step.label=descriptor.key;
+        step.object=int(k); step.part=0;
         for(auto value:descriptor.reads) step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(value)));
         for(auto value:descriptor.writes) step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(value)));
         B.steps.push_back(std::move(step));

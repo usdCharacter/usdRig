@@ -1899,7 +1899,8 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
     for(size_t index=0;index<B.switchFrameContexts.size();++index) {
         const auto &context=B.switchFrameContexts[index];
         auto &step=AddStep(&B,RigExecBakedStepKind::SpaceCheckpoint,int(index));
-        step.label=context.key;
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, which runs after all step builders.
         if(context.anchor>=0)
             step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PosedM,context.anchor));
         for(int slot:context.recompose) {
@@ -3820,7 +3821,6 @@ RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
     };
     for (size_t g = 0; g < B.composeGroups.size(); ++g) {
         const RigExecBakedComposeGroup &group = B.composeGroups[g];
-        const SdfPath &first = B.paths[size_t(group.begin)];
         for (const bool rest : {true, false}) {
             RigExecBakedStep step;
             step.isHead = true;
@@ -3828,9 +3828,8 @@ RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
                              : RigExecBakedStepKind::LadderCompose;
             step.object = int(g);
             step.part = rest ? 0 : 1;
-            step.label =
-                std::string(rest ? "RestCompose " : "LadderCompose ") +
-                first.GetString();
+            // Unlabeled: step labels derive from descriptor keys in
+            // RigExecBakedAssignStepCosts, which runs after all step builders.
             std::set<uint32_t> versions, rests, ladders, spaces;
             for (int i = group.begin; i < group.end; ++i) {
                 const size_t slot = size_t(i);
@@ -4125,7 +4124,8 @@ RigExecBakedBuildAvarSteps(RigExecBakedProgramImpl *program)
     auto &B=*program;
     for(size_t slot=0;slot<B.paths.size();++slot) {
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::AvarInputs; step.object=int(slot);
-        step.label="AvarInputs "+B.paths[slot].GetString();
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, which runs after all step builders.
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::Avars,slot));
         B.steps.push_back(std::move(step));
     }
