@@ -3131,6 +3131,26 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.defaultRoundTrip.assign(N, GfMatrix4d(1.0));
     B.ladders.resize(size_t(N));
     for (auto &ladder : B.ladders) ladder.interveningSpace.constant = GfMatrix4d(1.0);
+    phases.Next("Bake.spaces");
+    // The provider-space program builds here, ahead of the ladder's own
+    // resolve, rather than beside the compose below: a rig whose spaces
+    // refuse (a capture or provider failure) skips the fifteen
+    // resolutions per slot and their commit, which the refused program
+    // would throw away. The resolve and commit read nothing the spaces
+    // write -- stage, chain targets, and the slot table above -- and the
+    // spaces read nothing they write, so a rig they accept builds the
+    // identical program. A failure waits for the bakeability join below,
+    // which still reports first; without the beside task there is no
+    // join to wait for, so it refuses at once.
+    std::string spacesError;
+    const bool spacesOk = RigExecBakedBuildSpaces(&B, capture, &spacesError,
+        scene, sceneStage, sceneSerial, poseInputGraph);
+    if (!spacesOk && !bakeableBeside) {
+        refuse("provider expressions could not translate: " + spacesError,
+               E._rigPath);
+        return nullptr;
+    }
+    phases.Next("Bake.the_rest_chain_and_the_default-space_ladder");
     // Fifteen composed-stage resolutions per provider slot, and on a
     // character this loop is the other of the two places Build spends most
     // of its time -- see the input binding table below, which is the same
@@ -3150,7 +3170,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // is scratch -- nothing reaches the program until the merge, and a
     // refused rig never merges.
     RigExecProfilePhases bindPhases(&E._profiler, "compile");
-    bindPhases.Next("Bake.ladder.resolve");
+    if (spacesOk) {
+        bindPhases.Next("Bake.ladder.resolve");
+    }
     struct _LadderResolution {
         RigExecBakedInput<GfMatrix4d> posedSpace;
         SdfPathVector posedSpaceWalk;
@@ -3257,11 +3279,13 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             shard.Seal();
         }
     };
-    if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
-        commitChunks > 1) {
-        WorkParallelForN(commitChunks, resolveLadderChunks);
-    } else {
-        resolveLadderChunks(0, commitChunks);
+    if (spacesOk) {
+        if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
+            commitChunks > 1) {
+            WorkParallelForN(commitChunks, resolveLadderChunks);
+        } else {
+            resolveLadderChunks(0, commitChunks);
+        }
     }
     // The bakeability join, here because everything above only read, and
     // the commit below is the first step a refused rig must not take (see
@@ -3286,6 +3310,13 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                             buildReasons.end());
         }
         ctx.reasons = reasons;
+    }
+    if (!spacesOk) {
+        // The held spaces failure, refused after the join that reports
+        // first, with the same reason the later call site gave it.
+        refuse("provider expressions could not translate: " + spacesError,
+               E._rigPath);
+        return nullptr;
     }
     bindPhases.Next("Bake.ladder.commit");
     // The order-bearing half, serial: the merge hands each chunk its first
@@ -3440,13 +3471,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.ladderVarying = true;
     }
     _SampleIntervening(&B, capture);
-    {
-        std::string error;
-        if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial,poseInputGraph)) {
-            refuse("provider expressions could not translate: "+error,E._rigPath);
-            return nullptr;
-        }
-    }
     RigExecBakedNumberLeaves(&B);
     RigExecBakedSampleLeaves(&B, capture, /* all = */ true);
     // Every rest before any ladder: a ladder reads its own slot's rest and
