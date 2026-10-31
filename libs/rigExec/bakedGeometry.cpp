@@ -3603,6 +3603,48 @@ MatrixWeightsNoteVersion(
     }
 }
 
+/// The fuse diagnostic weight without the box: RevisionStatic reads the
+/// revision's `defaultWeightLeaf` only to unbox a float, and the shared
+/// resolve returns that box by value -- a heap allocation per static per
+/// run. The plain arm answers the sampled value itself, so where no walk,
+/// record or version arm is bound the float is read in place; anything
+/// else falls back to the shared resolve. The arm selection repeats that
+/// function's, so the answer is the same value.
+bool
+DiagnosticWeightDirect(
+    const RigExecBakedProgramImpl &B,
+    const RigExecBakedPathLeaves &leaves, size_t k, float *out)
+{
+    if (k >= leaves.decl.keys.size()) {
+        *out = 1.0f;
+        return true;
+    }
+    const RigExecRevisionLeafKey &key = leaves.decl.keys[k];
+    if (key.flavour != RigExecRevisionLeafFlavour::ResolvedOnly) {
+        return false;
+    }
+    if (k < leaves.walks.size() && leaves.walks[k] >= 0) {
+        return false;
+    }
+    const int recordIndex = k < leaves.exactRecordIndices.size()
+        ? leaves.exactRecordIndices[k] : -1;
+    if (recordIndex >= 0 && size_t(recordIndex) < B.propertyRecords.size()) {
+        return false;
+    }
+    const int version = k < leaves.exactVersions.size()
+        ? leaves.exactVersions[k] : -1;
+    if (version >= 0 && size_t(version) < B.propertyVersionValid.size()) {
+        return false;
+    }
+    if (k >= leaves.values.size()) {
+        *out = 1.0f;
+        return true;
+    }
+    const VtValue &held = leaves.values[k];
+    *out = held.IsHolding<float>() ? held.UncheckedGet<float>() : 1.0f;
+    return true;
+}
+
 /// The skin revision over its whole array, out of the fuse.
 ///
 /// The path where the partition no longer describes the layout the packet
@@ -5556,10 +5598,16 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         // can leave the packet identical, and the line the fuse emits is
         // about the weight rather than about the packet.
         // Read the same declared resolved source the effective memo compares.
-        const VtValue diagnosticWeight = RigExecBakedResolvePathLeaf(
-            B, revision.leaves, size_t(revision.defaultWeightLeaf));
-        revision.defaultWeight = diagnosticWeight.IsHolding<float>()
-            ? diagnosticWeight.UncheckedGet<float>() : 1.0f;
+        float diagnosticWeight = 1.0f;
+        if (!DiagnosticWeightDirect(
+                B, revision.leaves, size_t(revision.defaultWeightLeaf),
+                &diagnosticWeight)) {
+            const VtValue boxed = RigExecBakedResolvePathLeaf(
+                B, revision.leaves, size_t(revision.defaultWeightLeaf));
+            diagnosticWeight = boxed.IsHolding<float>()
+                ? boxed.UncheckedGet<float>() : 1.0f;
+        }
+        revision.defaultWeight = diagnosticWeight;
         // Selection already compares the exact declared packet inputs.
         // This flag records actual current-generation assembly only; it is
         // not a second cache authority or a deep-copy packet fingerprint.
