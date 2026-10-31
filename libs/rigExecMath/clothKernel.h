@@ -2761,6 +2761,13 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
         const RigExecClothTick &from = ticks[k - 1];
         const RigExecClothTick &to = ticks[k];
         const bool collide = colliders.pointCount && !colliders.triangles.empty();
+        // Skips the tick's per-substep triangle precompute while no
+        // simulated particle starts the tick within the swept collider
+        // reach. Every search then broadphase-rejects before any fetch,
+        // and a particle crossing into reach mid-tick derives its
+        // candidates with the same lerps, area vector, and verdict the
+        // precompute ran, so the answers agree bit for bit either way.
+        bool skipTris = false;
         if (collide) {
             float pad = std::max(std::max(0.0f, to.parameters.thickness),
                                  std::max(0.0f, to.parameters.collisionDepth));
@@ -2771,13 +2778,30 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             RigExecBuildClothGrid(colliders, from.colliders, to.colliders,
                                   pad,
                                   &ws->grid, &ws->cellScratch);
+            // The verdict scans every particle, so it runs only when the
+            // tick's precompute is worth skipping: a substep per collider
+            // triangle against two box tests per particle.
+            const size_t triWork = size_t(substeps) * (colliders.triangles.size() / 3);
+            if (triWork > 2 * n) {
+                skipTris = true;
+                for (size_t i = 0; i < n; ++i) {
+                    if (!RigExecClothOutsideSweptBounds(ws->grid, x + 3 * i, pad)) {
+                        skipTris = false;
+                        break;
+                    }
+                }
+            }
+            // An empty precompute covers no triangle; the search derives
+            // what it touches. The sized vectors stay for the next near tick.
+            if (skipTris) ws->contacts.triangleCount = 0;
         }
         for (int sub = 1; sub <= substeps; ++sub) {
             const RigExecClothStep s =
                 RigExecClothStepFor(to.parameters, substeps, sub, frame);
             // The tick's collider triangles at this substep's fraction,
-            // once for every particle and iteration below.
-            if (collide)
+            // once for every particle and iteration below; far ticks skip
+            // the precompute above and derive on touch instead.
+            if (collide && !skipTris)
                 RigExecClothContactTrisAt(colliders, from.colliders,
                                            to.colliders, s.t, &ws->contacts);
             const RigExecClothContactTris *contacts =
