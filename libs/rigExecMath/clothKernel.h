@@ -268,6 +268,13 @@ struct RigExecClothGrid {
     /// re-deriving the same bounds. Transient within a build.
     std::vector<float> triBounds;
     std::vector<char> triFinite;
+    /// Per-triangle swept-bound shape sum from the measure walk, one float
+    /// each: the six absolute bound corners summed in bound order, the
+    /// reach-independent part of the contact prefilter's margin. The
+    /// prefilter adds the reach over it instead of re-summing per
+    /// candidate; the regrouped sum differs by rounding only, far inside
+    /// the margin, and the exact tail re-decides every survivor.
+    std::vector<float> triShapes;
 };
 
 /// One substep's interpolated collider triangles: the vertices at the
@@ -1127,14 +1134,19 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     }
     grid->triBounds.resize(6 * triangleCount);
     grid->triFinite.resize(triangleCount);
+    grid->triShapes.resize(triangleCount);
     for (size_t t = 0; t < triangleCount; ++t) {
         float lo[3], hi[3];
         const bool finite = bounds(t, lo, hi);
         grid->triFinite[t] = finite ? 1 : 0;
+        float shapes = 0;
         for (int a = 0; a < 3; ++a) {
             grid->triBounds[6 * t + size_t(a)] = lo[a];
             grid->triBounds[6 * t + size_t(a) + 3] = hi[a];
+            shapes += std::abs(lo[a]);
         }
+        for (int a = 0; a < 3; ++a) shapes += std::abs(hi[a]);
+        grid->triShapes[t] = shapes;
         if (!finite) continue;
         for (int a = 0; a < 3; ++a) {
             grid->sweptLo[a] = std::min(grid->sweptLo[a], lo[a]);
@@ -1358,8 +1370,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             // path as before.
             {
                 const float *tb = grid.triBounds.data() + 6 * size_t(tri);
-                float shapes = reach;
-                for (int a = 0; a < 6; ++a) shapes += std::abs(tb[a]);
+                const float shapes = reach + grid.triShapes[size_t(tri)];
                 const float bound = reach + shapes * 1.9073486328125e-06f + 1e-30f;
                 bool outside = false;
                 for (int a = 0; a < 3; ++a) {
