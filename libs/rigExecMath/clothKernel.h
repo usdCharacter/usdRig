@@ -2130,14 +2130,16 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // A padded triangle bucket at an edge midpoint covers every possible
     // edge/edge encounter along that edge, not just its endpoints.
     const auto measureReach = [&]() {
-        float reach = 0;
+        // One square root for the max half-length: sqrt is monotonic, so
+        // the max of the roots is the root of the max, the same float.
+        float maxD2 = 0;
         for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
             if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
             float d[3];
             Sub(x + 3 * size_t(mesh.constraintEnds[2*c]), x + 3 * size_t(mesh.constraintEnds[2*c+1]), d);
-            reach = std::max(reach, 0.5f * Length(d));
+            maxD2 = std::max(maxD2, Dot(d, d));
         }
-        return reach;
+        return 0.5f * std::sqrt(maxD2);
     };
     const float edgeReach = measureReach();
     // Loop-invariant mesh extents, held once per call: the same values
