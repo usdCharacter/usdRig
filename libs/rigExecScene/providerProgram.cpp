@@ -201,14 +201,20 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     RigExecProviderProgram *output,std::string *error,const std::set<SdfPath> *selectedProviders) {
     if(!output)return Fail(error,"provider compiler needs an output");
     RigExecProviderProgram program;
-    std::set<SdfPath> providerPaths,usedAttributes,xformPaths,nativeFrames;
+    std::set<SdfPath> providerPaths,xformPaths,nativeFrames;
+    // The used attributes with the captured rows the walk already found:
+    // the slot loop below takes each entry's attribute and node from them
+    // instead of re-finding both. Same keys in the same order as the set
+    // this replaces, so the visit sequence is unchanged; the capture's
+    // node-based maps keep the rows stable for the build.
+    std::map<SdfPath,std::pair<const RigExecSceneAttributeDescriptor*,const RigExecSceneNodeDescriptor*>> usedAttributes;
     std::function<void(const SdfPath &)> includeAttribute,includeProvider;
     std::function<void(const SdfPath &,uint32_t)> includeAffine;
     includeAttribute=[&](const SdfPath &path) {
         const auto attribute=scene.attributes.find(path);
         const auto owner=scene.nodes.find(path.GetPrimPath());
         if(attribute==scene.attributes.end() || owner==scene.nodes.end() || !owner->second.fact.active ||
-            !usedAttributes.insert(path).second)return;
+            !usedAttributes.emplace(path,std::make_pair(&attribute->second,&owner->second)).second)return;
         if(Provider(owner->second.fact.type) && Expression(path.GetNameToken()))includeProvider(path.GetPrimPath());
         uint32_t affine=0;
         if(AffineOutput(scene,path,&affine))includeAffine(path.GetPrimPath(),affine);
@@ -291,18 +297,14 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     std::vector<_KeySlot> slots;
     slots.reserve(usedAttributes.size()*2+compEntries.capacity());
     std::map<SdfPath,RigExecValueId> routed;
-    for(const auto &path:usedAttributes) {
-        const auto found=scene.attributes.find(path);
-        if(found==scene.attributes.end())continue;
-        const auto node=scene.nodes.find(path.GetPrimPath());
-        if(node==scene.nodes.end() || !node->second.fact.active)continue;
+    for(const auto &[path,row]:usedAttributes) {
         _UsedAttribute u;
-        u.path=path;u.attr=&found->second;u.node=&node->second;
+        u.path=path;u.attr=row.first;u.node=row.second;
         const uint32_t ui=uint32_t(used.size());
         const std::string text=path.GetString();
         slots.push_back({RigExecProviderRawKey(text),ui,0});
         slots.push_back({RigExecProviderAttributeKey(text),ui,1});
-        const auto &attr=found->second;
+        const auto &attr=*row.first;
         if(attr.readPhase!=RigExecSceneBasePhase && attr.fact.connections.size()==1) {
             const auto input=scene.attributes.find(attr.fact.connections.front());
             const auto inputNode=scene.nodes.find(attr.fact.connections.front().GetPrimPath());
