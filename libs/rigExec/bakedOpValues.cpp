@@ -803,6 +803,15 @@ bool RigExecBakedPublishSmallValue(const RigExecBakedProgramImpl &B,RigExecOpVal
         if(published) {
             key.Append(uint64_t(g->published.count)); key.Append(g->version); keyed=true;
         } else if(v->role==RigExecBakedRevisionRole::Range) {
+            // A Range matrix group's held skip: the body proved every key
+            // field standing, so the stored key already spells these bytes
+            // and the compare is skipped, leaving the flag, revision and
+            // key the spell would have left. Anything else keys as before.
+            if(v->op==RigExecRevisionOp::Matrix &&
+               g->matrixSkipHeld && value->initialized) {
+                value->changed=0;
+                return true;
+            }
             key.Append(g->ok); key.Append(uint64_t(g->published.count));
             key.Append(g->version); keyed=true;
         } else {

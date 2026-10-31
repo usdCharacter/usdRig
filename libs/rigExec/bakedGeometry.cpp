@@ -3898,6 +3898,9 @@ RunGroupStep(RigExecBakedProgramImpl &B,
     state.walk.computed = 0;
     state.walk.reused = 0;
     state.walk.skippedWhole = 0;
+    // The publish claim starts dropped every run; only the whole-walk
+    // skip below re-attests it.
+    state.matrixSkipHeld = false;
     if (revision->rangeSetAside) {
         // A cycle set the revision aside: it passes the base through, as an
         // excluded fuse does, and computes nothing.
@@ -3971,7 +3974,11 @@ RunGroupStep(RigExecBakedProgramImpl &B,
                 packetRevision, from.slot, from.version, count,
                 state.version, state.ran,
                 entryRange->second - entryRange->first)) {
+            // Last run's ok, before the body overwrites it: the skip's
+            // held claim needs it, since the key spells the bit.
+            const bool groupWasOk = state.ok;
             state.ok = true;
+            state.matrixSkipHeld = groupWasOk;
             state.walk.computed = 0;
             state.walk.reused =
                 uint32_t(entryRange->second - entryRange->first);

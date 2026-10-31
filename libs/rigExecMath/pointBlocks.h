@@ -144,6 +144,17 @@ struct RigExecGroupState {
     bool computedRan = false;
     /// A group step's sparse walk over this group (RigExecSparseWalkMemo).
     RigExecSparseWalkMemo<Point> walk;
+    /// The chunk's verdict that this run's whole-walk skip of a Range
+    /// matrix group left every RevisionOut key field standing: the skip
+    /// proved the published bytes identical to last run's, the count and
+    /// version are untouched by the skip, and the ok bit (captured before
+    /// the body overwrote it) proves that bit identical too. The group
+    /// publish skips its key spell and reports unchanged while this
+    /// stands; the stored key already spells these fields, so skipping
+    /// the compare is unobservable. Set fresh by every group run (cleared
+    /// beside the walk counters, attested only on the skip), never read
+    /// or written by any other step.
+    bool matrixSkipHeld = false;
 };
 
 /// Whether \p memo's per-revision inputs are the \p size bytes at \p params:
