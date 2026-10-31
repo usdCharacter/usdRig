@@ -39,6 +39,21 @@ struct Mesh {
     size_t Size() const { return points.size() / 3; }
 };
 
+// Population of the self edge/edge pair bitset: the recorded unique
+// pairs, the same count the hash sets' count field held. Portable
+// popcount; test-only.
+size_t PairBitCount(const std::vector<uint64_t> &bits)
+{
+    size_t n = 0;
+    for (uint64_t w : bits) {
+        w -= (w >> 1) & 0x5555555555555555ull;
+        w = (w & 0x3333333333333333ull) + ((w >> 2) & 0x3333333333333333ull);
+        w = (w + (w >> 4)) & 0x0f0f0f0f0f0f0f0full;
+        n += size_t((w * 0x0101010101010101ull) >> 56);
+    }
+    return n;
+}
+
 // A curtain in the xy plane, (n x n) points, `size` across, top at y = top.
 Mesh Curtain(int n, float size, float top, float z = 0.0f)
 {
@@ -1991,7 +2006,7 @@ void TestSelfPairDiscoveryOrder()
 {
     // A folded curtain layer over itself: vertex/triangle and edge/edge
     // corrections both fire. Adjacency runs before dedup where the mesh
-    // built the union rows, so the pair set records only non-adjacent
+    // built the union rows, so the pair bitset records only non-adjacent
     // pairs; the corrections that reach projection, and the solved
     // points, are pinned bit for bit.
     const int n = 4;
@@ -2035,7 +2050,8 @@ void TestSelfPairDiscoveryOrder()
     CHECK(ee == 6);
     CHECK(ws.selfLambda.size() == 13);
     CHECK(ws.selfPairs.count == 0);
-    CHECK(ws.selfPairs64.count == 144);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 144);
     uint64_t h = 1469598103934665603ull;
     const auto *p = reinterpret_cast<const uint8_t *>(x.data());
     for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
@@ -2045,14 +2061,14 @@ void TestSelfPairDiscoveryOrder()
     CHECK(h == 0xc2fddc4fec45e38aull);
 }
 
-void TestSelfLargeMeshUsesArrayDedup()
+void TestSelfLargeMeshUsesPairBitset()
 {
-    // Past 65536 points the endpoints no longer pack, so the edge/edge
-    // discovery keys the array set instead of the packed one. A folded
-    // curtain padded with far-away isolated points takes the array arm,
-    // records the same pairs, and solves the curtain identically: the
-    // padded points hash into buckets but die at the band, and add no
-    // constraints.
+    // A folded curtain padded with far-away isolated points takes the
+    // pair bitset past the old packing limit, records the same pairs,
+    // and solves the curtain identically: the padded points hash into
+    // buckets but die at the band, and add no constraints. The mesh is
+    // past the adjacency-bitset point cap, so the linear scans key
+    // behind the same verdicts as the bitset path.
     const int n = 4;
     Mesh m;
     for (int j = 0; j < n; ++j)
@@ -2080,7 +2096,7 @@ void TestSelfLargeMeshUsesArrayDedup()
     RigExecClothSettings settings;
     CHECK(Build(m, nullptr, settings, &mesh));
     CHECK(mesh.pointCount == 66000);
-    CHECK(!RigExecClothPairSet64::Packable(mesh.pointCount));
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
     RigExecClothProfile contact;
     contact.kind = RigExecClothProfileKind::SelfCollision;
     contact.hard = true;
@@ -2097,11 +2113,12 @@ void TestSelfLargeMeshUsesArrayDedup()
     std::vector<float> x = m.points;
     RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
     CHECK(ws.selfPairs64.count == 0);
-    // The linear path keys the share-live pairs (351) where the bitset
-    // path keys only the adjacency-live ones (144); the adjacency scans
-    // behind the insert retire the same pairs, so the same corrections
-    // survive either way.
-    CHECK(ws.selfPairs.count == 351);
+    CHECK(ws.selfPairs.count == 0);
+    // The linear path records the share-live pairs (351 bits) where the
+    // bitset path records only the adjacency-live ones (144); the
+    // adjacency scans behind the record retire the same pairs, so the
+    // same corrections survive either way.
+    CHECK(PairBitCount(ws.selfPairBits) == 351);
     size_t ve = 0, ee = 0;
     for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
     CHECK(ve == 7);
@@ -2622,14 +2639,193 @@ void TestSelfEdgeTwins()
     CHECK(interior > 0);
 }
 
-void TestSelfTwinSkipMatchesNoSkip()
+// Three sheets sharing one edge row: each shared edge sits in three
+// triangles, so the edge/edge discovery meets every triangle edge
+// through non-twin triangles as well as twins.
+Mesh NonManifoldFold()
 {
-    // The twin skip only skips duplicate pairs: solving with the twins
-    // and with every twin forced to -1 (no skip possible) inserts the
-    // same keys and solves the same points. A skip of a new key would
-    // drop an insert or a correction here: the strip folds a long sheet
-    // back on itself so buckets discriminate along its length while the
-    // layers correct against each other.
+    Mesh m;
+    for (int i = 0; i < 4; ++i) {
+        m.points.push_back(float(i));
+        m.points.push_back(0.0f);
+        m.points.push_back(0.0f);
+    }
+    const float upper[][3] = {{0, 1, 0}, {0, 0.5f, 0.2f}, {0, 0.5f, -0.2f}};
+    for (const auto &row : upper)
+        for (int i = 0; i < 4; ++i) {
+            m.points.push_back(float(i) + row[0]);
+            m.points.push_back(row[1]);
+            m.points.push_back(row[2]);
+        }
+    for (int s = 0; s < 3; ++s) {
+        const int base = 4 + 4 * s;
+        for (int q = 0; q < 3; ++q) {
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {q, q + 1, base + q + 1});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {q, base + q + 1, base + q});
+        }
+    }
+    return m;
+}
+
+void TestTriEdgeConstraintMapsStretchEdges()
+{
+    // Prepare maps each triangle edge to its stretch constraint: every
+    // triangle edge is one (the build pushes one per unique mesh edge),
+    // so the edge/edge discovery reads a dense pair id through it.
+    // Verified against the constraints directly on a manifold curtain
+    // and the non-manifold fold, where each shared edge still maps to
+    // its single constraint from every triangle holding it.
+    const Mesh meshes[] = {Curtain(4, 3.0f, 2.0f), NonManifoldFold()};
+    for (const Mesh &m : meshes) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        const size_t tris = mesh.triangles.size() / 3;
+        CHECK(mesh.triEdgeConstraint.size() == 3 * tris);
+        if (mesh.triEdgeConstraint.size() != 3 * tris) continue;
+        for (size_t t = 0; t < tris; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const int32_t cc = mesh.triEdgeConstraint[3 * t + e];
+                CHECK(cc >= 0);
+                if (cc < 0) continue;
+                CHECK(mesh.constraintKind[size_t(cc)] ==
+                      uint8_t(RigExecClothConstraint::Stretch));
+                CHECK(mesh.constraintEnds[2 * size_t(cc)] ==
+                      mesh.triEdges[6 * t + 2 * e]);
+                CHECK(mesh.constraintEnds[2 * size_t(cc) + 1] ==
+                      mesh.triEdges[6 * t + 2 * e + 1]);
+            }
+        for (size_t t = 0; t < tris; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const int32_t k = mesh.triEdges[6 * t + 2 * e];
+                const int32_t l = mesh.triEdges[6 * t + 2 * e + 1];
+                for (size_t u = 0; u < tris; ++u)
+                    for (size_t f = 0; f < 3; ++f) {
+                        if (mesh.triEdges[6 * u + 2 * f] != k ||
+                            mesh.triEdges[6 * u + 2 * f + 1] != l)
+                            continue;
+                        CHECK(mesh.triEdgeConstraint[3 * u + f] ==
+                              mesh.triEdgeConstraint[3 * t + e]);
+                    }
+            }
+    }
+}
+
+void TestSelfNonManifoldFoldPinned()
+{
+    // The non-manifold fold solves with its shared edges discovered
+    // through three triangles each: the pair bitset records the
+    // discovered set once and the solved points pin the corrections.
+    const Mesh m = NonManifoldFold();
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 0);
+    CHECK(ee == 4);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 150);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0x6681b4d9aa7413a3ull);
+}
+
+void TestSelfPairBitsetFallback()
+{
+    // Past the pair-bitset constraint cap the twin skip and hash sets
+    // serve instead, with the same verdicts: a folded 20x20 sheet takes
+    // the fallback, records the same pairs the old path did, and pins
+    // the same solved points.
+    const int w = 20, l = 20;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(mesh.constraintRest.size() > RigExecClothMaxPairBitConstraints);
+    CHECK(!RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 441);
+    CHECK(ee == 28);
+    CHECK(PairBitCount(ws.selfPairBits) == 0);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 48030);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xe7866709b5941b4eull);
+}
+
+void TestSelfFoldedStripPinned()
+{
+    // A long sheet folded back on itself: buckets discriminate along
+    // its length while the layers correct against each other, through
+    // same-constraint revisits and cross-direction pairs. The pair
+    // bitset records the discovered set and the solved points pin the
+    // corrections bit for bit.
     const int w = 4, l = 16;
     Mesh m;
     for (int j = 0; j < l; ++j)
@@ -2650,6 +2846,7 @@ void TestSelfTwinSkipMatchesNoSkip()
     RigExecClothMesh mesh;
     RigExecClothSettings settings;
     CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
     RigExecClothProfile contact;
     contact.kind = RigExecClothProfileKind::SelfCollision;
     contact.hard = true;
@@ -2662,28 +2859,19 @@ void TestSelfTwinSkipMatchesNoSkip()
     RigExecClothStep step;
     step.h = 1.0f / 24;
     step.depth = 0.15f;
-    const auto solve = [&](std::vector<float> *x, RigExecClothWorkspace *ws) {
-        *x = m.points;
-        RigExecClothSelfContacts(mesh, step, m.points.data(), ws, x->data());
-        uint64_t h = 1469598103934665603ull;
-        const auto *p = reinterpret_cast<const uint8_t *>(x->data());
-        for (size_t i = 0; i < x->size() * sizeof(float); ++i) {
-            h ^= p[i];
-            h *= 1099511628211ull;
-        }
-        return h;
-    };
-    RigExecClothWorkspace withTwins, noTwins;
-    std::vector<float> xTwins, xNoTwins;
-    const uint64_t hashTwins = solve(&xTwins, &withTwins);
-    const size_t pairsTwins = withTwins.selfPairs64.count;
-    CHECK(withTwins.selfPairs.count == 0);
-    std::fill(mesh.triEdgeTwin.begin(), mesh.triEdgeTwin.end(), -1);
-    const uint64_t hashNoTwins = solve(&xNoTwins, &noTwins);
-    CHECK(pairsTwins == noTwins.selfPairs64.count);
-    CHECK(noTwins.selfPairs.count == 0);
-    CHECK(pairsTwins > 0);
-    CHECK(hashTwins == hashNoTwins);
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 3707);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0x430244becdd74004ull);
 }
 
 void TestTriSpheresRetireOnTouch()
@@ -2787,7 +2975,8 @@ void TestHeldConstraintBandInputs()
     for (const auto &kv : ws.selfLambda)
         if (!(kv.first[3] == -1 && kv.first[4] == -1)) ++edgePairs;
     CHECK(ws.selfPairs.count == 0);
-    CHECK(ws.selfPairs64.count > 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) > 0);
     CHECK(edgePairs > 0);
     uint64_t hash = 1469598103934665603ull;
     const auto *bytes = reinterpret_cast<const uint8_t *>(x.data());
@@ -2854,7 +3043,8 @@ void TestTriangleBandSkipsSeparatedTriangles()
         else
             ++edgePairs;
     CHECK(ws.selfPairs.count == 0);
-    CHECK(ws.selfPairs64.count > 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) > 0);
     CHECK(edgePairs > 0);
     CHECK(vertPairs > 0);
     uint64_t hash = 1469598103934665603ull;
@@ -3423,7 +3613,7 @@ int main()
     TestSelfGridReuseVerdict();
     TestClothGridDeterminism();
     TestSelfPairDiscoveryOrder();
-    TestSelfLargeMeshUsesArrayDedup();
+    TestSelfLargeMeshUsesPairBitset();
     TestNeighborBitsMatchLists();
     TestEdgeBitsMatchVertices();
     TestSharedEndpointsTestAdjacent();
@@ -3431,7 +3621,10 @@ int main()
     TestStrengthCacheMatchesDirect();
     TestSelfEdgeCanonicalization();
     TestSelfEdgeTwins();
-    TestSelfTwinSkipMatchesNoSkip();
+    TestTriEdgeConstraintMapsStretchEdges();
+    TestSelfNonManifoldFoldPinned();
+    TestSelfPairBitsetFallback();
+    TestSelfFoldedStripPinned();
     TestTriSpheresRetireOnTouch();
     TestHeldConstraintBandInputs();
     TestTriangleBandSkipsSeparatedTriangles();

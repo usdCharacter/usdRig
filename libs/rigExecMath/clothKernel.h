@@ -59,6 +59,21 @@ constexpr int RigExecClothMaxIterations = 64;
 /// Meshes past this size keep the linear neighbor scans: their bitsets
 /// would outgrow the fast caches they exist to serve.
 constexpr size_t RigExecClothMaxBitsetPoints = 2048;
+/// Meshes past this many constraints keep the twin skip and hash-set
+/// edge/edge dedup: their pair bitset would outgrow the fast caches it
+/// exists to serve. The bitset is one bit per constraint pair with its
+/// diagonal, so 2048 constraints take 256 KiB; verdicts are exact either
+/// way.
+constexpr size_t RigExecClothMaxPairBitConstraints = 2048;
+
+/// True when the edge/edge discovery dedups through the pair bitset:
+/// both edges are stretch constraints, so the unordered pair is one
+/// triangular index, cheaper than the twin skip and hash probe it
+/// replaces. Past the cap the twin skip and hash sets serve instead.
+inline bool RigExecClothUsePairBits(size_t constraintCount)
+{
+    return constraintCount <= RigExecClothMaxPairBitConstraints;
+}
 
 /// Constraint kinds in RigExecClothMesh::constraintKind.
 enum class RigExecClothConstraint : uint8_t { Stretch = 0, Bend = 1 };
@@ -199,6 +214,11 @@ struct RigExecClothMesh {
     /// the edges; the discovery skips a proven duplicate pair when its
     /// twin was already visited from the same constraint.
     std::vector<int32_t> triEdgeTwin;
+    /// Per triangle edge, the stretch constraint over its endpoints.
+    /// Every triangle edge is one (the build pushes one per unique mesh
+    /// edge), so the discovery maps its triangle edge to a dense pair
+    /// id through it. Built for self-contact meshes with the edges.
+    std::vector<int32_t> triEdgeConstraint;
     /// Per-constraint material inputs, built with a nonempty model; empty
     /// without one. constraintProfile[c] is the Stretch/Bend profile
     /// projecting the constraint's midpoint sample, or -1, and
@@ -423,6 +443,11 @@ struct RigExecClothWorkspace {
     /// Per-triangle bucket marks for the self edge/edge twin skip,
     /// cleared per call, the storage retained.
     std::vector<uint32_t> selfTwinStamp;
+    /// The edge-pair bitset, one bit per constraint pair with its
+    /// diagonal, cleared per self profile, its storage retained. Small
+    /// meshes dedup through it instead of the twin skip and hash sets,
+    /// with the same verdicts.
+    std::vector<uint64_t> selfPairBits;
     /// The self edge/edge spheres, sized per call, their storage retained.
     RigExecClothEdgeSpheres selfSpheres;
     /// The self vertex/triangle spheres, sized per call, retained alike.
@@ -985,6 +1010,34 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
                     (order[m].tri == lo) ? next : lo;
             r = s;
         }
+        // The constraint index of each triangle edge: every triangle edge
+        // is a stretch constraint (the build pushed one per unique mesh
+        // edge), so a sorted join over the sorted endpoint pairs maps
+        // each edge to its constraint. A miss is impossible by
+        // construction and would stay -1.
+        mesh->triEdgeConstraint.assign(mesh->triangles.size(), -1);
+        struct EdgeConstraint { uint64_t key; int32_t c; };
+        std::vector<EdgeConstraint> edgeOrder;
+        edgeOrder.reserve(mesh->constraintRest.size());
+        for (size_t c = 0; c < mesh->constraintRest.size(); ++c) {
+            if (mesh->constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
+            const uint64_t a = uint64_t(uint32_t(mesh->constraintEnds[2 * c]));
+            const uint64_t b = uint64_t(uint32_t(mesh->constraintEnds[2 * c + 1]));
+            edgeOrder.push_back({(a << 32) | b, int32_t(c)});
+        }
+        std::sort(edgeOrder.begin(), edgeOrder.end(),
+                  [](const EdgeConstraint &x, const EdgeConstraint &y) { return x.key < y.key; });
+        for (size_t t = 0; t < mesh->triangles.size() / 3; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const uint64_t a = uint64_t(uint32_t(mesh->triEdges[6 * t + 2 * e]));
+                const uint64_t b = uint64_t(uint32_t(mesh->triEdges[6 * t + 2 * e + 1]));
+                const uint64_t key = (a << 32) | b;
+                const auto found =
+                    std::lower_bound(edgeOrder.begin(), edgeOrder.end(), key,
+                                     [](const EdgeConstraint &x, uint64_t k) { return x.key < k; });
+                if (found != edgeOrder.end() && found->key == key)
+                    mesh->triEdgeConstraint[3 * t + e] = found->c;
+            }
     }
     mesh->materialFrames.resize(9 * mesh->pointCount);
     for (size_t i = 0; i < mesh->pointCount; ++i)
@@ -2145,6 +2198,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // Loop-invariant mesh extents, held once per call: the same values
     // the discovery loops re-derive per iteration.
     const size_t constraintCount = mesh.constraintRest.size();
+    // The pair bitset serves while the constraint count fits under its
+    // cap; past it the twin skip and hash sets serve instead. The word
+    // count multiplies only under the cap, so no size overflows.
+    const bool usePairBits = RigExecClothUsePairBits(constraintCount);
+    const size_t pairCount =
+        usePairBits ? constraintCount * (constraintCount + 1) / 2 : 0;
+    const size_t pairWords = (pairCount + 63) / 64;
     // The triangle band's reach bound: every triangle edge is a stretch
     // constraint, so the stretch half-length maximum covers each triangle
     // edge's sphere radius. Re-derived when vertex/triangle corrections
@@ -2165,7 +2225,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     // The twin-skip bucket marks, one per triangle, cleared per call;
     // the mark runs across profiles so every constraint's mark is new.
     std::vector<uint32_t> &twinStamp = ws->selfTwinStamp;
-    twinStamp.assign(mesh.triangles.size() / 3, 0);
+    if (!usePairBits) twinStamp.assign(mesh.triangles.size() / 3, 0);
     uint32_t twinMark = 0;
     for (size_t profileIndex = 0; profileIndex < mesh.model.profiles.size(); ++profileIndex) {
         const auto &p = mesh.model.profiles[profileIndex];
@@ -2182,6 +2242,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         const int32_t *meshTriangles = mesh.triangles.data();
         const int32_t *meshTriEdges = mesh.triEdges.data();
         const int32_t *meshTriTwin = mesh.triEdgeTwin.data();
+        const int32_t *meshTriEdgeConstraint = mesh.triEdgeConstraint.data();
         const int32_t *meshConstraintEnds = mesh.constraintEnds.data();
         const uint8_t *meshConstraintKind = mesh.constraintKind.data();
         for (size_t i = 0; i < mesh.pointCount; ++i) {
@@ -2307,19 +2368,26 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // per-pair allocation.
         RigExecClothPairSet &pairs = ws->selfPairs;
         RigExecClothPairSet64 &pairs64 = ws->selfPairs64;
+        std::vector<uint64_t> &pairBits = ws->selfPairBits;
         // Packed keys where every endpoint fits 16 bits, the array set
         // past that: packing is injective on packed meshes, so both sets
         // reach the same verdicts on the same keys.
         const bool packPairs = RigExecClothPairSet64::Packable(mesh.pointCount);
-        if (packPairs) pairs64.Clear();
+        if (usePairBits) pairBits.assign(pairWords, 0);
+        else if (packPairs) pairs64.Clear();
         else pairs.Clear();
+        // The pair-bitset base stays fixed across the edge/edge pass:
+        // the profile cleared it above and the discovery only flips
+        // bits, so the edge tests reread the same base without
+        // reloading it per entry.
+        uint64_t *eePairBase = usePairBits ? pairBits.data() : nullptr;
         for (size_t c = 0; c < constraintCount; ++c) {
             if (meshConstraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
             const int32_t i = meshConstraintEnds[2*c], j = meshConstraintEnds[2*c+1];
             float mid[3]; Lerp(x + 3*size_t(i), x + 3*size_t(j), .5f, mid);
             const uint32_t bucket = Hash(Cell(mid[0], grid.cellSize), Cell(mid[1], grid.cellSize),
                                           Cell(mid[2], grid.cellSize), grid.bucketMask);
-            ++twinMark;
+            if (!usePairBits) ++twinMark;
             // The bucket, twin, and adjacency bases stay fixed across
             // the discovery batch: the grid rebuilds between passes
             // only, the twin marks store without reallocating, and the
@@ -2335,10 +2403,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             // batch: at most three inserts per bucket entry, so the
             // table stays under the cap through the batch and the
             // inserts below skip their checks with the same verdicts.
-            const size_t batchKeys =
-                3 * (eeBucketBounds[bucket + 1] - eeBucketBounds[bucket]);
-            if (packPairs) pairs64.ReserveForBatch(batchKeys);
-            else pairs.ReserveForBatch(batchKeys);
+            // The bitset path records into pre-cleared words instead.
+            if (!usePairBits) {
+                const size_t batchKeys =
+                    3 * (eeBucketBounds[bucket + 1] - eeBucketBounds[bucket]);
+                if (packPairs) pairs64.ReserveForBatch(batchKeys);
+                else pairs.ReserveForBatch(batchKeys);
+            }
             // The constraint edge's band inputs are fixed for the bucket
             // loop: its sphere and thickness factor derive once, lazily
             // at the first band test, and a correction retires the
@@ -2359,8 +2430,10 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // The twin-skip mark lands with the visit: buckets list
                 // triangles ascending, so a twin below this triangle is
                 // already marked when the edge loop reads it, and the
-                // same marks are set without a second bucket pass.
-                eeTwinBase[tri] = twinMark;
+                // same marks are set without a second bucket pass. The
+                // bitset path records visits per pair instead, with no
+                // per-entry mark.
+                if (!usePairBits) eeTwinBase[tri] = twinMark;
                 // The triangle band: the centroid sphere holds every edge
                 // midpoint of the triangle within its radius, and the reach
                 // bound covers every triangle edge's sphere radius, so a
@@ -2423,27 +2496,43 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             AdjacentToRowBits(eeAdjRow, l)) break;
                     }
                     else if (i == k || i == l || j == k || j == l) break;
-                    // Twin skip: the edge's smallest twin triangle sits
-                    // earlier in this ascending bucket, so the same pair
-                    // was already visited from this constraint and the
-                    // dedup set holds its key.
-                    const int32_t twin = meshTriTwin[3*tri];
-                    if (twin >= 0 && twin < int32_t(tri) &&
-                        eeTwinBase[size_t(twin)] == twinMark) break;
-                    // Both edges arrive sorted with four distinct
-                    // endpoints, so the pair order is one compare, and
-                    // the insert hashes the ordered endpoints directly
-                    // instead of packing and unpacking them first.
-                    if (packPairs) {
-                        if (k < i) {
-                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
-                        } else {
-                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
-                        }
+                    if (usePairBits) {
+                        // One bit per constraint pair, triangular with its
+                        // diagonal: both edges are stretch constraints, so
+                        // the unordered pair is one index, and the verdict
+                        // is exact set membership like the twin skip and
+                        // hash sets below, in discovery order.
+                        const size_t o2 = size_t(meshTriEdgeConstraint[3*tri]);
+                        const size_t hi = c > o2 ? c : o2;
+                        const size_t lo = c > o2 ? o2 : c;
+                        const size_t bit = hi * (hi + 1) / 2 + lo;
+                        const uint64_t mask = 1ull << (bit & 63);
+                        uint64_t &slot = eePairBase[bit >> 6];
+                        if (slot & mask) break;
+                        slot |= mask;
                     } else {
-                        std::array<int32_t,4> key{{i,j,k,l}};
-                        if (k < i) key = {{k,l,i,j}};
-                        if (!pairs.InsertNoGrow(key)) break;
+                        // Twin skip: the edge's smallest twin triangle sits
+                        // earlier in this ascending bucket, so the same pair
+                        // was already visited from this constraint and the
+                        // dedup set holds its key.
+                        const int32_t twin = meshTriTwin[3*tri];
+                        if (twin >= 0 && twin < int32_t(tri) &&
+                            eeTwinBase[size_t(twin)] == twinMark) break;
+                        // Both edges arrive sorted with four distinct
+                        // endpoints, so the pair order is one compare, and
+                        // the insert hashes the ordered endpoints directly
+                        // instead of packing and unpacking them first.
+                        if (packPairs) {
+                            if (k < i) {
+                                if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
+                            } else {
+                                if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
+                            }
+                        } else {
+                            std::array<int32_t,4> key{{i,j,k,l}};
+                            if (k < i) key = {{k,l,i,j}};
+                            if (!pairs.InsertNoGrow(key)) break;
+                        }
                     }
                     if (!useEdgeBits) {
                         bool adjacent = false;
@@ -2552,27 +2641,43 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             AdjacentToRowBits(eeAdjRow, l)) break;
                     }
                     else if (i == k || i == l || j == k || j == l) break;
-                    // Twin skip: the edge's smallest twin triangle sits
-                    // earlier in this ascending bucket, so the same pair
-                    // was already visited from this constraint and the
-                    // dedup set holds its key.
-                    const int32_t twin = meshTriTwin[3*tri+1];
-                    if (twin >= 0 && twin < int32_t(tri) &&
-                        eeTwinBase[size_t(twin)] == twinMark) break;
-                    // Both edges arrive sorted with four distinct
-                    // endpoints, so the pair order is one compare, and
-                    // the insert hashes the ordered endpoints directly
-                    // instead of packing and unpacking them first.
-                    if (packPairs) {
-                        if (k < i) {
-                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
-                        } else {
-                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
-                        }
+                    if (usePairBits) {
+                        // One bit per constraint pair, triangular with its
+                        // diagonal: both edges are stretch constraints, so
+                        // the unordered pair is one index, and the verdict
+                        // is exact set membership like the twin skip and
+                        // hash sets below, in discovery order.
+                        const size_t o2 = size_t(meshTriEdgeConstraint[3*tri+1]);
+                        const size_t hi = c > o2 ? c : o2;
+                        const size_t lo = c > o2 ? o2 : c;
+                        const size_t bit = hi * (hi + 1) / 2 + lo;
+                        const uint64_t mask = 1ull << (bit & 63);
+                        uint64_t &slot = eePairBase[bit >> 6];
+                        if (slot & mask) break;
+                        slot |= mask;
                     } else {
-                        std::array<int32_t,4> key{{i,j,k,l}};
-                        if (k < i) key = {{k,l,i,j}};
-                        if (!pairs.InsertNoGrow(key)) break;
+                        // Twin skip: the edge's smallest twin triangle sits
+                        // earlier in this ascending bucket, so the same pair
+                        // was already visited from this constraint and the
+                        // dedup set holds its key.
+                        const int32_t twin = meshTriTwin[3*tri+1];
+                        if (twin >= 0 && twin < int32_t(tri) &&
+                            eeTwinBase[size_t(twin)] == twinMark) break;
+                        // Both edges arrive sorted with four distinct
+                        // endpoints, so the pair order is one compare, and
+                        // the insert hashes the ordered endpoints directly
+                        // instead of packing and unpacking them first.
+                        if (packPairs) {
+                            if (k < i) {
+                                if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
+                            } else {
+                                if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
+                            }
+                        } else {
+                            std::array<int32_t,4> key{{i,j,k,l}};
+                            if (k < i) key = {{k,l,i,j}};
+                            if (!pairs.InsertNoGrow(key)) break;
+                        }
                     }
                     if (!useEdgeBits) {
                         bool adjacent = false;
@@ -2681,27 +2786,43 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             AdjacentToRowBits(eeAdjRow, l)) break;
                     }
                     else if (i == k || i == l || j == k || j == l) break;
-                    // Twin skip: the edge's smallest twin triangle sits
-                    // earlier in this ascending bucket, so the same pair
-                    // was already visited from this constraint and the
-                    // dedup set holds its key.
-                    const int32_t twin = meshTriTwin[3*tri+2];
-                    if (twin >= 0 && twin < int32_t(tri) &&
-                        eeTwinBase[size_t(twin)] == twinMark) break;
-                    // Both edges arrive sorted with four distinct
-                    // endpoints, so the pair order is one compare, and
-                    // the insert hashes the ordered endpoints directly
-                    // instead of packing and unpacking them first.
-                    if (packPairs) {
-                        if (k < i) {
-                            if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
-                        } else {
-                            if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
-                        }
+                    if (usePairBits) {
+                        // One bit per constraint pair, triangular with its
+                        // diagonal: both edges are stretch constraints, so
+                        // the unordered pair is one index, and the verdict
+                        // is exact set membership like the twin skip and
+                        // hash sets below, in discovery order.
+                        const size_t o2 = size_t(meshTriEdgeConstraint[3*tri+2]);
+                        const size_t hi = c > o2 ? c : o2;
+                        const size_t lo = c > o2 ? o2 : c;
+                        const size_t bit = hi * (hi + 1) / 2 + lo;
+                        const uint64_t mask = 1ull << (bit & 63);
+                        uint64_t &slot = eePairBase[bit >> 6];
+                        if (slot & mask) break;
+                        slot |= mask;
                     } else {
-                        std::array<int32_t,4> key{{i,j,k,l}};
-                        if (k < i) key = {{k,l,i,j}};
-                        if (!pairs.InsertNoGrow(key)) break;
+                        // Twin skip: the edge's smallest twin triangle sits
+                        // earlier in this ascending bucket, so the same pair
+                        // was already visited from this constraint and the
+                        // dedup set holds its key.
+                        const int32_t twin = meshTriTwin[3*tri+2];
+                        if (twin >= 0 && twin < int32_t(tri) &&
+                            eeTwinBase[size_t(twin)] == twinMark) break;
+                        // Both edges arrive sorted with four distinct
+                        // endpoints, so the pair order is one compare, and
+                        // the insert hashes the ordered endpoints directly
+                        // instead of packing and unpacking them first.
+                        if (packPairs) {
+                            if (k < i) {
+                                if (!pairs64.InsertNoGrowFields(k, l, i, j)) break;
+                            } else {
+                                if (!pairs64.InsertNoGrowFields(i, j, k, l)) break;
+                            }
+                        } else {
+                            std::array<int32_t,4> key{{i,j,k,l}};
+                            if (k < i) key = {{k,l,i,j}};
+                            if (!pairs.InsertNoGrow(key)) break;
+                        }
                     }
                     if (!useEdgeBits) {
                         bool adjacent = false;
