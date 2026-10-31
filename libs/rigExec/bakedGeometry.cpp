@@ -5729,10 +5729,27 @@ RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
     leaves->values.clear();
     leaves->values.reserve(n);
     const bool skipHops = varying && varying->size() == n;
+    // Leaves arrive grouped by prim -- the provider round binds hundreds of
+    // attributes on a handful of prims -- so hold each prim across its run:
+    // one prim walk per run plus one attribute lookup per leaf, instead of
+    // a full path walk per leaf. GetAttributeAtPath answers exactly this
+    // prim plus this name for a property path, and an invalid prim binds
+    // nothing, as the path walk would.
+    SdfPath boundPrim;
+    UsdPrim prim;
+    bool havePrim = false;
     for (size_t k = 0; k < n; ++k) {
         const RigExecRevisionLeafKey &key = leaves->decl.keys[k];
         if (stage && key.path.IsPropertyPath()) {
-            leaves->attributes[k] = stage->GetAttributeAtPath(key.path);
+            const SdfPath primPath = key.path.GetPrimPath();
+            if (!havePrim || primPath != boundPrim) {
+                boundPrim = primPath;
+                prim = stage->GetPrimAtPath(primPath);
+                havePrim = true;
+            }
+            leaves->attributes[k] = prim
+                ? prim.GetAttribute(key.path.GetNameToken())
+                : UsdAttribute();
         }
         if (skipHops && key.flavour == RigExecRevisionLeafFlavour::Raw) {
             // A Raw read reaches its own path only, and its varying bit is
