@@ -2554,17 +2554,17 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             for (uint32_t entry = vtBucketBounds[bucket]; entry < vtBucketBounds[bucket + 1]; ++entry) {
                 const int32_t tri = vtBucketTris[entry];
                 RigExecClothSample b;
-                for (size_t q = 0; q < 3; ++q)
-                    b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
                 // The triangle union row holds the vertices neighboring any
                 // corner, so one bit test answers the three corner tests;
                 // adjacency is symmetric, the same verdicts. Past the size
-                // cap the linear scans keep their order.
+                // cap the corners fill here for the linear scans below.
                 bool adjacent;
                 if (useBits)
                     adjacent =
                         (vtTriBase[size_t(tri) * vtStride + vtWord] & vtMask) != 0;
                 else {
+                    for (size_t q = 0; q < 3; ++q)
+                        b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
                     adjacent = false;
                     for (size_t q = 0; q < 3; ++q)
                         adjacent = adjacent || AdjacentTo(mesh.neighbors[i], b.vertices[q]);
@@ -2584,14 +2584,25 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     tc[2] = triCentersBase[3 * size_t(tri) + 2];
                     tr = triRadiiBase[size_t(tri)];
                 } else {
-                    TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
-                              b.vertices[1], b.vertices[2], x, tc, &tr, tickNow);
+                    // The correction path reads the corners straight from
+                    // the mesh; the hoisted fill below serves the direct path.
+                    TriSphere(&triSpheres, &spheres, size_t(tri),
+                              mesh.triangles[3 * size_t(tri)],
+                              mesh.triangles[3 * size_t(tri) + 1],
+                              mesh.triangles[3 * size_t(tri) + 2],
+                              x, tc, &tr, tickNow);
                 }
                 const float reach = tr + bandLimit;
                 const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
                             dd2 = point[2] - tc[2];
                 if (dd0 * dd0 + dd1 * dd1 + dd2 * dd2 > reach * reach * 1.0009765625f)
                     continue;
+                // The corners fill here on the bitset path: neither filter
+                // above reads them, so killed entries skip the three loads.
+                // The same values the eager fill stored.
+                if (useBits)
+                    for (size_t q = 0; q < 3; ++q)
+                        b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
                 const float *v0 = x + 3 * size_t(b.vertices[0]);
                 const float *v1 = x + 3 * size_t(b.vertices[1]);
                 const float *v2 = x + 3 * size_t(b.vertices[2]);
