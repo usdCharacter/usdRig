@@ -1318,6 +1318,22 @@ void TestColorSingleMatchesSerial()
                             RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
                         projectColor(mesh, step, lo, hi, y.data());
                         CHECK(same(x, y));
+                        // The tick precompute agrees bit for bit with the old
+                        // path, on flat, curved, dead, and bare constraints.
+                        if (!mesh.model.Empty()) {
+                            std::vector<uint8_t> fast;
+                            std::vector<float> palpha;
+                            bool anyPre = false;
+                            RigExecClothPrecomputeProjection(mesh, step, &fast,
+                                                             &palpha, &anyPre);
+                            auto v = pose;
+                            RigExecClothProjectColorSingle<true>(
+                                mesh, step, lo, hi, v.data(),
+                                anyPre ? fast.data() : nullptr,
+                                anyPre ? palpha.data() : nullptr);
+                            CHECK(same(y, v));
+                            compared += 1;
+                        }
                         // Split ranges re-chunk the color; the writes agree.
                         const uint32_t mid = lo + (hi - lo) / 2;
                         projectColor(mesh, step, lo, mid, z.data());
@@ -1365,6 +1381,37 @@ void TestColorSingleMatchesSerial()
                                                &why));
                 run(mesh, posesFor(m, mesh));
             }
+        }
+        for (int hard = 0; hard < 2; ++hard) {
+            // A force-curved profile stays slow: the precompute marks it
+            // slow and the old path runs verbatim.
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = RigExecClothProfileKind::Stretch;
+            p.minStrength = 0.2f;
+            p.maxStrength = 1.0f;
+            p.forceCurve = {0, 1, 10000, 0};
+            p.compliance = .001f;
+            p.hard = hard != 0;
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh, posesFor(m, mesh));
+        }
+        {
+            // A zero mask kills the strength: dead-flat, slow path.
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = RigExecClothProfileKind::Stretch;
+            p.maps[ClothMask] = std::vector<float>(m.Size(), 0.0f);
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh, posesFor(m, mesh));
         }
     }
     {

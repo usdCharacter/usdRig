@@ -466,6 +466,12 @@ struct RigExecClothWorkspace {
     std::vector<float> attachmentLambda;
     std::vector<float> contactLambda;
     std::vector<int32_t> contactTriangles;
+    /// The tick's projection precompute, one byte and one float per
+    /// constraint: whether the constraint's XPBD alpha is tick-fixed
+    /// (bare, or flat-finite-live strength) and that alpha. Derived
+    /// once per tick, read by every substep; the storage retained.
+    std::vector<uint8_t> projFast;
+    std::vector<float> projAlpha;
     std::map<std::array<int32_t, 5>, float> selfLambda;
     RigExecClothGrid selfGrid;
     std::vector<uint64_t> selfScratch;
@@ -1867,20 +1873,28 @@ inline bool RigExecClothHaveSve();
 /// compile time; the caller instantiates false for an empty model so
 /// the hot loop carries no model branch or dead code. The true path
 /// reads the prepared strength cache behind one model check, so it
-/// still agrees with the false path on an empty model.
+/// still agrees with the false path on an empty model. \p projFast and
+/// \p projAlpha, when given, hold the tick's precomputed alphas, read
+/// instead of the strength derivation; nulls keep the old path exactly.
 template <bool Model>
 #if defined(RIGEXEC_CLOTH_SVE)
-// SVE for the vector path below. The solve below carries the same target
-// so the scalar instantiation still inlines there; the vector one stays
-// out-of-line on size and direct callers take that copy.
+// SVE for the vector path below. Both instantiations stay out-of-line:
+// the vector body is large, and inlining it into the solve bloats the
+// caller's hot text and costs percent-level time there, so the decision
+// is explicit rather than left to the inliner budget.
 __attribute__((target("+sve")))
 #endif
+__attribute__((noinline))
 inline void
 RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
                                const RigExecClothStep &s, uint32_t begin,
-                               uint32_t end, float *x)
+                               uint32_t end, float *x,
+                               const uint8_t *projFast = nullptr,
+                               const float *projAlpha = nullptr)
 {
     using namespace cloth_detail;
+    (void)projFast;
+    (void)projAlpha;
     constexpr uint32_t kChunk = 64;
     for (uint32_t base = begin; base < end;) {
         const uint32_t n = end - base < kChunk ? end - base : kChunk;
@@ -1969,33 +1983,42 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
                 if (!(len > 0.0f)) { live[k] = 0; continue; }
                 const float C = len - mesh.constraintRest[c];
                 if constexpr (Model) {
-                    // The strength cache exists exactly when the model is
-                    // nonempty; without one every constraint keeps the default
-                    // alpha, the same verdicts a profile scan over no profiles
-                    // returned.
-                    if (!mesh.model.Empty()) {
-                        const int32_t pi = mesh.constraintProfile[c];
-                        if (pi >= 0) {
-                            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
-                            const float *base = mesh.constraintStrengthBase.data() + 4 * c;
-                            // A flat strength range needs no force estimate:
-                            // the curve interpolates between equal endpoints,
-                            // so the strength is the endpoint times the mask
-                            // and the directional scalar, and the force
-                            // quotient is dead. The +0.0f keeps the signed-zero
-                            // behavior of the full form bit for bit; infinite
-                            // endpoints and NaN take the full path.
-                            float strength;
-                            if (base[0] == base[1] && std::isfinite(base[0])) {
-                                strength = (base[0] + 0.0f) * base[2] * base[3];
-                            } else {
-                                const float force = wa + wb > 0
-                                    ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-                                strength =
-                                    RigExecClothCachedBase(profile, base, force) * base[3];
+                    // The tick's precomputed alpha where the caller derived
+                    // it: the same default or quotient the block below
+                    // forms, read instead of recomputed per substep. A null
+                    // table, or a curved constraint, keeps the old path
+                    // exactly.
+                    if (projFast && projAlpha && projFast[c]) {
+                        alpha = projAlpha[c];
+                    } else {
+                        // The strength cache exists exactly when the model is
+                        // nonempty; without one every constraint keeps the default
+                        // alpha, the same verdicts a profile scan over no profiles
+                        // returned.
+                        if (!mesh.model.Empty()) {
+                            const int32_t pi = mesh.constraintProfile[c];
+                            if (pi >= 0) {
+                                const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+                                const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+                                // A flat strength range needs no force estimate:
+                                // the curve interpolates between equal endpoints,
+                                // so the strength is the endpoint times the mask
+                                // and the directional scalar, and the force
+                                // quotient is dead. The +0.0f keeps the signed-zero
+                                // behavior of the full form bit for bit; infinite
+                                // endpoints and NaN take the full path.
+                                float strength;
+                                if (base[0] == base[1] && std::isfinite(base[0])) {
+                                    strength = (base[0] + 0.0f) * base[2] * base[3];
+                                } else {
+                                    const float force = wa + wb > 0
+                                        ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                                    strength =
+                                        RigExecClothCachedBase(profile, base, force) * base[3];
+                                }
+                                if (!(strength > 0)) { live[k] = 0; continue; }
+                                alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
                             }
-                            if (!(strength > 0)) { live[k] = 0; continue; }
-                            alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
                         }
                     }
                 }
@@ -3623,14 +3646,66 @@ inline bool RigExecClothHaveSve()
 }
 #endif
 
+/// Derives the tick's projection alphas for \p tickStep (one substep's
+/// constants: the projection reads only the tick-fixed alphaStretch,
+/// alphaBend, and h). A bare constraint keeps its kind default, and a
+/// flat-finite-live one its endpoint strength's compliance quotient,
+/// both fixed for the tick, so the substeps below read them instead of
+/// re-deriving the same kind verdicts, profile verdicts, maps, and
+/// quotient. A dead-flat or force-curved constraint stays slow: it
+/// takes the old path verbatim, with the same verdicts. The same
+/// arithmetic in the same order, so the alphas match the per-substep
+/// derivation bit for bit; the denominator, deltas, and writes stay in
+/// the callers. \p anyPre reports whether any constraint precomputed,
+/// so an all-curved tick passes nulls and the callers keep the old path
+/// with no per-constraint cost.
+inline void
+RigExecClothPrecomputeProjection(const RigExecClothMesh &mesh,
+                                 const RigExecClothStep &tickStep,
+                                 std::vector<uint8_t> *fast,
+                                 std::vector<float> *alpha, bool *anyPre)
+{
+    const size_t count = mesh.constraintRest.size();
+    fast->resize(count);
+    alpha->resize(count);
+    *anyPre = false;
+    if (mesh.model.Empty()) return;
+    for (size_t c = 0; c < count; ++c) {
+        const float fallback =
+            mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                ? tickStep.alphaStretch : tickStep.alphaBend;
+        const int32_t pi = mesh.constraintProfile[c];
+        if (pi >= 0) {
+            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+            const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+            if (base[0] == base[1] && std::isfinite(base[0])) {
+                const float strength = (base[0] + 0.0f) * base[2] * base[3];
+                if (strength > 0) {
+                    (*fast)[c] = 1;
+                    (*alpha)[c] = profile.hard
+                        ? 0 : profile.compliance / (strength * tickStep.h * tickStep.h);
+                    *anyPre = true;
+                    continue;
+                }
+            }
+            (*fast)[c] = 0;
+            (*alpha)[c] = 0;
+            continue;
+        }
+        (*fast)[c] = 1;
+        (*alpha)[c] = fallback;
+        *anyPre = true;
+    }
+}
+
 /// Solves the window \p ticks (oldest first, the last the current frame)
 /// into \p out (pointCount float3s). \p frameSeconds is the time between
 /// ticks. A single tick returns its entering points. False, with \p out
 /// holding the current entering points, on an invalid mesh, a non-finite
 /// input, or a result that is not finite.
 #if defined(RIGEXEC_CLOTH_SVE)
-// Matches the project function above so its scalar instantiation still
-// inlines here; the vector one stays out-of-line on size.
+// Matches the project function above; both instantiations stay
+// out-of-line there, called from the color loop below.
 __attribute__((target("+sve")))
 #endif
 inline bool
@@ -3685,6 +3760,16 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
         const RigExecClothTick &from = ticks[k - 1];
         const RigExecClothTick &to = ticks[k];
         const bool collide = colliders.pointCount && !colliders.triangles.empty();
+        // The tick's projection alphas, once for every substep below. The
+        // step carries the tick's parameters with this solve's substeps,
+        // so its h and default alphas match every substep's bit for bit.
+        bool tickPreAny = false;
+        if (!mesh.model.Empty())
+            RigExecClothPrecomputeProjection(
+                mesh, RigExecClothStepFor(to.parameters, substeps, 1, frame),
+                &ws->projFast, &ws->projAlpha, &tickPreAny);
+        const uint8_t *tickProjFast = tickPreAny ? ws->projFast.data() : nullptr;
+        const float *tickProjAlpha = tickPreAny ? ws->projAlpha.data() : nullptr;
         // The profile search's pre-check box over this tick's pad reach,
         // derived once per tick with the grid below.
         RigExecClothReachBounds profileBounds;
@@ -3818,7 +3903,8 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                         else
                             RigExecClothProjectColorSingle<true>(mesh, s, lo,
                                                                 mesh.colorStart[color + 1],
-                                                                x);
+                                                                x, tickProjFast,
+                                                                tickProjAlpha);
                     } else {
                         const uint32_t lo = skipKk ? mesh.colorStart[color] +
                                                          mesh.colorKkSkip[color]
