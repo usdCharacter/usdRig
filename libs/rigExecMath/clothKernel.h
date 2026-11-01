@@ -2527,7 +2527,8 @@ inline bool RigExecClothSelfGridReusable(uint64_t clock, uint64_t gridClock,
 /// Two-sided vertex/triangle contact between selected cloth regions. The
 /// broad phase is rebuilt inside the existing constraint iteration; all
 /// corrections act on the same private particle arena as stretch and bend.
-inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
+template <bool Bitsets, bool PairDedup>
+inline void RigExecClothSelfContactsImpl(const RigExecClothMesh &mesh,
     const RigExecClothStep &step, const float *previous,
     RigExecClothWorkspace *ws, float *x)
 {
@@ -2680,7 +2681,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // adjacency is symmetric, the same verdicts. Past the size
                 // cap the corners fill here for the linear scans below.
                 bool adjacent;
-                if (useBits)
+                if constexpr (Bitsets)
                     adjacent =
                         (vtTriBase[size_t(tri) * vtStride + vtWord] & vtMask) != 0;
                 else {
@@ -2721,7 +2722,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // The corners fill here on the bitset path: neither filter
                 // above reads them, so killed entries skip the three loads.
                 // The same values the eager fill stored.
-                if (useBits)
+                if constexpr (Bitsets)
                     for (size_t q = 0; q < 3; ++q)
                         b.vertices[q] = mesh.triangles[3 * size_t(tri) + q];
                 const float *v0 = x + 3 * size_t(b.vertices[0]);
@@ -2844,7 +2845,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             // table stays under the cap through the batch and the
             // inserts below skip their checks with the same verdicts.
             // The bitset path records into pre-cleared words instead.
-            if (!usePairBits) {
+            if constexpr (!PairDedup) {
                 const size_t batchKeys =
                     3 * (eeBucketBounds[bucket + 1] - eeBucketBounds[bucket]);
                 if (packPairs) pairs64.ReserveForBatch(batchKeys);
@@ -2925,12 +2926,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // verdicts. Past the size cap the share test stays ahead
                     // of the insert, and the linear scans stay behind it so
                     // a rediscovered pair still skips them.
-                    if (useEdgeBits) {
+                    if constexpr (Bitsets) {
                         if (AdjacentToRowBits(eeAdjRow, k) ||
                             AdjacentToRowBits(eeAdjRow, l)) break;
+                    } else {
+                        if (i == k || i == l || j == k || j == l) break;
                     }
-                    else if (i == k || i == l || j == k || j == l) break;
-                    if (usePairBits) {
+                    if constexpr (PairDedup) {
                         // One bit per constraint pair, triangular with its
                         // diagonal: both edges are stretch constraints, so
                         // the unordered pair is one index, and the verdict
@@ -2968,7 +2970,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             if (!pairs.InsertNoGrow(key)) break;
                         }
                     }
-                    if (!useEdgeBits) {
+                    if constexpr (!Bitsets) {
                         bool adjacent = false;
                         for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
                             adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
@@ -3070,12 +3072,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // verdicts. Past the size cap the share test stays ahead
                     // of the insert, and the linear scans stay behind it so
                     // a rediscovered pair still skips them.
-                    if (useEdgeBits) {
+                    if constexpr (Bitsets) {
                         if (AdjacentToRowBits(eeAdjRow, k) ||
                             AdjacentToRowBits(eeAdjRow, l)) break;
+                    } else {
+                        if (i == k || i == l || j == k || j == l) break;
                     }
-                    else if (i == k || i == l || j == k || j == l) break;
-                    if (usePairBits) {
+                    if constexpr (PairDedup) {
                         // One bit per constraint pair, triangular with its
                         // diagonal: both edges are stretch constraints, so
                         // the unordered pair is one index, and the verdict
@@ -3113,7 +3116,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             if (!pairs.InsertNoGrow(key)) break;
                         }
                     }
-                    if (!useEdgeBits) {
+                    if constexpr (!Bitsets) {
                         bool adjacent = false;
                         for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
                             adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
@@ -3215,12 +3218,13 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                     // verdicts. Past the size cap the share test stays ahead
                     // of the insert, and the linear scans stay behind it so
                     // a rediscovered pair still skips them.
-                    if (useEdgeBits) {
+                    if constexpr (Bitsets) {
                         if (AdjacentToRowBits(eeAdjRow, k) ||
                             AdjacentToRowBits(eeAdjRow, l)) break;
+                    } else {
+                        if (i == k || i == l || j == k || j == l) break;
                     }
-                    else if (i == k || i == l || j == k || j == l) break;
-                    if (usePairBits) {
+                    if constexpr (PairDedup) {
                         // One bit per constraint pair, triangular with its
                         // diagonal: both edges are stretch constraints, so
                         // the unordered pair is one index, and the verdict
@@ -3258,7 +3262,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                             if (!pairs.InsertNoGrow(key)) break;
                         }
                     }
-                    if (!useEdgeBits) {
+                    if constexpr (!Bitsets) {
                         bool adjacent = false;
                         for (int32_t a : {i,j}) for (int32_t b : {k,l}) {
                             adjacent = adjacent || (useBits ? AdjacentToBits(mesh, a, b)
@@ -3352,6 +3356,29 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
             }
         }
     }
+}
+
+/// The runtime-dispatched self-contact pass: meshes take the instantiation
+/// matching their adjacency bitsets and pair dedup (bitset path past the
+/// point cap but under the constraint cap included), so each runs its exact
+/// original branch selection with the per-entry tests folded out. Mixed
+/// bitsets fall through to a linear-scan one, whose scans reach the same
+/// verdicts on any mesh. Same corrections either way.
+inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
+    const RigExecClothStep &step, const float *previous,
+    RigExecClothWorkspace *ws, float *x)
+{
+    const bool useBits = !mesh.neighborBits.empty();
+    const bool useEdgeBits = !mesh.edgeNeighborBits.empty();
+    const bool usePairBits = RigExecClothUsePairBits(mesh.constraintRest.size());
+    if (useBits && useEdgeBits && usePairBits)
+        RigExecClothSelfContactsImpl<true, true>(mesh, step, previous, ws, x);
+    else if (useBits && useEdgeBits)
+        RigExecClothSelfContactsImpl<true, false>(mesh, step, previous, ws, x);
+    else if (usePairBits)
+        RigExecClothSelfContactsImpl<false, true>(mesh, step, previous, ws, x);
+    else
+        RigExecClothSelfContactsImpl<false, false>(mesh, step, previous, ws, x);
 }
 
 /// Checks a window before it is solved: every tick has entering points
