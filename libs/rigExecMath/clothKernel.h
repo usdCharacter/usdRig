@@ -1488,8 +1488,15 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     {
         for (uint32_t k = grid.bucketStart[bucket]; k < grid.bucketStart[bucket + 1]; ++k) {
             const int32_t tri = grid.bucketTriangles[k];
-            const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
-            if (filterCollider && (firstVertex < twoSidedBegin || firstVertex >= twoSidedEnd)) continue;
+            // Lazy first-vertex load: only the collider-range guard, the
+            // two-sided slab, and the normal flip read it, and the
+            // empty-model path takes none of them, so an eager load
+            // costs a dependent fetch per candidate there. Each use
+            // loads it on its own live path; the same values.
+            if (filterCollider) {
+                const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
+                if (firstVertex < twoSidedBegin || firstVertex >= twoSidedEnd) continue;
+            }
             // Swept-box pre-filter: a candidate whose tick-swept bounds sit
             // farther than the reach from p fails the reach verdict below,
             // so it skips the fetch, the barycentric solve, and the distance.
@@ -1571,7 +1578,13 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                 const float s2 = np - Dot(n, v[2]);
                 const float margin =
                     (grid.triShapes[size_t(tri)] + reach + reach) * 3.0517578125e-05f + 1e-30f;
-                if (mayFlip && firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd) {
+                bool twoSidedSlab = false;
+                if (mayFlip) {
+                    const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
+                    twoSidedSlab =
+                        firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd;
+                }
+                if (twoSidedSlab) {
                     const float front = reach + margin, back = -reach - margin;
                     if ((s0 > front && s1 > front && s2 > front) ||
                         (s0 < back && s1 < back && s2 < back))
@@ -1594,7 +1607,12 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             float q[3];
             for (int a = 0; a < 3; ++a)
                 q[a] = w[0] * v[0][a] + w[1] * v[1][a] + w[2] * v[2][a];
-            if (previous && firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd) {
+            bool flipSide = false;
+            if (previous) {
+                const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
+                flipSide = firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd;
+            }
+            if (flipSide) {
                 float oldQ[3] = {0, 0, 0};
                 for (size_t c = 0; c < 3; ++c) {
                     const size_t vertex = size_t(colliders.triangles[3 * size_t(tri) + c]);
