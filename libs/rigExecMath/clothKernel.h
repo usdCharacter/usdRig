@@ -51,6 +51,22 @@
 #include <utility>
 #include <vector>
 
+// The SVE project path below compiles on AArch64 GCC/Clang only, never on
+// Apple (no SVE there); every other platform takes the scalar loop.
+// RIGEXEC_CLOTH_SVE_OFF forces the scalar loop anywhere, for testing the
+// fallback.
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__APPLE__) && \
+    !defined(RIGEXEC_CLOTH_SVE_OFF)
+#include <arm_sve.h>
+#if defined(__linux__)
+#include <sys/auxv.h>
+#ifndef HWCAP_SVE
+#include <asm/hwcap.h>
+#endif
+#endif
+#define RIGEXEC_CLOTH_SVE 1
+#endif
+
 namespace rigExec {
 
 /// The longest window a cloth mover may simulate, in frames.
@@ -1711,6 +1727,11 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
     }
 }
 
+#if defined(RIGEXEC_CLOTH_SVE)
+// True on kernels that report SVE; lock-free, read per project call.
+inline bool RigExecClothHaveSve();
+#endif
+
 /// Projects one color's constraints [begin, end) with the
 /// iterations==1 form, in two passes per chunk: the first derives each
 /// live constraint's direction and deltas with no stores to \p x, the
@@ -1727,6 +1748,12 @@ RigExecClothProjectConstraintSingle(const RigExecClothMesh &mesh,
 /// reads the prepared strength cache behind one model check, so it
 /// still agrees with the false path on an empty model.
 template <bool Model>
+#if defined(RIGEXEC_CLOTH_SVE)
+// SVE for the vector path below. The solve below carries the same target
+// so the scalar instantiation still inlines there; the vector one stays
+// out-of-line on size and direct callers take that copy.
+__attribute__((target("+sve")))
+#endif
 inline void
 RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
                                const RigExecClothStep &s, uint32_t begin,
@@ -1740,6 +1767,66 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
         float ka[kChunk], kb[kChunk];
         int32_t ends[kChunk][2];
         char live[kChunk];
+        bool sveDone = false;
+#if defined(RIGEXEC_CLOTH_SVE)
+        // The vector derive: scalar loads, then the root-and-divide chain
+        // four constraints at a time. Each lane runs the same IEEE
+        // operations in the same association as the scalar loop, so the
+        // stash matches bit for bit;
+        // lanes the scalar verdicts would skip match those verdicts and
+        // their stash is never read. Length-agnostic across SVE widths.
+        if constexpr (!Model) {
+            if (RigExecClothHaveSve()) {
+                float sveWa[kChunk], sveWb[kChunk], sveRest[kChunk], sveAlpha[kChunk];
+                for (uint32_t q = 0; q < n; ++q) {
+                    const size_t c = size_t(base + q);
+                    ends[q][0] = mesh.constraintEnds[2 * c];
+                    ends[q][1] = mesh.constraintEnds[2 * c + 1];
+                    const size_t a = size_t(ends[q][0]);
+                    const size_t b = size_t(ends[q][1]);
+                    sveWa[q] = mesh.inverseMass[a];
+                    sveWb[q] = mesh.inverseMass[b];
+                    sveAlpha[q] =
+                        mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                            ? s.alphaStretch : s.alphaBend;
+                    Sub(x + 3 * a, x + 3 * b, d[q]);
+                    sveRest[q] = mesh.constraintRest[c];
+                }
+                float sveM[64];
+                for (uint32_t sveK = 0; sveK < n;) {
+                    svbool_t pg = svwhilelt_b32(sveK, n);
+                    const uint32_t lanes = uint32_t(svcntp_b32(svptrue_b32(), pg));
+                    svbool_t all = svptrue_b32();
+                    svfloat32x3_t xyz = svld3(pg, &d[sveK][0]);
+                    svfloat32_t vx = svget3(xyz, 0), vy = svget3(xyz, 1),
+                                vz = svget3(xyz, 2);
+                    svfloat32_t t0 = svmul_x(all, vx, vx);
+                    svfloat32_t t1 = svmul_x(all, vy, vy);
+                    svfloat32_t t2 = svmul_x(all, vz, vz);
+                    svfloat32_t dot = svadd_x(all, svadd_x(all, t0, t1), t2);
+                    svfloat32_t len = svsqrt_x(pg, dot);
+                    svfloat32_t rest = svld1(pg, sveRest + sveK);
+                    svfloat32_t C = svsub_x(pg, len, rest);
+                    svfloat32_t wav = svld1(pg, sveWa + sveK),
+                                wbv = svld1(pg, sveWb + sveK),
+                                alv = svld1(pg, sveAlpha + sveK);
+                    svfloat32_t denom = svadd_x(pg, svadd_x(pg, wav, wbv), alv);
+                    svfloat32_t dl = svdiv_x(pg, svneg_x(pg, C), denom);
+                    svst1(pg, ka + sveK, svdiv_x(pg, svmul_x(pg, wav, dl), len));
+                    svst1(pg, kb + sveK, svdiv_x(pg, svmul_x(pg, wbv, dl), len));
+                    svbool_t liveM = svand_z(pg, svcmpgt(pg, len, 0.0f),
+                                             svcmpgt(pg, denom, 0.0f));
+                    svst1(pg, sveM,
+                          svsel(liveM, svdup_f32(1.0f), svdup_f32(0.0f)));
+                    for (uint32_t j = 0; j < lanes; ++j)
+                        live[sveK + j] = char(sveM[j] != 0.0f);
+                    sveK += lanes;
+                }
+                sveDone = true;
+            }
+        }
+#endif
+        if (!sveDone) {
 // Four-wide: the serial loop leaves the root-and-divide chain
 // under-pipelined, so the unroll overlaps four constraints'
 // chains. Each constraint runs the same operations in the same
@@ -1747,56 +1834,57 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
 #if defined(__GNUC__)
 #pragma GCC unroll 4
 #endif
-        for (uint32_t k = 0; k < n; ++k) {
-            const size_t c = size_t(base + k);
-            ends[k][0] = mesh.constraintEnds[2 * c];
-            ends[k][1] = mesh.constraintEnds[2 * c + 1];
-            const size_t a = size_t(ends[k][0]);
-            const size_t b = size_t(ends[k][1]);
-            const float wa = mesh.inverseMass[a], wb = mesh.inverseMass[b];
-            float alpha = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
-                                    ? s.alphaStretch : s.alphaBend;
-            Sub(x + 3 * a, x + 3 * b, d[k]);
-            const float len = Length(d[k]);
-            if (!(len > 0.0f)) { live[k] = 0; continue; }
-            const float C = len - mesh.constraintRest[c];
-            if constexpr (Model) {
-                // The strength cache exists exactly when the model is
-                // nonempty; without one every constraint keeps the default
-                // alpha, the same verdicts a profile scan over no profiles
-                // returned.
-                if (!mesh.model.Empty()) {
-                    const int32_t pi = mesh.constraintProfile[c];
-                    if (pi >= 0) {
-                        const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
-                        const float *base = mesh.constraintStrengthBase.data() + 4 * c;
-                        // A flat strength range needs no force estimate:
-                        // the curve interpolates between equal endpoints,
-                        // so the strength is the endpoint times the mask
-                        // and the directional scalar, and the force
-                        // quotient is dead. The +0.0f keeps the signed-zero
-                        // behavior of the full form bit for bit; infinite
-                        // endpoints and NaN take the full path.
-                        float strength;
-                        if (base[0] == base[1] && std::isfinite(base[0])) {
-                            strength = (base[0] + 0.0f) * base[2] * base[3];
-                        } else {
-                            const float force = wa + wb > 0
-                                ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
-                            strength =
-                                RigExecClothCachedBase(profile, base, force) * base[3];
+            for (uint32_t k = 0; k < n; ++k) {
+                const size_t c = size_t(base + k);
+                ends[k][0] = mesh.constraintEnds[2 * c];
+                ends[k][1] = mesh.constraintEnds[2 * c + 1];
+                const size_t a = size_t(ends[k][0]);
+                const size_t b = size_t(ends[k][1]);
+                const float wa = mesh.inverseMass[a], wb = mesh.inverseMass[b];
+                float alpha = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+                                        ? s.alphaStretch : s.alphaBend;
+                Sub(x + 3 * a, x + 3 * b, d[k]);
+                const float len = Length(d[k]);
+                if (!(len > 0.0f)) { live[k] = 0; continue; }
+                const float C = len - mesh.constraintRest[c];
+                if constexpr (Model) {
+                    // The strength cache exists exactly when the model is
+                    // nonempty; without one every constraint keeps the default
+                    // alpha, the same verdicts a profile scan over no profiles
+                    // returned.
+                    if (!mesh.model.Empty()) {
+                        const int32_t pi = mesh.constraintProfile[c];
+                        if (pi >= 0) {
+                            const RigExecClothProfile &profile = mesh.model.profiles[size_t(pi)];
+                            const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+                            // A flat strength range needs no force estimate:
+                            // the curve interpolates between equal endpoints,
+                            // so the strength is the endpoint times the mask
+                            // and the directional scalar, and the force
+                            // quotient is dead. The +0.0f keeps the signed-zero
+                            // behavior of the full form bit for bit; infinite
+                            // endpoints and NaN take the full path.
+                            float strength;
+                            if (base[0] == base[1] && std::isfinite(base[0])) {
+                                strength = (base[0] + 0.0f) * base[2] * base[3];
+                            } else {
+                                const float force = wa + wb > 0
+                                    ? std::abs(0.0f - C / (wa + wb)) / (s.h * s.h) : 0;
+                                strength =
+                                    RigExecClothCachedBase(profile, base, force) * base[3];
+                            }
+                            if (!(strength > 0)) { live[k] = 0; continue; }
+                            alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
                         }
-                        if (!(strength > 0)) { live[k] = 0; continue; }
-                        alpha = profile.hard ? 0 : profile.compliance / (strength * s.h * s.h);
                     }
                 }
+                const float denom = wa + wb + alpha;
+                if (!(denom > 0.0f)) { live[k] = 0; continue; }
+                const float dl = -C / denom;
+                ka[k] = wa * dl / len;
+                kb[k] = wb * dl / len;
+                live[k] = 1;
             }
-            const float denom = wa + wb + alpha;
-            if (!(denom > 0.0f)) { live[k] = 0; continue; }
-            const float dl = -C / denom;
-            ka[k] = wa * dl / len;
-            kb[k] = wb * dl / len;
-            live[k] = 1;
         }
 // Four-wide with the derive pass above: the scattered position
 // updates overlap four constraints' loads and stores while each
@@ -3365,11 +3453,27 @@ RigExecClothWindowStart(const RigExecClothMesh &mesh,
     return oldest;
 }
 
+#if defined(RIGEXEC_CLOTH_SVE)
+inline bool RigExecClothHaveSve()
+{
+#if defined(__linux__)
+    return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
+#else
+    return false;
+#endif
+}
+#endif
+
 /// Solves the window \p ticks (oldest first, the last the current frame)
 /// into \p out (pointCount float3s). \p frameSeconds is the time between
 /// ticks. A single tick returns its entering points. False, with \p out
 /// holding the current entering points, on an invalid mesh, a non-finite
 /// input, or a result that is not finite.
+#if defined(RIGEXEC_CLOTH_SVE)
+// Matches the project function above so its scalar instantiation still
+// inlines here; the vector one stays out-of-line on size.
+__attribute__((target("+sve")))
+#endif
 inline bool
 RigExecSolveCloth(const RigExecClothMesh &mesh,
                   const RigExecClothColliders &colliders,
