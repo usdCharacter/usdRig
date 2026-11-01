@@ -2504,9 +2504,8 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         bool triBandOn = true;
         // The triangle-sphere bases stay fixed across the edge/edge pass:
         // the cache is sized per call and only assigned within it, so the
-        // fast path below rereads the same bases without reloading them
+        // triband below rereads the same bases without reloading them
         // per entry.
-        const uint64_t *triTickBase = triSpheres.triTick.data();
         const float *triCentersBase = triSpheres.centers.data();
         const float *triRadiiBase = triSpheres.radii.data();
         // Flat dedup over retained storage: the same verdicts as an
@@ -2527,6 +2526,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // bits, so the edge tests reread the same base without
         // reloading it per entry.
         uint64_t *eePairBase = usePairBits ? pairBits.data() : nullptr;
+        // Bulk-refresh every triangle sphere for the triband below: the
+        // refresh computes exactly the stale spheres (never visited, or
+        // retired by vertex/triangle corrections) through the same
+        // freshness logic the per-entry calls ran, stamping the held
+        // tick, so the triband reads them directly with no per-entry
+        // tick check. The same values and stamps.
+        for (size_t bulkTri = 0; bulkTri < sphereTris; ++bulkTri) {
+            float bulkC[3], bulkR;
+            TriSphere(&triSpheres, &spheres, bulkTri, meshTriangles[3 * bulkTri],
+                      meshTriangles[3 * bulkTri + 1], meshTriangles[3 * bulkTri + 2],
+                      x, bulkC, &bulkR, tickNow);
+        }
         for (size_t c = 0; c < constraintCount; ++c) {
             if (meshConstraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
             const int32_t i = meshConstraintEnds[2*c], j = meshConstraintEnds[2*c+1];
@@ -2594,22 +2605,16 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                         pairBandBase = heldR1 + heldThick;
                         haveHeld = true;
                     }
-                    // The fresh triangle sphere needs no corners: a stamp
-                    // from the held tick covers every corner's ticks, so the
-                    // fast path fetches the cached sphere over the held bases
-                    // without loading them; the slow path loads them for the
-                    // tick compares and the recompute. The same values.
+                    // Direct read over the bulk-refreshed spheres: the
+                    // refresh ahead of the pass stamped every sphere with
+                    // the held tick, and the band switches off beside the
+                    // first correction that could retire them. The same
+                    // values the checked fetch returned.
                     float ttc[3], ttr;
-                    if (triTickBase[tri] == tickNow) {
-                        ttc[0] = triCentersBase[3*tri];
-                        ttc[1] = triCentersBase[3*tri+1];
-                        ttc[2] = triCentersBase[3*tri+2];
-                        ttr = triRadiiBase[tri];
-                    } else {
-                        TriSphere(&triSpheres, &spheres, tri, meshTriangles[3*tri],
-                                  meshTriangles[3*tri+1], meshTriangles[3*tri+2],
-                                  x, ttc, &ttr, tickNow);
-                    }
+                    ttc[0] = triCentersBase[3*tri];
+                    ttc[1] = triCentersBase[3*tri+1];
+                    ttc[2] = triCentersBase[3*tri+2];
+                    ttr = triRadiiBase[tri];
                     const float td0 = heldC1[0] - ttc[0], td1 = heldC1[1] - ttc[1],
                                 td2 = heldC1[2] - ttc[2];
                     const float trr = ttr + triBandBase;
