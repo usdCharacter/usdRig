@@ -329,6 +329,13 @@ struct RigExecClothGrid {
     /// emptiness, so a stale table from another tick is never mistaken
     /// for this tick's.
     std::vector<float> triFilter;
+    /// Per-triangle slab margins over one tick's reach, one float each:
+    /// the same arithmetic the vertex-slab pre-test runs per candidate,
+    /// filled beside the prefilter boxes. The search reads them through
+    /// the grid wherever the caller passed the prefilter boxes, so the
+    /// slab loads its margin instead of re-deriving it over the shape
+    /// sum and the reach, with no new branch.
+    std::vector<float> triSlab;
 };
 
 /// One substep's interpolated collider triangles: the vertices at the
@@ -1518,6 +1525,12 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             // subnormal scales, where the relative band underflows below the
             // absolute rounding. NaN inputs compare false and take the full
             // path as before.
+            // The vertex-slab margin arrives with the prefilter verdict: the
+            // tick's table where the caller derived the prefilter boxes
+            // (the same widened value the expression below forms, read
+            // instead of recomputed), the per-candidate derivation
+            // otherwise. No new branch either way.
+            float slabMargin;
             {
                 // The tick's prefilter boxes, where the caller derived
                 // them: the same widened bounds the block below forms,
@@ -1532,6 +1545,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                         }
                     }
                     if (outside) continue;
+                    slabMargin = grid.triSlab[size_t(tri)];
                 } else {
                     const float *tb = grid.triBounds.data() + 6 * size_t(tri);
                     const float shapes = reach + grid.triShapes[size_t(tri)];
@@ -1544,6 +1558,8 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                         }
                     }
                     if (outside) continue;
+                    slabMargin =
+                        (grid.triShapes[size_t(tri)] + reach + reach) * 3.0517578125e-05f + 1e-30f;
                 }
             }
             float localV[3][3];
@@ -1585,8 +1601,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                 const float s0 = np - Dot(n, v[0]);
                 const float s1 = np - Dot(n, v[1]);
                 const float s2 = np - Dot(n, v[2]);
-                const float margin =
-                    (grid.triShapes[size_t(tri)] + reach + reach) * 3.0517578125e-05f + 1e-30f;
+                const float margin = slabMargin;
                 bool twoSidedSlab = false;
                 if (mayFlip) {
                     const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
@@ -3598,9 +3613,11 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                 const float reach = std::max(thickness, depth);
                 const size_t triCount = colliders.triangles.size() / 3;
                 ws->grid.triFilter.resize(6 * triCount);
+                ws->grid.triSlab.resize(triCount);
                 const float *tb = ws->grid.triBounds.data();
                 const float *shapeSums = ws->grid.triShapes.data();
                 float *fb = ws->grid.triFilter.data();
+                float *slab = ws->grid.triSlab.data();
                 for (size_t t = 0; t < triCount; ++t) {
                     const float shapeSum = reach + shapeSums[t];
                     const float bound = reach + shapeSum * 1.9073486328125e-06f + 1e-30f;
@@ -3608,6 +3625,7 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                         fb[6 * t + size_t(a)] = tb[6 * t + size_t(a)] - bound;
                         fb[6 * t + size_t(a) + 3] = tb[6 * t + size_t(a) + 3] + bound;
                     }
+                    slab[t] = (shapeSums[t] + reach + reach) * 3.0517578125e-05f + 1e-30f;
                 }
             }
             RigExecClothSweptReachBounds(ws->grid, pad, &profileBounds);
