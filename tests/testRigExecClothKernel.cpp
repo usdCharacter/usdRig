@@ -2809,7 +2809,11 @@ void TestSelfPairBitsetFallback()
     CHECK(ee == 28);
     CHECK(PairBitCount(ws.selfPairBits) == 0);
     CHECK(ws.selfPairs.count == 0);
-    CHECK(ws.selfPairs64.count == 48030);
+    // Grid-shape statistic: four buckets per triangle spread hash
+    // collisions thinner, so discovery records fewer spurious pairs
+    // before the filters; the corrections and solved points below are
+    // unchanged.
+    CHECK(ws.selfPairs64.count == 41706);
     uint64_t h = 1469598103934665603ull;
     const auto *p = reinterpret_cast<const uint8_t *>(x.data());
     for (size_t i = 0; i < x.size() * sizeof(float); ++i) {

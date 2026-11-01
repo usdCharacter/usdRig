@@ -1295,7 +1295,15 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         (mulCell && std::isfinite(reciprocal)) ? reciprocal : 0.0f;
     grid->cellSizeInv = inv;
     uint32_t buckets = 1;
-    while (buckets < 2 * triangleCount && buckets < (1u << 24)) buckets <<= 1;
+    // Four buckets per triangle: the span walk lists the same cells, so
+    // the extra table only spreads hash collisions thinner, and each
+    // query reads fewer candidates. Every covering triangle still lands
+    // in its cell's bucket, each bucket still lists ascending, and the
+    // contact search breaks ties to the lower triangle, so the argmin
+    // answers bit for bit; the discovery loops walk a subsequence of the
+    // same pairs in the same order, and their exact dedup sets reach the
+    // same verdicts, so corrections apply in the same order.
+    while (buckets < 4 * triangleCount && buckets < (1u << 24)) buckets <<= 1;
     grid->bucketMask = buckets - 1;
     // Each triangle's buckets, once each, in triangle order; then a counting
     // sort by bucket, which keeps the triangles of a bucket ascending. The
