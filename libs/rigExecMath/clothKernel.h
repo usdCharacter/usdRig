@@ -492,6 +492,15 @@ struct RigExecClothWorkspace {
     RigExecClothGrid grid;
     std::vector<uint64_t> cellScratch;
     RigExecClothContactTris contacts;
+    /// The collider-grid floor the last tick recorded for this one:
+    /// fine when many particles met fat buckets, else coarse. Reset
+    /// per solve; the first tick builds coarse.
+    float gridFloorNext = 2.0f;
+    /// Whether the solve knows its buckets run fat (sixty-four mean
+    /// entries over the occupied ones), and the verdict. Fatness is a
+    /// collider property, so one scan per solve settles every tick.
+    bool gridFatKnown = false;
+    bool gridFat = false;
 };
 
 namespace cloth_detail {
@@ -1193,11 +1202,16 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
 /// \p skipAux skips the shape sums and swept bounds: only grids whose
 /// searches never read them (the self-discovery grids, which walk
 /// buckets and spheres) may ask for it.
+/// \p floorMul scales the pad floor under the cell size: finer cells
+/// list fewer candidates per bucket at the cost of more entries per
+/// triangle. Order-free searches answer identically at any floor; the
+/// discovery grids keep the default, whose bucket order their
+/// corrections apply in.
 inline void
 RigExecBuildClothGrid(const RigExecClothColliders &colliders,
                       const float *before, const float *after, float pad,
                       RigExecClothGrid *grid, std::vector<uint64_t> *scratch,
-                      bool mulCell = false, bool skipAux = false)
+                      bool mulCell = false, bool skipAux = false, float floorMul = 2.0f)
 {
     using namespace cloth_detail;
     const size_t triangleCount = colliders.triangles.size() / 3;
@@ -1230,7 +1244,7 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         }
         return finite;
     };
-    // Cell size: the mean swept triangle extent, at least twice the pad.
+    // Cell size: the mean swept triangle extent, at least the pad floor.
     // The same walk gathers the broadphase bounds over the same finite
     // triangles the grid lists, so every candidate lies inside them, and
     // keeps every triangle's bounds for the span walk below, which
@@ -1271,7 +1285,7 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         ++measured;
     }
     float cell = measured ? float(extent / double(measured)) : 1.0f;
-    cell = std::max(cell, 2.0f * pad);
+    cell = std::max(cell, floorMul * pad);
     if (!(cell > 0.0f) || !std::isfinite(cell)) cell = 1.0f;
     grid->cellSize = cell;
     // The reciprocal cell, where asked: a non-finite reciprocal (a
@@ -3568,6 +3582,9 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
     ws->attachmentLambda.resize(bindingCount);
     ws->contactLambda.resize(n);
     ws->contactTriangles.resize(n);
+    ws->gridFloorNext = 2.0f;
+    ws->gridFatKnown = false;
+    ws->gridFat = false;
     float *x = ws->x.data();
     float *xp = ws->previous.data();
     float *v = ws->velocity.data();
@@ -3600,7 +3617,8 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
             // so the monotone multiply-based cells answer identically.
             RigExecBuildClothGrid(colliders, from.colliders, to.colliders,
                                   pad,
-                                  &ws->grid, &ws->cellScratch, true);
+                                  &ws->grid, &ws->cellScratch, true, false,
+                                  ws->gridFloorNext);
             // The tick's prefilter boxes on the empty-model path: the
             // reach is tick-fixed there (every search runs this step's
             // thickness and depth), so each triangle's widened bounds
@@ -3731,6 +3749,48 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                 if (!mesh.model.Empty()) RigExecClothSelfContacts(mesh, s, xp, ws, x);
             }
             for (size_t i = 0; i < n; ++i) RigExecClothVelocity(mesh, s, i, x, xp, v);
+            // Record the next tick's floor: fine when many particles
+            // met fat buckets, trading entries per triangle for
+            // candidates per search; else the cheap coarse grid.
+            // Sixty-four in-box searchers over buckets averaging
+            // sixty-four entries amortize the fine build; below either
+            // the coarse grid wins or ties. The contact search is an
+            // order-free argmin over either conservative superset, so
+            // the answers agree bit for bit.
+            if (collide && !skipTris) {
+                if (!ws->gridFatKnown) {
+                    const uint32_t *starts = ws->grid.bucketStart.data();
+                    const size_t buckets = ws->grid.bucketStart.size() - 1;
+                    const size_t entries = ws->grid.bucketTriangles.size();
+                    size_t occupied = 0;
+                    for (size_t b = 0; b < buckets; ++b) {
+                        occupied += starts[b + 1] != starts[b];
+                        if (64 * occupied > entries) break;
+                    }
+                    ws->gridFat = occupied && 64 * occupied <= entries;
+                    ws->gridFatKnown = true;
+                }
+                size_t inBox = 0;
+                if (ws->gridFat) {
+                    // The tick's pad again (reach over its parameters and profiles),
+                    // mirroring the tick setup. Recomputed this late so the hot
+                    // setup keeps the base layout on every solve shape.
+                    float rpad = std::max(std::max(0.0f, to.parameters.thickness),
+                                          std::max(0.0f, to.parameters.collisionDepth));
+                    for (const auto &p : mesh.model.profiles)
+                        if (p.kind == RigExecClothProfileKind::Collision)
+                            for (size_t i = 0; i < n; ++i)
+                                rpad = std::max(rpad, p.thickness * RigExecClothMap(p, ClothThickness, i));
+                    for (size_t i = 0; i < n; ++i) {
+                        if (!RigExecClothOutsideSweptBounds(ws->grid, x + 3 * i, rpad)) {
+                            if (++inBox >= 64) break;
+                        }
+                    }
+                }
+                ws->gridFloorNext = (ws->gridFat && inBox >= 64) ? 0.75f : 2.0f;
+            } else if (collide) {
+                ws->gridFloorNext = 2.0f;
+            }
         }
     }
     for (size_t i = 0; i < 3 * n; ++i) {
