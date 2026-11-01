@@ -274,6 +274,10 @@ struct RigExecClothTick {
 /// triangles ascending within a bucket.
 struct RigExecClothGrid {
     float cellSize = 1.0f;
+    /// The reciprocal cell where the build asked for multiply-based
+    /// cells, zero where it kept division: the query reads this to
+    /// reach the same bucket the span walk listed. Transient.
+    float cellSizeInv = 0.0f;
     uint32_t bucketMask = 0;
     std::vector<uint32_t> bucketStart;
     std::vector<int32_t> bucketTriangles;
@@ -521,6 +525,7 @@ inline bool AdjacentToRowBits(const uint64_t *row, int32_t v);
 inline bool AdjacentToTriBits(const RigExecClothMesh &mesh, size_t t, int32_t v);
 
 inline int64_t Cell(float v, float cell) { return int64_t(std::floor(v / cell)); }
+inline int64_t CellMul(float v, float inv) { return int64_t(std::floor(v * inv)); }
 
 inline uint32_t Hash(int64_t x, int64_t y, int64_t z, uint32_t mask)
 {
@@ -1157,16 +1162,23 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
 /// Builds the grid of \p colliders swept from \p before to \p after (point
 /// arrays of colliders.pointCount float3s), padded by \p pad. Triangles are
 /// listed in ascending order in every bucket. \p scratch is reused storage.
+/// \p mulCell asks for multiply-based cells: one division per build
+/// replaces three per query. The multiply-based cell is monotone in
+/// the coordinate, so the span walk still lists every triangle the
+/// query's cell can hold; only order-free searches (the argmin
+/// contact search, the existential window scan) may ask for it.
 inline void
 RigExecBuildClothGrid(const RigExecClothColliders &colliders,
                       const float *before, const float *after, float pad,
-                      RigExecClothGrid *grid, std::vector<uint64_t> *scratch)
+                      RigExecClothGrid *grid, std::vector<uint64_t> *scratch,
+                      bool mulCell = false)
 {
     using namespace cloth_detail;
     const size_t triangleCount = colliders.triangles.size() / 3;
     grid->bucketStart.clear();
     grid->bucketTriangles.clear();
     if (!triangleCount) {
+        grid->cellSizeInv = 0.0f;
         grid->bucketMask = 0;
         grid->bucketStart.assign(2, 0);
         for (int a = 0; a < 3; ++a) {
@@ -1230,6 +1242,12 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
     cell = std::max(cell, 2.0f * pad);
     if (!(cell > 0.0f) || !std::isfinite(cell)) cell = 1.0f;
     grid->cellSize = cell;
+    // The reciprocal cell, where asked: a non-finite reciprocal (a
+    // subnormal cell) stays on division, as do all default builds.
+    const float reciprocal = 1.0f / cell;
+    const float inv =
+        (mulCell && std::isfinite(reciprocal)) ? reciprocal : 0.0f;
+    grid->cellSizeInv = inv;
     uint32_t buckets = 1;
     while (buckets < 2 * triangleCount && buckets < (1u << 24)) buckets <<= 1;
     grid->bucketMask = buckets - 1;
@@ -1247,8 +1265,10 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         if (!keptFinite[t]) continue;
         int64_t c0[3], c1[3];
         for (int a = 0; a < 3; ++a) {
-            c0[a] = Cell(kept[6 * t + size_t(a)] - pad, cell);
-            c1[a] = Cell(kept[6 * t + size_t(a) + 3] + pad, cell);
+            c0[a] = inv != 0.0f ? CellMul(kept[6 * t + size_t(a)] - pad, inv)
+                                : Cell(kept[6 * t + size_t(a)] - pad, cell);
+            c1[a] = inv != 0.0f ? CellMul(kept[6 * t + size_t(a) + 3] + pad, inv)
+                                : Cell(kept[6 * t + size_t(a) + 3] + pad, cell);
         }
         // A triangle swept across more cells than the table holds is
         // listed in every bucket once.
@@ -1437,8 +1457,15 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     if (!broadphaseKnownInside &&
         RigExecClothOutsideSweptBounds(grid, p, reach))
         return best;
-    const uint32_t bucket = Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
-                                 Cell(p[2], grid.cellSize), grid.bucketMask);
+    // Multiply-based cells where the grid was built that way: the
+    // query reads the span walk's reciprocal, reaching the bucket
+    // the span walk listed without repeating its divisions.
+    const float cellInv = grid.cellSizeInv;
+    const uint32_t bucket = cellInv != 0.0f
+        ? Hash(CellMul(p[0], cellInv), CellMul(p[1], cellInv), CellMul(p[2], cellInv),
+               grid.bucketMask)
+        : Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
+               Cell(p[2], grid.cellSize), grid.bucketMask);
     // The normal flip below needs the previous point: without one no
     // candidate flips, so the vertex-slab pre-test runs one-sided.
     const bool mayFlip = previous != nullptr;
@@ -3398,9 +3425,12 @@ RigExecSolveCloth(const RigExecClothMesh &mesh,
                 if (p.kind == RigExecClothProfileKind::Collision)
                     for (size_t i = 0; i < n; ++i)
                         pad = std::max(pad, p.thickness * RigExecClothMap(p, ClothThickness, i));
+            // Multiply-based cells: the tick's contact searches are an
+            // order-free argmin over the grid's conservative superset,
+            // so the monotone multiply-based cells answer identically.
             RigExecBuildClothGrid(colliders, from.colliders, to.colliders,
                                   pad,
-                                  &ws->grid, &ws->cellScratch);
+                                  &ws->grid, &ws->cellScratch, true);
             // The tick's prefilter boxes on the empty-model path: the
             // reach is tick-fixed there (every search runs this step's
             // thickness and depth), so each triangle's widened bounds
