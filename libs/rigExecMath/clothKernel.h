@@ -2385,6 +2385,26 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         const int32_t *meshTriEdgeConstraint = mesh.triEdgeConstraint.data();
         const int32_t *meshConstraintEnds = mesh.constraintEnds.data();
         const uint8_t *meshConstraintKind = mesh.constraintKind.data();
+        // The triangle-sphere bases stay fixed across both discovery
+        // loops: the cache is sized per call and only assigned within
+        // it, so the bands below reread the same bases without
+        // reloading them per entry.
+        const float *triCentersBase = triSpheres.centers.data();
+        const float *triRadiiBase = triSpheres.radii.data();
+        // Bulk-refresh every triangle sphere for the bands below: the
+        // refresh computes exactly the stale spheres through the same
+        // freshness logic the per-entry calls ran, stamping the held
+        // tick, so both bands read them directly with no per-entry
+        // tick check. The same values and stamps. A vertex/triangle
+        // correction retires spheres, so the first one falls back to
+        // checked fetches and re-validates ahead of the edge/edge pass.
+        for (size_t bulkTri = 0; bulkTri < sphereTris; ++bulkTri) {
+            float bulkC[3], bulkR;
+            TriSphere(&triSpheres, &spheres, bulkTri, meshTriangles[3 * bulkTri],
+                      meshTriangles[3 * bulkTri + 1], meshTriangles[3 * bulkTri + 2],
+                      x, bulkC, &bulkR, tickNow);
+        }
+        bool vtBandDirect = true;
         for (size_t i = 0; i < mesh.pointCount; ++i) {
             const auto a = RigExecClothVertex(i);
             // Either region may supply the vertex; contact is symmetric.
@@ -2430,8 +2450,15 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 // nothing, and clamping a negative reach at zero stays
                 // conservative. Skips the barycentric weights.
                 float tc[3], tr;
-                TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
-                          b.vertices[1], b.vertices[2], x, tc, &tr, tickNow);
+                if (vtBandDirect) {
+                    tc[0] = triCentersBase[3 * size_t(tri)];
+                    tc[1] = triCentersBase[3 * size_t(tri) + 1];
+                    tc[2] = triCentersBase[3 * size_t(tri) + 2];
+                    tr = triRadiiBase[size_t(tri)];
+                } else {
+                    TriSphere(&triSpheres, &spheres, size_t(tri), b.vertices[0],
+                              b.vertices[1], b.vertices[2], x, tc, &tr, tickNow);
+                }
                 const float reach = tr + bandLimit;
                 const float dd0 = point[0] - tc[0], dd1 = point[1] - tc[1],
                             dd2 = point[2] - tc[2];
@@ -2465,6 +2492,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
                 const float correction = RigExecClothProjectSamples(mesh, step, p,
                     a, &b, signedDistance - thickness, n, true, &lambda, x, false);
                 tickNow = TouchVerts(&spheres, int32_t(i), b.vertices[0], b.vertices[1], b.vertices[2]);
+                vtBandDirect = false;
                 const float mu = p.friction * RigExecClothMap(p, ClothFriction, i);
                 if (!(correction > 0 && mu > 0)) continue;
                 RigExecClothSamplePoint(b, x, q);
@@ -2502,12 +2530,6 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // The triangle band stays on until an edge/edge correction moves
         // x, which could grow a triangle edge past the reach bound.
         bool triBandOn = true;
-        // The triangle-sphere bases stay fixed across the edge/edge pass:
-        // the cache is sized per call and only assigned within it, so the
-        // triband below rereads the same bases without reloading them
-        // per entry.
-        const float *triCentersBase = triSpheres.centers.data();
-        const float *triRadiiBase = triSpheres.radii.data();
         // Flat dedup over retained storage: the same verdicts as an
         // ordered set (the discovery loops keep their order), with no
         // per-pair allocation.
@@ -2526,17 +2548,18 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         // bits, so the edge tests reread the same base without
         // reloading it per entry.
         uint64_t *eePairBase = usePairBits ? pairBits.data() : nullptr;
-        // Bulk-refresh every triangle sphere for the triband below: the
-        // refresh computes exactly the stale spheres (never visited, or
-        // retired by vertex/triangle corrections) through the same
-        // freshness logic the per-entry calls ran, stamping the held
-        // tick, so the triband reads them directly with no per-entry
-        // tick check. The same values and stamps.
-        for (size_t bulkTri = 0; bulkTri < sphereTris; ++bulkTri) {
-            float bulkC[3], bulkR;
-            TriSphere(&triSpheres, &spheres, bulkTri, meshTriangles[3 * bulkTri],
-                      meshTriangles[3 * bulkTri + 1], meshTriangles[3 * bulkTri + 2],
-                      x, bulkC, &bulkR, tickNow);
+        // The vertex-loop bulk above stamped every sphere with the held
+        // tick; only a vertex/triangle correction retires any, so only
+        // then does the edge/edge pass re-validate them. The same values
+        // and stamps either way: without a correction the refresh would
+        // only restamp the same tick.
+        if (!vtBandDirect) {
+            for (size_t bulkTri = 0; bulkTri < sphereTris; ++bulkTri) {
+                float bulkC[3], bulkR;
+                TriSphere(&triSpheres, &spheres, bulkTri, meshTriangles[3 * bulkTri],
+                          meshTriangles[3 * bulkTri + 1], meshTriangles[3 * bulkTri + 2],
+                          x, bulkC, &bulkR, tickNow);
+            }
         }
         for (size_t c = 0; c < constraintCount; ++c) {
             if (meshConstraintKind[c] != uint8_t(RigExecClothConstraint::Stretch)) continue;
