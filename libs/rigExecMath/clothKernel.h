@@ -1740,6 +1740,13 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
         float ka[kChunk], kb[kChunk];
         int32_t ends[kChunk][2];
         char live[kChunk];
+// Four-wide: the serial loop leaves the root-and-divide chain
+// under-pipelined, so the unroll overlaps four constraints'
+// chains. Each constraint runs the same operations in the same
+// order, so the stash and the pass below see the same bits.
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
         for (uint32_t k = 0; k < n; ++k) {
             const size_t c = size_t(base + k);
             ends[k][0] = mesh.constraintEnds[2 * c];
@@ -1791,6 +1798,12 @@ RigExecClothProjectColorSingle(const RigExecClothMesh &mesh,
             kb[k] = wb * dl / len;
             live[k] = 1;
         }
+// Four-wide with the derive pass above: the scattered position
+// updates overlap four constraints' loads and stores while each
+// constraint's updates land in the same order on the same bits.
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
         for (uint32_t k = 0; k < n; ++k) {
             if (!live[k]) continue;
             const size_t a = size_t(ends[k][0]);
