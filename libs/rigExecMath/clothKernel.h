@@ -1476,8 +1476,16 @@ RigExecClothContactTrisAt(const RigExecClothColliders &colliders,
 /// floats per triangle, the swept bounds widened by this search's
 /// reach in the prefilter's own arithmetic); the prefilter reads them
 /// instead of deriving them. A null pointer derives them as before.
+///
+/// \p EmptyModel unswitches the caller-known branches: the empty-model
+/// search always arrives with a prefilter table, no collider filter,
+/// no previous point or region, a proven broadphase, and a precompute
+/// table, so the true instantiation folds those branches out of the
+/// candidate loop. The false instantiation keeps every runtime check
+/// and answers every other call exactly as before.
+template <bool EmptyModel>
 inline RigExecClothContact
-RigExecClothFindContact(const RigExecClothColliders &colliders,
+RigExecClothFindContactImpl(const RigExecClothColliders &colliders,
                         const RigExecClothGrid &grid, const float *before,
                         const float *after, float t, const float *p,
                         float thickness, float depth, const float *previous = nullptr,
@@ -1500,7 +1508,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
     // and return empty. A caller that already tested the same box over
     // the same reach passes broadphaseKnownInside and skips the
     // re-derivation; the verdict would repeat bit for bit.
-    if (!broadphaseKnownInside &&
+    if (!EmptyModel && !broadphaseKnownInside &&
         RigExecClothOutsideSweptBounds(grid, p, reach))
         return best;
     // Multiply-based cells where the grid was built that way: the
@@ -1512,9 +1520,6 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                grid.bucketMask)
         : Hash(Cell(p[0], grid.cellSize), Cell(p[1], grid.cellSize),
                Cell(p[2], grid.cellSize), grid.bucketMask);
-    // The normal flip below needs the previous point: without one no
-    // candidate flips, so the vertex-slab pre-test runs one-sided.
-    const bool mayFlip = previous != nullptr;
     {
         for (uint32_t k = grid.bucketStart[bucket]; k < grid.bucketStart[bucket + 1]; ++k) {
             const int32_t tri = grid.bucketTriangles[k];
@@ -1523,7 +1528,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             // empty-model path takes none of them, so an eager load
             // costs a dependent fetch per candidate there. Each use
             // loads it on its own live path; the same values.
-            if (filterCollider) {
+            if (!EmptyModel && filterCollider) {
                 const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
                 if (firstVertex < twoSidedBegin || firstVertex >= twoSidedEnd) continue;
             }
@@ -1548,8 +1553,21 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             {
                 // The tick's prefilter boxes, where the caller derived
                 // them: the same widened bounds the block below forms,
-                // read instead of recomputed per candidate.
-                if (filterBoxes) {
+                // read instead of recomputed per candidate. The empty-model
+                // search always carries the table; the general search keeps
+                // the runtime test for callers that mix table and profiles.
+                if constexpr (EmptyModel) {
+                    const float *fb = filterBoxes + 6 * size_t(tri);
+                    bool outside = false;
+                    for (int a = 0; a < 3; ++a) {
+                        if (p[a] < fb[a] || p[a] > fb[a + 3]) {
+                            outside = true;
+                            break;
+                        }
+                    }
+                    if (outside) continue;
+                    slabMargin = grid.triSlab[size_t(tri)];
+                } else if (filterBoxes) {
                     const float *fb = filterBoxes + 6 * size_t(tri);
                     bool outside = false;
                     for (int a = 0; a < 3; ++a) {
@@ -1579,7 +1597,12 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             float localV[3][3];
             float n[3];
             const float *v[3] = {localV[0], localV[1], localV[2]};
-            if (precomputed && size_t(tri) < precomputed->triangleCount) {
+            // The empty-model search always carries the precompute table;
+            // the general search covers callers without one.
+            const bool covered = EmptyModel ? size_t(tri) < precomputed->triangleCount
+                                            : (precomputed &&
+                                               size_t(tri) < precomputed->triangleCount);
+            if (covered) {
                 if (precomputed->degenerate[size_t(tri)]) continue;
                 const float *row = precomputed->verts.data() + 9 * size_t(tri);
                 v[0] = row; v[1] = row + 3; v[2] = row + 6;
@@ -1616,8 +1639,10 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
                 const float s1 = np - Dot(n, v[1]);
                 const float s2 = np - Dot(n, v[2]);
                 const float margin = slabMargin;
+                // The normal flip needs the previous point: without one no
+                // candidate flips, so the empty-model pre-test runs one-sided.
                 bool twoSidedSlab = false;
-                if (mayFlip) {
+                if (!EmptyModel && previous != nullptr) {
                     const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
                     twoSidedSlab =
                         firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd;
@@ -1636,7 +1661,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             }
             float w[3];
             ClosestBarycentric(p, v[0], v[1], v[2], w);
-            if (region && !region->empty()) {
+            if (!EmptyModel && region && !region->empty()) {
                 float selected = 0;
                 for (size_t c = 0; c < 3; ++c)
                     selected += w[c] * (*region)[size_t(colliders.triangles[3 * size_t(tri) + c]) - twoSidedBegin];
@@ -1646,7 +1671,7 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
             for (int a = 0; a < 3; ++a)
                 q[a] = w[0] * v[0][a] + w[1] * v[1][a] + w[2] * v[2][a];
             bool flipSide = false;
-            if (previous) {
+            if (!EmptyModel && previous) {
                 const size_t firstVertex = size_t(colliders.triangles[3 * size_t(tri)]);
                 flipSide = firstVertex >= twoSidedBegin && firstVertex < twoSidedEnd;
             }
@@ -1685,6 +1710,38 @@ RigExecClothFindContact(const RigExecClothColliders &colliders,
         }
     }
     return best;
+}
+
+/// The runtime-dispatched contact search: a call carrying the empty-model
+/// conditions (a prefilter table, no collider filter, no previous point
+/// or region, a proven broadphase, and a precompute table) takes the
+/// unswitched instantiation; every other call takes the general one.
+/// Same answers either way; production empty-model searches meet the
+/// conditions by construction.
+inline RigExecClothContact
+RigExecClothFindContact(const RigExecClothColliders &colliders,
+                        const RigExecClothGrid &grid, const float *before,
+                        const float *after, float t, const float *p,
+                        float thickness, float depth, const float *previous = nullptr,
+                        float t0 = 0, size_t twoSidedBegin = 0,
+                        size_t twoSidedEnd = std::numeric_limits<size_t>::max(),
+                        bool filterCollider = false,
+                        const std::vector<float> *region = nullptr,
+                        const RigExecClothContactTris *precomputed = nullptr,
+                        bool broadphaseKnownInside = false,
+                        const float *filterBoxes = nullptr)
+{
+    const bool fast = filterBoxes && !filterCollider && !previous && !region &&
+                      broadphaseKnownInside && precomputed;
+    if (fast)
+        return RigExecClothFindContactImpl<true>(
+            colliders, grid, before, after, t, p, thickness, depth, previous,
+            t0, twoSidedBegin, twoSidedEnd, filterCollider, region, precomputed,
+            broadphaseKnownInside, filterBoxes);
+    return RigExecClothFindContactImpl<false>(
+        colliders, grid, before, after, t, p, thickness, depth, previous,
+        t0, twoSidedBegin, twoSidedEnd, filterCollider, region, precomputed,
+        broadphaseKnownInside, filterBoxes);
 }
 
 /// One substep's tick-level constants, shared by the passes below and the
