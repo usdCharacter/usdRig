@@ -1183,11 +1183,14 @@ inline bool RigExecPrepareClothModel(RigExecClothMesh *mesh,
 /// the coordinate, so the span walk still lists every triangle the
 /// query's cell can hold; only order-free searches (the argmin
 /// contact search, the existential window scan) may ask for it.
+/// \p skipAux skips the shape sums and swept bounds: only grids whose
+/// searches never read them (the self-discovery grids, which walk
+/// buckets and spheres) may ask for it.
 inline void
 RigExecBuildClothGrid(const RigExecClothColliders &colliders,
                       const float *before, const float *after, float pad,
                       RigExecClothGrid *grid, std::vector<uint64_t> *scratch,
-                      bool mulCell = false)
+                      bool mulCell = false, bool skipAux = false)
 {
     using namespace cloth_detail;
     const size_t triangleCount = colliders.triangles.size() / 3;
@@ -1238,18 +1241,24 @@ RigExecBuildClothGrid(const RigExecClothColliders &colliders,
         float lo[3], hi[3];
         const bool finite = bounds(t, lo, hi);
         grid->triFinite[t] = finite ? 1 : 0;
-        float shapes = 0;
         for (int a = 0; a < 3; ++a) {
             grid->triBounds[6 * t + size_t(a)] = lo[a];
             grid->triBounds[6 * t + size_t(a) + 3] = hi[a];
-            shapes += std::abs(lo[a]);
         }
-        for (int a = 0; a < 3; ++a) shapes += std::abs(hi[a]);
-        grid->triShapes[t] = shapes;
+        // The shape sums in their own accumulation order; skipped grids
+        // never read them.
+        if (!skipAux) {
+            float shapes = 0;
+            for (int a = 0; a < 3; ++a) shapes += std::abs(lo[a]);
+            for (int a = 0; a < 3; ++a) shapes += std::abs(hi[a]);
+            grid->triShapes[t] = shapes;
+        }
         if (!finite) continue;
-        for (int a = 0; a < 3; ++a) {
-            grid->sweptLo[a] = std::min(grid->sweptLo[a], lo[a]);
-            grid->sweptHi[a] = std::max(grid->sweptHi[a], hi[a]);
+        if (!skipAux) {
+            for (int a = 0; a < 3; ++a) {
+                grid->sweptLo[a] = std::min(grid->sweptLo[a], lo[a]);
+                grid->sweptHi[a] = std::max(grid->sweptHi[a], hi[a]);
+            }
         }
         extent += double(std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2])));
         ++measured;
@@ -2493,7 +2502,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
     float triReach = edgeReach;
     uint64_t triReachClock = spheres.clock;
     RigExecBuildClothGrid(topology, previous, x, std::max(pad, step.depth),
-                          &ws->selfGrid, &ws->selfScratch);
+                          &ws->selfGrid, &ws->selfScratch, false, true);
     const auto &grid = ws->selfGrid;
     // While the vertex/triangle grid stays valid for the edge/edge pass,
     // the edge/edge discovery rereads it as is instead of rebuilding it.
@@ -2679,7 +2688,7 @@ inline void RigExecClothSelfContacts(const RigExecClothMesh &mesh,
         if (!RigExecClothSelfGridReusable(spheres.clock, selfGridClock, edgeReach,
                                           std::max(pad, step.depth)))
             RigExecBuildClothGrid(topology, previous, x, std::max(std::max(pad, step.depth), edgeReach),
-                                  &ws->selfGrid, &ws->selfScratch);
+                                  &ws->selfGrid, &ws->selfScratch, false, true);
         if (spheres.clock != triReachClock) {
             triReach = measureReach();
             triReachClock = spheres.clock;
