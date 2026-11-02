@@ -5324,6 +5324,20 @@ struct RigExecBakedBuildContext {
     RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const TfToken &name,
                                      T fallback, SdfPathVector *walk,
                                      bool sourceValue = false) const;
+    /// The capture-sourced half of ResolveBind: answers the BindInput read
+    /// from the detached capture BuildSpaces took on this same unchanged
+    /// stage, instead of re-walking it. True when the capture answered, with
+    /// \p input holding exactly what RigExecBakedBindInput would have
+    /// returned; false for anything the rows cannot prove -- no capture, a
+    /// missing row, an inactive hop (whose rows the capture leaves empty
+    /// while a live read answers them), or a varying hop (whose probe-time
+    /// re-classify the rows do not hold) -- and then the caller runs the
+    /// stage path. The walk is built locally and moved out only on success,
+    /// so a refusal leaves the caller's walk untouched for the stage path.
+    template <class T>
+    bool TryCaptureBind(const UsdPrim &prim, const TfToken &name,
+                        T fallback, SdfPathVector *walk,
+                        RigExecBakedInput<T> *input) const;
     template <class T>
     RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const char *name,
                                      T fallback, SdfPathVector *walk,
@@ -5391,14 +5405,152 @@ RigExecBakedIsLiveChannel(const TfToken &name)
 }
 
 template <class T>
+bool
+RigExecBakedBuildContext::TryCaptureBind(const UsdPrim &prim, const TfToken &name,
+                                         T fallback, SdfPathVector *walk,
+                                         RigExecBakedInput<T> *input) const
+{
+    *input = RigExecBakedInput<T>();
+    input->constant = fallback;
+    if (!program || !prim) {
+        return false;
+    }
+    // A reference, not a copy: a copy takes the shared count's atomic
+    // increment and decrement on every bind, and BuildSpaces published this
+    // capture before the first bind ran, so it cannot move under the read.
+    const std::shared_ptr<const RigExecSceneDescriptors> &captured =
+        program->sceneDescriptors;
+    if (!captured) {
+        return false;
+    }
+    const RigExecSceneDescriptors &scene = *captured;
+    size_t slot = scene.identities.size();
+    for (size_t s = 0; s < scene.identities.size(); ++s) {
+        if (scene.identities[s] == capture) {
+            slot = s;
+            break;
+        }
+    }
+    if (slot >= scene.identities.size()) {
+        return false;
+    }
+    const UsdAttribute head = prim.GetAttribute(name);
+    if (!head) {
+        return true;
+    }
+    const SdfPath headPath = head.GetPath();
+    const auto headRow = scene.attributes.find(headPath);
+    if (headRow == scene.attributes.end()) {
+        return false;
+    }
+    const auto headNode = scene.nodes.find(headPath.GetPrimPath());
+    if (headNode == scene.nodes.end() || !headNode->second.fact.active) {
+        return false;
+    }
+    // The ClassifyInput forward walk over captured rows: the same hops in
+    // the same order, the same revisit and fan-out stops, the same
+    // chain-target flag. The captured connections were composed under the
+    // same authored gate the stage walk uses, on this same unchanged stage.
+    SdfPathVector found;
+    std::set<SdfPath> visiting;
+    struct _Hop {
+        SdfPath path;
+        std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator row;
+        size_t samples = 0;
+        bool spline = false;
+    };
+    std::vector<_Hop> hops;
+    bool viaChain = false;
+    SdfPath current = headPath;
+    auto row = headRow;
+    for (;;) {
+        if (!visiting.insert(current).second) {
+            break;
+        }
+        found.push_back(current);
+        if (chainTargets.count(current)) {
+            viaChain = true;
+        }
+        const RigExecSceneAttribute &fact = row->second.fact;
+        const size_t samples = fact.sampleTimes.size();
+        if (fact.mightBeTimeVarying || samples > 0) {
+            return false;
+        }
+        hops.push_back({current, row, samples, !fact.spline.IsEmpty()});
+        if (fact.connections.size() != 1) {
+            break;
+        }
+        const SdfPath next = fact.connections[0];
+        const auto nextRow = scene.attributes.find(next);
+        if (nextRow == scene.attributes.end()) {
+            return false;
+        }
+        const auto nextNode = scene.nodes.find(next.GetPrimPath());
+        if (nextNode == scene.nodes.end() || !nextNode->second.fact.active) {
+            return false;
+        }
+        current = next;
+        row = nextRow;
+    }
+    if (viaChain) {
+        input->varying = true;
+        input->resolvedAttr = head;
+        input->head = head;
+        if (walk) {
+            *walk = std::move(found);
+        }
+        return true;
+    }
+    // The reverse pass, tail to head: a hop's captured raw IS the same
+    // capture-time Get the stage pass issues -- the capture resolved on
+    // this same unchanged stage -- so a hold of T is that Get's success
+    // and value. A keyed hop the capture-time Get misses is probed at its
+    // first key through the stage, exactly as the stage pass does.
+    for (auto it = hops.rbegin(); it != hops.rend(); ++it) {
+        const auto &inputs = it->row->second.inputs;
+        if (slot >= inputs.size()) {
+            return false;
+        }
+        const VtValue &raw = inputs[slot].raw;
+        if (raw.IsHolding<T>()) {
+            input->constant = raw.UncheckedGet<T>();
+            break;
+        }
+        if (it->samples > 0 || it->spline) {
+            const UsdAttribute hop =
+                prim.GetStage()->GetAttributeAtPath(it->path);
+            if (!hop) {
+                return false;
+            }
+            T probe{};
+            if (!hop.Get(&probe, UsdTimeCode::EarliestTime())) {
+                continue;
+            }
+            // The BindInput tail: the selected hop is re-read at the
+            // capture time, keeping the fallback when it has no default.
+            hop.Get(&input->constant, capture);
+            break;
+        }
+    }
+    input->head = head;
+    if (walk) {
+        *walk = std::move(found);
+    }
+    return true;
+}
+
+template <class T>
 RigExecBakedInput<T>
 RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
                                       T fallback, SdfPathVector *walk,
                                       bool sourceValue) const
 {
-    RigExecBakedInput<T> input =
-        RigExecBakedBindInput(prim, name, fallback, capture, chainTargets,
-                              walk);
+    RigExecBakedInput<T> input;
+    if (!TryCaptureBind(prim, name, fallback, walk, &input)) {
+        input =
+            RigExecBakedBindInput(prim, name, fallback, capture, chainTargets,
+                                  walk);
+    }
     // An input that reads an animation channel -- on its head or on any hop
     // of its connection walk -- is read per frame from the start, the way a
     // keyed one is, instead of being folded. Switches, spaces and dials are
