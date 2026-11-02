@@ -53,6 +53,11 @@ namespace {
 // takes the token registry's lock.
 const TfToken _inputElementName(RigExecInputElementMetadataName);
 const TfToken _removedSamplePhase("rigExec:samplePhase");
+// Bounds the retries on a rig that is broken everywhere at once; past it
+// the rig fails as a whole, as it always did. Shared by the retry loop and
+// the early discovery pass, which converts failures into skips by the same
+// rule before the loop ever sees them.
+constexpr size_t kMaxSkippedOperations = 64;
 const TfToken _removedRibbonPhases[] = {
     TfToken("rigExec:driverCurveReadPhase"),
     TfToken("rigExec:surfaceReadPhase")};
@@ -115,10 +120,6 @@ RigExecRigEvaluator::_CompileRig(std::vector<std::string> *errors)
         if (errors) errors->push_back(std::move(sceneError));
         return false;
     }
-
-    // Bounds the retries on a rig that is broken everywhere at once; past it
-    // the rig fails as a whole, as it always did.
-    static constexpr size_t kMaxSkippedOperations = 64;
 
     const std::map<SdfPath, std::string> committedSkips = _skippedOperations;
     _skippedOperations.clear();
@@ -228,23 +229,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     _certainCandidates.clear();
     _certainCandidatesOverflowed = false;
     stampCompileRegion("Compile.Prologue");
-    // rigExec:startFramePolicy, resolved once per compile into chain ->
-    // provider. Every solver-input walk below reads a chain's start frame
-    // through this map when it has no authored target; the baked program
-    // and scene translation apply the same rule to the captured scene. The
-    // stage is never written. The digest covers the rule's inputs (policy,
-    // joints, their namespace ancestry). Warnings go to both channels, like
-    // the transform-authority pass: TF_WARN is what a host surfaces to the
-    // author, the errors vector is what a test can read.
-    std::map<SdfPath, SdfPath> derivedStartFrames;
-    for (const std::string &message : _DeriveStartFrames(&derivedStartFrames)) {
-        if (errors) {
-            errors->push_back("warning: " + message);
-        }
-        TF_WARN("%s", message.c_str());
-    }
-    stampCompileRegion("Compile.DerivedStartFrames");
-
     // The structure digest is a pure read of the composed stage that boils it
     // down to one number, and that number is not consulted until the compiled rig is
     // committed far below: nothing in between reads it, and compile authors
@@ -252,9 +236,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // compile rather than beside only its tail: dispatched after
     // DiscoverValidate it can land after the main thread reaches the join
     // below, and compile then pays for the digest in waiting.
-    // Safe to dispatch before DiscoverValidate because that phase AUTHORS NOTHING:
-    // it reads the composed stage and reports, so there is no edit for the
-    // digest to race. And a rig malformed enough for DiscoverValidate to
+    // Safe to dispatch ahead of every phase below because those phases AUTHOR
+    // NOTHING to the stage: they read the composed stage and report, so there
+    // is no edit for the digest to race, including from the early mover
+    // discovery just below, whose skips land in evaluator state the digest
+    // never consults. And a rig malformed enough for DiscoverValidate to
     // reject is still one _ComputeStructureDigest reads without complaint --
     // every lookup in it goes through GetPrimAtPath/GetAttribute/Get, which
     // hand back invalid objects that the code already tests for, rather than
@@ -316,6 +302,76 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // worker row. With RIGEXEC_ENABLE_PARALLEL_EVAL=0 the call above ran
     // inline and this stamp measures the whole of it.
     stampCompileRegion("Compile.StructureDigest");
+    // Mover discovery runs here, ahead of the phases that consume the skip
+    // set, rather than at its historical position below: a discovery
+    // failure names its mover, so collecting every such failure up front
+    // reaches in one pass the skip set the retry loop used to reach one
+    // failure per attempt, and the attempt then runs once instead of once
+    // per broken mover. The walk is a pure stage read -- _DiscoverMovers is
+    // const and validates each mover from stage state alone, excusing only
+    // the movers already set aside -- so the set it collects is fixed for
+    // the stage, and the attempt below reuses its outputs rather than
+    // rediscovering them. Notices stay buffered until the historical
+    // position so the errors vector keeps their order; a failure the retry
+    // loop would not convert (no culprit, an already-skipped culprit, or a
+    // full skip set) is re-raised there, with the notices it walked past,
+    // exactly as the attempt that reached it used to fail.
+    std::vector<RigExecMoverRecord> newMovers;
+    std::vector<_SurfaceProjectorRecord> newSurfaceProjectors;
+    SdfPathVector inertMovers;
+    std::vector<std::string> discoveryNotices;
+    _CompileFailure discoveryFailure;
+    bool haveDiscoveryFailure = false;
+    if (_stage) {
+        RIGEXEC_PROFILE_SCOPE_CAT(_profiler, "DiscoverValidate.MoverDiscovery",
+                                  "compile");
+        for (;;) {
+            std::vector<RigExecMoverRecord> tryMovers;
+            std::vector<_SurfaceProjectorRecord> tryProjectors;
+            SdfPathVector tryInert;
+            std::vector<std::string> tryNotices;
+            _CompileFailure tryFailure;
+            if (_DiscoverMovers(tryMovers, tryProjectors, tryInert,
+                                &tryNotices, &tryFailure)) {
+                newMovers = std::move(tryMovers);
+                newSurfaceProjectors = std::move(tryProjectors);
+                inertMovers = std::move(tryInert);
+                discoveryNotices = std::move(tryNotices);
+                break;
+            }
+            const bool repeat = std::any_of(
+                tryFailure.operations.begin(), tryFailure.operations.end(),
+                [this](const SdfPath &path) {
+                    return _IsSkippedOperation(path);
+                });
+            if (tryFailure.operations.empty() || repeat ||
+                _skippedOperations.size() >= kMaxSkippedOperations) {
+                discoveryNotices = std::move(tryNotices);
+                discoveryFailure = std::move(tryFailure);
+                haveDiscoveryFailure = true;
+                break;
+            }
+            for (const SdfPath &culprit : tryFailure.operations) {
+                _skippedOperations.emplace(culprit, tryFailure.message);
+            }
+        }
+    }
+    // rigExec:startFramePolicy, resolved once per compile into chain ->
+    // provider. Every solver-input walk below reads a chain's start frame
+    // through this map when it has no authored target; the baked program
+    // and scene translation apply the same rule to the captured scene. The
+    // stage is never written. The digest covers the rule's inputs (policy,
+    // joints, their namespace ancestry). Warnings go to both channels, like
+    // the transform-authority pass: TF_WARN is what a host surfaces to the
+    // author, the errors vector is what a test can read.
+    std::map<SdfPath, SdfPath> derivedStartFrames;
+    for (const std::string &message : _DeriveStartFrames(&derivedStartFrames)) {
+        if (errors) {
+            errors->push_back("warning: " + message);
+        }
+        TF_WARN("%s", message.c_str());
+    }
+    stampCompileRegion("Compile.DerivedStartFrames");
 
     // The parts WITHIN those regions, for the same reason and on the same
     // clock: a phase that takes a fifth of the compile says nothing about
@@ -600,13 +656,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     }
 
-    compileBlocks.Next("DiscoverValidate.MoverDiscovery");
-    std::vector<RigExecMoverRecord> newMovers;
-    SdfPathVector inertMovers;
-    std::vector<_SurfaceProjectorRecord> newSurfaceProjectors;
-    if (!_DiscoverMovers(newMovers, newSurfaceProjectors, inertMovers,
-                         errors, failure)) {
-        return fail(failure->message, failure->operations);
+    // Mover discovery ran ahead of the skip-consuming phases (see above);
+    // its notices land here, in their historical position, and a failure
+    // the early pass could not convert fails the attempt as it used to.
+    if (errors) {
+        errors->insert(errors->end(), discoveryNotices.begin(),
+                       discoveryNotices.end());
+    }
+    if (haveDiscoveryFailure) {
+        return fail(discoveryFailure.message,
+                    std::move(discoveryFailure.operations));
     }
 
     compileBlocks.Next("DiscoverValidate.OutputCheck");
