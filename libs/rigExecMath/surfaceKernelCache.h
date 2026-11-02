@@ -2,6 +2,7 @@
 #define RIGEXEC_MATH_SURFACE_KERNEL_CACHE_H
 #include "deltaMushKernel.h"
 #include "spatialAccel.h"
+#include "wrinkleKernel.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -56,6 +57,10 @@ template<class Point,class Wide> class RigExecSurfaceKernelCache {
     struct Wrinkle { size_t points=0; std::vector<int> counts,indices;
         RigExecWrinkleTopology mode; int distance=0; RigExecWrinkleMesh value; };
     std::shared_ptr<const Wrinkle> wrinkle;
+    struct WrinkleRest : MeshKey {
+        RigExecWrinkleTopology mode; int distance=0;
+        RigExecWrinkleRestData value; };
+    std::shared_ptr<const WrinkleRest> wrinkleRest;
     struct Normals : MeshKey { std::vector<Point> value; };
     struct Adjacency { size_t points=0; std::vector<int> counts,indices; RigExecMeshAdjacency value; };
     std::shared_ptr<const Adjacency> adjacency;
@@ -124,6 +129,24 @@ public:
         if(!RigExecBuildWrinkleMesh(points,c,i,mode,distance,&entry->value)) return nullptr;
         entry->points=points; entry->counts=c; entry->indices=i; entry->mode=mode; entry->distance=distance;
         wrinkle=entry; return &wrinkle->value;
+    }
+    /// The wrinkle rest lengths for (rest, topology): the constraint and
+    /// neighbor-ring lengths over the WrinkleTopology entry, rebuilt when
+    /// any rest bit, face, or bending rule differs. The entry carries no
+    /// scale, so an animated restLengthScale still hits. Null when the
+    /// topology or the rest side fails closed, exactly as the per-frame
+    /// build would have verdict-ed.
+    const RigExecWrinkleRestData *WrinkleRestData(
+        const std::vector<Point> &p,const std::vector<int> &c,const std::vector<int> &i,
+        RigExecWrinkleTopology mode,int distance) {
+        if(wrinkleRest && wrinkleRest->Matches(p,c,i) && wrinkleRest->mode==mode &&
+            wrinkleRest->distance==distance) return &wrinkleRest->value;
+        const RigExecWrinkleMesh *topology=WrinkleTopology(p.size(),c,i,mode,distance);
+        if(!topology) return nullptr;
+        auto entry=std::make_shared<WrinkleRest>();
+        if(!RigExecBuildWrinkleRestData<Point,Wide>(p,*topology,&entry->value)) return nullptr;
+        entry->points=p; entry->counts=c; entry->indices=i; entry->mode=mode; entry->distance=distance;
+        wrinkleRest=entry; return &wrinkleRest->value;
     }
     template<class Compute> const std::vector<Point> &VertexNormals(bool posed,
         const std::vector<Point> &p,const std::vector<int> &c,

@@ -10,6 +10,7 @@
 #include "pointFrame.h"
 #include "wrinkleSettings.h"
 #include "meshConnectivity.h"
+#include "wrinkleKernel.h"
 #include "deltaMushSettings.h"
 
 #include "pxr/base/gf/matrix4d.h"
@@ -61,11 +62,14 @@ bool RigExecApplyDeltaMush(
 /// pins, isolated vertices, and degenerate normals stay put.
 /// See docs/concepts/wrinkle-deformation.md and the cited Wrinkle Meshes paper.
 /// \p topology supplies prebuilt connectivity; null builds it from the inputs.
+/// \p restData supplies retained rest lengths for this rest pose; null
+/// derives them per frame, bit-identically.
 bool RigExecApplyWrinkle(
     std::vector<GfVec3f> *points, const std::vector<GfVec3f> &rest,
     const std::vector<int> &counts, const std::vector<int> &indices,
     const RigExecWrinkleSettings &settings = {},
-    const RigExecWrinkleMesh *topology = nullptr);
+    const RigExecWrinkleMesh *topology = nullptr,
+    const RigExecWrinkleRestData *restData = nullptr);
 
 /// Axis-aligned bound volume of a point set (zero for < 2 points).
 double RigExecBoundVolume(const GfVec3f *points, size_t count);

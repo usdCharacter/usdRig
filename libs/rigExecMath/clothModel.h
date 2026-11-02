@@ -101,6 +101,10 @@ inline float RigExecClothSampleMap(const RigExecClothProfile &p, size_t channel,
     return value;
 }
 
+inline float RigExecClothDirectional(const RigExecClothProfile &p,
+                                     const float *direction, const float *frame,
+                                     const float *warpMaps);
+
 /// Strength uses the estimated reaction load, independently of the current
 /// iteration's compliance. Zero strength disables a constraint; positive
 /// strength leaves a hard constraint rigid and scales a soft one's stiffness.
@@ -114,17 +118,44 @@ inline float RigExecClothStrength(const RigExecClothProfile &p,
     float strength = lo + (hi - lo) * RigExecClothCurve(p.forceCurve, force);
     strength *= RigExecClothSampleMap(p, ClothMask, sample);
     if (direction && frame) {
-        float directional = 0;
-        const float scale[3] = {p.warp, p.weft, p.normal};
-        for (size_t a = 0; a < 3; ++a) {
-            float dot = 0;
-            for (size_t q = 0; q < 3; ++q) dot += direction[q] * frame[3 * a + q];
-            directional += dot * dot * scale[a] *
-                RigExecClothSampleMap(p, ClothWarp + a, sample);
-        }
-        strength *= directional;
+        const float warpMaps[3] = {
+            RigExecClothSampleMap(p, ClothWarp, sample),
+            RigExecClothSampleMap(p, ClothWeft, sample),
+            RigExecClothSampleMap(p, ClothNormal, sample)};
+        strength *= RigExecClothDirectional(p, direction, frame, warpMaps);
     }
     return strength;
+}
+
+/// The directional factor of RigExecClothStrength: the warp/weft/normal
+/// blend of \p direction over \p frame, with the warp-map samples arriving
+/// precomputed. Strength multiplies its isotropic part by this factor; a
+/// caller sharing one sample across directions derives the maps once and
+/// the dots per direction, the same values Strength forms inline.
+inline float RigExecClothDirectional(const RigExecClothProfile &p,
+                                     const float *direction, const float *frame,
+                                     const float *warpMaps)
+{
+    float directional = 0;
+    const float scale[3] = {p.warp, p.weft, p.normal};
+    for (size_t a = 0; a < 3; ++a) {
+        float dot = 0;
+        for (size_t q = 0; q < 3; ++q) dot += direction[q] * frame[3 * a + q];
+        directional += dot * dot * scale[a] * warpMaps[a];
+    }
+    return directional;
+}
+
+/// The isotropic part of RigExecClothStrength over prepared inputs: the
+/// force curve over the cached lo, hi, and mask, the same value Strength
+/// forms before its directional factor. The caller multiplies by the
+/// cached directional scalar, or by RigExecClothDirectional over the
+/// cached warp maps when the direction varies per call.
+inline float RigExecClothCachedBase(const RigExecClothProfile &p,
+                                    const float *base, float force)
+{
+    return (base[0] + (base[1] - base[0]) * RigExecClothCurve(p.forceCurve, force)) *
+        base[2];
 }
 
 inline bool RigExecClothValidateModel(const RigExecClothModel &model, size_t points,

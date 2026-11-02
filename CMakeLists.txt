@@ -672,7 +672,8 @@ add_executable(testRigExecCloth tests/testRigExecCloth.cpp)
 target_link_libraries(testRigExecCloth PRIVATE rigExec rigExecScene rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecCloth PRIVATE
     ${_rigexec_schema_resource_define}
-    RIGEXEC_CLOTH_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda")
+    RIGEXEC_CLOTH_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda"
+    RIGEXEC_CLOTH_MATERIALS="${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_materials.usda")
 add_test(NAME testRigExecCloth COMMAND testRigExecCloth)
 
 add_executable(testRigExecConstraints tests/testRigExecConstraints.cpp)

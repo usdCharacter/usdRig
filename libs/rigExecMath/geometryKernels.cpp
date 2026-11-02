@@ -321,11 +321,12 @@ RigExecApplyWrinkle(
     std::vector<GfVec3f> *points, const std::vector<GfVec3f> &rest,
     const std::vector<int> &counts, const std::vector<int> &indices,
     const RigExecWrinkleSettings &settings,
-    const RigExecWrinkleMesh *topology)
+    const RigExecWrinkleMesh *topology,
+    const RigExecWrinkleRestData *restData)
 {
     if (topology) {
         return RigExecApplyWrinkleWithTopology<GfVec3f, GfVec3d>(
-            points, rest, counts, indices, settings, *topology);
+            points, rest, counts, indices, settings, *topology, restData);
     }
     return RigExecApplyWrinkleKernel<GfVec3f, GfVec3d>(
         points, rest, counts, indices, settings);

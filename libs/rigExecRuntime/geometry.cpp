@@ -3655,8 +3655,10 @@ RrGeoApplyRevisionKernel(
         if(surfaceCache) {
             const auto *topology=surfaceCache->WrinkleTopology(p.restPoints.size(),
                 p.topologyCounts,p.topologyIndices,p.wrinkleSettings.topology,p.wrinkleSettings.neighborDistance);
-            return topology && RigExecApplyWrinkleWithTopology<RrVec3f,RrVec3d>(
-                pts,p.restPoints,p.topologyCounts,p.topologyIndices,p.wrinkleSettings,*topology);
+            const auto *rest=surfaceCache->WrinkleRestData(p.restPoints,
+                p.topologyCounts,p.topologyIndices,p.wrinkleSettings.topology,p.wrinkleSettings.neighborDistance);
+            return topology && rest && RigExecApplyWrinkleWithTopology<RrVec3f,RrVec3d>(
+                pts,p.restPoints,p.topologyCounts,p.topologyIndices,p.wrinkleSettings,*topology,rest);
         }
         return RigExecApplyWrinkleKernel<RrVec3f,RrVec3d>(pts,p.restPoints,
             p.topologyCounts,p.topologyIndices,p.wrinkleSettings);

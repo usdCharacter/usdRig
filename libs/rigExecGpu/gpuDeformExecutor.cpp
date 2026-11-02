@@ -436,7 +436,7 @@ struct RigExecGpuDeformExecutor::Impl {
                                       job.ticks[k].colliders,
                                       std::max(std::max(0.0f, p.thickness),
                                                std::max(0.0f, p.collisionDepth)),
-                                      &clothGridScratch, &clothCellScratch);
+                                      &clothGridScratch, &clothCellScratch, true);
                 clothHead[4 * k] = uint32_t(clothGrid.size());
                 clothGrid.insert(clothGrid.end(), clothGridScratch.bucketStart.begin(),
                                  clothGridScratch.bucketStart.end());

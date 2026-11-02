@@ -5,14 +5,18 @@
 // rigid input motion is carried rigidly, repeated solves are bit-identical,
 // and a window whose first frame has a collider cutting through the cloth
 // starts before the contact, so a ball pushed through a curtain keeps it in
-// front frame after frame. A format-25 (RCL1) compiled rig plays as it was
-// exported. Header-only and USD-free.
+// front frame after frame. The swept-bounds broadphase agrees with the full
+// contact search. A format-25 (RCL1) compiled rig plays as it was exported.
+// Header-only and USD-free.
 #include "rigExecMath/clothKernel.h"
 #include "rigExecBinary/clothPlayback.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <set>
 #include <vector>
 
 using namespace rigExec;
@@ -34,6 +38,21 @@ struct Mesh {
     std::vector<int> counts, indices;
     size_t Size() const { return points.size() / 3; }
 };
+
+// Population of the self edge/edge pair bitset: the recorded unique
+// pairs, the same count the hash sets' count field held. Portable
+// popcount; test-only.
+size_t PairBitCount(const std::vector<uint64_t> &bits)
+{
+    size_t n = 0;
+    for (uint64_t w : bits) {
+        w -= (w >> 1) & 0x5555555555555555ull;
+        w = (w & 0x3333333333333333ull) + ((w >> 2) & 0x3333333333333333ull);
+        w = (w + (w >> 4)) & 0x0f0f0f0f0f0f0f0full;
+        n += size_t((w * 0x0101010101010101ull) >> 56);
+    }
+    return n;
+}
 
 // A curtain in the xy plane, (n x n) points, `size` across, top at y = top.
 Mesh Curtain(int n, float size, float top, float z = 0.0f)
@@ -428,6 +447,7 @@ void TestClearOfColliders()
                                      scene.ball.indices.size(), false, &colliders));
     RigExecClothGrid grid;
     std::vector<uint64_t> scratch;
+    std::vector<float> areas;
     // Behind the curtain, through it, and on the far side of it.
     for (int k = 0; k < PushThrough::kFrames; ++k) {
         const float z = PushThrough::BallZ(k);
@@ -437,10 +457,170 @@ void TestClearOfColliders()
                                                         &scratch);
         // Within a facet's sag of the radius either answer is right.
         if (std::fabs(std::fabs(z) - 6.0f) > 0.3f) CHECK(clear == !cuts);
+        // Caller-held area storage agrees with the call-local table.
+        const bool shared = RigExecClothClearOfColliders(mesh, colliders, scene.curtain.points.data(),
+                                                         scene.balls[size_t(k)].data(), &grid,
+                                                         &scratch, &areas);
+        CHECK(shared == clear);
     }
     // No colliders: always clear.
     CHECK(RigExecClothClearOfColliders(mesh, RigExecClothColliders(), scene.curtain.points.data(),
                                        nullptr, &grid, &scratch));
+}
+
+// Brute force: every stretch edge against every collider triangle, the same
+// segment test the grid path runs once it lists a pair.
+bool BruteForceClear(const RigExecClothMesh &mesh, const RigExecClothColliders &colliders,
+                     const float *cloth, const float *colliderPoints)
+{
+    const auto stretch = uint8_t(RigExecClothConstraint::Stretch);
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        if (mesh.constraintKind[c] != stretch) continue;
+        const float *p = cloth + 3 * size_t(mesh.constraintEnds[2 * c]);
+        const float *q = cloth + 3 * size_t(mesh.constraintEnds[2 * c + 1]);
+        for (size_t tri = 0; tri < colliders.triangles.size() / 3; ++tri) {
+            const float *a = colliderPoints + 3 * size_t(colliders.triangles[3 * tri]);
+            const float *b = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 1]);
+            const float *d = colliderPoints + 3 * size_t(colliders.triangles[3 * tri + 2]);
+            float ab[3], ac[3], n[3];
+            cloth_detail::Sub(b, a, ab);
+            cloth_detail::Sub(d, a, ac);
+            cloth_detail::Cross(ab, ac, n);
+            if (cloth_detail::SegmentCrossesTriangleArea(p, q, a, b, d, n)) return false;
+        }
+    }
+    return true;
+}
+
+void TestClearOfCollidersBroadphase()
+{
+    const Mesh curtain = Curtain(9, 16.0f, 20.0f);
+    std::vector<float> pins(curtain.Size(), 0.0f);
+    for (int c = 0; c < 9; ++c) pins[size_t(c)] = 1.0f;
+    RigExecClothMesh mesh;
+    CHECK(Build(curtain, &pins, RigExecClothSettings(), &mesh));
+    if (!mesh.valid) return;
+    const Mesh ball = Sphere(4.0f, 8, 12);
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(ball.Size(), ball.counts.data(), ball.counts.size(),
+                                     ball.indices.data(), ball.indices.size(), false,
+                                     &colliders));
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    // Seeded placements from far away to straight through; the grid and
+    // scratch are reused across calls as the window start reuses them.
+    uint64_t state = 0x9e3779b97f4a7c15ULL;
+    const auto rnd = [&]() {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        return double(state >> 33) / double(1ULL << 31) - 0.5;
+    };
+    int blocked = 0, clear = 0;
+    for (int seed = 0; seed < 600; ++seed) {
+        const float scale = seed % 3 == 0 ? 0.5f : (seed % 3 == 1 ? 1.0f : 2.0f);
+        std::vector<float> at = ball.points;
+        const float ox = float(40.0 * rnd()), oy = float(12.0 + 30.0 * rnd()),
+                    oz = float(30.0 * rnd());
+        for (size_t i = 0; i < ball.Size(); ++i) {
+            at[3 * i] = at[3 * i] * scale + ox;
+            at[3 * i + 1] = at[3 * i + 1] * scale + oy;
+            at[3 * i + 2] = at[3 * i + 2] * scale + oz;
+        }
+        const bool want = BruteForceClear(mesh, colliders, curtain.points.data(), at.data());
+        const bool got = RigExecClothClearOfColliders(mesh, colliders, curtain.points.data(),
+                                                      at.data(), &grid, &scratch);
+        if (got != want) {
+            std::printf("seed %d: broadphase %d, brute force %d\n", seed, int(got),
+                        int(want));
+            CHECK(false);
+        }
+        blocked += !want;
+        clear += want;
+    }
+    CHECK(blocked > 0 && clear > 0);
+    // Edges snapped to the padded box: from two margins inside to half an
+    // edge past it, on both x sides. Near-boundary skips must still agree.
+    float longest = 0.0f;
+    const auto stretch = uint8_t(RigExecClothConstraint::Stretch);
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        if (mesh.constraintKind[c] != stretch) continue;
+        const float *p = curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * c]);
+        const float *q = curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * c + 1]);
+        float d[3];
+        cloth_detail::Sub(p, q, d);
+        longest = std::max(longest, cloth_detail::Length(d));
+    }
+    const float half = 0.5f * longest;
+    float sweptLo = std::numeric_limits<float>::infinity(),
+          sweptHi = -std::numeric_limits<float>::infinity();
+    for (size_t i = 0; i < ball.Size(); ++i) {
+        sweptLo = std::min(sweptLo, ball.points[3 * i]);
+        sweptHi = std::max(sweptHi, ball.points[3 * i]);
+    }
+    const float margin = (std::max(std::fabs(sweptLo), std::fabs(sweptHi)) + half) *
+                             0.0009765625f;
+    size_t firstStretch = 0;
+    while (firstStretch < mesh.constraintRest.size() &&
+           mesh.constraintKind[firstStretch] != stretch)
+        ++firstStretch;
+    CHECK(firstStretch < mesh.constraintRest.size());
+    const float *e0 =
+        curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * firstStretch]);
+    const float *e1 =
+        curtain.points.data() + 3 * size_t(mesh.constraintEnds[2 * firstStretch + 1]);
+    const float midX = 0.5f * (e0[0] + e1[0]);
+    for (float delta : {-2.0f * margin, -0.5f * margin, 0.0f, 0.5f * margin, 2.0f * margin,
+                        half}) {
+        for (int side = 0; side < 2; ++side) {
+            std::vector<float> at = ball.points;
+            const float edge = side == 0 ? sweptHi + half + margin : sweptLo - half - margin;
+            const float tx = side == 0 ? midX - edge + delta : midX - edge - delta;
+            for (size_t i = 0; i < ball.Size(); ++i) at[3 * i] += tx;
+            const bool want =
+                BruteForceClear(mesh, colliders, curtain.points.data(), at.data());
+            const bool got = RigExecClothClearOfColliders(mesh, colliders,
+                                                          curtain.points.data(), at.data(),
+                                                          &grid, &scratch);
+            if (got != want) {
+                std::printf("snap delta %g side %d: broadphase %d, brute force %d\n",
+                            double(delta), side, int(got), int(want));
+                CHECK(false);
+            }
+        }
+    }
+}
+
+// A crossing whose midpoint sits outside the collider's swept box but
+// within half the longest edge of it: the broadphase must test it, not
+// skip it. A pads-hug-the-box mutation reports clear here.
+void TestClearOfCollidersBandCrossing()
+{
+    const Mesh m = Curtain(2, 2.0f, 1.0f);
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, RigExecClothSettings(), &mesh));
+    if (!mesh.valid) return;
+    RigExecClothColliders colliders;
+    const int counts[] = {3}, indices[] = {0, 1, 2};
+    CHECK(RigExecAppendClothCollider(3, counts, 1, indices, 3, false, &colliders));
+    // Edge (0, 1) pierces the triangle's interior at (9.9, 0.5, 0.5) with
+    // its midpoint at x = 10.1, past the box face at x = 10 but within
+    // half the longest edge of it; the other points sit clear of the box.
+    std::vector<float> cloth = {9.6f, 0.47f, 0.53f, 10.6f, 0.57f, 0.43f,
+                                20.0f, 0.0f, 0.0f, 20.0f, 1.0f, 0.0f};
+    const std::vector<float> tri = {9.0f, 0.0f, 0.0f, 10.0f, 0.0f, 0.0f,
+                                    9.9f, 1.0f, 1.0f};
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    CHECK(!BruteForceClear(mesh, colliders, cloth.data(), tri.data()));
+    CHECK(!RigExecClothClearOfColliders(mesh, colliders, cloth.data(), tri.data(), &grid,
+                                        &scratch));
+    // The same edge shifted half an edge past the padded box: clear by both.
+    for (int a = 0; a < 3; ++a) {
+        cloth[a] += 6.0f;
+        cloth[3 + a] += 6.0f;
+    }
+    CHECK(BruteForceClear(mesh, colliders, cloth.data(), tri.data()));
+    CHECK(RigExecClothClearOfColliders(mesh, colliders, cloth.data(), tri.data(), &grid,
+                                       &scratch));
 }
 
 // Fraction of the curtain points within reach of the ball that lie on its
@@ -545,6 +725,355 @@ void TestWindowStartsBeforeContact()
     CHECK(worstFixed < 0.5f);
 }
 
+bool SameContact(const RigExecClothContact &a, const RigExecClothContact &b)
+{
+    return a.triangle == b.triangle &&
+        std::memcmp(&a.violation, &b.violation, sizeof(float)) == 0 &&
+        std::memcmp(a.normal, b.normal, sizeof(a.normal)) == 0 &&
+        std::memcmp(a.weights, b.weights, sizeof(a.weights)) == 0;
+}
+
+void TestSweptBoundsAndBroadphase()
+{
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    // A grid that never went through the build covers everything, so the
+    // broadphase never skips on it; so does an empty build.
+    RigExecClothGrid fresh;
+    for (int a = 0; a < 3; ++a) {
+        CHECK(fresh.sweptLo[a] == -std::numeric_limits<float>::infinity());
+        CHECK(fresh.sweptHi[a] == std::numeric_limits<float>::infinity());
+    }
+    RigExecClothGrid empty;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(RigExecClothColliders(), nullptr, nullptr, 1.0f, &empty,
+                          &scratch);
+    for (int a = 0; a < 3; ++a) {
+        CHECK(empty.sweptLo[a] == -std::numeric_limits<float>::infinity());
+        CHECK(empty.sweptHi[a] == std::numeric_limits<float>::infinity());
+    }
+    const float thicknessDepth[][2] = {{0.5f, 2.0f}, {0.0f, 0.0f}, {0.0f, 5.0f},
+                                       {2.0f, 0.5f}, {1e-30f, 1e-30f}};
+    const float fractions[] = {0.0f, 0.37f, 1.0f};
+    size_t compared = 0;
+    for (float shift : {0.0f, 1e15f}) {
+        // The box swept from `before` to `after`; the second pass moves the
+        // scene to 1e15 units, where the bound rounding dwarfs the reach and
+        // only the margin keeps the broadphase sound.
+        float before[24], after[24];
+        for (int i = 0; i < 24; ++i) {
+            before[i] = box[i] + shift;
+            after[i] = box[i] + shift + (i % 3 == 0 ? 4.0f : (i % 3 == 1 ? -2.0f : 1.0f));
+        }
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(colliders, before, after, 8.0f, &grid, &scratch);
+        for (int a = 0; a < 3; ++a) {
+            float lo = std::numeric_limits<float>::infinity();
+            float hi = -std::numeric_limits<float>::infinity();
+            for (int v = 0; v < 8; ++v) {
+                lo = std::min(lo, std::min(before[3 * v + a], after[3 * v + a]));
+                hi = std::max(hi, std::max(before[3 * v + a], after[3 * v + a]));
+            }
+            CHECK(grid.sweptLo[a] == lo);
+            CHECK(grid.sweptHi[a] == hi);
+        }
+        // The same grid with the broadphase scrubbed off agrees bitwise.
+        RigExecClothGrid scrubbed = grid;
+        for (int a = 0; a < 3; ++a) {
+            scrubbed.sweptLo[a] = -std::numeric_limits<float>::infinity();
+            scrubbed.sweptHi[a] = std::numeric_limits<float>::infinity();
+        }
+        // Query lattice over the swept box plus the reach, boundary-adjacent
+        // points, far points, and non-finite ones.
+        std::vector<std::array<float, 3>> queries;
+        for (const auto &td : thicknessDepth) {
+            const float reach = std::max(td[0], td[1]);
+            for (int a = 0; a < 3; ++a) {
+                const float lo = grid.sweptLo[a] - reach;
+                const float hi = grid.sweptHi[a] + reach;
+                for (int k = 0; k <= 6; ++k) {
+                    std::array<float, 3> q = {{shift, shift + 8.0f, shift}};
+                    q[size_t(a)] = lo + (hi - lo) * float(k) / 6.0f;
+                    queries.push_back(q);
+                }
+                for (float edge : {lo, hi}) {
+                    for (float qv : {edge, std::nextafterf(edge, -1e30f),
+                                     std::nextafterf(edge, 1e30f)}) {
+                        std::array<float, 3> q = {{shift, shift + 8.0f, shift}};
+                        q[size_t(a)] = qv;
+                        queries.push_back(q);
+                    }
+                }
+            }
+        }
+        for (float far : {-1e6f, 1e6f}) queries.push_back({{far + shift, shift, shift}});
+        const float inf = std::numeric_limits<float>::infinity();
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        queries.push_back({{nan, shift, shift}});
+        queries.push_back({{shift, inf, shift}});
+        queries.push_back({{-inf, shift, shift}});
+        for (const auto &td : thicknessDepth) {
+            for (float t : fractions) {
+                RigExecClothContactTris tris;
+                RigExecClothContactTrisAt(colliders, before, after, t, &tris);
+                for (bool table : {false, true}) {
+                    for (const auto &q : queries) {
+                        const RigExecClothContact a = RigExecClothFindContact(
+                            colliders, grid, before, after, t, q.data(), td[0], td[1],
+                            nullptr, 0, 0, std::numeric_limits<size_t>::max(), false,
+                            nullptr, table ? &tris : nullptr);
+                        const RigExecClothContact b = RigExecClothFindContact(
+                            colliders, scrubbed, before, after, t, q.data(), td[0], td[1],
+                            nullptr, 0, 0, std::numeric_limits<size_t>::max(), false,
+                            nullptr, table ? &tris : nullptr);
+                        CHECK(SameContact(a, b));
+                        ++compared;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(compared > 10000);
+}
+
+// Brute-force contact reference: every triangle, no bucket, no broadphase,
+// no swept-box pre-filter. It uses the same per-triangle primitives as
+// RigExecClothFindContact, so any disagreement pins the search (bucketing,
+// broadphase, pre-filter) rather than the per-triangle math.
+static RigExecClothContact BruteContact(const RigExecClothColliders &colliders,
+                                        const float *before, const float *after,
+                                        float t, const float *p, float thickness,
+                                        float depth,
+                                        const RigExecClothContactTris *precomputed)
+{
+    using namespace cloth_detail;
+    RigExecClothContact best;
+    if (colliders.triangles.empty()) return best;
+    const float reach = std::max(thickness, depth);
+    float bestDistance = std::numeric_limits<float>::infinity();
+    const size_t count = colliders.triangles.size() / 3;
+    for (size_t tri = 0; tri < count; ++tri) {
+        float localV[3][3];
+        float n[3];
+        const float *v[3] = {localV[0], localV[1], localV[2]};
+        if (precomputed && tri < precomputed->triangleCount) {
+            if (precomputed->degenerate[tri]) continue;
+            const float *row = precomputed->verts.data() + 9 * tri;
+            v[0] = row; v[1] = row + 3; v[2] = row + 6;
+            const float *held = precomputed->normals.data() + 3 * tri;
+            n[0] = held[0]; n[1] = held[1]; n[2] = held[2];
+        } else {
+            for (int c = 0; c < 3; ++c) {
+                const size_t i = size_t(colliders.triangles[3 * tri + size_t(c)]);
+                Lerp(before + 3 * i, after + 3 * i, t, localV[c]);
+            }
+            float e1[3], e2[3];
+            Sub(localV[1], localV[0], e1); Sub(localV[2], localV[0], e2);
+            Cross(e1, e2, n);
+            const float len = Length(n);
+            if (!(len > 0.0f)) continue;
+            n[0] /= len; n[1] /= len; n[2] /= len;
+        }
+        float w[3];
+        ClosestBarycentric(p, v[0], v[1], v[2], w);
+        float q[3];
+        for (int a = 0; a < 3; ++a)
+            q[a] = w[0] * v[0][a] + w[1] * v[1][a] + w[2] * v[2][a];
+        float d[3];
+        Sub(p, q, d);
+        const float signedDistance = Dot(d, n);
+        const float distance = Length(d);
+        if (distance > reach) continue;
+        if (signedDistance >= thickness || signedDistance < -depth) continue;
+        if (signedDistance >= 0.0f && distance >= thickness) continue;
+        if (distance < bestDistance ||
+            (distance == bestDistance && int32_t(tri) < best.triangle)) {
+            bestDistance = distance;
+            best.triangle = int32_t(tri);
+            best.violation = thickness - signedDistance;
+            best.normal[0] = n[0]; best.normal[1] = n[1]; best.normal[2] = n[2];
+            best.weights[0] = w[0]; best.weights[1] = w[1]; best.weights[2] = w[2];
+        }
+    }
+    return best;
+}
+
+void TestContactBoxPrefilterMatchesBruteForce()
+{
+    // The swept-box pre-filter in FindContact skips candidates provably
+    // beyond the reach. This pins it against the brute-force scan above:
+    // box scenes at unit and 1e15 scales (where bound rounding dwarfs the
+    // reach), a huge triangle with a tiny reach (the widest slop regime
+    // of the band), and a tiny-magnitude scene (where the absolute floor
+    // dominates the band). Queries cover the swept lattice, per-triangle
+    // box faces at ulp adjacency, far points, non-finite points, and a
+    // deterministic pseudo-random cloud, with and without the precomputed
+    // table.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int boxCounts[6] = {4, 4, 4, 4, 4, 4};
+    const int boxIndices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                                0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    const float huge[9] = {0, 0, 0, 200, 0, 0, 0, 200, 0};
+    const int hugeCounts[1] = {3};
+    const int hugeIndices[3] = {0, 1, 2};
+    struct Scene {
+        const float *points;
+        int pointCount;
+        const int *counts;
+        int countSize;
+        const int *indices;
+        int indexSize;
+        float shift;
+        float pointScale;
+        float motion[3];
+        float thickness;
+        float depth;
+        float pad;
+        float querySpan;
+    };
+    const Scene scenes[] = {
+        {box, 8, boxCounts, 6, boxIndices, 24, 0.0f, 1.0f, {4.0f, -2.0f, 1.0f},
+         0.5f, 2.0f, 8.0f, 40.0f},
+        {box, 8, boxCounts, 6, boxIndices, 24, 1e15f, 1.0f, {4.0f, -2.0f, 1.0f},
+         0.5f, 2.0f, 8.0f, 40.0f},
+        {huge, 3, hugeCounts, 1, hugeIndices, 3, 0.0f, 1.0f, {1.0f, 2.0f, 3.0f},
+         1e-3f, 1e-3f, 8.0f, 300.0f},
+        {box, 8, boxCounts, 6, boxIndices, 24, 0.0f, 1e-30f, {0.0f, 0.0f, 0.0f},
+         1e-30f, 1e-30f, 1.0f, 1e-28f},
+    };
+    const float fractions[] = {0.0f, 0.37f, 1.0f};
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    size_t compared = 0;
+    uint64_t rng = 0x9E3779B97F4A7C15ull;
+    const auto nextRandom = [&]() {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return uint32_t(rng >> 40);
+    };
+    for (size_t s = 0; s < sizeof(scenes) / sizeof(scenes[0]); ++s) {
+        const Scene &scene = scenes[s];
+        RigExecClothColliders colliders;
+        CHECK(RigExecAppendClothCollider(size_t(scene.pointCount), scene.counts,
+                                         size_t(scene.countSize), scene.indices,
+                                         size_t(scene.indexSize), false, &colliders));
+        const size_t points = size_t(scene.pointCount);
+        std::vector<float> before(3 * points), after(3 * points);
+        for (size_t v = 0; v < points; ++v) {
+            for (int a = 0; a < 3; ++a) {
+                const float p = scene.points[3 * v + size_t(a)] * scene.pointScale;
+                before[3 * v + size_t(a)] = p + scene.shift;
+                after[3 * v + size_t(a)] =
+                    p + scene.shift + scene.motion[a] * scene.pointScale;
+            }
+        }
+        std::vector<uint64_t> scratch;
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(colliders, before.data(), after.data(), scene.pad,
+                              &grid, &scratch);
+        const float reach = std::max(scene.thickness, scene.depth);
+        std::vector<std::array<float, 3>> queries;
+        for (int ix = 0; ix < 5; ++ix)
+            for (int iy = 0; iy < 5; ++iy)
+                for (int iz = 0; iz < 5; ++iz) {
+                    const int k[3] = {ix, iy, iz};
+                    std::array<float, 3> q;
+                    for (int a = 0; a < 3; ++a) {
+                        const float lo = grid.sweptLo[a] - reach;
+                        const float hi = grid.sweptHi[a] + reach;
+                        q[size_t(a)] = lo + (hi - lo) * float(k[a]) / 4.0f;
+                    }
+                    queries.push_back(q);
+                }
+        const size_t triCount = colliders.triangles.size() / 3;
+        for (size_t t = 0; t < triCount; ++t) {
+            const float *tb = grid.triBounds.data() + 6 * t;
+            std::array<float, 3> center = {{scene.shift, scene.shift, scene.shift}};
+            for (int c = 0; c < 3; ++c) {
+                const size_t v = size_t(colliders.triangles[3 * t + size_t(c)]);
+                for (int a = 0; a < 3; ++a)
+                    center[size_t(a)] +=
+                        (before[3 * v + size_t(a)] + after[3 * v + size_t(a)]) / 6.0f;
+            }
+            for (int a = 0; a < 3; ++a) {
+                for (int side = 0; side < 2; ++side) {
+                    const float face = side ? tb[size_t(a) + 3] + reach
+                                            : tb[size_t(a)] - reach;
+                    for (float qv : {face, std::nextafterf(face, face + 1.0f),
+                                     std::nextafterf(face, face - 1.0f)}) {
+                        std::array<float, 3> q = center;
+                        q[size_t(a)] = qv;
+                        queries.push_back(q);
+                    }
+                }
+            }
+        }
+        for (float far : {-1e6f, 1e6f})
+            queries.push_back({{far + scene.shift, scene.shift, scene.shift}});
+        queries.push_back({{nan, scene.shift, scene.shift}});
+        queries.push_back({{scene.shift, inf, scene.shift}});
+        queries.push_back({{-inf, scene.shift, scene.shift}});
+        for (int k = 0; k < 200; ++k) {
+            std::array<float, 3> q;
+            for (int a = 0; a < 3; ++a) {
+                const float f = float(nextRandom()) / float(1u << 24);
+                q[size_t(a)] = scene.shift + (f - 0.5f) * 2.0f * scene.querySpan;
+            }
+            queries.push_back(q);
+        }
+        for (float t : fractions) {
+            RigExecClothContactTris tris;
+            RigExecClothContactTrisAt(colliders, before.data(), after.data(), t, &tris);
+            for (bool table : {false, true}) {
+                for (const auto &q : queries) {
+                    const RigExecClothContact a = RigExecClothFindContact(
+                        colliders, grid, before.data(), after.data(), t, q.data(),
+                        scene.thickness, scene.depth, nullptr, 0, 0,
+                        std::numeric_limits<size_t>::max(), false, nullptr,
+                        table ? &tris : nullptr);
+                    const RigExecClothContact b = BruteContact(
+                        colliders, before.data(), after.data(), t, q.data(),
+                        scene.thickness, scene.depth, table ? &tris : nullptr);
+                    CHECK(SameContact(a, b));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared > 10000);
+}
+
+void TestMultiIterationSolves()
+{
+    // The solve dispatches the general projection when iterations > 1;
+    // it must still succeed deterministically with finite results.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    RigExecClothSettings settings;
+    settings.iterations = 3;
+    settings.substeps = 2;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothParameters p;
+    std::vector<std::vector<float>> entering(3, m.points);
+    bool ok = false, ok2 = false;
+    const auto a = Solve(mesh, RigExecClothColliders(), settings, p, entering,
+                         NoColliders, &ok);
+    const auto b = Solve(mesh, RigExecClothColliders(), settings, p, entering,
+                         NoColliders, &ok2);
+    CHECK(ok);
+    CHECK(ok2);
+    CHECK(a.size() == 3 * mesh.pointCount);
+    for (float v : a) CHECK(std::isfinite(v));
+    CHECK(std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+}
+
 void TestRefusals()
 {
     const Mesh m = Curtain(4, 3.0f, 1.0f);
@@ -631,6 +1160,374 @@ void TestForceResponseAndDirectionalMaterial()
     CHECK(std::abs(velocity[1] - std::exp(-1.0f)) < 1e-5f);
 }
 
+void TestSingleIterationMatchesMulti()
+{
+    // The iterations==1 projection drops the lambda traffic: every lambda
+    // read sees the substep fill (+0.0f). It must match the general form
+    // with a zeroed lambda bitwise, including C == +0 (rest-length edges),
+    // zero-length edges, and zero-denominator (kinematic-rigid) ones, on
+    // the empty and material paths alike.
+    const Mesh m = Curtain(3, 2.0f, 4.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    pins[0] = pins[1] = pins[2] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh bare;
+    CHECK(Build(m, &pins, settings, &bare));
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    std::vector<std::vector<float>> poses;
+    poses.push_back(m.points);
+    for (float scale : {0.5f, 1.5f}) {
+        auto x = m.points;
+        for (float &v : x) v *= scale;
+        poses.push_back(x);
+    }
+    for (float scale : {1e-20f, 1e20f}) {
+        auto x = m.points;
+        for (size_t i = 0; i < m.Size(); ++i) x[3 * i] = m.points[3 * i] * scale;
+        poses.push_back(x);
+    }
+    {
+        // One coincident pair exercises the zero-length early return.
+        auto x = m.points;
+        const size_t a = size_t(bare.constraintEnds[0]);
+        const size_t b = size_t(bare.constraintEnds[1]);
+        x[3 * b] = x[3 * a];
+        x[3 * b + 1] = x[3 * a + 1];
+        x[3 * b + 2] = x[3 * a + 2];
+        poses.push_back(x);
+    }
+    size_t compared = 0;
+    const auto run = [&](RigExecClothMesh &mesh) {
+        for (const auto &pose : poses) {
+            for (float alpha : {0.0f, 1e-6f, 1e6f}) {
+                for (float h : {1.0f / 24.0f, 1e-3f, 10.0f}) {
+                    RigExecClothStep step;
+                    step.h = h;
+                    step.alphaStretch = alpha;
+                    step.alphaBend = 0.5f * alpha;
+                    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+                        auto x = pose, y = pose;
+                        std::vector<float> lambda(mesh.constraintRest.size(), 0.0f);
+                        RigExecClothProjectConstraint(mesh, step, c, x.data(),
+                                                     lambda.data());
+                        RigExecClothProjectConstraintSingle(mesh, step, c, y.data());
+                        CHECK(same(x, y));
+                        ++compared;
+                    }
+                }
+            }
+        }
+    };
+    run(bare);
+    for (int hard = 0; hard < 2; ++hard) {
+        for (auto kind : {RigExecClothProfileKind::Stretch,
+                          RigExecClothProfileKind::Bend}) {
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = kind;
+            p.warp = 100;
+            p.weft = .01f;
+            p.compliance = .001f;
+            p.hard = hard != 0;
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh);
+        }
+    }
+    CHECK(compared > 5000);
+}
+
+void TestColorSingleMatchesSerial()
+{
+    // The batched color projection runs each constraint's operations in
+    // the same order as the serial per-constraint loop over disjoint
+    // particles, so it must match bitwise: rest-length, stretched,
+    // extreme-scale, zero-length, and signed-zero poses, on the empty
+    // and material paths alike, across chunk-sized and multi-chunk
+    // colors, and across split ranges.
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    const auto posesFor = [](const Mesh &m, const RigExecClothMesh &mesh) {
+        std::vector<std::vector<float>> poses;
+        poses.push_back(m.points);
+        for (float scale : {0.5f, 1.5f}) {
+            auto x = m.points;
+            for (float &v : x) v *= scale;
+            poses.push_back(x);
+        }
+        for (float scale : {1e-20f, 1e20f}) {
+            auto x = m.points;
+            for (size_t i = 0; i < m.Size(); ++i) x[3 * i] = m.points[3 * i] * scale;
+            poses.push_back(x);
+        }
+        {
+            // One coincident pair exercises the zero-length early return.
+            auto x = m.points;
+            const size_t a = size_t(mesh.constraintEnds[0]);
+            const size_t b = size_t(mesh.constraintEnds[1]);
+            x[3 * b] = x[3 * a];
+            x[3 * b + 1] = x[3 * a + 1];
+            x[3 * b + 2] = x[3 * a + 2];
+            poses.push_back(x);
+        }
+        {
+            // Signed zeros: a skipped constraint must not touch them, and
+            // a zero-delta one must add the same signed zero both ways.
+            auto x = m.points;
+            const size_t b = size_t(mesh.constraintEnds[1]);
+            x[3 * b] = -0.0f;
+            x[3 * b + 1] = -0.0f;
+            x[3 * b + 2] = -0.0f;
+            poses.push_back(x);
+        }
+        return poses;
+    };
+    size_t compared = 0;
+    // The solve's instantiation dispatch: the empty-model loop for an
+    // empty model, the profile path otherwise.
+    const auto projectColor = [](const RigExecClothMesh &mesh,
+                                 const RigExecClothStep &step, uint32_t lo,
+                                 uint32_t hi, float *x) {
+        if (mesh.model.Empty())
+            RigExecClothProjectColorSingle<false>(mesh, step, lo, hi, x);
+        else
+            RigExecClothProjectColorSingle<true>(mesh, step, lo, hi, x);
+    };
+    const auto run = [&](RigExecClothMesh &mesh,
+                         const std::vector<std::vector<float>> &poses) {
+        for (const auto &pose : poses) {
+            for (float alpha : {0.0f, 1e-6f, 1e6f}) {
+                for (float h : {1.0f / 24.0f, 1e-3f, 10.0f}) {
+                    RigExecClothStep step;
+                    step.h = h;
+                    step.alphaStretch = alpha;
+                    step.alphaBend = 0.5f * alpha;
+                    for (size_t color = 0; color < mesh.ColorCount(); ++color) {
+                        const uint32_t lo = mesh.colorStart[color];
+                        const uint32_t hi = mesh.colorStart[color + 1];
+                        auto x = pose, y = pose, z = pose;
+                        for (uint32_t c = lo; c < hi; ++c)
+                            RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+                        projectColor(mesh, step, lo, hi, y.data());
+                        CHECK(same(x, y));
+                        // The tick precompute agrees bit for bit with the old
+                        // path, on flat, curved, dead, and bare constraints.
+                        if (!mesh.model.Empty()) {
+                            std::vector<uint8_t> fast;
+                            std::vector<float> palpha;
+                            bool anyPre = false;
+                            RigExecClothPrecomputeProjection(mesh, step, &fast,
+                                                             &palpha, &anyPre);
+                            auto v = pose;
+                            RigExecClothProjectColorSingle<true>(
+                                mesh, step, lo, hi, v.data(),
+                                anyPre ? fast.data() : nullptr,
+                                anyPre ? palpha.data() : nullptr);
+                            CHECK(same(y, v));
+                            compared += 1;
+                        }
+                        // Split ranges re-chunk the color; the writes agree.
+                        const uint32_t mid = lo + (hi - lo) / 2;
+                        projectColor(mesh, step, lo, mid, z.data());
+                        projectColor(mesh, step, mid, hi, z.data());
+                        CHECK(same(x, z));
+                        // An empty range writes nothing.
+                        projectColor(mesh, step, lo, lo, z.data());
+                        CHECK(same(x, z));
+                        compared += 3;
+                        // On an empty model both instantiations agree.
+                        if (mesh.model.Empty()) {
+                            auto w = pose;
+                            RigExecClothProjectColorSingle<true>(mesh, step, lo, hi,
+                                                                w.data());
+                            CHECK(same(y, w));
+                            compared += 1;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    {
+        const Mesh m = Curtain(3, 2.0f, 4.0f);
+        std::vector<float> pins(m.Size(), 0.0f);
+        pins[0] = pins[1] = pins[2] = 1.0f;
+        RigExecClothSettings settings;
+        RigExecClothMesh bare;
+        CHECK(Build(m, &pins, settings, &bare));
+        run(bare, posesFor(m, bare));
+        for (int hard = 0; hard < 2; ++hard) {
+            for (auto kind : {RigExecClothProfileKind::Stretch,
+                              RigExecClothProfileKind::Bend}) {
+                RigExecClothMesh mesh;
+                CHECK(Build(m, &pins, settings, &mesh));
+                RigExecClothProfile p;
+                p.kind = kind;
+                p.warp = 100;
+                p.weft = .01f;
+                p.compliance = .001f;
+                p.hard = hard != 0;
+                auto model = MaterialModel(mesh, m, p);
+                std::string why;
+                CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                               &why));
+                run(mesh, posesFor(m, mesh));
+            }
+        }
+        for (int hard = 0; hard < 2; ++hard) {
+            // A force-curved profile stays slow: the precompute marks it
+            // slow and the old path runs verbatim.
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = RigExecClothProfileKind::Stretch;
+            p.minStrength = 0.2f;
+            p.maxStrength = 1.0f;
+            p.forceCurve = {0, 1, 10000, 0};
+            p.compliance = .001f;
+            p.hard = hard != 0;
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh, posesFor(m, mesh));
+        }
+        {
+            // A zero mask kills the strength: dead-flat, slow path.
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            RigExecClothProfile p;
+            p.kind = RigExecClothProfileKind::Stretch;
+            p.maps[ClothMask] = std::vector<float>(m.Size(), 0.0f);
+            auto model = MaterialModel(mesh, m, p);
+            std::string why;
+            CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {},
+                                           &why));
+            run(mesh, posesFor(m, mesh));
+        }
+    }
+    {
+        // A mesh wide enough that colors span several chunks.
+        const Mesh m = Curtain(17, 16.0f, 16.0f);
+        std::vector<float> pins(m.Size(), 0.0f);
+        for (int c = 0; c < 17; ++c) pins[size_t(c)] = 1.0f;
+        RigExecClothSettings settings;
+        RigExecClothMesh mesh;
+        CHECK(Build(m, &pins, settings, &mesh));
+        size_t widest = 0;
+        for (size_t color = 0; color < mesh.ColorCount(); ++color)
+            widest = std::max(widest, size_t(mesh.colorStart[color + 1] -
+                                             mesh.colorStart[color]));
+        CHECK(widest > 64);
+        run(mesh, posesFor(m, mesh));
+    }
+    CHECK(compared > 5000);
+}
+
+void TestKinematicSkipPartition()
+{
+    // Each color's leading colorKkSkip entries are exactly its stretch
+    // kinematic pairs, and projecting that leading run at zero stretch
+    // alpha on an empty model leaves any pose bitwise unchanged (the
+    // zero denominator returns before any write, NaN lengths included),
+    // so the solve may start past it.
+    const Mesh m = Curtain(9, 8.0f, 8.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    for (int c = 0; c < 9; ++c) pins[size_t(c)] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, &pins, settings, &mesh));
+    CHECK(mesh.model.Empty());
+    CHECK(mesh.colorKkSkip.size() == mesh.ColorCount());
+    const auto isKk = [&](uint32_t c) {
+        const size_t a = size_t(mesh.constraintEnds[2 * c]);
+        const size_t b = size_t(mesh.constraintEnds[2 * c + 1]);
+        return mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch) &&
+               mesh.inverseMass[a] == 0.0f && mesh.inverseMass[b] == 0.0f;
+    };
+    size_t skipped = 0;
+    for (size_t k = 0; k < mesh.ColorCount(); ++k) {
+        const uint32_t lo = mesh.colorStart[k], hi = mesh.colorStart[k + 1];
+        CHECK(mesh.colorKkSkip[k] <= hi - lo);
+        for (uint32_t c = lo; c < lo + mesh.colorKkSkip[k]; ++c) CHECK(isKk(c));
+        for (uint32_t c = lo + mesh.colorKkSkip[k]; c < hi; ++c) CHECK(!isKk(c));
+        skipped += mesh.colorKkSkip[k];
+    }
+    CHECK(skipped == 8);
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    std::vector<std::vector<float>> poses;
+    poses.push_back(m.points);
+    {
+        auto x = m.points;
+        for (float &v : x) v *= 0.5f;
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        const size_t a = size_t(mesh.constraintEnds[0]);
+        const size_t b = size_t(mesh.constraintEnds[1]);
+        x[3 * b] = x[3 * a];
+        x[3 * b + 1] = x[3 * a + 1];
+        x[3 * b + 2] = x[3 * a + 2];
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        x[0] = -0.0f;
+        x[1] = -0.0f;
+        x[2] = -0.0f;
+        poses.push_back(x);
+    }
+    {
+        auto x = m.points;
+        x[0] = std::numeric_limits<float>::quiet_NaN();
+        poses.push_back(x);
+    }
+    RigExecClothStep step;
+    step.h = 1.0f / 24.0f;
+    step.alphaStretch = 0.0f;
+    step.alphaBend = 0.5f;
+    size_t compared = 0;
+    for (const auto &pose : poses) {
+        for (size_t color = 0; color < mesh.ColorCount(); ++color) {
+            const uint32_t lo = mesh.colorStart[color];
+            const uint32_t hi = mesh.colorStart[color + 1];
+            const uint32_t mid = lo + mesh.colorKkSkip[color];
+            auto x = pose, y = pose;
+            for (uint32_t c = lo; c < mid; ++c)
+                RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+            CHECK(same(x, pose));
+            for (uint32_t c = lo; c < hi; ++c)
+                RigExecClothProjectConstraintSingle(mesh, step, c, x.data());
+            // The mesh is empty (checked above), so the solve takes the
+            // branch-free instantiation here.
+            RigExecClothProjectColorSingle<false>(mesh, step, mid, hi, y.data());
+            CHECK(same(x, y));
+            // The general arm skips the same run: it returns before any
+            // write, so positions and lambda come back untouched.
+            auto z = pose;
+            std::vector<float> lambda(mesh.constraintRest.size(), 0.0f);
+            for (uint32_t c = lo; c < mid; ++c)
+                RigExecClothProjectConstraint(mesh, step, c, z.data(), lambda.data());
+            CHECK(same(z, pose));
+            for (float l : lambda) CHECK(l == 0.0f);
+            compared += 3;
+        }
+    }
+    CHECK(compared > 100);
+}
+
 void TestHardSoftBarycentricAttachments()
 {
     const Mesh m = Curtain(2, 2, 2);
@@ -704,6 +1601,1510 @@ void TestSelfContactKeepsAttachments()
             momentum += (x[3*i+axis] - m.points[3*i+axis]) / mesh.inverseMass[i];
         CHECK(std::abs(momentum) < 1e-4f);
     }
+}
+
+using PairKey = std::array<int32_t, 4>;
+
+void TestPairSetMatchesOrderedSet()
+{
+    // The self-contact dedup set must give the same insert-or-duplicate
+    // verdicts as an ordered set on every stream: sequential (crossing
+    // growth), clustered duplicates, bench-scale, extreme values, and
+    // brute-forced hash collisions that chain the probe and wrap the
+    // mask. Replaying each stream after Clear must repeat the verdicts
+    // exactly (stale slots stay unread).
+    auto check = [](const std::vector<PairKey> &stream) {
+        RigExecClothPairSet set;
+        std::set<PairKey> ref;
+        for (const PairKey &key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        for (const PairKey &key : stream) CHECK(!set.Insert(key));
+        set.Clear();
+        ref.clear();
+        for (const PairKey &key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+    };
+    check({{{1, 2, 3, 4}}, {{1, 2, 3, 4}}, {{4, 3, 2, 1}}});
+    std::vector<PairKey> sequential;
+    for (int32_t i = 0; i < 40000; ++i)
+        sequential.push_back({{i, i + 1, i + 2, i + 3}});
+    check(sequential);
+    // Clustered duplicates in a deterministic shuffle: a set that never
+    // reports duplicates fails here.
+    uint64_t state = 0x12345678u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<PairKey> clustered;
+    for (int round = 0; round < 50; ++round)
+        for (int32_t i = 0; i < 100; ++i) clustered.push_back({{i, -i, 7, round % 5}});
+    for (size_t i = clustered.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(clustered[i], clustered[j]);
+    }
+    size_t dups = 0;
+    {
+        std::set<PairKey> ref;
+        for (const PairKey &key : clustered) dups += !ref.insert(key).second;
+    }
+    CHECK(dups > 4000);
+    check(clustered);
+    check({{{0, 0, 0, 0}},
+           {{std::numeric_limits<int32_t>::min(), -1, 0, 1}},
+           {{std::numeric_limits<int32_t>::max(), 1, 0, -1}},
+           {{std::numeric_limits<int32_t>::min(), -1, 0, 1}}});
+    // Brute-forced collisions on one bucket, then on the last bucket so
+    // the probe wraps: a broken probe or mask fails these.
+    for (const uint32_t bucket : {uint32_t(0), uint32_t(4095)}) {
+        std::vector<PairKey> colliding;
+        for (int32_t i = 0; colliding.size() < 32; ++i) {
+            const PairKey key = {{i, i * 31 + 7, -i, bucket}};
+            if ((uint32_t(RigExecClothPairSet::Hash(key)) & 4095u) == bucket)
+                colliding.push_back(key);
+        }
+        RigExecClothPairSet set;
+        std::set<PairKey> ref;
+        for (const PairKey &key : colliding) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        CHECK(ref.size() == colliding.size());
+        for (const PairKey &key : colliding) CHECK(!set.Insert(key));
+    }
+}
+
+void TestPairSetPreGrownBatch()
+{
+    // A batch covered by ReserveForBatch inserts with the same verdicts
+    // as an ordered set, needs no grow mid-batch, and stays under the
+    // 70% load cap throughout; reserving zero keys never grows. The
+    // stream crosses growth with clustered duplicates.
+    uint64_t state = 0x9e3779b9u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<PairKey> stream;
+    for (int round = 0; round < 60; ++round)
+        for (int32_t i = 0; i < 150; ++i)
+            stream.push_back({{i, -i, round % 7, round % 3}});
+    for (size_t i = stream.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(stream[i], stream[j]);
+    }
+    RigExecClothPairSet set;
+    CHECK(set.SlotCount() == 0);
+    set.ReserveForBatch(0);
+    CHECK(set.SlotCount() == 0);
+    CHECK(set.count == 0);
+    std::set<PairKey> ref;
+    size_t dups = 0;
+    const size_t batch = 700;
+    for (size_t lo = 0; lo < stream.size(); lo += batch) {
+        const size_t hi = std::min(lo + batch, stream.size());
+        set.ReserveForBatch(hi - lo);
+        const size_t slots = set.SlotCount();
+        CHECK(slots > 0);
+        for (size_t k = lo; k < hi; ++k) {
+            const bool want = ref.insert(stream[k]).second;
+            dups += !want;
+            CHECK(set.InsertNoGrow(stream[k]) == want);
+            CHECK(set.SlotCount() == slots);
+            CHECK(set.count * 10 <= set.SlotCount() * 7);
+        }
+    }
+    CHECK(dups > 4000);
+    CHECK(set.count == ref.size());
+    // Sequential unique keys stress the reserve margin itself: every
+    // batch key is new, so an under-sized reserve breaches the cap.
+    set.Clear();
+    ref.clear();
+    std::vector<PairKey> sequential;
+    for (int32_t i = 0; i < 5000; ++i)
+        sequential.push_back({{i, i + 1, i + 2, i + 3}});
+    for (size_t lo = 0; lo < sequential.size(); lo += batch) {
+        const size_t hi = std::min(lo + batch, sequential.size());
+        set.ReserveForBatch(hi - lo);
+        const size_t slots = set.SlotCount();
+        for (size_t k = lo; k < hi; ++k) {
+            const bool want = ref.insert(sequential[k]).second;
+            CHECK(want);
+            CHECK(set.InsertNoGrow(sequential[k]) == want);
+            CHECK(set.SlotCount() == slots);
+            CHECK(set.count * 10 <= set.SlotCount() * 7);
+        }
+    }
+    CHECK(set.count == ref.size());
+    // One large batch pins the reserve size itself: an under-sized
+    // reserve fits the batch but breaches the cap.
+    set.Clear();
+    ref.clear();
+    std::vector<PairKey> bulk;
+    for (int32_t i = 0; i < 6000; ++i)
+        bulk.push_back({{i * 3, i * 3 + 1, -i, i}});
+    set.ReserveForBatch(bulk.size());
+    const size_t bulkSlots = set.SlotCount();
+    for (const PairKey &key : bulk) {
+        const bool want = ref.insert(key).second;
+        CHECK(want);
+        CHECK(set.InsertNoGrow(key) == want);
+        CHECK(set.SlotCount() == bulkSlots);
+        CHECK(set.count * 10 <= set.SlotCount() * 7);
+    }
+    CHECK(set.count == ref.size());
+}
+
+void TestPairSet64MatchesOrderedSet()
+{
+    // The packed-key dedup set must give the same insert-or-duplicate
+    // verdicts as an ordered set on every stream, like the array set:
+    // sequential (crossing growth), clustered duplicates, field
+    // boundaries, and brute-forced hash collisions that chain the probe
+    // and wrap the mask. Replaying each stream after Clear must repeat
+    // the verdicts exactly.
+    auto check = [](const std::vector<uint64_t> &stream) {
+        RigExecClothPairSet64 set;
+        std::set<uint64_t> ref;
+        for (uint64_t key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        for (uint64_t key : stream) CHECK(!set.Insert(key));
+        set.Clear();
+        ref.clear();
+        for (uint64_t key : stream) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+    };
+    check({RigExecClothPairSet64::Pack(1, 2, 3, 4),
+           RigExecClothPairSet64::Pack(1, 2, 3, 4),
+           RigExecClothPairSet64::Pack(4, 3, 2, 1)});
+    std::vector<uint64_t> sequential;
+    for (int32_t i = 0; i < 40000; ++i)
+        sequential.push_back(RigExecClothPairSet64::Pack(i, i + 1, i + 2, i + 3));
+    check(sequential);
+    uint64_t state = 0x12345678u;
+    const auto next = [&state]() {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return state >> 33;
+    };
+    std::vector<uint64_t> clustered;
+    for (int round = 0; round < 50; ++round)
+        for (int32_t i = 0; i < 100; ++i)
+            clustered.push_back(RigExecClothPairSet64::Pack(i, 7, 9, round % 5));
+    for (size_t i = clustered.size() - 1; i > 0; --i) {
+        const size_t j = size_t(next() % (i + 1));
+        std::swap(clustered[i], clustered[j]);
+    }
+    size_t dups = 0;
+    {
+        std::set<uint64_t> ref;
+        for (uint64_t key : clustered) dups += !ref.insert(key).second;
+    }
+    CHECK(dups > 4000);
+    check(clustered);
+    check({RigExecClothPairSet64::Pack(0, 0, 0, 0),
+           RigExecClothPairSet64::Pack(65535, 65535, 65535, 65535),
+           RigExecClothPairSet64::Pack(0, 65535, 1, 65534),
+           RigExecClothPairSet64::Pack(0, 0, 0, 0)});
+    for (const uint32_t bucket : {uint32_t(0), uint32_t(4095)}) {
+        std::vector<uint64_t> colliding;
+        // Two-dimensional drive: a one-dimensional 16-bit field repeats
+        // before 32 buckets collide, but (i, j) pairs stay distinct.
+        for (int32_t i = 0; colliding.size() < 32 && i < 65536; ++i)
+            for (int32_t j = 0; j < 64 && colliding.size() < 32; ++j) {
+                const uint64_t key = RigExecClothPairSet64::Pack(
+                    i, j, (i * 31 + 7) & 0xffff, bucket);
+                if ((uint32_t(RigExecClothPairSet64::Hash(key)) & 4095u) == bucket)
+                    colliding.push_back(key);
+            }
+        CHECK(colliding.size() == 32);
+        RigExecClothPairSet64 set;
+        std::set<uint64_t> ref;
+        for (uint64_t key : colliding) {
+            const bool want = ref.insert(key).second;
+            CHECK(set.Insert(key) == want);
+        }
+        CHECK(ref.size() == colliding.size());
+        for (uint64_t key : colliding) CHECK(!set.Insert(key));
+    }
+    // The packed and array sets agree key by key on packed meshes: the
+    // same discovery stream records the same set in both.
+    {
+        RigExecClothPairSet ref;
+        RigExecClothPairSet64 set;
+        for (int32_t i = 0; i < 5000; ++i) {
+            const PairKey array{{i, i + 1, i * 3 + 7, i * 7 + 1}};
+            const uint64_t packed = RigExecClothPairSet64::Pack(
+                array[0], array[1], array[2], array[3]);
+            CHECK(set.Insert(packed) == ref.Insert(array));
+        }
+        CHECK(set.count == ref.count);
+    }
+}
+
+void TestPairPackBoundaries()
+{
+    // Packing holds four 16-bit fields: boundary endpoints keep their
+    // identity, distinct quads pack distinctly, and Packable admits
+    // exactly the point counts whose endpoints fit.
+    CHECK(RigExecClothPairSet64::Packable(0));
+    CHECK(RigExecClothPairSet64::Packable(289));
+    CHECK(RigExecClothPairSet64::Packable(65536));
+    CHECK(!RigExecClothPairSet64::Packable(65537));
+    CHECK(!RigExecClothPairSet64::Packable(1000000));
+    const uint64_t lo = RigExecClothPairSet64::Pack(0, 0, 0, 0);
+    const uint64_t hi = RigExecClothPairSet64::Pack(65535, 65535, 65535, 65535);
+    CHECK(lo == 0ull);
+    CHECK(hi == 0xffffffffffffffffull);
+    CHECK(RigExecClothPairSet64::Pack(1, 2, 3, 4) !=
+          RigExecClothPairSet64::Pack(4, 3, 2, 1));
+    CHECK(RigExecClothPairSet64::Pack(0, 0, 0, 1) != lo);
+    CHECK(RigExecClothPairSet64::Pack(256, 1, 2, 3) !=
+          RigExecClothPairSet64::Pack(1, 256, 2, 3));
+    CHECK((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) & 0xffffull) == 0x12ull);
+    CHECK(((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 16) & 0xffffull) ==
+          0x3456ull);
+    CHECK(((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 32) & 0xffffull) ==
+          0x78ull);
+    CHECK((RigExecClothPairSet64::Pack(0x12, 0x3456, 0x78, 0x9abc) >> 48) == 0x9abcull);
+}
+
+void TestEdgeSpheresRetireOnTouch()
+{
+    // The self edge/edge band caches midpoint spheres until a correction
+    // moves an endpoint: a first fetch computes from the positions, a
+    // touch elsewhere keeps the cached tick and values, and touching
+    // either endpoint retires the sphere so the next fetch recomputes.
+    Mesh m;
+    m.points = {-1,-1,0, 1,-1,0, 0,1,0, -1,-1,.5f, 1,-1,.5f, 0,1,.5f};
+    m.counts = {3,3}; m.indices = {0,1,2,3,4,5};
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    const size_t edges = mesh.constraintRest.size() + mesh.triangles.size();
+    RigExecClothEdgeSpheres spheres;
+    spheres.centers.assign(3 * edges, 0.0f);
+    spheres.radii.assign(edges, 0.0f);
+    spheres.edgeTick.assign(edges, 0);
+    spheres.vertTick.assign(m.Size(), 0);
+    std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    uint64_t now = spheres.clock;
+    std::vector<float> x = m.points;
+    float c[3], r;
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), c, &r, now);
+    CHECK(c[0] == (x[0] + x[3]) * 0.5f && c[1] == (x[1] + x[4]) * 0.5f &&
+          c[2] == (x[2] + x[5]) * 0.5f);
+    const float e0 = x[3] - x[0], e1 = x[4] - x[1], e2 = x[5] - x[2];
+    CHECK(r == 0.5f * std::sqrt(e0 * e0 + e1 * e1 + e2 * e2));
+    const uint64_t first = spheres.edgeTick[0];
+    CHECK(first == spheres.clock);
+    // While no touch has landed, a second fetch hits on the stamp alone.
+    float clean[3], cleanR;
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), clean, &cleanR, now);
+    CHECK(spheres.edgeTick[0] == first);
+    CHECK(clean[0] == c[0] && clean[1] == c[1] && clean[2] == c[2] && cleanR == r);
+    // A touch that avoids both endpoints keeps the cached sphere, even
+    // when other positions move.
+    x[6] += 0.25f;
+    now = cloth_detail::TouchVerts(&spheres, 2, 3, 4, 5);
+    float kept[3], keptR;
+    cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), kept, &keptR, now);
+    CHECK(spheres.edgeTick[0] == first);
+    CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
+    // Moving either endpoint and touching it retires the sphere.
+    for (int32_t v : {0, 1}) {
+        x[3 * size_t(v)] += 0.5f;
+        now = cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        float fresh[3], freshR;
+        cloth_detail::EdgeSphere(&spheres, 0, 0, 1, x.data(), fresh, &freshR, now);
+        CHECK(spheres.edgeTick[0] != first);
+        CHECK(fresh[0] == (x[0] + x[3]) * 0.5f &&
+              fresh[1] == (x[1] + x[4]) * 0.5f &&
+              fresh[2] == (x[2] + x[5]) * 0.5f);
+    }
+}
+
+void TestSelfGridReuseVerdict()
+{
+    // The edge/edge pass reuses the vertex/triangle grid exactly when no
+    // projection moved x since it was built and the edge reach fits inside
+    // the vertex/triangle pad. Equal clocks with a reach at the pad reuse
+    // (both pads are that pad); any clock advance or overhang rebuilds.
+    // A NaN reach reuses: std::max keeps the pad, so the inputs match.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.5f, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 1.0f, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.0f, 0.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, nan, 1.0f));
+    CHECK(RigExecClothSelfGridReusable(7, 7, 0.5f, inf));
+    CHECK(!RigExecClothSelfGridReusable(7, 7, 1.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(7, 7, inf, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(8, 7, 0.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(7, 8, 0.5f, 1.0f));
+    CHECK(!RigExecClothSelfGridReusable(8, 7, 1.5f, 1.0f));
+}
+
+void TestClothGridDeterminism()
+{
+    // The grid-reuse verdict rests on the build being deterministic:
+    // identical inputs rebuild identical buckets, cells, and bounds,
+    // whatever the retained scratch held. A wider pad widens the cells.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    float after[24];
+    for (int i = 0; i < 24; ++i) after[i] = box[i] + 0.25f * float(i % 3 - 1);
+    const auto same = [](const RigExecClothGrid &a, const RigExecClothGrid &b) {
+        return a.cellSize == b.cellSize && a.bucketMask == b.bucketMask &&
+               a.bucketStart == b.bucketStart &&
+               a.bucketTriangles == b.bucketTriangles &&
+               std::memcmp(a.sweptLo, b.sweptLo, sizeof(a.sweptLo)) == 0 &&
+               std::memcmp(a.sweptHi, b.sweptHi, sizeof(a.sweptHi)) == 0;
+    };
+    RigExecClothGrid first, second;
+    std::vector<uint64_t> scratch(64, 0xdeadbeefull);
+    RigExecBuildClothGrid(colliders, box, after, 0.5f, &first, &scratch);
+    scratch.assign(64, 0x12345678ull);
+    RigExecBuildClothGrid(colliders, box, after, 0.5f, &second, &scratch);
+    CHECK(same(first, second));
+    RigExecClothGrid wide;
+    RigExecBuildClothGrid(colliders, box, after, 20.0f, &wide, &scratch);
+    CHECK(wide.cellSize > first.cellSize);
+    // Each bucket lists exactly its triangles, ascending: a brute-force
+    // rehash of every cell in every triangle's span, deduped through a
+    // set, agrees with the stamp-deduped build bucket by bucket.
+    const Mesh cm = Curtain(6, 4.0f, 3.0f);
+    RigExecClothColliders cc;
+    CHECK(RigExecAppendClothCollider(cm.Size(), cm.counts.data(), cm.counts.size(),
+                                     cm.indices.data(), cm.indices.size(), false, &cc));
+    std::vector<float> moved = cm.points;
+    for (size_t i = 0; i < moved.size(); ++i) moved[i] += 0.125f * float(int(i) % 5 - 2);
+    for (const float pad : {0.0f, 0.5f, 3.0f}) {
+        RigExecClothGrid grid;
+        RigExecBuildClothGrid(cc, cm.points.data(), moved.data(), pad, &grid, &scratch);
+        const size_t tris = cc.triangles.size() / 3;
+        const uint32_t buckets = grid.bucketMask + 1;
+        std::vector<std::set<int32_t>> want(buckets);
+        for (size_t t = 0; t < tris; ++t) {
+            float lo[3], hi[3];
+            bool finite = true;
+            for (int a = 0; a < 3; ++a) {
+                lo[a] = std::numeric_limits<float>::infinity();
+                hi[a] = -std::numeric_limits<float>::infinity();
+            }
+            for (int k = 0; k < 3; ++k) {
+                const size_t v = size_t(cc.triangles[3 * t + size_t(k)]);
+                for (int a = 0; a < 3; ++a) {
+                    const float p = cm.points[3 * v + size_t(a)];
+                    const float q = moved[3 * v + size_t(a)];
+                    finite = finite && std::isfinite(p) && std::isfinite(q);
+                    lo[a] = std::min(lo[a], std::min(p, q));
+                    hi[a] = std::max(hi[a], std::max(p, q));
+                }
+            }
+            if (!finite) continue;
+            int64_t c0[3], c1[3];
+            for (int a = 0; a < 3; ++a) {
+                c0[a] = cloth_detail::Cell(lo[a] - pad, grid.cellSize);
+                c1[a] = cloth_detail::Cell(hi[a] + pad, grid.cellSize);
+            }
+            const uint64_t span = uint64_t(c1[0] - c0[0] + 1) *
+                                  uint64_t(c1[1] - c0[1] + 1) *
+                                  uint64_t(c1[2] - c0[2] + 1);
+            if (span >= buckets) {
+                for (uint32_t b = 0; b < buckets; ++b) want[b].insert(int32_t(t));
+                continue;
+            }
+            for (int64_t x = c0[0]; x <= c1[0]; ++x)
+                for (int64_t y = c0[1]; y <= c1[1]; ++y)
+                    for (int64_t z = c0[2]; z <= c1[2]; ++z)
+                        want[cloth_detail::Hash(x, y, z, grid.bucketMask)].insert(int32_t(t));
+        }
+        CHECK(grid.bucketStart.size() == size_t(buckets) + 1);
+        for (uint32_t b = 0; b < buckets; ++b) {
+            const uint32_t lo = grid.bucketStart[b], hi = grid.bucketStart[b + 1];
+            CHECK(hi - lo == want[b].size());
+            size_t k = lo;
+            int32_t prev = -1;
+            for (int32_t t : want[b]) {
+                CHECK(k < hi && grid.bucketTriangles[k] == t);
+                CHECK(t > prev);
+                prev = t;
+                ++k;
+            }
+        }
+    }
+}
+
+void TestSelfPairDiscoveryOrder()
+{
+    // A folded curtain layer over itself: vertex/triangle and edge/edge
+    // corrections both fire. Adjacency runs before dedup where the mesh
+    // built the union rows, so the pair bitset records only non-adjacent
+    // pairs; the corrections that reach projection, and the solved
+    // points, are pinned bit for bit.
+    const int n = 4;
+    Mesh m;
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const bool top = j < n / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(n - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < n; ++j)
+        for (int i = 0; i + 1 < n; ++i) {
+            const int a = j * n + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + n});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + n, a + n});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 7);
+    CHECK(ee == 6);
+    CHECK(ws.selfLambda.size() == 13);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 144);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xc2fddc4fec45e38aull);
+}
+
+void TestSelfLargeMeshUsesPairBitset()
+{
+    // A folded curtain padded with far-away isolated points takes the
+    // pair bitset past the old packing limit, records the same pairs,
+    // and solves the curtain identically: the padded points hash into
+    // buckets but die at the band, and add no constraints. The mesh is
+    // past the adjacency-bitset point cap, so the linear scans key
+    // behind the same verdicts as the bitset path.
+    const int n = 4;
+    Mesh m;
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const bool top = j < n / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(n - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < n; ++j)
+        for (int i = 0; i + 1 < n; ++i) {
+            const int a = j * n + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + n});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + n, a + n});
+        }
+    const size_t curtainPoints = m.points.size() / 3;
+    while (m.points.size() / 3 < 66000) {
+        m.points.push_back(10000.0f);
+        m.points.push_back(-10000.0f);
+        m.points.push_back(5000.0f);
+    }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(mesh.pointCount == 66000);
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(ws.selfPairs.count == 0);
+    // The linear path records the share-live pairs (351 bits) where the
+    // bitset path records only the adjacency-live ones (144); the
+    // adjacency scans behind the record retire the same pairs, so the
+    // same corrections survive either way.
+    CHECK(PairBitCount(ws.selfPairBits) == 351);
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 7);
+    CHECK(ee == 6);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < 3 * curtainPoints * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xc2fddc4fec45e38aull);
+}
+
+void TestNeighborBitsMatchLists()
+{
+    // The neighbor bitsets report the same relation as the sorted lists
+    // for every vertex pair; past the size cap, or without a self-contact
+    // profile, Prepare leaves them empty and the scans stay linear.
+    const Mesh curtains[] = {Curtain(4, 3.0f, 2.0f), Curtain(2, 2.0f, 2.0f)};
+    for (const Mesh &m : curtains) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(!mesh.neighborBits.empty());
+        if (mesh.neighborBits.empty()) continue;
+        CHECK(mesh.neighborBitStride == (m.Size() + 63) / 64);
+        size_t compared = 0;
+        for (size_t a = 0; a < m.Size(); ++a)
+            for (size_t b = 0; b < m.Size(); ++b) {
+                CHECK(cloth_detail::AdjacentToBits(mesh, int32_t(a), int32_t(b)) ==
+                      cloth_detail::AdjacentTo(mesh.neighbors[a], int32_t(b)));
+                ++compared;
+            }
+        CHECK(compared == m.Size() * m.Size());
+    }
+    // A model without self contact builds no sets either.
+    {
+        const Mesh m = Curtain(4, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothModel model;
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.neighborBits.empty());
+    }
+    // Either side of the size cap: 2025 points build the sets, 2116 do
+    // not (no solve: Prepare alone decides).
+    for (const int n : {45, 46}) {
+        const Mesh m = Curtain(n, 3.0f, 2.0f);
+        CHECK(m.Size() == size_t(n * n));
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.neighborBits.empty() == (n == 46));
+    }
+}
+
+void TestEdgeBitsMatchVertices()
+{
+    // Each constraint's union row reports the vertices neighboring
+    // either endpoint: the same verdict as the two vertex rows, or the
+    // two sorted lists, for every constraint and vertex. Past the size
+    // cap, or without a self-contact profile, Prepare leaves the union
+    // rows empty with the bitsets.
+    const Mesh curtains[] = {Curtain(4, 3.0f, 2.0f), Curtain(2, 2.0f, 2.0f)};
+    for (const Mesh &m : curtains) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.edgeNeighborBits.size() ==
+              mesh.constraintRest.size() * mesh.neighborBitStride);
+        if (mesh.edgeNeighborBits.empty()) continue;
+        size_t compared = 0;
+        for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+            const int32_t i = mesh.constraintEnds[2 * c];
+            const int32_t j = mesh.constraintEnds[2 * c + 1];
+            for (size_t v = 0; v < m.Size(); ++v) {
+                const bool want =
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(i)], int32_t(v)) ||
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(j)], int32_t(v));
+                CHECK(cloth_detail::AdjacentToEdgeBits(mesh, c, int32_t(v)) == want);
+                CHECK(want == (cloth_detail::AdjacentToBits(mesh, i, int32_t(v)) ||
+                               cloth_detail::AdjacentToBits(mesh, j, int32_t(v))));
+                ++compared;
+            }
+        }
+        CHECK(compared == mesh.constraintRest.size() * m.Size());
+    }
+    // A model without self contact builds no union rows either.
+    {
+        const Mesh m = Curtain(4, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothModel model;
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.edgeNeighborBits.empty());
+    }
+    // Either side of the size cap.
+    for (const int n : {45, 46}) {
+        const Mesh m = Curtain(n, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.edgeNeighborBits.empty() == (n == 46));
+    }
+}
+
+void TestSharedEndpointsTestAdjacent()
+{
+    // The edge/edge discovery tests union-row adjacency before the twin
+    // skip, with no endpoint-sharing test: every neighbor list holds its
+    // own vertex, so the constraint row holds both endpoints and every
+    // endpoint-sharing pair tests adjacent. Exhausted here over every
+    // stretch constraint against every triangle edge, on an open curtain
+    // and a closed sphere.
+    const Mesh meshes[] = {Curtain(4, 3.0f, 2.0f), Sphere(1.0f, 4, 6)};
+    for (const Mesh &m : meshes) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(!mesh.edgeNeighborBits.empty());
+        if (mesh.edgeNeighborBits.empty()) continue;
+        size_t shared = 0, checked = 0, stretch = 0;
+        const size_t triCount = mesh.triangles.size() / 3;
+        for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+            if (mesh.constraintKind[c] != uint8_t(RigExecClothConstraint::Stretch))
+                continue;
+            ++stretch;
+            const int32_t i = mesh.constraintEnds[2 * c];
+            const int32_t j = mesh.constraintEnds[2 * c + 1];
+            for (size_t t = 0; t < triCount; ++t) {
+                for (size_t e = 0; e < 3; ++e) {
+                    const int32_t k = mesh.triEdges[6 * t + 2 * e];
+                    const int32_t l = mesh.triEdges[6 * t + 2 * e + 1];
+                    ++checked;
+                    if (!(i == k || i == l || j == k || j == l)) continue;
+                    ++shared;
+                    CHECK(cloth_detail::AdjacentToEdgeBits(mesh, c, k) ||
+                          cloth_detail::AdjacentToEdgeBits(mesh, c, l));
+                }
+            }
+        }
+        CHECK(shared > 0);
+        CHECK(checked == stretch * triCount * 3);
+    }
+}
+
+void TestTriBitsMatchVertices()
+{
+    // Each triangle's union row reports the vertices neighboring any
+    // corner: the same verdict as the three vertex rows, or the three
+    // sorted lists, for every triangle and vertex. Past the size cap,
+    // or without a self-contact profile, Prepare leaves the union
+    // rows empty with the bitsets.
+    const Mesh curtains[] = {Curtain(4, 3.0f, 2.0f), Curtain(2, 2.0f, 2.0f)};
+    for (const Mesh &m : curtains) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.size() ==
+              mesh.triangles.size() / 3 * mesh.neighborBitStride);
+        if (mesh.triNeighborBits.empty()) continue;
+        size_t compared = 0;
+        for (size_t t = 0; t < mesh.triangles.size() / 3; ++t) {
+            const int32_t u = mesh.triangles[3 * t];
+            const int32_t v = mesh.triangles[3 * t + 1];
+            const int32_t w = mesh.triangles[3 * t + 2];
+            for (size_t x = 0; x < m.Size(); ++x) {
+                const bool want =
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(u)], int32_t(x)) ||
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(v)], int32_t(x)) ||
+                    cloth_detail::AdjacentTo(mesh.neighbors[size_t(w)], int32_t(x));
+                CHECK(cloth_detail::AdjacentToTriBits(mesh, t, int32_t(x)) == want);
+                CHECK(want == (cloth_detail::AdjacentToBits(mesh, u, int32_t(x)) ||
+                               cloth_detail::AdjacentToBits(mesh, v, int32_t(x)) ||
+                               cloth_detail::AdjacentToBits(mesh, w, int32_t(x))));
+                ++compared;
+            }
+        }
+        CHECK(compared == mesh.triangles.size() / 3 * m.Size());
+    }
+    // A model without self contact builds no union rows either.
+    {
+        const Mesh m = Curtain(4, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothModel model;
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.empty());
+    }
+    // Either side of the size cap.
+    for (const int n : {45, 46}) {
+        const Mesh m = Curtain(n, 3.0f, 2.0f);
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        CHECK(mesh.triNeighborBits.empty() == (n == 46));
+    }
+}
+
+void TestStrengthCacheMatchesDirect()
+{
+    // Prepare derives the position-independent strength inputs once: the
+    // cached profile verdicts and lo/hi/mask/directional inputs match the
+    // per-call profile scans and strength evaluations bit for bit, over
+    // varied masks (including last-wins overlaps and unmatched -1s),
+    // painted maps, and force curves.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    const size_t n = m.Size();
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothModel model;
+    RigExecClothProfile stretch0, stretch1;
+    stretch0.kind = stretch1.kind = RigExecClothProfileKind::Stretch;
+    stretch0.minStrength = 0.5f; stretch0.maxStrength = 2.0f;
+    stretch0.forceCurve = {0, 0, 100, 1};
+    stretch0.warp = 2.0f; stretch0.weft = 0.5f;
+    stretch0.maps[ClothMask].assign(n, 0.25f);
+    stretch0.maps[ClothWarp].assign(n, 1.5f);
+    stretch0.sourceMask.assign(n, 0.0f);
+    stretch0.sourceMask[0] = stretch0.sourceMask[1] = 1.0f;
+    stretch1.minStrength = 1.0f; stretch1.maxStrength = 3.0f;
+    stretch1.forceCurve = {0, 1, 50, 0.25f, 200, 1};
+    stretch1.maps[ClothMinStrength].assign(n, 0.5f);
+    stretch1.maps[ClothMaxStrength].assign(n, 2.0f);
+    stretch1.sourceMask.assign(n, 0.0f);
+    stretch1.sourceMask[1] = stretch1.sourceMask[2] = 1.0f;
+    RigExecClothProfile bend;
+    bend.kind = RigExecClothProfileKind::Bend;
+    bend.compliance = 0.002f;
+    RigExecClothProfile damping;
+    damping.kind = RigExecClothProfileKind::Damping;
+    damping.minStrength = 2.0f; damping.maxStrength = 8.0f;
+    damping.forceCurve = {0, 0.5f, 10, 1};
+    damping.maps[ClothMask].assign(n, 0.75f);
+    damping.maps[ClothWeft].assign(n, 2.0f);
+    damping.sourceMask.assign(n, 0.0f);
+    for (size_t i = 0; i < n; i += 2) damping.sourceMask[i] = 1.0f;
+    RigExecClothProfile tether;
+    tether.kind = RigExecClothProfileKind::Tether;
+    tether.sourceMask.assign(n, 0.0f);
+    tether.sourceMask[3] = 1.0f;
+    RigExecClothProfile collision, collisionB;
+    collision.kind = collisionB.kind = RigExecClothProfileKind::Collision;
+    collision.thickness = 0.3f;
+    collision.sourceMask.assign(n, 1.0f);
+    collisionB.targetCollider = 0;
+    collisionB.sourceMask.assign(n, 0.0f);
+    for (size_t i = 1; i < n; i += 2) collisionB.sourceMask[i] = 1.0f;
+    RigExecClothProfile self;
+    self.kind = RigExecClothProfileKind::SelfCollision;
+    self.thickness = 0.2f;
+    self.maps[ClothThickness].assign(n, 0.5f);
+    self.maps[ClothThickness][5] = 3.0f;
+    model.profiles = {stretch0, stretch1, bend, damping, tether, collision,
+                      collisionB, self};
+    for (int32_t vertex : mesh.triangles) {
+        model.triangleUV.push_back(m.points[3 * size_t(vertex)]);
+        model.triangleUV.push_back(m.points[3 * size_t(vertex) + 1]);
+    }
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {4}, &why));
+    const float forces[] = {0.0f, 0.5f, 50.0f, 200.0f, 1e30f,
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN()};
+    const auto sameBits = [](float a, float b) {
+        return std::memcmp(&a, &b, sizeof(float)) == 0;
+    };
+    CHECK(mesh.constraintProfile.size() == mesh.constraintRest.size());
+    CHECK(mesh.constraintStrengthBase.size() == 4 * mesh.constraintRest.size());
+    size_t matched = 0, unmatched = 0;
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c) {
+        const size_t a = size_t(mesh.constraintEnds[2 * c]);
+        const size_t b = size_t(mesh.constraintEnds[2 * c + 1]);
+        RigExecClothSample sample;
+        sample.vertices = {{int32_t(a), int32_t(b), int32_t(b)}};
+        sample.weights = {{0.5f, 0.5f, 0}};
+        const auto kind = mesh.constraintKind[c] == uint8_t(RigExecClothConstraint::Stretch)
+            ? RigExecClothProfileKind::Stretch : RigExecClothProfileKind::Bend;
+        const RigExecClothProfile *want = RigExecClothProfileFor(mesh, kind, sample);
+        const int32_t wi = want ? int32_t(want - mesh.model.profiles.data()) : -1;
+        CHECK(mesh.constraintProfile[c] == wi);
+        if (!want) { ++unmatched; continue; }
+        ++matched;
+        float restDirection[3];
+        cloth_detail::Sub(mesh.restPoints.data() + 3 * a,
+                          mesh.restPoints.data() + 3 * b, restDirection);
+        const float rl = cloth_detail::Length(restDirection);
+        for (float &q : restDirection) q /= rl;
+        const float *base = mesh.constraintStrengthBase.data() + 4 * c;
+        CHECK(sameBits(base[0], want->minStrength *
+            RigExecClothSampleMap(*want, ClothMinStrength, sample)));
+        CHECK(sameBits(base[1], want->maxStrength *
+            RigExecClothSampleMap(*want, ClothMaxStrength, sample)));
+        CHECK(sameBits(base[2], RigExecClothSampleMap(*want, ClothMask, sample)));
+        const float warpMaps[3] = {
+            RigExecClothSampleMap(*want, ClothWarp, sample),
+            RigExecClothSampleMap(*want, ClothWeft, sample),
+            RigExecClothSampleMap(*want, ClothNormal, sample)};
+        CHECK(sameBits(base[3], RigExecClothDirectional(
+            *want, restDirection, mesh.materialFrames.data() + 9 * a, warpMaps)));
+        for (float force : forces) {
+            const float direct = RigExecClothStrength(*want, sample, force,
+                restDirection, mesh.materialFrames.data() + 9 * a);
+            const float cached = RigExecClothCachedBase(*want, base, force) * base[3];
+            CHECK(sameBits(direct, cached));
+        }
+    }
+    CHECK(matched > 0 && unmatched > 0);
+    CHECK(mesh.vertexDamping.size() == n);
+    CHECK(mesh.vertexDampingBase.size() == 6 * n);
+    CHECK(mesh.vertexTether.size() == n);
+    CHECK(mesh.vertexCollision.size() == n);
+    size_t dampMatched = 0, tetherMatched = 0, collideMatched = 0;
+    const float dirs[][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}, {1, 2, 3}};
+    for (size_t i = 0; i < n; ++i) {
+        const RigExecClothSample vertex = RigExecClothVertex(i);
+        const RigExecClothProfile *damp =
+            RigExecClothProfileFor(mesh, RigExecClothProfileKind::Damping, vertex);
+        const int32_t di = damp ? int32_t(damp - mesh.model.profiles.data()) : -1;
+        CHECK(mesh.vertexDamping[i] == di);
+        const RigExecClothProfile *teth =
+            RigExecClothProfileFor(mesh, RigExecClothProfileKind::Tether, vertex);
+        CHECK(mesh.vertexTether[i] ==
+              (teth ? int32_t(teth - mesh.model.profiles.data()) : -1));
+        if (teth) ++tetherMatched;
+        const RigExecClothProfile *hit = nullptr;
+        for (size_t k = mesh.model.profiles.size(); k-- > 0;) {
+            const auto &profile = mesh.model.profiles[k];
+            if (profile.kind == RigExecClothProfileKind::Collision &&
+                (profile.targetCollider < 0 || profile.targetCollider == 0) &&
+                RigExecClothRegion(profile.sourceMask, vertex) > 0) {
+                hit = &profile;
+                break;
+            }
+        }
+        CHECK(mesh.vertexCollision[i] ==
+              (hit ? int32_t(hit - mesh.model.profiles.data()) : -1));
+        if (hit) ++collideMatched;
+        if (!damp) continue;
+        ++dampMatched;
+        const float *base = mesh.vertexDampingBase.data() + 6 * i;
+        CHECK(sameBits(base[0], damp->minStrength *
+            RigExecClothSampleMap(*damp, ClothMinStrength, vertex)));
+        CHECK(sameBits(base[1], damp->maxStrength *
+            RigExecClothSampleMap(*damp, ClothMaxStrength, vertex)));
+        CHECK(sameBits(base[2], RigExecClothSampleMap(*damp, ClothMask, vertex)));
+        CHECK(sameBits(base[3], RigExecClothSampleMap(*damp, ClothWarp, vertex)));
+        CHECK(sameBits(base[4], RigExecClothSampleMap(*damp, ClothWeft, vertex)));
+        CHECK(sameBits(base[5], RigExecClothSampleMap(*damp, ClothNormal, vertex)));
+        const float *frame = mesh.materialFrames.data() + 9 * i;
+        for (float force : forces) {
+            const float isotropic = RigExecClothCachedBase(*damp, base, force);
+            CHECK(sameBits(isotropic, RigExecClothStrength(*damp, vertex, force)));
+            for (const auto &dir : dirs) {
+                const float direct =
+                    RigExecClothStrength(*damp, vertex, force, dir, frame);
+                const float cached =
+                    isotropic * RigExecClothDirectional(*damp, dir, frame, base + 3);
+                CHECK(sameBits(direct, cached));
+            }
+        }
+    }
+    CHECK(dampMatched > 0 && dampMatched < n);
+    CHECK(tetherMatched == 1 && collideMatched == n);
+    float wantPad = 0;
+    for (const auto &p : mesh.model.profiles)
+        if (p.kind == RigExecClothProfileKind::SelfCollision)
+            for (size_t i = 0; i < n; ++i)
+                wantPad = std::max(wantPad,
+                    p.thickness * RigExecClothMap(p, ClothThickness, i));
+    CHECK(sameBits(mesh.selfPad, wantPad));
+    CHECK(mesh.selfPad == 0.2f * 3.0f);
+    // An empty model builds no caches.
+    {
+        RigExecClothMesh bare;
+        CHECK(Build(m, nullptr, settings, &bare));
+        RigExecClothModel empty;
+        CHECK(RigExecPrepareClothModel(&bare, empty, m.points.data(), {}, &why));
+        CHECK(bare.constraintProfile.empty());
+        CHECK(bare.constraintStrengthBase.empty());
+        CHECK(bare.vertexDamping.empty());
+        CHECK(bare.vertexDampingBase.empty());
+        CHECK(bare.vertexTether.empty());
+        CHECK(bare.vertexCollision.empty());
+        CHECK(bare.selfPad == 0);
+    }
+}
+
+void TestSelfEdgeCanonicalization()
+{
+    // Prepare stores each triangle edge sorted, and the discovery keys
+    // them by one compare: with both edges sorted and four distinct
+    // endpoints, (k,l) < (i,j) is exactly k < i. Constraints arrive
+    // sorted from the build.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    for (size_t c = 0; c < mesh.constraintRest.size(); ++c)
+        CHECK(mesh.constraintEnds[2 * c] < mesh.constraintEnds[2 * c + 1]);
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    CHECK(mesh.triEdges.size() == 2 * mesh.triangles.size());
+    for (size_t t = 0; t < mesh.triangles.size() / 3; ++t)
+        for (size_t e = 0; e < 3; ++e) {
+            const int32_t p = mesh.triangles[3 * t + e];
+            const int32_t q = mesh.triangles[3 * t + (e + 1) % 3];
+            CHECK(mesh.triEdges[6 * t + 2 * e] == std::min(p, q));
+            CHECK(mesh.triEdges[6 * t + 2 * e + 1] == std::max(p, q));
+        }
+    size_t compared = 0;
+    for (int32_t i = 0; i < 6; ++i)
+        for (int32_t j = 0; j < 6; ++j)
+            for (int32_t k = 0; k < 6; ++k)
+                for (int32_t l = 0; l < 6; ++l) {
+                    if (!(i < j && k < l)) continue;
+                    if (i == k || i == l || j == k || j == l) continue;
+                    CHECK((k < i) == (std::make_pair(k, l) < std::make_pair(i, j)));
+                    ++compared;
+                }
+    CHECK(compared == 90);
+}
+
+void TestSelfEdgeTwins()
+{
+    // Prepare records each triangle edge's smallest other triangle, or
+    // -1 for a boundary edge: the twin skip's proof that the pair was
+    // already visited. Verified against the triangles directly, with
+    // both boundary and interior edges present.
+    const Mesh m = Curtain(4, 3.0f, 2.0f);
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    const size_t tris = mesh.triangles.size() / 3;
+    CHECK(mesh.triEdgeTwin.size() == 3 * tris);
+    if (mesh.triEdgeTwin.size() != 3 * tris) return;
+    size_t boundary = 0, interior = 0;
+    for (size_t t = 0; t < tris; ++t)
+        for (size_t e = 0; e < 3; ++e) {
+            const int32_t p = mesh.triangles[3 * t + e];
+            const int32_t q = mesh.triangles[3 * t + (e + 1) % 3];
+            const int32_t k = std::min(p, q), l = std::max(p, q);
+            int32_t want = -1;
+            for (size_t u = 0; u < tris; ++u) {
+                if (u == t) continue;
+                for (size_t f = 0; f < 3; ++f) {
+                    const int32_t a = mesh.triangles[3 * u + f];
+                    const int32_t b = mesh.triangles[3 * u + (f + 1) % 3];
+                    if (std::min(a, b) == k && std::max(a, b) == l) {
+                        if (want < 0 || int32_t(u) < want) want = int32_t(u);
+                    }
+                }
+            }
+            CHECK(mesh.triEdgeTwin[3 * t + e] == want);
+            if (want < 0) ++boundary;
+            else ++interior;
+        }
+    CHECK(boundary > 0);
+    CHECK(interior > 0);
+}
+
+// Three sheets sharing one edge row: each shared edge sits in three
+// triangles, so the edge/edge discovery meets every triangle edge
+// through non-twin triangles as well as twins.
+Mesh NonManifoldFold()
+{
+    Mesh m;
+    for (int i = 0; i < 4; ++i) {
+        m.points.push_back(float(i));
+        m.points.push_back(0.0f);
+        m.points.push_back(0.0f);
+    }
+    const float upper[][3] = {{0, 1, 0}, {0, 0.5f, 0.2f}, {0, 0.5f, -0.2f}};
+    for (const auto &row : upper)
+        for (int i = 0; i < 4; ++i) {
+            m.points.push_back(float(i) + row[0]);
+            m.points.push_back(row[1]);
+            m.points.push_back(row[2]);
+        }
+    for (int s = 0; s < 3; ++s) {
+        const int base = 4 + 4 * s;
+        for (int q = 0; q < 3; ++q) {
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {q, q + 1, base + q + 1});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {q, base + q + 1, base + q});
+        }
+    }
+    return m;
+}
+
+void TestTriEdgeConstraintMapsStretchEdges()
+{
+    // Prepare maps each triangle edge to its stretch constraint: every
+    // triangle edge is one (the build pushes one per unique mesh edge),
+    // so the edge/edge discovery reads a dense pair id through it.
+    // Verified against the constraints directly on a manifold curtain
+    // and the non-manifold fold, where each shared edge still maps to
+    // its single constraint from every triangle holding it.
+    const Mesh meshes[] = {Curtain(4, 3.0f, 2.0f), NonManifoldFold()};
+    for (const Mesh &m : meshes) {
+        RigExecClothMesh mesh;
+        RigExecClothSettings settings;
+        CHECK(Build(m, nullptr, settings, &mesh));
+        RigExecClothProfile contact;
+        contact.kind = RigExecClothProfileKind::SelfCollision;
+        RigExecClothModel model;
+        model.profiles = {contact};
+        std::string why;
+        CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+        const size_t tris = mesh.triangles.size() / 3;
+        CHECK(mesh.triEdgeConstraint.size() == 3 * tris);
+        if (mesh.triEdgeConstraint.size() != 3 * tris) continue;
+        for (size_t t = 0; t < tris; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const int32_t cc = mesh.triEdgeConstraint[3 * t + e];
+                CHECK(cc >= 0);
+                if (cc < 0) continue;
+                CHECK(mesh.constraintKind[size_t(cc)] ==
+                      uint8_t(RigExecClothConstraint::Stretch));
+                CHECK(mesh.constraintEnds[2 * size_t(cc)] ==
+                      mesh.triEdges[6 * t + 2 * e]);
+                CHECK(mesh.constraintEnds[2 * size_t(cc) + 1] ==
+                      mesh.triEdges[6 * t + 2 * e + 1]);
+            }
+        for (size_t t = 0; t < tris; ++t)
+            for (size_t e = 0; e < 3; ++e) {
+                const int32_t k = mesh.triEdges[6 * t + 2 * e];
+                const int32_t l = mesh.triEdges[6 * t + 2 * e + 1];
+                for (size_t u = 0; u < tris; ++u)
+                    for (size_t f = 0; f < 3; ++f) {
+                        if (mesh.triEdges[6 * u + 2 * f] != k ||
+                            mesh.triEdges[6 * u + 2 * f + 1] != l)
+                            continue;
+                        CHECK(mesh.triEdgeConstraint[3 * u + f] ==
+                              mesh.triEdgeConstraint[3 * t + e]);
+                    }
+            }
+    }
+}
+
+void TestSelfNonManifoldFoldPinned()
+{
+    // The non-manifold fold solves with its shared edges discovered
+    // through three triangles each: the pair bitset records the
+    // discovered set once and the solved points pin the corrections.
+    const Mesh m = NonManifoldFold();
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 0);
+    CHECK(ee == 4);
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 150);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0x6681b4d9aa7413a3ull);
+}
+
+void TestSelfPairBitsetFallback()
+{
+    // Past the pair-bitset constraint cap the twin skip and hash sets
+    // serve instead, with the same verdicts: a folded 20x20 sheet takes
+    // the fallback, records the same pairs the old path did, and pins
+    // the same solved points.
+    const int w = 20, l = 20;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(mesh.constraintRest.size() > RigExecClothMaxPairBitConstraints);
+    CHECK(!RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t ve = 0, ee = 0;
+    for (const auto &entry : ws.selfLambda) (entry.first[3] < 0 ? ve : ee)++;
+    CHECK(ve == 441);
+    CHECK(ee == 28);
+    CHECK(PairBitCount(ws.selfPairBits) == 0);
+    CHECK(ws.selfPairs.count == 0);
+    // Grid-shape statistic: four buckets per triangle spread hash
+    // collisions thinner, so discovery records fewer spurious pairs
+    // before the filters; the corrections and solved points below are
+    // unchanged.
+    CHECK(ws.selfPairs64.count == 41706);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0xe7866709b5941b4eull);
+}
+
+void TestSelfFoldedStripPinned()
+{
+    // A long sheet folded back on itself: buckets discriminate along
+    // its length while the layers correct against each other, through
+    // same-constraint revisits and cross-direction pairs. The pair
+    // bitset records the discovered set and the solved points pin the
+    // corrections bit for bit.
+    const int w = 4, l = 16;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.5f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.3f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    CHECK(RigExecClothUsePairBits(mesh.constraintRest.size()));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.0f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.depth = 0.15f;
+    RigExecClothWorkspace ws;
+    std::vector<float> x = m.points;
+    RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) == 3707);
+    uint64_t h = 1469598103934665603ull;
+    const auto *p = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    CHECK(h == 0x430244becdd74004ull);
+}
+
+void TestTriSpheresRetireOnTouch()
+{
+    // The vertex/triangle band caches centroid spheres until a correction
+    // moves a corner: a first fetch computes from the positions, a touch
+    // elsewhere keeps the cached tick and values, and touching any of the
+    // three corners retires the sphere so the next fetch recomputes.
+    // Freshness reuses the edge spheres' ticks and clock.
+    Mesh m;
+    m.points = {-1,-1,0, 1,-1,0, 0,1,0, -1,-1,.5f, 1,-1,.5f, 0,1,.5f};
+    m.counts = {3,3}; m.indices = {0,1,2,3,4,5};
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothEdgeSpheres spheres;
+    spheres.vertTick.assign(m.Size(), 0);
+    std::fill(spheres.vertTick.begin(), spheres.vertTick.end(), ++spheres.clock);
+    uint64_t now = spheres.clock;
+    RigExecClothTriSpheres tris;
+    tris.centers.assign(6, 0.0f);
+    tris.radii.assign(2, 0.0f);
+    tris.triTick.assign(2, 0);
+    std::vector<float> x = m.points;
+    float c[3], r;
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), c, &r, now);
+    CHECK(c[0] == (x[0] + x[3] + x[6]) / 3.0f &&
+          c[1] == (x[1] + x[4] + x[7]) / 3.0f &&
+          c[2] == (x[2] + x[5] + x[8]) / 3.0f);
+    const uint64_t first = tris.triTick[0];
+    CHECK(first == spheres.clock);
+    float clean[3], cleanR;
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), clean, &cleanR, now);
+    CHECK(tris.triTick[0] == first);
+    CHECK(clean[0] == c[0] && clean[1] == c[1] && clean[2] == c[2] && cleanR == r);
+    x[9] += 0.25f;
+    now = cloth_detail::TouchVerts(&spheres, 3, 4, 5, 3);
+    float kept[3], keptR;
+    cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), kept, &keptR, now);
+    CHECK(tris.triTick[0] == first);
+    CHECK(kept[0] == c[0] && kept[1] == c[1] && kept[2] == c[2] && keptR == r);
+    for (int32_t v : {0, 1, 2}) {
+        x[3 * size_t(v)] += 0.5f;
+        now = cloth_detail::TouchVerts(&spheres, v, 3, 4, 5);
+        float fresh[3], freshR;
+        cloth_detail::TriSphere(&tris, &spheres, 0, 0, 1, 2, x.data(), fresh, &freshR, now);
+        CHECK(tris.triTick[0] != first);
+        CHECK(fresh[0] == (x[0] + x[3] + x[6]) / 3.0f &&
+              fresh[1] == (x[1] + x[4] + x[7]) / 3.0f &&
+              fresh[2] == (x[2] + x[5] + x[8]) / 3.0f);
+    }
+}
+
+void TestHeldConstraintBandInputs()
+{
+    // The edge/edge band derives the constraint edge's sphere and
+    // thickness factor once per bucket loop and re-derives the sphere
+    // after a correction retires it. This fold's corrections land
+    // mid-bucket over repeated solves, so the answer pins both the
+    // held values and the re-derivation: dropping the retire, or
+    // halving the held thickness, changes the hash (both sabotages
+    // verified to fail).
+    const int w = 4, l = 16;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.37f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.1f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 2.0f;
+    contact.friction = 0.3f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.t = 1;
+    step.depth = 2.0f;
+    std::vector<float> x = m.points;
+    RigExecClothWorkspace ws;
+    for (int k = 0; k < 3; ++k)
+        RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t edgePairs = 0;
+    for (const auto &kv : ws.selfLambda)
+        if (!(kv.first[3] == -1 && kv.first[4] == -1)) ++edgePairs;
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) > 0);
+    CHECK(edgePairs > 0);
+    uint64_t hash = 1469598103934665603ull;
+    const auto *bytes = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    CHECK(hash == 0xa7c3d3671e2050a8ull);
+}
+
+void TestTriangleBandSkipsSeparatedTriangles()
+{
+    // The edge/edge triangle band skips a bucket triangle whose centroid
+    // sphere cannot meet the constraint edge's sphere, deciding all three
+    // edge pairs at once. This fold keeps the band active (over a third
+    // of entries skipped, measured) while both vertex/triangle and
+    // edge/edge corrections land, so the answer pins the skip, the
+    // reach re-derivation after vertex/triangle corrections, and the
+    // switch-off after edge/edge corrections. Kill-side bound errors
+    // are masked by dedup rediscovery from surviving paths (even a
+    // zeroed reach diverges nowhere), so the band's exactness rests on
+    // the kill-implies-band-skip implication rather than on this pin.
+    const int w = 4, l = 16;
+    Mesh m;
+    for (int j = 0; j < l; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool top = j < l / 2;
+            m.points.push_back(float(i) + (top ? 0.0f : 0.37f));
+            m.points.push_back(top ? float(j) : float(l - 1 - j));
+            m.points.push_back(top ? 0.0f : 0.1f);
+        }
+    for (int j = 0; j + 1 < l; ++j)
+        for (int i = 0; i + 1 < w; ++i) {
+            const int a = j * w + i;
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a, a + 1, a + w});
+            m.counts.push_back(3);
+            m.indices.insert(m.indices.end(), {a + 1, a + 1 + w, a + w});
+        }
+    RigExecClothMesh mesh;
+    RigExecClothSettings settings;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile contact;
+    contact.kind = RigExecClothProfileKind::SelfCollision;
+    contact.hard = true;
+    contact.thickness = 0.5f;
+    contact.friction = 0.3f;
+    RigExecClothModel model;
+    model.profiles = {contact};
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(), {}, &why));
+    RigExecClothStep step;
+    step.h = 1.0f / 24;
+    step.t = 1;
+    step.depth = 2.0f;
+    std::vector<float> x = m.points;
+    RigExecClothWorkspace ws;
+    for (int k = 0; k < 3; ++k)
+        RigExecClothSelfContacts(mesh, step, m.points.data(), &ws, x.data());
+    size_t edgePairs = 0, vertPairs = 0;
+    for (const auto &kv : ws.selfLambda)
+        if (kv.first[3] == -1 && kv.first[4] == -1)
+            ++vertPairs;
+        else
+            ++edgePairs;
+    CHECK(ws.selfPairs.count == 0);
+    CHECK(ws.selfPairs64.count == 0);
+    CHECK(PairBitCount(ws.selfPairBits) > 0);
+    CHECK(edgePairs > 0);
+    CHECK(vertPairs > 0);
+    uint64_t hash = 1469598103934665603ull;
+    const auto *bytes = reinterpret_cast<const uint8_t *>(x.data());
+    for (size_t i = 0; i < x.size() * sizeof(float); ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    CHECK(hash == 0x2e9524674c81109full);
 }
 
 void TestMaterialCompiledRigRoundTrip()
@@ -899,6 +3300,335 @@ void TestEdgeContactAndModelValidation()
 
 }  // namespace
 
+void TestPredictUsesGravityStep()
+{
+    // The predict pass takes the substep's gravity times its length from
+    // the caller: a free particle gains exactly that step in velocity and
+    // then moves by the new velocity times the length, a kinematic one is
+    // placed on its entering points at the substep fraction, and both
+    // record their previous position first.
+    const Mesh m = Curtain(3, 2.0f, 4.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    pins[0] = pins[1] = pins[2] = 1.0f;
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, &pins, settings, &mesh));
+    const auto same = [](const std::vector<float> &a, const std::vector<float> &b) {
+        return a.size() == b.size() &&
+               std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    const float gravities[][3] = {{0.0f, 0.0f, 0.0f},
+                                  {0.0f, -9.81f, 0.0f},
+                                  {1.5f, -2.5f, 3.75f}};
+    size_t compared = 0;
+    for (const auto &g : gravities) {
+        for (float h : {1.0f / 240.0f, 1e-6f, 2.0f}) {
+            for (float t : {0.0f, 0.3f, 1.0f}) {
+                RigExecClothStep step;
+                step.h = h;
+                step.t = t;
+                step.gravity[0] = g[0];
+                step.gravity[1] = g[1];
+                step.gravity[2] = g[2];
+                const float gravityStep[3] = {g[0] * h, g[1] * h, g[2] * h};
+                auto from = m.points, to = m.points;
+                for (size_t i = 0; i < m.Size(); ++i) to[3 * i] += 1.0f;
+                for (size_t i = 0; i < m.Size(); ++i) {
+                    auto x = m.points, wantX = m.points;
+                    std::vector<float> xp(3 * m.Size(), 0.0f), wantXp(3 * m.Size(), 0.0f);
+                    std::vector<float> v(3 * m.Size(), 0.0f), wantV(3 * m.Size(), 0.0f);
+                    for (size_t k = 0; k < v.size(); ++k) {
+                        v[k] = 0.25f * float(int(k) - 3);
+                        wantV[k] = v[k];
+                    }
+                    for (int a = 0; a < 3; ++a)
+                        wantXp[3 * i + size_t(a)] = m.points[3 * i + size_t(a)];
+                    if (mesh.inverseMass[i] == 0.0f) {
+                        for (int a = 0; a < 3; ++a)
+                            wantX[3 * i + size_t(a)] = from[3 * i + size_t(a)] +
+                                (to[3 * i + size_t(a)] - from[3 * i + size_t(a)]) * t;
+                    } else {
+                        for (int a = 0; a < 3; ++a) {
+                            wantV[3 * i + size_t(a)] += gravityStep[a];
+                            wantX[3 * i + size_t(a)] += wantV[3 * i + size_t(a)] * h;
+                        }
+                    }
+                    RigExecClothPredict(mesh, step, from.data(), to.data(), i,
+                                        x.data(), xp.data(), v.data(), gravityStep);
+                    CHECK(same(x, wantX));
+                    CHECK(same(xp, wantXp));
+                    CHECK(same(v, wantV));
+                    ++compared;
+                }
+            }
+        }
+    }
+    CHECK(compared > 200);
+}
+
+void TestOutsideBoundsSkipsSearch()
+{
+    // The particle pass skips the contact search itself when the shared
+    // broadphase flags the particle outside the swept bounds. That verdict
+    // must imply an empty search (the direction the skip relies on): on and
+    // off the boundary, far away, and for non-finite points. A grid that
+    // never went through the build covers everything, so the precheck
+    // never fires on it and the search runs as before.
+    const float box[24] = {-8, 0, -8, 8, 0, -8, 8, 0, 8, -8, 0, 8,
+                           -8, 15.5f, -8, 8, 15.5f, -8,
+                           8, 15.5f, 8, -8, 15.5f, 8};
+    const int counts[6] = {4, 4, 4, 4, 4, 4};
+    const int indices[24] = {0, 1, 2, 3, 4, 7, 6, 5, 3, 2, 6, 7,
+                             0, 4, 5, 1, 0, 3, 7, 4, 1, 5, 6, 2};
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(8, counts, 6, indices, 24, false, &colliders));
+    float before[24], after[24];
+    for (int i = 0; i < 24; ++i) {
+        before[i] = box[i];
+        after[i] = box[i] + (i % 3 == 0 ? 4.0f : (i % 3 == 1 ? -2.0f : 1.0f));
+    }
+    RigExecClothGrid grid, fresh;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, before, after, 8.0f, &grid, &scratch);
+    const float thicknessDepth[][2] = {{0.5f, 2.0f}, {0.0f, 0.0f}, {2.0f, 0.5f}};
+    std::vector<std::array<float, 3>> queries;
+    queries.push_back({{0.0f, 8.0f, 0.0f}});
+    for (const auto &td : thicknessDepth) {
+        const float reach = std::max(td[0], td[1]);
+        for (int a = 0; a < 3; ++a) {
+            const float lo = grid.sweptLo[a] - reach;
+            const float hi = grid.sweptHi[a] + reach;
+            for (int k = 0; k <= 6; ++k) {
+                std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                q[size_t(a)] = lo + (hi - lo) * float(k) / 6.0f;
+                queries.push_back(q);
+            }
+            for (float edge : {lo, hi}) {
+                for (float qv : {edge, std::nextafterf(edge, -1e30f),
+                                 std::nextafterf(edge, 1e30f)}) {
+                    std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                    q[size_t(a)] = qv;
+                    queries.push_back(q);
+                }
+            }
+            // Just outside the true box: a box derived with a larger
+            // reach still covers these, so they discriminate the reach
+            // the box was derived with.
+            for (int side = 0; side < 2; ++side) {
+                const double bound =
+                    double(side == 0 ? grid.sweptLo[a] : grid.sweptHi[a]);
+                const double margin =
+                    (std::abs(bound) + double(reach)) * 9.5367431640625e-07;
+                const double outside =
+                    side == 0 ? bound - double(reach) - 2.0 * margin
+                              : bound + double(reach) + 2.0 * margin;
+                std::array<float, 3> q = {{0.0f, 8.0f, 0.0f}};
+                q[size_t(a)] = float(outside);
+                queries.push_back(q);
+            }
+        }
+    }
+    for (float far : {-1e6f, 1e6f}) queries.push_back({{far, 0.0f, 0.0f}});
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    queries.push_back({{nan, 0.0f, 0.0f}});
+    queries.push_back({{0.0f, inf, 0.0f}});
+    queries.push_back({{-inf, 0.0f, 0.0f}});
+    size_t compared = 0;
+    bool sawOutside = false, sawInside = false;
+    for (const auto &td : thicknessDepth) {
+        const float reach = std::max(td[0], td[1]);
+        // The once-per-substep box agrees with the per-particle verdict
+        // on every query, including the unbuilt grid that covers all.
+        RigExecClothReachBounds built, unbuilt;
+        RigExecClothSweptReachBounds(grid, reach, &built);
+        RigExecClothSweptReachBounds(fresh, reach, &unbuilt);
+        for (float t : {0.0f, 0.37f, 1.0f}) {
+            for (const auto &q : queries) {
+                CHECK(!RigExecClothOutsideSweptBounds(fresh, q.data(), reach));
+                CHECK(!RigExecClothOutsideSweptReach(&unbuilt, q.data()));
+                const bool outside =
+                    RigExecClothOutsideSweptBounds(grid, q.data(), reach);
+                CHECK(RigExecClothOutsideSweptReach(&built, q.data()) == outside);
+                sawOutside = sawOutside || outside;
+                sawInside = sawInside || !outside;
+                const RigExecClothContact c = RigExecClothFindContact(
+                    colliders, grid, before, after, t, q.data(), td[0], td[1]);
+                if (outside) CHECK(c.triangle < 0);
+                ++compared;
+            }
+        }
+    }
+    CHECK(compared > 1000);
+    CHECK(sawOutside && sawInside);
+}
+
+void TestTetherLimitsPrecomputed()
+{
+    // The mesh carries the tether limit and its short-circuit bound
+    // derived at build, and the particle pass reads them instead of
+    // forming them per substep. Both must equal the documented formula
+    // bitwise, on tethered and untethered builds alike.
+    const Mesh m = Curtain(5, 4.0f, 8.0f);
+    std::vector<float> pins(m.Size(), 0.0f);
+    for (int c = 0; c < 5; ++c) pins[size_t(c)] = 1.0f;
+    for (float slack : {0.0f, 0.05f, 1.0f}) {
+        for (bool tethers : {true, false}) {
+            RigExecClothSettings settings;
+            settings.tetherSlack = slack;
+            settings.tethers = tethers;
+            RigExecClothMesh mesh;
+            CHECK(Build(m, &pins, settings, &mesh));
+            CHECK(mesh.tetherLimit.size() == m.Size());
+            CHECK(mesh.tetherShortSquared.size() == m.Size());
+            for (size_t i = 0; i < m.Size(); ++i) {
+                const float limit = mesh.tetherRest[i] * (1.0f + settings.tetherSlack);
+                const float limitSquared = limit * limit;
+                const float shortSquared = (limit < 1e-18f || !std::isfinite(limitSquared))
+                    ? -1.0f : limitSquared * (1.0f - 0.000244140625f);
+                CHECK(std::memcmp(&limit, &mesh.tetherLimit[i], sizeof(float)) == 0);
+                CHECK(std::memcmp(&shortSquared, &mesh.tetherShortSquared[i],
+                                  sizeof(float)) == 0);
+            }
+        }
+    }
+}
+
+void TestCollisionProfileContact()
+{
+    // A Collision profile drives the model contact path: the per-particle
+    // sample selects the profile (Region reads it) and scales the response
+    // (Strength reads it). A particle resting behind a collider plane is
+    // pushed out; one beyond the reach is untouched.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile p;
+    p.kind = RigExecClothProfileKind::Collision;
+    p.sourceMask.assign(m.Size(), 1.0f);
+    auto model = MaterialModel(mesh, m, p);
+    const Mesh plane = Sheet(2, 10.0f, -0.05f);
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(),
+                                   {plane.Size()}, &why));
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(plane.Size(), plane.counts.data(),
+                                     plane.counts.size(), plane.indices.data(),
+                                     plane.indices.size(), false, &colliders));
+    RigExecClothParameters params;
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, plane.points.data(), plane.points.data(),
+                          std::max(params.thickness, params.collisionDepth),
+                          &grid, &scratch);
+    const RigExecClothStep step =
+        RigExecClothStepFor(params, settings.substeps, 1, 1.0f / 24.0f);
+    std::vector<float> x = m.points, previous = m.points;
+    std::vector<float> contactLambda(m.Size(), 0.0f);
+    std::vector<int32_t> contactTriangles(m.Size(), -1);
+    // Row 1 sits at y = 0, just in front of the plane: contact pushes it up.
+    const size_t near = 5;
+    RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                             m.points.data(), m.points.data(),
+                             plane.points.data(), plane.points.data(), true,
+                             near, x.data(), previous.data(),
+                             contactLambda.data(), contactTriangles.data(),
+                             nullptr);
+    CHECK(x[3 * near + 1] > 0.0f);
+    // Row 3 sits at y = -2, deep behind the plane: outside the violated
+    // slab, so the pass leaves it alone.
+    const size_t far = 13;
+    RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                             m.points.data(), m.points.data(),
+                             plane.points.data(), plane.points.data(), true,
+                             far, x.data(), previous.data(),
+                             contactLambda.data(), contactTriangles.data(),
+                             nullptr);
+    CHECK(x[3 * far] == m.points[3 * far]);
+    CHECK(x[3 * far + 1] == m.points[3 * far + 1]);
+    CHECK(x[3 * far + 2] == m.points[3 * far + 2]);
+}
+
+void TestProfileBroadphasePrefilter()
+{
+    // The profile path's search pre-check: over the tick's pad-reach box
+    // a particle outside it skips the per-collider searches and one
+    // inside takes them; either way the pass agrees bit for bit with the
+    // unchecked pass. Both arms must fire across the curtain.
+    const Mesh m = Curtain(4, 3.0f, 1.0f);
+    const Mesh plane = Sheet(2, 10.0f, -0.05f);
+    RigExecClothColliders colliders;
+    CHECK(RigExecAppendClothCollider(plane.Size(), plane.counts.data(),
+                                     plane.counts.size(), plane.indices.data(),
+                                     plane.indices.size(), false, &colliders));
+    bool sawSkip = false, sawSearch = false;
+    // A tight pad skips the far rows; a loose one searches everywhere.
+    // Either way the checked pass matches the unchecked pass bit for bit.
+    for (float thickness : {0.5f, 2.0f}) {
+    RigExecClothSettings settings;
+    RigExecClothMesh mesh;
+    CHECK(Build(m, nullptr, settings, &mesh));
+    RigExecClothProfile p;
+    p.kind = RigExecClothProfileKind::Collision;
+    p.thickness = thickness;
+    p.sourceMask.assign(m.Size(), 1.0f);
+    auto model = MaterialModel(mesh, m, p);
+    std::string why;
+    CHECK(RigExecPrepareClothModel(&mesh, model, m.points.data(),
+                                   {plane.Size()}, &why));
+    RigExecClothParameters params;
+    params.thickness = 0.5f;
+    params.collisionDepth = 0.1f;
+    // The tick's pad, as the solve forms it: the step reach, plus the
+    // maximum Collision thickness over the profiles and particles.
+    float pad = std::max(std::max(0.0f, params.thickness),
+                         std::max(0.0f, params.collisionDepth));
+    for (const auto &prof : mesh.model.profiles)
+        if (prof.kind == RigExecClothProfileKind::Collision)
+            for (size_t i = 0; i < mesh.pointCount; ++i)
+                pad = std::max(pad, prof.thickness *
+                                        RigExecClothMap(prof, ClothThickness, i));
+    RigExecClothGrid grid;
+    std::vector<uint64_t> scratch;
+    RigExecBuildClothGrid(colliders, plane.points.data(), plane.points.data(),
+                          pad, &grid, &scratch);
+    RigExecClothReachBounds bounds;
+    RigExecClothSweptReachBounds(grid, pad, &bounds);
+    const RigExecClothStep step =
+        RigExecClothStepFor(params, settings.substeps, 1, 1.0f / 24.0f);
+    for (size_t i = 0; i < m.Size(); ++i) {
+        const bool outside = RigExecClothOutsideSweptReach(
+            &bounds, m.points.data() + 3 * i);
+        sawSkip = sawSkip || outside;
+        sawSearch = sawSearch || !outside;
+        std::vector<float> want = m.points, wantLambda(m.Size(), 0.0f);
+        std::vector<int32_t> wantTriangles(m.Size(), -1);
+        RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                                 m.points.data(), m.points.data(),
+                                 plane.points.data(), plane.points.data(), true,
+                                 i, want.data(), m.points.data(),
+                                 wantLambda.data(), wantTriangles.data(),
+                                 nullptr, nullptr, nullptr);
+        std::vector<float> got = m.points, gotLambda(m.Size(), 0.0f);
+        std::vector<int32_t> gotTriangles(m.Size(), -1);
+        RigExecClothParticlePass(mesh, colliders, grid, settings, step,
+                                 m.points.data(), m.points.data(),
+                                 plane.points.data(), plane.points.data(), true,
+                                 i, got.data(), m.points.data(),
+                                 gotLambda.data(), gotTriangles.data(),
+                                 nullptr, nullptr, &bounds);
+        CHECK(std::memcmp(want.data(), got.data(),
+                          want.size() * sizeof(float)) == 0);
+        CHECK(std::memcmp(wantLambda.data(), gotLambda.data(),
+                          wantLambda.size() * sizeof(float)) == 0);
+        CHECK(std::memcmp(wantTriangles.data(), gotTriangles.data(),
+                          wantTriangles.size() * sizeof(int32_t)) == 0);
+    }
+    }
+    CHECK(sawSkip && sawSearch);
+}
+
 int main()
 {
     TestTopology();
@@ -908,11 +3638,47 @@ int main()
     TestFollowsInput();
     TestCarriedRigidly();
     TestClearOfColliders();
+    TestClearOfCollidersBroadphase();
+    TestClearOfCollidersBandCrossing();
+    TestSweptBoundsAndBroadphase();
+    TestContactBoxPrefilterMatchesBruteForce();
+    TestSingleIterationMatchesMulti();
+    TestColorSingleMatchesSerial();
+    TestKinematicSkipPartition();
+    TestPredictUsesGravityStep();
+    TestOutsideBoundsSkipsSearch();
+    TestTetherLimitsPrecomputed();
+    TestCollisionProfileContact();
+    TestProfileBroadphasePrefilter();
+    TestMultiIterationSolves();
     TestWindowStartsBeforeContact();
     TestRefusals();
     TestForceResponseAndDirectionalMaterial();
     TestHardSoftBarycentricAttachments();
     TestSelfContactKeepsAttachments();
+    TestPairSetMatchesOrderedSet();
+    TestPairSetPreGrownBatch();
+    TestPairSet64MatchesOrderedSet();
+    TestPairPackBoundaries();
+    TestEdgeSpheresRetireOnTouch();
+    TestSelfGridReuseVerdict();
+    TestClothGridDeterminism();
+    TestSelfPairDiscoveryOrder();
+    TestSelfLargeMeshUsesPairBitset();
+    TestNeighborBitsMatchLists();
+    TestEdgeBitsMatchVertices();
+    TestSharedEndpointsTestAdjacent();
+    TestTriBitsMatchVertices();
+    TestStrengthCacheMatchesDirect();
+    TestSelfEdgeCanonicalization();
+    TestSelfEdgeTwins();
+    TestTriEdgeConstraintMapsStretchEdges();
+    TestSelfNonManifoldFoldPinned();
+    TestSelfPairBitsetFallback();
+    TestSelfFoldedStripPinned();
+    TestTriSpheresRetireOnTouch();
+    TestHeldConstraintBandInputs();
+    TestTriangleBandSkipsSeparatedTriangles();
     TestMaterialCompiledRigRoundTrip();
     TestFormat25CompiledDataPlays();
     TestEdgeContactAndModelValidation();

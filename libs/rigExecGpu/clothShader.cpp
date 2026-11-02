@@ -192,6 +192,7 @@ vec3 closestBarycentric(vec3 p, vec3 a, vec3 b, vec3 c) {
 }
 
 int cellOf(float v, float cell) { return int(floor(v / cell)); }
+int cellOfInv(float v, float inv) { return int(floor(v * inv)); }
 
 // One candidate triangle of RigExecClothFindContact: kept when it is the
 // closest violated one so far, a tie going to the lower triangle.
@@ -234,9 +235,12 @@ bool findContact(Step s, int k, vec3 p, out int bestTri, out float violation,
     uint h = uint(4 * k);
     uint starts = head[h], tris = head[h + 1u], mask = head[h + 2u];
     float cell = uintBitsToFloat(head[h + 3u]);
+    float inv = 1.0 / cell;
     float reach = max(s.thickness, s.depth);
     float bestDistance = uintBitsToFloat(0x7f800000u);
-    int x = cellOf(p.x, cell), y = cellOf(p.y, cell), z = cellOf(p.z, cell);
+    int x = isinf(inv) ? cellOf(p.x, cell) : cellOfInv(p.x, inv);
+    int y = isinf(inv) ? cellOf(p.y, cell) : cellOfInv(p.y, inv);
+    int z = isinf(inv) ? cellOf(p.z, cell) : cellOfInv(p.z, inv);
     uint bucket = ((uint(x) * 73856093u) ^ (uint(y) * 19349663u) ^ (uint(z) * 83492791u)) & mask;
     uint begin = grid[starts + bucket], end = grid[starts + bucket + 1u];
     for (uint e = begin; e < end; ++e)
