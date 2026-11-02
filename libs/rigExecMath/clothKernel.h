@@ -2696,9 +2696,12 @@ inline void RigExecClothSelfContactsImpl(const RigExecClothMesh &mesh,
             const uint64_t vtMask = 1ull << (i & 63);
             const uint32_t bucket = Hash(Cell(point[0], grid.cellSize), Cell(point[1], grid.cellSize),
                                           Cell(point[2], grid.cellSize), grid.bucketMask);
+            // The sample lives at vertex scope: every surviving entry
+            // overwrites all vertices and weights before reading them,
+            // so killed entries skip the default member stores. Same values.
+            RigExecClothSample b;
             for (uint32_t entry = vtBucketBounds[bucket]; entry < vtBucketBounds[bucket + 1]; ++entry) {
                 const int32_t tri = vtBucketTris[entry];
-                RigExecClothSample b;
                 // The triangle union row holds the vertices neighboring any
                 // corner, so one bit test answers the three corner tests;
                 // adjacency is symmetric, the same verdicts. Past the size
