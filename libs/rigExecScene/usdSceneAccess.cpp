@@ -21,6 +21,7 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((readPhase, "rigExecReadPhase"))
     ((inputElement, "rigExecInputElement"))
     (interpolation)
+    ((connectionPaths, "connectionPaths"))
 );
 namespace {
 VtDictionary Metadata(const UsdObject &object) {
@@ -66,8 +67,9 @@ void Keep(VtDictionary *result, const char *name, const TfToken &key,
 // as the per-key lookup did.
 template <class Object>
 void KeepGated(VtDictionary *result, const char *name, const TfToken &key,
-    const Object &object, const UsdPrimDefinition::Property &fallbackProp) {
-    if (object.HasAuthoredMetadata(key)) {
+    const Object &object, const UsdPrimDefinition::Property &fallbackProp,
+    bool authored) {
+    if (authored) {
         Keep(result, name, key, object);
         return;
     }
@@ -75,20 +77,54 @@ void KeepGated(VtDictionary *result, const char *name, const TfToken &key,
     if (fallbackProp && fallbackProp.GetMetadata(key, &value))
         (*result)[name] = std::move(value);
 }
+// The authored-ness of every field capture probes on an attribute, from one
+// property-stack walk. The Default stack holds every spec each probe's own
+// resolver walk would visit -- same prim index, same walk, no early-out, no
+// clip specs at Default -- and SdfSpec::HasField is the same layer field
+// check the existence composer runs, so a field is authored exactly when
+// some spec in the stack carries it. Metadata is timeless, so clips cannot
+// change the answer; connections ride the same walk as a fourth field.
+struct AuthoredFields {
+    bool connections = false;
+    bool readPhase = false;
+    bool inputElement = false;
+    bool interpolation = false;
+    bool complete() const {
+        return connections && readPhase && inputElement && interpolation;
+    }
+};
+AuthoredFields ScanAuthoredFields(const UsdAttribute &attribute) {
+    AuthoredFields found;
+    for (const SdfPropertySpecHandle &spec :
+         attribute.GetPropertyStack(UsdTimeCode::Default())) {
+        if (!found.connections && spec->HasField(_tokens->connectionPaths))
+            found.connections = true;
+        if (!found.readPhase && spec->HasField(_tokens->readPhase))
+            found.readPhase = true;
+        if (!found.inputElement && spec->HasField(_tokens->inputElement))
+            found.inputElement = true;
+        if (!found.interpolation && spec->HasField(_tokens->interpolation))
+            found.interpolation = true;
+        if (found.complete())
+            break;
+    }
+    return found;
+}
 VtDictionary CapturedPrimMetadata(const UsdPrim &) {
     return VtDictionary();
 }
-VtDictionary CapturedAttributeMetadata(const UsdAttribute &attribute) {
+VtDictionary CapturedAttributeMetadata(const UsdAttribute &attribute,
+                                        const AuthoredFields &authored) {
     VtDictionary result;
     const UsdPrim prim = attribute.GetPrim();
     const UsdPrimDefinition::Property fallbackProp =
         prim.GetPrimDefinition().GetPropertyDefinition(attribute.GetName());
     KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, attribute,
-              fallbackProp);
+              fallbackProp, authored.readPhase);
     KeepGated(&result, "rigExecInputElement", _tokens->inputElement, attribute,
-              fallbackProp);
+              fallbackProp, authored.inputElement);
     KeepGated(&result, "interpolation", _tokens->interpolation, attribute,
-              fallbackProp);
+              fallbackProp, authored.interpolation);
     return result;
 }
 VtDictionary CapturedRelationshipMetadata(const UsdRelationship &relationship) {
@@ -97,7 +133,8 @@ VtDictionary CapturedRelationshipMetadata(const UsdRelationship &relationship) {
     const UsdPrimDefinition::Property fallbackProp =
         prim.GetPrimDefinition().GetPropertyDefinition(relationship.GetName());
     KeepGated(&result, "rigExecReadPhase", _tokens->readPhase, relationship,
-              fallbackProp);
+              fallbackProp,
+              relationship.HasAuthoredMetadata(_tokens->readPhase));
     return result;
 }
 }
@@ -182,13 +219,18 @@ UsdAttribute RigExecUsdSceneAccess::BindAttribute(const SdfPath &path) const {
 }
 bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result, bool clipped, bool subsetMetadata) const {
     if (!_stage || !result || !attribute) return false;
+    // One stack walk answers the connections gate and the three metadata
+    // gates below; the complete-facts path keeps its direct queries.
+    const AuthoredFields authored =
+        subsetMetadata ? ScanAuthoredFields(attribute) : AuthoredFields();
     *result = {attribute.GetPath(), attribute.GetTypeName(),
-        subsetMetadata ? CapturedAttributeMetadata(attribute) : Metadata(attribute), {}};
+        subsetMetadata ? CapturedAttributeMetadata(attribute, authored) : Metadata(attribute), {}};
     // Composed connections are empty when nothing authors any, so the
     // authored flag this fact already records gates the composition walk:
     // the overwhelmingly common unconnected attribute skips it. Exact, and
     // no new query: the flag read moves up from below.
-    result->hasAuthoredConnections = attribute.HasAuthoredConnections();
+    result->hasAuthoredConnections = subsetMetadata ? authored.connections :
+        attribute.HasAuthoredConnections();
     if (result->hasAuthoredConnections)
         attribute.GetConnections(&result->connections);
     // One resolve for the value-source facts: each direct query below

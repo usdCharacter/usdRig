@@ -400,11 +400,14 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     auto &B=*program;
+    RigExecProfilePhases spacesPhases(B.profiler,"compile");
+    spacesPhases.Next("Bake.spaces.select");
     auto sceneOwner=std::make_shared<RigExecSceneDescriptors>();
     auto &scene=*sceneOwner;
     std::set<SdfPath> selected;
     for(const auto &entry:B.index) selected.insert(entry.first);
     const std::vector<UsdTimeCode> identities={capture,UsdTimeCode::Default()};
+    spacesPhases.Next("Bake.spaces.capture");
     bool reused=false;
     if(captured && capturedStage==UsdStageWeakPtr(B.stage) &&
        captured->rigRoot==B.evaluator->GetRigPath() &&
@@ -417,7 +420,9 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
                capturedSerial==B.evaluator->GetStageEditSerial();
     }
     if(!reused && !RigExecDispatchCaptureSceneDescriptors(B.stage,B.evaluator->GetRigPath(),identities,&scene,error)) return false;
+    spacesPhases.Next("Bake.spaces.buildProvider");
     if(!RigExecBuildProviderProgram(scene,false,&B.providerProgram,error,&selected)) return false;
+    spacesPhases.Next("Bake.spaces.sampleProvider");
     B.sceneDescriptors=std::move(sceneOwner);
     B.providerActive.assign(B.paths.size(),0);
     for(size_t slot=0;slot<B.paths.size();++slot) {
@@ -427,6 +432,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     B.providerValues=RigExecTypedValueStore(B.providerProgram.valueKeys.size());
     std::vector<RigExecValueId> changed;
     if(!RigExecSampleProviderProgram(B.providerProgram,scene,0,{},&B.providerValues,&changed,error)) return false;
+    spacesPhases.Next("Bake.spaces.fileLeaves");
     B.providerLeaves=RigExecBakedPathLeaves();
     B.providerLeafValues.clear();
     B.providerLeafBlocked.clear();
@@ -484,7 +490,9 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
             B.prims.emplace_hint(B.prims.end(),primPath);
         }
     }
+    spacesPhases.Next("Bake.spaces.bindLeaves");
     RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves,&leafVarying);
+    spacesPhases.Next("Bake.spaces.slotChannels");
     // Connected consumers refresh an expression closure against native base
     // versions. Unconnected namespace expressions keep their initial context.
     // These binding calls append ops without changing existing output IDs.
@@ -524,6 +532,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
             B.ladders[slot].spaceValues[channel]=int(value);
         }
     }
+    spacesPhases.Next("Bake.spaces.externSlots");
     B.providerExternalSlots.clear();
     for(const auto &input:B.providerProgram.externalInputs) {
         const auto found=B.index.find(input.owner);
@@ -555,6 +564,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // only an empty path gets no entry, and the walker's answer for it is
     // empty too. Owning thread; the graph spreads its stage reads as the
     // other Build-time regions do.
+    spacesPhases.Next("Bake.spaces.poseInputs");
     std::unordered_map<SdfPath,evaluatorDetail::_PoseInputInfo,SdfPath::Hash> poseInfos;
     {
         // The compile's prefetch graph when one rode along: extending it
@@ -595,9 +605,12 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         B.providerRefreshTemplateOps.push_back(p.ops.size());
         p.ops.push_back(std::move(op));p.descriptors.push_back(std::move(descriptor));
     }
+    spacesPhases.Next("Bake.spaces.spellOwners");
     RigExecSpellProviderOwners(&B.providerProgram);
+    spacesPhases.Next("Bake.spaces.sampleSpaces");
     B.providerValues.values.resize(B.providerProgram.valueKeys.size());
     RigExecBakedSampleSpaces(&B,capture,true,&scene);
+    spacesPhases.Close();
     return true;
 }
 const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &B,size_t k)
