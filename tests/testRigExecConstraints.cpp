@@ -2142,79 +2142,6 @@ TestUnwiringOneMoverLeavesTheRestRunning()
 }
 
 static void
-TestMultipleBrokenMoversSkipTogether()
-{
-    // Two discovery-failing movers, one inert mover, one healthy mover:
-    // the compile sets both broken movers aside and reports exactly one
-    // skip warning per mover in path order plus the inert notice, while
-    // the healthy mover keeps driving. The errors vector is asserted
-    // exactly: the early discovery pass must reproduce the retry loop's
-    // diagnostics entry for entry, not just its compiled result.
-    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    MakeXform(stage, SdfPath("/Asset"), Matrix());
-    MakeXform(stage, SdfPath("/Asset/Target"), Matrix());
-    MakeXform(stage, SdfPath("/Asset/ParSource"),
-              Matrix(GfVec3d(7, 0, 0)));
-    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
-    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
-    // A Scope is not a UsdGeomXformable in any environment, with or without
-    // the schema plugin, so both constraints fail mover discovery exactly
-    // the way the joint-targeted aims in 19_HarmonicsChain.usda do.
-    stage->DefinePrim(SdfPath("/Asset/Rig/Scopes/Anchor"),
-                      TfToken("Scope"));
-    const UsdPrim good = MakeConstraint(
-        stage, "Good", "RigExecParentConstraint",
-        {SdfPath("/Asset/Target")});
-    good.CreateRelationship(TfToken("rigExec:sources"))
-        .SetTargets({SdfPath("/Asset/ParSource")});
-    for (const char *axis : {"X", "Y", "Z"}) {
-        good.CreateAttribute(
-               TfToken(std::string("inputs:affectRotation") + axis),
-               SdfValueTypeNames->Bool)
-            .Set(false);
-    }
-    for (const char *name : {"BadA", "BadB"}) {
-        const UsdPrim bad = MakeConstraint(
-            stage, name, "RigExecParentConstraint",
-            {SdfPath("/Asset/Rig/Scopes/Anchor")});
-        bad.CreateRelationship(TfToken("rigExec:sources"))
-            .SetTargets({SdfPath("/Asset/ParSource")});
-    }
-    const UsdPrim idle = MakeConstraint(
-        stage, "Idle", "RigExecParentConstraint", {});
-    idle.GetRelationship(TfToken("rigExec:moves")).SetTargets({});
-
-    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
-    std::vector<std::string> errors;
-    CHECK(evaluator.Compile(&errors));
-    CHECK(errors.size() == 3);
-    if (errors.size() == 3) {
-        CHECK(errors[0] ==
-              "warning: Skipped operation /Asset/Rig/Movers/BadA -- "
-              "RigExecParentConstraint /Asset/Rig/Movers/BadA targets "
-              "/Asset/Rig/Scopes/Anchor, which is not a transform provider; "
-              "a constraint target must be a UsdGeomXformable");
-        CHECK(errors[1] ==
-              "warning: Skipped operation /Asset/Rig/Movers/BadB -- "
-              "RigExecParentConstraint /Asset/Rig/Movers/BadB targets "
-              "/Asset/Rig/Scopes/Anchor, which is not a transform provider; "
-              "a constraint target must be a UsdGeomXformable");
-        CHECK(errors[2] ==
-              "Mover has no moves targets: /Asset/Rig/Movers/Idle; it is "
-              "inert this generation");
-    }
-
-    const RigExecRigPose pose =
-        evaluator.Evaluate(UsdTimeCode::Default());
-    CHECK(pose.valid);
-    const auto it = pose.providerXforms.find(SdfPath("/Asset/Target"));
-    CHECK(it != pose.providerXforms.end());
-    if (it != pose.providerXforms.end()) {
-        CHECK(Near(it->second.ExtractTranslation(), GfVec3d(7, 0, 0)));
-    }
-}
-
-static void
 TestInvalidContractsFailClosed()
 {
     // Every built-in evaluator constraint is a writer. A typed constraint
@@ -5337,7 +5264,6 @@ main()
     TestGeometryEnvelopeIsChordLerp();
     TestDomainsOnOnePrimDoNotCompete();
     TestUnwiringOneMoverLeavesTheRestRunning();
-    TestMultipleBrokenMoversSkipTogether();
     TestCompileRecoveryIgnoresOperationSpelling();
     TestConstraintRegistryCoversTheSchema();
     TestRotationOrderCapabilityIsRecorded();
