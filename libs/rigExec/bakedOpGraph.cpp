@@ -519,13 +519,16 @@ void BuildSourceLeafIndex(RigExecBakedProgramImpl *program)
     index->avarBindings=B.avarBindings.size();
     index->avarConstantBindings=B.avarConstantBindings.size();
     B.leaves.ForEach([&](auto &pool) { index->pools.push_back(pool.value.size()); });
-    std::map<std::tuple<uint8_t,uint8_t,uint32_t>,uint32_t> ids;
-    std::vector<std::pair<uint32_t,uint32_t>> reads;
+    // Packed (kind, type, slot) keys: the packing is injective, so one
+    // sort over the (key, op) pairs numbers every distinct key without a
+    // tree descent and node allocation per read. Entry ids run in packed
+    // key order rather than first-visit order; every consumer (begin/ops,
+    // typedEntry, overrideEntry, the avar/always lists) is rebuilt from
+    // the same numbering, and dirty marks do not depend on visit order.
+    std::vector<std::pair<uint64_t,uint32_t>> keyed;
     const auto watch=[&](K kind,uint8_t type,uint32_t at,uint32_t c) {
-        const auto found=ids.emplace(std::make_tuple(uint8_t(kind),type,at),
-                                     uint32_t(index->entries.size()));
-        if(found.second) index->entries.push_back({kind,type,at});
-        reads.emplace_back(found.first->second,c);
+        const uint64_t key=(uint64_t(uint8_t(kind))<<40)|(uint64_t(type)<<32)|at;
+        keyed.emplace_back(key,c);
     };
     for(const uint32_t c:state.sourceVisits) {
         if(c>=ops || (c<state.constantSource.size() && state.constantSource[c])) continue;
@@ -566,8 +569,21 @@ void BuildSourceLeafIndex(RigExecBakedProgramImpl *program)
             for(const uint32_t id:B.readerWalks[size_t(walk)].slots) slot(id);
         }
     }
-    std::sort(reads.begin(),reads.end());
-    reads.erase(std::unique(reads.begin(),reads.end()),reads.end());
+    std::sort(keyed.begin(),keyed.end());
+    keyed.erase(std::unique(keyed.begin(),keyed.end()),keyed.end());
+    // Sorted and unique by (key, op), so numbering keys in this order
+    // leaves `reads` sorted and unique by (entry, op) as built.
+    std::vector<std::pair<uint32_t,uint32_t>> reads;
+    reads.reserve(keyed.size());
+    uint64_t last=0; bool have=false;
+    for(const auto &kc:keyed) {
+        if(!have || kc.first!=last) {
+            have=true; last=kc.first;
+            index->entries.push_back(
+                {K(uint8_t(kc.first>>40)),uint8_t(kc.first>>32),uint32_t(kc.first)});
+        }
+        reads.emplace_back(uint32_t(index->entries.size())-1,kc.second);
+    }
     index->begin.assign(index->entries.size()+1,0);
     for(const auto &read:reads) ++index->begin[read.first+1];
     for(size_t w=0;w<index->entries.size();++w) index->begin[w+1]+=index->begin[w];

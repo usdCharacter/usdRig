@@ -1561,8 +1561,8 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                 if (chain.targetSlot >= 0) {
                     slots.insert(uint32_t(chain.targetSlot));
                 }
-                step.label = "PropertyRevision " + chain.target.GetString() +
-                             " base";
+                // Unlabeled: step labels derive from descriptor keys in
+                // RigExecBakedAssignStepCosts, after all step builders.
             } else {
                 const Chain::Revision &r = chain.revisions[k - 1];
                 reads.insert(chain.versionBase + uint32_t(k) - 1);
@@ -1608,7 +1608,8 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                     }
                 });
                 step.alwaysRuns = !r.weightObject.IsEmpty();
-                step.label = "PropertyRevision " + r.mover.GetString();
+                // Unlabeled: step labels derive from descriptor keys in
+                // RigExecBakedAssignStepCosts, after all step builders.
             }
             writes.insert(chain.versionBase + uint32_t(k));
             for (const uint32_t record : chain.records) {

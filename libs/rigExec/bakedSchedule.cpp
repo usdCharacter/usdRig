@@ -580,8 +580,12 @@ RigExecBakedAssignStepCosts(RigExecBakedProgramImpl *program,
     RigExecPathText labels;
     for (int index = int(firstStep); index < int(B.steps.size()); ++index) {
         RigExecBakedStep &step = B.steps[size_t(index)];
-        // Compiled identity owns the label; handwritten diagnostics may
-        // still derive a label before the final descriptor is assigned.
+        // Compiled identity owns the label: step builders and the
+        // descriptor loop leave labels empty, and every reader below (the
+        // schedule report, validation, imaging, oracle) sees only what
+        // this loop derives from the descriptor key. A handwritten
+        // diagnostic may still derive a label before the final
+        // descriptor is assigned.
         const auto category = step.descriptorKey.rfind("/category:");
         step.label = category == std::string::npos
             ? StepLabel(B, step, labels) : step.descriptorKey.substr(0, category);
@@ -2272,11 +2276,23 @@ std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBak
     const auto *B = &program;
     // Genuine compiler-emitted value edges, never vector order or extra
     // scheduler dependencies. Only pure mixed-role helpers may inherit prep.
-    std::map<uint64_t, std::vector<size_t>> writers;
+    // Sorted (slot key, writer) pairs answer the same membership the map
+    // did, with one allocation instead of one node plus one vector per
+    // key. Pairs sort key-major with writers ascending, so each key's
+    // run reads in the same order the map's vector held; ancestry is a
+    // monotone boolean propagation whose fixpoint is visit-order free.
+    std::vector<std::pair<uint64_t, size_t>> writers;
+    size_t writeSlots = 0;
+    for (size_t i = 0; i < B->steps.size(); ++i)
+        for (const auto &r : B->steps[i].writes)
+            if (r.end > r.begin)
+                writeSlots += size_t(r.end) - size_t(r.begin);
+    writers.reserve(writeSlots);
     for (size_t i = 0; i < B->steps.size(); ++i)
         for (const auto &r : B->steps[i].writes)
             for (uint32_t slot = r.begin; slot < r.end; ++slot)
-                writers[(uint64_t(r.domain) << 32) | slot].push_back(i);
+                writers.emplace_back((uint64_t(r.domain) << 32) | slot, i);
+    std::sort(writers.begin(), writers.end());
     std::vector<char> ancestry(B->steps.size(), 0);
     std::vector<size_t> pending;
     for (size_t i = 0; i < B->steps.size(); ++i)
@@ -2287,12 +2303,15 @@ std::vector<char> RigExecBakedExpectedStageFramesAdmissionReads(const RigExecBak
         const size_t i = pending.back(); pending.pop_back();
         for (const auto &r : B->steps[i].reads)
             for (uint32_t slot = r.begin; slot < r.end; ++slot) {
-                const auto at = writers.find((uint64_t(r.domain) << 32) | slot);
-                if (at == writers.end()) continue;
-                for (const size_t producer : at->second)
+                const uint64_t key = (uint64_t(r.domain) << 32) | slot;
+                auto at = std::lower_bound(writers.begin(), writers.end(), key,
+                    [](const auto &entry, uint64_t k) { return entry.first < k; });
+                for (; at != writers.end() && at->first == key; ++at) {
+                    const size_t producer = at->second;
                     if (!ancestry[producer]) {
                         ancestry[producer] = 1; pending.push_back(producer);
                     }
+                }
             }
     }
     using K = RigExecBakedStepKind;

@@ -8,6 +8,7 @@
 #include "pxr/usd/usdGeom/xformable.h"
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include "pxr/base/tf/staticTokens.h"
 
 namespace rigExec {
@@ -83,11 +84,9 @@ bool Phase(const VtDictionary &metadata, TfToken *phase, std::string *error, con
     if(phase->IsEmpty())*phase=RigExecSceneBasePhase;
     return true;
 }
-bool Expression(const RigExecSceneDescriptors &scene, const SdfPath &path) {
-    const auto node = scene.nodes.find(path.GetPrimPath());
-    if (node == scene.nodes.end()) return false;
-    const auto type=node->second.fact.type;
-    if (node->second.domain != RigExecSceneDomain::Provider && type!="RigExecSphereWeight" &&
+bool Expression(const RigExecSceneNodeDescriptor &node, const SdfPath &path) {
+    const auto type=node.fact.type;
+    if (node.domain != RigExecSceneDomain::Provider && type!="RigExecSphereWeight" &&
         type!="RigExecPlaneWeight" && type!="RigExecCurveWeight") return false;
     const auto name = path.GetNameToken();
     return name == "default:space" || name == "avars:defaultSpace" || name == "posed:defaultSpace" ||
@@ -103,33 +102,70 @@ bool Forward(const RigExecSceneDescriptors &scene, const SdfPath &path,
     visiting->erase(path);
     return true;
 }
-RigExecSceneInput Input(const RigExecSceneDescriptors &scene, const SdfPath &path, size_t identity) {
+SdfPath FirstHop(const RigExecSceneDescriptors &scene,
+    std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator first) {
+    // The overwhelmingly common attribute is unconnected and answers from
+    // its own row: no visited set, no re-finds, no second hop. Only a
+    // followed connection pays for the walk below, which then starts past
+    // this first hop with the same visited set, hops and source the loop
+    // would have built reaching it. Decided per attribute: connections and
+    // types do not vary by identity.
+    const auto &connections = first->second.fact.connections;
+    SdfPath next;
+    if (connections.size() == 1) {
+        const auto input = scene.attributes.find(connections.front());
+        const auto provider = scene.nodes.find(connections.front().GetPrimPath());
+        if (input != scene.attributes.end() && provider != scene.nodes.end() && provider->second.fact.active &&
+            input->second.fact.type.GetType() == first->second.fact.type.GetType())
+            next = connections.front();
+    }
+    return next;
+}
+RigExecSceneInput Input(const RigExecSceneDescriptors &scene,
+    std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator first,
+    std::map<SdfPath, RigExecSceneNodeDescriptor>::const_iterator prim,
+    bool computed, const SdfPath &next, size_t identity) {
     RigExecSceneInput result;
-    const auto first = scene.attributes.find(path);
-    if (first == scene.attributes.end()) return result;
+    const SdfPath &path = first->first;
     result.raw = first->second.inputs[identity].raw;
     result.rawBlocked = first->second.inputs[identity].rawBlocked;
-    SdfPath current = path;
-    std::set<SdfPath> visited;
+    result.hops.push_back(path);
+    result.source = path;
+    if (prim == scene.nodes.end() || !prim->second.fact.active) return result;
+    if (computed) { result.state = RigExecSceneInputState::Computed; return result; }
+    const auto &connections = first->second.fact.connections;
+    if (next.IsEmpty()) {
+        if (connections.size() > 1 && first->second.fact.type.IsArray() &&
+            prim->second.fact.type.GetString().rfind("RigExec",0) == 0) {
+            result.state = RigExecSceneInputState::Computed;
+            return result;
+        }
+        result.resolved = first->second.inputs[identity].raw;
+        result.resolvedBlocked = first->second.inputs[identity].rawBlocked;
+        result.state = result.resolved.IsEmpty() ? RigExecSceneInputState::Empty : RigExecSceneInputState::Raw;
+        return result;
+    }
+    SdfPath current = next;
+    std::set<SdfPath> visited{path};
     while (visited.insert(current).second) {
         result.hops.push_back(current);
         result.source = current;
         const auto attr = scene.attributes.find(current);
-        const auto prim = scene.nodes.find(current.GetPrimPath());
-        if (attr == scene.attributes.end() || prim == scene.nodes.end() || !prim->second.fact.active) return result;
-        if (Expression(scene,current)) { result.state = RigExecSceneInputState::Computed; return result; }
-        const auto &connections = attr->second.fact.connections;
-        if (connections.size() == 1) {
-            const auto input = scene.attributes.find(connections.front());
-            const auto provider = scene.nodes.find(connections.front().GetPrimPath());
+        const auto target = scene.nodes.find(current.GetPrimPath());
+        if (attr == scene.attributes.end() || target == scene.nodes.end() || !target->second.fact.active) return result;
+        if (Expression(target->second,current)) { result.state = RigExecSceneInputState::Computed; return result; }
+        const auto &followed = attr->second.fact.connections;
+        if (followed.size() == 1) {
+            const auto input = scene.attributes.find(followed.front());
+            const auto provider = scene.nodes.find(followed.front().GetPrimPath());
             if (input != scene.attributes.end() && provider != scene.nodes.end() && provider->second.fact.active &&
                 input->second.fact.type.GetType() == attr->second.fact.type.GetType()) {
-                current = connections.front();
+                current = followed.front();
                 continue;
             }
         }
-        if (connections.size() > 1 && attr->second.fact.type.IsArray() &&
-            prim->second.fact.type.GetString().rfind("RigExec",0) == 0) {
+        if (followed.size() > 1 && attr->second.fact.type.IsArray() &&
+            target->second.fact.type.GetString().rfind("RigExec",0) == 0) {
             result.state = RigExecSceneInputState::Computed;
             return result;
         }
@@ -151,41 +187,118 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
     const auto *usd=dynamic_cast<const RigExecUsdSceneAccess *>(&source);
     scene.rigRoot = root;
     scene.identities = identities;
+    // A repeated identity resolves once: Build captures {Default, Default},
+    // and the second row would re-read every attribute for the same answer.
+    // Unique times in first-occurrence order; each requested identity maps
+    // to its unique slot for the replication after the connection walks.
+    std::vector<UsdTimeCode> unique;
+    std::vector<size_t> slot;
+    unique.reserve(identities.size());
+    slot.reserve(identities.size());
+    for (const auto time : identities) {
+        const auto found = std::find(unique.begin(), unique.end(), time);
+        if (found == unique.end()) {
+            slot.push_back(unique.size());
+            unique.push_back(time);
+        } else slot.push_back(size_t(found - unique.begin()));
+    }
     scene.timeCodesPerSecond = source.TimeCodesPerSecond();
     scene.framesPerSecond = source.FramesPerSecond();
     scene.interpolation = source.Interpolation();
     scene.upAxis = source.UpAxis();
     for (const auto time : identities)
         if (!source.HasIdentity(time)) return Fail(error,"scene capture identity unavailable");
+    // Domain and schema facts are pure functions of the prim type name, so
+    // each distinct type resolves once per capture instead of once per prim.
+    std::map<TfToken,std::tuple<RigExecSceneDomain,bool,bool>> typeFacts;
+    // Prims carrying value-clip opinions, as a stack: paths arrive in
+    // lexical order, so a subtree's paths are contiguous and ancestors
+    // precede descendants. A prim is clip-affected exactly when the stack
+    // is non-empty after popping paths it sits outside of. Read from the
+    // already-captured prim metadata, so this costs no new stage query.
+    std::vector<SdfPath> clipStack;
+    // Transient bound attributes parallel to the current prim's attribute
+    // paths: PrimProperties already holds every object, so per-attribute
+    // capture reuses them instead of rebinding each path through the
+    // stage. Local only; descriptors keep paths, never handles.
+    std::vector<UsdAttribute> bound;
+    // Capture-subset metadata on the USD path: the capture and every scene
+    // translation read three keys (rigExecReadPhase, rigExecInputElement,
+    // interpolation; the clips probe never fires, since GetAllMetadata
+    // filters clip keys), so each fact keeps those alone instead of
+    // composing every field through GetAllMetadata. Generic frontends keep
+    // their complete facts; the kept keys agree exactly.
     for (const auto &path : source.Prims(SdfPath::AbsoluteRootPath())) {
         RigExecSceneNodeDescriptor node;
-        if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
-        node.domain = Domain(node.fact.type);
-        node.attributes = source.Attributes(path);
-        node.relationships = source.Relationships(path);
-        const auto schemaType=UsdSchemaRegistry::GetTypeFromSchemaTypeName(node.fact.type);
-        node.transformProvider=node.domain==RigExecSceneDomain::Provider || schemaType.IsA<UsdGeomXformable>();
-        node.pointBased=schemaType.IsA<UsdGeomPointBased>();
-        for (const auto &property : node.attributes) {
+        if (usd) {
+            if (!usd->PrimProperties(path,&node.fact,&node.attributes,&node.relationships,&bound,true))
+                return Fail(error,"scene prim unavailable: " + path.GetString());
+        } else {
+            if (!source.Prim(path,&node.fact)) return Fail(error,"scene prim unavailable: " + path.GetString());
+            node.attributes = source.Attributes(path);
+            node.relationships = source.Relationships(path);
+        }
+        while (!clipStack.empty() && !path.HasPrefix(clipStack.back())) clipStack.pop_back();
+        if (node.fact.metadata.count("clips")) clipStack.push_back(path);
+        const bool clipped = !clipStack.empty();
+        const auto known = typeFacts.find(node.fact.type);
+        if (known != typeFacts.end()) {
+            node.domain = std::get<0>(known->second);
+            node.transformProvider = std::get<1>(known->second);
+            node.pointBased = std::get<2>(known->second);
+        } else {
+            node.domain = Domain(node.fact.type);
+            const auto schemaType=UsdSchemaRegistry::GetTypeFromSchemaTypeName(node.fact.type);
+            node.transformProvider=node.domain==RigExecSceneDomain::Provider || schemaType.IsA<UsdGeomXformable>();
+            node.pointBased=schemaType.IsA<UsdGeomPointBased>();
+            typeFacts.emplace(node.fact.type,std::make_tuple(node.domain,node.transformProvider,node.pointBased));
+        }
+        for (size_t k = 0; k < node.attributes.size(); ++k) {
+            const auto &property = node.attributes[k];
             RigExecSceneAttributeDescriptor attr;
-            const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
-            if (!(usd ? usd->Attribute(attribute,&attr.fact) : source.Attribute(property,&attr.fact)) ||
+            const auto attribute=usd ? bound[k] : UsdAttribute();
+            if (!(usd ? usd->Attribute(attribute,&attr.fact,clipped,true) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
-            for (const auto time : identities) {
+            // With no authored value opinion and no clips above, nothing
+            // can block the value: a block is itself an opinion, and clips
+            // are the only other source of one. Answer clear without the
+            // resolve-info walk. Generic sources keep their stored lookup.
+            const bool clear = usd && !clipped && !attr.fact.hasAuthoredValue;
+            // Without clips above, a valueless live attribute resolves empty
+            // at every identity: the query reports a value for an authored
+            // default, authored samples, an authored spline, or a schema
+            // fallback, so false leaves no source a resolve could find. The
+            // input starts empty, so the resolve is skipped outright; the
+            // blocked row below still runs, since a block without a fallback
+            // reads valueless yet blocked. USD sources only, like clear:
+            // generic facts do not promise the same HasValue/Get agreement.
+            const bool valueless = usd && !clipped && !attr.fact.hasValue;
+            // The row count below is the requested identity count, whether
+            // the unique loop fills it directly or the replication after the
+            // connection walks extends it: size once, grow never.
+            attr.inputs.reserve(identities.size());
+            for (const auto time : unique) {
                 RigExecSceneInput input;
-                if (node.fact.active && !(usd ? usd->Resolve(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
+                if (node.fact.active && !valueless && !(usd ? usd->ResolveActive(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
-                input.rawBlocked = usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time);
+                input.rawBlocked = clear ? false :
+                    (usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time));
                 attr.inputs.push_back(std::move(input));
             }
-            scene.attributes.emplace(property,std::move(attr));
+            // Prims arrive in sorted order with each prim's properties
+            // sorted, so every map grows in ascending key order; the end
+            // hint turns each descent into a constant-time append. A hint
+            // is advisory -- a frontend that lists another order only loses
+            // the shortcut, never correctness.
+            scene.attributes.emplace_hint(scene.attributes.end(),property,std::move(attr));
         }
         for (const auto &property : node.relationships) {
             RigExecSceneRelationshipDescriptor rel;
-            if (!source.Relationship(property,&rel.fact) || !Phase(rel.fact.metadata,&rel.readPhase,error,property)) return false;
-            scene.relationships.emplace(property,std::move(rel));
+            if (!(usd ? usd->RelationshipCaptured(property,&rel.fact) : source.Relationship(property,&rel.fact)) ||
+                !Phase(rel.fact.metadata,&rel.readPhase,error,property)) return false;
+            scene.relationships.emplace_hint(scene.relationships.end(),property,std::move(rel));
         }
-        scene.nodes.emplace(path,std::move(node));
+        scene.nodes.emplace_hint(scene.nodes.end(),path,std::move(node));
     }
     // Primvar names translation publishes to: an animated map's authored
     // rigExec:primvarName or its prim name, a projector's authored shader
@@ -244,8 +357,61 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
                 (target.IsPrimPath() || scene.attributes.count(target) || scene.relationships.count(target)));
         }
     }
-    for (auto &[path, attr] : scene.attributes)
-        for (size_t i = 0; i < identities.size(); ++i) attr.inputs[i] = Input(scene,path,i);
+    // The connection walks run over the unique rows only: every attribute
+    // still holds unique-sized inputs while they run, so a walk that reads
+    // another attribute's row sees the same row the requested identity
+    // would have resolved. Replication below is then an exact copy.
+    // The walk takes the rows it runs over as iterators: the attribute row
+    // is the loop's own, and the prim row rides a one-entry cache, since
+    // rows arrive in path order with each prim's own rows together. The
+    // per-attribute head -- active prim, expression test, first hop -- is
+    // decided once per row rather than once per identity; only the raw and
+    // resolved reads vary by identity. The followed-connection walks below
+    // keep their own finds.
+    auto primIt = scene.nodes.end();
+    SdfPath primPath;
+    bool primCached = false;
+    for (auto it = scene.attributes.begin(); it != scene.attributes.end(); ++it) {
+        const SdfPath owner = it->first.GetPrimPath();
+        if (!primCached || owner != primPath) {
+            primPath = owner;
+            primIt = scene.nodes.find(owner);
+            primCached = true;
+        }
+        const bool active =
+            primIt != scene.nodes.end() && primIt->second.fact.active;
+        const bool computed =
+            active && Expression(primIt->second, it->first);
+        // The first hop is walked only past the two early returns, as
+        // before: inactive and expression rows never pay for it.
+        const SdfPath next =
+            active && !computed ? FirstHop(scene, it) : SdfPath();
+        for (size_t u = 0; u < unique.size(); ++u)
+            it->second.inputs[u] = Input(scene, it, primIt, computed, next, u);
+    }
+    if (unique.size() != identities.size()) {
+        if (unique.size() == 1) {
+            // One unique identity means every slot reads row zero -- the
+            // Build {Default, Default} capture -- so extend that row in
+            // place instead of building a second vector per attribute. The
+            // reservation above already sized the storage, so the resize
+            // cannot move row zero while it is the copy source; each
+            // further slot takes its row from it directly. One copy per
+            // attribute instead of two (the spilled local plus the fill),
+            // with identical rows either way.
+            for (auto &[path, attr] : scene.attributes) {
+                (void)path;
+                attr.inputs.resize(identities.size());
+                for (size_t s = 1; s < identities.size(); ++s)
+                    attr.inputs[s] = attr.inputs[0];
+            }
+        } else for (auto &[path, attr] : scene.attributes) {
+            std::vector<RigExecSceneInput> full;
+            full.reserve(identities.size());
+            for (size_t s : slot) full.push_back(attr.inputs[s]);
+            attr.inputs = std::move(full);
+        }
+    }
     for (const auto &[path, node] : scene.nodes) {
         if (node.stackOrdinal < 0 || !node.fact.active) continue;
         const auto moves = scene.relationships.find(path.AppendProperty(_tokens->rigExecMoves));

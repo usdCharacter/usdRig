@@ -14,12 +14,23 @@
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
 
 namespace rigExec {
 namespace {
+// Asks for everything: named, not a temporary, so its address is the stable
+// skip token of the BuildSpaces pose-input round.
+const auto kPoseInputNoSkip = [](const SdfPath &) { return false; };
+// The seven space channels the slot loop binds, interned at load: building
+// a TfToken from text takes the registry lock, and the loop would build
+// each one per slot.
+const std::array<TfToken,7> kSpaceChannelNames = {
+    TfToken("rest:space"), TfToken("default:space"), TfToken("posed:space"),
+    TfToken("parent:space"), TfToken("parent:defaultSpace"),
+    TfToken("avars:defaultSpace"), TfToken("posed:defaultSpace")};
 RigExecRevisionLeafType _Type(const SdfValueTypeName &type)
 {
     using T=RigExecRevisionLeafType;
@@ -385,14 +396,18 @@ size_t _ProviderPruneViolations(const RigExecBakedProgramImpl &B)
 }
 bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode capture,
     std::string *error,const RigExecSceneDescriptors *captured,
-    const UsdStageWeakPtr &capturedStage,uint64_t capturedSerial)
+    const UsdStageWeakPtr &capturedStage,uint64_t capturedSerial,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     auto &B=*program;
+    RigExecProfilePhases spacesPhases(B.profiler,"compile");
+    spacesPhases.Next("Bake.spaces.select");
     auto sceneOwner=std::make_shared<RigExecSceneDescriptors>();
     auto &scene=*sceneOwner;
     std::set<SdfPath> selected;
     for(const auto &entry:B.index) selected.insert(entry.first);
     const std::vector<UsdTimeCode> identities={capture,UsdTimeCode::Default()};
+    spacesPhases.Next("Bake.spaces.capture");
     bool reused=false;
     if(captured && capturedStage==UsdStageWeakPtr(B.stage) &&
        captured->rigRoot==B.evaluator->GetRigPath() &&
@@ -405,7 +420,9 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
                capturedSerial==B.evaluator->GetStageEditSerial();
     }
     if(!reused && !RigExecDispatchCaptureSceneDescriptors(B.stage,B.evaluator->GetRigPath(),identities,&scene,error)) return false;
+    spacesPhases.Next("Bake.spaces.buildProvider");
     if(!RigExecBuildProviderProgram(scene,false,&B.providerProgram,error,&selected)) return false;
+    spacesPhases.Next("Bake.spaces.sampleProvider");
     B.sceneDescriptors=std::move(sceneOwner);
     B.providerActive.assign(B.paths.size(),0);
     for(size_t slot=0;slot<B.paths.size();++slot) {
@@ -415,26 +432,67 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     B.providerValues=RigExecTypedValueStore(B.providerProgram.valueKeys.size());
     std::vector<RigExecValueId> changed;
     if(!RigExecSampleProviderProgram(B.providerProgram,scene,0,{},&B.providerValues,&changed,error)) return false;
+    spacesPhases.Next("Bake.spaces.fileLeaves");
     B.providerLeaves=RigExecBakedPathLeaves();
     B.providerLeafValues.clear();
     B.providerLeafBlocked.clear();
     B.providerFrozenKeys.clear();
+    // The capture's ValueMightBeTimeVarying answers, parallel to the decl
+    // keys: the bind below takes each Raw leaf's varying bit from them
+    // instead of re-querying the attribute it just bound. Same stage, read
+    // by the same Build, and USD documents the query's answer identical to
+    // the attribute's -- so the bits are the walk's, without its queries.
+    std::vector<char> leafVarying;
+    leafVarying.reserve(B.providerProgram.sampled.size());
+    // The frozen key's property token spells "rigExec:providerRaw:<name>":
+    // one distinct token per property NAME, shared by every prim sampled
+    // for it. Memoized by the name token -- GetNameToken answers the
+    // interned token without touching the registry, and token equality is
+    // identity -- so the concatenation and the registry lock run once per
+    // name instead of once per leaf. A short vector: a handful of names,
+    // found by pointer compares.
+    std::vector<std::pair<TfToken,TfToken>> frozenTokens;
+    frozenTokens.reserve(32);
+    // Sampled inputs arrive grouped by prim; consecutive duplicates file
+    // nothing new, so each run's prim enters the set once, when its run
+    // starts. A repeated prim later files again, exactly as before.
+    SdfPath filedPrim;
+    bool haveFiledPrim=false;
+    // Sampled inputs arrive in ascending path order (see the named-set
+    // hint below), so the capture rows are walked once, not found per leaf.
+    RigExecOrderedPathLookup<decltype(scene.attributes)> rowsByPath(scene.attributes);
     for(const auto &input:B.providerProgram.sampled) {
-        const auto attribute=scene.attributes.find(input.attribute);
+        const auto attribute=rowsByPath.Find(input.attribute);
         if(attribute==scene.attributes.end()) continue;
         const auto &fact=attribute->second;
         const VtValue fallback=fact.inputs.empty()?VtValue():fact.inputs[0].raw;
         B.providerLeaves.decl.Add({input.attribute,_Type(fact.fact.type),
             RigExecRevisionLeafTime::AtTime,RigExecRevisionLeafFlavour::Raw,fallback});
+        leafVarying.push_back(fact.fact.mightBeTimeVarying?1:0);
         B.providerLeafValues.push_back(input.value);
         B.providerLeafBlocked.push_back(!fact.inputs.empty() && fact.inputs[0].rawBlocked);
-        B.providerFrozenKeys.push_back(input.attribute.GetPrimPath().AppendProperty(
-            TfToken("rigExec:providerRaw:"+input.attribute.GetName())));
-        B.named.insert(input.attribute); B.prims.insert(input.attribute.GetPrimPath());
+        const TfToken nameToken=input.attribute.GetNameToken();
+        TfToken frozenToken;
+        for(const auto &memo:frozenTokens)
+            if(memo.first==nameToken) { frozenToken=memo.second; break; }
+        if(frozenToken.IsEmpty()) {
+            frozenToken=TfToken("rigExec:providerRaw:"+input.attribute.GetName());
+            frozenTokens.emplace_back(nameToken,frozenToken);
+        }
+        const SdfPath primPath=input.attribute.GetPrimPath();
+        B.providerFrozenKeys.push_back(primPath.AppendProperty(frozenToken));
+        // Sampled inputs arrive in ascending path order, so the named set
+        // grows at its end; the hint only advises, never decides.
+        B.named.emplace_hint(B.named.end(),input.attribute);
+        if(!haveFiledPrim || primPath!=filedPrim) {
+            filedPrim=primPath;
+            haveFiledPrim=true;
+            B.prims.emplace_hint(B.prims.end(),primPath);
+        }
     }
-    RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves);
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
+    spacesPhases.Next("Bake.spaces.bindLeaves");
+    RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves,&leafVarying);
+    spacesPhases.Next("Bake.spaces.slotChannels");
     // Connected consumers refresh an expression closure against native base
     // versions. Unconnected namespace expressions keep their initial context.
     // These binding calls append ops without changing existing output IDs.
@@ -450,7 +508,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     for(size_t slot=0;slot<B.paths.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(kSpaceChannelNames[channel]);
             const auto found=B.providerProgram.attributeValues.find(consumer);
             if(found==B.providerProgram.attributeValues.end()) continue;
             RigExecValueId value=found->second;
@@ -474,6 +532,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
             B.ladders[slot].spaceValues[channel]=int(value);
         }
     }
+    spacesPhases.Next("Bake.spaces.externSlots");
     B.providerExternalSlots.clear();
     for(const auto &input:B.providerProgram.externalInputs) {
         const auto found=B.index.find(input.owner);
@@ -505,10 +564,17 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     // only an empty path gets no entry, and the walker's answer for it is
     // empty too. Owning thread; the graph spreads its stage reads as the
     // other Build-time regions do.
+    spacesPhases.Next("Bake.spaces.poseInputs");
     std::unordered_map<SdfPath,evaluatorDetail::_PoseInputInfo,SdfPath::Hash> poseInfos;
     {
-        evaluatorDetail::_PoseInputGraph graph;
-        graph.Extend(B.stage,B.paths,[](const SdfPath &){return false;},
+        // The compile's prefetch graph when one rode along: extending it
+        // answers the prims it already listed whole from the accumulated
+        // components and reads only the rest, instead of walking the stage
+        // a second time. Without one, a fresh graph walks as before.
+        evaluatorDetail::_PoseInputGraph fresh;
+        evaluatorDetail::_PoseInputGraph *graph =
+            poseInputGraph ? poseInputGraph : &fresh;
+        graph->Extend(B.stage,B.paths,kPoseInputNoSkip,&kPoseInputNoSkip,
             RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive(),*B.profiler,&poseInfos);
     }
     const evaluatorDetail::_PoseInputInfo noPoseInputs;
@@ -539,9 +605,12 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         B.providerRefreshTemplateOps.push_back(p.ops.size());
         p.ops.push_back(std::move(op));p.descriptors.push_back(std::move(descriptor));
     }
+    spacesPhases.Next("Bake.spaces.spellOwners");
     RigExecSpellProviderOwners(&B.providerProgram);
+    spacesPhases.Next("Bake.spaces.sampleSpaces");
     B.providerValues.values.resize(B.providerProgram.valueKeys.size());
-    RigExecBakedSampleSpaces(&B,capture,true);
+    RigExecBakedSampleSpaces(&B,capture,true,&scene);
+    spacesPhases.Close();
     return true;
 }
 const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &B,size_t k)
@@ -585,11 +654,30 @@ GfMatrix4d RigExecBakedProviderParentRaw(const RigExecBakedProgramImpl &B,int sl
 }
 void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,bool all)
 {
+    RigExecBakedSampleSpaces(program,time,all,nullptr);
+}
+void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,bool all,
+    const RigExecSceneDescriptors *captured)
+{
     auto &B=*program;
     auto &leaves=B.providerLeaves;
     const bool full=all || !leaves.sampled || leaves.stamp!=B.programStamp;
     const bool timeMoved=!leaves.sampled || time!=leaves.time;
     const bool defaultMoved=timeMoved && (time.IsDefault() || leaves.time.IsDefault());
+    // The capture's row for this same time, when one rode along: Build
+    // samples its space leaves at the capture time on the unchanged stage
+    // the capture just resolved, so those rows ARE this sample's Gets and
+    // resolve infos, answered without issuing them again.
+    size_t slot=0;
+    bool haveSlot=false;
+    if(captured) for(size_t s=0;s<captured->identities.size();++s)
+        if(captured->identities[s]==time){slot=s;haveSlot=true;break;}
+    // Leaf keys ascend with the sampled rows they were filed from, and a
+    // skipped leaf only advances the walk further, so the capture rows are
+    // walked once instead of found per leaf.
+    const std::map<SdfPath,RigExecSceneAttributeDescriptor> noRows;
+    RigExecOrderedPathLookup<std::map<SdfPath,RigExecSceneAttributeDescriptor>> rowsByPath(
+        captured?captured->attributes:noRows);
     for(size_t k=0;k<leaves.attributes.size();++k) {
         leaves.changed[k]=0;
         if(!full && !leaves.mustSample[k] &&
@@ -598,8 +686,23 @@ void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program,UsdTimeCode time,
         ++B.pathLeafSamples;
         const auto &attribute=leaves.attributes[k];
         VtValue value;
-        const bool blocked=attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
-        if(attribute) attribute.Get(&value,time);
+        bool blocked=false,sourced=false;
+        // Active prims only: the capture leaves inactive rows empty while a
+        // live read answers them, so those keep the live read, exactly as
+        // before, as does anything the rows do not cover.
+        if(haveSlot && attribute && attribute.GetPrim().IsActive() &&
+           k<leaves.decl.keys.size()) {
+            const auto row=rowsByPath.Find(leaves.decl.keys[k].path);
+            if(row!=captured->attributes.end() && slot<row->second.inputs.size()) {
+                value=row->second.inputs[slot].raw;
+                blocked=row->second.inputs[slot].rawBlocked;
+                sourced=true;
+            }
+        }
+        if(!sourced) {
+            blocked=attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
+            if(attribute) attribute.Get(&value,time);
+        }
         leaves.changed[k]=!RigExecBakedHeadValueSame(value,leaves.values[k]) ||
             bool(B.providerLeafBlocked[k])!=blocked;
         if(leaves.changed[k]) RigExecBakedNoteSpaceLeafSampled(&B,k);
@@ -789,12 +892,10 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
     std::string *error)
 {
     auto &B=*program;
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
     for(size_t slot=0;slot<B.ladders.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(kSpaceChannelNames[channel]);
             const auto chain=std::find_if(B.propertyChains.begin(),B.propertyChains.end(),
                 [&](const auto &item){return item.target==consumer &&
                     item.arm==RigExecBakedPropertyChain::Arm::Matrix4d && !item.revisions.empty();});
@@ -953,7 +1054,8 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.sampled[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=2;
-        step.label="SpaceRaw "+input.attribute.GetString();
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, after all step builders.
         step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceLeaf,int(k)));
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(input.value)));
         B.steps.push_back(std::move(step));
@@ -963,7 +1065,6 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.routedInputs[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=3;
-        step.label="SpaceConnection "+B.providerProgram.valueKeys[size_t(input.value)];
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(input.value)));
         B.steps.push_back(std::move(step));
     }
@@ -971,7 +1072,6 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
         const auto &input=B.providerProgram.externalInputs[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=1;
-        step.label="SpaceInput "+B.providerProgram.valueKeys[size_t(input.value)];
         const int slot=B.providerExternalSlots[k];
         if(slot>=0 && input.computation=="computeRestFrame")
             step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::Rest,slot));
@@ -989,7 +1089,7 @@ void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
     for(size_t k=0;k<B.providerProgram.ops.size();++k) {
         const auto &descriptor=B.providerProgram.descriptors[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
-        step.object=int(k); step.part=0; step.label=descriptor.key;
+        step.object=int(k); step.part=0;
         for(auto value:descriptor.reads) step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(value)));
         for(auto value:descriptor.writes) step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(value)));
         B.steps.push_back(std::move(step));

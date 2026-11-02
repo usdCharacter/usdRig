@@ -77,6 +77,18 @@ void TestCompilerRefusals()
         RigExecCyclePolicy::Reject, &graph, &error));
     CHECK(!RigExecCompileOpGraph({Op("same", {}, {}), Op("same", {}, {})}, {},
         RigExecCyclePolicy::Reject, &graph, &error));
+    // Duplicate reports fire in descriptor order: the first index whose
+    // key appeared before, whatever sorts first, and an empty key beats
+    // a later duplicate exactly as the interleaved check did.
+    CHECK(!RigExecCompileOpGraph(
+        {Op("b", {}, {}), Op("a", {}, {}), Op("c", {}, {}), Op("a", {}, {}),
+         Op("b", {}, {})},
+        {}, RigExecCyclePolicy::Reject, &graph, &error));
+    CHECK(error == "empty or duplicate operation key: a");
+    CHECK(!RigExecCompileOpGraph(
+        {Op("a", {}, {}), Op("", {}, {}), Op("a", {}, {})}, {},
+        RigExecCyclePolicy::Reject, &graph, &error));
+    CHECK(error == "empty or duplicate operation key: ");
     auto bad = Op("badPredecessor", {}, {});
     bad.predecessors = {1};
     CHECK(!RigExecCompileOpGraph({bad}, {}, RigExecCyclePolicy::Reject,
@@ -225,6 +237,94 @@ void TestDeclaredSemanticPredecessors()
     steps[0].required={"missing"};
     CHECK(!compile(true));
     CHECK(error.find("A requires missing")!=std::string::npos);
+}
+
+void TestAdapterWildTypedIds()
+{
+    // Ids past the dense table's width or entry budget spill to maps and
+    // answer exactly what dense ids answer, including refusals.
+    struct Range { uint32_t domain, begin, end; };
+    struct Step {
+        std::string key;
+        uint32_t kind = 0;
+        bool externalReads = false;
+        std::vector<Range> reads, writes;
+    };
+    const auto compile = [](const std::vector<Step> &steps,
+        RigExecCompiledGraph *graph, RigExecOpAdapterState *state,
+        std::string *error) {
+        return RigExecOpCompileAdapter(steps,
+            [](const Range &r) { return r.domain; },
+            [](const Range &r) { return r.begin; },
+            [](const Range &r) { return r.end; },
+            [](const Step &s) { return s.key; },
+            [](uint32_t, uint32_t) { return false; }, graph, state, error);
+    };
+    std::vector<Step> steps(3);
+    steps[0].key = "A"; steps[0].writes = {{1000, 5, 6}}; // Wild domain.
+    steps[1].key = "B"; steps[1].writes = {{0, 3000000, 3000001}}; // Wild slot.
+    steps[2].key = "C";
+    steps[2].reads = {{1000, 5, 6}, {0, 3000000, 3000001}};
+    steps[2].writes = {{0, 7, 7}}; // Empty range binds nothing.
+    RigExecCompiledGraph graph;
+    RigExecOpAdapterState state;
+    std::string error;
+    CHECK(compile(steps, &graph, &state, &error));
+    CHECK(Keys(graph) == std::vector<std::string>({"A", "B", "C"}));
+    CHECK(state.values.size() == 2);
+    CHECK(state.leaves.empty());
+    CHECK(graph.ops[2].predecessors == std::vector<uint32_t>({0, 1}));
+    // A duplicate producer on a spilled id refuses like a dense one.
+    steps[1].writes = {{1000, 5, 6}};
+    CHECK(!compile(steps, &graph, &state, &error));
+    CHECK(error.find("multiple typed producers for domain 1000 slot 5") !=
+          std::string::npos);
+    CHECK(error.find("A") != std::string::npos &&
+          error.find("B") != std::string::npos);
+    // A spilled read with no producer and no sampled source refuses.
+    steps[1].writes = {{0, 3000000, 3000001}};
+    steps[2].reads = {{1000, 5, 6}, {0, 4000000, 4000001}};
+    CHECK(!compile(steps, &graph, &state, &error));
+    CHECK(error.find("read has no producer or declared sampled source") !=
+          std::string::npos);
+}
+
+void TestAdapterManySemanticRefs()
+{
+    // Past the linear-scan threshold the key index binds the same edges.
+    struct Range { uint32_t domain, begin, end; };
+    struct Step {
+        std::string key;
+        uint32_t kind = 0;
+        bool externalReads = false;
+        std::vector<Range> reads, writes;
+        std::vector<std::string> required;
+    };
+    std::vector<Step> steps(20);
+    for (uint32_t i = 0; i < steps.size(); ++i) {
+        steps[i].key = "S" + std::to_string(i);
+        steps[i].writes = {{0, i, i + 1}};
+        if (i == steps.size() - 1)
+            for (uint32_t j = 0; j < 17; ++j)
+                steps[i].required.push_back("S" + std::to_string(j));
+    }
+    RigExecCompiledGraph graph;
+    RigExecOpAdapterState state;
+    std::string error;
+    std::function<const std::vector<std::string> &(uint32_t)> requirements =
+        [&](uint32_t i) -> const std::vector<std::string> & {
+        return steps[i].required;
+    };
+    CHECK(RigExecOpCompileAdapter(steps,
+        [](const Range &r) { return r.domain; },
+        [](const Range &r) { return r.begin; },
+        [](const Range &r) { return r.end; },
+        [](const Step &s) { return s.key; },
+        [](uint32_t, uint32_t) { return false; }, &graph, &state, &error,
+        RigExecCyclePolicy::Reject, requirements));
+    CHECK(graph.ops.size() == steps.size());
+    CHECK(graph.ops.back().descriptor.key == "S19");
+    CHECK(graph.ops.back().predecessors.size() == 17);
 }
 
 void TestCutoffAndRetention()
@@ -925,7 +1025,8 @@ int main()
 {
     WorkSetConcurrencyLimit(4);
     TestCanonicalOrder(); TestCompilerRefusals(); TestCyclesAndSetAside();
-    TestDeclaredSemanticPredecessors();
+    TestDeclaredSemanticPredecessors(); TestAdapterWildTypedIds();
+    TestAdapterManySemanticRefs();
     TestCutoffAndRetention(); TestReaderSpecificShadow(); TestCandidateEffectiveInputs(); TestSerialParallelReadiness();
     TestUnrelatedBranchFinishesBeforeGate(); TestFatalCancellationJoinsActiveCallbacks();
     TestClusterCompletionAndCounts(); TestSkipEffectsAndVolatileSeeds();

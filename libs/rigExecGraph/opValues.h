@@ -108,6 +108,92 @@ struct RigExecHeldSteps {
 
 inline RigExecValueId RigExecOpAddValue(RigExecOpAdapterState *, uint32_t, uint32_t);
 
+/// A (domain, slot) pair's value id and writer op, dense where the ids
+/// allow. Backends number slots from zero per domain, so a vector per
+/// domain answers in O(1) with no per-entry node. Growth past a small
+/// entry budget, or a domain past the dense width, spills to maps, so no
+/// input -- however wild its ranges -- can size a vector it does not
+/// need. Misses read back as kNoValue/kNoWriter on either path, and ids
+/// are still assigned in first-visit order, so the table answers exactly
+/// what the two maps it replaces answered.
+struct RigExecOpTypedTable {
+    static constexpr RigExecValueId kNoValue = ~RigExecValueId(0);
+    static constexpr uint32_t kNoWriter = ~uint32_t(0);
+    // Real backends stay an order of magnitude inside both: dozens of
+    // domains, slots below the backend arrays' sizes. Past them the map
+    // is the original speed, never a failure.
+    static constexpr uint32_t kDenseDomains = 64;
+    static constexpr size_t kDenseEntries = size_t(1) << 20;
+    std::vector<std::vector<RigExecValueId>> valueOf;
+    std::vector<std::vector<uint32_t>> writerOf;
+    std::map<std::pair<uint32_t, uint32_t>, RigExecValueId> spillValues;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> spillWriters;
+    size_t denseEntries = 0;
+    const std::vector<RigExecValueId> *denseValues(uint32_t d) const
+    {
+        return d < valueOf.size() ? &valueOf[d] : nullptr;
+    }
+    const std::vector<uint32_t> *denseWriters(uint32_t d) const
+    {
+        return d < writerOf.size() ? &writerOf[d] : nullptr;
+    }
+    RigExecValueId value(uint32_t d, uint32_t s) const
+    {
+        // Spill first: a set files exactly one path, on a miss from both,
+        // so a pair lives in at most one of them whatever later growth
+        // does. The empty check keeps the dense path one branch.
+        if (!spillValues.empty()) {
+            const auto found = spillValues.find(std::make_pair(d, s));
+            if (found != spillValues.end()) return found->second;
+        }
+        if (const auto *row = denseValues(d))
+            if (s < row->size()) return (*row)[s];
+        return kNoValue;
+    }
+    uint32_t writer(uint32_t d, uint32_t s) const
+    {
+        if (!spillWriters.empty()) {
+            const auto found = spillWriters.find(std::make_pair(d, s));
+            if (found != spillWriters.end()) return found->second;
+        }
+        if (const auto *row = denseWriters(d))
+            if (s < row->size()) return (*row)[s];
+        return kNoWriter;
+    }
+    // A slot the dense rows do not cover yet: grow them when the budget
+    // allows, so the caller can file it dense. A slot that would break
+    // the budget, like a domain past the dense width, stays spilled.
+    bool cover(uint32_t d, uint32_t s)
+    {
+        if (d >= kDenseDomains) return false;
+        if (d < valueOf.size() && s < valueOf[d].size()) return true;
+        const size_t have =
+            d < valueOf.size() ? valueOf[d].size() : 0;
+        if (denseEntries + (size_t(s) + 1 - have) > kDenseEntries)
+            return false;
+        if (d >= valueOf.size()) {
+            valueOf.resize(size_t(d) + 1);
+            writerOf.resize(size_t(d) + 1);
+        }
+        if (s >= valueOf[d].size()) {
+            denseEntries += size_t(s) + 1 - valueOf[d].size();
+            valueOf[d].resize(size_t(s) + 1, kNoValue);
+            writerOf[d].resize(size_t(s) + 1, kNoWriter);
+        }
+        return true;
+    }
+    void setValue(uint32_t d, uint32_t s, RigExecValueId id)
+    {
+        if (cover(d, s)) valueOf[d][s] = id;
+        else spillValues.emplace(std::make_pair(d, s), id);
+    }
+    void setWriter(uint32_t d, uint32_t s, uint32_t w)
+    {
+        if (cover(d, s)) writerOf[d][s] = w;
+        else spillWriters.emplace(std::make_pair(d, s), w);
+    }
+};
+
 /// Preindex typed producers before binding any reads. Backends supply
 /// their domain descriptors; the compiler alone owns canonical ordering.
 template <class Step, class Domain, class Begin, class End, class Key, class Sampled>
@@ -119,27 +205,31 @@ inline bool RigExecOpCompileAdapter(const std::vector<Step> &steps,
     const RigExecOpExclusionProof *retainedExclusions = nullptr)
 {
     *state = RigExecOpAdapterState();
-    std::map<std::pair<uint32_t, uint32_t>, RigExecValueId> values;
-    std::map<std::pair<uint32_t, uint32_t>, uint32_t> writers;
+    RigExecOpTypedTable typed;
     std::vector<RigExecOpDescriptor> descriptors(steps.size());
     for (uint32_t i = 0; i < steps.size(); ++i) {
         const auto &step = steps[i]; auto &op = descriptors[i];
         op.key = key(step); op.kind = uint32_t(step.kind);
         op.volatileInput = step.externalReads;
         for (const auto &range : step.writes) {
-            for (uint32_t slot = begin(range); slot < end(range); ++slot) {
-                const auto typed = std::make_pair(domain(range), slot);
-                const auto found = writers.emplace(typed,i);
-                if (!found.second && found.first->second != i) {
+            const uint32_t typedDomain = domain(range);
+            const uint32_t first = begin(range), last = end(range);
+            for (uint32_t slot = first; slot < last; ++slot) {
+                const uint32_t prior = typed.writer(typedDomain, slot);
+                if (prior != RigExecOpTypedTable::kNoWriter && prior != i) {
                     if (error) *error = "multiple typed producers for domain " +
-                        std::to_string(typed.first) + " slot " + std::to_string(slot) +
-                        ": " + key(steps[found.first->second]) + " and " + key(step);
+                        std::to_string(typedDomain) + " slot " + std::to_string(slot) +
+                        ": " + key(steps[prior]) + " and " + key(step);
                     return false;
                 }
-                auto value = values.find(typed);
-                if (value == values.end()) value = values.emplace(typed,
-                    RigExecOpAddValue(state,typed.first,slot)).first;
-                op.writes.push_back(value->second);
+                if (prior == RigExecOpTypedTable::kNoWriter)
+                    typed.setWriter(typedDomain, slot, i);
+                RigExecValueId id = typed.value(typedDomain, slot);
+                if (id == RigExecOpTypedTable::kNoValue) {
+                    id = RigExecOpAddValue(state, typedDomain, slot);
+                    typed.setValue(typedDomain, slot, id);
+                }
+                op.writes.push_back(id);
             }
         }
     }
@@ -147,42 +237,71 @@ inline bool RigExecOpCompileAdapter(const std::vector<Step> &steps,
     // predecessors. Backends opt in with stable descriptor identities only.
     // Never import a historical scheduling list from Step.preds.
     if (semanticPredecessors) {
-        std::map<std::string, uint32_t> byKey;
+        // Count before indexing: most compiles bind no semantic edge, and
+        // building the key index for an empty use is pure waste. A
+        // handful of references scans cheaper than the index costs to
+        // build; past that the index pays. All three spell the same
+        // edges -- the first descriptor carrying the required key -- or
+        // the same error.
+        size_t references = 0;
         for (uint32_t i = 0; i < descriptors.size(); ++i)
-            byKey.emplace(descriptors[i].key, i);
-        for (uint32_t i = 0; i < descriptors.size(); ++i)
-            for (const auto &required : semanticPredecessors(i)) {
-                const auto found = byKey.find(required);
-                if (found == byKey.end()) {
-                    if (error) *error = "semantic predecessor has no descriptor: " +
-                        descriptors[i].key + " requires " + required;
-                    return false;
+            references += semanticPredecessors(i).size();
+        if (references != 0 && references <= 16) {
+            for (uint32_t i = 0; i < descriptors.size(); ++i)
+                for (const auto &required : semanticPredecessors(i)) {
+                    uint32_t found = descriptors.size();
+                    for (uint32_t j = 0; j < descriptors.size(); ++j)
+                        if (descriptors[j].key == required) { found = j; break; }
+                    if (found == descriptors.size()) {
+                        if (error) *error = "semantic predecessor has no descriptor: " +
+                            descriptors[i].key + " requires " + required;
+                        return false;
+                    }
+                    descriptors[i].predecessors.push_back(found);
                 }
-                descriptors[i].predecessors.push_back(found->second);
-            }
+        } else if (references != 0) {
+            std::map<std::string, uint32_t> byKey;
+            for (uint32_t i = 0; i < descriptors.size(); ++i)
+                byKey.emplace(descriptors[i].key, i);
+            for (uint32_t i = 0; i < descriptors.size(); ++i)
+                for (const auto &required : semanticPredecessors(i)) {
+                    const auto found = byKey.find(required);
+                    if (found == byKey.end()) {
+                        if (error) *error = "semantic predecessor has no descriptor: " +
+                            descriptors[i].key + " requires " + required;
+                        return false;
+                    }
+                    descriptors[i].predecessors.push_back(found->second);
+                }
+        }
     }
     for (uint32_t i = 0; i < steps.size(); ++i) {
         auto &op = descriptors[i];
         for (const auto &range : steps[i].reads) {
-            for (uint32_t slot = begin(range); slot < end(range); ++slot) {
-                const auto typed = std::make_pair(domain(range),slot);
-                auto value = values.find(typed);
-                if (value == values.end()) {
-                    if (!sampled(typed.first,slot)) {
+            const uint32_t typedDomain = domain(range);
+            const uint32_t first = begin(range), last = end(range);
+            for (uint32_t slot = first; slot < last; ++slot) {
+                RigExecValueId id = typed.value(typedDomain, slot);
+                if (id == RigExecOpTypedTable::kNoValue) {
+                    if (!sampled(typedDomain,slot)) {
                         if(error) *error="read has no producer or declared sampled source: "+
-                            key(steps[i])+" domain "+std::to_string(typed.first)+
+                            key(steps[i])+" domain "+std::to_string(typedDomain)+
                             " slot "+std::to_string(slot);
                         return false;
                     }
-                    value = values.emplace(typed,RigExecOpAddValue(state,typed.first,slot)).first;
-                    state->leaves.push_back(value->second);
+                    id = RigExecOpAddValue(state,typedDomain,slot);
+                    typed.setValue(typedDomain,slot,id);
+                    state->leaves.push_back(id);
                 }
-                op.reads.push_back(value->second);
+                op.reads.push_back(id);
             }
         }
     }
+    // No reader index here: the canonical remap below renumbers every value
+    // id and rebuilds the index from the final ids, so the compile's own
+    // index would be cleared unread.
     state->compiled = RigExecCompileOpGraph(descriptors, state->leaves,
-        cyclePolicy, retainedExclusions, graph, error);
+        cyclePolicy, retainedExclusions, graph, error, false);
     if (state->compiled) {
         for(uint32_t i=0;i<descriptors.size();++i) if(graph->canonicalIndex[i]<0)
             for(auto id:descriptors[i].writes) state->excludedValues.push_back(id);

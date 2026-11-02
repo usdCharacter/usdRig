@@ -1166,9 +1166,34 @@ public:
     TfToken Interpolation() const override{return source.Interpolation();}
     TfToken UpAxis() const override{return source.UpAxis();}
 };
+// The capture-subset contract: the typed (bound-handle) capture keeps only
+// the metadata keys scene translation reads, while the generic (path)
+// capture keeps complete facts. Equivalence holds on the consumed keys,
+// and the typed side carries nothing else.
+bool OnlyConsumedKeys(const VtDictionary &typed,std::initializer_list<const char*> keys)
+{
+    for(const auto &[key,value] : typed) {
+        (void)value;
+        if(std::find(keys.begin(),keys.end(),key)==keys.end())return false;
+    }
+    return true;
+}
+bool SameConsumedKeys(const VtDictionary &typed,const VtDictionary &full,
+    std::initializer_list<const char*> keys)
+{
+    if(!OnlyConsumedKeys(typed,keys))return false;
+    for(const char *key : keys) {
+        const auto a=typed.find(key),b=full.find(key);
+        if((a==typed.end())!=(b==full.end()))return false;
+        if(a!=typed.end()&&a->second!=b->second)return false;
+    }
+    return true;
+}
 void CheckSameAttribute(const RigExecSceneAttribute &a,const RigExecSceneAttribute &b)
 {
-    CHECK(a.path==b.path&&a.type==b.type&&a.metadata==b.metadata&&a.connections==b.connections);
+    CHECK(a.path==b.path&&a.type==b.type&&a.connections==b.connections);
+    CHECK(SameConsumedKeys(a.metadata,b.metadata,
+        {"rigExecReadPhase","rigExecInputElement","interpolation"}));
     CHECK(a.hasValue==b.hasValue&&a.hasAuthoredValue==b.hasAuthoredValue);
     CHECK(a.hasAuthoredReadableValue==b.hasAuthoredReadableValue&&a.hasAuthoredConnections==b.hasAuthoredConnections);
     CHECK(a.mightBeTimeVarying==b.mightBeTimeVarying&&a.hasAuthoredDefault==b.hasAuthoredDefault);
@@ -1189,6 +1214,22 @@ void TestBoundUsdAttributeCapture()
         const auto inactiveValue=inactive.CreateAttribute(TfToken("value"),SdfValueTypeNames->Double);
         CHECK(inactiveValue.Set(0.75));CHECK(inactive.SetActive(false));
         CHECK(prim.CreateRelationship(TfToken("targets")).SetTargets({value.GetPath(),inactive.GetPath()}));
+        // Every consumed metadata key, authored: a phase token and string,
+        // an input element, an interpolation token, a relationship phase,
+        // and clips on their own attribute-free prim, clear of the valued
+        // attributes the assertions below read. GetAllMetadata filters
+        // clip keys, so neither side ever carries clips; the prim locks
+        // that agreement.
+        CHECK(value.SetMetadata(TfToken("rigExecReadPhase"),VtValue(TfToken("final"))));
+        CHECK(connected.SetMetadata(TfToken("rigExecReadPhase"),VtValue(std::string("preceding"))));
+        CHECK(blocked.SetMetadata(TfToken("rigExecInputElement"),VtValue(1)));
+        CHECK(blocked.SetMetadata(TfToken("interpolation"),VtValue(TfToken("varying"))));
+        CHECK(prim.GetRelationship(TfToken("targets")).SetMetadata(
+            TfToken("rigExecReadPhase"),VtValue(std::string("base"))));
+        const auto clipped=stage->DefinePrim(SdfPath("/Rig/Clipped"));
+        VtDictionary clipSet;clipSet["primPath"]=VtValue(SdfPath("/Rig/Clipped"));
+        VtDictionary clips;clips["default"]=VtValue(clipSet);
+        CHECK(clipped.SetMetadata(TfToken("clips"),VtValue(clips)));
         const RigExecUsdSceneAccess typed(stage);const GenericUsdCapture generic(typed);
         const std::vector<UsdTimeCode> identities={UsdTimeCode::Default(),UsdTimeCode(1)};
         RigExecSceneDescriptors old;std::string typedError,genericError;
@@ -1201,14 +1242,16 @@ void TestBoundUsdAttributeCapture()
         CHECK(held.relationships.size()==old.relationships.size());
         for(const auto &entry:held.relationships) {
             const auto &a=entry.second;const auto &b=old.relationships.at(entry.first);
-            CHECK(a.fact.path==b.fact.path&&a.fact.metadata==b.fact.metadata&&a.fact.targets==b.fact.targets);
+            CHECK(a.fact.path==b.fact.path&&a.fact.targets==b.fact.targets);
+            CHECK(SameConsumedKeys(a.fact.metadata,b.fact.metadata,{"rigExecReadPhase"}));
             CHECK(a.readPhase==b.readPhase&&a.forwardedTargets==b.forwardedTargets&&a.targetExists==b.targetExists);
         }
         CHECK(held.applications.empty()&&old.applications.empty()&&held.jointBindings.empty()&&old.jointBindings.empty());
         for(const auto &entry:held.nodes) {
             const auto &a=entry.second;const auto &b=old.nodes.at(entry.first);
             CHECK(a.fact.path==b.fact.path&&a.fact.type==b.fact.type&&a.fact.appliedSchemas==b.fact.appliedSchemas);
-            CHECK(a.fact.metadata==b.fact.metadata&&a.fact.active==b.fact.active&&a.fact.children==b.fact.children);
+            CHECK(SameConsumedKeys(a.fact.metadata,b.fact.metadata,{"clips"}));
+            CHECK(a.fact.active==b.fact.active&&a.fact.children==b.fact.children);
             CHECK(a.attributes==b.attributes&&a.relationships==b.relationships&&a.stackOrdinal==b.stackOrdinal);
             CHECK(a.domain==b.domain&&a.transformProvider==b.transformProvider&&a.pointBased==b.pointBased);
         }

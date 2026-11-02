@@ -117,6 +117,7 @@ BindPointReads(RigExecBakedProgramImpl *program)
         [&](RigExecBakedProgramImpl::GeomRevision *revision, size_t chain,
             size_t before, bool afterStatus) {
             revision->pointBindings.clear();
+            revision->pointBindings.reserve(revision->binding.phases.size());
             for (const auto &[input, phase] : revision->binding.phases) {
                 RigExecBakedPointsBinding bound =
                     bind(input, phase, revision->moverPath, chain, before,
@@ -165,6 +166,9 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                           const std::vector<RigExecBakedChainSpec> &chains)
 {
     RigExecBakedProgramImpl &B = *ctx->program;
+    // Every push below appends a spec-sized run once: reserve the exact
+    // counts so the bake never grows these elementwise.
+    B.chains.reserve(B.chains.size() + chains.size());
     auto refuse = [&](const std::string &what, const SdfPath &where) {
         ctx->Refuse(what, where);
     };
@@ -278,6 +282,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         // channel weight and see it -- so the input and sample prims go into
         // `resolvedRoutedPrims` beside the mover's, where an override on one
         // of their properties places with nothing else to do.
+        out.blendChannels.reserve(r.binding.blendInputs.size());
         for (const SdfPath &input : r.binding.blendInputs) {
             RigExecBakedProgramImpl::GeomBlendChannel channel;
             B.prims.insert(input);
@@ -314,6 +319,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             }
             const auto samples = r.binding.blendSamples.find(input);
             if (samples != r.binding.blendSamples.end()) {
+                channel.samples.reserve(samples->second.size());
                 for (const RigExecBlendSampleBinding &binding :
                          samples->second) {
                     RigExecBakedProgramImpl::GeomBlendChannel::Sample sample;
@@ -395,6 +401,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                 out.driverFramesSolver = solver->second;
             }
         }
+        out.influenceSlots.reserve(r.binding.influences.size());
         for (const SdfPath &influence : r.binding.influences) {
             const int slot = slotOf(influence);
             if (slot < 0) refuse("skin influence is not a provider", influence);
@@ -530,6 +537,8 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         const SdfPath &target = spec.target;
         RigExecBakedProgramImpl::GeomChain chain;
         chain.target = target;
+        chain.revisions.reserve(spec.revisions.size());
+        chain.derived.reserve(spec.derived.size());
         // The base points are read per frame through a query, so only the
         // query's own validity depends on this surviving a resync.
         B.prims.insert(target.GetPrimPath());
@@ -6635,7 +6644,8 @@ RigExecBakedRunProjectorTarget(
 
 void
 RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
-                           RigExecBakedPathLeaves *leaves)
+                           RigExecBakedPathLeaves *leaves,
+                           const std::vector<char> *varying)
 {
     const size_t n = leaves->decl.keys.size();
     leaves->attributes.assign(n, UsdAttribute());
@@ -6643,15 +6653,47 @@ RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
     leaves->varying.assign(n, 0);
     leaves->values.clear();
     leaves->values.reserve(n);
+    const bool skipHops = varying && varying->size() == n;
+    // Leaves arrive grouped by prim -- the provider round binds hundreds of
+    // attributes on a handful of prims -- so hold each prim across its run:
+    // one prim walk per run plus one attribute lookup per leaf, instead of
+    // a full path walk per leaf. GetAttributeAtPath answers exactly this
+    // prim plus this name for a property path, and an invalid prim binds
+    // nothing, as the path walk would.
+    SdfPath boundPrim;
+    UsdPrim prim;
+    bool havePrim = false;
     for (size_t k = 0; k < n; ++k) {
         const RigExecRevisionLeafKey &key = leaves->decl.keys[k];
         if (stage && key.path.IsPropertyPath()) {
-            leaves->attributes[k] = stage->GetAttributeAtPath(key.path);
+            const SdfPath primPath = key.path.GetPrimPath();
+            if (!havePrim || primPath != boundPrim) {
+                boundPrim = primPath;
+                prim = stage->GetPrimAtPath(primPath);
+                havePrim = true;
+            }
+            leaves->attributes[k] = prim
+                ? prim.GetAttribute(key.path.GetNameToken())
+                : UsdAttribute();
         }
-        bool varying = false;
-        RigExecRevisionLeafHops(key, leaves->attributes[k], &leaves->hops[k],
-                                &varying);
-        leaves->varying[k] = varying ? 1 : 0;
+        if (skipHops && key.flavour == RigExecRevisionLeafFlavour::Raw) {
+            // A Raw read reaches its own path only, and its varying bit is
+            // the attribute's ValueMightBeTimeVarying at an AtTime read, so
+            // the caller's answers reproduce the walk below hop for hop and
+            // bit for bit: the same single hop, and no varying bit without
+            // a bound attribute, a moving time, or a varying answer.
+            leaves->hops[k].push_back(key.path);
+            leaves->varying[k] =
+                (key.time == RigExecRevisionLeafTime::AtTime &&
+                 leaves->attributes[k] && (*varying)[k])
+                    ? 1
+                    : 0;
+        } else {
+            bool varies = false;
+            RigExecRevisionLeafHops(key, leaves->attributes[k],
+                                    &leaves->hops[k], &varies);
+            leaves->varying[k] = varies ? 1 : 0;
+        }
         leaves->values.push_back(key.fallback);
     }
     leaves->compiledRig.assign(n, 0);
@@ -7078,7 +7120,8 @@ RigExecBakedBuildLayoutSteps(RigExecBakedProgramImpl *program)
         step.part = 0;
         step.kind = RigExecBakedStepKind::SkinTopology;
         step.object = int(r);
-        step.label = "SkinTopology " + revision.moverPath.GetString();
+        // Unlabeled: step labels derive from descriptor keys in
+        // RigExecBakedAssignStepCosts, after all step builders.
         step.writes.push_back(RigExecBakedOne(
             RigExecBakedSlotDomain::SkinTopology, uint32_t(r)));
         B.steps.push_back(std::move(step));

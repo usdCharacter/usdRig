@@ -36,6 +36,8 @@
 
 namespace rigExec {
 
+namespace evaluatorDetail { class _PoseInputGraph; }
+
 struct RigExecSceneDescriptors;
 struct RigExecScenePoseInterpolatorDescriptor;
 struct RigExecSceneSpaceSwitchDescriptor;
@@ -859,7 +861,8 @@ private:
         std::unique_ptr<RigExecBakedProgram> outgoing = nullptr,
         const RigExecSceneDescriptors *scene = nullptr,
         const UsdStageWeakPtr &sceneStage = UsdStageWeakPtr(),
-        uint64_t sceneSerial = 0);
+        uint64_t sceneSerial = 0,
+        evaluatorDetail::_PoseInputGraph *poseInputGraph = nullptr);
 
     /// The structure digest in three segments: the discovered output sets
     /// (joints, controls, volume guides, pose interpolators), the solver

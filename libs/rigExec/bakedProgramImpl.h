@@ -88,6 +88,8 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace rigExec {
 
+namespace evaluatorDetail { class _PoseInputGraph; }
+
 class RigExecRigEvaluator;
 struct RigExecRigPose;
 struct RigExecHeadLeafConstants;
@@ -206,10 +208,17 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
                           const std::set<SdfPath> &chainTargets,
                           bool *viaChain, bool *varying,
                           UsdAttribute *selected,
-                          SdfPathVector *walk = nullptr)
+                          SdfPathVector *walk = nullptr,
+                          T *selectedValue = nullptr,
+                          bool *selectedAtTime = nullptr)
 {
     std::set<SdfPath> visiting;
-    std::vector<UsdAttribute> fallback;
+    struct Fallback {
+        UsdAttribute attribute;
+        size_t samples = 0;
+        bool spline = false;
+    };
+    std::vector<Fallback> fallback;
     UsdAttribute a = attribute;
     while (a && visiting.insert(a.GetPath()).second) {
         if (walk) {
@@ -228,12 +237,22 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
         // USD build while it varies. This is the same predicate
         // RigExecBakedAnimatedOrConnected applies further down, for the
         // same reason.
-        if (a.ValueMightBeTimeVarying() || a.GetNumTimeSamples() > 0) {
+        // One resolve for the per-hop questions: ValueMightBeTimeVarying,
+        // GetNumTimeSamples and HasSpline each recompute the same timeless
+        // resolve info, while the query answers all three from one. The
+        // counts below are also what the reverse pass probes with, so it
+        // does not recompute them. Connections compose only when authored:
+        // with no authored connection opinions there is nothing to compose.
+        const UsdAttributeQuery query(a);
+        const size_t samples = query.GetNumTimeSamples();
+        if (query.ValueMightBeTimeVarying() || samples > 0) {
             *varying = true;
         }
-        fallback.push_back(a);
+        fallback.push_back({a, samples, query.HasSpline()});
         SdfPathVector connections;
-        a.GetConnections(&connections);
+        if (a.HasAuthoredConnections()) {
+            a.GetConnections(&connections);
+        }
         if (connections.size() != 1) {
             break;
         }
@@ -244,10 +263,25 @@ RigExecBakedClassifyInput(const UsdAttribute &attribute, UsdTimeCode time,
         // A keyed attribute with no default answers at every frame but not
         // at Default, so it is probed at its first key; otherwise the input
         // has no handle and every frame reads its fallback.
-        const bool keyed = it->GetNumTimeSamples() > 0 || it->HasSpline();
-        if (it->Get(&probe, time) ||
-            (keyed && it->Get(&probe, UsdTimeCode::EarliestTime()))) {
-            *selected = *it;
+        const bool keyed = it->samples > 0 || it->spline;
+        if (it->attribute.Get(&probe, time)) {
+            *selected = it->attribute;
+            // The reverse pass already read what an at-time caller Gets
+            // next, so hand the probe out and spare it the second resolve.
+            // A selection by earliest sample reads nothing at `time` and
+            // reports no value: its caller still Gets (and keeps the
+            // fallback that Get leaves behind).
+            if (selectedValue) {
+                *selectedValue = std::move(probe);
+            }
+            if (selectedAtTime) {
+                *selectedAtTime = true;
+            }
+            return;
+        }
+        if (keyed &&
+            it->attribute.Get(&probe, UsdTimeCode::EarliestTime())) {
+            *selected = it->attribute;
             return;
         }
     }
@@ -274,8 +308,11 @@ RigExecBakedBindInput(const UsdPrim &prim, const TfToken &name, T fallback,
     input.head = attribute;
     bool viaChain = false, varying = false;
     UsdAttribute selected;
+    T selectedValue{};
+    bool selectedAtTime = false;
     RigExecBakedClassifyInput<T>(attribute, time, chainTargets, &viaChain,
-                                 &varying, &selected, walk);
+                                 &varying, &selected, walk, &selectedValue,
+                                 &selectedAtTime);
     if (viaChain) {
         input.varying = true;
         input.resolvedAttr = attribute;
@@ -289,7 +326,11 @@ RigExecBakedBindInput(const UsdPrim &prim, const TfToken &name, T fallback,
         return input;
     }
     if (selected) {
-        selected.Get(&input.constant, time);
+        if (selectedAtTime) {
+            input.constant = std::move(selectedValue);
+        } else {
+            selected.Get(&input.constant, time);
+        }
     }
     return input;
 }
@@ -4704,7 +4745,8 @@ const VtValue *RigExecBakedSpaceLeafOverlay(const RigExecBakedProgramImpl &, siz
 GfMatrix4d RigExecBakedProviderParentRaw(const RigExecBakedProgramImpl &,int slot);
 bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program, UsdTimeCode capture,
     std::string *error, const RigExecSceneDescriptors *scene = nullptr,
-    const UsdStageWeakPtr &sceneStage = UsdStageWeakPtr(), uint64_t sceneSerial = 0);
+    const UsdStageWeakPtr &sceneStage = UsdStageWeakPtr(), uint64_t sceneSerial = 0,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph = nullptr);
 bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program, std::string *error);
 /// Build, once every non-provider step and cross-domain read is declared and
 /// before the provider leaves are numbered: binds the routed inputs' reads,
@@ -4715,6 +4757,12 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program, std::st
 bool RigExecBakedPruneProviderProgram(RigExecBakedProgramImpl *program, std::string *error);
 void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program);
 void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program, UsdTimeCode time, bool all);
+/// When \p captured holds \p time among its identities, the leaves it
+/// already resolved there are answered from those rows instead of being
+/// read off the stage a second time; anything the rows do not cover reads
+/// live as before.
+void RigExecBakedSampleSpaces(RigExecBakedProgramImpl *program, UsdTimeCode time, bool all,
+    const RigExecSceneDescriptors *captured);
 void RigExecBakedRunSpaceOp(RigExecBakedProgramImpl *program, RigExecBakedStep *step);
 void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program);
 bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t index,
@@ -4724,13 +4772,23 @@ bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t i
     const std::vector<std::vector<size_t>> &externalInputsBySlot);
 void RigExecBakedRunProviderRefresh(RigExecBakedProgramImpl *program,RigExecBakedStep *step);
 
+/// The patchable-input prefix of RigExecBakedNumberLeaves: the pools, the
+/// input leaf indices, and the override and source-backed rows the sampler
+/// reads. Path leaves, the by-path index, step bindings and head leaves
+/// are not numbered; the mid-build sample that feeds the rest and ladder
+/// compose reads none of them, and the end of Build numbers them all again.
+void RigExecBakedNumberInputLeaves(RigExecBakedProgramImpl *program);
 void RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program);
 
 /// Resolves \p leaves' keys on \p stage at Build: each key's attribute, the
 /// paths its read can reach and whether it can move with the time; seeds
-/// every value with its key's fallback. Owning thread.
+/// every value with its key's fallback. Owning thread. When \p varying
+/// answers every key, in decl order, with its attribute's
+/// ValueMightBeTimeVarying, Raw leaves take their hops and varying bit from
+/// it instead of re-querying the stage; other flavours walk as before.
 void RigExecBakedBindPathLeaves(const UsdStageRefPtr &stage,
-                                RigExecBakedPathLeaves *leaves);
+                                RigExecBakedPathLeaves *leaves,
+                                const std::vector<char> *varying = nullptr);
 
 /// Restarts \p leaves' content versions at their current values: version
 /// 0, which no run has read yet.
@@ -5184,15 +5242,21 @@ void
 RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
                        RigExecBakedInput<T> *input, const SdfPathVector &walk)
 {
-    if (prim && prim.GetAttribute(name)) {
+    // `head` is prim's `name` attribute from the BindInput every caller
+    // resolved this input through: set exactly when that lookup found it.
+    // Its truthiness answers the existence probe without a second prim
+    // lookup, and its prim is prim itself, so the head-prim filing below
+    // is the prim filing here, and goes.
+    if (input->head) {
         sink->Bound(input->varying);
     }
     if (prim) {
-        sink->Prim(prim.GetPath());
+        const SdfPath primPath = prim.GetPath();
+        sink->Prim(primPath);
         // Named even when absent: a resync that CREATES this property is
         // an input appearing, and the bake captured the default it did
         // not find.
-        sink->Named(prim.GetPath().AppendProperty(name));
+        sink->Named(primPath.AppendProperty(name));
     }
     // The registration proper: an input with no head has nothing an
     // override could stand on, and no number.
@@ -5214,7 +5278,6 @@ RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
     if (walk.empty()) {
         sink->Overridable(input->head.GetPath(), input->overrideIndex);
     }
-    sink->Prim(input->head.GetPrim().GetPath());
     for (const SdfPath &path : walk) {
         sink->Named(path);
     }
@@ -5454,6 +5517,20 @@ struct RigExecBakedBuildContext {
     RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const TfToken &name,
                                      T fallback, SdfPathVector *walk,
                                      bool sourceValue = false) const;
+    /// The capture-sourced half of ResolveBind: answers the BindInput read
+    /// from the detached capture BuildSpaces took on this same unchanged
+    /// stage, instead of re-walking it. True when the capture answered, with
+    /// \p input holding exactly what RigExecBakedBindInput would have
+    /// returned; false for anything the rows cannot prove -- no capture, a
+    /// missing row, an inactive hop (whose rows the capture leaves empty
+    /// while a live read answers them), or a varying hop (whose probe-time
+    /// re-classify the rows do not hold) -- and then the caller runs the
+    /// stage path. The walk is built locally and moved out only on success,
+    /// so a refusal leaves the caller's walk untouched for the stage path.
+    template <class T>
+    bool TryCaptureBind(const UsdPrim &prim, const TfToken &name,
+                        T fallback, SdfPathVector *walk,
+                        RigExecBakedInput<T> *input) const;
     template <class T>
     RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const char *name,
                                      T fallback, SdfPathVector *walk,
@@ -5521,14 +5598,152 @@ RigExecBakedIsLiveChannel(const TfToken &name)
 }
 
 template <class T>
+bool
+RigExecBakedBuildContext::TryCaptureBind(const UsdPrim &prim, const TfToken &name,
+                                         T fallback, SdfPathVector *walk,
+                                         RigExecBakedInput<T> *input) const
+{
+    *input = RigExecBakedInput<T>();
+    input->constant = fallback;
+    if (!program || !prim) {
+        return false;
+    }
+    // A reference, not a copy: a copy takes the shared count's atomic
+    // increment and decrement on every bind, and BuildSpaces published this
+    // capture before the first bind ran, so it cannot move under the read.
+    const std::shared_ptr<const RigExecSceneDescriptors> &captured =
+        program->sceneDescriptors;
+    if (!captured) {
+        return false;
+    }
+    const RigExecSceneDescriptors &scene = *captured;
+    size_t slot = scene.identities.size();
+    for (size_t s = 0; s < scene.identities.size(); ++s) {
+        if (scene.identities[s] == capture) {
+            slot = s;
+            break;
+        }
+    }
+    if (slot >= scene.identities.size()) {
+        return false;
+    }
+    const UsdAttribute head = prim.GetAttribute(name);
+    if (!head) {
+        return true;
+    }
+    const SdfPath headPath = head.GetPath();
+    const auto headRow = scene.attributes.find(headPath);
+    if (headRow == scene.attributes.end()) {
+        return false;
+    }
+    const auto headNode = scene.nodes.find(headPath.GetPrimPath());
+    if (headNode == scene.nodes.end() || !headNode->second.fact.active) {
+        return false;
+    }
+    // The ClassifyInput forward walk over captured rows: the same hops in
+    // the same order, the same revisit and fan-out stops, the same
+    // chain-target flag. The captured connections were composed under the
+    // same authored gate the stage walk uses, on this same unchanged stage.
+    SdfPathVector found;
+    std::set<SdfPath> visiting;
+    struct _Hop {
+        SdfPath path;
+        std::map<SdfPath, RigExecSceneAttributeDescriptor>::const_iterator row;
+        size_t samples = 0;
+        bool spline = false;
+    };
+    std::vector<_Hop> hops;
+    bool viaChain = false;
+    SdfPath current = headPath;
+    auto row = headRow;
+    for (;;) {
+        if (!visiting.insert(current).second) {
+            break;
+        }
+        found.push_back(current);
+        if (chainTargets.count(current)) {
+            viaChain = true;
+        }
+        const RigExecSceneAttribute &fact = row->second.fact;
+        const size_t samples = fact.sampleTimes.size();
+        if (fact.mightBeTimeVarying || samples > 0) {
+            return false;
+        }
+        hops.push_back({current, row, samples, !fact.spline.IsEmpty()});
+        if (fact.connections.size() != 1) {
+            break;
+        }
+        const SdfPath next = fact.connections[0];
+        const auto nextRow = scene.attributes.find(next);
+        if (nextRow == scene.attributes.end()) {
+            return false;
+        }
+        const auto nextNode = scene.nodes.find(next.GetPrimPath());
+        if (nextNode == scene.nodes.end() || !nextNode->second.fact.active) {
+            return false;
+        }
+        current = next;
+        row = nextRow;
+    }
+    if (viaChain) {
+        input->varying = true;
+        input->resolvedAttr = head;
+        input->head = head;
+        if (walk) {
+            *walk = std::move(found);
+        }
+        return true;
+    }
+    // The reverse pass, tail to head: a hop's captured raw IS the same
+    // capture-time Get the stage pass issues -- the capture resolved on
+    // this same unchanged stage -- so a hold of T is that Get's success
+    // and value. A keyed hop the capture-time Get misses is probed at its
+    // first key through the stage, exactly as the stage pass does.
+    for (auto it = hops.rbegin(); it != hops.rend(); ++it) {
+        const auto &inputs = it->row->second.inputs;
+        if (slot >= inputs.size()) {
+            return false;
+        }
+        const VtValue &raw = inputs[slot].raw;
+        if (raw.IsHolding<T>()) {
+            input->constant = raw.UncheckedGet<T>();
+            break;
+        }
+        if (it->samples > 0 || it->spline) {
+            const UsdAttribute hop =
+                prim.GetStage()->GetAttributeAtPath(it->path);
+            if (!hop) {
+                return false;
+            }
+            T probe{};
+            if (!hop.Get(&probe, UsdTimeCode::EarliestTime())) {
+                continue;
+            }
+            // The BindInput tail: the selected hop is re-read at the
+            // capture time, keeping the fallback when it has no default.
+            hop.Get(&input->constant, capture);
+            break;
+        }
+    }
+    input->head = head;
+    if (walk) {
+        *walk = std::move(found);
+    }
+    return true;
+}
+
+template <class T>
 RigExecBakedInput<T>
 RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
                                       T fallback, SdfPathVector *walk,
                                       bool sourceValue) const
 {
-    RigExecBakedInput<T> input =
-        RigExecBakedBindInput(prim, name, fallback, capture, chainTargets,
-                              walk);
+    RigExecBakedInput<T> input;
+    if (!TryCaptureBind(prim, name, fallback, walk, &input)) {
+        input =
+            RigExecBakedBindInput(prim, name, fallback, capture, chainTargets,
+                                  walk);
+    }
     // An input that reads an animation channel -- on its head or on any hop
     // of its connection walk -- is read per frame from the start, the way a
     // keyed one is, instead of being folded. Switches, spaces and dials are
@@ -5555,12 +5770,17 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
     if constexpr (std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>) {
         if (sourceValue && !input.varying && input.head &&
             input.head.GetTypeName().GetType()==TfType::Find<T>() && walk &&
-            walk->size()==1 && walk->front()==input.head.GetPath() &&
-            !input.head.ValueMightBeTimeVarying() &&
-            input.head.GetNumTimeSamples()==0 && !input.head.HasSpline()) {
-            input.sourceBacked=true;
-            input.sourceFallback=fallback;
-            input.query=UsdAttributeQuery(input.head);
+            walk->size()==1 && walk->front()==input.head.GetPath()) {
+            // One resolve for the steadiness questions, asked of the same
+            // query the binding keeps: ValueMightBeTimeVarying,
+            // GetNumTimeSamples and HasSpline each recompute it directly.
+            UsdAttributeQuery head(input.head);
+            if (!head.ValueMightBeTimeVarying() &&
+                head.GetNumTimeSamples()==0 && !head.HasSpline()) {
+                input.sourceBacked=true;
+                input.sourceFallback=fallback;
+                input.query=std::move(head);
+            }
         }
     }
     // A selection that moves with the time code is read the long way,

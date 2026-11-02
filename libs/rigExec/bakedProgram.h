@@ -115,6 +115,8 @@ struct RigExecUpstreamArrayRow {
 
 class RigExecRigEvaluator;
 
+namespace evaluatorDetail { class _PoseInputGraph; }
+
 /// Every array attribute of \p evaluator's compiled rig an upstream value
 /// may stand on, sorted by path, one row per attribute: each chain's base
 /// points; every array read a revision or derived target declares
@@ -533,17 +535,22 @@ private:
     std::map<SdfPath, std::string> _GetCycleSkips(
         const std::map<SdfPath, SdfPath> &switchOwners) const;
     /// Only the synchronous compile caller can offer its local capture.
+    /// \p poseInputGraph, when offered, is the compile's prefetch graph on
+    /// this stage state: the BuildSpaces round extends it instead of walking
+    /// the stage a second time. Null walks fresh, as before.
     static std::unique_ptr<RigExecBakedProgram> _BuildWithSceneCapture(
         RigExecRigEvaluator *evaluator, std::vector<std::string> *reasons,
         const RigExecSceneDescriptors *scene, const UsdStageWeakPtr &sceneStage,
-        uint64_t sceneSerial);
+        uint64_t sceneSerial,
+        evaluatorDetail::_PoseInputGraph *poseInputGraph = nullptr);
     static std::unique_ptr<RigExecBakedProgram> _BuildWithSceneCaptureAttempt(
         RigExecRigEvaluator *, std::vector<std::string> *,
         const RigExecSceneDescriptors *, const UsdStageWeakPtr &, uint64_t,
         const std::set<SdfPath> &excludedPoseWriters,
         const std::set<SdfPath> &excludedSolverBodies,
         const RigExecOpExclusionProof &exclusionProof,
-        const std::map<SdfPath, std::string> &cycleSkipReasons);
+        const std::map<SdfPath, std::string> &cycleSkipReasons,
+        evaluatorDetail::_PoseInputGraph *poseInputGraph = nullptr);
     /// Binds \p evaluator's property chains into \p program's head tier
     /// (bakedProperties.cpp): chains, records, walks, head leaves and
     /// override slots. Build only.

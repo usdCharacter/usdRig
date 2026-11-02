@@ -33,6 +33,7 @@
 #include "movers/moverRegistry.h"
 #include "movers/pathOperation.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorInternal.h"
 #include "types.h"
@@ -57,6 +58,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -67,6 +69,7 @@
 #include <numeric>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -2681,7 +2684,8 @@ RigExecBakedProgram::Build(RigExecRigEvaluator *evaluator,
 std::unique_ptr<RigExecBakedProgram>
 RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
     std::vector<std::string> *reasons, const RigExecSceneDescriptors *scene,
-    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial)
+    const UsdStageWeakPtr &sceneStage, uint64_t sceneSerial,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     // Every candidate remains unpublished. Normalize only actual canonical
     // SCC writer owners, then rebuild all frame bindings and version tables
@@ -2694,7 +2698,8 @@ RigExecBakedProgram::_BuildWithSceneCapture(RigExecRigEvaluator *evaluator,
     for (;;) {
         auto candidate = _BuildWithSceneCaptureAttempt(evaluator, reasons,
             scene, sceneStage, sceneSerial, excludedPoseWriters,
-            excludedSolverBodies, exclusionProof, cycleSkipReasons);
+            excludedSolverBodies, exclusionProof, cycleSkipReasons,
+            poseInputGraph);
         if (!candidate) return nullptr;
         if (evaluator->_stageEditSerial != sourceSerial) {
             if (reasons) reasons->push_back("source changed during cycle writer normalization");
@@ -2855,7 +2860,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     const std::set<SdfPath> &excludedPoseWriters,
     const std::set<SdfPath> &excludedSolverBodies,
     const RigExecOpExclusionProof &exclusionProof,
-    const std::map<SdfPath, std::string> &cycleSkipReasons)
+    const std::map<SdfPath, std::string> &cycleSkipReasons,
+    evaluatorDetail::_PoseInputGraph *poseInputGraph)
 {
     RigExecInputReplayComparisonScope replayComparison("RigExecBakedProgram::Build");
     if (!evaluator) {
@@ -3125,6 +3131,26 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.defaultRoundTrip.assign(N, GfMatrix4d(1.0));
     B.ladders.resize(size_t(N));
     for (auto &ladder : B.ladders) ladder.interveningSpace.constant = GfMatrix4d(1.0);
+    phases.Next("Bake.spaces");
+    // The provider-space program builds here, ahead of the ladder's own
+    // resolve, rather than beside the compose below: a rig whose spaces
+    // refuse (a capture or provider failure) skips the fifteen
+    // resolutions per slot and their commit, which the refused program
+    // would throw away. The resolve and commit read nothing the spaces
+    // write -- stage, chain targets, and the slot table above -- and the
+    // spaces read nothing they write, so a rig they accept builds the
+    // identical program. A failure waits for the bakeability join below,
+    // which still reports first; without the beside task there is no
+    // join to wait for, so it refuses at once.
+    std::string spacesError;
+    const bool spacesOk = RigExecBakedBuildSpaces(&B, capture, &spacesError,
+        scene, sceneStage, sceneSerial, poseInputGraph);
+    if (!spacesOk && !bakeableBeside) {
+        refuse("provider expressions could not translate: " + spacesError,
+               E._rigPath);
+        return nullptr;
+    }
+    phases.Next("Bake.the_rest_chain_and_the_default-space_ladder");
     // Fifteen composed-stage resolutions per provider slot, and on a
     // character this loop is the other of the two places Build spends most
     // of its time -- see the input binding table below, which is the same
@@ -3144,7 +3170,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // is scratch -- nothing reaches the program until the merge, and a
     // refused rig never merges.
     RigExecProfilePhases bindPhases(&E._profiler, "compile");
-    bindPhases.Next("Bake.ladder.resolve");
+    if (spacesOk) {
+        bindPhases.Next("Bake.ladder.resolve");
+    }
     struct _LadderResolution {
         RigExecBakedInput<GfMatrix4d> posedSpace;
         SdfPathVector posedSpaceWalk;
@@ -3251,11 +3279,13 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             shard.Seal();
         }
     };
-    if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
-        commitChunks > 1) {
-        WorkParallelForN(commitChunks, resolveLadderChunks);
-    } else {
-        resolveLadderChunks(0, commitChunks);
+    if (spacesOk) {
+        if (RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive() &&
+            commitChunks > 1) {
+            WorkParallelForN(commitChunks, resolveLadderChunks);
+        } else {
+            resolveLadderChunks(0, commitChunks);
+        }
     }
     // The bakeability join, here because everything above only read, and
     // the commit below is the first step a refused rig must not take (see
@@ -3280,6 +3310,13 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
                             buildReasons.end());
         }
         ctx.reasons = reasons;
+    }
+    if (!spacesOk) {
+        // The held spaces failure, refused after the join that reports
+        // first, with the same reason the later call site gave it.
+        refuse("provider expressions could not translate: " + spacesError,
+               E._rigPath);
+        return nullptr;
     }
     bindPhases.Next("Bake.ladder.commit");
     // The order-bearing half, serial: the merge hands each chunk its first
@@ -3338,19 +3375,28 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         renumber(&out.rotationSign, first);
         ladder.rotationSign = std::move(out.rotationSign);
         const UsdPrim provider = B.stage->GetPrimAtPath(B.paths[size_t(i)]);
-        const auto connected = [&provider](const char *name) {
-            const UsdAttribute attribute = provider.GetAttribute(TfToken(name));
+        // Composed connections are empty when nothing authors any, so the
+        // authored flag gates the composition walk, the target rebinds and
+        // the type compares: the overwhelmingly common unconnected channel
+        // answers false from the flag alone. Same gate _AttributeIsIdentity
+        // uses above. The names are the load-interned channel tokens, not
+        // per-slot registry constructions.
+        const auto connected = [&provider](const TfToken &name) {
+            const UsdAttribute attribute = provider.GetAttribute(name);
+            if (!attribute || !attribute.HasAuthoredConnections()) {
+                return false;
+            }
             SdfPathVector sources;
-            return attribute && attribute.GetConnections(&sources) &&
+            return attribute.GetConnections(&sources) &&
                    sources.size() == 1 && attribute.GetStage()->GetAttributeAtPath(sources[0]) &&
                    attribute.GetStage()->GetAttributeAtPath(sources[0]).GetTypeName() == attribute.GetTypeName();
         };
-        ladder.posedSpaceConnected = connected("posed:space");
-        ladder.defaultSpaceConnected = connected("default:space");
-        ladder.parentSpaceConnected = connected("parent:space");
-        ladder.parentDefaultSpaceConnected = connected("parent:defaultSpace");
-        ladder.avarDefaultSpaceConnected = connected("avars:defaultSpace");
-        ladder.posedDefaultSpaceConnected = connected("posed:defaultSpace");
+        ladder.posedSpaceConnected = connected(kPosedSpace);
+        ladder.defaultSpaceConnected = connected(kDefaultSpace);
+        ladder.parentSpaceConnected = connected(kParentSpace);
+        ladder.parentDefaultSpaceConnected = connected(kParentDefaultSpace);
+        ladder.avarDefaultSpaceConnected = connected(kAvarDefaultSpace);
+        ladder.posedDefaultSpaceConnected = connected(kPosedDefaultSpace);
         renumber(&out.rotationOrder, first);
         ladder.rotationOrder = std::move(out.rotationOrder);
         for (int c = 0; c < 6; ++c) {
@@ -3434,14 +3480,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         B.ladderVarying = true;
     }
     _SampleIntervening(&B, capture);
-    {
-        std::string error;
-        if(!RigExecBakedBuildSpaces(&B,capture,&error,scene,sceneStage,sceneSerial)) {
-            refuse("provider expressions could not translate: "+error,E._rigPath);
-            return nullptr;
-        }
-    }
-    RigExecBakedNumberLeaves(&B);
+    // The sample below and the rest/ladder compose read only the
+    // patchable-input leaves; path leaves, the by-path index, step bindings
+    // and head leaves have no reader until the end of Build numbers them.
+    RigExecBakedNumberInputLeaves(&B);
     RigExecBakedSampleLeaves(&B, capture, /* all = */ true);
     // Every rest before any ladder: a ladder reads its own slot's rest and
     // its parent's, and a slot's parent is below it.
@@ -4010,11 +4052,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         return false;
     };
     for (const auto &[target, nativeRevisions] : E._graphChains) {
-        const auto chainIt = E._graphChains.find(target);
-        if (chainIt == E._graphChains.end()) continue;
         RigExecBakedChainSpec spec;
         spec.target = target;
-        for (const auto &revision : chainIt->second) {
+        for (const auto &revision : nativeRevisions) {
             if (keepRevision(revision)) spec.revisions.push_back(revisionSpec(revision));
         }
         const auto derivedIt = E._graphDerivedChains.find(target);
@@ -4259,11 +4299,17 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     };
     // Keys describe authored owners and domain-local revisions, independently
     // of the descriptor emission or eventual execution order.
+    // Path texts are memoized across steps: chains share targets, groups
+    // share owners, and every step spells both without touching the
+    // registry-locked GetString.
+    RigExecPathText keyTexts;
     for (auto &step : B.steps) {
         using K=RigExecBakedStepKind;
         SdfPath owner,target;
         int revision=-1,ordinal=-1;
-        std::string expression;
+        // A view: every source below (stored keys, value keys, the one
+        // literal) outlives the iteration that spells from it.
+        std::string_view expression;
         switch(step.kind) {
         case K::ComposeSubtree: case K::RestCompose: case K::LadderCompose:
             owner=B.paths[size_t(B.composeGroups[size_t(step.object)].begin)]; break;
@@ -4363,10 +4409,44 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         const auto position=E._nativePoseOrdinals.find(owner);
         if(position!=E._nativePoseOrdinals.end()) ordinal=position->second;
-        step.label=expression.empty()?owner.GetString():expression;
-        step.descriptorKey=step.label+"/category:"+std::to_string(int(step.kind))+
-            "/stack:"+std::to_string(ordinal)+"/target:"+target.GetString()+
-            "/revision:"+std::to_string(revision)+"/subindex:"+std::to_string(step.part);
+        // One allocation per key instead of a chain of temporaries: the
+        // numbers render into stack buffers (to_chars spells integers
+        // exactly as to_string does) so the reserve is exact, and the
+        // texts come from the memo above. Byte-identical to the
+        // concatenation this replaces.
+        const std::string &ownerText = keyTexts(owner);
+        const std::string &targetText = keyTexts(target);
+        const std::string_view head =
+            expression.empty() ? std::string_view(ownerText) : expression;
+        // Unlabeled: RigExecBakedAssignStepCosts derives each label from the
+        // descriptor key below, spelling this same head, so no reader ever
+        // sees an intermediate label.
+        char rendered[4][32];
+        const int numbers[4] = {int(step.kind), ordinal, revision,
+                                step.part};
+        std::string_view digits[4];
+        for (int d = 0; d < 4; ++d) {
+            const auto last = std::to_chars(
+                rendered[d], rendered[d] + sizeof(rendered[d]),
+                numbers[d]).ptr;
+            digits[d] = std::string_view(rendered[d], size_t(last - rendered[d]));
+        }
+        std::string key;
+        key.reserve(head.size() + targetText.size() + digits[0].size() +
+                    digits[1].size() + digits[2].size() + digits[3].size() +
+                    sizeof("/category:/stack:/target:/revision:/subindex:") - 1);
+        key += head;
+        key += "/category:";
+        key += digits[0];
+        key += "/stack:";
+        key += digits[1];
+        key += "/target:";
+        key += targetText;
+        key += "/revision:";
+        key += digits[2];
+        key += "/subindex:";
+        key += digits[3];
+        step.descriptorKey = std::move(key);
     }
     if (!ctx.ok) return nullptr;
     // Bind declared solver relationship prerequisites to canonical identities

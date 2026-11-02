@@ -9,7 +9,9 @@
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usdGeom/xformOp.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <set>
 #include <string_view>
@@ -31,19 +33,22 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((avarsRx,"avars:rx")) ((avarsRy,"avars:ry")) ((avarsRz,"avars:rz"))
     ((avarsRspin,"avars:rspin")) ((avarsRotationOrder,"avars:rotationOrder"))
     ((avarsRotationSign,"avars:rotationSign"))
+    ((rigExecControl,"RigExecControl")) ((rigExecJoint,"RigExecJoint"))
+    ((rigExecSphereWeight,"RigExecSphereWeight")) ((rigExecPlaneWeight,"RigExecPlaneWeight"))
+    ((rigExecCurveWeight,"RigExecCurveWeight"))
+    ((outputsMatrix,"outputs:matrix"))
 );
 namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message; return false; }
 bool Provider(const TfToken &type) {
-    return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" ||
-        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";
+    return type==_tokens->rigExecControl || type==_tokens->rigExecJoint || type==_tokens->rigExecSphereWeight ||
+        type==_tokens->rigExecPlaneWeight || type==_tokens->rigExecCurveWeight;
 }
 const char *const computations[]={"computeRestFrame","computedDefaultSpace","computeDefaultFrame",
     "computedParentDefaultSpace","computedParentSpace","computePointFrame","computeMatrix","interveningSpace","computeAvarMatrix"};
-const char *const expressions[]={"default:space","avars:defaultSpace","posed:defaultSpace","parent:space","parent:defaultSpace"};
-bool Expression(const std::string &name) {
-    for(const auto *expression:expressions)if(name==expression)return true;
-    return false;
+bool Expression(const TfToken &name) {
+    return name==_tokens->defaultSpace || name==_tokens->avarsDefaultSpace || name==_tokens->posedDefaultSpace ||
+        name==_tokens->parentSpace || name==_tokens->parentDefaultSpace;
 }
 SdfPath ParentProvider(const RigExecSceneDescriptors &scene,const SdfPath &path) {
     for(auto parent=path.GetParentPath();!parent.IsEmpty();parent=parent.GetParentPath()) {
@@ -66,7 +71,7 @@ uint32_t AffineTypeOf(const TfToken &type) {
     return affineTypeCount;
 }
 bool AffineOutput(const RigExecSceneDescriptors &scene,const SdfPath &attribute,uint32_t *kind) {
-    if(attribute.GetName()!="outputs:matrix")return false;
+    if(attribute.GetNameToken()!=_tokens->outputsMatrix)return false;
     const auto node=scene.nodes.find(attribute.GetPrimPath());
     if(node==scene.nodes.end() || !node->second.fact.active)return false;
     *kind=AffineTypeOf(node->second.fact.type);
@@ -173,13 +178,21 @@ struct GfProviderStore {
     void PublishFrame(uint64_t id,const RigExecPointFrame &value){store.Publish(id,value);}
 };
 }
-std::string RigExecProviderValueKey(const SdfPath &owner,const std::string &computation) {
-    return "computation:"+owner.GetString()+":"+computation;
+std::string RigExecProviderValueKey(const std::string &ownerText,const char *computation) {
+    return "computation:"+ownerText+":"+computation;
 }
-std::string RigExecProviderRawKey(const SdfPath &attribute) { return "raw:"+attribute.GetString(); }
-std::string RigExecProviderAttributeKey(const SdfPath &attribute) { return "value:"+attribute.GetString(); }
+std::string RigExecProviderRawKey(const std::string &attributeText) { return "raw:"+attributeText; }
+std::string RigExecProviderAttributeKey(const std::string &attributeText) { return "value:"+attributeText; }
+std::string RigExecProviderRoutedKey(const std::string &consumerText,const TfToken &phase) {
+    return "connection:"+consumerText+":"+phase.GetString();
+}
+std::string RigExecProviderValueKey(const SdfPath &owner,const std::string &computation) {
+    return RigExecProviderValueKey(owner.GetString(),computation.c_str());
+}
+std::string RigExecProviderRawKey(const SdfPath &attribute) { return RigExecProviderRawKey(attribute.GetString()); }
+std::string RigExecProviderAttributeKey(const SdfPath &attribute) { return RigExecProviderAttributeKey(attribute.GetString()); }
 std::string RigExecProviderRoutedKey(const SdfPath &consumer,const TfToken &phase) {
-    return "connection:"+consumer.GetString()+":"+phase.GetString();
+    return RigExecProviderRoutedKey(consumer.GetString(),phase);
 }
 RigExecValueId RigExecProviderProgram::FindValue(const std::string &key) const {
     const auto found=valueIds.find(key);return found==valueIds.end()?RigExecNoProviderValue:found->second;
@@ -188,18 +201,37 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     RigExecProviderProgram *output,std::string *error,const std::set<SdfPath> *selectedProviders) {
     if(!output)return Fail(error,"provider compiler needs an output");
     RigExecProviderProgram program;
-    std::set<SdfPath> providerPaths,usedAttributes,xformPaths,nativeFrames;
+    std::set<SdfPath> providerPaths,xformPaths,nativeFrames;
+    // The used attributes with the captured rows the walk already found:
+    // the slot loop below takes each entry's attribute and node from them
+    // instead of re-finding both. Same keys in the same order as the set
+    // this replaces, so the visit sequence is unchanged; the capture's
+    // node-based maps keep the rows stable for the build.
+    std::map<SdfPath,std::pair<const RigExecSceneAttributeDescriptor*,const RigExecSceneNodeDescriptor*>> usedAttributes;
     std::function<void(const SdfPath &)> includeAttribute,includeProvider;
     std::function<void(const SdfPath &,uint32_t)> includeAffine;
+    // The inclusion below, answered from rows the caller already holds: the
+    // membership test, the provider/affine checks and the connection walk
+    // read them instead of re-finding both. Same guards in the same order,
+    // so it files exactly what the path-taking entry files.
+    const auto includeKnown=[&](const SdfPath &path,
+        const RigExecSceneAttributeDescriptor *attribute,
+        const RigExecSceneNodeDescriptor *owner) {
+        if(!owner->fact.active ||
+            !usedAttributes.emplace(path,std::make_pair(attribute,owner)).second)return;
+        if(Provider(owner->fact.type) && Expression(path.GetNameToken()))includeProvider(path.GetPrimPath());
+        if(path.GetNameToken()==_tokens->outputsMatrix) {
+            const uint32_t kind=AffineTypeOf(owner->fact.type);
+            if(kind<affineTypeCount)includeAffine(path.GetPrimPath(),kind);
+        }
+        for(const auto &connection:attribute->fact.connections)includeAttribute(connection);
+    };
     includeAttribute=[&](const SdfPath &path) {
         const auto attribute=scene.attributes.find(path);
+        if(attribute==scene.attributes.end())return;
         const auto owner=scene.nodes.find(path.GetPrimPath());
-        if(attribute==scene.attributes.end() || owner==scene.nodes.end() || !owner->second.fact.active ||
-            !usedAttributes.insert(path).second)return;
-        if(Provider(owner->second.fact.type) && Expression(path.GetName()))includeProvider(path.GetPrimPath());
-        uint32_t affine=0;
-        if(AffineOutput(scene,path,&affine))includeAffine(path.GetPrimPath(),affine);
-        for(const auto &connection:attribute->second.fact.connections)includeAttribute(connection);
+        if(owner==scene.nodes.end())return;
+        includeKnown(path,&attribute->second,&owner->second);
     };
     // An affine frame expression reads its input attributes and the point
     // frames of the providers its relationships name.
@@ -226,7 +258,27 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             &_tokens->defaultRx,&_tokens->defaultRy,&_tokens->defaultRz,&_tokens->avarsUnitScaleFactor,&_tokens->avarsTx,&_tokens->avarsTy,
             &_tokens->avarsTz,&_tokens->avarsSx,&_tokens->avarsSy,&_tokens->avarsSz,&_tokens->avarsRx,&_tokens->avarsRy,
             &_tokens->avarsRz,&_tokens->avarsRspin,&_tokens->avarsRotationOrder,&_tokens->avarsRotationSign};
-        for(const auto *input:inputs)includeAttribute(path.AppendProperty(*input));
+        // The node's own captured attributes, matched by interned name: the
+        // capture files every attribute a name probe could find, so a name
+        // outside the input list is skipped and a name inside is the same
+        // path AppendProperty would have spelled -- without spelling one
+        // path per name through the node table's lock, and with the owner
+        // row this lookup already holds instead of the walk's per-attribute
+        // re-find. A probed name the capture never saw was a find-miss
+        // no-op, so the included set is unchanged; the used map below sorts
+        // it either way.
+        const auto owner=scene.nodes.find(path);
+        if(owner==scene.nodes.end() || !owner->second.fact.active)return;
+        for(const SdfPath &attribute:owner->second.attributes) {
+            const TfToken name=attribute.GetNameToken();
+            for(const auto *input:inputs)
+                if(name==*input) {
+                    const auto row=scene.attributes.find(attribute);
+                    if(row!=scene.attributes.end())
+                        includeKnown(attribute,&row->second,&owner->second);
+                    break;
+                }
+        }
     };
     for(const auto &[path,node]:scene.nodes)
         if(node.fact.active && Provider(node.fact.type) && (!selectedProviders || selectedProviders->count(path)))includeProvider(path);
@@ -249,53 +301,161 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             xformPaths.insert(ancestor);for(const auto &attribute:captured->second.attributes)if(attribute.GetName()=="xformOpOrder" || attribute.GetName().rfind("xformOp:",0)==0)includeAttribute(attribute);
         }
     }
-    std::set<std::string> keys;
+    // Each value key is spelled once and carries where its id goes: the
+    // raw/attribute/routed slots per used attribute and the computation slots
+    // per provider, native frame and xform path are sorted once, and ids are
+    // assigned positionally from that order, exactly as the old sort, unique
+    // and FindValue round-trips did. A repeated key shares its predecessor's
+    // id. The computation keys iterate the provider sets directly: the sort
+    // below makes push order irrelevant, so the scene-wide scan with its
+    // per-node membership tests is redundant.
+    struct _UsedAttribute {
+        SdfPath path;
+        const RigExecSceneAttributeDescriptor *attr=nullptr;
+        const RigExecSceneNodeDescriptor *node=nullptr;
+        RigExecValueId raw=RigExecNoProviderValue;
+        RigExecValueId value=RigExecNoProviderValue;
+        RigExecValueId routed=RigExecNoProviderValue;
+        // The path spelled once for the raw/attribute/routed keys above and
+        // the op key below: one GetString serves all four.
+        std::string text;
+    };
+    struct _CompEntry { SdfPath path; uint32_t comp; };
+    struct _KeySlot { std::string key; uint32_t index; uint8_t kind; };
+    constexpr uint32_t compCount=uint32_t(sizeof(computations)/sizeof(computations[0]));
+    std::vector<_UsedAttribute> used;
+    used.reserve(usedAttributes.size());
+    std::vector<_CompEntry> compEntries;
+    compEntries.reserve(providerPaths.size()*compCount+nativeFrames.size()*compCount+xformPaths.size());
+    std::vector<_KeySlot> slots;
+    slots.reserve(usedAttributes.size()*2+compEntries.capacity());
     std::map<SdfPath,RigExecValueId> routed;
-    for(const auto &[path,attr]:scene.attributes) {
-        if(!usedAttributes.count(path))continue;
-        const auto node=scene.nodes.find(path.GetPrimPath());
-        if(node==scene.nodes.end() || !node->second.fact.active)continue;
-        keys.insert(RigExecProviderRawKey(path));keys.insert(RigExecProviderAttributeKey(path));
-        if(attr.readPhase!="base" && attr.fact.connections.size()==1) {
+    for(const auto &[path,row]:usedAttributes) {
+        _UsedAttribute u;
+        u.path=path;u.attr=row.first;u.node=row.second;
+        const uint32_t ui=uint32_t(used.size());
+        const std::string text=path.GetString();
+        slots.push_back({RigExecProviderRawKey(text),ui,0});
+        slots.push_back({RigExecProviderAttributeKey(text),ui,1});
+        const auto &attr=*row.first;
+        if(attr.readPhase!=RigExecSceneBasePhase && attr.fact.connections.size()==1) {
             const auto input=scene.attributes.find(attr.fact.connections.front());
             const auto inputNode=scene.nodes.find(attr.fact.connections.front().GetPrimPath());
             if(input!=scene.attributes.end() && inputNode!=scene.nodes.end() && inputNode->second.fact.active &&
-                input->second.fact.type.GetType()==attr.fact.type.GetType())keys.insert(RigExecProviderRoutedKey(path,attr.readPhase));
+                input->second.fact.type.GetType()==attr.fact.type.GetType())
+                slots.push_back({RigExecProviderRoutedKey(text,attr.readPhase),ui,2});
+        }
+        u.text=text;
+        used.push_back(std::move(u));
+    }
+    for(const auto &path:providerPaths) {
+        const std::string text=path.GetString();
+        for(uint32_t c=0;c<compCount;++c) {
+            compEntries.push_back({path,c});
+            slots.push_back({RigExecProviderValueKey(text,computations[c]),uint32_t(compEntries.size())-1,3});
         }
     }
-    for(const auto &[path,node]:scene.nodes)if(node.fact.active) {
-        if(providerPaths.count(path) || nativeFrames.count(path))for(const auto *computation:computations)
-            keys.insert(RigExecProviderValueKey(path,computation));
-        if(xformPaths.count(path))
-            keys.insert(RigExecProviderValueKey(path,"localXform"));
-    }
-    for(const auto &key:keys) {
-        const auto id=RigExecValueId(program.valueKeys.size());
-        program.valueIds.emplace(key,id);program.valueKeys.push_back(key);
-    }
-    for(const auto &path:usedAttributes) {
-        const auto &attr=scene.attributes.at(path);
-        const auto value=program.FindValue(RigExecProviderRoutedKey(path,attr.readPhase));
-        if(value!=RigExecNoProviderValue) {
-            routed.emplace(path,value);program.leaves.push_back(value);
-            program.routedInputs.push_back({value,path,attr.fact.connections.front(),attr.readPhase});
+    for(const auto &path:nativeFrames) {
+        const std::string text=path.GetString();
+        for(uint32_t c=0;c<compCount;++c) {
+            compEntries.push_back({path,c});
+            slots.push_back({RigExecProviderValueKey(text,computations[c]),uint32_t(compEntries.size())-1,3});
         }
     }
+    for(const auto &path:xformPaths) {
+        compEntries.push_back({path,compCount});
+        slots.push_back({RigExecProviderValueKey(path,"localXform"),uint32_t(compEntries.size())-1,3});
+    }
+    std::sort(slots.begin(),slots.end(),[](const auto &a,const auto &b) { return a.key<b.key; });
+    // Computation ids by owner: one row per path, one slot per computation,
+    // with localXform past compCount. A lookup descends once on the path it
+    // is given and indexes the row, filing no pair and no name string per
+    // call; rows start at RigExecNoProviderValue, so a missing computation
+    // answers exactly what the old map's miss answered. Each (path,
+    // computation) pair is filed once -- provider, native-frame and xform
+    // paths carry disjoint computation sets -- so positional filing agrees
+    // with the old emplace on every entry.
+    using _CompRow=std::array<RigExecValueId,compCount+1>;
+    std::map<SdfPath,_CompRow> compIds;
+    for(auto &slot:slots) {
+        RigExecValueId id;
+        if(!program.valueKeys.empty() && slot.key==program.valueKeys.back())
+            id=RigExecValueId(program.valueKeys.size()-1);
+        else {
+            id=RigExecValueId(program.valueKeys.size());
+            program.valueIds.emplace_hint(program.valueIds.end(),slot.key,id);
+            program.valueKeys.push_back(std::move(slot.key));
+        }
+        if(slot.kind<3) {
+            auto &u=used[slot.index];
+            if(slot.kind==0)u.raw=id;else if(slot.kind==1)u.value=id;else u.routed=id;
+        } else {
+            const auto &entry=compEntries[slot.index];
+            const auto row=compIds.find(entry.path);
+            if(row==compIds.end()) {
+                _CompRow fresh;
+                fresh.fill(RigExecNoProviderValue);
+                fresh[entry.comp]=id;
+                compIds.emplace(entry.path,std::move(fresh));
+            } else row->second[entry.comp]=id;
+        }
+    }
+    // (prim, name) to the used entry's index: one descent answers the
+    // value, the raw id, and the captured row together.
+    std::map<std::pair<SdfPath,TfToken>,uint32_t> attrIds;
+    for(uint32_t i=0;i<used.size();++i) {
+        auto &u=used[i];
+        attrIds.emplace_hint(attrIds.end(),std::make_pair(u.path.GetPrimPath(),u.path.GetNameToken()),i);
+    }
+    // The used entries are in ascending path order (filed from the map
+    // above), so a path descent answers from them directly instead of a
+    // second map built for the same lookups. used.size() is the miss.
+    const auto usedAt=[&](const SdfPath &path) {
+        const auto at=std::lower_bound(used.begin(),used.end(),path,
+            [](const _UsedAttribute &u,const SdfPath &p) { return u.path<p; });
+        return at!=used.end() && at->path==path?uint32_t(at-used.begin()):uint32_t(used.size());
+    };
+    for(const auto &u:used) {
+        if(u.routed==RigExecNoProviderValue)continue;
+        routed.emplace_hint(routed.end(),u.path,u.routed);program.leaves.push_back(u.routed);
+        program.routedInputs.push_back({u.routed,u.path,u.attr->fact.connections.front(),u.attr->readPhase});
+    }
+    constexpr uint32_t noAttr=uint32_t(-1);
+    const auto attrIndex=[&](const SdfPath &path,const TfToken &name) {
+        const auto found=attrIds.find(std::make_pair(path,name));
+        return found==attrIds.end()?noAttr:found->second;
+    };
     const auto attrId=[&](const SdfPath &path,const TfToken &name) {
-        return program.FindValue(RigExecProviderAttributeKey(path.AppendProperty(name)));
+        const uint32_t i=attrIndex(path,name);
+        return i==noAttr?RigExecNoProviderValue:used[i].value;
     };
     const auto compId=[&](const SdfPath &path,const char *name) {
-        return path.IsEmpty()?RigExecNoProviderValue:program.FindValue(RigExecProviderValueKey(path,name));
+        if(path.IsEmpty())return RigExecNoProviderValue;
+        uint32_t c=compCount+1;
+        for(uint32_t k=0;k<compCount;++k)
+            if(!std::strcmp(computations[k],name)) { c=k; break; }
+        if(c>compCount && !std::strcmp(name,"localXform"))c=compCount;
+        if(c>compCount)return RigExecNoProviderValue;
+        const auto found=compIds.find(path);
+        return found==compIds.end()?RigExecNoProviderValue:found->second[c];
     };
+    const auto rawId=[&](const SdfPath &path) {
+        const uint32_t i=usedAt(path);
+        return i==used.size()?RigExecNoProviderValue:used[i].raw;
+    };
+
     const auto connect=[&](const RigExecSceneAttribute &fact) {
         const auto route=routed.find(fact.path);
         if(route!=routed.end())return route->second;
         if(fact.connections.size()!=1)return RigExecNoProviderValue;
-        const auto found=scene.attributes.find(fact.connections.front());
-        const auto node=scene.nodes.find(fact.connections.front().GetPrimPath());
-        if(found==scene.attributes.end() || node==scene.nodes.end() || !node->second.fact.active ||
-            found->second.fact.type.GetType()!=fact.type.GetType())return RigExecNoProviderValue;
-        return program.FindValue(RigExecProviderAttributeKey(fact.connections.front()));
+        // The used entry carries the target's captured rows, which the
+        // inclusion already proved present with an active owner -- the same
+        // rows the scene lookups would find -- so the type check reads
+        // them, and a target outside the used set is the old miss.
+        const uint32_t i=usedAt(fact.connections.front());
+        if(i==used.size() ||
+            used[i].attr->fact.type.GetType()!=fact.type.GetType())return RigExecNoProviderValue;
+        return used[i].value;
     };
     const auto add=[&](RigExecProviderOp op,const std::string &key) {
         RigExecOpDescriptor descriptor;
@@ -306,15 +466,15 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
         descriptor.reads.erase(std::unique(descriptor.reads.begin(),descriptor.reads.end()),descriptor.reads.end());
         program.ops.push_back(std::move(op));program.descriptors.push_back(std::move(descriptor));
     };
-    for(const auto &[path,attr]:scene.attributes) {
-        if(!usedAttributes.count(path))continue;
-        const auto node=scene.nodes.find(path.GetPrimPath());
-        if(node==scene.nodes.end() || !node->second.fact.active)continue;
-        const auto raw=program.FindValue(RigExecProviderRawKey(path));
-        const auto value=program.FindValue(RigExecProviderAttributeKey(path));
-        program.rawInputs.emplace(path,raw);program.attributeValues.emplace(path,value);
+    for(const auto &u:used) {
+        const SdfPath &path=u.path;
+        const auto &attr=*u.attr;
+        const auto node=u.node;
+        const auto raw=u.raw;
+        const auto value=u.value;
+        program.rawInputs.emplace_hint(program.rawInputs.end(),path,raw);program.attributeValues.emplace_hint(program.attributeValues.end(),path,value);
         program.sampled.push_back({raw,path});program.leaves.push_back(raw);
-        if(Provider(node->second.fact.type) && Expression(path.GetName()))continue;
+        if(Provider(node->fact.type) && Expression(path.GetNameToken()))continue;
         uint32_t affine=0;
         if(AffineOutput(scene,path,&affine)) {
             // Inputs in the table's order: the attributes, one frame per
@@ -339,17 +499,17 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
                 op.affineTargets=uint32_t(targets.size());
                 for(const auto &target:AffineTargets(scene,prim,tokens.targetObjects))op.inputs.push_back(frame(target));
             }
-            add(std::move(op),"affineFrame:"+path.GetString());
+            add(std::move(op),"affineFrame:"+u.text);
             continue;
         }
         if(attr.fact.connections.size()>1 && attr.fact.type.IsArray() &&
-            node->second.fact.type.GetString().rfind("RigExec",0)==0)
+            node->fact.type.GetString().rfind("RigExec",0)==0)
             return Fail(error,"provider translation needs typed array connection concatenation: "+path.GetString());
-        add({RigExecProviderOpKind::Attribute,path,value,{raw,connect(attr.fact)}},"attribute:"+path.GetString());
+        add({RigExecProviderOpKind::Attribute,path,value,{raw,connect(attr.fact)}},"attribute:"+u.text);
     }
     if(composeFrames)for(const auto &[path,node]:scene.nodes) {
         if(!xformPaths.count(path))continue;
-        const auto order=program.FindValue(RigExecProviderRawKey(path.AppendProperty(_tokens->xformOpOrder)));
+        const auto order=rawId(path.AppendProperty(_tokens->xformOpOrder));
         RigExecProviderOp op{RigExecProviderOpKind::LocalXform,path,compId(path,"localXform"),{order}};
         for(const auto &attribute:node.attributes) {
             const std::string name=attribute.GetName();
@@ -357,29 +517,55 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
             const auto end=name.find(':',8);
             const auto type=XformOpType(name,8,end==std::string::npos?end:end-8);
             if(type==UsdGeomXformOp::TypeInvalid)return Fail(error,"unknown pure xform operation: "+attribute.GetString());
-            op.xforms.push_back({attribute.GetNameToken(),program.FindValue(RigExecProviderRawKey(attribute)),int(type)});
+            op.xforms.push_back({attribute.GetNameToken(),rawId(attribute),int(type)});
         }
         add(std::move(op),"localXform:"+path.GetString());
     }
     for(const auto &path:nativeFrames) {
+        const std::string text=path.GetString();
         RigExecProviderOp relative{RigExecProviderOpKind::RelativeXform,path,compId(path,"computedDefaultSpace"),{}};
         for(auto ancestor=path;!ancestor.IsEmpty() && ancestor!=scene.rigRoot.GetParentPath();ancestor=ancestor.GetParentPath()) {
-            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));}
+            const auto local=compId(ancestor,"localXform");if(local!=UINT64_MAX){relative.inputs.push_back(local);relative.inputs.push_back(rawId(ancestor.AppendProperty(_tokens->xformOpOrder)));}
         }
-        add(std::move(relative),"stageRelativeXform:"+path.GetString());
-        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computePointFrame"),{compId(path,"computedDefaultSpace")}},"stageFrame:"+path.GetString());
-        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeRestFrame"),{compId(path,"computedDefaultSpace")}},"stageRest:"+path.GetString());
-        add({RigExecProviderOpKind::JointMatrix,path,compId(path,"computeMatrix"),{compId(path,"computeRestFrame"),compId(path,"computePointFrame")}},"stageDelta:"+path.GetString());
+        add(std::move(relative),"stageRelativeXform:"+text);
+        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computePointFrame"),{compId(path,"computedDefaultSpace")}},"stageFrame:"+text);
+        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeRestFrame"),{compId(path,"computedDefaultSpace")}},"stageRest:"+text);
+        add({RigExecProviderOpKind::JointMatrix,path,compId(path,"computeMatrix"),{compId(path,"computeRestFrame"),compId(path,"computePointFrame")}},"stageDelta:"+text);
     }
-    for(const auto &[path,node]:scene.nodes) {
-        if(!providerPaths.count(path))continue;
+    // The computation slots each provider loop below indexes, resolved once
+    // from the table: a reorder of computations[] still resolves the same
+    // names to their new slots.
+    const auto compIndex=[&](const char *name) {
+        uint32_t k=0;for(;k<compCount;++k)if(!std::strcmp(computations[k],name))break;return k;
+    };
+    const uint32_t ciRest=compIndex("computeRestFrame"),ciComputedDefault=compIndex("computedDefaultSpace"),
+        ciDefaultFrame=compIndex("computeDefaultFrame"),ciParentDefault=compIndex("computedParentDefaultSpace"),
+        ciParentSpace=compIndex("computedParentSpace"),ciPointFrame=compIndex("computePointFrame"),
+        ciMatrix=compIndex("computeMatrix"),ciIntervening=compIndex("interveningSpace"),ciAvar=compIndex("computeAvarMatrix");
+    _CompRow noRow;noRow.fill(RigExecNoProviderValue);
+    // The providers in path order: providerPaths is the same ordered set the
+    // scene-wide scan filters for, so visiting it directly repeats that
+    // scan's sequence with no per-node membership test. Each provider reads
+    // its own computation row and its parent's once and indexes both; the
+    // expression keys reuse the spelled prim text, and the attribute index
+    // answers each expression's ids and captured row in one descent.
+    for(const auto &path:providerPaths) {
+        const std::string text=path.GetString();
         const SdfPath parent=ParentProvider(scene,path);
-        const auto selfRest=compId(path,"computeRestFrame"),selfPose=compId(path,"computePointFrame");
-        const auto parentRest=compId(parent,"computeRestFrame");
-        const auto intervening=compId(path,"interveningSpace");
-        if(!composeFrames)for(const auto *computation:{"computeRestFrame","computePointFrame","interveningSpace"}) {
-            const auto id=compId(path,computation);program.leaves.push_back(id);
-            program.externalInputs.push_back({id,path,computation});
+        const auto selfRowIt=compIds.find(path);
+        const auto parentRowIt=parent.IsEmpty()?compIds.end():compIds.find(parent);
+        const _CompRow &selfRow=selfRowIt==compIds.end()?noRow:selfRowIt->second;
+        const _CompRow &parentRow=parentRowIt==compIds.end()?noRow:parentRowIt->second;
+        const auto selfRest=selfRow[ciRest],selfPose=selfRow[ciPointFrame];
+        const auto parentRest=parentRow[ciRest];
+        const auto intervening=selfRow[ciIntervening];
+        if(!composeFrames) {
+            const char *const extNames[]={"computeRestFrame","computePointFrame","interveningSpace"};
+            const RigExecValueId extIds[]={selfRest,selfPose,intervening};
+            for(int e=0;e<3;++e) {
+                program.leaves.push_back(extIds[e]);
+                program.externalInputs.push_back({extIds[e],path,extNames[e]});
+            }
         }
         else {
             RigExecProviderOp ix{RigExecProviderOpKind::InterveningXform,path,intervening,{}};
@@ -388,40 +574,40 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
                 const auto local=compId(ancestor,"localXform");
                 if(local!=RigExecNoProviderValue) {
                     ix.inputs.push_back(local);
-                    ix.inputs.push_back(program.FindValue(RigExecProviderRawKey(ancestor.AppendProperty(_tokens->xformOpOrder))));
+                    ix.inputs.push_back(rawId(ancestor.AppendProperty(_tokens->xformOpOrder)));
                 }
             }
-            add(std::move(ix),"interveningXform:"+path.GetString());
+            add(std::move(ix),"interveningXform:"+text);
             add({RigExecProviderOpKind::RestFrame,path,selfRest,{attrId(path,_tokens->restSpace),
                 attrId(path,_tokens->restTx),attrId(path,_tokens->restTy),attrId(path,_tokens->restTz),
                 attrId(path,_tokens->restRx),attrId(path,_tokens->restRy),attrId(path,_tokens->restRz),parentRest,intervening}},
-                "restFrame:"+path.GetString());
+                "restFrame:"+text);
         }
-        add({RigExecProviderOpKind::FrameToSpace,path,compId(path,"computedParentDefaultSpace"),
-            {compId(parent,"computeDefaultFrame")}},"parentDefault:"+path.GetString());
-        add({RigExecProviderOpKind::FrameToSpace,path,compId(path,"computedParentSpace"),
-            {compId(parent,"computePointFrame")}},"parentPosed:"+path.GetString());
-        add({RigExecProviderOpKind::DefaultSpace,path,compId(path,"computedDefaultSpace"),
+        add({RigExecProviderOpKind::FrameToSpace,path,selfRow[ciParentDefault],
+            {parentRow[ciDefaultFrame]}},"parentDefault:"+text);
+        add({RigExecProviderOpKind::FrameToSpace,path,selfRow[ciParentSpace],
+            {parentRow[ciPointFrame]}},"parentPosed:"+text);
+        add({RigExecProviderOpKind::DefaultSpace,path,selfRow[ciComputedDefault],
             {selfRest,parentRest,attrId(path,_tokens->parentDefaultSpace),
              attrId(path,_tokens->defaultTx),attrId(path,_tokens->defaultTy),attrId(path,_tokens->defaultTz),
-             attrId(path,_tokens->defaultRx),attrId(path,_tokens->defaultRy),attrId(path,_tokens->defaultRz)}},"computedDefault:"+path.GetString());
+             attrId(path,_tokens->defaultRx),attrId(path,_tokens->defaultRy),attrId(path,_tokens->defaultRz)}},"computedDefault:"+text);
         for(const auto *expression:{&_tokens->defaultSpace,&_tokens->avarsDefaultSpace,&_tokens->posedDefaultSpace,&_tokens->parentSpace,&_tokens->parentDefaultSpace}) {
-            const SdfPath property=path.AppendProperty(*expression);
-            const auto fact=scene.attributes.find(property);
-            if(fact==scene.attributes.end())return Fail(error,"provider expression attribute missing: "+property.GetString());
+            const uint32_t ai=attrIndex(path,*expression);
+            if(ai==noAttr)return Fail(error,"provider expression attribute missing: "+path.AppendProperty(*expression).GetString());
+            const auto &entry=used[ai];
             RigExecValueId fallback;
-            if(*expression==_tokens->defaultSpace)fallback=compId(path,"computedDefaultSpace");
+            if(*expression==_tokens->defaultSpace)fallback=selfRow[ciComputedDefault];
             else if(*expression==_tokens->avarsDefaultSpace)fallback=attrId(path,_tokens->defaultSpace);
             else if(*expression==_tokens->posedDefaultSpace)fallback=attrId(path,_tokens->avarsDefaultSpace);
-            else if(*expression==_tokens->parentSpace)fallback=compId(path,"computedParentSpace");
-            else fallback=compId(path,"computedParentDefaultSpace");
-            add({RigExecProviderOpKind::SpaceExpression,property,
-                program.FindValue(RigExecProviderAttributeKey(property)),
-                {program.FindValue(RigExecProviderRawKey(property)),connect(fact->second.fact),fallback}},
-                "spaceExpression:"+property.GetString());
+            else if(*expression==_tokens->parentSpace)fallback=selfRow[ciParentSpace];
+            else fallback=selfRow[ciParentDefault];
+            add({RigExecProviderOpKind::SpaceExpression,entry.path,
+                entry.value,
+                {entry.raw,connect(entry.attr->fact),fallback}},
+                "spaceExpression:"+text+"."+expression->GetString());
         }
-        add({RigExecProviderOpKind::MatrixToFrame,path,compId(path,"computeDefaultFrame"),{attrId(path,_tokens->defaultSpace)}},
-            "defaultFrame:"+path.GetString());
+        add({RigExecProviderOpKind::MatrixToFrame,path,selfRow[ciDefaultFrame],{attrId(path,_tokens->defaultSpace)}},
+            "defaultFrame:"+text);
         if(composeFrames) {
             RigExecProviderOp posed{RigExecProviderOpKind::PosedFrame,path,selfPose,
                 {attrId(path,_tokens->posedSpace),attrId(path,_tokens->posedDefaultSpace),attrId(path,_tokens->parentDefaultSpace),attrId(path,_tokens->parentSpace),
@@ -429,14 +615,17 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
                  attrId(path,_tokens->avarsSx),attrId(path,_tokens->avarsSy),attrId(path,_tokens->avarsSz),
                  attrId(path,_tokens->avarsRx),attrId(path,_tokens->avarsRy),attrId(path,_tokens->avarsRz),attrId(path,_tokens->avarsRspin),
                  attrId(path,_tokens->avarsRotationOrder),attrId(path,_tokens->avarsRotationSign)}};
-            RigExecProviderOp avars{RigExecProviderOpKind::AvarMatrix,path,compId(path,"computeAvarMatrix"),
+            RigExecProviderOp avars{RigExecProviderOpKind::AvarMatrix,path,selfRow[ciAvar],
                 std::vector<RigExecValueId>(posed.inputs.begin()+4,posed.inputs.end())};
-            avars.scaleAvars=node.fact.type=="RigExecControl" || node.fact.type=="RigExecJoint";
-            add(std::move(avars),"avarMatrix:"+path.GetString());
-            posed.scaleAvars=node.fact.type=="RigExecControl" || node.fact.type=="RigExecJoint";
-            add(std::move(posed),"posedFrame:"+path.GetString());
+            const auto found=scene.nodes.find(path);
+            const bool scaleAvars=found!=scene.nodes.end() &&
+                (found->second.fact.type=="RigExecControl" || found->second.fact.type=="RigExecJoint");
+            avars.scaleAvars=scaleAvars;
+            add(std::move(avars),"avarMatrix:"+text);
+            posed.scaleAvars=scaleAvars;
+            add(std::move(posed),"posedFrame:"+text);
         }
-        add({RigExecProviderOpKind::JointMatrix,path,compId(path,"computeMatrix"),{selfRest,selfPose}},"jointMatrix:"+path.GetString());
+        add({RigExecProviderOpKind::JointMatrix,path,selfRow[ciMatrix],{selfRest,selfPose}},"jointMatrix:"+text);
     }
     std::sort(program.leaves.begin(),program.leaves.end());
     program.leaves.erase(std::unique(program.leaves.begin(),program.leaves.end()),program.leaves.end());
@@ -668,18 +857,28 @@ bool RigExecSampleProviderProgram(const RigExecProviderProgram &program,
         if(attribute==scene.attributes.end() || (!value.IsEmpty() && value.GetType()!=attribute->second.fact.type.GetType()))
             return Fail(error,"provider overlay native type mismatch: "+path.GetString());
     }
+    // One find per leaf: the validation pass remembers each source row, so
+    // the publish pass below reuses it instead of finding it again. Failure
+    // order is unchanged -- every missing source still fails before any
+    // type check or publish, and changed is still cleared between them.
+    // Sampled rows arrive in ascending path order, so the cursor walks the
+    // rows once instead of descending per leaf.
+    std::vector<const RigExecSceneAttributeDescriptor *> rows;
+    rows.reserve(program.sampled.size());
+    RigExecOrderedPathLookup<decltype(scene.attributes)> rowsByPath(scene.attributes);
     for(const auto &leaf:program.sampled) {
-        const auto attribute=scene.attributes.find(leaf.attribute);
+        const auto attribute=rowsByPath.Find(leaf.attribute);
         if(attribute==scene.attributes.end() || identity>=attribute->second.inputs.size())return Fail(error,"provider source state missing");
+        rows.push_back(&attribute->second);
     }
     changed->clear();
-    for(const auto &leaf:program.sampled) {
-        const auto attr=scene.attributes.find(leaf.attribute);
-        if(attr==scene.attributes.end() || identity>=attr->second.inputs.size())return Fail(error,"provider source state missing");
+    for(size_t i=0;i<program.sampled.size();++i) {
+        const auto &leaf=program.sampled[i];
+        const auto &attr=*rows[i];
         const auto overlay=overlays.find(leaf.attribute);
-        const auto &source=attr->second.inputs[identity];
+        const auto &source=attr.inputs[identity];
         const auto &value=overlay==overlays.end()?source.raw:overlay->second;
-        if(!value.IsEmpty() && value.GetType()!=attr->second.fact.type.GetType())
+        if(!value.IsEmpty() && value.GetType()!=attr.fact.type.GetType())
             return Fail(error,"provider overlay native type mismatch: "+leaf.attribute.GetString());
         if(store->PublishSource(leaf.value,value,overlay==overlays.end()?source.rawBlocked:false,overlay!=overlays.end()))
             changed->push_back(leaf.value);

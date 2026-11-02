@@ -9,6 +9,9 @@
 #include <queue>
 #include <set>
 #include <sstream>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace rigExec {
 namespace {
@@ -92,6 +95,55 @@ std::vector<std::string> Loop(const std::vector<uint32_t> &component,
     }
     return {};
 }
+/// The value-to-producer table behind the compile, dense where the ids
+/// allow. Compiled values are dense from zero, so one row answers every
+/// registration and lookup in O(1) with a single allocation; wild ids
+/// (past the entry budget or too sparse to fill) spill to the map the
+/// compiler always used, answering exactly what it answered.
+class ProducerIndex {
+public:
+    static constexpr uint32_t kNone = ~uint32_t(0);
+    // The typed table's budgets, in the same spirit: real compiles stay
+    // orders of magnitude inside both, and past them the map is the
+    // original speed, never a failure.
+    static constexpr size_t kDenseEntries = size_t(1) << 20;
+    static constexpr size_t kDenseFillPerReference = 512;
+
+    void Reserve(RigExecValueId maxValue, size_t references)
+    {
+        if (maxValue >= kDenseEntries) return;
+        const size_t need = size_t(maxValue) + 1;
+        if (need <= references * kDenseFillPerReference)
+            _dense.assign(need, kNone);
+    }
+
+    /// The producer of \p value, or kNone. Reads back exactly what
+    /// Register filed, on either path.
+    uint32_t Producer(RigExecValueId value) const
+    {
+        if (!_dense.empty())
+            return size_t(value) < _dense.size() ? _dense[size_t(value)] : kNone;
+        const auto found = _spill.find(value);
+        return found == _spill.end() ? kNone : found->second;
+    }
+
+    /// Files \p op as a producer of \p value. The first producer wins,
+    /// exactly as the map's emplace: re-registering the same op changes
+    /// nothing, so the caller reports a conflict only for a different op.
+    void Register(RigExecValueId value, uint32_t op)
+    {
+        if (!_dense.empty()) {
+            uint32_t &slot = _dense[size_t(value)];
+            if (slot == kNone) slot = op;
+            return;
+        }
+        _spill.emplace(value, op);
+    }
+
+private:
+    std::vector<uint32_t> _dense;
+    std::map<RigExecValueId, uint32_t> _spill;
+};
 } // namespace
 
 bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
@@ -106,22 +158,75 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
     const RigExecOpExclusionProof *retainedExclusions,
     RigExecCompiledGraph *out, std::string *error)
 {
+    return RigExecCompileOpGraph(descriptors, leaves, policy,
+        retainedExclusions, out, error, true);
+}
+
+bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
+    const std::vector<RigExecValueId> &leaves, RigExecCyclePolicy policy,
+    const RigExecOpExclusionProof *retainedExclusions,
+    RigExecCompiledGraph *out, std::string *error, bool buildReaders)
+{
     const auto fail = [&](const std::string &message) { if (error) *error = message; return false; };
     if (!out) return fail("null graph output");
     if (descriptors.size() > UINT32_MAX) return fail("too many operations");
     const size_t count = descriptors.size();
-    std::set<RigExecValueId> leafSet(leaves.begin(), leaves.end());
-    std::map<RigExecValueId, uint32_t> producers;
-    std::set<std::string> keys;
+    // Sorted leaves answer the same membership the set did, with one
+    // allocation instead of one node per leaf.
+    std::vector<RigExecValueId> leafVec(leaves.begin(), leaves.end());
+    std::sort(leafVec.begin(), leafVec.end());
+    leafVec.erase(std::unique(leafVec.begin(), leafVec.end()),
+                  leafVec.end());
+    const auto isLeaf = [&](RigExecValueId value) {
+        return std::binary_search(leafVec.begin(), leafVec.end(), value);
+    };
+    ProducerIndex producers;
+    {
+        RigExecValueId maxValue = 0;
+        size_t references = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            references += descriptors[i].writes.size() + descriptors[i].reads.size();
+            for (RigExecValueId value : descriptors[i].writes)
+                maxValue = std::max(maxValue, value);
+            for (RigExecValueId value : descriptors[i].reads)
+                maxValue = std::max(maxValue, value);
+        }
+        producers.Reserve(maxValue, references);
+    }
+    // Duplicate keys without copying one: views sort in the same byte
+    // order the key set used, and every key but its lowest-indexed twin
+    // is marked, so the loop below fails on exactly the index it failed
+    // on. The order also serves the retained-exclusion check below.
+    std::vector<std::pair<std::string_view, uint32_t>> keyOrder;
+    keyOrder.reserve(count);
+    for (uint32_t i = 0; i < count; ++i)
+        keyOrder.emplace_back(std::string_view(descriptors[i].key), i);
+    std::sort(keyOrder.begin(), keyOrder.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    std::vector<char> dupKey(count, 0);
+    for (size_t k = 0; k < keyOrder.size();) {
+        size_t e = k + 1;
+        uint32_t first = keyOrder[k].second;
+        while (e < keyOrder.size() && keyOrder[e].first == keyOrder[k].first) {
+            first = std::min(first, keyOrder[e].second);
+            ++e;
+        }
+        if (e - k > 1)
+            for (size_t j = k; j < e; ++j)
+                if (keyOrder[j].second != first)
+                    dupKey[keyOrder[j].second] = 1;
+        k = e;
+    }
     for (uint32_t i = 0; i < count; ++i) {
-        if (descriptors[i].key.empty() || !keys.insert(descriptors[i].key).second)
+        if (descriptors[i].key.empty() || dupKey[i])
             return fail("empty or duplicate operation key: " + descriptors[i].key);
         for (RigExecValueId value : descriptors[i].writes) {
-            auto added = producers.emplace(value, i);
-            if (!added.second && added.first->second != i)
+            const uint32_t prior = producers.Producer(value);
+            if (prior != ProducerIndex::kNone && prior != i)
                 return fail("multiple producers for value " + std::to_string(value) + ": " +
-                    descriptors[added.first->second].key + " and " + descriptors[i].key);
-            if (leafSet.count(value)) return fail("operation writes a sampled leaf: " + descriptors[i].key);
+                    descriptors[prior].key + " and " + descriptors[i].key);
+            producers.Register(value, i);
+            if (isLeaf(value)) return fail("operation writes a sampled leaf: " + descriptors[i].key);
         }
     }
     std::vector<std::vector<uint32_t>> preds(count), succs(count);
@@ -130,9 +235,9 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for (uint32_t predecessor : preds[i])
             if (predecessor >= count) return fail("predecessor out of range: " + descriptors[i].key);
         for (RigExecValueId value : descriptors[i].reads) {
-            const auto producer = producers.find(value);
-            if (producer != producers.end()) preds[i].push_back(producer->second);
-            else if (!leafSet.count(value)) return fail("read has no producer or sampled leaf: " + descriptors[i].key);
+            const uint32_t producer = producers.Producer(value);
+            if (producer != ProducerIndex::kNone) preds[i].push_back(producer);
+            else if (!isLeaf(value)) return fail("read has no producer or sampled leaf: " + descriptors[i].key);
         }
         Unique(&preds[i]);
         for (uint32_t predecessor : preds[i]) succs[predecessor].push_back(i);
@@ -176,7 +281,15 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for(const auto &key:retainedExclusions->removedKeys) {
             if(!removedKeys.insert(key).second || retainedKeys.count(key) || !members.count(key))
                 return fail("duplicate, overlapping or unproved removed exclusion key: "+key);
-            if(keys.count(key))return fail("removed exclusion still has a descriptor: "+key);
+            const std::string_view view(key);
+            const auto ordered = std::lower_bound(
+                keyOrder.begin(), keyOrder.end(), view,
+                [](const auto &entry, std::string_view v) {
+                    return entry.first < v;
+                });
+            const bool stillHas =
+                ordered != keyOrder.end() && ordered->first == view;
+            if(stillHas)return fail("removed exclusion still has a descriptor: "+key);
         }
         for(const auto &key:members)if(!retainedKeys.count(key) && !removedKeys.count(key))
             return fail("retained SCC member has no exclusion mapping: "+key);
@@ -190,15 +303,46 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
             [&](uint32_t at){return excluded[at]!=0;}),edges.end());};
         removeExcluded(preds[i]);removeExcluded(succs[i]);
     }
-    for (const auto &component : Components(succs, preds)) {
-        std::vector<std::string> members;
-        members.reserve(component.size());
-        for (uint32_t i : component) {
-            excluded[i] = 1;
-            members.push_back(descriptors[i].key);
+    // Key ranks from the duplicate check's order: keys are unique past it,
+    // so ranks order the ready queue exactly as the key strings did, with
+    // integer compares instead of string compares per push and pop.
+    std::vector<uint32_t> keyRank(count, 0);
+    for (uint32_t k = 0; k < keyOrder.size(); ++k) keyRank[keyOrder[k].second] = k;
+    const auto after = [&](uint32_t a, uint32_t b) { return keyRank[a] > keyRank[b]; };
+    std::vector<uint32_t> unresolved(count, 0), order;
+    const auto runKahn = [&] {
+        order.clear();
+        std::fill(unresolved.begin(), unresolved.end(), 0);
+        std::priority_queue<uint32_t, std::vector<uint32_t>, decltype(after)> ready(after);
+        for (uint32_t i = 0; i < count; ++i) if (!excluded[i]) {
+            for (uint32_t predecessor : preds[i]) if (!excluded[predecessor]) ++unresolved[i];
+            if (!unresolved[i]) ready.push(i);
         }
-        std::sort(members.begin(), members.end());
-        reports.emplace_back(Loop(component, succs, descriptors), std::move(members));
+        while (!ready.empty()) {
+            const uint32_t at = ready.top(); ready.pop(); order.push_back(at);
+            for (uint32_t next : succs[at]) if (!excluded[next] && --unresolved[next] == 0) ready.push(next);
+        }
+    };
+    // Kahn orders every op outside a cycle, so a complete first order proves
+    // the graph acyclic and the SCC discovery below -- which would find
+    // nothing -- is skipped. A partial order takes the slow path: discovery
+    // marks the cycle members excluded exactly as before, and Kahn runs
+    // again over the remainder, seeing what the single pass always saw.
+    runKahn();
+    size_t included = 0;
+    for (uint32_t i = 0; i < count; ++i) included += excluded[i] == 0;
+    if (order.size() != included) {
+        for (const auto &component : Components(succs, preds)) {
+            std::vector<std::string> members;
+            members.reserve(component.size());
+            for (uint32_t i : component) {
+                excluded[i] = 1;
+                members.push_back(descriptors[i].key);
+            }
+            std::sort(members.begin(), members.end());
+            reports.emplace_back(Loop(component, succs, descriptors), std::move(members));
+        }
+        runKahn();
     }
     std::sort(reports.begin(), reports.end());
     reports.erase(std::unique(reports.begin(),reports.end()),reports.end());
@@ -216,17 +360,6 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         }
         return fail(message);
     }
-    const auto after = [&](uint32_t a, uint32_t b) { return descriptors[a].key > descriptors[b].key; };
-    std::priority_queue<uint32_t, std::vector<uint32_t>, decltype(after)> ready(after);
-    std::vector<uint32_t> unresolved(count, 0), order;
-    for (uint32_t i = 0; i < count; ++i) if (!excluded[i]) {
-        for (uint32_t predecessor : preds[i]) if (!excluded[predecessor]) ++unresolved[i];
-        if (!unresolved[i]) ready.push(i);
-    }
-    while (!ready.empty()) {
-        const uint32_t at = ready.top(); ready.pop(); order.push_back(at);
-        for (uint32_t next : succs[at]) if (!excluded[next] && --unresolved[next] == 0) ready.push(next);
-    }
     graph.canonicalIndex.assign(count, -1);
     for (uint32_t i = 0; i < order.size(); ++i) graph.canonicalIndex[order[i]] = int32_t(i);
     graph.ops.resize(order.size());
@@ -242,11 +375,13 @@ bool RigExecCompileOpGraph(const std::vector<RigExecOpDescriptor> &descriptors,
         for (uint32_t next : succs[old]) if (!excluded[next])
             op.successors.push_back(uint32_t(graph.canonicalIndex[next]));
         Unique(&op.predecessors); Unique(&op.successors);
-        for (RigExecValueId value : op.descriptor.reads) graph.readers[value].push_back(i);
+        if (buildReaders)
+            for (RigExecValueId value : op.descriptor.reads) graph.readers[value].push_back(i);
         if (op.descriptor.volatileInput) graph.volatileOps.push_back(i);
         graph.longestPath = std::max(graph.longestPath, distance[i]);
     }
-    for (auto &reader : graph.readers) Unique(&reader.second);
+    if (buildReaders)
+        for (auto &reader : graph.readers) Unique(&reader.second);
     if (!RigExecTranslateOpClusters(&graph, {}, 0, error)) return false;
     *out = std::move(graph); return true;
 }
@@ -263,6 +398,29 @@ bool RigExecTranslateOpClusters(RigExecCompiledGraph *graph,
     for (double cost : costs)
         if (!std::isfinite(cost) || cost < 0) return fail("invalid operation cost");
     const auto cost = [&](uint32_t op) { return costs.empty() ? 1.0 : costs[op]; };
+    // Zero grain coarsens nothing: every cluster is the singleton its start
+    // opened, so membership is the identity and each cluster's edges are
+    // its op's own edges in order -- ascending and unique already, never
+    // re-sorted. The check below is the general path's own, in its order;
+    // its chain-walk check is unreachable here, since the walk breaks
+    // before examining any successor.
+    if (grain == 0) {
+        for (uint32_t op = 0; op < count; ++op)
+            for (uint32_t predecessor : graph->ops[op].predecessors)
+                if (predecessor >= op)
+                    return fail("non-topological operation predecessor");
+        std::vector<uint32_t> singleton(count);
+        std::vector<RigExecOpCluster> groups(count);
+        for (uint32_t op = 0; op < count; ++op) {
+            singleton[op] = op;
+            groups[op].members.push_back(op);
+            groups[op].predecessors = graph->ops[op].predecessors;
+            groups[op].successors = graph->ops[op].successors;
+        }
+        graph->clusters = std::move(groups);
+        graph->opClusters = std::move(singleton);
+        return true;
+    }
     std::vector<uint32_t> membership(count, UINT32_MAX);
     std::vector<RigExecOpCluster> clusters;
     for (uint32_t start = 0; start < count; ++start) {

@@ -51,6 +51,7 @@ namespace {
 
 // Removed attributes the compile refuses, interned once at load: interning
 // takes the token registry's lock.
+const TfToken _inputElementName(RigExecInputElementMetadataName);
 const TfToken _removedSamplePhase("rigExec:samplePhase");
 const TfToken _removedRibbonPhases[] = {
     TfToken("rigExec:driverCurveReadPhase"),
@@ -77,9 +78,9 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
     const UsdPrim inputRoot = _stage ? _stage->GetPrimAtPath(_rigPath) : UsdPrim();
     if (inputRoot) for (const auto &prim : UsdPrimRange(inputRoot)) {
         for (const auto &attribute : prim.GetAttributes()) {
-            if (!attribute.HasAuthoredMetadata(TfToken(RigExecInputElementMetadataName))) continue;
+            if (!attribute.HasAuthoredMetadata(_inputElementName)) continue;
             VtValue element;
-            attribute.GetMetadata(TfToken(RigExecInputElementMetadataName), &element);
+            attribute.GetMetadata(_inputElementName, &element);
             if (!element.IsHolding<int>() || element.UncheckedGet<int>() < 0 ||
                 attribute.GetTypeName().GetType() != TfType::Find<GfVec3f>()) {
                 if (errors) errors->push_back(attribute.GetPath().GetString() +
@@ -2498,9 +2499,20 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // Compile one pose DAG. Constraints retain authored preceding order;
     // solvers read the final constrained state of each declared frame input.
     // Bound joints replace their namespace callback, cutting ancestor edges.
+    // Frame-provider identity, memoized. The seed and closure walks below
+    // ask this once per ancestor of every input, so shared namespace
+    // ancestors are re-asked once per seed below them; the stage cannot
+    // change while a compile runs, so the first answer stands. Compile-local
+    // and asked only on the compiling thread.
+    std::unordered_map<SdfPath, bool, SdfPath::Hash> frameProviderMemo;
     auto isFrameProvider = [&](const SdfPath &path) {
+        const auto found = frameProviderMemo.find(path);
+        if (found != frameProviderMemo.end()) {
+            return found->second;
+        }
         const UsdPrim prim = _stage->GetPrimAtPath(path);
-        return _IsFrameProvider(prim);
+        return frameProviderMemo.emplace(path, _IsFrameProvider(prim))
+            .first->second;
     };
     std::map<SdfPath, _PoseInputInfo> newPoseInputInfo;
     // A stage closure that the schedule and request passes below ask for
@@ -2531,9 +2543,11 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // what makes seeding it generously safe.
     std::unordered_map<SdfPath, _PoseInputInfo, SdfPath::Hash>
         poseInfoPrefetch;
-    // Shared, not local: a deferred compiled rig hands it to
-    // _RealizeDeferredExecPrep, which materializes the attribute sets the
-    // solver-input index reads from it.
+    // Shared, not local: the baked program's BuildSpaces round extends this
+    // same graph instead of walking the stage a second time (it rides along
+    // through _RebuildBakedProgram below). A prim the prefetch listed whole
+    // is answered from the accumulated components; one it skipped for a
+    // bound joint is asked again under the round's own skip.
     const auto poseInputGraph = std::make_shared<_PoseInputGraph>();
     const std::function<bool(const SdfPath &)> isBoundJoint =
         [&](const SdfPath &path) { return newJointBinding.count(path) != 0; };
@@ -2565,7 +2579,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 auto warm = poseInfoPrefetch.find(path);
                 if (warm == poseInfoPrefetch.end()) {
                     poseInputGraph->Extend(
-                        _stage, {path}, isBoundJoint,
+                        _stage, {path}, isBoundJoint, &isBoundJoint,
                         RigExecParallelEvaluationEnabled(), _profiler,
                         &poseInfoPrefetch);
                     warm = poseInfoPrefetch.find(path);
@@ -2729,7 +2743,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         for (const SdfPath &path : newControlPaths) seed(path);
         // A joint-bound path stops the real walk without being read, so the
         // graph does not ask about it either.
-        poseInputGraph->Extend(_stage, seeds, isBoundJoint,
+        poseInputGraph->Extend(_stage, seeds, isBoundJoint, &isBoundJoint,
                                RigExecParallelEvaluationEnabled(), _profiler,
                                &poseInfoPrefetch);
     }
@@ -3672,9 +3686,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
     _structureDirty = false;
     // Compile the complete native domain graph for this compiled rig.
+    // The prefetch graph rides along: the BuildSpaces round extends it
+    // instead of walking the stage a second time, on this stage state.
     _RebuildBakedProgram(std::move(retiringBakedProgram),
                          compileSceneReusable?compileScene.get():nullptr,
-                         compileSceneStage,compileSceneSerial);
+                         compileSceneStage,compileSceneSerial,
+                         poseInputGraph.get());
     _restEditedProviders.clear();
     {
         // Join the digest task: from here on its result is read. Last, and

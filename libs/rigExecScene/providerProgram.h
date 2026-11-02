@@ -75,6 +75,13 @@ std::string RigExecProviderValueKey(const SdfPath &owner,const std::string &comp
 std::string RigExecProviderRawKey(const SdfPath &attribute);
 std::string RigExecProviderAttributeKey(const SdfPath &attribute);
 std::string RigExecProviderRoutedKey(const SdfPath &consumer,const TfToken &phase);
+/// The same keys from an already-spelled path text, for loops that file
+/// several keys per path: one GetString serves them all. The path overloads
+/// spell once and delegate here, so every spelling stays in one place.
+std::string RigExecProviderValueKey(const std::string &ownerText,const char *computation);
+std::string RigExecProviderRawKey(const std::string &attributeText);
+std::string RigExecProviderAttributeKey(const std::string &attributeText);
+std::string RigExecProviderRoutedKey(const std::string &consumerText,const TfToken &phase);
 /// With composeFrames=false, native rest/posed frames are explicit leaves;
 /// each expression kernel can enter the native graph as one ordinary op.
 bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,

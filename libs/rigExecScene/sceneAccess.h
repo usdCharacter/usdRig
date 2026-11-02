@@ -33,6 +33,8 @@ struct RigExecSceneAttribute {
     bool hasAuthoredDefault = false;
     bool defaultBlocked = false;
     std::vector<double> sampleTimes;
+    /// USD capture leaves the default: no scene translation reads this fact.
+    /// Only the standalone Db path populates variability, from its own rows.
     SdfVariability variability = SdfVariabilityVarying;
     /// Owned composed spline for compile-time LUT translation, empty when absent.
     VtValue spline;
