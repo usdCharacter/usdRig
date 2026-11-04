@@ -275,7 +275,8 @@ bool RigExecBuildProviderProgram(const RigExecSceneDescriptors &scene,bool compo
     const TfToken *const computationTokens[]={&C.computeRestFrame,&C.computedDefaultSpace,&C.computeDefaultFrame,
         &C.computedParentDefaultSpace,&C.computedParentSpace,&C.computePointFrame,&C.computeMatrix,
         &C.interveningSpace,&C.computeAvarMatrix};
-    static_assert(std::size(computationTokens)==std::size(computations),"one token per computation");
+    static_assert(sizeof(computationTokens)/sizeof(computationTokens[0])==
+        sizeof(computations)/sizeof(computations[0]),"one token per computation");
     for(const auto &[path,attr]:scene.attributes) {
         if(!usedAttributes.count(path))continue;
         const auto node=scene.nodes.find(path.GetPrimPath());
