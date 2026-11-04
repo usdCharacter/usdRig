@@ -560,8 +560,10 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         const std::string key="refreshTemplate:"+B.paths[slot].GetString();
         p.valueKeys.push_back(key);p.valueIds.emplace(key,output);
         RigExecProviderOp op{RigExecProviderOpKind::PosedFrame,B.paths[slot],output,{}};
-        for(const auto &name:poseInputs)
-            op.inputs.push_back(p.FindValue(RigExecProviderAttributeKey(B.paths[slot].AppendProperty(name))));
+        for(const auto &name:poseInputs) {
+            const auto found=p.attributeValues.find(B.paths[slot].AppendProperty(name));
+            op.inputs.push_back(found==p.attributeValues.end()?RigExecNoProviderValue:found->second);
+        }
         const auto type=scene.nodes.at(B.paths[slot]).fact.type;
         op.scaleAvars=type=="RigExecControl" || type=="RigExecJoint";
         RigExecOpDescriptor descriptor;descriptor.key=key;descriptor.writes={output};
