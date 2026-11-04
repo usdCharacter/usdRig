@@ -1,7 +1,7 @@
 #
 # RigExec usdview plugin: authoring UI for volumetric weight objects
-# (RigExecSphereWeight, RigExecPlaneWeight, RigExecCurveWeight and
-# RigExecCombineWeight).
+# (RigExecSphereWeight, RigExecCapsuleWeight, RigExecPlaneWeight,
+# RigExecCurveWeight and RigExecCombineWeight).
 #
 # The attribute widgets at the top of this file -- SetAtTime,
 # AttributeValueMayHaveChanged, AttributeValueWidget and
@@ -38,6 +38,7 @@ except ImportError:                    # loader that did not add our dir
 # order is the order of the Create buttons.
 VOLUME_WEIGHT_TYPE_NAMES = (
     "RigExecSphereWeight",
+    "RigExecCapsuleWeight",
     "RigExecPlaneWeight",
     "RigExecCurveWeight",
     "RigExecCombineWeight",
@@ -49,6 +50,7 @@ VOLUME_WEIGHT_TYPE_NAMES = (
 # re-deriving it.
 PLACED_WEIGHT_TYPE_NAMES = (
     "RigExecSphereWeight",
+    "RigExecCapsuleWeight",
     "RigExecPlaneWeight",
     "RigExecCurveWeight",
 )
@@ -781,7 +783,12 @@ def CreateVolumeWeightPrim(stage, typeName, selectedPrims=None, time=None):
         sizeSource = targetPrim if targetPrim is not None else (
             selectedPrims[0] if selectedPrims else None)
         centre, size = ComputeCentreAndSize(sizeSource, time)
-        SetPlacementFromPoint(prim, centre, time)
+        # A capsule under a joint spans that joint's segment, from the
+        # joint's own origin to its first joint child, so it keeps its
+        # identity placement; only its radius follows the target's size.
+        if not (typeName == "RigExecCapsuleWeight" and
+                parent.GetTypeName() == "RigExecJoint"):
+            SetPlacementFromPoint(prim, centre, time)
         SeedFalloffForSize(prim, size, time)
 
     return prim
@@ -863,8 +870,48 @@ def RemoveInputWeightPaths(prim, paths):
     return removed
 
 
+def GetCapsuleSegmentEndPath(prim):
+    """
+    The provider whose posed origin ends a capsule weight's segment, as
+    an Sdf.Path, or None for a zero-length segment: the single target of
+    rigExec:segmentEnd, else the first RigExecJoint child (namespace
+    order) of the capsule's namespace-parent joint.  The evaluator's rule
+    (RigExecCapsuleSegmentEnd); a malformed relationship answers None.
+    """
+    if not prim or prim.GetTypeName() != "RigExecCapsuleWeight":
+        return None
+    relationship = prim.GetRelationship("rigExec:segmentEnd")
+    targets = list(relationship.GetTargets()) if relationship else []
+    if len(targets) > 1 or (targets and not targets[0].IsPrimPath()):
+        return None
+    if targets:
+        return targets[0]
+    parent = prim.GetParent()
+    if not parent or parent.GetTypeName() != "RigExecJoint":
+        return None
+    for child in parent.GetChildren():
+        if child.GetTypeName() == "RigExecJoint":
+            return child.GetPath()
+    return None
+
+
+def SetCapsuleSegmentEnd(prim, path):
+    """
+    Names the capsule's segment end, or clears rigExec:segmentEnd (None)
+    so the default end applies.  Returns False on a non-capsule.
+    """
+    if not prim or prim.GetTypeName() != "RigExecCapsuleWeight":
+        return False
+    relationship = prim.GetRelationship("rigExec:segmentEnd")
+    if not relationship:
+        relationship = prim.CreateRelationship("rigExec:segmentEnd")
+    if path is None:
+        return relationship.ClearTargets(True)
+    return relationship.SetTargets([Sdf.Path(str(path))])
+
+
 def IsVolumeWeightPrim(prim):
-    """True for the four concrete types this panel edits."""
+    """True for the five concrete types this panel edits."""
     return bool(prim) and prim.GetTypeName() in VOLUME_WEIGHT_TYPE_NAMES
 
 
@@ -2538,6 +2585,12 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             ", ".join(targets) if targets else "<not bound>")
         targetLabel.setWordWrap(True)
         self._parametersLayout.addRow("Surface", targetLabel)
+        if prim.GetTypeName() == "RigExecCapsuleWeight":
+            end = GetCapsuleSegmentEndPath(prim)
+            endLabel = QtWidgets.QLabel(
+                str(end) if end else "<none: a sphere>")
+            endLabel.setWordWrap(True)
+            self._parametersLayout.addRow("Segment end", endLabel)
 
     def _PopulatePlacement(self, prim):
         placed = prim.GetTypeName() in PLACED_WEIGHT_TYPE_NAMES

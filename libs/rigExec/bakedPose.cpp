@@ -19,6 +19,7 @@
 #include "solverKernels.h"
 #include "rigExecScene/sceneCompileInputs.h"
 #include "rigExecScene/solverSceneTranslation.h"
+#include "rigExecScene/skeleton2dTranslation.h"
 #include "rigExecScene/startFrameDerivation.h"
 #include "rigExecScene/constraintSceneTranslation.h"
 #include "sceneDispatch.h"
@@ -58,6 +59,8 @@ namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((rigExecJoints, "rigExec:joints"))
+    ((rigExecBoneGroups, "rigExec:boneGroups"))
+    ((rigExecActiveBone, "rigExec:activeBone"))
     ((rigExecJointElements, "rigExec:jointElements"))
     ((rigExecControlSpace, "rigExec:controlSpace"))
     ((rigExecControls, "rigExec:controls"))
@@ -324,6 +327,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.jointRests.push_back(B.restPts[foldRest(slot)]);
             }
         }
+        // The scene translation owns the solver's schema interpretation. A
+        // 2D skeleton needs it before its reads are bound (its switches'
+        // selectors and outside parent spaces come from it), so it runs
+        // there; every other kind translates below.
+        RigExecSceneSolverDescriptor descriptor;
+        std::string translationError;
+        int translated = -1;  // -1 not yet, 0 refused, 1 translated
         for (size_t k = 0; k < jointOutputs.size(); ++k) {
             const auto &[joint, element] = jointOutputs[k];
             const int slot = slotOf(joint);
@@ -340,6 +350,34 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 k < snapshotJoints.size() ? snapshotJoints[k] : 0);
         }
 
+        if (s.type == "RigExecFkChain" || s.type == "RigExecSkeleton2d") {
+            // rigExec:startFrame: the dynamic computation prepends the
+            // provider's rest-to-pose delta as a synthetic element 0 and
+            // drops its frame from the aggregate; a 2D skeleton solves in
+            // its rest frame and composes back through its pose. The bake
+            // records the slot and rest here (foldRest registers the
+            // refresh/dirty channels like any other rest read); the Solve
+            // arm replays the shape. An unwired target, a second target,
+            // or a non-provider target is the computation's answer, not
+            // a degenerate: no frame input, so the chain solves absolute.
+            // With no authored target, rigExec:startFramePolicy names the
+            // provider through the rule scene translation applies.
+            auto startTargets = targets(prim, _tokens->rigExecStartFrame);
+            SdfPath derivedStart;
+            if (startTargets.empty() &&
+                RigExecDeriveSceneStartFrame(*B.sceneDescriptors, solverPath,
+                                             &derivedStart) ==
+                    RigExecStartFrameDerivation::Derived) {
+                startTargets.push_back(derivedStart);
+            }
+            if (!startTargets.empty()) {
+                const int slot = providerSlot(startTargets[0]);
+                if (slot >= 0) {
+                    s.start = slot;
+                    s.startRest = B.restPts[foldRest(slot)];
+                }
+            }
+        }
         if (s.type == "RigExecFkChain") {
             s.parentRelative =
                 readToken(prim, _tokens->rigExecControlSpace, TfToken()) ==
@@ -359,31 +397,6 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 }
                 s.controls.push_back(slot);
                 s.controlRests.push_back(B.restPts[foldRest(slot)]);
-            }
-            // rigExec:startFrame: the dynamic computation prepends the
-            // provider's rest-to-pose delta as a synthetic element 0 and
-            // drops its frame from the aggregate. The bake records the
-            // slot and rest here (foldRest registers the refresh/dirty
-            // channels like any other rest read); the Solve arm replays
-            // the synthetic shape. An unwired target, a second target,
-            // or a non-provider target is the computation's answer, not
-            // a degenerate: no frame input, so the chain solves absolute.
-            // With no authored target, rigExec:startFramePolicy names the
-            // provider through the rule scene translation applies.
-            auto startTargets = targets(prim, _tokens->rigExecStartFrame);
-            SdfPath derivedStart;
-            if (startTargets.empty() &&
-                RigExecDeriveSceneStartFrame(*B.sceneDescriptors, solverPath,
-                                             &derivedStart) ==
-                    RigExecStartFrameDerivation::Derived) {
-                startTargets.push_back(derivedStart);
-            }
-            if (!startTargets.empty()) {
-                const int slot = providerSlot(startTargets[0]);
-                if (slot >= 0) {
-                    s.start = slot;
-                    s.startRest = B.restPts[foldRest(slot)];
-                }
             }
         } else if (s.type == "RigExecTwoBoneIk") {
             const auto r = targets(prim, _tokens->rigExecRootControl);
@@ -688,6 +701,75 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // either -- they shape batching and the compiled rig signature -- and
             // folding one would rebuild the program for an edit that cannot
             // change what it publishes.
+        } else if (s.type == "RigExecSkeleton2d") {
+            translated = RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors, solverPath,
+                providerRests, &descriptor, &translationError) ? 1 : 0;
+            // Thirteen channels per bone, rigExec:joints order, then the
+            // selectors: one activeBone value per group in
+            // rigExec:boneGroups order, then each space switch's active
+            // index. The avars are read per frame, as a dial is: a value
+            // edit on one patches the joint's own avar slot in place
+            // (RigExecProgramAvarPatch), so a folded copy here would keep
+            // the old value. A channel that math movers revise reads that
+            // chain's result.
+            for (const SdfPath &joint : targets(prim, _tokens->rigExecJoints)) {
+                const UsdPrim bone = B.stage->GetPrimAtPath(joint);
+                for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+                    const TfToken &name = RigExecBone2dChannelNames[c];
+                    if (RigExecBone2dChannelIsBool(c)) {
+                        s.bone2dBools.push_back(ctx->Bind(bone, name, false));
+                        continue;
+                    }
+                    SdfPathVector walk;
+                    RigExecBakedInput<double> input = ctx->ResolveBind(
+                        bone, name, kRigExecBone2dChannelDefaults[c], &walk);
+                    if (c < 4 && !input.varying && input.head) {
+                        input.varying = true;
+                        input.query = UsdAttributeQuery();
+                        input.resolvedAttr = input.head;
+                    }
+                    ctx->CommitBind(bone, name, &input, walk);
+                    s.bone2dDoubles.push_back(std::move(input));
+                }
+            }
+            for (const SdfPath &groupPath : targets(prim, _tokens->rigExecBoneGroups)) {
+                const UsdPrim group = B.stage->GetPrimAtPath(groupPath);
+                SdfPathVector walk;
+                RigExecBakedInput<double> input = ctx->ResolveBind(
+                    group, _tokens->rigExecActiveBone, 0.0, &walk);
+                ctx->CommitBind(group, _tokens->rigExecActiveBone, &input, walk);
+                s.bone2dSelectors.push_back(std::move(input));
+            }
+            if (translated == 1) {
+                const size_t groups = s.bone2dSelectors.size();
+                for (size_t g = groups; g < descriptor.bone2dSelectorReads.size(); ++g) {
+                    const SdfPath &property = descriptor.bone2dSelectorReads[g].consumer;
+                    const UsdPrim owner = B.stage->GetPrimAtPath(property.GetPrimPath());
+                    const double fallback = g < descriptor.bone2dSelectorFallbacks.size()
+                        ? descriptor.bone2dSelectorFallbacks[g] : 0.0;
+                    SdfPathVector walk;
+                    RigExecBakedInput<double> input = ctx->ResolveBind(
+                        owner, property.GetNameToken(), fallback, &walk);
+                    ctx->CommitBind(owner, property.GetNameToken(), &input, walk);
+                    s.bone2dSelectors.push_back(std::move(input));
+                }
+                // The outside parent spaces ride on the shared controls:
+                // provider frames read out of `fin` exactly as FK controls
+                // are, their rests folded like any other rest read.
+                for (const SdfPath &space : descriptor.controls) {
+                    const int slot = providerSlot(space);
+                    if (slot < 0) {
+                        translated = 0;
+                        std::string spaceText;
+                        if (!RigExecSpellPathText(space, &spaceText)) spaceText = space.GetAsString();
+                        translationError = s.pathText + ": the 2D parent space " + spaceText +
+                                           " is not a pose provider";
+                        break;
+                    }
+                    s.controls.push_back(slot);
+                    s.controlRests.push_back(B.restPts[foldRest(slot)]);
+                }
+            }
         }
         // What can move this description, asked once. `restsVary` is the
         // whole rest CHAIN of every slot it measured from -- a provider's
@@ -729,17 +811,23 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 std::unique(s.restOverrides.begin(), s.restOverrides.end()),
                 s.restOverrides.end());
         }
-        RigExecSceneSolverDescriptor descriptor;
-        std::string translationError;
-        if(!RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors,solverPath,providerRests,&descriptor,&translationError))
+        if(translated<0)
+            translated=RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors,solverPath,providerRests,&descriptor,&translationError)?1:0;
+        if(translated==0)
             refuse(translationError,solverPath);
         else {
             // Native input binding selects live/rest SSA versions; the common
             // structural record owns the solver's schema interpretation.
+            // The bake's own rest reads (the live and the folded ones) win
+            // over the record's compile-time copies.
             auto &record=descriptor.record;
             record.degenerate=record.degenerate||s.degenerate;
             record.restIsLive=std::move(s.restIsLive);
             record.jointRests=std::move(s.jointRests);
+            if(s.type=="RigExecSkeleton2d") {
+                record.controlRests=std::move(s.controlRests);
+                record.startRest=s.startRest;
+            }
             static_cast<RigExecSolverRecord &>(s)=std::move(record);
         }
         s.kernelInputs.controls.resize(s.controls.size());
@@ -2227,6 +2315,9 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                                        (solver.start >= 0 ? 1 : 0));
                 RigExecBakedStep &step =
                     AddStep(&B, RigExecBakedStepKind::Solve, si);
+                // The solve's one diagnostic (a refused or failed solve
+                // says why), as for a guide-only solver.
+                step.maxDiagnostics = 1;
                 for (const int control : solver.controls) {
                     if (control >= 0) {
                         step.reads.push_back(RigExecBakedOne(
@@ -2872,6 +2963,9 @@ NoteSolverInputs(const RigExecBakedProgramImpl::Solver &solver,
     NoteInput(solver.twistTurns, sink);
     NoteInput(solver.ribbonSampleCount, sink);
     NoteInput(solver.ikSpace, sink);
+    for (const auto &input : solver.bone2dDoubles) NoteInput(input, sink);
+    for (const auto &input : solver.bone2dBools) NoteInput(input, sink);
+    for (const auto &input : solver.bone2dSelectors) NoteInput(input, sink);
     // The spline parameters the bake could not fold, which the solve re-reads
     // as a group rather than one input at a time.
     sink->step->varyingInputs = sink->step->varyingInputs || solver.splineParamsVary;
@@ -4526,7 +4620,8 @@ RefreshSolverRests(const RigExecBakedProgramImpl &B,
          ++k) {
         s.jointRests[k] = restPtsOf(k, s.restRefs[k].first);
     }
-    if (s.type == "RigExecFkChain") {
+    if (s.type == "RigExecFkChain" || s.type == "RigExecSkeleton2d") {
+        // A 2D skeleton's controls are its outside parent spaces.
         for (size_t k = 0; k < s.controls.size(); ++k) {
             s.controlRests[k] = B.restPts[size_t(s.controls[k])];
         }
@@ -4959,6 +5054,25 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
                 live(s.roll)||live(s.twist)||live(s.minLengthRatio);
             input.preserveVolume=rd(s.preserveVolume);input.midFollowWeight=rd(s.midFollowWeight);
             input.rollDegrees=rd(s.roll);input.twistDegrees=rd(s.twist);input.minLengthRatio=rd(s.minLengthRatio);
+        } else if(s.type=="RigExecSkeleton2d") {
+            s.kind=RigExecSolverKind::Skeleton2d;
+            input.controls.resize(s.controls.size());
+            for(size_t k=0;k<s.controls.size();++k) input.controls[k]=B.fin[size_t(s.controlReads[k])];
+            const size_t bones=std::min(s.bone2dDoubles.size()/kRigExecBone2dDoubleChannels,
+                                        s.bone2dBools.size()/kRigExecBone2dBoolChannels);
+            input.bone2dChannels.resize(bones);
+            for(size_t k=0;k<bones;++k) {
+                const auto *d=&s.bone2dDoubles[k*kRigExecBone2dDoubleChannels];
+                const auto *f=&s.bone2dBools[k*kRigExecBone2dBoolChannels];
+                RigExecBone2dChannels &ch=input.bone2dChannels[k];
+                for(size_t c=0;c<kRigExecBone2dChannelCount;++c) {
+                    const size_t at=RigExecBone2dChannelStorage(c);
+                    RigExecBone2dSetChannel(&ch,c,RigExecBone2dChannelIsBool(c)?(rd(f[at])?1.0:0.0):rd(d[at]));
+                }
+            }
+            input.bone2dSelectors.resize(s.bone2dSelectors.size());
+            for(size_t g=0;g<s.bone2dSelectors.size();++g)
+                input.bone2dSelectors[g]=rd(s.bone2dSelectors[g]);
         }
         std::string error;
         if(!RigExecRunSolver(s,input,&s.kernelWorkspace,&aggregate,&error) && !error.empty())

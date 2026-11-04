@@ -361,7 +361,8 @@ RigExecRigEvaluator::_DeriveStartFrames(
         return true;
     };
     for (const UsdPrim &prim : UsdPrimRange(rig)) {
-        if (prim.GetTypeName() != "RigExecFkChain" ||
+        if ((prim.GetTypeName() != "RigExecFkChain" &&
+             prim.GetTypeName() != "RigExecSkeleton2d") ||
             _IsSkippedOperation(prim.GetPath())) {
             continue;
         }

@@ -297,6 +297,34 @@ main(int argc, char **argv)
         UsdGeomBBoxCache volumeCache(
             UsdTimeCode::Default(),
             {UsdGeomTokens->default_, UsdGeomTokens->guide});
+        // The unauthored default is falloff: its curves use 30% of the
+        // declared wire width. Preserve separate full-width wire checks.
+        TfToken defaultMode;
+        CHECK(sphere.GetAttribute(TfToken("guide:drawMode")).Get(&defaultMode));
+        CHECK(defaultMode == TfToken("falloff"));
+        CHECK(plane.GetAttribute(TfToken("guide:drawMode")).Get(&defaultMode));
+        CHECK(defaultMode == TfToken("falloff"));
+        const GfRange3d falloffSphere =
+            volumeCache.ComputeWorldBound(sphere).ComputeAlignedRange();
+        CHECK(_Near(falloffSphere.GetMin(), GfVec3d(3.955, -3.0225, -3.0225)));
+        CHECK(_Near(falloffSphere.GetMax(), GfVec3d(16.045, 3.0225, 3.0225)));
+        CHECK(sphere.GetAttribute(TfToken("inputs:scaleXPos")).Set(2.0f));
+        CHECK(sphere.GetAttribute(TfToken("inputs:scaleXNeg")).Set(0.5f));
+        volumeCache.Clear();
+        const GfRange3d falloffAsymmetric =
+            volumeCache.ComputeWorldBound(sphere).ComputeAlignedRange();
+        CHECK(_Near(falloffAsymmetric.GetMin(), GfVec3d(6.955, -3.0225, -3.0225)));
+        CHECK(_Near(falloffAsymmetric.GetMax(), GfVec3d(22.045, 3.0225, 3.0225)));
+        const GfRange3d falloffPlane =
+            volumeCache.ComputeWorldBound(plane).ComputeAlignedRange();
+        CHECK(_Near(falloffPlane.GetMin(), GfVec3d(-3.7575, -0.0075, -2.5075)));
+        CHECK(_Near(falloffPlane.GetMax(), GfVec3d(3.7575, 2.0075, 2.5075)));
+
+        CHECK(sphere.GetAttribute(TfToken("inputs:scaleXPos")).Set(1.0f));
+        CHECK(sphere.GetAttribute(TfToken("inputs:scaleXNeg")).Set(1.0f));
+        CHECK(sphere.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire")));
+        CHECK(plane.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire")));
+        volumeCache.Clear();
         const GfRange3d sphereRange =
             volumeCache.ComputeWorldBound(sphere).ComputeAlignedRange();
         CHECK(!sphereRange.IsEmpty());
@@ -352,6 +380,43 @@ main(int argc, char **argv)
             {UsdGeomTokens->default_, UsdGeomTokens->guide});
         CHECK(nonFiniteCurveCache.ComputeWorldBound(curveWeight)
                   .ComputeAlignedRange().IsEmpty());
+
+        // A capsule bounds both ends of its segment padded by the radius:
+        // placed at (10,0,5), ending at a joint at (14,0,5), radius 1 and a
+        // Y divisor of 2, in the default falloff mode (30% of the 0.05 wire,
+        // halved).
+        {
+            const UsdPrim end = volumes->DefinePrim(
+                rigPath.AppendChild(TfToken("CapsuleEnd")),
+                TfToken("RigExecJoint"));
+            GfMatrix4d endRest(1.0);
+            endRest.SetTranslate(GfVec3d(14, 0, 5));
+            CHECK(end.GetAttribute(TfToken("rest:space")).Set(endRest));
+            const UsdPrim capsule = volumes->DefinePrim(
+                rigPath.AppendChild(TfToken("Capsule")),
+                TfToken("RigExecCapsuleWeight"));
+            GfMatrix4d capsuleRest(1.0);
+            capsuleRest.SetTranslate(GfVec3d(10, 0, 5));
+            CHECK(capsule.GetAttribute(TfToken("rest:space")).Set(capsuleRest));
+            CHECK(capsule.GetAttribute(TfToken("inputs:scaleY")).Set(2.0f));
+            CHECK(capsule.GetRelationship(TfToken("rigExec:segmentEnd"))
+                      .SetTargets({end.GetPath()}));
+            UsdGeomBBoxCache capsuleCache(
+                UsdTimeCode::Default(),
+                {UsdGeomTokens->default_, UsdGeomTokens->guide});
+            const GfRange3d capsuleRange =
+                capsuleCache.ComputeWorldBound(capsule).ComputeAlignedRange();
+            CHECK(_Near(capsuleRange.GetMin(), GfVec3d(8.9925, -2.015, 3.9925)));
+            CHECK(_Near(capsuleRange.GetMax(), GfVec3d(15.0075, 2.015, 6.0075)));
+            // No end: the zero-length segment, a sphere about the origin.
+            CHECK(capsule.GetRelationship(TfToken("rigExec:segmentEnd"))
+                      .ClearTargets(true));
+            capsuleCache.Clear();
+            const GfRange3d sphereLike =
+                capsuleCache.ComputeWorldBound(capsule).ComputeAlignedRange();
+            CHECK(_Near(sphereLike.GetMin(), GfVec3d(8.9925, -2.015, 3.9925)));
+            CHECK(_Near(sphereLike.GetMax(), GfVec3d(11.0075, 2.015, 6.0075)));
+        }
 
         // Required curve authoring stays required, and `none` remains a real
         // guide suppression mode rather than a phantom framing extent.

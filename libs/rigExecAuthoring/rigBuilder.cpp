@@ -1374,6 +1374,21 @@ RigExecSphereWeightHandle::SetDirectionalScales(
 }
 
 void
+RigExecCapsuleWeightHandle::SetScales(float sx, float sy, float sz)
+{
+    _AuthorAttr(GetPrim(), "inputs:scaleX", SdfValueTypeNames->Float, VtValue(sx));
+    _AuthorAttr(GetPrim(), "inputs:scaleY", SdfValueTypeNames->Float, VtValue(sy));
+    _AuthorAttr(GetPrim(), "inputs:scaleZ", SdfValueTypeNames->Float, VtValue(sz));
+}
+
+void
+RigExecCapsuleWeightHandle::SetSegmentEnd(const SdfPath &path)
+{
+    SetRel("rigExec:segmentEnd", path.IsEmpty() ? std::vector<SdfPath>()
+                                                : std::vector<SdfPath>{ path });
+}
+
+void
 RigExecPlaneWeightHandle::SetAxis(const TfToken &axis)
 {
     _AuthorAttr(
@@ -3751,6 +3766,19 @@ RigExecRigBuilder::AddSphereWeight(
         scope.AppendChild(TfToken(name)), target, falloffMin, falloffMax);
 }
 
+RigExecCapsuleWeightHandle
+RigExecRigBuilder::AddCapsuleWeight(
+    const std::string &name, const SdfPath &target, const SdfPath &segmentEnd,
+    float falloffMin, float falloffMax)
+{
+    _RequireName(name, "capsule weight name");
+    _RequireTargetPath(target, "capsule weight target");
+    const SdfPath scope = _EnsureScope("Weights");
+    return DefineCapsuleWeight(
+        scope.AppendChild(TfToken(name)), target, segmentEnd, falloffMin,
+        falloffMax);
+}
+
 RigExecPlaneWeightHandle
 RigExecRigBuilder::AddPlaneWeight(
     const std::string &name, const SdfPath &target, float falloffMin,
@@ -3788,6 +3816,23 @@ RigExecRigBuilder::DefineSphereWeight(
     RigExecSphereWeightHandle handle(_stage, path);
     handle.SetTarget(target);
     handle.SetFalloff(falloffMin, falloffMax);
+    return handle;
+}
+
+RigExecCapsuleWeightHandle
+RigExecRigBuilder::DefineCapsuleWeight(
+    const SdfPath &path, const SdfPath &target, const SdfPath &segmentEnd,
+    float falloffMin, float falloffMax)
+{
+    _RequireTargetPath(target, "capsule weight target");
+    UsdPrim prim = _DefineTypedAt(path, "RigExecCapsuleWeight");
+    _ApplyApiRequired(prim, _kNodeGraphApi);
+    RigExecCapsuleWeightHandle handle(_stage, path);
+    handle.SetTarget(target);
+    handle.SetFalloff(falloffMin, falloffMax);
+    if (!segmentEnd.IsEmpty()) {
+        handle.SetSegmentEnd(segmentEnd);
+    }
     return handle;
 }
 

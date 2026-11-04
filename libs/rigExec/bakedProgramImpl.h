@@ -1032,7 +1032,7 @@ struct RigExecBakedWalkHop {
     /// The head leaf holding `path`'s own value as the walk reads it; -1
     /// where the walk never falls back to it.
     int leaf = -1;
-    int poseWeight = -1; ///< same-generation Float publication, revision oracle only
+    int poseWeight = -1; ///< poseWeights index of a pose interpolator's Float publication read in place of the overlay: weight-field scalar reads, and property-revision Float inputs connected at rigExecReadPhase "final"
     int crossDomain = -1; ///< explicit cross-domain pose/geometry version read
 };
 
@@ -2452,6 +2452,19 @@ struct RigExecBakedProgramImpl {
         RigExecBakedInput<double> preserveVolume, midFollowWeight, roll, twist,
             minLengthRatio;
         bool splineParamsVary = false;
+        /// Skeleton2d: each bone's channels, rigExec:joints order. Doubles
+        /// are avars:tx, ty, rz, sx, bone2d:lockX, lockY, lockAngle, offsetX,
+        /// offsetY, targetIndex (ten per bone); bools are bone2d:sideFlip,
+        /// endFlip, lock (three). The selectors follow: each group's
+        /// activeBone in rigExec:boneGroups order, then each space switch's
+        /// active index. Its start frame is `start` and its outside parent
+        /// spaces are `controls`.
+        /// The avars are always read per frame, like a dial: a value edit
+        /// patches the joint's own avar slot in place, which a folded copy
+        /// here would not see.
+        std::vector<RigExecBakedInput<double>> bone2dDoubles;
+        std::vector<RigExecBakedInput<bool>> bone2dBools;
+        std::vector<RigExecBakedInput<double>> bone2dSelectors;
         // TwistDistribution. rigExec:start and rigExec:end ride on the shared
         // `root` and `end` members rather than a pair of their own: they are
         // provider slots read out of `fin` exactly as an IK control is, and
@@ -3906,6 +3919,10 @@ struct RigExecBakedProgramImpl {
         /// computePointFrame with its base frame before the authoritative
         /// snapshot, and a mover's packet is what that snapshot carries.
         int providerSlot = -1;
+        /// A RigExecCapsuleWeight's segment end: the provider slot whose
+        /// frame origin ends the segment (same phase as the placement), or
+        /// -1 for a zero-length segment (RigExecCapsuleSegmentEnd).
+        int segmentEndSlot = -1;
         RigExecBakedInput<float> falloffMin, falloffMax;
         RigExecBakedInput<float> scaleX, scaleY, scaleZ;
         RigExecBakedInput<float> scaleXPos, scaleYPos, scaleZPos, scaleXNeg, scaleYNeg, scaleZNeg;
@@ -3960,6 +3977,9 @@ struct RigExecBakedProgramImpl {
         int consumer = -1;
         int part = 0;
         std::vector<int> volumes;
+        /// The capsule segment-end provider slots of the closure, sorted,
+        /// read in the placement phase (base or final frame origin).
+        std::vector<int> segmentEnds;
         std::vector<int> availableChains;
         bool changed = false;
         std::vector<RigExecBakedReaderWalk> scalarReads;
@@ -5299,6 +5319,12 @@ struct RigExecBakedBuildContext {
     template <class T>
     void CommitBind(const UsdPrim &prim, const TfToken &name,
                     RigExecBakedInput<T> *input, const SdfPathVector &walk);
+    template <class T>
+    void CommitBind(const UsdPrim &prim, const char *name,
+                    RigExecBakedInput<T> *input, const SdfPathVector &walk)
+    {
+        CommitBind(prim, TfToken(name), input, walk);
+    }
 
     /// Binds \p name as a per-frame input, registering it for overrides and
     /// for invalidation. Resolve and commit together, for the call sites
@@ -5306,6 +5332,12 @@ struct RigExecBakedBuildContext {
     template <class T>
     RigExecBakedInput<T> Bind(const UsdPrim &prim, const TfToken &name,
                               T fallback, bool sourceValue = false);
+    template <class T>
+    RigExecBakedInput<T> Bind(const UsdPrim &prim, const char *name,
+                              T fallback, bool sourceValue = false)
+    {
+        return Bind(prim, TfToken(name), fallback, sourceValue);
+    }
 };
 
 inline void

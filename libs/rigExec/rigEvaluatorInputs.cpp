@@ -8,6 +8,8 @@
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/primDefinition.h"
+#include "pxr/usd/usd/primTypeInfo.h"
 #include "pxr/usd/usd/primRange.h"
 
 #include <algorithm>
@@ -33,6 +35,8 @@ using namespace evaluatorDetail;
 namespace {
 
 const TfToken _restPointsAttr("rigExec:restPoints");
+const TfToken _poseSeedReadPhase("rigExecReadPhase");
+const TfToken _poseSeedInputElement("rigExecInputElement");
 
 // Whether any override in \p overrides could reach a cached blend sample
 // shape.
@@ -195,6 +199,7 @@ namespace {
 // they are asked per weight object per frame, and token comparison is a
 // pointer comparison while literal comparison is not.
 const TfToken _kSphereWeightType("RigExecSphereWeight");
+const TfToken _kCapsuleWeightType("RigExecCapsuleWeight");
 const TfToken _kPlaneWeightType("RigExecPlaneWeight");
 const TfToken _kCurveWeightType("RigExecCurveWeight");
 const TfToken _kJointType("RigExecJoint");
@@ -211,7 +216,7 @@ bool
 _IsVolumeWeightType(const TfToken &typeName)
 {
     return typeName == _kSphereWeightType || typeName == _kPlaneWeightType ||
-           typeName == _kCurveWeightType;
+           typeName == _kCurveWeightType || typeName == _kCapsuleWeightType;
 }
 
 // Types whose frames participate in namespace-based pose dependencies.
@@ -226,6 +231,25 @@ bool
 _IsFrameProvider(const UsdPrim &prim)
 {
     return prim && _IsFrameProviderType(prim.GetTypeName());
+}
+
+bool
+_IsPoseInputSeed(const UsdAttribute &attribute)
+{
+    const UsdPrim prim = attribute.GetPrim();
+    if (!_IsFrameProvider(prim) || !attribute.IsCustom() ||
+        attribute.HasAuthoredConnections() ||
+        attribute.HasAuthoredMetadata(_poseSeedReadPhase) ||
+        attribute.HasAuthoredMetadata(_poseSeedInputElement) ||
+        TfStringStartsWith(attribute.GetName().GetString(), "rigExec:")) {
+        return true;
+    }
+    // Reserved engine properties include deprecated inputs compile rejects.
+    const UsdPrimDefinition &definition = prim.GetPrimDefinition();
+    // Missing schema registration cannot establish that a custom property
+    // is unrelated. Applied schemas may declare custom inputs too.
+    return prim.GetPrimTypeInfo().GetSchemaTypeName() != prim.GetTypeName() ||
+           bool(definition.GetAttributeDefinition(attribute.GetName()));
 }
 
 /// True for every schema that publishes computeWeightPacket.

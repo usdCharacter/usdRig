@@ -3,8 +3,10 @@
 #include "registry.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExec/bakedProgramImpl.h"
+#include "rigExec/capsuleSegment.h"
 #include "rigExec/frameCacheSparsity.h"
 #include "rigExec/parallel.h"
+#include "rigExecScene/authoredRestSpace.h"
 
 #include "rigExecMath/avarScale.h"
 
@@ -1325,6 +1327,8 @@ RigExecImagingRegistry::_Publish(
 {
     RigExecImagingBridge::PublishResult result;
     snapshot->generation = ++_generation;
+    // Frames on demand: offset reads of this generation's outputs go here.
+    snapshot->frameTable = _frameTable;
     // The generation this replaces is freed on a worker: a thousand
     // published prims take longer to destroy than to diff.
     RigExecImagingSnapshotConstPtr replaced = _store->Get();
@@ -2217,10 +2221,17 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
                                   "imaging");
         published = _Publish(std::move(snapshot), compiledRig);
     }
+    // Frames on demand: an edit, a recompile or moved upstream values make
+    // every other frame stale; readers holding them are told below.
+    const bool framesReset =
+        _frameTable->ResetIfStale(_FrameTableStampLocked());
     lock.unlock();
     {
         RigExecProfileScope scope(profiler, "Imaging.Broadcast", "imaging");
         _Broadcast(published);
+    }
+    if (framesReset) {
+        _BroadcastFramesChanged();
     }
     return true;
 }
@@ -2832,6 +2843,9 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
     if (const Ptr routed = _Routed()) {
         return routed->OnIdle(runner);
     }
+    // Frames on demand first: cached frames become entries, the rest join
+    // the rewarm lane the sweep below enqueues before anything else.
+    ServiceFrameDemand(8, /* allowFallback = */ true);
     std::vector<SdfPath> rigs;
     UsdTimeCode playhead;
     // Held across the unlocked trigger below: a Deactivate in between stops
@@ -4663,6 +4677,227 @@ RigExecImagingRegistry::_Deactivate(bool byHost)
     scheduler.reset();
 }
 
+// ---------------------------------------------------------------------------
+// Frames on demand (frameTable.h, docs/specs/frames-on-demand.md).
+
+uint64_t
+RigExecImagingRegistry::_FrameTableStampLocked() const
+{
+    // Everything an entry depends on besides its time: the stage, the
+    // compiled rigs, their edit serials and their upstream values.
+    uint64_t hash = 1469598103934665603ULL;
+    const auto mix = [&hash](uint64_t value) {
+        hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+    };
+    mix(reinterpret_cast<uintptr_t>(get_pointer(_stage)));
+    mix(_publishedCompiledRigId);
+    for (const RigSession &session : _sessions) {
+        mix(session.rigPath.GetHash());
+        mix(session.upstreamSerial);
+        if (session.playback) {
+            mix(session.playback->GetCompiledRigSignature());
+        } else if (session.bridge) {
+            mix(session.bridge->GetCompiledRigSignature());
+            mix(session.bridge->GetEvaluator().GetStageEditSerial());
+        }
+    }
+    return hash;
+}
+
+bool
+RigExecImagingRegistry::_CachedFrameLocked(
+    double time, std::shared_ptr<RigExecImagingSnapshot> *frame,
+    bool evaluate)
+{
+    const UsdTimeCode at(time);
+    auto combined = std::make_shared<RigExecImagingSnapshot>();
+    combined->stage = UsdStageWeakPtr(_stage);
+    combined->sampleTimeIsDefault = false;
+    combined->sampleTime = time;
+    SdfPath commonAssetRoot;
+    bool firstRoot = true;
+    for (RigSession &session : _sessions) {
+        // The upstream values that time reads, handed over the way SetTime
+        // hands them, and put back afterwards with the dirty flag: the
+        // displayed generation stays exactly as it was.
+        const bool wasDirty = session.dirty;
+        std::vector<RigExecUpstreamValue> held =
+            session.playback ? session.playback->GetUpstreamInputs()
+                             : session.bridge->GetUpstreamInputs();
+        _HandOffUpstreamLocked(&session, at);
+        RigExecImagingSnapshotConstPtr part;
+        bool ok = false;
+        if (session.playback) {
+            // A .rigexec playback has no frame cache: it plays its binary
+            // at the time into its own store (the chains read the combined
+            // store, never this one) and the displayed one is put back.
+            const RigExecImagingSnapshotConstPtr shown = session.store->Get();
+            const RigExecImagingBridge::PublishResult played =
+                session.playback->EvaluateAndPublishResult(at);
+            part = session.store->Get();
+            session.store->Replace(
+                shown ? std::make_shared<RigExecImagingSnapshot>(*shown)
+                      : nullptr);
+            ok = played.ok && part && part->Describes(_stage, at);
+        } else if (session.bridge) {
+            std::string diagnostic;
+            bool evaluated = false;
+            ok = session.bridge->SnapshotAtTimeWithoutPublishing(
+                at, evaluate, &part, &diagnostic, &evaluated);
+            if (evaluated) {
+                ++session.evaluationCount;
+            }
+        }
+        if (session.playback) {
+            if (session.playback->GetUpstreamInputs() != held) {
+                session.playback->SetUpstreamInputs(std::move(held));
+            }
+        } else if (session.bridge &&
+                   session.bridge->GetUpstreamInputs() != held) {
+            session.bridge->SetUpstreamInputs(std::move(held));
+        }
+        session.dirty = wasDirty;
+        if (!ok || !part) {
+            if (!session.playback) {
+                // Not cached yet: the background workers warm it (the idle
+                // sweep visits the rewarm lane first).
+                auto &lane = session.pendingRewarm;
+                if (std::find(lane.begin(), lane.end(), time) == lane.end()) {
+                    if (lane.size() >= RigExecFrameTable::kMaxDemand) {
+                        lane.erase(lane.begin());
+                    }
+                    lane.push_back(time);
+                }
+            }
+            return false;
+        }
+        combined->xformResetPaths.insert(part->xformResetPaths.begin(),
+                                         part->xformResetPaths.end());
+        if (firstRoot) {
+            commonAssetRoot = session.assetRoot;
+            firstRoot = false;
+        } else if (commonAssetRoot != session.assetRoot) {
+            commonAssetRoot = SdfPath();
+        }
+        for (const auto &[path, published] : part->prims) {
+            // Two rigs never publish one prim (SetTime refuses it).
+            combined->prims.emplace(path, published);
+        }
+    }
+    combined->assetRoot = commonAssetRoot;
+    // What RigExecSnapshotStore::Publish derives for a published generation.
+    for (const auto &[path, prim] : combined->prims) {
+        if (prim.hasXform) {
+            combined->hasDrivenXforms = true;
+            break;
+        }
+    }
+    *frame = std::move(combined);
+    return true;
+}
+
+size_t
+RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames,
+                                           bool allowFallback)
+{
+    if (const Ptr routed = _Routed()) {
+        return routed->ServiceFrameDemand(maxFrames, allowFallback);
+    }
+    size_t added = 0;
+    bool reset = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_sessions.empty() || !_stage) {
+            _frameTable->Clear();
+            _pendingFrameDemand.clear();
+            _pendingFrameAge.clear();
+            return 0;
+        }
+        reset = _frameTable->ResetIfStale(_FrameTableStampLocked());
+        // A live preview's displayed pose is not the authored one; frames
+        // asked for meanwhile wait for it to end.
+        bool previewing = _previewActive;
+        for (const RigSession &session : _sessions) {
+            previewing = previewing || (session.bridge &&
+                !session.bridge->GetInteractiveOverrides().empty());
+        }
+        std::vector<double> wanted = _frameTable->TakeDemand();
+        wanted.insert(wanted.end(), _pendingFrameDemand.begin(),
+                      _pendingFrameDemand.end());
+        _pendingFrameDemand.clear();
+        const double playhead =
+            _lastTime.IsNumeric() ? _lastTime.GetValue() : 0.0;
+        std::sort(wanted.begin(), wanted.end(),
+                  [playhead](double a, double b) {
+                      const double da = std::abs(a - playhead);
+                      const double db = std::abs(b - playhead);
+                      return da != db ? da < db : a > b;
+                  });
+        std::set<int64_t> seen;
+        bool fallbackUsed = false;
+        std::map<int64_t, int> ages;
+        for (const double time : wanted) {
+            const int64_t key = RigExecFrameTable::Key(time);
+            if (!std::isfinite(time) || !seen.insert(key).second ||
+                _frameTable->Contains(time)) {
+                continue;
+            }
+            const auto aged = _pendingFrameAge.find(key);
+            const int age = (aged == _pendingFrameAge.end() ? 0 : aged->second) + 1;
+            std::shared_ptr<RigExecImagingSnapshot> frame;
+            if (!previewing && added < maxFrames) {
+                bool ready = _CachedFrameLocked(time, &frame);
+                if (!ready && allowFallback && !fallbackUsed &&
+                    age >= kFrameDemandFallbackAge) {
+                    // Still not warmed: one evaluation here, so the frame
+                    // is answered even when no worker ever will.
+                    fallbackUsed = true;
+                    ready = _CachedFrameLocked(time, &frame,
+                                               /* evaluate = */ true);
+                }
+                if (ready) {
+                    _frameTable->Insert(time, std::move(frame), playhead);
+                    ++added;
+                    continue;
+                }
+            }
+            if (_pendingFrameDemand.size() < RigExecFrameTable::kMaxDemand) {
+                _pendingFrameDemand.push_back(time);
+                ages[key] = age;
+            }
+        }
+        _pendingFrameAge.swap(ages);
+    }
+    if (added || reset) {
+        _BroadcastFramesChanged();
+    }
+    return added;
+}
+
+bool
+RigExecImagingRegistry::HasFrameDemand()
+{
+    if (const Ptr routed = _Routed()) {
+        return routed->HasFrameDemand();
+    }
+    if (_frameTable->HasDemand()) {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(_mutex);
+    return !_pendingFrameDemand.empty();
+}
+
+void
+RigExecImagingRegistry::_BroadcastFramesChanged()
+{
+    // Unlocked, like _Broadcast: readers re-enter through their dirties.
+    for (const Chain &chain : _BoundChains()) {
+        if (chain.results) {
+            chain.results->NotifyFramesChanged();
+        }
+    }
+}
+
 void
 RigExecImagingRegistry::_Broadcast(
     const RigExecImagingBridge::PublishResult &result)
@@ -5032,6 +5267,7 @@ _AccumulateRestGuideBounds(
         return true;
     }
     if (type == "RigExecSphereWeight" ||
+        type == "RigExecCapsuleWeight" ||
         type == "RigExecPlaneWeight" ||
         type == "RigExecCurveWeight") {
         const PXR_NS::TfToken drawMode = token("guide:drawMode", "falloff");
@@ -5138,6 +5374,50 @@ _AccumulateRestGuideBounds(
                     PXR_NS::GfBBox3d(PXR_NS::GfRange3d(-negativeScales - padding, positiveScales + padding),
                                      scale * rest)
                         .ComputeAlignedRange());
+                found = true;
+            }
+            return found;
+        }
+
+        if (type == "RigExecCapsuleWeight") {
+            // _AppendCapsuleVolumeGuide's range: both segment ends padded
+            // by the radius in the divided local space, the end at its
+            // authored rest like the volume.
+            PXR_NS::GfMatrix4d divide(1.0);
+            divide.SetScale(PXR_NS::GfVec3d(
+                1.0 / axisScale[0], 1.0 / axisScale[1],
+                1.0 / axisScale[2]));
+            const PXR_NS::GfMatrix4d toLocal = rest.GetInverse() * divide;
+            PXR_NS::GfRange3d localCenters(PXR_NS::GfVec3d(0.0),
+                                           PXR_NS::GfVec3d(0.0));
+            const PXR_NS::SdfPath endPath =
+                rigExec::RigExecCapsuleSegmentEnd(prim);
+            if (const PXR_NS::UsdPrim end = endPath.IsEmpty()
+                    ? PXR_NS::UsdPrim()
+                    : prim.GetStage()->GetPrimAtPath(endPath)) {
+                bool endRigid = false;
+                const PXR_NS::GfMatrix4d endRest =
+                    rigExec::RigExecAuthoredGuideRestSpace(end, time, &endRigid);
+                const PXR_NS::GfVec3f localEnd(
+                    toLocal.Transform(endRest.ExtractTranslation()));
+                if (endRigid && std::isfinite(localEnd[0]) &&
+                    std::isfinite(localEnd[1]) && std::isfinite(localEnd[2])) {
+                    localCenters.UnionWith(PXR_NS::GfVec3d(localEnd));
+                }
+            }
+            PXR_NS::GfMatrix4d scale(1.0);
+            scale.SetScale(axisScale);
+            const PXR_NS::GfMatrix4d toAsset = scale * rest;
+            bool found = false;
+            for (const double radius : {falloffMin, falloffMax}) {
+                if (!std::isfinite(radius) || radius <= 0.0) {
+                    continue;
+                }
+                const PXR_NS::GfVec3d pad(radius + halfWidth);
+                const PXR_NS::GfRange3d local(
+                    localCenters.GetMin() - pad, localCenters.GetMax() + pad);
+                range->UnionWith(
+                    PXR_NS::GfBBox3d(local, toAsset).ComputeAlignedRange());
                 found = true;
             }
             return found;
@@ -5721,6 +6001,26 @@ RigExecImaging_OnIdle()
     return 0;
 }
 
+int
+RigExecImaging_ServiceFrameDemand()
+{
+    RigExecImagingRegistry &registry = _Legacy();
+    if (!registry.IsActive()) {
+        return -1;
+    }
+    return int(registry.ServiceFrameDemand());
+}
+
+int
+RigExecImaging_HasFrameDemand()
+{
+    RigExecImagingRegistry &registry = _Legacy();
+    if (!registry.IsActive()) {
+        return -1;
+    }
+    return registry.HasFrameDemand() ? 1 : 0;
+}
+
 long long
 RigExecImaging_GetGeneration()
 {
@@ -5892,6 +6192,26 @@ RigExecImaging_OnIdleForStage(long long stageCacheId)
 }
 
 int
+RigExecImaging_ServiceFrameDemandForStage(long long stageCacheId)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !context->IsActive()) {
+        return -1;
+    }
+    return int(context->ServiceFrameDemand());
+}
+
+int
+RigExecImaging_HasFrameDemandForStage(long long stageCacheId)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context || !context->IsActive()) {
+        return -1;
+    }
+    return context->HasFrameDemand() ? 1 : 0;
+}
+
+int
 RigExecImaging_WriteProfileSummaryForStage(long long stageCacheId,
                                            const char *path)
 {
@@ -5923,6 +6243,90 @@ RigExecImaging_GetGenerationForStage(long long stageCacheId)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     return context ? _Generation(*context) : 0;
+}
+
+namespace {
+
+// The displayed generation's record of `primPath`, or null.
+const rigExec::RigExecPublishedPrim *
+_PublishedPrim(const rigExec::RigExecImagingSnapshotConstPtr &snapshot,
+               const char *primPath)
+{
+    if (!snapshot || !primPath || !PXR_NS::SdfPath::IsValidPathString(primPath)) {
+        return nullptr;
+    }
+    const auto it = snapshot->prims.find(PXR_NS::SdfPath(primPath));
+    return it == snapshot->prims.end() ? nullptr : &it->second;
+}
+
+}  // namespace
+
+int
+RigExecImaging_GetPublishedPointsForStage(
+    long long stageCacheId, const char *primPath, float *xyz, int capacity)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context) {
+        return -2;
+    }
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    if (!prim || !prim->hasPoints) {
+        return -1;
+    }
+    const int count = int(prim->points.size());
+    if (xyz && capacity >= count && count > 0) {
+        std::memcpy(xyz, prim->points.cdata(), sizeof(float) * 3 * prim->points.size());
+    }
+    return count;
+}
+
+int
+RigExecImaging_GetPublishedScalarPrimvarForStage(
+    long long stageCacheId, const char *primPath, const char *primvarName,
+    float *out)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context) {
+        return -2;
+    }
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    if (!prim || !primvarName) {
+        return 0;
+    }
+    const auto it = prim->shaderFloats.find(PXR_NS::TfToken(primvarName));
+    if (it == prim->shaderFloats.end()) {
+        return 0;
+    }
+    if (out) {
+        *out = it->second;
+    }
+    return 1;
+}
+
+int
+RigExecImaging_GetPublishedXformRevisionForStage(
+    long long stageCacheId, const char *primPath, double *out16)
+{
+    const RegistryPtr context = _ForStage(stageCacheId);
+    if (!context) {
+        return -2;
+    }
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    if (!prim || !prim->hasXform) {
+        return 0;
+    }
+    PXR_NS::GfMatrix4d baseInverse;
+    if (!rigExec::RigExecTryInvertXform(prim->xformBase, &baseInverse)) {
+        return 0;
+    }
+    const PXR_NS::GfMatrix4d revision = prim->xform * baseInverse;
+    if (out16) {
+        std::memcpy(out16, revision.data(), sizeof(double) * 16);
+    }
+    return 1;
 }
 
 int

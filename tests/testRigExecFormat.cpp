@@ -28,6 +28,7 @@
 #include "rigExecBinary/stepGraph.h"
 #include "rigExecBinary/transport.h"
 #include "rigExecGraph/providerRecords.h"
+#include "rigExecMath/skeleton2dKernel.h"
 
 #include <algorithm>
 #include <array>
@@ -1485,7 +1486,8 @@ TestOpenRefusals()
                   "format 26 the cloth's material model (RCL3) and format "
                   "27 volume falloff sample inputs, format 28 Range "
                   "Smooth revisions, format 29 sparse blend channel keys, "
-                  "format 30 Range DQ and independent summaries; per-group range chains "
+                  "format 30 Range DQ and independent summaries and the 2D skeleton, "
+                  "driven action and scalar primvar records; per-group range chains "
                   "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
@@ -6197,6 +6199,108 @@ void TestSolverSemanticMetadataRefusals()
     reject(std::move(wrongBody),"semantic prerequisites on a non-Solve body");
 }
 
+/// A 2-bone skeleton2d table on a rich-file solver: channels as fresh
+/// constant reads (no override numbers), one group over both bones, the
+/// first bone's tip the second, the second an End joint; a space switch on
+/// the second over the first bone, the base and the row's one control (an
+/// outside parent space), its selector after the group's.
+static void _AttachSkeleton2d(fb::RigExecWireSolver *solver)
+{
+    solver->jointRests.resize(2);
+    solver->controls = {0};
+    solver->controlRests = {_L(1)};
+    solver->controlReads = {0};
+    auto table = std::make_unique<fb::RigExecWireSkeleton2d>();
+    table->solveOrder = {0, 1};
+    table->parent = {-1, 0};
+    table->flags = {kRigExecBone2dTip, kRigExecBone2dTip};
+    table->limits = {0, 0, 0, 0};
+    table->scaling = {0, 0};
+    table->squashFactor = {1, 1};
+    table->maxStretch = {1, 1};
+    table->tipBone = {1, -1};
+    table->tip = {0, 0, 0.5, 0};
+    for (size_t b = 0; b < 2; ++b) {
+        for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+            table->channels.push_back(
+                _InValue(RigExecBone2dChannelIsBool(c) ? InputTag::Bool : InputTag::Double));
+        }
+    }
+    table->spaceBegin = {0, 0};
+    table->spaceCount = {0, 3};
+    table->spaceSources = {0, -1, RigExecBone2dSpaceExternal(0)};
+    table->spaceSelector = {-1, 1};
+    table->targetBegin = {0, 0};
+    table->targetCount = {1, 0};
+    table->targetCandidates = {1};
+    table->angleController = {-1, 0};
+    table->posController = {-1, -1};
+    table->scaleController = {-1, -1};
+    table->controlFactors = {0, 0, 0, 0, 0.5, 0, 0, 0};
+    table->groupBegin = {0};
+    table->groupCount = {2};
+    table->groupMembers = {0, 1};
+    table->groupEnabled = {1};
+    table->selectorChannels.push_back(_InValue(InputTag::Double));
+    table->selectorChannels.push_back(_InValue(InputTag::Double));
+    solver->skeleton2d = std::move(table);
+}
+
+void TestSkeleton2dWireShapes()
+{
+    std::string why;
+    RigExecWireFile file = _RichFile();
+    _AttachSkeleton2d(&file.pose->solvers[0]);
+    CHECK(RigExecFormatValidate(file, &why));
+    const auto reject = [](RigExecWireFile bad, const char *fragment) {
+        std::string error;
+        CHECK(!RigExecFormatValidate(bad, &error));
+        CHECK(error.find(fragment) != std::string::npos);
+    };
+    // A skeleton2d is refused in a file older than format 28.
+    RigExecWireFile older = file;
+    older.formatVersion = 27;
+    reject(std::move(older), "skeleton2d: in a format older than 28");
+    // A bad range, space, tip, selector, candidate, member, enabled flag or
+    // channel tag is refused.
+    RigExecWireFile badBegin = file;
+    badBegin.pose->solvers[0].skeleton2d->spaceBegin[1] = 2;
+    reject(std::move(badBegin), "malformed 2D skeleton");
+    RigExecWireFile lateSpace = file;
+    lateSpace.pose->solvers[0].skeleton2d->spaceSources[0] = 1;
+    reject(std::move(lateSpace), "malformed 2D skeleton");
+    RigExecWireFile missingSpace = file;
+    missingSpace.pose->solvers[0].skeleton2d->spaceSources[2] = RigExecBone2dSpaceExternal(1);
+    reject(std::move(missingSpace), "malformed 2D skeleton");
+    RigExecWireFile groupSelector = file;
+    groupSelector.pose->solvers[0].skeleton2d->spaceSelector[1] = 0;
+    reject(std::move(groupSelector), "malformed 2D skeleton");
+    RigExecWireFile strayTip = file;
+    strayTip.pose->solvers[0].skeleton2d->tipBone[0] = 2;
+    reject(std::move(strayTip), "malformed 2D skeleton");
+    RigExecWireFile shortTips = file;
+    shortTips.pose->solvers[0].skeleton2d->tip.pop_back();
+    reject(std::move(shortTips), "malformed 2D skeleton");
+    RigExecWireFile unreadSpace = file;
+    unreadSpace.pose->solvers[0].controlReads.clear();
+    reject(std::move(unreadSpace), "malformed 2D skeleton");
+    RigExecWireFile badCandidate = file;
+    badCandidate.pose->solvers[0].skeleton2d->targetCandidates[0] = 7;
+    reject(std::move(badCandidate), "malformed 2D skeleton");
+    RigExecWireFile badMember = file;
+    badMember.pose->solvers[0].skeleton2d->groupMembers[1] = 7;
+    reject(std::move(badMember), "malformed 2D skeleton");
+    RigExecWireFile badEnabled = file;
+    badEnabled.pose->solvers[0].skeleton2d->groupEnabled[0] = 7;
+    reject(std::move(badEnabled), "malformed 2D skeleton");
+    RigExecWireFile badTag = file;
+    badTag.pose->solvers[0].skeleton2d->channels[4].tag = InputTag::Double;
+    reject(std::move(badTag), "skeleton2d.channels");
+    RigExecWireFile badGroups = file;
+    badGroups.pose->solvers[0].skeleton2d->selectorChannels.clear();
+    reject(std::move(badGroups), "malformed 2D skeleton");
+}
+
 void TestPublishedPropertyOverlayCandidates()
 {
     auto file=_RichFile();
@@ -6454,6 +6558,7 @@ main()
     TestPublishedPropertyOverlayCandidates();
     TestSparseBlendShapeFacts();
     TestSolverSemanticMetadataRefusals();
+    TestSkeleton2dWireShapes();
     TestBitExactness();
     TestDeterminism();
     TestOpenRefusals();

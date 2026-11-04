@@ -336,12 +336,14 @@ python docs/render_media.py --page joint
 - Nest joints (Elbow inside Shoulder) so hierarchy, guides, and FK composition all agree — and remember `rest:space` is measured from the parent joint's rest, not from the world.
 - Several solvers may pose one joint, and pose constraints are steps of the same kind in the same stack: the order is the composed namespace of the whole rig and nothing else, bottom sibling first. Put `Solvers` at the bottom of the rig to get the classic "solve, then revise" shape; a constraint that ends up BELOW a solver feeds it instead — every solver kind composes over the frame the steps below it left, so nothing is discarded either way.
 - A solver whose output another solver reads is naming joints for their rests, not claiming them, so an IK and an FK chain can both list the chain that their IK/FK blend actually poses.
+- The bones of a [2D skeleton](skeleton_2d.md) are plain nested joints too: their namespace is their hierarchy, and a bone runs to its first child joint, an `End` joint for a leaf.
 
 ## See also
 
 - [FK Chain](fk_chain.md)
 - [Aim Constraint](aim_constraint.md)
 - [Matrix Mover](matrix_mover.md)
+- [Skeleton 2D](skeleton_2d.md)
 
 ---
 

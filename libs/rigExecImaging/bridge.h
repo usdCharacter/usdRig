@@ -34,10 +34,6 @@ namespace rigExec {
 
 class RigExecWarmFrameIndex;
 
-/// Authored rest placement for guide drawing and cold bounds. No rig evaluation.
-GfMatrix4d RigExecAuthoredGuideRestSpace(
-    const UsdPrim &prim, UsdTimeCode time, bool *rigid);
-
 /// Publishes one background warming completion into \p cache and the
 /// optional warm index, never into the snapshot store the viewport reads.
 ///
@@ -182,6 +178,23 @@ public:
     /// The caller serializes access to the evaluator and bounds idle work.
     /// Returns true only when a valid pose was stored in the frame cache.
     bool WarmFrameOnCallingThread(UsdTimeCode time);
+
+    /// Frames on demand (frameTable.h): \p time's pose built into
+    /// an unpublished snapshot -- no store swap, no Hydra notice, no
+    /// generation, no change to the published time, and no GPU deform or
+    /// guide state touched. A frame-cache entry serves under the proofs
+    /// EvaluateAndPublishResult serves with (the sparse re-key lane aside:
+    /// it rewrites entries, so it counts as a miss here). On a miss with
+    /// \p evaluate set, one evaluation on the calling thread, memoized like
+    /// WarmFrameOnCallingThread unless RIGEXEC_FRAME_CACHE=off. False
+    /// while interactive overrides stand, on a miss without \p evaluate, or
+    /// when the evaluation fails (\p diagnostic then carries its first
+    /// message). \p evaluated says whether the evaluator ran. Owner thread,
+    /// serialized by the caller.
+    bool SnapshotAtTimeWithoutPublishing(
+        UsdTimeCode time, bool evaluate,
+        RigExecImagingSnapshotConstPtr *snapshot, std::string *diagnostic,
+        bool *evaluated);
 
     /// Render-motion publication: evaluates the rig at
     /// baseTime + offset for every explicit frame-relative shutter offset,
@@ -485,6 +498,37 @@ private:
     void _PublishPoseSnapshot(
         UsdTimeCode time, const RigExecRigPose &pose,
         PublishResult *result);
+
+    /// The snapshot \p pose publishes as. With \p publishing false it holds
+    /// what a pose query reads (geometry, scalar primvars, provider
+    /// transforms) and leaves the GPU deform history and guide payloads
+    /// alone. The generation is the publisher's to assign.
+    std::shared_ptr<RigExecImagingSnapshot> _BuildPoseSnapshot(
+        UsdTimeCode time, const RigExecRigPose &pose, bool publishing);
+
+    /// Retires the freshness proofs when a stage edit moved the serial and
+    /// no registry does it. Returns the evaluator's current edit serial.
+    uint64_t _NoteCacheEditSerial();
+
+    /// What a lookup sampled on its way to a miss, for the sparse lane.
+    struct _CacheMiss {
+        bool sampled = false;
+        bool haveBase = false;
+        RigExecFrameInputs inputs;
+        RigExecFrameCacheKey key;
+        uint64_t unfolded = 0;
+    };
+
+    /// The frame-cache lanes shared by publication and pose queries: the
+    /// pose-only proof, the warm-index row, then the sampled proof compare.
+    /// True with \p pose and \p key filled on a hit. With \p publishing
+    /// false it records no profiler scope or lane count; either way it
+    /// takes the frame-cache shard and warm-index locks (in their existing
+    /// order) and writes nothing to the stage. A miss fills
+    /// \p miss with the sample the sparse lane plans on.
+    bool _LookupCachedPose(UsdTimeCode time, bool publishing,
+                           RigExecRigPose *pose, RigExecFrameCacheKey *key,
+                           _CacheMiss *miss);
 
     /// Fills \p published with a chain's program publication (shader
     /// mode): the shared tables, this frame and the adjacent one.

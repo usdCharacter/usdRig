@@ -1,0 +1,96 @@
+#usda 1.0
+(
+    defaultPrim = "Char"
+    doc = """Layer bind (flip case): the group Head is carried
+    rigidly by bone FC's setup-to-pose map through a transform-domain
+    RigExecMatrixMover reading FC at final. FC: base (0.4, -0.2), angle 0.
+    Frame 1: side flip (local Y mirrored); 2: end flip (local X mirrored);
+    3: scaled 2 along the bone and 0.5 across (squash and stretch);
+    4: turned +30 degrees and moved by (0.1, 0.05). The flips and the cross
+    scale are posed through FC's avars:sx/sy here, so this case reads only
+    the mover's carrying of D_k, whatever solver poses the bone. Head sits
+    under Parent, translated by (1, 2) and scaled by 2; the marker's setup
+    world position is (0.5, -0.1)."""
+    endTimeCode = 4
+    startTimeCode = 0
+)
+
+def Xform "Char"
+{
+    def RigExecRoot "Rig"
+    {
+        def Scope "Bones"
+        {
+            def RigExecJoint "FC"
+            {
+                double avars:rz.timeSamples = {
+                    0: 0,
+                    1: 0,
+                    2: 0,
+                    3: 0,
+                    4: 30,
+                }
+                double avars:sx.timeSamples = {
+                    0: 1,
+                    1: 1,
+                    2: -1,
+                    3: 2,
+                    4: 1,
+                }
+                double avars:sy.timeSamples = {
+                    0: 1,
+                    1: -1,
+                    2: 1,
+                    3: 0.5,
+                    4: 1,
+                }
+                double avars:tx.timeSamples = {
+                    0: 0,
+                    1: 0,
+                    2: 0,
+                    3: 0,
+                    4: 0.1,
+                }
+                double avars:ty.timeSamples = {
+                    0: 0,
+                    1: 0,
+                    2: 0,
+                    3: 0,
+                    4: 0.05,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.4, -0.2, 0, 1) )
+            }
+        }
+
+        def Scope "Movers"
+        {
+            def RigExecMatrixMover "HeadBind" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                rel rigExec:moves = </Char/Art/Parent/Head>
+                rel rigExec:transform = </Char/Rig/Bones/FC> (
+                    rigExecReadPhase = "final"
+                )
+            }
+        }
+    }
+
+    def Scope "Art"
+    {
+        def Xform "Parent"
+        {
+            double3 xformOp:scale = (2, 2, 2)
+            double3 xformOp:translate = (1, 2, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+            def Xform "Head"
+            {
+                def Points "Marker"
+                {
+                    point3f[] points = [(-0.25, -1.05, 0)]
+                }
+            }
+        }
+    }
+}

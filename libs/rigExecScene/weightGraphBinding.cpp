@@ -128,6 +128,11 @@ static bool BindWeightGraph(const RigExecSceneWeightProgram &program,const RigEx
                !resolve(object.path,object.path,RigExecWeightValueRole::BaseFrame,base,&binding.baseFrame,error))return false;
             binding.fieldReads.push_back(binding.placement);binding.packetReads.push_back(binding.baseFrame);
         }
+        if(result.records[id].kind==6 && !object.segmentEnd.IsEmpty()) {
+            if(!resolve(object.path,object.segmentEnd,RigExecWeightValueRole::Placement,_tokens->finalPhase,&binding.segmentEndPlacement,error) ||
+               !resolve(object.path,object.segmentEnd,RigExecWeightValueRole::BaseFrame,base,&binding.segmentEndBaseFrame,error))return false;
+            binding.fieldReads.push_back(binding.segmentEndPlacement);binding.packetReads.push_back(binding.segmentEndBaseFrame);
+        }
         if(!resolve(object.path,object.path,RigExecWeightValueRole::Packet,base,&binding.packet,error))return false;
         const auto &record=program.records[id];
         if(record.base>=0) {
@@ -206,6 +211,8 @@ bool RigExecRunBoundWeightField(const RigExecWeightGraphBinding &binding,const R
         if(const auto *matrix=Read<GfMatrix4d>(store,bound.placement)){input.hasPlacement=true;input.placement=*matrix;}
         else if(const auto *frame=Read<RigExecPointFrame>(store,bound.placement))
             if(frame->IsValid() && !frame->IsDegenerate()){input.hasPlacement=true;input.placement=RigExecVolumePlacement(*frame);}
+        if(const auto *frame=Read<RigExecPointFrame>(store,bound.segmentEndPlacement)){input.hasSegmentEnd=true;input.segmentEnd=frame->Origin();}
+        else if(const auto *matrix=Read<GfMatrix4d>(store,bound.segmentEndPlacement)){input.hasSegmentEnd=true;input.segmentEnd=matrix->ExtractTranslation();}
     }
     RigExecWeightPointView current;const RigExecWeightPointView *points=nullptr;
     if(entering!=UINT64_MAX) {
@@ -237,6 +244,9 @@ bool RigExecRunBoundWeightPacket(const RigExecWeightGraphBinding &binding,int id
     volume.representation=record.representationToken;volume.rangePolicy=record.rangePolicy;volume.hasPlacement=false;
     if(const auto *frame=Read<RigExecPointFrame>(store,bound.baseFrame)){volume.placement=*frame;volume.hasPlacement=true;}
     else if(const auto *matrix=Read<GfMatrix4d>(store,bound.baseFrame)){volume.placement=RigExecFrameFromMatrix(*matrix);volume.hasPlacement=true;}
+    volume.hasCapsuleEnd=false;
+    if(const auto *frame=Read<RigExecPointFrame>(store,bound.segmentEndBaseFrame)){volume.capsuleEnd=frame->Origin();volume.hasCapsuleEnd=true;}
+    else if(const auto *matrix=Read<GfMatrix4d>(store,bound.segmentEndBaseFrame)){volume.capsuleEnd=matrix->ExtractTranslation();volume.hasCapsuleEnd=true;}
     volume.params.falloffMin=current.scalars[6];volume.params.falloffMax=current.scalars[7];volume.params.invert=input.invert;
     volume.params.strength=input.strength;volume.params.curveData=record.falloffCurve.data();volume.params.curveCount=record.falloffCurve.size();
     if (const auto *samples = Resolve<VtFloatArray>(store, bound.falloffSamples)) {

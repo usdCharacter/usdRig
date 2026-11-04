@@ -21,6 +21,7 @@ affiliation, endorsement, or ownership of the underlying techniques.
 | Barycentric coordinates | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 3.4 | `libs/rigExec/movers/clothInputs.h` (`Samples`, UV and barycentric cloth bindings), `libs/rigExecMath/clothModel.h` (`RigExecClothSampleMap`) |
 | Warp and weft axes from UV coordinates | Baraff and Witkin, *Large Steps in Cloth Simulation*, SIGGRAPH (1998), [DOI](https://doi.org/10.1145/280814.280821) | `libs/rigExecMath/clothKernel.h` (`RigExecClothMaterialFrame`) |
 | Closest point on a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.5 | `libs/rigExecMath/clothKernel.h` (`ClosestBarycentric`), `libs/rigExecGpu/clothShader.cpp` |
+| Closest point on a segment | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.2 | `libs/rigExecMath/weightFields.cpp` (`RigExecSegmentDistance`: RigExecCapsuleWeight and RigExecCurveWeight fields), `libs/rigExecRuntime/weights.cpp` (`_RrSegmentDistance`) |
 | Closest points between segments | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.9 | `libs/rigExecMath/clothKernel.h` (`ClosestSegments`, edge/edge self-contact) |
 | Segment crossing a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.3.6 | `libs/rigExecMath/clothKernel.h` (`RigExecClothClearOfColliders`, where a cloth window starts) |
 | Wrinkle reference lengths and bounded offsets | Müller and Chentanez, *Wrinkle Meshes* (2010), [author-hosted paper](https://matthias-research.github.io/pages/publications/wrinkleMeshes.pdf), [DOI](https://doi.org/10.2312/SCA/SCA10/085-091) | `libs/rigExecMath/wrinkleKernel.h`; [method and limitations](concepts/wrinkle-deformation.md) |
@@ -32,6 +33,21 @@ affiliation, endorsement, or ownership of the underlying techniques.
 | RigLogic radial-basis solvers, machine-learned behavior and animated maps | Epic Games, [OpenRigLogic](https://github.com/EpicGames/OpenRigLogic) (MIT), RigLogic 13.5.0 at commit [`9ca65ac`](https://github.com/EpicGames/OpenRigLogic/commit/9ca65ac08b64a1ea5f0d79466e64706b3ac524ba): `src/riglogic/rbf/cpu`, `src/riglogic/ml/cpu`, `src/riglogic/conditionaltable` and `src/riglogic/animatedmaps`; [RigLogic whitepaper](https://cdn2.unrealengine.com/rig-logic-whitepaper-v2-5c9f23f7e210.pdf). What was ported and what was added is listed in [RigLogic behaviours](concepts/riglogic.md#provenance) | `libs/rigExecMath/rbfMethodKernel.h` (RigExecPoseInterpolator `rigExec:solver` additive and interpolative), `libs/rigExecMath/mlpKernel.h` (RigExecMlMover), `libs/rigExecMath/conditionalTableKernel.h` (RigExecAnimatedMaps); reference values from RigLogic itself in `tests/fixtures/rigLogicReference.inc` |
 | Swing-twist decomposition | Dobrowolski, *Swing-twist decomposition in Clifford algebra* (2015), [arXiv:1506.05481](https://arxiv.org/abs/1506.05481) | `libs/rigExec/solverKernels.cpp` (space switch rotation filters), `libs/rigExecMath/solvers.cpp` (`_SwingTwist`), `libs/rigExecMath/rbf.cpp` |
 | Forward and backward reaching IK | Aristidou and Lasenby, *FABRIK: A fast, iterative solver for the Inverse Kinematics problem*, Graphical Models 73(5):243–260 (2011), [DOI](https://doi.org/10.1016/j.gmod.2011.05.003) | `libs/rigExecMath/singleChainIk.cpp` (RigExecSingleChainIkConstraint) |
+| Linear blend skinning | Magnenat-Thalmann, Laperrière, and Thalmann, *Joint-Dependent Local Deformations for Hand Animation and Object Grasping*, Graphics Interface (1988), [DOI](https://doi.org/10.20380/GI1988.04); Lewis, Cordner, and Fong, *Pose Space Deformation: A Unified Approach to Shape Interpolation and Skeleton-Driven Deformation*, SIGGRAPH (2000), [DOI](https://doi.org/10.1145/344779.344862) | `libs/rigExec/moverGraph.cpp` (`RigExecApplySkinKernel`, RigExecSkinMover `classicLinear`) |
+| Cyclic coordinate descent | Wang and Chen, *A Combined Optimization Method for Solving the Inverse Kinematics Problems of Mechanical Manipulators*, IEEE Transactions on Robotics and Automation 7(4):489–499 (1991), [DOI](https://doi.org/10.1109/70.86079). The rules beyond the per-joint descent have no public source; see [2D skeleton rules without a public source](#2d-skeleton-rules-without-a-public-source) | `libs/rigExecMath/skeleton2dKernel.h` (RigExecSkeleton2d lock and target solves) |
+
+## 2D skeleton rules without a public source
+
+The rules and constants of `skeleton2dKernel.h` and `drivenActionKernel.h`
+that the sources above do not cover have no public source; they come from an
+unpublished internal specification. They include the 2D lock and IK solve
+rules: the lock and target rules of the coordinate descent
+(chain stops, pins left out of a parent's children, the 32-bone chain cap,
+the retry from the other bend, out-of-reach stretch, limit handling),
+delta-form control bones and alternative-chain bone groups. And they include the driven-action frame rules:
+the side rule, the full-turn wrap, the tie rule, and the offset and value
+channels. [2D skeletons, binding and driven actions](concepts/skeletons-2d.md)
+describes the behavior.
 
 Implementation details and limitations are documented with each operator.
 The cloth mover combines the sources above in one solver of its own: a

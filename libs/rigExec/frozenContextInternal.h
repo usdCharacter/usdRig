@@ -120,6 +120,9 @@ _VisitSolverInputs(Obj &solver, Fn &&fn)
     fn(solver.twistTurns);
     fn(solver.ribbonSampleCount);
     fn(solver.ikSpace);
+    for (auto &input : solver.bone2dDoubles) fn(input);
+    for (auto &input : solver.bone2dBools) fn(input);
+    for (auto &input : solver.bone2dSelectors) fn(input);
 }
 
 template <class Obj, class Fn>
@@ -233,6 +236,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((dynamicWeight, "RigExecDynamicWeight"))
     ((combineWeight, "RigExecCombineWeight"))
     ((sphereWeight, "RigExecSphereWeight"))
+    ((capsuleWeight, "RigExecCapsuleWeight"))
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
     ((targetPointsKey, "frozenWeight:targetPoints"))

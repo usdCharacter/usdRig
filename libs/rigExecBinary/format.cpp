@@ -10,6 +10,8 @@
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/mlpKernel.h"
+#include "rigExecMath/drivenActionKernel.h"
+#include "rigExecMath/skeleton2dKernel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1055,6 +1057,23 @@ private:
             if (op.frames == 0 || op.frames > RigExecHarmonicsMaxWindowFrames)
                 return _Bad(_At("windowed_ops", "frames", long(w)) + ": out of range");
         }
+        // Format 28 adds driven action and primvar records. Published scalar
+        // primvars name distinct float or double property chains; older formats
+        // hold none.
+        if (_f.formatVersion < 28 && !_f.scalarPrimvarChains.empty())
+            return _Bad("scalar_primvar_chains in a format older than 28");
+        {
+            std::vector<char> seen(_f.propertyChains.size(), 0);
+            for (size_t k = 0; k < _f.scalarPrimvarChains.size(); ++k) {
+                const uint32_t c = _f.scalarPrimvarChains[k];
+                if (size_t(c) >= _f.propertyChains.size() || seen[c] ||
+                    (_f.propertyChains[c].valueType != fb::PropertyValueType::Float &&
+                     _f.propertyChains[c].valueType != fb::PropertyValueType::Double))
+                    return _Bad(_At("scalar_primvar_chains", "", long(k)) +
+                                ": not a distinct float or double property chain");
+                seen[c] = 1;
+            }
+        }
         return true;
     }
 
@@ -1806,6 +1825,7 @@ private:
             const std::string type=RigExecFormatPathText(_f,solver.type);
             const auto supported=[&](const std::string &port) {
                 if(type=="RigExecFkChain")return port=="rigExec:controls" || port=="rigExec:startFrame";
+                if(type=="RigExecSkeleton2d")return port=="rigExec:startFrame";
                 if(type=="RigExecTwoBoneIk")return port=="rigExec:rootControl" || port=="rigExec:effectorControl" || port=="rigExec:poleControl" || port=="rigExec:space";
                 if(type=="RigExecBlendPointFrames")return port=="rigExec:inputA" || port=="rigExec:inputB";
                 if(type=="RigExecTwistDistribution")return port=="rigExec:start" || port=="rigExec:end";
@@ -2324,6 +2344,9 @@ private:
             for (int32_t slot : field.volumes)
                 if (slot < 0 || size_t(slot) >= _f.slotMeta->paths.size())
                     return _Bad(who + ": placement slot out of range");
+            for (int32_t slot : field.segmentEnds)
+                if (slot < 0 || size_t(slot) >= _f.slotMeta->paths.size())
+                    return _Bad(who + ": segment end slot out of range");
             if(producers[f]>=0) for(int32_t slot:field.volumes)
                 if(!_BodyRead(size_t(producers[f]),field.placementPhase==fb::WeightFieldPlacementPhase::Base?
                     fb::SlotDomain::WeightFramesBase:fb::SlotDomain::WeightFrames,uint32_t(slot)))
@@ -2901,6 +2924,8 @@ private:
                 for(int32_t input:weight.inputs)read(D::WeightPacket,uint32_t(input));
                 if(weight.providerSlot>=0 && size_t(weight.providerSlot)<_bodyBaseLast.size())
                     read(D::PoseBase,_bodyBaseLast[size_t(weight.providerSlot)]);
+                if(weight.segmentEndSlot>=0 && size_t(weight.segmentEndSlot)<_bodyBaseLast.size())
+                    read(D::PoseBase,_bodyBaseLast[size_t(weight.segmentEndSlot)]);
                 continue;
             }
             if(step.kind==K::WeightField && _Has(g.weightFields,step.object)) {
@@ -2916,6 +2941,11 @@ private:
                 }
                 for(int32_t slot:field.volumes)
                     read(field.placementPhase==fb::WeightFieldPlacementPhase::Base?D::WeightFramesBase:D::WeightFrames,uint32_t(slot));
+                const bool baseEnds=field.placementPhase==fb::WeightFieldPlacementPhase::Base;
+                const auto &endLast=baseEnds?_bodyBaseLast:_bodyFinLast;
+                for(int32_t slot:field.segmentEnds)
+                    if(slot>=0 && size_t(slot)<endLast.size())
+                        read(baseEnds?D::PoseBase:D::PoseFin,endLast[size_t(slot)]);
                 continue;
             }
             if(step.kind==K::VolumePlacements && step.object>=0) {
@@ -4038,6 +4068,29 @@ private:
                 return _Bad(row + ".maps: malformed animated maps");
             }
         }
+        if (interp.drivenAction) {
+            // Format 28: a driven action's search replaces every solve. Its
+            // one value input is the driver; its outputs are frame, weight,
+            // active and one value per channel.
+            const fb::RigExecWireDrivenAction &a = *interp.drivenAction;
+            const size_t channels = a.channelOffset.size();
+            bool ok = _f.formatVersion >= 28 && !interp.network &&
+                      !interp.method && !interp.maps &&
+                      interp.driverSlot < 0 && interp.valueInputs.size() == 1 &&
+                      a.driver.size() >= 2 && a.side >= -1 && a.side <= 1 &&
+                      a.channelBegin.size() == channels + 1 &&
+                      a.channelBegin.front() == 0 &&
+                      a.channelBegin.back() == a.channelSamples.size() &&
+                      interp.poseSlots.size() ==
+                          kRigExecDrivenActionFixedOutputs + channels;
+            for (size_t c = 0; ok && c < channels; ++c) {
+                ok = a.channelBegin[c] < a.channelBegin[c + 1] &&
+                     a.channelOffset[c] <= 1;
+            }
+            if (!ok) {
+                return _Bad(row + ".driven_action: malformed driven action");
+            }
+        }
         if (interp.network) {
             const fb::RigExecWireMlNetwork &n = *interp.network;
             std::vector<int> activations(n.layerActivations.begin(),
@@ -4062,6 +4115,106 @@ private:
                 network.OutputCount() != interp.poseSlots.size()) {
                 return _Bad(row + ".network: malformed ML network" +
                             (why.empty() ? std::string() : ": " + why));
+            }
+        }
+        return true;
+    }
+
+    /// A RigExecSkeleton2d's table: one entry per bone in solve order, a
+    /// permutation of the joints, every parent and bone space solved before
+    /// its child, kRigExecBone2dChannelCount channel reads per bone, the
+    /// tip, space, candidate, control and group arrays
+    /// (rigExecMath/skeleton2dKernel.h), the selectors (one activeBone read
+    /// per group, then one active-index read per space switch). The row's
+    /// controls are the outside parent spaces.
+    bool _Skeleton2d(const fb::RigExecWireSolver &s, const std::string &row)
+    {
+        const fb::RigExecWireSkeleton2d &k = *s.skeleton2d;
+        if (_f.formatVersion < 28) {
+            return _Bad(row + ".skeleton2d: in a format older than 28");
+        }
+        const size_t perBone = kRigExecBone2dChannelCount;
+        const size_t n = k.solveOrder.size();
+        const size_t groups = k.groupCount.size();
+        const size_t outside = s.controls.size();
+        bool ok = k.parent.size() == n && k.flags.size() == n &&
+                  k.limits.size() == 2 * n && k.scaling.size() == n &&
+                  k.squashFactor.size() == n && k.maxStretch.size() == n &&
+                  k.tipBone.size() == n && k.tip.size() == 2 * n &&
+                  k.channels.size() == n * perBone && s.jointRests.size() == n &&
+                  s.controlRests.size() == outside &&
+                  s.controlReads.size() == outside;
+        ok = ok && k.spaceBegin.size() == n && k.spaceCount.size() == n &&
+             k.spaceSelector.size() == n &&
+             k.targetBegin.size() == n && k.targetCount.size() == n &&
+             k.angleController.size() == n && k.posController.size() == n &&
+             k.scaleController.size() == n &&
+             k.controlFactors.size() == 4 * n &&
+             k.groupBegin.size() == groups &&
+             k.groupEnabled.size() == groups &&
+             k.selectorChannels.size() >= groups;
+        std::vector<char> seen(ok ? n : 0, 0);
+        for (size_t e = 0; ok && e < n; ++e) {
+            ok = k.solveOrder[e] < n && !seen[k.solveOrder[e]] &&
+                 k.parent[e] >= -1 && k.parent[e] < int32_t(e) &&
+                 k.scaling[e] <= uint8_t(RigExecBone2dScaling::Uniform) &&
+                 std::isfinite(k.limits[2 * e]) &&
+                 std::isfinite(k.limits[2 * e + 1]) &&
+                 std::isfinite(k.squashFactor[e]) &&
+                 std::isfinite(k.maxStretch[e]) &&
+                 k.tipBone[e] >= -1 && k.tipBone[e] < int32_t(n) &&
+                 std::isfinite(k.tip[2 * e]) && std::isfinite(k.tip[2 * e + 1]);
+            if (ok) {
+                ok = k.spaceBegin[e] <= k.spaceSources.size() &&
+                     k.spaceCount[e] <= k.spaceSources.size() - k.spaceBegin[e] &&
+                     (k.spaceCount[e] == 0
+                          ? k.spaceSelector[e] == -1
+                          : (k.spaceSelector[e] >= int32_t(groups) &&
+                             size_t(k.spaceSelector[e]) < k.selectorChannels.size())) &&
+                     k.targetBegin[e] <= k.targetCandidates.size() &&
+                     k.targetCount[e] <= k.targetCandidates.size() - k.targetBegin[e] &&
+                     k.angleController[e] >= -1 && k.angleController[e] < int32_t(n) &&
+                     k.posController[e] >= -1 && k.posController[e] < int32_t(n) &&
+                     k.scaleController[e] >= -1 && k.scaleController[e] < int32_t(n) &&
+                     std::isfinite(k.controlFactors[4 * e]) &&
+                     std::isfinite(k.controlFactors[4 * e + 1]) &&
+                     std::isfinite(k.controlFactors[4 * e + 2]) &&
+                     std::isfinite(k.controlFactors[4 * e + 3]);
+            }
+            if (ok) seen[k.solveOrder[e]] = 1;
+        }
+        for (size_t e = 0; ok && e < n; ++e) {
+            for (uint32_t c = 0; ok && c < k.spaceCount[e]; ++c) {
+                const int32_t space = k.spaceSources[k.spaceBegin[e] + c];
+                ok = space < int32_t(e) &&
+                     (space >= -1 || size_t(int64_t(-2) - int64_t(space)) < outside);
+            }
+        }
+        for (size_t e = 0; ok && e < k.targetCandidates.size(); ++e) {
+            ok = k.targetCandidates[e] >= 0 && k.targetCandidates[e] < int32_t(n);
+        }
+        for (size_t g = 0; ok && g < groups; ++g) {
+            ok = k.groupBegin[g] <= k.groupMembers.size() &&
+                 k.groupCount[g] <= k.groupMembers.size() - k.groupBegin[g] &&
+                 k.groupEnabled[g] <= 1;
+        }
+        for (size_t e = 0; ok && e < k.groupMembers.size(); ++e) {
+            ok = k.groupMembers[e] >= 0 && k.groupMembers[e] < int32_t(n);
+        }
+        if (!ok) {
+            return _Bad(row + ".skeleton2d: malformed 2D skeleton");
+        }
+        for (size_t f = 0; f < k.channels.size(); ++f) {
+            const size_t c = f % perBone;
+            const int tag = RigExecBone2dChannelIsBool(c) ? int(InputTag::Bool) : int(InputTag::Double);
+            if (!_Read(&k.channels[f], tag, _Baked, row, "skeleton2d.channels", long(f))) {
+                return false;
+            }
+        }
+        for (size_t g = 0; g < k.selectorChannels.size(); ++g) {
+            if (!_Read(&k.selectorChannels[g], int(InputTag::Double), _Baked, row,
+                       "skeleton2d.selector_channels", long(g))) {
+                return false;
             }
         }
         return true;
@@ -4102,6 +4255,9 @@ private:
         }
         if (!s.splineRest) {
             return _Bad(row + ".spline_rest: missing");
+        }
+        if (s.skeleton2d && !_Skeleton2d(s, row)) {
+            return false;
         }
         return _ReadPtr(s.bend, dbl, _Baked, row, "bend") &&
                _ReadPtr(s.upperOffset, dbl, _Baked, row, "upper_offset") &&
@@ -5964,7 +6120,8 @@ private:
                 !_Bools(w.targetValid, row, "target_valid") ||
                 !_Bools(w.sampleValid, row, "sample_valid") ||
                 !_Bools(w.curveValid, row, "curve_valid") ||
-                !_Index(w.providerSlot, _slots, true, row, "provider_slot")) {
+                !_Index(w.providerSlot, _slots, true, row, "provider_slot") ||
+                !_Index(w.segmentEndSlot, _slots, true, row, "segment_end_slot")) {
                 return false;
             }
             // The painted arrays and the oracle's points, as input slots:

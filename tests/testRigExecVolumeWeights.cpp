@@ -20,6 +20,9 @@
 #include "rigExecMath/pointFrame.h"
 #include "rigExecPoseCompare.h"
 #include "rigExecFrozenParity.h"
+#include "rigExecRuntimeDrive.h"
+#include "rigExecSceneProgramDrive.h"
+#include "pxr/usd/sdf/layer.h"
 #include <limits>
 #include <algorithm>
 
@@ -275,6 +278,488 @@ TestSphereWeight()
     for (size_t i = 0; i < 4; ++i) {
         CHECK(Near(points[i], Moved(f.base[i], expected[i])));
     }
+}
+
+// Native, frozen and .rigexec evaluation agree bit for bit at every time
+// of \p times, and the .rigexec moves the points (not a vacuous match); with
+// \p sceneProgram, the detached scene program's points agree too at the
+// integral times.
+static void
+CheckThreeEvaluators(const UsdStageRefPtr &stage, const std::string &what,
+                     const std::vector<double> &times,
+                     bool sceneProgram = true)
+{
+    const SdfPath rig("/Asset/Rig");
+    RigExecRigEvaluator evaluator(stage, rig);
+    std::vector<std::string> errors;
+    if (!evaluator.Compile(&errors)) {
+        for (const std::string &e : errors) {
+            std::printf("%s parity: compile error: %s\n", what.c_str(),
+                        e.c_str());
+        }
+        ++failures;
+        return;
+    }
+    std::vector<std::string> reasons;
+    const bool bakeable = evaluator.IsBakeable(&reasons);
+    CHECK(bakeable);
+    for (const std::string &r : reasons) {
+        std::printf("%s parity: not bakeable: %s\n", what.c_str(), r.c_str());
+    }
+    for (const double time : times) {
+        std::string why;
+        const bool same = RigExecFrozenMatchesLive(
+            &evaluator, rig, UsdTimeCode(time), &why);
+        if (!same) {
+            std::printf("%s frozen at %g: %s\n", what.c_str(), time,
+                        why.c_str());
+        }
+        CHECK(same);
+    }
+    std::vector<uint8_t> bytes;
+    std::string error;
+    if (!RigExecTestBakeAt(evaluator, times.front(), &bytes, &error)) {
+        std::printf("%s bake: %s\n", what.c_str(), error.c_str());
+        ++failures;
+        return;
+    }
+    RigExecTestPlayer player;
+    if (!player.Open(bytes, stage, &error)) {
+        std::printf("%s open: %s\n", what.c_str(), error.c_str());
+        ++failures;
+        return;
+    }
+    for (const double time : times) {
+        if (!player.Play(time, &error)) {
+            std::printf("%s play at %g: %s\n", what.c_str(), time,
+                        error.c_str());
+            ++failures;
+            return;
+        }
+        std::vector<std::string> diffs;
+        const bool same = RigExecCompareRuntimeOutputs(
+            evaluator.Evaluate(UsdTimeCode(time)), player.Reader(), &diffs);
+        for (const std::string &line : diffs) {
+            std::printf("%s runtime at %g: %s\n", what.c_str(), time,
+                        line.c_str());
+        }
+        CHECK(same);
+        CHECK(!player.Reader().GetPoints().empty());
+    }
+    // And the detached scene program, at the integral times, point for point.
+    if (!sceneProgram) return;
+    int first = 0, last = 0;
+    bool integral = false;
+    for (const double time : times) {
+        if (time != std::floor(time)) continue;
+        first = integral ? std::min(first, int(time)) : int(time);
+        last = integral ? std::max(last, int(time)) : int(time);
+        integral = true;
+    }
+    if (!integral) return;
+    rigExecSceneProgramDrive::SceneRun scene(stage, rig, first, last);
+    CHECK(scene.ok);
+    if (!scene.ok) return;
+    for (const double time : times) {
+        if (time != std::floor(time)) continue;
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(time));
+        CHECK(scene.Evaluate(int(time)));
+        for (const auto &[path, value] : pose.movedProperties) {
+            if (!value.IsHolding<VtVec3fArray>()) continue;
+            const VtValue got = scene.Final(path, RigExecSceneValueDomain::Points);
+            CHECK(got.IsHolding<VtVec3fArray>());
+            if (!got.IsHolding<VtVec3fArray>()) continue;
+            const VtVec3fArray &want = value.UncheckedGet<VtVec3fArray>();
+            const VtVec3fArray &have = got.UncheckedGet<VtVec3fArray>();
+            CHECK(want.size() == have.size());
+            for (size_t i = 0; i < want.size() && i < have.size(); ++i) {
+                if (want[i] != have[i]) {
+                    std::printf("%s scene program at %g: %s[%zu] differs\n",
+                                what.c_str(), time, path.GetText(), i);
+                    ++failures;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// The capsule: d is the distance to the segment from the volume's origin
+// to its end provider's origin, here an explicit rigExec:segmentEnd joint
+// at (4,0,0). Hand-computed: beside the middle, beyond either cap, on the
+// axis, and well outside.
+static void
+TestCapsuleWeight()
+{
+    Fixture f(VtVec3fArray{GfVec3f(2, 0.5f, 0), GfVec3f(5, 0, 0),
+                           GfVec3f(-0.3f, 0.4f, 0), GfVec3f(2, 0, 0),
+                           GfVec3f(2, 3, 0), GfVec3f(4, 0.6f, 0.8f)},
+              GfVec3d(0, 2, 0));
+    UsdPrim end = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/End"),
+                                      TfToken("RigExecJoint"));
+    Fixture::PlaceAt(end, GfVec3d(4, 0, 0));
+    UsdPrim v = f.MakeVolume("Capsule", TfToken("RigExecCapsuleWeight"),
+                             GfVec3d(0, 0, 0), 0.0f, 2.0f);
+    v.CreateRelationship(TfToken("rigExec:segmentEnd"))
+        .SetTargets({end.GetPath()});
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+
+    const VtVec3fArray points = f.Resolve("capsule");
+    CHECK(points.size() == 6);
+    if (points.size() != 6) return;
+    // d = 0.5, 1, 0.5, 0, 3, 1 over a [0, 2] band.
+    const float expected[6] = {0.75f, 0.5f, 0.75f, 1.0f, 0.0f, 0.5f};
+    for (size_t i = 0; i < 6; ++i) {
+        CHECK(Near(points[i], Moved(f.base[i], expected[i])));
+    }
+    CheckThreeEvaluators(f.stage, "capsule", {0.0});
+
+    // Per-axis scales divide the points and the end alike: scaleY 0.5 makes
+    // the tube elliptical, so (2,0.5,0) is 1 away and reads 0.5.
+    v.CreateAttribute(TfToken("inputs:scaleY"), SdfValueTypeNames->Float)
+        .Set(0.5f);
+    const VtVec3fArray scaled = f.Resolve("capsule scaled");
+    CHECK(scaled.size() == 6);
+    if (scaled.size() == 6) {
+        CHECK(Near(scaled[0], Moved(f.base[0], 0.5f)));
+        CHECK(Near(scaled[1], Moved(f.base[1], 0.5f)));
+        CHECK(Near(scaled[3], Moved(f.base[3], 1.0f)));
+    }
+}
+
+// The default end: the first RigExecJoint child, in namespace order, of
+// the capsule's namespace-parent joint -- not a non-joint child before it,
+// not a later joint -- and a reorder of the children picks the other one.
+// No joint child at all leaves a zero-length segment: a sphere.
+static void
+TestCapsuleDefaultEnd()
+{
+    Fixture f(VtVec3fArray{GfVec3f(2, 0.5f, 0), GfVec3f(0, 2.5f, 0),
+                           GfVec3f(0, 0, 0)},
+              GfVec3d(0, 2, 0));
+    UsdPrim arm = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Arm"),
+                                      TfToken("RigExecJoint"));
+    f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Arm/Meta"),
+                        TfToken("Scope"));
+    UsdPrim hand = f.stage->DefinePrim(
+        SdfPath("/Asset/Rig/Joints/Arm/Hand"), TfToken("RigExecJoint"));
+    hand.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
+        .Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(3, 0, 0)));
+    UsdPrim other = f.stage->DefinePrim(
+        SdfPath("/Asset/Rig/Joints/Arm/Other"), TfToken("RigExecJoint"));
+    other.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
+        .Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(0, 3, 0)));
+    UsdPrim v = f.stage->DefinePrim(
+        SdfPath("/Asset/Rig/Joints/Arm/Influence"),
+        TfToken("RigExecCapsuleWeight"));
+    v.CreateRelationship(TfToken("rigExec:weightTarget"))
+        .SetTargets({Fixture::Target()});
+    v.CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
+        .Set(2.0f);
+    v.CreateAttribute(TfToken("rigExec:falloffProfile"),
+                      SdfValueTypeNames->Token).Set(TfToken("linear"));
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+
+    // Arm -> Hand (3,0,0): (2,0.5,0) is 0.5 away, (0,2.5,0) is 2.5.
+    VtVec3fArray points = f.Resolve("capsule default end");
+    CHECK(points.size() == 3);
+    if (points.size() == 3) {
+        CHECK(Near(points[0], Moved(f.base[0], 0.75f)));
+        CHECK(Near(points[1], Moved(f.base[1], 0.0f)));
+        CHECK(Near(points[2], Moved(f.base[2], 1.0f)));
+    }
+
+    // Reordered: Other (0,3,0) is now the first joint child.
+    arm.SetChildrenReorder({TfToken("Other"), TfToken("Hand")});
+    points = f.Resolve("capsule reordered end");
+    CHECK(points.size() == 3);
+    if (points.size() == 3) {
+        CHECK(Near(points[0], Moved(f.base[0], 0.0f)));
+        CHECK(Near(points[1], Moved(f.base[1], 1.0f)));
+    }
+
+    // No joint child: the sphere about the origin.
+    arm.ClearChildrenReorder();
+    f.stage->RemovePrim(hand.GetPath());
+    f.stage->RemovePrim(other.GetPath());
+    points = f.Resolve("capsule without an end");
+    CHECK(points.size() == 3);
+    if (points.size() == 3) {
+        // |(2,0.5,0)| = 2.06 > 2; |(0,2.5,0)| = 2.5; the origin is on it.
+        CHECK(Near(points[0], Moved(f.base[0], 0.0f)));
+        CHECK(Near(points[2], Moved(f.base[2], 1.0f)));
+    }
+}
+
+// The segment end is a FRAME read per evaluation: the parent joint's
+// animated avars:sx moves its child joint, and the capsule stretches with
+// it in one compiled rig (no recompile between the two times).
+static void
+TestCapsuleRidesJoint()
+{
+    Fixture f(VtVec3fArray{GfVec3f(5, 0.5f, 0), GfVec3f(7, 0, 0),
+                           GfVec3f(1, 0.4f, 0)},
+              GfVec3d(0, 2, 0));
+    UsdPrim arm = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Arm"),
+                                      TfToken("RigExecJoint"));
+    UsdAttribute sx = arm.CreateAttribute(TfToken("avars:sx"),
+                                          SdfValueTypeNames->Double);
+    sx.Set(1.0, UsdTimeCode(0));
+    sx.Set(2.0, UsdTimeCode(1));
+    UsdPrim hand = f.stage->DefinePrim(
+        SdfPath("/Asset/Rig/Joints/Arm/Hand"), TfToken("RigExecJoint"));
+    hand.CreateAttribute(TfToken("rest:space"), SdfValueTypeNames->Matrix4d)
+        .Set(GfMatrix4d(1.0).SetTranslate(GfVec3d(3, 0, 0)));
+    UsdPrim v = f.stage->DefinePrim(
+        SdfPath("/Asset/Rig/Joints/Arm/Influence"),
+        TfToken("RigExecCapsuleWeight"));
+    v.CreateRelationship(TfToken("rigExec:weightTarget"))
+        .SetTargets({Fixture::Target()});
+    v.CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
+        .Set(2.0f);
+    v.CreateAttribute(TfToken("rigExec:falloffProfile"),
+                      SdfValueTypeNames->Token).Set(TfToken("linear"));
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+
+    RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
+    evaluator.cpuReference = !BakedPathRequested();
+    std::vector<std::string> errors;
+    CHECK(evaluator.Compile(&errors));
+    for (const std::string &e : errors) std::printf("rides: %s\n", e.c_str());
+    // sx 1: the end at (3,0,0); sx 2: at (6,0,0). (1,0.4,0) is 0.4 away
+    // either way.
+    const float expected[2][3] = {{0.0f, 0.0f, 0.8f}, {0.75f, 0.5f, 0.8f}};
+    for (int t = 0; t < 2; ++t) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
+        CHECK(pose.valid);
+        CheckTheHarnessRan("capsule rides joint", pose);
+        const auto it = pose.movedProperties.find(Fixture::Target());
+        CHECK(it != pose.movedProperties.end());
+        if (it == pose.movedProperties.end()) continue;
+        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
+        CHECK(points.size() == 3);
+        for (size_t i = 0; i < points.size() && i < 3; ++i) {
+            CHECK(Near(points[i], Moved(f.base[i], expected[t][i])));
+        }
+    }
+    CheckThreeEvaluators(f.stage, "capsule rides joint", {0.0, 1.0});
+}
+
+// The capsule through the CURRENT-POINT field path: its rigExec:weightTarget
+// reads `preceding`, so the field is measured inside the mover stack, with
+// the end read in the field's placement phase. A first mover lifts every
+// point +1Y; the capsule spans (0,1,0)-(4,1,0), so the lifted points sit on
+// its axis.
+static void
+TestCapsuleCurrentPhase()
+{
+    Fixture f(VtVec3fArray{GfVec3f(1, 0, 0), GfVec3f(3, 0.5f, 0),
+                           GfVec3f(6, 0, 0)},
+              GfVec3d(0, 2, 0));
+    UsdPrim lift = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/Lift"),
+                                       TfToken("RigExecJoint"));
+    Fixture::PlaceAt(lift, GfVec3d(0, 1, 0));
+    UsdPrim full = f.MakeStaticWeight("Full", VtFloatArray{1, 1, 1});
+    UsdPrim end = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/End"),
+                                      TfToken("RigExecJoint"));
+    Fixture::PlaceAt(end, GfVec3d(4, 1, 0));
+    UsdPrim v = f.MakeVolume("Capsule", TfToken("RigExecCapsuleWeight"),
+                             GfVec3d(0, 1, 0), 0.0f, 2.0f);
+    v.CreateRelationship(TfToken("rigExec:segmentEnd"))
+        .SetTargets({end.GetPath()});
+    v.GetRelationship(TfToken("rigExec:weightTarget"))
+        .SetMetadata(TfToken("rigExecReadPhase"), std::string("preceding"));
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/Second"), v.GetPath());
+    UsdPrim first = f.MakeMover(SdfPath("/Asset/Rig/Movers/Second/First"),
+                                full.GetPath());
+    first.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({lift.GetPath()});
+
+    const VtVec3fArray points = f.Resolve("capsule preceding");
+    CHECK(points.size() == 3);
+    if (points.size() != 3) return;
+    // Lifted: (1,1,0) d 0, (3,1.5,0) d 0.5, (6,1,0) d 2.
+    const float expected[3] = {1.0f, 0.75f, 0.0f};
+    for (size_t i = 0; i < 3; ++i) {
+        CHECK(Near(points[i],
+                   Moved(f.base[i] + GfVec3f(0, 1, 0), expected[i])));
+    }
+    CheckThreeEvaluators(f.stage, "capsule preceding", {0.0});
+}
+
+// rigExec:segmentEnd names at most one prim; two is a compile error.
+static void
+TestCapsuleRejectsTwoEnds()
+{
+    Fixture f(VtVec3fArray{GfVec3f(0, 0, 0)}, GfVec3d(0, 2, 0));
+    UsdPrim a = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/A"),
+                                    TfToken("RigExecJoint"));
+    UsdPrim b = f.stage->DefinePrim(SdfPath("/Asset/Rig/Joints/B"),
+                                    TfToken("RigExecJoint"));
+    UsdPrim v = f.MakeVolume("Capsule", TfToken("RigExecCapsuleWeight"),
+                             GfVec3d(0, 0, 0), 0.0f, 1.0f);
+    v.CreateRelationship(TfToken("rigExec:segmentEnd"))
+        .SetTargets({a.GetPath(), b.GetPath()});
+    f.MakeMover(SdfPath("/Asset/Rig/Movers/M"), v.GetPath());
+    RigExecRigEvaluator evaluator(f.stage, SdfPath("/Asset/Rig"));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    bool named = false;
+    for (const std::string &e : errors) {
+        named = named || e.find("rigExec:segmentEnd") != std::string::npos;
+    }
+    CHECK(!compiled && named);
+}
+
+// F7: a capsule as a mover envelope on a 3D FK arm. The capsule authored
+// under the shoulder spans shoulder -> elbow and rides the posed shoulder;
+// a matrix mover carries the strip by the shoulder's rest->pose map,
+// weighted by it. At frame 4 the shoulder is turned 90 degrees about Z,
+// so the capsule runs along +Y over static points measured in base phase.
+static const char *const kArmUsda = R"(#usda 1.0
+(
+    startTimeCode = 1
+    endTimeCode = 4
+    upAxis = "Y"
+)
+def Xform "Asset"
+{
+    def Scope "Geom"
+    {
+        def Points "Strip"
+        {
+            point3f[] points = [(0, 1.5, 0), (1.5, 0, 0), (0.625, 1.5, 0), (0, 3.5, 0), (8, 0, 0)]
+        }
+        def Points "Fore"
+        {
+            point3f[] points = [(3, 1, 0), (4, 0.2, 0.5), (0, 0, 0)]
+        }
+    }
+    def RigExecRoot "Rig"
+    {
+        def Scope "Controls"
+        {
+            def RigExecControl "C0" (prepend apiSchemas = ["RigExecControlAPI"])
+            {
+                double avars:rz.timeSamples = {1: 0, 4: 90}
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                def RigExecControl "C1" (prepend apiSchemas = ["RigExecControlAPI"])
+                {
+                    double avars:ry.timeSamples = {1: 0, 4: -30}
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (3, 0, 0, 1) )
+                    def RigExecControl "C2" (prepend apiSchemas = ["RigExecControlAPI"])
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2.5, 0, 0.5, 1) )
+                    }
+                }
+            }
+        }
+        def Scope "Solvers"
+        {
+            def RigExecFkChain "ArmFK"
+            {
+                rel rigExec:controls = [</Asset/Rig/Controls/C0>, </Asset/Rig/Controls/C0/C1>, </Asset/Rig/Controls/C0/C1/C2>]
+                uniform token rigExec:controlSpace = "parentRelative"
+                rel rigExec:joints = [</Asset/Rig/Joints/Shoulder>, </Asset/Rig/Joints/Shoulder/Elbow>, </Asset/Rig/Joints/Shoulder/Elbow/Wrist>]
+            }
+        }
+        def Scope "Joints"
+        {
+            def RigExecJoint "Shoulder"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                def RigExecCapsuleWeight "Upper"
+                {
+                    rel rigExec:weightTarget = </Asset/Geom/Strip.points>
+                    uniform token rigExec:falloffProfile = "linear"
+                    float inputs:falloffMin = 0.25
+                    float inputs:falloffMax = 1
+                }
+                def RigExecJoint "Elbow"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (3, 0, 0, 1) )
+                    def RigExecCapsuleWeight "Lower"
+                    {
+                        rel rigExec:weightTarget = </Asset/Geom/Fore.points>
+                        uniform token rigExec:falloffProfile = "smooth"
+                        float inputs:falloffMin = 0.2
+                        float inputs:falloffMax = 1.5
+                        float inputs:scaleZ = 0.75
+                    }
+                    def RigExecJoint "Wrist"
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2.5, 0, 0.5, 1) )
+                    }
+                }
+            }
+        }
+        def Scope "Movers"
+        {
+            def RigExecMatrixMover "UpperFollow" (prepend apiSchemas = ["RigExecMoverAPI"])
+            {
+                rel rigExec:moves = </Asset/Geom/Strip.points>
+                rel rigExec:transform = </Asset/Rig/Joints/Shoulder> (rigExecReadPhase = "final")
+                rel rigExec:weightObject = </Asset/Rig/Joints/Shoulder/Upper>
+            }
+            def RigExecMatrixMover "LowerFollow" (prepend apiSchemas = ["RigExecMoverAPI"])
+            {
+                rel rigExec:moves = </Asset/Geom/Fore.points>
+                rel rigExec:transform = </Asset/Rig/Joints/Shoulder/Elbow> (rigExecReadPhase = "final")
+                rel rigExec:weightObject = </Asset/Rig/Joints/Shoulder/Elbow/Lower>
+            }
+        }
+    }
+}
+)";
+
+static void
+TestCapsuleEnvelopeOnAnArm()
+{
+    const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
+    CHECK(layer->ImportFromString(kArmUsda));
+    const UsdStageRefPtr stage = UsdStage::Open(layer);
+    RigExecRigEvaluator evaluator(stage, SdfPath("/Asset/Rig"));
+    evaluator.cpuReference = !BakedPathRequested();
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    CHECK(compiled);
+    for (const std::string &e : errors) std::printf("arm: %s\n", e.c_str());
+    if (!compiled) return;
+    const SdfPath strip("/Asset/Geom/Strip.points");
+    const VtVec3fArray base{GfVec3f(0, 1.5f, 0), GfVec3f(1.5f, 0, 0),
+                            GfVec3f(0.625f, 1.5f, 0), GfVec3f(0, 3.5f, 0),
+                            GfVec3f(8, 0, 0)};
+    for (const double t : {1.0, 4.0}) {
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(t));
+        CHECK(pose.valid);
+        CheckTheHarnessRan("capsule envelope on an arm", pose);
+        const auto it = pose.movedProperties.find(strip);
+        CHECK(it != pose.movedProperties.end());
+        if (it == pose.movedProperties.end()) continue;
+        const VtVec3fArray points = it->second.Get<VtVec3fArray>();
+        CHECK(points.size() == base.size());
+        if (points.size() != base.size()) continue;
+        if (t == 1.0) {
+            // Rest: the shoulder's rest->pose map is the identity.
+            for (size_t i = 0; i < base.size(); ++i) {
+                CHECK(Near(points[i], base[i]));
+            }
+            continue;
+        }
+        // Turned 90 degrees: the capsule spans (0,0,0)-(0,3,0). Weights
+        // over the [0.25, 1] band: d 0 -> 1, d 1.5 -> 0, d 0.625 -> 0.5,
+        // d 0.5 (beyond the elbow cap) -> 2/3, d 8 -> 0; each point moves
+        // by p + w (R p - p) with R the 90 degree turn.
+        const auto turned = [](const GfVec3f &p) {
+            return GfVec3f(-p[1], p[0], p[2]);
+        };
+        const float w[5] = {1.0f, 0.0f, 0.5f, 2.0f / 3.0f, 0.0f};
+        for (size_t i = 0; i < base.size(); ++i) {
+            const GfVec3f expected = base[i] + w[i] * (turned(base[i]) - base[i]);
+            CHECK(Near(points[i], expected));
+        }
+    }
+    CheckThreeEvaluators(stage, "capsule envelope on an arm", {1.0, 2.5, 4.0});
 }
 
 // A volume placed by rest:space alone, with NOTHING animated.
@@ -1346,8 +1831,11 @@ struct ConstraintEnvelopeFixture {
     // xform-derived"), for a reason that belongs to the dynamic path rather
     // than to the bake: see TestAConstrainedVolumeWeightFallsBack in
     // testRigExecBakedMode.
+    // \p capsuleEnd, when given, makes the volume a capsule ending at a
+    // joint placed there.
     ConstraintEnvelopeFixture(const GfVec3d &volumeAt,
-                              const char *readPhase)
+                              const char *readPhase,
+                              const GfVec3d *capsuleEnd = nullptr)
     {
         stage = UsdStage::CreateInMemory();
         stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
@@ -1373,8 +1861,16 @@ struct ConstraintEnvelopeFixture {
         // and the placement is visible in the answer.
         const UsdPrim sphere = stage->DefinePrim(
             SdfPath("/Asset/Rig/Weights/Sphere"),
-            TfToken("RigExecSphereWeight"));
+            TfToken(capsuleEnd ? "RigExecCapsuleWeight"
+                               : "RigExecSphereWeight"));
         Fixture::PlaceAt(sphere, volumeAt);
+        if (capsuleEnd) {
+            const UsdPrim end = stage->DefinePrim(
+                SdfPath("/Asset/Rig/Joints/End"), TfToken("RigExecJoint"));
+            Fixture::PlaceAt(end, *capsuleEnd);
+            sphere.CreateRelationship(TfToken("rigExec:segmentEnd"))
+                .SetTargets({end.GetPath()});
+        }
         sphere.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({SdfPath("/Asset/Geom/M.points")});
         sphere.CreateAttribute(TfToken("inputs:falloffMin"),
@@ -1474,6 +1970,37 @@ TestVolumeWeightOnAConstraint(const char *readPhase)
         differs = differs || !Near(lowPoints[i], highPoints[i]);
     }
     CHECK(differs);
+}
+
+// The capsule through the constraint-envelope field form: placed at the
+// origin and ending at (0,8,0), every point lies on its segment, so the
+// constraint moves all of them fully -- where a sphere of the same band at
+// the same origin leaves the far point alone.
+static void
+TestCapsuleOnAConstraint(const char *readPhase)
+{
+    const std::string what =
+        std::string("capsule envelope on a geometry constraint, ") + readPhase;
+    const GfVec3d end(0, 8, 0);
+    ConstraintEnvelopeFixture capsule(GfVec3d(0, 0, 0), readPhase, &end);
+    ConstraintEnvelopeFixture sphere(GfVec3d(0, 0, 0), readPhase);
+    const VtVec3fArray capsulePoints = capsule.Resolve(what);
+    const VtVec3fArray spherePoints = sphere.Resolve(what + ", sphere");
+    if (capsulePoints.size() != capsule.base.size() ||
+        spherePoints.size() != sphere.base.size()) {
+        ++failures;
+        return;
+    }
+    const auto [moved, held] = SplitByMovement(capsulePoints, capsule.base);
+    CHECK(moved == capsule.base.size() && held == 0);
+    // Full weight on every point: the far point moves as far as the near one.
+    CHECK(Near(capsulePoints[2] - capsule.base[2],
+               capsulePoints[0] - capsule.base[0]));
+    CHECK(Near(spherePoints[2], sphere.base[2]));
+    // The detached scene program does not reproduce a geometry constraint's
+    // volume envelope for any shape (a sphere differs the same way), so this
+    // case compares the three production evaluators only.
+    CheckThreeEvaluators(capsule.stage, what, {0.0}, /*sceneProgram=*/false);
 }
 
 // RigExecVolumePlacement: the decomposition of a usable final frame, and the
@@ -2504,6 +3031,12 @@ main(int argc, char **argv)
 
     TestSphereWeight();
     TestInteractiveFalloffSamples();
+    TestCapsuleWeight();
+    TestCapsuleDefaultEnd();
+    TestCapsuleRidesJoint();
+    TestCapsuleCurrentPhase();
+    TestCapsuleRejectsTwoEnds();
+    TestCapsuleEnvelopeOnAnArm();
     TestVolumePlacedByRestSpace();
     TestSphereAxisScales();
     TestSphereDirectionalScales();
@@ -2531,6 +3064,8 @@ main(int argc, char **argv)
     TestCurveWeightRejectsTwoCurves();
     TestVolumeWeightOnAConstraint("base");
     TestVolumeWeightOnAConstraint("preceding");
+    TestCapsuleOnAConstraint("base");
+    TestCapsuleOnAConstraint("preceding");
     TestVolumePlacementGate();
     TestTheOracleReadsTheProgramsPlacements();
     TestReleasedOverridePublishesTheProgramsPlacements();

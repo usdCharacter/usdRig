@@ -14,9 +14,17 @@ placed volume:
 |---|---|---|
 | `RigExecVolumeWeight` | abstract, `RigExecXformable` | — |
 | `RigExecSphereWeight` | `RigExecVolumeWeight` | `\|(px/sx, py/sy, pz/sz)\|` |
+| `RigExecCapsuleWeight` | `RigExecVolumeWeight` | distance to the segment from the origin to the end provider's origin, after `inputs:scaleX/Y/Z` |
 | `RigExecPlaneWeight` | `RigExecVolumeWeight` | signed `p[axis]`, optionally clipped to a rectangle |
 | `RigExecCurveWeight` | `RigExecVolumeWeight` | distance to the curve's polyline |
 | `RigExecCombineWeight` | `RigExecWeightObject` | folds other weight objects |
+
+`RigExecCapsuleWeight` joined the generated shapes later (format 28). Its
+segment ends at the posed origin of a second provider -- the single target of
+`rigExec:segmentEnd`, else the first `RigExecJoint` child of the capsule's
+namespace-parent joint -- read as a frame every evaluation in the placement's
+phase, so the segment follows an animated end. No end is a zero-length
+segment, the sphere about the origin.
 
 Sphere axis divisors are the shared `inputs:scaleX/Y/Z` multiplied by
 `inputs:scaleXPos/YPos/ZPos` for nonnegative local coordinates and

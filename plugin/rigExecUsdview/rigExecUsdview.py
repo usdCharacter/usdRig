@@ -17,10 +17,12 @@ from pxr import Gf, Tf, Usd, UsdUtils
 from pxr.Usdviewq.plugin import PluginContainer
 
 try:
+    import editorExtension
     import imagingHandle
     import sessionRegistry
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import editorExtension
     import imagingHandle
     import sessionRegistry
 
@@ -203,6 +205,11 @@ _WARMING_COMMIT_DELAY_MS = 500
 # batched state query plus at most one budgeted OnIdle sweep, and the
 # driver sleeps as soon as every frame reads cached.
 _WARMING_IDLE_TICK_MS = 120
+# Frames on demand (docs/specs/frames-on-demand.md): how often the plugin
+# turns frames Hydra readers asked for at a time offset (onion skins,
+# exports) into answers. One cheap native check per tick while a rig is
+# active; the work itself never evaluates on this thread.
+_FRAME_DEMAND_TICK_MS = 50
 
 # Native sampling can defer a declined frame before choosing its live
 # evaluation fallback. Allow that retry window before parking the driver.
@@ -850,8 +857,13 @@ class RigExecUsdviewContainer(PluginContainer):
         graph edits and viewport gizmo drags alike.
 
         Takes no argument from the toolbar button, which has no
-        usdviewApi of its own to pass.
+        usdviewApi of its own to pass. An editor extension may show its own
+        home of the editor instead (editorExtension.ShowEditor).
         """
+        api = usdviewApi or self._api
+        shown = editorExtension.ShowEditor(api, editorExtension.GRAPH_EDITOR)
+        if shown is not None:
+            return shown
         # Same lazy sibling import as _OpenVolumeWeightPanel.
         try:
             import graphEditorUI
@@ -860,8 +872,7 @@ class RigExecUsdviewContainer(PluginContainer):
                 0, os.path.dirname(os.path.abspath(__file__)))
             import graphEditorUI
 
-        return graphEditorUI.OpenGraphEditor(usdviewApi or self._api,
-                                             self._UndoStack())
+        return graphEditorUI.OpenGraphEditor(api, self._UndoStack())
 
     def _UndoStack(self):
         """
@@ -870,6 +881,10 @@ class RigExecUsdviewContainer(PluginContainer):
         Lazy for the same reason the panels are: rigExecUndo is Qt-free,
         but nothing needs a stack until something authors through it,
         and the two existing panels can adopt this one later.
+
+        An editor extension may supply the session's stack
+        (editorExtension.UndoStack); it keeps rigExecUndo.UndoStack's
+        protocol.
         """
         if self._undoStack is None:
             try:
@@ -878,7 +893,11 @@ class RigExecUsdviewContainer(PluginContainer):
                 sys.path.insert(
                     0, os.path.dirname(os.path.abspath(__file__)))
                 import rigExecUndo
-            self._undoStack = rigExecUndo.UndoStack()
+            stack = None
+            if getattr(self, "_api", None) is not None:
+                stack = editorExtension.UndoStack(self._api)
+            self._undoStack = (stack if stack is not None
+                               else rigExecUndo.UndoStack())
         return self._undoStack
 
     def _EnsureViewportTools(self):
@@ -998,6 +1017,11 @@ class RigExecUsdviewContainer(PluginContainer):
                 return ended
 
         return _Sink()
+
+    def ReadPublishedControlFrame(self, stage, path, time):
+        """This session's published asset-space frame of `path` at `time`
+        (Gf.Matrix4d), or None; answers for this session's stage only."""
+        return self._ReadPublishedControlFrame(stage, path, time)
 
     def _ReadPublishedControlFrame(self, stage, path, time):
         # Answers for THIS session's stage only; gizmoMath asks every
@@ -1324,8 +1348,8 @@ class RigExecUsdviewContainer(PluginContainer):
         """
         outputTypes = {
             "RigExecControl", "RigExecJoint",
-            "RigExecSphereWeight", "RigExecPlaneWeight",
-            "RigExecCurveWeight",
+            "RigExecSphereWeight", "RigExecCapsuleWeight",
+            "RigExecPlaneWeight", "RigExecCurveWeight",
         }
         for rigPath in rigPaths:
             root = stage.GetPrimAtPath(rigPath)
@@ -1444,6 +1468,20 @@ class RigExecUsdviewContainer(PluginContainer):
         self._EnsureViewAxis()
         self._RestoreHoverPicker()
         self._EnsureMarkingMenu()
+        editorExtension.StageReplaced(getattr(self, "_api", None))
+
+    def ReadPublishedGeneration(self, stage):
+        """The imaging generation of this session's published snapshot, or
+        None."""
+        if not self._active or self._lib is None or stage != self._cachedStage:
+            return None
+        read = getattr(self._lib, "RigExecImaging_GetGenerationForStage", None)
+        if read is None:
+            return None
+        read.argtypes = [ctypes.c_longlong]
+        read.restype = ctypes.c_longlong
+        cacheId = UsdUtils.StageCache.Get().GetId(stage).ToLongInt()
+        return int(read(cacheId))
 
     def _ActivateCurrentStage(self):
         stage = self._api.dataModel.stage
@@ -1731,6 +1769,54 @@ class RigExecUsdviewContainer(PluginContainer):
         if drifted:
             self._PushWarmRangeFromStage()
 
+    def _WakeFrameDemandDriver(self):
+        # Frames on demand: a recurring tick while a rig is active. Readers
+        # that sample a rig output at a time offset get "not yet" until the
+        # frame is cached; the tick turns cached frames into answers (and
+        # Hydra dirties), and outside playback hands the rest to the idle
+        # sweep, which warms them on the background workers first. An
+        # older library without the entry points never starts it.
+        if not (self._active and self._lib):
+            return
+        if not self._Imaging().Has("HasFrameDemand"):
+            return
+        try:
+            from pxr.Usdviewq.qt import QtCore
+        except Exception:
+            return
+        try:
+            timer = getattr(self, "_frameDemandTimer", None)
+            if timer is None:
+                timer = QtCore.QTimer()
+                timer.setSingleShot(False)
+                timer.timeout.connect(self._TickFrameDemand)
+                self._frameDemandTimer = timer
+            if not timer.isActive():
+                timer.start(_FRAME_DEMAND_TICK_MS)
+        except Exception:
+            pass
+
+    def _TickFrameDemand(self):
+        if not (self._active and self._lib):
+            try:
+                self._frameDemandTimer.stop()
+            except Exception:
+                pass
+            return
+        imaging = self._Imaging()
+        try:
+            if imaging.HasFrameDemand() != 1:
+                return
+            if self._IsPlaying() or self._IsNavigating():
+                # Cached frames only: warming sweeps wait for idle.
+                imaging.ServiceFrameDemand()
+            else:
+                # OnIdle services the demand first, then enqueues the
+                # frames still missing ahead of its regular sweep.
+                imaging.OnIdle()
+        except AttributeError:
+            pass
+
     def _WakeWarmingDriver(self):
         # Start (or keep) the recurring idle driver: it ticks OnIdle
         # while unwarm frames remain in range and sleeps otherwise.
@@ -1740,6 +1826,7 @@ class RigExecUsdviewContainer(PluginContainer):
         # warm synchronously as before.
         if not (self._active and self._lib):
             return
+        self._WakeFrameDemandDriver()
         self._RepushWarmRangeIfChanged()
         if (getattr(self, "_warmingCommitPending", False)
                 or getattr(self, "_previewWarmingPaused", False)):

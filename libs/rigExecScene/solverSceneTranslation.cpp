@@ -1,6 +1,7 @@
 #include "solverSceneTranslation.h"
 #include "sceneInputTypes.h"
 #include "startFrameDerivation.h"
+#include "skeleton2dTranslation.h"
 #include "rigExec/solverKernels.h"
 #include "rigExec/types.h"
 #include "pxr/base/vt/types.h"
@@ -52,6 +53,7 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
     else if(type=="RigExecTwistDistribution")s.kind=RigExecSolverKind::TwistDistribution;
     else if(type=="RigExecRibbon")s.kind=RigExecSolverKind::Ribbon;
     else if(type=="RigExecSplineIk")s.kind=RigExecSolverKind::SplineIk;
+    else if(type=="RigExecSkeleton2d")s.kind=RigExecSolverKind::Skeleton2d;
     else return Fail(error,"unsupported solver: "+type.GetString());
     auto targets=[&](const TfToken &name) { return source.Targets(path.AppendProperty(name)); };
     auto providerExists=[&](const SdfPath &provider) {
@@ -118,6 +120,17 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
     }
     s.restIsLive.assign(result.joints.size(),false);
     SdfPath derivedStart;
+    if(s.kind==RigExecSolverKind::FkChain || s.kind==RigExecSolverKind::Skeleton2d) {
+        // The frame the chain or skeleton hangs from. rigExec:startFramePolicy
+        // resolves here, at compile time, into the same declared start-frame
+        // input an authored target binds.
+        result.start=first(_tokens->rigExecStartFrame,true);
+        if(RigExecDeriveSceneStartFrame(scene,path,&derivedStart)!=RigExecStartFrameDerivation::Derived ||
+           !providerExists(derivedStart))derivedStart=SdfPath();
+        if(!derivedStart.IsEmpty())result.start=derivedStart;
+        s.hasStart=!result.start.IsEmpty();
+        if(s.hasStart)s.startRest=rest(result.start).points;
+    }
     if(s.kind==RigExecSolverKind::FkChain) {
         TfToken mode;if(!token(_tokens->rigExecControlSpace,TfToken(),&mode))return false;
         s.parentRelative=mode=="parentRelative";
@@ -126,14 +139,6 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         for(const auto &control:targets(_tokens->rigExecControls))if(providerExists(control)) {
             result.controls.push_back(control);s.controlRests.push_back(rest(control).points);
         }
-        result.start=first(_tokens->rigExecStartFrame,true);
-        // rigExec:startFramePolicy resolves here, at compile time, into the
-        // same declared start-frame input an authored target binds.
-        if(RigExecDeriveSceneStartFrame(scene,path,&derivedStart)!=RigExecStartFrameDerivation::Derived ||
-           !providerExists(derivedStart))derivedStart=SdfPath();
-        if(!derivedStart.IsEmpty())result.start=derivedStart;
-        s.hasStart=!result.start.IsEmpty();
-        if(s.hasStart)s.startRest=rest(result.start).points;
     } else if(s.kind==RigExecSolverKind::TwoBoneIk) {
         result.root=first(_tokens->rigExecRootControl,true);result.end=first(_tokens->rigExecEffectorControl,true);
         result.pole=first(_tokens->rigExecPoleControl,true);
@@ -230,6 +235,24 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         s.splineParams.twist=GfDegreesToRadians(initial("inputs:twist",0.0));
         s.splineParams.minLengthRatio=initial("inputs:minLengthRatio",0.0);
 
+    } else if(s.kind==RigExecSolverKind::Skeleton2d) {
+        RigExecSceneSkeleton2dDescriptor skeleton;
+        if(!RigExecTranslateSceneSkeleton2d(scene,path,result.start,rests,&skeleton,error))return false;
+        if(skeleton.joints!=result.joints)
+            return Fail(error,path.GetString()+": every 2D skeleton bone must be a pose provider");
+        s.bone2dOrder=std::move(skeleton.solveOrder);s.bone2dSetup=std::move(skeleton.setup);
+        s.bone2dSpaceSources=std::move(skeleton.spaceSources);
+        s.bone2dTargetCandidates=std::move(skeleton.targetCandidates);
+        s.bone2dGroups=std::move(skeleton.groups);
+        s.bone2dGroupMembers=std::move(skeleton.groupMembers);
+        // Outside parent spaces ride on the shared controls: provider frames
+        // read out of the pose exactly as FK controls are.
+        for(const auto &space:skeleton.externalSources) {
+            result.controls.push_back(space);s.controlRests.push_back(rest(space).points);
+        }
+        result.bone2dChannelReads=std::move(skeleton.channelReads);
+        result.bone2dSelectorReads=std::move(skeleton.selectorReads);
+        result.bone2dSelectorFallbacks=std::move(skeleton.selectorFallbacks);
     }
     for(const TfToken *name:{&_tokens->rigExecControls,&_tokens->rigExecStartFrame,&_tokens->rigExecRootControl,
         &_tokens->rigExecMidControl,&_tokens->rigExecEffectorControl,&_tokens->rigExecEndControl,
@@ -324,6 +347,29 @@ bool RigExecResolveSceneSolverInputs(const RigExecSceneDescriptors &scene,
     };
     if(!aggregate(descriptor.blendA,"rigExec:inputA",&input.blendA) ||
        !aggregate(descriptor.blendB,"rigExec:inputB",&input.blendB))return false;
+    if(descriptor.record.kind==RigExecSolverKind::Skeleton2d) {
+        const size_t bones=descriptor.bone2dChannelReads.size()/kRigExecBone2dChannelCount;
+        input.bone2dChannels.assign(bones,RigExecBone2dChannels());
+        for(size_t k=0;k<descriptor.bone2dChannelReads.size();++k) {
+            VtValue boxed;
+            const auto &typed=descriptor.bone2dChannelReads[k];
+            if(typed.readPhase!="base" && !deliveredInputs.count(typed.consumer))
+                return Fail(error,"phased 2D bone channel producer unavailable: "+typed.consumer.GetString());
+            if(!RigExecResolveSceneTypedRead(scene,typed,identity,deliveredInputs,&boxed,nullptr))continue;
+            RigExecSetBone2dChannel(&input.bone2dChannels[k/kRigExecBone2dChannelCount],
+                k%kRigExecBone2dChannelCount,boxed);
+        }
+        input.bone2dSelectors=descriptor.bone2dSelectorFallbacks;
+        input.bone2dSelectors.resize(descriptor.bone2dSelectorReads.size(),0.0);
+        for(size_t g=0;g<descriptor.bone2dSelectorReads.size();++g) {
+            VtValue boxed;
+            const auto &typed=descriptor.bone2dSelectorReads[g];
+            if(typed.readPhase!="base" && !deliveredInputs.count(typed.consumer))
+                return Fail(error,"phased 2D selector producer unavailable: "+typed.consumer.GetString());
+            if(!RigExecResolveSceneTypedRead(scene,typed,identity,deliveredInputs,&boxed,nullptr))continue;
+            if(boxed.IsHolding<double>())input.bone2dSelectors[g]=boxed.UncheckedGet<double>();
+        }
+    }
     return RigExecRefreshSolverParameters(descriptor.record.kind,readValue,&input,error);
 }
 
@@ -370,6 +416,8 @@ bool RigExecRefreshSolverParameters(RigExecSolverKind kind,
             value("inputs:roll",0.0,&input.rollDegrees) && value("inputs:twist",0.0,&input.twistDegrees) &&
             value("inputs:minLengthRatio",0.0,&input.minLengthRatio);
     case RigExecSolverKind::FkChain:return true;
+    // Its channels are per-bone typed reads, filled by the caller.
+    case RigExecSolverKind::Skeleton2d:return true;
     }
     return Fail(error,"unknown normalized solver input kind");
 }

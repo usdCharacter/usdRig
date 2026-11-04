@@ -484,8 +484,8 @@ public:
     void SetBias(float bias);
 };
 
-/// Common contract of placed volumetric weight objects (sphere, plane,
-/// curve): a distance function generates the field. The volume is an
+/// Common contract of placed volumetric weight objects (sphere, capsule,
+/// plane, curve): a distance function generates the field. The volume is an
 /// xformable -- place it with rest:space/avars like any control or joint;
 /// shape comes from the falloff band and scale inputs, not the transform.
 class RigExecVolumeWeightHandle : public RigExecWeightHandle {
@@ -530,6 +530,19 @@ public:
     void SetScales(float sx, float sy, float sz);
     void SetDirectionalScales(float px, float py, float pz,
                               float nx, float ny, float nz);
+};
+
+/// RigExecCapsuleWeight: falloff about the segment from the placed origin
+/// to its end provider's origin. Authored under a joint with no
+/// rigExec:segmentEnd, the segment runs to that joint's first joint child.
+class RigExecCapsuleWeightHandle : public RigExecVolumeWeightHandle {
+public:
+    using RigExecVolumeWeightHandle::RigExecVolumeWeightHandle;
+
+    void SetScales(float sx, float sy, float sz);
+    /// The provider whose posed origin ends the segment; an empty path
+    /// clears the relationship and restores the default end.
+    void SetSegmentEnd(const SdfPath &path);
 };
 
 /// RigExecPlaneWeight: signed gradient across a plane.
@@ -1331,6 +1344,12 @@ public:
     RigExecSphereWeightHandle AddSphereWeight(
         const std::string &name, const SdfPath &target, float falloffMin = 0.f,
         float falloffMax = 1.f);
+    /// A capsule under /Weights has no parent joint, so its segment end is
+    /// \p segmentEnd (empty: a zero-length segment).
+    RigExecCapsuleWeightHandle AddCapsuleWeight(
+        const std::string &name, const SdfPath &target,
+        const SdfPath &segmentEnd = SdfPath(), float falloffMin = 0.f,
+        float falloffMax = 1.f);
     RigExecPlaneWeightHandle AddPlaneWeight(
         const std::string &name, const SdfPath &target, float falloffMin = 0.f,
         float falloffMax = 1.f);
@@ -1342,6 +1361,12 @@ public:
     /// parent must already exist; unlike Add* these do not impose /Weights.
     RigExecSphereWeightHandle DefineSphereWeight(
         const SdfPath &path, const SdfPath &target, float falloffMin = 0.f,
+        float falloffMax = 1.f);
+    /// Defined under a joint, the capsule spans that joint's segment by
+    /// default; \p segmentEnd, when given, names the end explicitly.
+    RigExecCapsuleWeightHandle DefineCapsuleWeight(
+        const SdfPath &path, const SdfPath &target,
+        const SdfPath &segmentEnd = SdfPath(), float falloffMin = 0.f,
         float falloffMax = 1.f);
     RigExecPlaneWeightHandle DefinePlaneWeight(
         const SdfPath &path, const SdfPath &target, float falloffMin = 0.f,

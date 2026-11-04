@@ -21,7 +21,7 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 );
 namespace {
 bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}
-bool Hierarchical(const TfToken &type){return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";}
+bool Hierarchical(const TfToken &type){return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight" || type=="RigExecCapsuleWeight";}
 RigExecSceneValueDomain Domain(RigExecSceneDomain domain) {
     if(domain==RigExecSceneDomain::GeometryMover)return RigExecSceneValueDomain::Points;
     if(domain==RigExecSceneDomain::PropertyMover)return RigExecSceneValueDomain::Property;

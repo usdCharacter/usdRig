@@ -218,18 +218,19 @@ _IsBakedSolverType(const TfToken &type)
 {
     return type == "RigExecFkChain" || type == "RigExecTwoBoneIk" ||
            type == "RigExecBlendPointFrames" || type == "RigExecSplineIk" ||
-           type == "RigExecTwistDistribution" || type == "RigExecRibbon";
+           type == "RigExecTwistDistribution" || type == "RigExecRibbon" ||
+           type == "RigExecSkeleton2d";
 }
 
-// The three placeable weight shapes, which the evaluator spells the same way
-// in its own file-static _IsVolumeWeightType. Three tokens, and duplicating
+// The four placeable weight shapes, which the evaluator spells the same way
+// in its own file-static _IsVolumeWeightType. Four tokens, and duplicating
 // them here is cheaper than widening a header for a predicate neither side
 // would ever change without the other.
 bool
 _IsVolumeWeightTypeName(const TfToken &type)
 {
     return type == "RigExecSphereWeight" || type == "RigExecPlaneWeight" ||
-           type == "RigExecCurveWeight";
+           type == "RigExecCurveWeight" || type == "RigExecCapsuleWeight";
 }
 
 // The volumes the walk places (_nativeVolumeProviders) that have no

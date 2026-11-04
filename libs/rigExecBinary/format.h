@@ -552,8 +552,10 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// reads after the colliders. A format-25 file's cloth compiled rig is RCL1 and
 /// plays as exported: its inputs at their format-25 slots, no reach-back
 /// window and no material model. The tables are unchanged.
+///
 /// Format 27 admits volume falloff sample arrays through the existing typed
 /// path-read rows. Older files use their compiled falloff table.
+///
 /// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part
 /// k also reads the groups of its entering version holding a point group k's
 /// results read (its halo: a smooth's edge neighbours, a delta mush's
@@ -561,10 +563,29 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// neither as a Range revision. Format 29 lets sparse target-space blends
 /// carry channel keys on chunks and read those weights at each chunk.
 /// Format 30 admits Range DQ skins and independent Range status summaries.
+///
+/// Format 28 adds 2D skeletons, driven actions, bone groups and capsule
+/// weights: Solver.skeleton2d (a RigExecSkeleton2d over nested RigExecJoint
+/// bones with RigExecBone2dAPI: the per-bone setup in solve order, child-joint
+/// tips, space-switch parent spaces, target candidates, control bones and
+/// factors, bone groups, and its channel and selector inputs; its start frame
+/// is the row's start and its outside parent spaces are the row's controls),
+/// PoseInterpolator.driven_action (a RigExecDrivenAction's driver samples,
+/// side, tie rule and channel samples), File.scalar_primvar_chains (the
+/// property chains published as constant primvars), and the capsule weight's
+/// segment end: WeightObject.segment_end_slot (the provider whose frame origin
+/// ends a RigExecCapsuleWeight's segment, read per run) and
+/// WeightField.segment_ends (those slots, read in the field's placement
+/// phase). Older files hold none of them.
 inline constexpr uint32_t RigExecFormatVersion = 30;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.
 inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
+
+/// Fields every Solver row carries before its kind-specific inputs, in
+/// registration order: the bake numbers them (serialize.cpp), the runtime
+/// reads them by RrSolverField (store.h), and computedCapture places them.
+inline constexpr size_t RigExecWireSolverFixedFieldCount = 19;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;

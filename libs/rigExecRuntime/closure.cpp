@@ -569,6 +569,7 @@ static bool RrCompileCommonGraph(RrProgram *p,std::string *error)
             const auto type = p->TextOrEmpty(solver.type);
             std::vector<std::string> ports;
             if (type == "RigExecFkChain") ports = {"rigExec:controls","rigExec:startFrame"};
+            else if (type == "RigExecSkeleton2d") ports = {"rigExec:startFrame"};
             else if (type == "RigExecTwoBoneIk") ports = {"rigExec:rootControl","rigExec:effectorControl","rigExec:poleControl","rigExec:space"};
             else if (type == "RigExecBlendPointFrames") ports = {"rigExec:inputA","rigExec:inputB"};
             else if (type == "RigExecTwistDistribution") ports = {"rigExec:start","rigExec:end"};

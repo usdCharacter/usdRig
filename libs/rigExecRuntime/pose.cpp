@@ -457,6 +457,7 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     scratch->interpMasks.assign(poses.poseInterpolators.size(), 1.0);
     scratch->interpNetworks.assign(poses.poseInterpolators.size(), {});
     scratch->interpMaps.assign(poses.poseInterpolators.size(), {});
+    scratch->interpDriven.assign(poses.poseInterpolators.size(), {});
     for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
         scratch->interpValues[i].assign(
             poses.poseInterpolators[i].valueInputs.size(), 0.0);
@@ -508,6 +509,20 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
                                     m->rowCut[r]});
                 }
                 table.AddMap(std::move(rows));
+            }
+        }
+        if (const auto &a = poses.poseInterpolators[i].drivenAction) {
+            // Open validated the offsets (format.cpp).
+            RigExecDrivenActionTable &table = scratch->interpDriven[i];
+            table.driver = a->driver;
+            table.side = int(a->side);
+            table.fullTurn = a->fullTurn;
+            table.tiesLater = a->tiesLater;
+            for (size_t c = 0; c + 1 < a->channelBegin.size(); ++c) {
+                table.channelSamples.emplace_back(
+                    a->channelSamples.begin() + a->channelBegin[c],
+                    a->channelSamples.begin() + a->channelBegin[c + 1]);
+                table.channelOffset.push_back(a->channelOffset[c] ? 1 : 0);
             }
         }
         if (const auto &n = poses.poseInterpolators[i].network) {
@@ -600,6 +615,45 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
         for (const RigExecWireVec3f &p : wire.ribbonRestPoints) {
             state.ribbonRestPoints.push_back(
                 RrVec3f(p[0], p[1], p[2]));
+        }
+        if (const auto *skeleton = wire.skeleton2d.get()) {
+            const size_t bones = skeleton->solveOrder.size();
+            state.bone2dOrder = skeleton->solveOrder;
+            state.bone2dSetup.resize(bones);
+            for (size_t e = 0; e < bones; ++e) {
+                RigExecBone2dSetup &bone = state.bone2dSetup[e];
+                bone.parent = skeleton->parent[e];
+                bone.flags = skeleton->flags[e];
+                bone.minAngle = skeleton->limits[2 * e];
+                bone.maxAngle = skeleton->limits[2 * e + 1];
+                bone.scaling = RigExecBone2dScaling(skeleton->scaling[e]);
+                bone.squashFactor = skeleton->squashFactor[e];
+                bone.maxStretch = skeleton->maxStretch[e];
+                bone.tipBone = skeleton->tipBone[e];
+                bone.tipX = skeleton->tip[2 * e];
+                bone.tipY = skeleton->tip[2 * e + 1];
+                bone.spaceBegin = skeleton->spaceBegin[e];
+                bone.spaceCount = skeleton->spaceCount[e];
+                bone.spaceSelector = skeleton->spaceSelector[e];
+                bone.targetBegin = skeleton->targetBegin[e];
+                bone.targetCount = skeleton->targetCount[e];
+                bone.angleController = skeleton->angleController[e];
+                bone.posController = skeleton->posController[e];
+                bone.scaleController = skeleton->scaleController[e];
+                bone.angleFactor = skeleton->controlFactors[4 * e];
+                bone.posFactorX = skeleton->controlFactors[4 * e + 1];
+                bone.posFactorY = skeleton->controlFactors[4 * e + 2];
+                bone.scaleFactor = skeleton->controlFactors[4 * e + 3];
+            }
+            state.bone2dSpaceSources = skeleton->spaceSources;
+            state.bone2dTargetCandidates = skeleton->targetCandidates;
+            state.bone2dGroups.resize(skeleton->groupCount.size());
+            for (size_t g = 0; g < skeleton->groupCount.size(); ++g) {
+                state.bone2dGroups[g].memberBegin = skeleton->groupBegin[g];
+                state.bone2dGroups[g].memberCount = skeleton->groupCount[g];
+                state.bone2dGroups[g].enabled = skeleton->groupEnabled[g] != 0;
+            }
+            state.bone2dGroupMembers = skeleton->groupMembers;
         }
     }
     scratch->recordAfter.assign(poses.commits.size(), 1);

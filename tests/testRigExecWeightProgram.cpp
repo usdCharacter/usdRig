@@ -14,7 +14,8 @@ RigExecWeightRecord Record(int kind,const char *name) {
     RigExecWeightRecord result;result.kind=kind;result.name=name;result.representation=0;
     result.representationToken=TfToken("constant");result.rangePolicy=TfToken("strict");
     result.type=TfToken(kind==0?"RigExecStaticWeight":kind==1?"RigExecDynamicWeight":
-        kind==2?"RigExecCombineWeight":kind==3?"RigExecSphereWeight":kind==4?"RigExecPlaneWeight":"RigExecCurveWeight");
+        kind==2?"RigExecCombineWeight":kind==3?"RigExecSphereWeight":kind==4?"RigExecPlaneWeight":
+        kind==5?"RigExecCurveWeight":"RigExecCapsuleWeight");
     return result;
 }
 void TestPaintedDynamicAndComposition() {
@@ -101,6 +102,23 @@ void TestVolumesAndCurrentPhases() {
     inputs[2].phasedPoints[2]={true,true,nullptr,0};
     Check(!RigExecRunWeightField(records,2,inputs,3,nullptr,&result,&error) && result.empty() &&
         error=="curve: rigExec:curve must name exactly one points source","empty phased curve accepted");
+    // Capsule (kind 6): the segment [placement origin, segmentEnd]; no end
+    // is the sphere, a scaled divisor divides the end as well.
+    records.push_back(Record(6,"capsule"));inputs.emplace_back();
+    std::vector<GfVec3f> beside{{1,.5f,0},{3,0,0},{-.5f,0,0}};
+    inputs[3].hasPlacement=true;inputs[3].rawPoints[1]={false,true,beside.data(),beside.size()};
+    inputs[3].hasSegmentEnd=true;inputs[3].segmentEnd=GfVec3d(2,0,0);
+    Check(RigExecRunWeightField(records,3,inputs,3,nullptr,&result,&error),"capsule failed");
+    Near(result[0],.5f);Near(result[1],0);Near(result[2],.5f);
+    inputs[3].hasSegmentEnd=false;
+    Check(RigExecRunWeightField(records,3,inputs,3,nullptr,&result,&error),"capsule without an end failed");
+    Near(result[0],0);Near(result[2],.5f);
+    inputs[3].hasSegmentEnd=true;inputs[3].scalars[8]=2;
+    Check(RigExecRunWeightField(records,3,inputs,3,nullptr,&result,&error),"scaled capsule failed");
+    Near(result[0],.5f);Near(result[1],.5f);Near(result[2],.75f);
+    inputs[3].segmentEnd=GfVec3d(std::nan(""),0,0);
+    Check(!RigExecRunWeightField(records,3,inputs,3,nullptr,&result,&error) && result.empty() &&
+        error=="capsule: capsule segment end is not finite","non-finite capsule end accepted");
 }
 void TestPacketPolicyAndProfiles() {
     auto record=Record(0,"packet");RigExecWeightPacketInputs inputs;

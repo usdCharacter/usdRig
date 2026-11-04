@@ -20,6 +20,7 @@ CATEGORIES = [
                              "skin_influence", "armature_parent"]),
     ("Solvers", ["fk_chain", "two_bone_ik", "spline_ik",
                  "blend_point_frames", "twist_distribution", "ribbon"]),
+    ("2D skeletons", ["skeleton_2d", "bone_2d", "bone_2d_group"]),
     ("Constraints", ["aim_constraint", "position_constraint",
                      "rotation_constraint", "scale_constraint",
                      "parent_constraint", "single_chain_ik_constraint",
@@ -31,9 +32,11 @@ CATEGORIES = [
                          "volume_correct_mover",
                          "ml_mover", "ml_output"]),
     ("Blend channels", ["blend_input", "blend_sample"]),
-    ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map"]),
+    ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map",
+                    "driven_action", "action_channel"]),
     ("Weights", ["static_weight", "dynamic_weight", "sphere_weight",
-                 "plane_weight", "curve_weight", "combine_weight"]),
+                 "capsule_weight", "plane_weight", "curve_weight",
+                 "combine_weight"]),
     ("Property math", ["float_math_mover", "vec3f_math_mover",
                        "matrix_math_mover"]),
     ("Shading", ["surface_projector"]),
@@ -300,11 +303,17 @@ for the whole loop and the only motion in frame comes from the one driver.""",
             "A solver whose output another solver reads is naming joints for "
             "their rests, not claiming them, so an IK and an FK chain can both "
             "list the chain that their IK/FK blend actually poses.",
+            # skeleton2dTranslation.cpp: the parent is the nearest RigExecJoint
+            # ancestor, the tip the first RigExecJoint child.
+            "The bones of a [2D skeleton](skeleton_2d.md) are plain nested "
+            "joints too: their namespace is their hierarchy, and a bone runs "
+            "to its first child joint, an `End` joint for a leaf.",
         ],
         "see_also": [
             ("fk_chain", "FK Chain"),
             ("aim_constraint", "Aim Constraint"),
             ("matrix_mover", "Matrix Mover"),
+            ("skeleton_2d", "Skeleton 2D"),
         ],
     },
     "auto_clavicle": {
@@ -413,11 +422,18 @@ closes where it began.""",
             "switches that each need the other composed first. A source "
             "under another switched control is fine, even one nested inside "
             "this switch's target: the nested switch resolves first.",
+            # skeleton2dTranslation.cpp reads the switch; the compile skips it
+            # as a pose step (rigEvaluatorCompile.cpp, PrepareRequests.SpaceSwitches).
+            "A switch whose target is a bone of a [Skeleton 2D](skeleton_2d.md) "
+            "is read by that skeleton inside its solve, not run as a step of its "
+            "own; its sources may then be bones of the skeleton, and the rig "
+            "root stands for the skeleton's start frame.",
         ],
         "see_also": [
             ("control", "Control"),
             ("parent_constraint", "Parent Constraint"),
             ("two_bone_ik", "Two-Bone IK"),
+            ("skeleton_2d", "Skeleton 2D"),
         ],
     },
     "fk_chain": {
@@ -1583,7 +1599,18 @@ has exactly one influence; the skin mover gathers every influence of a
 point and blends them together, so shared points bend smoothly instead
 of hinging. `rigExec:skinningMethod` picks the blend: `classicLinear`
 for linear blend skinning, `dualQuaternion` for the volume-preserving
-one.""",
+one.
+
+Flat cut-out artwork binds to a [2D skeleton](skeleton_2d.md) the same
+way: the skeleton's bones are the influences and the weights are
+authored arrays like any other skin's. A [capsule weight](capsule_weight.md)
+placed inside each bone describes the region it owns, and
+`rigexec.binding.generate_skin_weights(stage, skin_mover)` writes the
+arrays from those capsules: per point, each influence's capsule field at
+the setup pose, normalised over `rigExec:influences`. The rows are
+authored data, generated once rather than evaluated per frame, so
+regenerate them after moving a rest or resizing a capsule; an optional
+`point_indices` list regenerates only those rows.""",
         "how_it_works": """The mover is one revision in its target's point chain, so it runs in
 the mover-application walk after solving: it reads
 every influence's `computeMatrix` (the rest-to-posed map) at the
@@ -1650,6 +1677,8 @@ holds 1.500 at every column.""",
             ("matrix_mover", "Matrix Mover"),
             ("fk_chain", "FK Chain"),
             ("joint", "Joint"),
+            ("skeleton_2d", "Skeleton 2D"),
+            ("capsule_weight", "Capsule Weight"),
         ],
     },
     "blendshape_mover": {
@@ -2867,7 +2896,92 @@ rather than a plateau with an edge.""",
         "see_also": [
             ("static_weight", "Static Weight"),
             ("dynamic_weight", "Dynamic Weight"),
+            ("capsule_weight", "Capsule Weight"),
             ("matrix_mover", "Matrix Mover"),
+        ],
+    },
+    "capsule_weight": {
+        "title": "Capsule Weight",
+        "schema": "RigExecCapsuleWeight",
+        "summary": "A tube of influence along a bone: falloff about the segment to a child joint.",
+        "description": """A placed volume whose field is the distance to a SEGMENT: from the
+volume's own origin to the posed origin of its end provider. Authored
+inside a joint with nothing wired, the segment runs to that joint's
+first `RigExecJoint` child in namespace order — the same rule a bone's
+tip follows — so one capsule per bone covers exactly that bone, and
+`rel rigExec:segmentEnd` names any other `RigExecXformable` when the end
+should be explicit. The field is fully on within `inputs:falloffMin` of
+the segment and off at `inputs:falloffMax`: the iso-surfaces are
+capsules, two hemispherical caps joined by a tube, and per-axis
+`inputs:scaleX/Y/Z` make the tube elliptical. With no end at all the
+segment has zero length and the capsule is a sphere.""",
+        "how_it_works": """The prim publishes a weight packet that the bound mover consumes as
+its envelope during the geometry (point-chain) phase, like every volume
+weight. Each evaluation it takes its own posed frame, strips scale and
+shear so the field matches the rigid guide that is drawn, and reads the
+END PROVIDER'S frame in the same phase: the end is a second provider
+slot the compiled rig binds (the default child resolved once at
+compile), not a stored offset, so when the parent joint stretches
+along its length with `avars:sx` the child's origin moves and the
+segment follows it. Both the points and the end are carried into the
+capsule's local frame and divided by `inputs:scaleX/Y/Z`; `d` is then
+the distance from each point of `rigExec:weightTarget` (or of
+`rigExec:sampleSource`) to the nearest point of the segment, remapped
+across the band, exchanged by `inputs:invert`, run through the
+falloff lookup table, multiplied by `inputs:strength`, and bounded by
+`rigExec:rangePolicy`. The `rigExecReadPhase` metadata on
+`rigExec:weightTarget` chooses the measured points exactly as for a
+sphere: `base` (the default) measures the static bind points,
+`preceding` the points as they stand in the mover stack.""",
+        "wiring": [
+            ("`rigExec:weightTarget`", "Exact points property this generated field "
+             "covers; must be the same target the bound mover moves.", "yes"),
+            ("`rigExec:segmentEnd`", "Optional single provider whose posed origin "
+             "ends the segment; absent, the first `RigExecJoint` child of the "
+             "namespace-parent joint. More than one target is a compile error.",
+             "no"),
+            ("`rigExec:sampleSource`", "Static points to measure against instead of "
+             "the target. The weighted domain stays the target.", "no"),
+            ("(placement)", "No wiring: the volume follows its namespace-parent "
+             "xformable when unwired, as every volume weight does.", "-"),
+            ("(bound by)", "A mover's `rigExec:weightObject` applies this field.", "-"),
+        ],
+        "param_groups": [
+            ("Volume weight", "RigExecVolumeWeight"),
+            ("Transform provider", "RigExecXformable"),
+        ],
+        "example": """A 9 x 3 quad plank is lifted by one matrix mover whose joint holds a
+static one-unit rise. The field gating it is a capsule authored inside
+the UpperArm joint with no `rigExec:segmentEnd`, so it spans UpperArm to
+its child Forearm, three units along the plank. The only spline in the
+file is UpperArm's `avars:sx`: the stretch carries Forearm out to 4.5
+and back, the capsule's end follows Forearm's live frame, and the raised
+band grows and shrinks with round ends that stay round — the capsule's
+own placement drops the stretch, so the tube does not fatten. The inner
+capsule is `inputs:falloffMin` 0.4, where the plank is lifted the whole
+unit, and the outer one `inputs:falloffMax` 1.2, where it is not lifted
+at all; `linear` between them.""",
+        "tips": [
+            "Author one capsule inside each bone that should own a region: with "
+            "no relationship it ends at the bone's first joint child, so adding, "
+            "removing or reordering that child moves the segment and recompiles "
+            "the rig.",
+            "Size the tube with `inputs:falloffMin`/`inputs:falloffMax` and "
+            "`inputs:scaleX/Y/Z`; a scale in the transform is removed before the "
+            "field is built. The segment's LENGTH comes from the end provider "
+            "alone.",
+            "A leaf joint with no joint child has no segment: its capsule is a "
+            "sphere about the joint. Give a drawn leaf bone an `End` joint child "
+            "when its capsule should reach its tip.",
+            "Inside the influences of a Skin Mover, capsules are the source of "
+            "its authored rows: `rigexec.binding.generate_skin_weights` measures "
+            "them at the setup pose and normalises per point.",
+        ],
+        "see_also": [
+            ("sphere_weight", "Sphere Weight"),
+            ("curve_weight", "Curve Weight"),
+            ("skin_mover", "Skin Mover"),
+            ("joint", "Joint"),
         ],
     },
     "plane_weight": {
@@ -3045,6 +3159,7 @@ geometry it weights.""",
         ],
         "see_also": [
             ("sphere_weight", "Sphere Weight"),
+            ("capsule_weight", "Capsule Weight"),
             ("matrix_mover", "Matrix Mover"),
             ("static_weight", "Static Weight"),
         ],
@@ -3221,6 +3336,16 @@ and it drives nothing, the blendshape does all the work.""",
             "the rig root, whatever operator it belongs to; see "
             "[Connected inputs](../concepts/how-operators-fire.md#connected-inputs) "
             "and example 16.",
+            # bakedProperties.cpp, BindState::Hop: at `final` the revision
+            # declares the interpolator's PoseWeight slot, so the graph
+            # orders it after the interpolator.
+            "A float input connected to a pose interpolator's output (a pose "
+            "weight, an animated map, a driven action's `outputs:value` or "
+            "`outputs:active`) reads the output's authored value when "
+            "undeclared. Declare `rigExecReadPhase = \"final\"` to read what "
+            "the interpolator computed in the same evaluation; the mover then "
+            "runs after it, and two interpolators that drive each other's "
+            "inputs this way form a cycle, which every evaluator sets aside.",
             # bakedProperties.cpp, Base: a drag on the target is the chain's
             # base, in every evaluator.
             "Dragging the revised property itself edits its base: the movers "
@@ -4165,3 +4290,225 @@ for _key, _example in _AFFINE_EXAMPLES.items():
         "A .rigexec player needs this mover's playback kernel; without it the "
         "revision passes its points through."
     ]
+
+OPERATORS.update({
+    "skeleton_2d": {
+        "title": "Skeleton 2D",
+        "schema": "RigExecSkeleton2d",
+        "no_gif": True,
+        "example_key": "skeleton_2d",
+        "summary": "Solves a flat cut-out skeleton: bone channels, flips, locks and targets, one frame per bone.",
+        "description": """A 2D skeleton is one `RigExecSkeleton2d` solver claiming an ordered
+list of nested `RigExecJoint` bones that carry `RigExecBone2dAPI`. The bones'
+namespace is their hierarchy and each bone's `rest:space` is relative to its
+parent, as for every joint. The bones lie in the XY plane of the skeleton's
+start frame (the rig's asset space without one) and turn about its +Z, in
+degrees. The solver composes every bone's animated channels down the hierarchy
+over the bones' setup frames and publishes one frame per bone; a
+[Skin Mover](skin_mover.md) with authored weights then moves artwork with
+those frames.""",
+        "how_it_works": """The skeleton hangs from `rigExec:startFrame` the way an
+[FK Chain](fk_chain.md) does: the bones' rests and outside parent spaces are
+expressed in the start frame's rest frame, the solve stays in its plane, and
+the published frames are composed back through its posed frame. Per frame the
+solver composes each bone over its parent, applies side and end flips and
+independent angles, applies the cross scale, then runs the lock solve (cyclic
+coordinate descent over each locked bone's ancestors, within the angle limits)
+and the target solve (a bone's tip follows its target bone's base). A bone's
+tip is its first child joint. Locks win over targets. Bones under an inactive
+member of a [bone group](bone_2d_group.md) publish their rest frames and take
+no part. The published frame is the bone's setup-to-pose deformation,
+including its cross scale; children compose from the pose frame, so a bone's
+cross scale never shears them.
+
+A [Space Switch](space_switch.md) whose target is a bone is read by the
+skeleton and never runs as a pose step of its own: its sources are the bone's
+parent spaces in order. A source may be a bone of the same skeleton, a frame
+provider outside it (read as an input of the solve), or a prim that is not a
+frame provider, such as the rig root, which stands for the start frame. The
+active index is clamped to the list; a fractional index blends the bone's
+frames under the two neighbouring spaces, the origin linearly and the angle
+along the shortest arc. A bone whose active space is not one of the bones is a
+chain root for locks and targets.
+
+A bone's rest is its composed `rest:space`, or, where a pose step below the
+skeleton writes the bone, that step's frame, as for every aggregate solver.
+The rest must be a rotation about the plane's +Z plus a translation. A rest
+that is not planar is diagnosed, the skeleton passes the rests through for that
+frame, and evaluation continues. The same operation graph runs in native,
+frozen and `.rigexec` evaluation. The rules without a public source are listed
+in [References](../references.md#2d-skeleton-rules-without-a-public-source).""",
+        "wiring": [
+            ("`rigExec:joints`", "Ordered bones (joints with `RigExecBone2dAPI`); list position is the aggregate element index.", "yes"),
+            ("`rigExec:startFrame`", "The joint or control the skeleton hangs from; its XY plane is the skeleton's plane. It may not be a bone or sit under one.", "no"),
+            ("`rigExec:boneGroups`", "Ordered bone groups of this skeleton (prims with `RigExecBone2dGroupAPI`, conventionally Scopes); empty keeps every bone active.", "no"),
+        ],
+        "example": """A leg nested Hip / Thigh / Shin, with an `End` joint under the shin,
+and a pin bone Foot beside it with no joint child. The bones key
+`avars:rz`; the thigh also keys `avars:sx`, which stretches it along its
+length and carries the shin with it, and the foot keys `avars:tx`. Each
+bone holds a capsule weight with no `rigExec:segmentEnd`, so each spans
+its bone to its first joint child and the foot's is a sphere. One skin
+mover binds the leg mesh with rows written by
+`rigexec.binding.generate_skin_weights` from those capsules; the small tab
+quad beside the leg lies outside every capsule, keeps zero rows and holds
+still.""",
+        "tips": [
+            "Angle limits bound the lock solve only; keyed or driven angles are never clamped.",
+            "A lock chain is capped at 32 bones, and a bone with `bone2d:ignoredByIk`, or a pin, is not counted among its parent's children; a lock that the descent leaves short retries from the other bend and keeps the closer result.",
+            "Reparent a bone by moving it in the namespace (re-expressing its rest); animate a parent with a Space Switch on the bone whose first source is its namespace parent.",
+            "The namespace parents and every switch source must be acyclic, an outside source may not sit under a bone of the skeleton, and a switch on a bone may not author `rigExec:space`, `rigExec:rotationFilters` or a cleared axis mask.",
+            "Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Capsule Weight inside each bone and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.",
+            "See [2D skeletons, binding and driven actions](../concepts/skeletons-2d.md) for the whole workflow.",
+        ],
+        "see_also": [("bone_2d", "Bone 2D"), ("bone_2d_group", "Bone 2D Group"),
+                     ("space_switch", "Space Switch"), ("fk_chain", "FK Chain"),
+                     ("skin_mover", "Skin Mover"), ("driven_action", "Driven Action")],
+    },
+    "bone_2d": {
+        "title": "Bone 2D",
+        "schema": "RigExecBone2dAPI",
+        "no_gif": True,
+        "summary": "API schema that makes a joint one bone of a 2D skeleton.",
+        "description": """Apply `RigExecBone2dAPI` to a `RigExecJoint` that a
+[Skeleton 2D](skeleton_2d.md) lists in `rigExec:joints`. The joint's
+namespace parent is the bone's parent when it is a bone of the same skeleton
+(otherwise the bone is a root), and its `rest:space` is relative to that
+parent. Composed, the setup frame lies in the skeleton's plane: base at the
+origin, the bone along +X, rotation about the plane's +Z only. The bone runs
+to its first child joint.""",
+        "how_it_works": """The bone's tip is its first `RigExecJoint` child in namespace order: a
+child bone, or for a leaf an `End` joint (a plain `RigExecJoint` without this
+API that no solver lists). A bone with no joint child is a pin: its tip is its
+base. The tip is where a target solve aims and what `avars:sx` stretches. A
+child bone's rest is a value, so editing it re-solves without recompiling; an
+`End` joint's offset is compiled, so editing it recompiles.
+
+Animation lives on the joint's `avars`: `avars:tx` and `avars:ty` move the
+bone in its parent's frame, `avars:rz` turns it (degrees, as a delta from the
+setup angle) and `avars:sx` scales it along the bone. A channel that a property
+mover or a driven action revises is read as that chain's result. The flip, lock,
+offset and target-index channels are animated too; the index channel and the
+lock references are held (stepped) between keys. An animated parent is a
+[Space Switch](space_switch.md) on the bone, read by the skeleton.
+
+`bone2d:colorTag`, `bone2d:showLabel` and `bone2d:shy` are display hints for
+editors (a colour, a name label, membership of the shy set one view toggle
+hides). Evaluation never reads them, so editing one neither recompiles nor
+re-solves.""",
+        "wiring": [
+            ("`bone2d:targetCandidates`", "Ordered target bones for a tip-follow target, selected by `bone2d:targetIndex`.", "no"),
+            ("`bone2d:angleControl`, `bone2d:posControl`, `bone2d:scaleControl`", "At most one control bone each, in delta form.", "no"),
+        ],
+        "example": """A forearm bone nests under the upper arm with the rest:space
+(1, 0) relative to it and an `End` joint one unit along it. `avars:rz` of 30
+turns it 30 degrees from the setup angle. `bone2d:angleControl` pointing at a
+dial bone with `bone2d:angleControlFactor` -0.5 makes it counter-move at half
+the dial's turn.""",
+        "tips": [
+            "A pin (no joint child) is always excluded when counting a parent's children for the lock and target chains; a pin with a target and no parent bone is refused when the rig compiles.",
+            "Evaluation never clamps keyed or driven angles to `bone2d:minAngle` and `bone2d:maxAngle`; authoring tools clamp the values they write.",
+            "Order the children (`reorder nameChildren`) when a bone has several: the first child joint is its tip.",
+        ],
+        "see_also": [("skeleton_2d", "Skeleton 2D"), ("bone_2d_group", "Bone 2D Group"),
+                     ("space_switch", "Space Switch"), ("skin_mover", "Skin Mover")],
+    },
+    "bone_2d_group": {
+        "title": "Bone 2D Group",
+        "schema": "RigExecBone2dGroupAPI",
+        "no_gif": True,
+        "summary": "API schema that makes a prim (conventionally a Scope) an alternative-chain bone group: exactly one member chain is active at a time.",
+        "description": """Apply `RigExecBone2dGroupAPI` to a prim, conventionally a `Scope`, and list
+it on a [Skeleton 2D](skeleton_2d.md)'s `rigExec:boneGroups`. The group names the
+first bone of each alternative chain in that skeleton. Exactly one member is
+active; the bones under the inactive members publish their rest frames and
+neither solve nor join lock or target chains. Animating `rigExec:activeBone`
+swaps the visible chain.
+
+Membership is the schema's built-in `UsdCollectionAPI` instance `members`: the
+bones of `collection:members:includes` in list order, less any bone in
+`collection:members:excludes`.""",
+        "how_it_works": """The group's membership is structural and compiled once. The collection is
+explicit-only: its `expansionRule` defaults to `explicitOnly`, and a group that
+changes it or authors a `membershipExpression` is refused when the rig compiles,
+the same way in every evaluator. The active index arrives per evaluation, held
+between keys so the active member steps at its keys; an out-of-range value
+clamps to the nearest member. A group with `rigExec:enabled` false keeps every
+member active.""",
+        "wiring": [
+            ("`collection:members:includes`", "Ordered first bones of the alternative chains.", "yes"),
+            ("`collection:members:excludes`", "Bones dropped from the includes.", "no"),
+        ],
+        "example": """Two hand drawings, an open hand and a fist, hang as two chains from the
+wrist. A group lists both chain roots, and `rigExec:activeBone` is keyed 0 then
+1: the open hand's bones solve until the key and the fist's bones afterward,
+while the other chain sits at its rest.""",
+        "tips": [
+            "List the group on the skeleton's `rigExec:boneGroups`; a group the skeleton does not list has no effect.",
+            "Bind each chain's geometry to its own bones so the inactive drawing is not deformed.",
+            "A member's chain is the bones under it: nest each alternative drawing's bones under its member.",
+        ],
+        "see_also": [("skeleton_2d", "Skeleton 2D"), ("bone_2d", "Bone 2D")],
+    },
+    "driven_action": {
+        "title": "Driven Action",
+        "schema": "RigExecDrivenAction",
+        "no_gif": True,
+        "summary": "Maps a dial angle to a whole action frame and publishes driven channel values.",
+        "description": """A driven action reads a driver property, normally a dial bone's
+`avars:rz`, and finds the whole action frame whose recorded driver sample is
+closest. It publishes the frame, a normalised weight, an activity flag, and
+the values of its `RigExecActionChannel` children at that frame. It is not a
+mover: readers connect to its outputs.""",
+        "how_it_works": """`rigExec:driverSamples` holds the driver value at action frames 0 to N. The
+action serves one side of sample 0 (`rigExec:side`); on the other side, and at
+sample 0, the frame is 0. A driver that turns one full revolution wraps an angle
+outside its range onto the action's side first. Equal distances take the earlier
+or the later frame by `rigExec:frameTies`. A disabled action publishes frame 0.
+
+A reader that connects to `outputs:value`, `outputs:weight` or `outputs:active`
+and wants the value computed in the same evaluation declares
+`rigExecReadPhase = "final"` on the connected input; the reader then runs after
+the action. Undeclared, the connection reads the authored value. Two
+interpolators that drive each other's inputs this way form a cycle, and every
+evaluator sets it aside. The driver sample table is structural: an edit
+recompiles.""",
+        "wiring": [
+            ("`rigExec:driverAttributes`", "Exactly one float or double property, normally a bone's `avars:rz`.", "yes"),
+        ],
+        "example": """A wrist dial's `avars:rz` drives a hand-pose action with driver samples
+[0, 20, 45, 90]. At 50 degrees the closest sample is 45, so the action frame is 2.
+A channel in `offset` mode connected to a float math mover's input adds the
+channel's change since frame 0, and a channel in `value` mode with
+`outputs:active` as a blend envelope switches a drawing on.""",
+        "tips": [
+            "`rigExec:side` is normally authored from a dial's pair of actions; `fromSamples` judges it from the action's own samples.",
+            "`outputs:weight` is the frame divided by N, for blend inputs whose samples sit at k / N.",
+            "See [2D skeletons, binding and driven actions](../concepts/skeletons-2d.md#driven-actions).",
+        ],
+        "see_also": [("action_channel", "Action Channel"), ("pose_interpolator", "Pose Interpolator"),
+                     ("float_math_mover", "Float Math Mover")],
+    },
+    "action_channel": {
+        "title": "Action Channel",
+        "schema": "RigExecActionChannel",
+        "no_gif": True,
+        "summary": "One driven channel of a driven action: its value at each whole action frame.",
+        "description": """A child of a [Driven Action](driven_action.md). `rigExec:samples`
+holds the channel's value at whole action frames 0, 1, ...; past the last sample
+the last value holds. `outputs:value` is what readers connect to.""",
+        "how_it_works": """In `offset` mode the channel publishes `samples[f] - samples[0]`, for an
+additive mover. In `value` mode it publishes `samples[f]`, for a blend mover
+whose envelope is the action's `outputs:active`. The channels are compiled in
+child order, so adding or reordering a channel recompiles.""",
+        "wiring": [("`outputs:value`", "The channel's value; connectable like a pose weight.", "-")],
+        "example": """A channel with samples [0, 5, 12] in `offset` mode publishes 0, 5, 12 at
+frames 0, 1, 2 and 12 beyond; in `value` mode with samples [1, 0.5, 0] it
+publishes the samples themselves.""",
+        "tips": [
+            "Connect with `rigExecReadPhase = \"final\"` to read the value computed in the same evaluation.",
+            "An action with no channels still publishes frame, weight and active.",
+        ],
+        "see_also": [("driven_action", "Driven Action")],
+    },
+})

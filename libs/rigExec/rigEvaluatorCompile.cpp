@@ -13,10 +13,12 @@
 #include "parallel.h"
 #include "movers/moverRegistry.h"
 #include "frameExtraction.h"
+#include "capsuleSegment.h"
 #include "solverKernels.h"
 #include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/work/dispatcher.h"
 #include "pxr/base/work/loops.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -43,6 +45,14 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+
+// The 2D skeleton and space-switch names the compile reads, interned once.
+TF_DEFINE_PRIVATE_TOKENS(_skeleton2dCompileTokens,
+    (RigExecSkeleton2d) (RigExecSpaceSwitch)
+    ((joints, "rigExec:joints"))
+    ((target, "rigExec:target"))
+    ((sources, "rigExec:sources"))
+);
 
 namespace rigExec {
 
@@ -1104,6 +1114,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                     " (or be empty)", {solver.GetPath()});
                             }
                         }
+                    } else if (type == "RigExecSkeleton2d") {
+                        // One frame per bone, in list order: a bone's list
+                        // position is its element, never a remap.
+                        knownCount = static_cast<int>(jointTargets.size());
+                        if (!jointElements.empty()) {
+                            return fail(who + ": rigExec:jointElements is not "
+                                              "read by a 2D skeleton; a bone's "
+                                              "list position is its element",
+                                        {solver.GetPath()});
+                        }
                     }
 
                     for (size_t i = 0; i < jointTargets.size(); ++i) {
@@ -1236,6 +1256,44 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.SolverDag");
+    // A RigExecSpaceSwitch whose target is a bone of a RigExecSkeleton2d is
+    // read by that skeleton's translation and never becomes a pose step of
+    // its own. Its sources outside the skeleton are frame inputs of the
+    // skeleton's solve, declared below exactly like its relationship
+    // targets; sources that are bones of the skeleton are read inside the
+    // solve.
+    std::set<SdfPath> skeleton2dBones;
+    std::map<SdfPath, SdfPathVector> skeleton2dSwitchSources;
+    {
+        std::map<SdfPath, SdfPath> skeletonOf;
+        std::map<SdfPath, std::set<SdfPath>> bonesOf;
+        for (const UsdPrim &solver : orderedSolvers) {
+            if (solver.GetTypeName() != _skeleton2dCompileTokens->RigExecSkeleton2d) continue;
+            SdfPathVector bones;
+            solver.GetRelationship(_skeleton2dCompileTokens->joints).GetTargets(&bones);
+            for (const SdfPath &bone : bones) {
+                skeletonOf.emplace(bone, solver.GetPath());
+                bonesOf[solver.GetPath()].insert(bone);
+                skeleton2dBones.insert(bone);
+            }
+        }
+        if (!skeletonOf.empty()) {
+            for (const UsdPrim &prim : UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
+                if (prim.GetTypeName() != _skeleton2dCompileTokens->RigExecSpaceSwitch) continue;
+                SdfPathVector switched, sources;
+                prim.GetRelationship(_skeleton2dCompileTokens->target).GetTargets(&switched);
+                if (switched.size() != 1) continue;
+                const auto owner = skeletonOf.find(switched[0]);
+                if (owner == skeletonOf.end()) continue;
+                prim.GetRelationship(_skeleton2dCompileTokens->sources).GetTargets(&sources);
+                for (const SdfPath &source : sources) {
+                    if (!bonesOf[owner->second].count(source)) {
+                        skeleton2dSwitchSources[owner->second].push_back(source);
+                    }
+                }
+            }
+        }
+    }
     // A chain's rigExec:startFrame with no composed targets reads the
     // provider its policy derived, exactly where an authored target would.
     const auto appendDerivedStart = [&derivedStartFrames](
@@ -1339,6 +1397,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             newSolverDependencies[solver.GetPath()];
         }
         for (const UsdPrim &solver : solvers) {
+            // The relationship targets, then a 2D skeleton's outside
+            // switch sources.
+            std::vector<SdfPathVector> reads;
             for (const UsdRelationship &rel : solver.GetRelationships()) {
                 if (rel.GetName() == "rigExec:joints") {
                     continue;
@@ -1346,6 +1407,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 SdfPathVector targets;
                 rel.GetTargets(&targets);
                 appendDerivedStart(rel, &targets);
+                reads.push_back(std::move(targets));
+            }
+            const auto switchSources = skeleton2dSwitchSources.find(solver.GetPath());
+            if (switchSources != skeleton2dSwitchSources.end()) {
+                reads.push_back(switchSources->second);
+            }
+            for (const SdfPathVector &targets : reads) {
                 for (const SdfPath &target : targets) {
                     const SdfPath targetPrim = target.GetPrimPath();
                     if (solverPaths.count(targetPrim)) {
@@ -1415,6 +1483,9 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     std::vector<RigExecValueOverride> newFalloffLutOverrides;
     std::set<SdfPath> newCurrentPhaseWeights;
     std::set<SdfPath> newVolumeWeightProviders;
+    // The providers capsule weights read their segment end from; seeded so
+    // a capsule ending at a prim nothing else poses still has its frame.
+    std::set<SdfPath> newCapsuleEndProviders;
 
     // Walks a weight object and everything it composes, gathering what
     // the volumetric types need beyond their computeWeightPacket tap.
@@ -1481,6 +1552,24 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // curve weight.
             requireTargets(_tokens->rigExecSampleSource, 1,
                            "at most one points source");
+            if (w.GetTypeName() == RigExecCapsuleWeightType()) {
+                std::string why;
+                const SdfPath end = RigExecCapsuleSegmentEnd(w, &why);
+                if (!why.empty()) {
+                    volumeWeightError = why;
+                } else if (!end.IsEmpty()) {
+                    const UsdPrim endPrim = _stage->GetPrimAtPath(end);
+                    if (!endPrim || !_IsFrameProvider(endPrim)) {
+                        volumeWeightError =
+                            weightPath.GetString() + ": rigExec:segmentEnd " +
+                            end.GetString() +
+                            " must name a RigExecJoint, RigExecControl or "
+                            "volume weight";
+                    } else {
+                        newCapsuleEndProviders.insert(end);
+                    }
+                }
+            }
             if (w.GetTypeName() == "RigExecCurveWeight") {
                 SdfPathVector curves;
                 if (const UsdRelationship rel = w.GetRelationship(
@@ -2143,7 +2232,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     // ordered before the arm blend read the rest wrist). Authored and derived
     // starts alike -- the read does not know which.
     for (const UsdPrim &solver : orderedSolvers) {
-        if (solver.GetTypeName() != "RigExecFkChain") {
+        if (solver.GetTypeName() != "RigExecFkChain" &&
+            solver.GetTypeName() != "RigExecSkeleton2d") {
             continue;
         }
         const UsdRelationship startRel =
@@ -2757,6 +2847,15 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 }
             }
         }
+        // A 2D skeleton's outside switch sources: frame inputs read at base.
+        const auto switchSources = skeleton2dSwitchSources.find(solver);
+        if (switchSources != skeleton2dSwitchSources.end()) {
+            for (const SdfPath &source : switchSources->second) {
+                if (isFrameProvider(source.GetPrimPath())) {
+                    solverFrameInputs[solver].insert(source.GetPrimPath());
+                }
+            }
+        }
     }
     // The pose closure is otherwise computed one prim's _CollectPoseInputInfo
     // at a time, in the constraint pass and again in
@@ -3337,6 +3436,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     for (const SdfPath &path : newJointPaths) seedProvider(path);
     for (const SdfPath &path : newControlPaths) seedProvider(path);
     for (const SdfPath &path : newVolumeWeightProviders) seedProvider(path);
+    for (const SdfPath &path : newCapsuleEndProviders) seedProvider(path);
     const auto seedGeometryProviders = [&](const auto &chains) {
         for (const auto &[target, revisions] : chains)
             for (const _GraphRevision &revision : revisions) {
@@ -3371,6 +3471,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         for(const UsdPrim &prim:UsdPrimRange(rig)) {
             if(prim.GetTypeName()!="RigExecSpaceSwitch")continue;
             const SdfPath path=prim.GetPath();
+            // A switch on a 2D skeleton's bone is the skeleton's to read.
+            {
+                SdfPathVector switched;
+                prim.GetRelationship(_skeleton2dCompileTokens->target).GetTargets(&switched);
+                if(switched.size()==1 && skeleton2dBones.count(switched[0]))continue;
+            }
             const bool defaultCapture = compileScene &&
                 compileScene->rigRoot == _rigPath &&
                 compileScene->identities.size() == 1 &&
@@ -3671,6 +3777,23 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
         }
     }
     _propertyChains = std::move(newPropertyChains);
+    // The scalar primvar subset, once per compile on the owner thread.
+    // _propertyChains is ordered by target, so the list is sorted.
+    constexpr size_t kPrimvarsLength = sizeof("primvars:") - 1;
+    _scalarPrimvarTargets.clear();
+    _scalarPrimvarNames.clear();
+    for (const auto &[target, revisions] : _propertyChains) {
+        if (revisions.empty()) continue;
+        const UsdAttribute attribute =
+            _stage ? _stage->GetAttributeAtPath(target) : UsdAttribute();
+        if (!attribute ||
+            !RigExecIsScalarPrimvarTarget(target, attribute.GetTypeName())) {
+            continue;
+        }
+        _scalarPrimvarTargets.push_back(target);
+        _scalarPrimvarNames.emplace_back(
+            target.GetName().substr(kPrimvarsLength));
+    }
     _propertyChainOrder = std::move(newPropertyChainOrder);
     _phasedConnections = std::move(newPhasedConnections);
     // Every attribute a chain READS through a connection.

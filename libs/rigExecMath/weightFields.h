@@ -154,6 +154,24 @@ void RigExecSphereWeightField(
     const GfVec3f &positiveScales = GfVec3f(1.0f),
     const GfVec3f &negativeScales = GfVec3f(1.0f));
 
+/// A capsule's segment end in its scaled local frame: \p end (in the space
+/// \p scaledWorldToLocal maps from, the space the volume is placed in)
+/// carried through that map and narrowed to float, exactly as the points
+/// are. False, leaving \p localEnd untouched, when the result is not finite.
+/// Every evaluator places the end through this one function.
+bool RigExecCapsuleLocalEnd(const GfMatrix4d &scaledWorldToLocal,
+                            const GfVec3d &end, GfVec3f *localEnd);
+
+/// Capsule: the distance to the segment from the local origin to
+/// \p localEnd, which the caller expresses in the same (scaled) local frame
+/// \p worldToLocal maps the points into. A zero \p localEnd is a sphere.
+void RigExecCapsuleWeightField(
+    const std::vector<GfVec3f> &points,
+    const GfMatrix4d &worldToLocal,
+    const GfVec3f &localEnd,
+    const RigExecFalloffParams &params,
+    std::vector<float> *weights);
+
 /// \p bounds is null for the infinite plane and non-null for a bounded
 /// one, whose field is exactly zero outside the rectangle. A pointer
 /// rather than a flag-plus-struct so "unbounded" has one spelling and a
@@ -187,6 +205,9 @@ void RigExecSphereWeightField(RigExecWeightPointView points,
     const GfVec3f &positiveScales = GfVec3f(1.0f),
     const GfVec3f &negativeScales = GfVec3f(1.0f),
     const RigExecRangeRunner *ranges = nullptr);
+void RigExecCapsuleWeightField(RigExecWeightPointView points,
+    const GfMatrix4d &, const GfVec3f &localEnd, const RigExecFalloffParams &,
+    std::vector<float> *, const RigExecRangeRunner *ranges = nullptr);
 void RigExecPlaneWeightField(RigExecWeightPointView points,
     const GfMatrix4d &, int axis, const RigExecFalloffParams &,
     std::vector<float> *, const RigExecPlaneBounds *bounds = nullptr,

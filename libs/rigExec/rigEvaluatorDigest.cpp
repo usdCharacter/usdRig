@@ -5,6 +5,7 @@
 #include "rigEvaluatorConstraints.h"
 #include "parallel.h"
 #include "pathText.h"
+#include "capsuleSegment.h"
 #include "crossDomainInputs.h"
 #include "moverGraph.h"
 #include "movers/moverRegistry.h"
@@ -16,6 +17,7 @@
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/base/vt/dictionary.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
@@ -27,6 +29,45 @@
 #include <functional>
 #include <set>
 #include <unordered_map>
+
+// The Skeleton2d digest's names, interned once when the library loads.
+TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestRels,
+    ((targetCandidates, "bone2d:targetCandidates"))
+    ((angleControl, "bone2d:angleControl"))
+    ((posControl, "bone2d:posControl"))
+    ((scaleControl, "bone2d:scaleControl")));
+TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestSettings,
+    ((angleLimits, "bone2d:angleLimits"))
+    ((minAngle, "bone2d:minAngle"))
+    ((maxAngle, "bone2d:maxAngle"))
+    ((independentAngle, "bone2d:independentAngle"))
+    ((scalingMode, "bone2d:scalingMode"))
+    ((squashFactor, "bone2d:squashFactor"))
+    ((ignoredByIk, "bone2d:ignoredByIk"))
+    ((maxStretch, "bone2d:maxStretch"))
+    ((angleControlFactor, "bone2d:angleControlFactor"))
+    ((posControlFactorX, "bone2d:posControlFactorX"))
+    ((posControlFactorY, "bone2d:posControlFactorY"))
+    ((scaleControlFactor, "bone2d:scaleControlFactor")));
+TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestRests,
+    ((tx, "rest:tx"))
+    ((ty, "rest:ty"))
+    ((tz, "rest:tz"))
+    ((rx, "rest:rx"))
+    ((ry, "rest:ry"))
+    ((rz, "rest:rz"))
+    ((space, "rest:space")));
+TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestMisc,
+    ((bone2dApi, "RigExecBone2dAPI"))
+    ((boneGroups, "rigExec:boneGroups"))
+    ((groupApi, "RigExecBone2dGroupAPI"))
+    ((includes, "collection:members:includes"))
+    ((excludes, "collection:members:excludes"))
+    ((expansionRule, "collection:members:expansionRule"))
+    ((membershipExpression, "collection:members:membershipExpression"))
+    ((enabled, "rigExec:enabled"))
+    ((joint, "RigExecJoint"))
+    ((startFramePolicy, "rigExec:startFramePolicy")));
 
 namespace rigExec {
 
@@ -114,6 +155,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecSampleCount, "rigExec:sampleCount"))
     ((rigExecSampleSource, "rigExec:sampleSource"))
     ((rigExecSamples, "rigExec:samples"))
+    ((rigExecSegmentEnd, "rigExec:segmentEnd"))
     ((rigExecSkinningMethod, "rigExec:skinningMethod"))
     ((rigExecSolverMode, "rigExec:solverMode"))
     ((rigExecSources, "rigExec:sources"))
@@ -152,9 +194,12 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecBasis, "rigExec:basis"))
     ((rigExecBiases, "rigExec:biases"))
     ((rigExecBlendShear, "rigExec:blendShear"))
+    ((rigExecChannelMode, "rigExec:channelMode"))
     ((rigExecDistanceMethod, "rigExec:distanceMethod"))
+    ((rigExecDriverSamples, "rigExec:driverSamples"))
     ((rigExecEnableRotation, "rigExec:enableRotation"))
     ((rigExecEnableTranslation, "rigExec:enableTranslation"))
+    ((rigExecFrameTies, "rigExec:frameTies"))
     ((rigExecIkValue, "rigExec:ikValue"))
     ((rigExecInputMean, "rigExec:inputMean"))
     ((rigExecInputScale, "rigExec:inputScale"))
@@ -182,6 +227,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecRowSlope, "rigExec:rowSlope"))
     ((rigExecRowTo, "rigExec:rowTo"))
     ((rigExecScale, "rigExec:scale"))
+    ((rigExecSide, "rigExec:side"))
     ((rigExecSolver, "rigExec:solver"))
     ((rigExecSpaceLabels, "rigExec:spaceLabels"))
     ((rigExecTranslation, "rigExec:translation"))
@@ -636,6 +682,19 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += '|';
         }
         appendRelTargets(w, _tokens->rigExecSampleSource, true);
+        // A capsule's segment end is a provider binding resolved at compile,
+        // by default from the parent joint's children in namespace order, so
+        // the resolution (not only the relationship) is compiled rig identity.
+        if (w.GetTypeName() == RigExecCapsuleWeightType()) {
+            appendRelTargets(w, _tokens->rigExecSegmentEnd, true);
+            std::string why;
+            const SdfPath end = RigExecCapsuleSegmentEnd(w, &why);
+            noteRead(w.GetPath().GetParentPath());
+            if (!end.IsEmpty()) noteRead(end);
+            digest += "rigExec:segmentEnd=";
+            digest += end.IsEmpty() ? why : pathText(end);
+            digest += '|';
+        }
         // The falloff curve is structural: it is resampled to a table
         // once per rig compilation, so an edit to it has to begin a new one.
         // What gets hashed is the BAKED TABLE, not the knots. Hashing
@@ -781,7 +840,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                   _scalarTokens->rigExecBiases,
                   _scalarTokens->rigExecInputMean,
                   _scalarTokens->rigExecInputScale,
-                  _scalarTokens->rigExecOutputDefaults}) {
+                  _scalarTokens->rigExecOutputDefaults,
+                  // A driven action's search table.
+                  _scalarTokens->rigExecDriverSamples,
+                  _scalarTokens->rigExecSide,
+                  _scalarTokens->rigExecFrameTies}) {
                 appendScalar(interpolator, name);
             }
             appendRelTargets(interpolator, _tokens->rigExecMeshes, false);
@@ -805,6 +868,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                       _scalarTokens->rigExecRowSlope,
                       _scalarTokens->rigExecRowCut,
                       _scalarTokens->rigExecPrimvarName,
+                      // A driven action's channels.
+                      _tokens->rigExecSamples,
+                      _scalarTokens->rigExecChannelMode,
                       _scalarTokens->inputsEnabled}) {
                     appendScalar(pose, name);
                 }
@@ -967,8 +1033,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     std::unordered_map<SdfPath, std::string, SdfPath::Hash>
         providerClosureTokens;
     struct _DigestHop {
-        std::vector<SdfPath> own;     // this prim's attributes, sorted
+        std::vector<SdfPath> own;     // this prim's input seeds, sorted
         std::set<SdfPath> depends;    // prims this one reads
+        std::set<SdfPath> sources;    // exact sources, including missing ones
         /// Set by the prefetch below and nowhere else: the attributeText of
         /// every path in \c own, concatenated in \c own's order, and whether
         /// any of them has a connection source.
@@ -1063,9 +1130,13 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         _DigestAttribute read = readOf(attribute);
         // Every attribute read here is written out with its sources, so a
         // connected one goes into the certain footprint as it stands.
-        if (footprint && !read.sources.empty()) {
-            footprint->certain.closureConnections.insert_or_assign(
-                path, read.sources);
+        if (footprint) {
+            footprint->certain.closureAttributes.insert_or_assign(
+                path, read.typeName);
+            if (!read.sources.empty()) {
+                footprint->certain.closureConnections.insert_or_assign(
+                    path, read.sources);
+            }
         }
         return digestAttributes.insert_or_assign(std::move(path),
                                                  std::move(read))
@@ -1103,7 +1174,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // its OWN attributes plus the tokens of the providers it reads, in
         // path order. A provider is shared by every closure that reaches
         // it, so the work is linear in providers. Identity is at least as
-        // strong as the flattened set: any change to any attribute, type or
+        // strong as the flattened set: any change to any input, type or
         // connection anywhere in a closure changes that provider's token
         // and therefore every token that folds it in -- and it also
         // distinguishes WHICH provider an attribute arrived through, which
@@ -1126,7 +1197,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             }
             return text->second;
         };
-        // ONE HOP of a prim's pose inputs: every attribute it owns, and the
+        // ONE HOP of a prim's pose inputs: its own input seeds, and the
         // prims those attributes lead to. The same rules as
         // _CollectPoseInputInfo -- connections, parent:space to the
         // namespace frame provider, the default-space fallback -- but it
@@ -1189,10 +1260,12 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 }
                 for (const UsdAttribute &attribute :
                      provider.GetAttributes()) {
+                    if (!_IsPoseInputSeed(attribute)) continue;
                     hop.own.push_back(attribute.GetPath());
                     const _DigestAttribute &read =
                         rememberAttribute(hop.own.back(), attribute);
                     for (const SdfPath &source : read.sources) {
+                        hop.sources.insert(source);
                         if (source.GetPrimPath() != key) {
                             hop.depends.insert(source.GetPrimPath());
                         }
@@ -1264,15 +1337,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     continue;
                 }
                 const _DigestHop &hop = hopFor(provider);
-                // WHAT THIS TOKEN FOLDS IN: this prim's own attributes by
-                // text, and every prim it reads one hop away by token. A
-                // foreign attribute is never written out here -- its owner's
-                // token already hashes all of that owner's own attributes,
-                // so any edit to it changes this token too. That is at least
-                // as strong an identity as the flattened set this replaced,
-                // and marginally stronger: a structural edit to another
-                // attribute of a connection-source prim now also recompiles,
-                // which is a recompile, never a missed one.
+                // Each token folds in its own input seeds, the exact sources
+                // they name, and the providers reached one hop away. A source
+                // need not be a seed of its owner: custom terminal properties
+                // and missing sources still contribute their type/presence.
                 const std::set<SdfPath> &depends = hop.depends;
                 if (!expanded) {
                     if (state[path] == 1) {
@@ -1302,6 +1370,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         text += attributeText(attribute);
                     }
                 }
+                // An explicitly named source is structural even when it is
+                // not an own seed of its provider, or does not exist yet.
+                for (const SdfPath &source : hop.sources) {
+                    text += attributeText(source);
+                }
                 for (const SdfPath &input : depends) {
                     const auto ready = providerClosureTokens.find(input);
                     if (ready != providerClosureTokens.end()) {
@@ -1322,8 +1395,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
 
         // The prim's own authored connection inputs sit beside its provider
         // closure. The same
-        // iterative closure as _CollectAttributeConnectionInputs -- every
-        // attribute the prim owns, then every source reached from one,
+        // iterative closure as _CollectAttributeConnectionInputs -- the
+        // prim's input seeds, then every source reached from one,
         // missing sources and cycles included -- but read through the memo,
         // which by now already holds the prim's own attributes (the walk
         // above ran hopFor on it) and most of what they connect to. The
@@ -1344,6 +1417,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 pending = hopFor(prim).own;
             } else {
                 for (const UsdAttribute &attribute : prim.GetAttributes()) {
+                    if (!_IsPoseInputSeed(attribute)) continue;
                     pending.push_back(attribute.GetPath());
                 }
             }
@@ -1524,8 +1598,10 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 reads.clear();
                 for (const UsdAttribute &attribute :
                      provider.GetAttributes()) {
+                    if (!_IsPoseInputSeed(attribute)) continue;
                     _DigestAttribute read = readOf(attribute);
                     for (const SdfPath &source : read.sources) {
+                        made.hop.sources.insert(source);
                         if (source.GetPrimPath() != key) {
                             made.hop.depends.insert(source.GetPrimPath());
                         }
@@ -1781,6 +1857,110 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 digest += std::to_string(w.size()) + "/" +
                           std::to_string(wa ? wa.GetNumTimeSamples() : 0) +
                           ",";
+            } else if (stype == "RigExecSkeleton2d") {
+                // Every bone's hierarchy and uniform RigExecBone2dAPI
+                // settings are compiled into the solver record, so an edit
+                // to one recompiles: hashed by value, with the sample counts
+                // the compile refuses, and with what the compile validates
+                // about the bone (its API, its rest attributes). The
+                // hierarchy is the bones' paths (the joints list above)
+                // and the RigExecJoint ancestors between them; the tip is
+                // the first RigExecJoint child, whose rest is compiled when
+                // it is not a bone. The start-frame policy is hashed as for
+                // an FK chain.
+                // Value hashing: an in-process identity, never compared to
+                // a stored literal.
+                const auto appendValueNamed = [&](const UsdPrim &prim,
+                                                  const TfToken &name) {
+                    noteValueNamed(prim, name);
+                    VtValue value;
+                    const UsdAttribute a = prim.GetAttribute(name);
+                    if (a) {
+                        a.Get(&value);
+                    }
+                    digest.append(name.GetText(), name.size());
+                    digest += '=';
+                    digest += std::to_string(value.GetHash());
+                    digest += '|';
+                    return a;
+                };
+                const auto appendSamples = [&](const UsdAttribute &a) {
+                    digest += a ? std::to_string(a.GetNumTimeSamples()) +
+                                      (a.HasSpline() ? "s" : "") : "-";
+                    digest += ',';
+                };
+                appendSamples(appendValueNamed(solver, _bone2dDigestMisc->startFramePolicy));
+                const std::set<SdfPath> boneSet(joints.begin(), joints.end());
+                for (const SdfPath &j : joints) {
+                    const UsdPrim bone = _stage->GetPrimAtPath(j);
+                    if (!bone) {
+                        continue;
+                    }
+                    // The nearest RigExecJoint ancestor decides the parent.
+                    for (UsdPrim up = bone.GetParent(); up && up.GetPath() != _rigPath;
+                         up = up.GetParent()) {
+                        if (up.GetTypeName() == _bone2dDigestMisc->joint) {
+                            digest += pathText(up.GetPath());
+                            break;
+                        }
+                    }
+                    digest += '>';
+                    // The tip: the first RigExecJoint child; an End joint's
+                    // rest is compiled, so it is hashed by value.
+                    for (const UsdPrim &child : bone.GetChildren()) {
+                        if (child.GetTypeName() != _bone2dDigestMisc->joint) {
+                            continue;
+                        }
+                        digest += pathText(child.GetPath());
+                        if (!boneSet.count(child.GetPath())) {
+                            for (const TfToken &name : _bone2dDigestRests->allTokens) {
+                                appendSamples(appendValueNamed(child, name));
+                            }
+                        }
+                        break;
+                    }
+                    digest += '|';
+                    bool hasApi = false;
+                    for (const TfToken &api : bone.GetAppliedSchemas()) {
+                        hasApi = hasApi || api == _bone2dDigestMisc->bone2dApi;
+                    }
+                    digest += hasApi ? "api|" : "noapi|";
+                    for (const TfToken &name : _bone2dDigestRels->allTokens) {
+                        appendRelTargetsNamed(bone, name, false);
+                    }
+                    for (const TfToken &name : _bone2dDigestSettings->allTokens) {
+                        appendSamples(appendValueNamed(bone, name));
+                    }
+                    for (const TfToken &name : _bone2dDigestRests->allTokens) {
+                        noteValueNamed(bone, name);
+                        const UsdAttribute a = bone.GetAttribute(name);
+                        digest += a && a.HasAuthoredValue() ? "a" : "-";
+                        digest += a ? std::to_string(a.GetNumTimeSamples()) +
+                                          (a.HasSpline() ? "s" : "") : "";
+                        digest += ',';
+                    }
+                }
+                // Bone groups: order, the API the compile checks, the
+                // members collection (includes in order, excludes, the
+                // explicit-only rule) and enabled flags are compiled.
+                const std::vector<SdfPath> groupPaths = appendRelTargetsNamed(
+                    solver, _bone2dDigestMisc->boneGroups, false);
+                for (const SdfPath &groupPath : groupPaths) {
+                    const UsdPrim group = _stage->GetPrimAtPath(groupPath);
+                    if (!group) {
+                        continue;
+                    }
+                    bool hasGroupApi = false;
+                    for (const TfToken &api : group.GetAppliedSchemas()) {
+                        hasGroupApi = hasGroupApi || api == _bone2dDigestMisc->groupApi;
+                    }
+                    digest += hasGroupApi ? "api|" : "noapi|";
+                    appendRelTargetsNamed(group, _bone2dDigestMisc->includes, false);
+                    appendRelTargetsNamed(group, _bone2dDigestMisc->excludes, true);
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->expansionRule));
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->membershipExpression));
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->enabled));
+                }
             }
             digest += ';';
         }
@@ -1908,6 +2088,25 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                                 digest += attribute.GetResolveInfo(UsdTimeCode::Default()).ValueIsBlocked()?":blocked":":readable";
                                 digest += ":variability="+std::to_string(int(attribute.GetVariability()));
                                 digest += ":samples="+std::to_string(attribute.GetNumTimeSamples());
+                                noteSamples(path,attribute.GetTypeName().GetAsToken());
+                                // Every attribute a binding names as
+                                // structure is watched: its type, sample
+                                // count and connections are digested. A
+                                // uniform one is compiled layout (a point-code
+                                // array, a mode token): its Default value is
+                                // rig identity, so it is hashed here and an
+                                // edit recompiles. A varying one is read per
+                                // frame through declared inputs: only its
+                                // samples are noted, so a value edit stays
+                                // neutral. A varying attribute whose Default
+                                // feeds the compiled data is listed in
+                                // externalCompileSources instead.
+                                if(attribute.GetVariability()==SdfVariabilityUniform) {
+                                    noteValue(path);
+                                    VtValue value;
+                                    attribute.Get(&value,UsdTimeCode::Default());
+                                    digest += ":value="+std::to_string(value.GetHash());
+                                }
                                 for(const auto &source:_AuthoredConnections(attribute)) {
                                     noteRead(source);digest += "->"+pathText(source);
                                 }
@@ -1930,6 +2129,29 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         }
                         digest += '|';
                     }
+                    // Attributes the compiled data resolves at Default: an
+                    // edit of one is a structure edit even when it is varying.
+                    digest += "compileSources=";
+                    for(const auto &path:binding.externalCompileSources) {
+                        noteRead(path);noteValue(path);digest += pathText(path);
+                        if(const auto attribute=_stage->GetAttributeAtPath(path)) {
+                            VtValue value;
+                            attribute.Get(&value,UsdTimeCode::Default());
+                            digest += ":value="+std::to_string(value.GetHash());
+                        }
+                        digest += ',';
+                    }
+                    digest += '|';
+                    // The compiled data is a function of the stage that the
+                    // structure paths above may not cover on their own; a
+                    // change of it recompiles. A dictionary hashes by value;
+                    // another payload type contributes its type only.
+                    digest += "compiledData=";
+                    if(binding.externalCompileData.IsHolding<VtDictionary>())
+                        digest += std::to_string(binding.externalCompileData.GetHash());
+                    else if(!binding.externalCompileData.IsEmpty())
+                        digest += binding.externalCompileData.GetTypeid().name();
+                    digest += '|';
                 }
             }
             digest += ';';

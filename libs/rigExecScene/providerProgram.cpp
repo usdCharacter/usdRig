@@ -38,7 +38,7 @@ namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message; return false; }
 bool Provider(const TfToken &type) {
     return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" ||
-        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";
+        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight" || type=="RigExecCapsuleWeight";
 }
 const char *const computations[]={"computeRestFrame","computedDefaultSpace","computeDefaultFrame",
     "computedParentDefaultSpace","computedParentSpace","computePointFrame","computeMatrix","interveningSpace","computeAvarMatrix"};
@@ -111,7 +111,7 @@ const std::vector<AffineTokens> _affineTokens=[] {
     return table;
 }();
 // The xform operation type a name's type part spells, from the type tokens.
-UsdGeomXformOp::Type XformOpType(const std::string &name,size_t begin,size_t count) {
+UsdGeomXformOp::Type XformOpType(std::string_view name,size_t begin,size_t count) {
     for(int t=UsdGeomXformOp::TypeInvalid+1;t<=UsdGeomXformOp::TypeTransform;++t)
         if(!name.compare(begin,count,UsdGeomXformOp::GetOpTypeToken(UsdGeomXformOp::Type(t)).GetString()))return UsdGeomXformOp::Type(t);
     return UsdGeomXformOp::TypeInvalid;
@@ -587,6 +587,51 @@ bool RigExecProviderOpStructurallyValid(const RigExecProviderProgram &program,
         return Fail(error,"provider operation owner was not spelled at build");
     return true;
 }
+bool RigExecComposeLocalXform(const VtTokenArray &order,const RigExecXformOpLookup &lookup,
+    bool missingIsIdentity,GfMatrix4d *local,bool *resets,std::string *error,TfToken *failedOp) {
+    GfMatrix4d result(1.0);
+    if(resets)*resets=false;
+    for(size_t reverse=order.size();reverse>0;--reverse) {
+        const auto &token=order[reverse-1];
+        std::string_view name=token.GetString();
+        if(name=="!resetXformStack!"){if(resets)*resets=true;break;}
+        const bool inverse=name.rfind("!invert!",0)==0;
+        if(inverse)name.remove_prefix(8);
+        if(reverse>1) {
+            std::string_view next=order[reverse-2].GetString();
+            const bool nextInverse=next.rfind("!invert!",0)==0;
+            if(nextInverse)next.remove_prefix(8);
+            if(name==next && inverse!=nextInverse){--reverse;continue;}
+        }
+        int type=-1;
+        const VtValue *value=nullptr;
+        if(!lookup.find(lookup.context,name,&type,&value)) {
+            if(failedOp)*failedOp=token;
+            return Fail(error,"xform order names an uncaptured operation");
+        }
+        if(!value || value->IsEmpty()) {
+            if(missingIsIdentity)continue;
+            if(failedOp)*failedOp=token;
+            return Fail(error,"xform operation unavailable");
+        }
+        if(type<0 && name.rfind("xformOp:",0)!=0) {
+            if(failedOp)*failedOp=token;
+            return Fail(error,"unknown xform operation type");
+        }
+        if(type<0) {
+            const auto end=name.find(':',8);
+            type=int(XformOpType(name,8,end==std::string_view::npos?end:end-8));
+        }
+        if(type==UsdGeomXformOp::TypeInvalid) {
+            if(failedOp)*failedOp=token;
+            return Fail(error,"unknown xform operation type");
+        }
+        const auto transform=UsdGeomXformOp::GetOpTransform(UsdGeomXformOp::Type(type),*value,inverse);
+        if(transform!=GfMatrix4d(1.0))result*=transform;
+    }
+    *local=result;
+    return true;
+}
 bool RigExecRunProviderOp(const RigExecProviderProgram &program,uint32_t index,
     RigExecTypedValueStore *store,std::string *error) {
     if(!store || index>=program.ops.size() || store->values.size()<program.valueKeys.size())
@@ -622,27 +667,25 @@ bool RigExecRunProviderOp(const RigExecProviderProgram &program,uint32_t index,
         if((!order || !order->IsHolding<VtTokenArray>()) && !op.xforms.empty())
             return unavailable(id(0),"xform order unavailable: "+owner);
         if(order && order->IsHolding<VtTokenArray>()) {
-            const auto &tokens=order->UncheckedGet<VtTokenArray>();
-            for(size_t reverse=tokens.size();reverse>0;--reverse) {
-                const auto &token=tokens[reverse-1];
-                std::string_view name=token.GetString();
-                if(name=="!resetXformStack!")break;
-                const bool inverse=name.rfind("!invert!",0)==0;
-                if(inverse)name.remove_prefix(8);
-                if(reverse>1) {
-                    std::string_view next=tokens[reverse-2].GetString();
-                    const bool nextInverse=next.rfind("!invert!",0)==0;
-                    if(nextInverse)next.remove_prefix(8);
-                    if(name==next && inverse!=nextInverse){--reverse;continue;}
-                }
-                const auto input=std::find_if(op.xforms.begin(),op.xforms.end(),[&](const auto &candidate){return candidate.name.GetString()==name;});
-                if(input==op.xforms.end())return unavailable(id(0),"xform order names an uncaptured operation: "+owner+":"+token.GetString());
-                const auto *value=raw(input->raw);
-                if(!value || value->IsEmpty())
-                    return unavailable(input->raw,"xform operation unavailable: "+owner+":"+token.GetString());
-                const auto transform=UsdGeomXformOp::GetOpTransform(UsdGeomXformOp::Type(input->type),*value,inverse);
-                if(transform!=GfMatrix4d(1.0))result*=transform;
-            }
+            struct Source {const RigExecProviderOp &op; const RigExecTypedValueStore *store; RigExecValueId failed;} source{op,store,RigExecNoProviderValue};
+            const auto find=[](void *context,std::string_view name,int *type,const VtValue **value) {
+                auto &self=*static_cast<Source*>(context);
+                const auto input=std::find_if(self.op.xforms.begin(),self.op.xforms.end(),[&](const auto &candidate){return candidate.name.GetString()==name;});
+                if(input==self.op.xforms.end())return false;
+                *type=input->type;
+                const auto raw=input->raw;
+                const bool usable=raw<self.store->values.size() && self.store->values[size_t(raw)].initialized &&
+                    !self.store->values[size_t(raw)].blocked && !self.store->values[size_t(raw)].raw.IsEmpty();
+                *value=usable?&self.store->values[size_t(raw)].raw:nullptr;
+                self.failed=raw;
+                return true;
+            };
+            TfToken failedOp;
+            std::string reason;
+            bool resets=false;
+            if(!RigExecComposeLocalXform(order->UncheckedGet<VtTokenArray>(),{&source,find},false,&result,&resets,&reason,&failedOp))
+                return unavailable(reason.find("uncaptured")!=std::string::npos?id(0):source.failed,
+                    reason+": "+owner+":"+failedOp.GetString());
         }
         store->Publish(op.output,result);break;
     }

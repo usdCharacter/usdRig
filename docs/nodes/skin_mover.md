@@ -32,6 +32,17 @@ of hinging. `rigExec:skinningMethod` picks the blend: `classicLinear`
 for linear blend skinning, `dualQuaternion` for the volume-preserving
 one.
 
+Flat cut-out artwork binds to a [2D skeleton](skeleton_2d.md) the same
+way: the skeleton's bones are the influences and the weights are
+authored arrays like any other skin's. A [capsule weight](capsule_weight.md)
+placed inside each bone describes the region it owns, and
+`rigexec.binding.generate_skin_weights(stage, skin_mover)` writes the
+arrays from those capsules: per point, each influence's capsule field at
+the setup pose, normalised over `rigExec:influences`. The rows are
+authored data, generated once rather than evaluated per frame, so
+regenerate them after moving a rest or resizing a capsule; an optional
+`point_indices` list regenerates only those rows.
+
 Multi-influence skinning of an exact native point3f[] points
 property in ONE pass: every influence's matrix is gathered per point and
 blended by that point's authored weights, then the result is mixed with
@@ -199,6 +210,8 @@ python docs/render_media.py --page skin_mover
 - [Matrix Mover](matrix_mover.md)
 - [FK Chain](fk_chain.md)
 - [Joint](joint.md)
+- [Skeleton 2D](skeleton_2d.md)
+- [Capsule Weight](capsule_weight.md)
 
 ---
 

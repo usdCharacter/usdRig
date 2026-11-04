@@ -3,12 +3,14 @@
 #include "rigExecBake/arrayReads.h"
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/staticCapture.h"
+#include "rigExecBinary/format.h"
 #include "rigExec/bakedProgram.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/frozenContextInternal.h"
 #include "rigExec/moverGraph.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/rigEvaluatorInternal.h"
+#include "rigExecScene/skeleton2dTranslation.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
@@ -531,6 +533,9 @@ struct RigExecBakeComputedCapture::_State {
                     return false;
                 candidate.raw = hop.leaf >= 0;
                 candidate.crossDomain = hop.crossDomain;
+                // A property revision reading an interpolator publication
+                // (bakedProperties.cpp, BindState::Hop).
+                candidate.poseWeight = hop.poseWeight;
                 if (hop.chain >= 0) {
                     const auto &chain = program->propertyChains[size_t(hop.chain)];
                     candidate.kind = uint8_t(fb::PropertyCandidateKind::ChainFinal);
@@ -851,6 +856,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                       &wire.combineTargetPoints, &wire.combineTargetValid);
         wire.costElements = uint64_t(object.costElements);
         wire.providerSlot = int32_t(object.providerSlot);
+        wire.segmentEndSlot = int32_t(object.segmentEndSlot);
         wire.planeAxis = token(object.planeAxis);
         wire.planeBounds = token(object.planeBounds);
         _ToAttributes(object.targetPoints, interner, &wire.targetPoints,
@@ -1080,6 +1086,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         out.part = field.part;
         out.placementPhase = fb::WeightFieldPlacementPhase(field.placementPhase);
         out.volumes.assign(field.volumes.begin(), field.volumes.end());
+        out.segmentEnds.assign(field.segmentEnds.begin(), field.segmentEnds.end());
         out.availableChains.assign(field.availableChains.begin(), field.availableChains.end());
         out.scalarObjects.assign(field.scalarObjects.begin(), field.scalarObjects.end());
         for (int member : field.scalarMembers)
@@ -1325,8 +1332,30 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 &s.preserveVolume, &s.midFollowWeight, &s.roll,
                 &s.twist,          &s.minLengthRatio, &s.twistTurns,
                 &s.ribbonSampleCount, &s.ikSpace, &s.pin, &s.upperScale, &s.lowerScale, &s.softDistance, &s.limbTwist};
+            static_assert(std::size(fields) == RigExecWireSolverFixedFieldCount,
+                          "solver fixed fields: format.h, serialize.cpp, store.h");
             for (size_t f = 0; f < std::size(fields); ++f) {
                 place(fields[f], Family::Solver, i, f);
+            }
+            // A 2D skeleton's channels follow: thirteen per bone, in
+            // RigExecBone2dChannelNames order (Skeleton2d.channels), then the
+            // selectors (Skeleton2d.selector_channels): each group's
+            // activeBone, then each space switch's active index.
+            const size_t bones = std::min(s.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
+                                          s.bone2dBools.size() / kRigExecBone2dBoolChannels);
+            for (size_t k = 0; k < bones; ++k) {
+                for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
+                    const size_t at = RigExecBone2dChannelStorage(c);
+                    const void *input = RigExecBone2dChannelIsBool(c)
+                        ? static_cast<const void *>(&s.bone2dBools[k * kRigExecBone2dBoolChannels + at])
+                        : static_cast<const void *>(&s.bone2dDoubles[k * kRigExecBone2dDoubleChannels + at]);
+                    place(input, Family::Solver, i,
+                          RigExecWireSolverFixedFieldCount + k * kRigExecBone2dChannelCount + c);
+                }
+            }
+            for (size_t g = 0; g < s.bone2dSelectors.size(); ++g) {
+                place(static_cast<const void *>(&s.bone2dSelectors[g]), Family::Solver, i,
+                      RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount + g);
             }
         }
         for (size_t i = 0; i < B.constraints.size(); ++i) {
@@ -1698,6 +1727,7 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         object.samplesInFlight = oracleFacts[i].samplesInFlight;
         if (object.oracle && !object.samplesInFlight &&
             (object.type == TfToken("RigExecSphereWeight") ||
+             object.type == TfToken("RigExecCapsuleWeight") ||
              object.type == TfToken("RigExecPlaneWeight") ||
              object.type == TfToken("RigExecCurveWeight"))) {
             // Preserve full raw relationship cardinality. Prim targets are

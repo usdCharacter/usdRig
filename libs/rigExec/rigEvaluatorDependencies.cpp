@@ -29,12 +29,14 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
     ((rigExecMlMover, "RigExecMlMover"))
     ((rigExecAnimatedMaps, "RigExecAnimatedMaps"))
+    ((rigExecDrivenAction, "RigExecDrivenAction"))
     ((rigExecFkChain, "RigExecFkChain"))
     ((rigExecTwoBoneIk, "RigExecTwoBoneIk"))
     ((rigExecBlendPointFrames, "RigExecBlendPointFrames"))
     ((rigExecTwistDistribution, "RigExecTwistDistribution"))
     ((rigExecRibbon, "RigExecRibbon"))
     ((rigExecSplineIk, "RigExecSplineIk"))
+    ((rigExecSkeleton2d, "RigExecSkeleton2d"))
     ((rigExecJoints, "rigExec:joints"))
     ((rigExecPoseInputs, "rigExec:poseInputs"))
     ((parentSpace, "parent:space"))
@@ -108,6 +110,7 @@ _CollectAttributeConnectionInputs(const UsdPrim &prim)
     }
     std::vector<SdfPath> pending;
     for (const UsdAttribute &attribute : prim.GetAttributes()) {
+        if (!_IsPoseInputSeed(attribute)) continue;
         pending.push_back(attribute.GetPath());
     }
     while (!pending.empty()) {
@@ -223,7 +226,8 @@ _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
         const TfToken &type = prim.GetTypeName();
         return type == _tokens->rigExecPoseInterpolator ||
                type == _tokens->rigExecMlMover ||
-               type == _tokens->rigExecAnimatedMaps;
+               type == _tokens->rigExecAnimatedMaps ||
+               type == _tokens->rigExecDrivenAction;
     });
 }
 
@@ -263,7 +267,7 @@ const TfToken _kAggregateSolverTypes[] = {
     _tokens->rigExecFkChain, _tokens->rigExecTwoBoneIk,
     _tokens->rigExecBlendPointFrames,
     _tokens->rigExecTwistDistribution, _tokens->rigExecRibbon,
-    _tokens->rigExecSplineIk};
+    _tokens->rigExecSplineIk, _tokens->rigExecSkeleton2d};
 
 bool
 _IsAggregateSolverType(const TfToken &typeName)
@@ -317,6 +321,7 @@ _CollectPoseInputInfo(const UsdPrim &prim)
     std::vector<std::pair<SdfPath, bool>> pending;
     std::set<std::pair<SdfPath, bool>> visited;
     for (const UsdAttribute &attribute : prim.GetAttributes()) {
+        if (!_IsPoseInputSeed(attribute)) continue;
         pending.emplace_back(attribute.GetPath(), false);
     }
     while (!pending.empty()) {
@@ -791,6 +796,7 @@ _PoseInputGraph::Extend(
                     if (task.all && prim) {
                         for (const UsdAttribute &attribute :
                              prim.GetAttributes()) {
+                            if (!_IsPoseInputSeed(attribute)) continue;
                             read.listed.emplace_back(
                                 attribute.GetPath(),
                                 _AuthoredConnections(attribute));

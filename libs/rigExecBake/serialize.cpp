@@ -4,6 +4,7 @@
 #include "rigExecBake/pathTable.h"
 #include "rigExecBake/staticCapture.h"
 #include "rigExec/bakedProgramImpl.h"
+#include "rigExec/rigEvaluator.h"
 #include "rigExecScene/providerRecordExport.h"
 
 #include <algorithm>
@@ -780,6 +781,61 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     out->midRead = solver.midRead;
     out->endRead = solver.endRead;
     out->poleRead = solver.poleRead;
+    if (solver.kind == RigExecSolverKind::Skeleton2d) {
+        // The structural setup in solve order; the channels as registered,
+        // kRigExecBone2dChannelCount per bone after the
+        // RigExecWireSolverFixedFieldCount fixed fields, then the selectors:
+        // one group activeBone value per group, then one active index per
+        // space switch (computedCapture.cpp). The start frame and the
+        // outside parent spaces are the row's start and controls.
+        auto skeleton = std::make_unique<fb::RigExecWireSkeleton2d>();
+        const size_t bones = solver.bone2dOrder.size();
+        skeleton->solveOrder = solver.bone2dOrder;
+        for (const RigExecBone2dSetup &bone : solver.bone2dSetup) {
+            skeleton->parent.push_back(bone.parent);
+            skeleton->flags.push_back(bone.flags);
+            skeleton->limits.push_back(bone.minAngle);
+            skeleton->limits.push_back(bone.maxAngle);
+            skeleton->scaling.push_back(uint8_t(bone.scaling));
+            skeleton->squashFactor.push_back(bone.squashFactor);
+            skeleton->maxStretch.push_back(bone.maxStretch);
+            skeleton->tipBone.push_back(bone.tipBone);
+            skeleton->tip.push_back(bone.tipX);
+            skeleton->tip.push_back(bone.tipY);
+            skeleton->spaceBegin.push_back(bone.spaceBegin);
+            skeleton->spaceCount.push_back(bone.spaceCount);
+            skeleton->spaceSelector.push_back(bone.spaceSelector);
+            skeleton->targetBegin.push_back(bone.targetBegin);
+            skeleton->targetCount.push_back(bone.targetCount);
+            skeleton->angleController.push_back(bone.angleController);
+            skeleton->posController.push_back(bone.posController);
+            skeleton->scaleController.push_back(bone.scaleController);
+            skeleton->controlFactors.push_back(bone.angleFactor);
+            skeleton->controlFactors.push_back(bone.posFactorX);
+            skeleton->controlFactors.push_back(bone.posFactorY);
+            skeleton->controlFactors.push_back(bone.scaleFactor);
+        }
+        skeleton->spaceSources = solver.bone2dSpaceSources;
+        skeleton->targetCandidates = solver.bone2dTargetCandidates;
+        for (const RigExecBone2dGroup &group : solver.bone2dGroups) {
+            skeleton->groupBegin.push_back(group.memberBegin);
+            skeleton->groupCount.push_back(group.memberCount);
+            skeleton->groupEnabled.push_back(group.enabled ? uint8_t(1) : uint8_t(0));
+        }
+        skeleton->groupMembers = solver.bone2dGroupMembers;
+        skeleton->channels.reserve(bones * kRigExecBone2dChannelCount);
+        for (size_t f = 0; f < bones * kRigExecBone2dChannelCount; ++f) {
+            skeleton->channels.push_back(
+                _RegisteredValue(_Family::Solver, index, RigExecWireSolverFixedFieldCount + f));
+        }
+        const size_t selectors = solver.bone2dSelectors.size();
+        skeleton->selectorChannels.reserve(selectors);
+        for (size_t g = 0; g < selectors; ++g) {
+            skeleton->selectorChannels.push_back(_RegisteredValue(_Family::Solver, index,
+                RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount + g));
+        }
+        out->skeleton2d = std::move(skeleton);
+    }
 }
 
 void
@@ -1052,6 +1108,26 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
             out.maps = std::move(maps);
             out.primvarSlots = _ToI32s(interp.primvarSlots);
             out.primvarSources = _ToI32s(interp.primvarSources);
+        }
+        if (interp.drivenSolve && interp.driven) {
+            // The search table; the one value input is the driver.
+            const RigExecDrivenActionTable &table = *interp.driven;
+            auto driven = std::make_unique<fb::RigExecWireDrivenAction>();
+            driven->driver = table.driver;
+            driven->side = int8_t(table.side);
+            driven->fullTurn = table.fullTurn;
+            driven->tiesLater = table.tiesLater;
+            driven->channelBegin.push_back(0);
+            for (const std::vector<double> &samples : table.channelSamples) {
+                driven->channelSamples.insert(driven->channelSamples.end(),
+                                             samples.begin(), samples.end());
+                driven->channelBegin.push_back(
+                    uint32_t(driven->channelSamples.size()));
+            }
+            for (const char offset : table.channelOffset) {
+                driven->channelOffset.push_back(offset ? 1 : 0);
+            }
+            out.drivenAction = std::move(driven);
         }
     }
     pose->poseWeightPaths.reserve(program.poseWeightPaths.size());
@@ -1726,6 +1802,24 @@ _FileFill::Run(fb::RigExecWireFile *file, std::string *error)
         fb::RigExecWireCommonCycle row;
         row.keys = cycle;
         common.cycles.push_back(std::move(row));
+    }
+    // The property chains whose float or double result is a `primvars:`
+    // property, sorted by target path: the rule GetScalarPrimvarTargets
+    // applies, over the same chains (file property_chains parallel
+    // _program.propertyChains).
+    {
+        std::vector<std::pair<SdfPath, uint32_t>> scalars;
+        for (size_t c = 0; c < _program.propertyChains.size(); ++c) {
+            const RigExecBakedPropertyChain &chain = _program.propertyChains[c];
+            if (!chain.revisions.empty() && chain.targetExists &&
+                RigExecIsScalarPrimvarTarget(chain.target, chain.valueType)) {
+                scalars.emplace_back(chain.target, uint32_t(c));
+            }
+        }
+        std::sort(scalars.begin(), scalars.end());
+        for (const auto &entry : scalars) {
+            file->scalarPrimvarChains.push_back(entry.second);
+        }
     }
     // The windowed operations by step; a reader settles the rest from the
     // common graph.

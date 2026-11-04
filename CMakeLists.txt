@@ -98,9 +98,11 @@ set_target_properties(rigExecInputValues PROPERTIES POSITION_INDEPENDENT_CODE ON
 # USD scene translation. A shared library: librigExec does not absorb it.
 # Frame-path program runners are sources of rigExec, below.
 add_library(rigExecScene SHARED
+    libs/rigExecScene/authoredRestSpace.cpp
     libs/rigExecScene/autoClavicleGraph.cpp
     libs/rigExecScene/constraintGraphBinding.cpp
     libs/rigExecScene/constraintSceneTranslation.cpp
+    libs/rigExecScene/drivenActionTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
@@ -119,6 +121,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/sceneProgramTranslation.cpp
     libs/rigExecScene/sceneTypedReads.cpp
     libs/rigExecScene/sceneVersionRoutes.cpp
+    libs/rigExecScene/skeleton2dTranslation.cpp
     libs/rigExecScene/solverGraphBinding.cpp
     libs/rigExecScene/solverSceneTranslation.cpp
     libs/rigExecScene/usdSceneAccess.cpp
@@ -149,6 +152,7 @@ add_library(rigExec SHARED
     libs/rigExec/moverKernels.cpp
     libs/rigExec/solverKernels.cpp
     libs/rigExec/weightPackets.cpp
+    libs/rigExec/capsuleSegment.cpp
     libs/rigExec/inputReplay.cpp
     libs/rigExec/scalarReferenceAdapter.cpp
     libs/rigExec/oracleDispatch.cpp
@@ -294,6 +298,7 @@ target_link_libraries(rigExecStandalone PUBLIC rigExec exec esf usd sdf)
 target_link_libraries(rigExecStandalone PRIVATE rigExecScene)
 
 add_library(rigExecAuthoring SHARED
+    libs/rigExecAuthoring/generateSkinWeights.cpp
     libs/rigExecAuthoring/rigBuilder.cpp
     libs/rigExecAuthoring/schemaAuthoring.cpp)
 target_include_directories(rigExecAuthoring PUBLIC
@@ -301,7 +306,10 @@ target_include_directories(rigExecAuthoring PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecAuthoring PUBLIC
     sdf tf gf vt usd)
-target_link_libraries(rigExecAuthoring PRIVATE rigExecMath)
+# The skin-weight generator places capsules with the scene library's
+# pose-free rest composer and setup transform, and measures them with the
+# evaluator's packet builder; rigExecScene brings rigExec with it.
+target_link_libraries(rigExecAuthoring PRIVATE rigExecMath rigExecScene)
 
 # rigExecGpu: the per-vertex deform program on the GPU as an OpenGL 4.5
 # compute shader, on a worker thread that owns its own hidden context, and
@@ -337,6 +345,9 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/liveDebug.cpp
     # Pulled upstream scene-index inputs (rigExecInputs).
     libs/rigExecImaging/upstreamTable.cpp
+    # A prim's evaluated points, driven transform and scalar primvars at
+    # another frame, answered without publishing (onion skins).
+    libs/rigExecImaging/frameTable.cpp
 )
 target_include_directories(rigExecImaging PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
@@ -720,6 +731,144 @@ function(rigexec_add_graph_test name)
 endfunction()
 rigexec_add_graph_test(testRigExecConstraints CONE_VERIFY)
 
+# 2D skeletons and driven actions. The kernels alone are USD-free;
+# the labeller sees tf/gf/vt through rigExecMath, so the label is explicit.
+add_executable(testRigExecSkeleton2dKernel tests/testRigExecSkeleton2dKernel.cpp)
+target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecGraph)
+add_test(NAME testRigExecSkeleton2dKernel COMMAND testRigExecSkeleton2dKernel)
+set_tests_properties(testRigExecSkeleton2dKernel PROPERTIES LABELS "rigExecGraph;usd-free;fast")
+add_executable(testRigExecDrivenActionKernel tests/testRigExecDrivenActionKernel.cpp)
+target_link_libraries(testRigExecDrivenActionKernel PRIVATE rigExecGraph)
+add_test(NAME testRigExecDrivenActionKernel COMMAND testRigExecDrivenActionKernel)
+set_tests_properties(testRigExecDrivenActionKernel PROPERTIES LABELS "rigExecGraph;usd-free;fast")
+
+# A 2D skeleton in a rig: native, frozen and .rigexec parity.
+add_executable(testRigExecSkeleton2d tests/testRigExecSkeleton2d.cpp)
+target_link_libraries(testRigExecSkeleton2d PRIVATE rigExec rigExecScene
+    rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecSkeleton2d PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecSkeleton2d COMMAND testRigExecSkeleton2d)
+# A nested 2D chain bound by authored skin weights: the golden pose protocol
+# (first, held, forward, reverse and cold visits) in native, frozen and
+# .rigexec evaluation; one checked-in golden serves all three. After an
+# intended change, regenerate it with
+#   rigExecPose tests/fixtures/skeleton2d/<fixture>.usda --rig /Char/Rig
+#       --frames 0,1,2,3,4 --golden-out tests/fixtures/skeleton2d/<fixture>.golden
+foreach(_fixture nested_chain)
+    add_test(NAME testRigExecSkeleton2dBake_${_fixture} COMMAND rigExecBakeTool
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
+        --rig /Char/Rig --time 1
+        -o "${CMAKE_CURRENT_BINARY_DIR}/skeleton2d_${_fixture}.rigexec")
+    set_tests_properties(testRigExecSkeleton2dBake_${_fixture} PROPERTIES
+        FIXTURES_SETUP skeleton2dProgram_${_fixture})
+    foreach(_backend native frozen)
+        add_test(NAME testRigExecSkeleton2dGolden_${_fixture}_${_backend} COMMAND rigExecPose
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
+            --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend ${_backend}
+            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.golden")
+    endforeach()
+    add_test(NAME testRigExecSkeleton2dGolden_${_fixture}_runtime COMMAND rigExecPose
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
+        --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend runtime
+        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/skeleton2d_${_fixture}.rigexec"
+        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.golden")
+    set_tests_properties(testRigExecSkeleton2dGolden_${_fixture}_runtime PROPERTIES
+        FIXTURES_REQUIRED skeleton2dProgram_${_fixture})
+endforeach()
+
+# The 2D layer bind (a transform-domain RigExecMatrixMover carrying a group
+# by a bone's setup-to-pose map): the carried placement against hand-computed
+# values, frozen and .rigexec parity, then the golden pose protocol (first,
+# held, forward, reverse and cold visits) in native, frozen and .rigexec
+# evaluation; one checked-in golden serves all three. After an intended
+# change, regenerate it with
+#   rigExecPose tests/fixtures/layerBind/<fixture>.usda --rig /Char/Rig
+#       --frames 0,1,2,3,4 --golden-out tests/fixtures/layerBind/<fixture>.golden
+add_executable(testRigExecLayerBind tests/testRigExecLayerBind.cpp)
+target_link_libraries(testRigExecLayerBind PRIVATE rigExec rigExecScene
+    rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecLayerBind PRIVATE
+    ${_rigexec_schema_resource_define}
+    RIGEXEC_LAYER_BIND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind")
+add_test(NAME testRigExecLayerBind COMMAND testRigExecLayerBind)
+foreach(_fixture layer_bind)
+    add_test(NAME testRigExecLayerBindBake_${_fixture} COMMAND rigExecBakeTool
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
+        --rig /Char/Rig --time 1
+        -o "${CMAKE_CURRENT_BINARY_DIR}/layerBind_${_fixture}.rigexec")
+    set_tests_properties(testRigExecLayerBindBake_${_fixture} PROPERTIES
+        FIXTURES_SETUP layerBindProgram_${_fixture})
+    foreach(_backend native frozen)
+        add_test(NAME testRigExecLayerBindGolden_${_fixture}_${_backend} COMMAND rigExecPose
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
+            --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend ${_backend}
+            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.golden")
+    endforeach()
+    add_test(NAME testRigExecLayerBindGolden_${_fixture}_runtime COMMAND rigExecPose
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
+        --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend runtime
+        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/layerBind_${_fixture}.rigexec"
+        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.golden")
+    set_tests_properties(testRigExecLayerBindGolden_${_fixture}_runtime PROPERTIES
+        FIXTURES_REQUIRED layerBindProgram_${_fixture})
+endforeach()
+
+# Skin rows generated from capsule weights: a nested 2D chain (chain_2d), a
+# 3D FkChain arm skinning a stroke (arm_3d) and that arm after a capsule
+# edit with rigid, fixed and released rows (arm_3d_regenerated).
+# testRigExecGenerateSkinWeights re-derives every authored row from the
+# capsules; these goldens hold the pose protocol (first, held, forward,
+# reverse and cold visits) in native, frozen and .rigexec evaluation, one
+# checked-in golden for all three. After an intended change, regenerate it
+# with
+#   rigExecPose tests/fixtures/capsuleSkin/<fixture>.usda --rig <rig>
+#       --frames 0,1,2,3,4 --golden-out tests/fixtures/capsuleSkin/<fixture>.golden
+foreach(_fixture chain_2d arm_3d arm_3d_regenerated)
+    set(_rig /Arm/Rig)
+    if (_fixture STREQUAL "chain_2d")
+        set(_rig /Char/Rig)
+    endif()
+    add_test(NAME testRigExecCapsuleSkinBake_${_fixture} COMMAND rigExecBakeTool
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+        --rig ${_rig} --time 1
+        -o "${CMAKE_CURRENT_BINARY_DIR}/capsuleSkin_${_fixture}.rigexec")
+    set_tests_properties(testRigExecCapsuleSkinBake_${_fixture} PROPERTIES
+        FIXTURES_SETUP capsuleSkinProgram_${_fixture})
+    foreach(_backend native frozen)
+        add_test(NAME testRigExecCapsuleSkinGolden_${_fixture}_${_backend} COMMAND rigExecPose
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+            --rig ${_rig} --frames 0,1,2,3,4 --golden-backend ${_backend}
+            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.golden")
+    endforeach()
+    add_test(NAME testRigExecCapsuleSkinGolden_${_fixture}_runtime COMMAND rigExecPose
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+        --rig ${_rig} --frames 0,1,2,3,4 --golden-backend runtime
+        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/capsuleSkin_${_fixture}.rigexec"
+        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.golden")
+    set_tests_properties(testRigExecCapsuleSkinGolden_${_fixture}_runtime PROPERTIES
+        FIXTURES_REQUIRED capsuleSkinProgram_${_fixture})
+endforeach()
+
+# Driven actions in a rig: outputs, corrective order and Hydra publication;
+# then property movers reading action outputs at rigExecReadPhase "final"
+# (bone, switch and opacity channels, action-to-action chaining, the
+# two-action cycle refusal) in native, frozen and .rigexec evaluation,
+# frozen under both baked schedules.
+add_executable(testRigExecDrivenAction tests/testRigExecDrivenAction.cpp)
+target_link_libraries(testRigExecDrivenAction PRIVATE rigExec rigExecScene
+    rigExecBake rigExecRuntime rigExecSampler rigExecImaging)
+target_compile_definitions(testRigExecDrivenAction PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecDrivenAction COMMAND testRigExecDrivenAction)
+add_test(NAME testRigExecDrivenActionChannels COMMAND testRigExecDrivenAction channels)
+foreach(_schedule serial parallel)
+    add_test(NAME testRigExecDrivenActionChannels_${_schedule}
+        COMMAND testRigExecDrivenAction channels)
+    set_tests_properties(testRigExecDrivenActionChannels_${_schedule} PROPERTIES
+        ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule};RIGEXEC_ENABLE_PARALLEL_EVAL=1")
+endforeach()
+
 # Affine frame providers and the layered skin revision: numerical results,
 # then a control edit that must re-run both through their declared inputs;
 # the runtime's expressions against Gf's, and .rigexec playback.
@@ -994,6 +1143,12 @@ endforeach()
 add_test(NAME exec_crosscheck_computed_ik_space COMMAND testRigExecExecCrossCheckRows
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda" 1)
 set_tests_properties(exec_crosscheck_computed_ik_space PROPERTIES LABELS "exec")
+# A capsule weight whose default segment end (the parent joint's child, which
+# exec cannot traverse to) reaches exec through computeSegmentEnd; frame 1012
+# is the stretched end.
+add_test(NAME exec_crosscheck_capsule_weight COMMAND testRigExecExecCrossCheckRows
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/capsule_weight.usda" 1012)
+set_tests_properties(exec_crosscheck_capsule_weight PROPERTIES LABELS "exec")
 
 add_executable(testRigExecInputActions tests/testRigExecInputActions.cpp)
 target_link_libraries(testRigExecInputActions PRIVATE rigExec)
@@ -1638,13 +1793,22 @@ target_compile_definitions(testRigExecImagingPlayback PRIVATE
     ${_rigexec_schema_resource_define} ${_rigexec_imaging_resource_define})
 add_test(NAME testRigExecImagingPlayback COMMAND testRigExecImagingPlayback
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+# Frames on demand: rig outputs sampled at a time offset through Hydra.
+add_executable(testRigExecFrameDemand tests/testRigExecFrameDemand.cpp)
+target_link_libraries(testRigExecFrameDemand PRIVATE rigExecImaging rigExecBake rigExec)
+target_compile_definitions(testRigExecFrameDemand PRIVATE
+    ${_rigexec_schema_resource_define} ${_rigexec_imaging_resource_define}
+    RIGEXEC_EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples")
+add_test(NAME testRigExecFrameDemand COMMAND testRigExecFrameDemand)
 
 add_executable(testRigExecTouchPose tests/testRigExecTouchPose.cpp)
 target_link_libraries(testRigExecTouchPose PRIVATE rigExecImaging)
 add_test(NAME testRigExecTouchPose COMMAND testRigExecTouchPose)
 
 add_executable(testRigExecVolumeWeights tests/testRigExecVolumeWeights.cpp)
-target_link_libraries(testRigExecVolumeWeights PRIVATE rigExec)
+# The capsule cases compare native, frozen and .rigexec evaluation.
+target_link_libraries(testRigExecVolumeWeights PRIVATE rigExec rigExecBake
+    rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecVolumeWeights PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecVolumeWeights COMMAND testRigExecVolumeWeights
     "${CMAKE_CURRENT_SOURCE_DIR}/examples")
@@ -2090,6 +2254,13 @@ if (RIGEXEC_BUILD_USDNOODLES)
 endif()
 
 if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
+    # rigexec.imaging through ctypes against this build's rigExecImaging.
+    add_test(NAME testRigExecImagingPublishedPython
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_imaging_published.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    set_tests_properties(testRigExecImagingPublishedPython PROPERTIES
+        ENVIRONMENT "RIGEXEC_IMAGING_DLL=$<TARGET_FILE:rigExecImaging>")
     add_test(NAME testRigExecPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_python.py"
@@ -2097,6 +2268,12 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     add_test(NAME testRigExecPythonSchemaAuthoring
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_schema_authoring.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    # rigexec.binding.generate_skin_weights against hand-computed rows, and
+    # the capsuleSkin fixtures' rows against the generator.
+    add_test(NAME testRigExecGenerateSkinWeights
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_generate_skin_weights.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecSplineIkPython
         COMMAND ${Python3_EXECUTABLE}
@@ -2386,6 +2563,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_profiler_model.py")
 
     foreach(_python_test testRigExecPython testRigExecPythonSchemaAuthoring
+                         testRigExecGenerateSkinWeights
                          testRigExecSplineIkPython testRigExecPatchMouthPython
                          testRigExecFkControlSpacePython
                          testRigExecBake testRigExecInverse
@@ -2670,7 +2848,8 @@ foreach(_rigexec_boundable
         RigExecXformable RigExecControl RigExecJoint RigExecFkChain
         RigExecTwoBoneIk RigExecBlendPointFrames RigExecTwistDistribution
         RigExecRibbon RigExecSplineIk RigExecVolumeWeight RigExecSphereWeight
-        RigExecPlaneWeight RigExecCurveWeight RigExecClothConstraintSet)
+        RigExecCapsuleWeight RigExecPlaneWeight RigExecCurveWeight
+        RigExecClothConstraintSet)
     string(REPLACE
         "\"schemaIdentifier\": \"${_rigexec_boundable}\""
         "\"implementsComputeExtent\": true, \"schemaIdentifier\": \"${_rigexec_boundable}\""

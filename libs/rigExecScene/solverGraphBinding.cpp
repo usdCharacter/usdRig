@@ -1,4 +1,5 @@
 #include "solverGraphBinding.h"
+#include "skeleton2dTranslation.h"
 #include "rigExec/types.h"
 #include <algorithm>
 #include "pxr/base/vt/types.h"
@@ -72,6 +73,19 @@ bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
     RigExecSolverGraphBinding bound;bound.record=source.record;bound.output=output;
     bound.hasSpace=!source.space.IsEmpty();bound.spaceRest=source.spaceRest;
     if(!RigExecBindGraphInputs(source.inputs,source.typedReads,source.path,context,&bound.inputs,&bound.reads,error))return false;
+    bound.bone2dChannels.resize(source.bone2dChannelReads.size());
+    for(size_t k=0;k<source.bone2dChannelReads.size();++k) {
+        if(!RigExecBindGraphTypedRead(source.bone2dChannelReads[k],context,&bound.bone2dChannels[k],error))return false;
+        for(const auto *hops:{&bound.bone2dChannels[k].hops,&bound.bone2dChannels[k].doubleHops})
+            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    }
+    bound.bone2dSelectors.resize(source.bone2dSelectorReads.size());
+    bound.bone2dSelectorFallbacks=source.bone2dSelectorFallbacks;
+    for(size_t g=0;g<source.bone2dSelectorReads.size();++g) {
+        if(!RigExecBindGraphTypedRead(source.bone2dSelectorReads[g],context,&bound.bone2dSelectors[g],error))return false;
+        for(const auto *hops:{&bound.bone2dSelectors[g].hops,&bound.bone2dSelectors[g].doubleHops})
+            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    }
     const auto bind=[&](const SdfPath &path,const TfToken &name,RigExecValueId *id,bool aggregate=false,bool *required=nullptr) {
         if(path.IsEmpty() || source.record.degenerate)return true;
         RigExecSceneGraphReadRequest request;
@@ -194,6 +208,28 @@ bool RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,RigExecTypedVa
         if((bound.blendARequired && !input.blendA) || (bound.blendBRequired && !input.blendB))return fail("solver aggregate producer unavailable");
         const auto read=[&](const char *name,VtValue *value) {return RigExecReadBoundGraphInput(bound.inputs,name,*store,value,error);};
         if(!RigExecRefreshSolverParameters(bound.record.kind,read,&input,error)) {return fail(error && !error->empty()?*error:std::string("solver parameter refresh failed"));}
+        if(record.kind==RigExecSolverKind::Skeleton2d) {
+            input.bone2dChannels.assign(bound.bone2dChannels.size()/kRigExecBone2dChannelCount,RigExecBone2dChannels());
+            for(size_t k=0;k<bound.bone2dChannels.size();++k) {
+                VtValue value;std::string unavailable;
+                if(!RigExecReadGraphTypedRead(bound.bone2dChannels[k],*store,&value,&unavailable)) {
+                    if(!unavailable.empty())return fail(unavailable);
+                    continue;
+                }
+                RigExecSetBone2dChannel(&input.bone2dChannels[k/kRigExecBone2dChannelCount],
+                    k%kRigExecBone2dChannelCount,value);
+            }
+            input.bone2dSelectors=bound.bone2dSelectorFallbacks;
+            input.bone2dSelectors.resize(bound.bone2dSelectors.size(),0.0);
+            for(size_t g=0;g<bound.bone2dSelectors.size();++g) {
+                VtValue value;std::string unavailable;
+                if(!RigExecReadGraphTypedRead(bound.bone2dSelectors[g],*store,&value,&unavailable)) {
+                    if(!unavailable.empty())return fail(unavailable);
+                    continue;
+                }
+                if(value.IsHolding<double>())input.bone2dSelectors[g]=value.UncheckedGet<double>();
+            }
+        }
     }
     const bool valid=RigExecRunSolver(record,input,workspace,&output,error);
     store->Publish(bound.output,VtValue(output),!valid,false,output.frames.size(),valid?std::string():error?*error:"solver kernel failed");return valid;

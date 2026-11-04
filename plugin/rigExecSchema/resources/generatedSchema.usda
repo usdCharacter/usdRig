@@ -2967,6 +2967,238 @@ class RigExecSphereWeight "RigExecSphereWeight" (
     )
 }
 
+class RigExecCapsuleWeight "RigExecCapsuleWeight" (
+    customData = {
+        string userDocBrief = """Falloff about a segment: d is the distance from a point to the
+    nearest point of the segment from the volume's placed origin to its
+    segment end, measured in rigid volume-local space after
+    inputs:scaleX/Y/Z."""
+    }
+)
+{
+    matrix4d avars:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = """Zero pose supplied to avar evaluation; falls back to the
+        computed default:space."""
+        }
+    )
+    token avars:rotationOrder = "XYZ" (
+        allowedTokens = ["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"]
+    )
+    double3 avars:rotationSign = (1, 1, 1) (
+        customData = {
+            string userDocBrief = """Per-axis sign applied to rx, ry and rz -- and to rspin,
+        which is an X rotation -- before they are composed."""
+        }
+    )
+    double avars:rspin = 0
+    double avars:rx = 0
+    double avars:ry = 0
+    double avars:rz = 0
+    double avars:tx = 0
+    double avars:ty = 0
+    double avars:tz = 0
+    double avars:unitScaleFactor = 1 (
+        customData = {
+            string userDocBrief = "Multiplier converting translation avars into local distance units before the selected default and parent transforms."
+        }
+    )
+    double default:rx = 0
+    double default:ry = 0
+    double default:rz = 0
+    matrix4d default:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Local-to-world zero position for posing."
+        }
+    )
+    double default:tx = 0
+    double default:ty = 0
+    double default:tz = 0
+    float3[] extent (
+        customData = {
+            string userDocBrief = """Extent is a three dimensional range measuring the geometric
+        extent of the authored gprim in its own local space (i.e."""
+        }
+    )
+    color3f guide:displayColor = (1, 0.2, 0.2) (
+        customData = {
+            string userDocBrief = """Red by convention, matching the influence overlay the
+        results scene index paints onto the weighted geometry so the
+        volume and the region it grabs read as one object."""
+        }
+    )
+    float guide:displayOpacity = 0.35
+    uniform token guide:drawMode = "falloff" (
+        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
+        customData = {
+            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
+        continuous inner rings and a dashed exterior cage at falloffMax."""
+        }
+    )
+    uniform token guide:weightDisplay = "tint" (
+        allowedTokens = ["tint", "heatmap", "bands"]
+        customData = {
+            string userDocBrief = """Selected influence overlay: tint blends gray to red;
+        heatmap interpolates dark blue, blue, teal, yellow and red at weights
+        0, .25, .5, .75 and 1."""
+        }
+    )
+    double guide:wireWidth = 0.05 (
+        customData = {
+            string userDocBrief = "Width of the drawn wire guide curves; see RigExecControl."
+        }
+    )
+    float inputs:falloffMax = 1 (
+        customData = {
+            string userDocBrief = """Distance from the segment at which the field is fully OFF:
+        the outer radius of the capsule."""
+        }
+    )
+    float inputs:falloffMin = 0 (
+        customData = {
+            string userDocBrief = """Distance from the segment at which the field is fully ON,
+        in the capsule's local units after inputs:scaleX/Y/Z: the inner
+        radius of the capsule."""
+        }
+    )
+    float[] inputs:falloffSamples = [] (
+        customData = {
+            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
+        profile, from the outer boundary (0) to the inner boundary (1)."""
+        }
+    )
+    float inputs:invert = 0 (
+        customData = {
+            string userDocBrief = "Exchanges the two ends of the band."
+        }
+    )
+    float inputs:scaleX = 1 (
+        customData = {
+            string userDocBrief = """Per-axis divisor applied to the local coordinate, and to the
+        segment end, before the distance, making the tube elliptical; see
+        RigExecSphereWeight."""
+        }
+    )
+    float inputs:scaleY = 1
+    float inputs:scaleZ = 1
+    float inputs:strength = 1 (
+        customData = {
+            string userDocBrief = "Final multiplier on the remapped weight."
+        }
+    )
+    matrix4d parent:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Selected parent's default local-to-world space."
+        }
+    )
+    matrix4d parent:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Selected parent's posed local-to-world space."
+        }
+    )
+    matrix4d posed:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Controller-adjusted zero pose; falls back to avars:defaultSpace."
+        }
+    )
+    matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Final local-to-world transform."
+        }
+    )
+    rel proxyPrim (
+        customData = {
+            string userDocBrief = '''The proxyPrim relationship allows us to link a
+        prim whose purpose is "render" to its (single target)
+        purpose="proxy" prim.'''
+        }
+    )
+    uniform token purpose = "guide" (
+        allowedTokens = ["default", "render", "proxy", "guide"]
+        customData = {
+            string userDocBrief = """Render purpose, overriding UsdGeomImageable's `default`
+        fallback for the same reason RigExecJoint does: an influence
+        volume is a DIAGNOSTIC, drawn when a viewer asks for guides, and
+        the stock attribute keeps the drawing and the bounds from
+        disagreeing."""
+        }
+    )
+    double rest:rx = 0
+    double rest:ry = 0
+    double rest:rz = 0
+    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
+        customData = {
+            string userDocBrief = "Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized."
+        }
+    )
+    double rest:tx = 0
+    double rest:ty = 0
+    double rest:tz = 0
+    float rigExec:falloffCurve = 0 (
+        customData = {
+            string userDocBrief = """Falloff shape as an authored Ts spline over x in [0, 1],
+        read when rigExec:falloffProfile is `curve`."""
+        }
+    )
+    uniform token rigExec:falloffProfile = "smooth" (
+        allowedTokens = ["linear", "smooth", "easeIn", "easeOut", "constant", "curve"]
+        customData = {
+            string userDocBrief = """Named analytic remap of the normalized band parameter, or
+        `curve` to use the spline authored on rigExec:falloffCurve."""
+        }
+    )
+    uniform token rigExec:rangePolicy = "clamp" (
+        allowedTokens = ["strict", "clamp"]
+        customData = {
+            string userDocBrief = """Defaults to clamp rather than the strict used by the
+        authored weight objects: inputs:strength and inputs:invert are
+        animatable, and an artist scrubbing strength past one should see
+        the field saturate, not have the packet invalidated and its mover
+        pass through mid-drag."""
+        }
+    )
+    uniform token rigExec:representation = "dense" (
+        allowedTokens = ["dense"]
+        customData = {
+            string userDocBrief = """A generated field has a value at every element, so dense
+        is the only representation it can honestly publish."""
+        }
+    )
+    rel rigExec:sampleSource (
+        customData = {
+            string userDocBrief = """Optional explicit points source to measure against,
+        overriding rigExec:weightTarget for SAMPLING only."""
+        }
+    )
+    rel rigExec:segmentEnd (
+        customData = {
+            string userDocBrief = """Optional single RigExecXformable whose posed origin is the
+        far end of the segment."""
+        }
+    )
+    rel rigExec:weightTarget (
+        customData = {
+            string userDocBrief = """Canonical prim or exact property carrying the weighted
+        domain."""
+        }
+    )
+    token visibility = "inherited" (
+        allowedTokens = ["inherited", "invisible"]
+        customData = {
+            string userDocBrief = '''Visibility is meant to be the simplest form of "pruning"
+        visibility that is supported by most applications.'''
+        }
+    )
+    uniform token[] xformOpOrder (
+        customData = {
+            string userDocBrief = """Encodes the sequence of transformation operations in the
+        order in which they should be pushed onto a transform stack while
+        visiting a UsdStage's prims in a graph traversal that will effect
+        the desired positioning for this prim and its descendant prims."""
+        }
+    )
+}
+
 class RigExecPlaneWeight "RigExecPlaneWeight" (
     customData = {
         string userDocBrief = """Gradient across a plane: d is the SIGNED local coordinate
@@ -5542,5 +5774,316 @@ class RigExecBoneFrame "RigExecBoneFrame" (
         }
     )
     rel rigExec:sourceObject
+}
+
+class "RigExecBone2dAPI" (
+    customData = {
+        string userDocBrief = """One bone of a 2D skeleton, applied to a RigExecJoint that a
+    RigExecSkeleton2d lists in rigExec:joints."""
+    }
+)
+{
+    rel bone2d:angleControl (
+        customData = {
+            string userDocBrief = "At most one bone whose rz drives this bone's rz (delta form)."
+        }
+    )
+    uniform double bone2d:angleControlFactor = 0 (
+        customData = {
+            string userDocBrief = "Added per controller rz degree; 0.5 and -0.5 counter-move."
+        }
+    )
+    uniform bool bone2d:angleLimits = 0 (
+        customData = {
+            string userDocBrief = "Whether bone2d:minAngle/maxAngle bound the lock solve."
+        }
+    )
+    uniform token bone2d:colorTag = "plain" (
+        allowedTokens = ["plain", "red", "orange", "yellow", "green", "teal", "blue", "indigo", "purple", "pink", "brown", "gray"]
+        customData = {
+            string userDocBrief = """Display only: the colour editors draw the bone and its
+        channel rows in."""
+        }
+    )
+    bool bone2d:endFlip = 0 (
+        customData = {
+            string userDocBrief = "Mirrors the bone's local X about its base (held)."
+        }
+    )
+    uniform bool bone2d:ignoredByIk = 0 (
+        customData = {
+            string userDocBrief = """Excluded when counting a parent's children for the lock
+        and target chains; pins (bones with no joint child) are always
+        excluded."""
+        }
+    )
+    uniform bool bone2d:independentAngle = 0 (
+        customData = {
+            string userDocBrief = """Keep the setup world angle while ancestors turn: the world
+        angle is the setup world angle plus avars:rz."""
+        }
+    )
+    bool bone2d:lock = 0 (
+        customData = {
+            string userDocBrief = """While true, the lock solve keeps the bone's base at
+        (bone2d:lockX, bone2d:lockY) and its world angle at bone2d:lockAngle
+        by turning its ancestors."""
+        }
+    )
+    double bone2d:lockAngle = 0 (
+        customData = {
+            string userDocBrief = "Held world angle in degrees; authored like bone2d:lockX."
+        }
+    )
+    double bone2d:lockX = 0 (
+        customData = {
+            string userDocBrief = """Held base X in the skeleton's plane (the start frame's
+        space, asset space without one)."""
+        }
+    )
+    double bone2d:lockY = 0 (
+        customData = {
+            string userDocBrief = "Held base Y in the skeleton's plane; authored like bone2d:lockX."
+        }
+    )
+    uniform double bone2d:maxAngle = 0 (
+        customData = {
+            string userDocBrief = "Upper limit in degrees, relative to the setup local angle."
+        }
+    )
+    uniform double bone2d:maxStretch = 1 (
+        customData = {
+            string userDocBrief = """Largest common scale, >= 1, the lock and target solves may
+        give the chain to reach an out-of-range lock point or target."""
+        }
+    )
+    uniform double bone2d:minAngle = 0 (
+        customData = {
+            string userDocBrief = "Lower limit in degrees, relative to the setup local angle."
+        }
+    )
+    double bone2d:offsetX = 0 (
+        customData = {
+            string userDocBrief = """Animation offset in the parent's frame, added to the posed
+        local position only (never to the rest used for binding)."""
+        }
+    )
+    double bone2d:offsetY = 0 (
+        customData = {
+            string userDocBrief = "Animation offset Y in the parent's frame; authored like bone2d:offsetX."
+        }
+    )
+    rel bone2d:posControl (
+        customData = {
+            string userDocBrief = "At most one bone whose tx/ty drive this bone's tx/ty (delta form)."
+        }
+    )
+    uniform double bone2d:posControlFactorX = 0 (
+        customData = {
+            string userDocBrief = "Added per controller tx unit."
+        }
+    )
+    uniform double bone2d:posControlFactorY = 0 (
+        customData = {
+            string userDocBrief = "Added per controller ty unit."
+        }
+    )
+    rel bone2d:scaleControl (
+        customData = {
+            string userDocBrief = "At most one bone whose sx drives this bone's sx about 1."
+        }
+    )
+    uniform double bone2d:scaleControlFactor = 0 (
+        customData = {
+            string userDocBrief = "This bone's sx multiplies by 1 + factor * (controller sx - 1)."
+        }
+    )
+    uniform token bone2d:scalingMode = "normal" (
+        allowedTokens = ["normal", "squashStretch", "uniform"]
+        customData = {
+            string userDocBrief = """How avars:sx scales bound geometry across the bone:
+        normal leaves it, uniform scales it by sx too, squashStretch by
+        sx^(-bone2d:squashFactor)."""
+        }
+    )
+    uniform bool bone2d:showLabel = 0 (
+        customData = {
+            string userDocBrief = "Display only: editors draw the bone's name beside it."
+        }
+    )
+    uniform bool bone2d:shy = 0 (
+        customData = {
+            string userDocBrief = """Display only: editors may hide shy bones together with one
+        view toggle."""
+        }
+    )
+    bool bone2d:sideFlip = 0 (
+        customData = {
+            string userDocBrief = "Mirrors the bone's local Y (held)."
+        }
+    )
+    uniform double bone2d:squashFactor = 1 (
+        customData = {
+            string userDocBrief = "Exponent of the squashStretch cross scale, in [0.01, 100]."
+        }
+    )
+    rel bone2d:targetCandidates (
+        customData = {
+            string userDocBrief = """Ordered IK target options (other bones of the skeleton,
+        usually unparented pins)."""
+        }
+    )
+    double bone2d:targetIndex = -1 (
+        customData = {
+            string userDocBrief = """Index into bone2d:targetCandidates (rounded; negative or out
+        of range keeps no target)."""
+        }
+    )
+}
+
+class RigExecSkeleton2d "RigExecSkeleton2d" (
+    customData = {
+        string userDocBrief = """Solves a 2D skeleton: composes every bone's channels down the
+    namespace hierarchy over the setup frames, applies flips, independent
+    angles and cross scaling, then the lock and target solves, and
+    publishes one frame per listed joint (view-free extraction, like the
+    other solvers)."""
+    }
+)
+{
+    rel rigExec:boneGroups (
+        customData = {
+            string userDocBrief = """Ordered bone groups of this skeleton: prims carrying
+        RigExecBone2dGroupAPI (conventionally Scopes)."""
+        }
+    )
+    rel rigExec:joints (
+        customData = {
+            string userDocBrief = "Ordered bones (RigExecJoint with RigExecBone2dAPI)."
+        }
+    )
+    rel rigExec:startFrame (
+        customData = {
+            string userDocBrief = """Optional single provider (joint or control) the skeleton
+        hangs from, as for RigExecFkChain: the bones' rests and outside
+        parent spaces are expressed in its rest frame, the bones turn about
+        its +Z, and every published frame is composed back through its
+        posed frame."""
+        }
+    )
+    uniform token rigExec:startFramePolicy = "none" (
+        allowedTokens = ["none", "parent"]
+        customData = {
+            string userDocBrief = """Who names the start provider when rigExec:startFrame has no
+        authored targets, by the RigExecFkChain rule: `none` (the default)
+        solves in asset space; `parent` derives the nearest namespace
+        ancestor of the bones that is a RigExecJoint or RigExecControl and
+        that every bone shares, and falls back to asset space with a compile
+        warning when there is none."""
+        }
+    )
+}
+
+class "RigExecBone2dGroupAPI" (
+    apiSchemas = ["CollectionAPI:members"]
+    customData = {
+        token[] apiSchemaOverridePropertyNames = ["collection:members:expansionRule"]
+        string userDocBrief = """One alternative-chain bone group, applied to a prim (by
+    convention a Scope) that a RigExecSkeleton2d lists in
+    rigExec:boneGroups."""
+    }
+)
+{
+    uniform token collection:members:expansionRule = "explicitOnly" (
+        allowedTokens = ["explicitOnly", "expandPrims", "expandPrimsAndProperties"]
+        customData = {
+            string userDocBrief = """Members are listed explicitly; descendants of an included
+        bone are never members themselves."""
+        }
+    )
+    double rigExec:activeBone = 0 (
+        customData = {
+            string userDocBrief = """Index into the members (rounded; out of range clamps to the
+        nearest member)."""
+        }
+    )
+    uniform bool rigExec:enabled = 1 (
+        customData = {
+            string userDocBrief = "A disabled group keeps every member active."
+        }
+    )
+}
+
+class RigExecDrivenAction "RigExecDrivenAction" (
+    customData = {
+        string userDocBrief = """Maps a dial angle to a whole action frame and publishes values
+    at that frame."""
+    }
+)
+{
+    bool inputs:enabled = 1 (
+        customData = {
+            string userDocBrief = "A disabled action publishes frame 0."
+        }
+    )
+    float outputs:active = 0 (
+        customData = {
+            string userDocBrief = "1 when outputs:frame > 0, else 0."
+        }
+    )
+    float outputs:frame = 0 (
+        customData = {
+            string userDocBrief = "The whole action frame."
+        }
+    )
+    float outputs:weight = 0 (
+        customData = {
+            string userDocBrief = "outputs:frame / N, for blend inputs whose samples sit at k / N."
+        }
+    )
+    rel rigExec:driverAttributes (
+        customData = {
+            string userDocBrief = """Exactly one float or double property, normally a bone's
+        avars:rz, read at this relationship's rigExecReadPhase."""
+        }
+    )
+    uniform double[] rigExec:driverSamples = [] (
+        customData = {
+            string userDocBrief = """Driver value at each whole action frame, in the driver
+        property's own units; at least two."""
+        }
+    )
+    uniform token rigExec:frameTies = "earlier" (
+        allowedTokens = ["earlier", "later"]
+        customData = {
+            string userDocBrief = "Which frame wins when two samples are equally close."
+        }
+    )
+    uniform token rigExec:side = "fromSamples" (
+        allowedTokens = ["fromSamples", "positive", "negative"]
+        customData = {
+            string userDocBrief = "The side of sample 0 this action serves."
+        }
+    )
+}
+
+class RigExecActionChannel "RigExecActionChannel" (
+    customData = {
+        string userDocBrief = """One driven channel of its parent RigExecDrivenAction:
+    rigExec:samples holds the channel's value at whole action frames
+    0, 1, ...; past the last sample the last value holds."""
+    }
+)
+{
+    float outputs:value = 0
+    uniform token rigExec:channelMode = "offset" (
+        allowedTokens = ["offset", "value"]
+        customData = {
+            string userDocBrief = """offset publishes samples[f] - samples[0], for an additive
+        mover; value publishes samples[f], for a blend mover whose envelope
+        is the action's outputs:active."""
+        }
+    )
+    uniform double[] rigExec:samples = []
 }
 

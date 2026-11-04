@@ -27,6 +27,12 @@ struct RigExecSolverGraphBinding {
         pole=UINT64_MAX,space=UINT64_MAX,blendA=UINT64_MAX,blendB=UINT64_MAX,output=UINT64_MAX;
     bool hasSpace=false,blendARequired=false,blendBRequired=false;
     RigExecSolverRest spaceRest{};
+    /// Skeleton2d: one traversal per bone channel, rigExec:joints order,
+    /// then one per selector (each group's activeBone, then each space
+    /// switch's active index) with the values they read when unauthored.
+    std::vector<RigExecGraphTypedRead> bone2dChannels;
+    std::vector<RigExecGraphTypedRead> bone2dSelectors;
+    std::vector<double> bone2dSelectorFallbacks;
 };
 bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &,
     const RigExecSceneGraphBindingContext &,RigExecValueId output,

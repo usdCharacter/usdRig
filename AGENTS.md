@@ -26,6 +26,9 @@ starting its workflow, and keep this list current when adding or changing skills
   privately. The header-only `*Kernel.h` files here (pose, provider, and
   blend-layout arithmetic among them) also compile into the USD-free
   runtime; keep them free of `pxr/` and `rigExecGraph` includes.
+  `skeleton2dKernel.h` and `drivenActionKernel.h` are the 2D skeleton solve
+  and the driven-action frame search; their rules without a public source
+  are listed in `docs/references.md`.
 - `libs/rigExecGraph`: the USD-free op scheduler. The archive is
   `opGraph.cpp` only; the other headers here (typed op values, provider op
   records and their interpreter, window history) are header-only and also
@@ -67,6 +70,9 @@ starting its workflow, and keep this list current when adding or changing skills
   `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
   remains for cross-check and tests.
 - `libs/rigExecAuthoring` and `python`: authoring APIs and Python bindings.
+  `rigExecAuthoring` also hosts the skin-weight generator
+  (`generateSkinWeights`, bound as `rigexec.binding.generate_skin_weights`);
+  it links `rigExecScene` privately to compose rests and never evaluates a rig.
 - When adding or changing a registered mover module, read
   [external movers](docs/concepts/external-movers.md#build-a-mover-repository).
   Use `rigexec_add_mover` in [rigExecMover.cmake](cmake/rigExecMover.cmake)
@@ -98,6 +104,16 @@ starting its workflow, and keep this list current when adding or changing skills
   (`RigExecGeometryRanges()`) and keep order-dependent sums outside it.
   Range and Whole results must be bitwise identical.
 - `libs/rigExecImaging`: scene indices, activation, and display state.
+  Frames on demand ([spec](docs/specs/frames-on-demand.md)): the results
+  scene index answers a rig output sampled at a time offset from the
+  context's frame table (`frameTable.h`), never evaluating on the reader's
+  thread; `ServiceFrameDemand` fills it from the frame cache. This is how
+  hosts read other frames (onion skins, exports). Without a Hydra chain,
+  `python/rigexec/imaging.py` reads what the displayed generation published
+  (set the time first). 2D artwork binds through a `RigExecSkinMover` with
+  authored `rigExec:jointIndices`/`rigExec:jointWeights`, like 3D skins;
+  `skeleton2dTranslation` and `drivenActionTranslation` in
+  `libs/rigExecScene` translate the 2D skeleton and driven action.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
   `rigExecRuntime` links `rigExecBinary` and `rigExecGraph` and no OpenUSD
@@ -108,7 +124,9 @@ starting its workflow, and keep this list current when adding or changing skills
   distinct from `.rigexec` binary playback.
 - `plugin/rigExecUsdview`: editor UI plus Qt-free interaction models
   (`*Model.py`). `plugin/touchPose` and `plugin/shapeEditor` are further
-  `usdview` tools with the same split.
+  `usdview` tools with the same split. A host application can take over the
+  editors' input, undo and edit target through `editorExtension.py`
+  ([spec](docs/specs/editor-extensions.md)).
 - `plugin/usdNoodles`: bundled third-party node editor; preserve its license.
 - `tools`: the `rigExecPose`, `rigExecBake`, and `rigExecReplayInputs`
   command-line programs, and the test selector behind `bin/test_changed.sh`.
@@ -281,9 +299,11 @@ scripts; their defaults look for a sibling dependency install.
 5. Run the smallest set of tests that covers the change, capped at 4 minutes
    of wall clock. `bin/test_changed.sh <paths>` prints that set.
    `bin/test_changed.sh --run <paths>` builds the direct executables and
-   runs them. The direct set is the inner loop; run the transitive set
-   before pushing. Both follow public and interface links, so a private
-   dependency stays inside the library that links it. The ctest line uses
+   runs them. `RIGEXEC_BUILD_DIR` selects another configured tree for the
+   helpers and `bin/test_changed.sh --run`. The direct set is the inner
+   loop; run the transitive set before pushing. Both follow public and
+   interface links, so a private dependency stays inside the library that
+   links it. The ctest line uses
    labels: `usd-free` when every selected executable links no OpenUSD
    library, otherwise the project libraries named on those executables'
    own link lines. `-R` keeps the run to the selected tests.

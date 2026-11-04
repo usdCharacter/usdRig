@@ -124,11 +124,17 @@ _RrCandidateOverlay(const RrProgram &program,
 {
     const auto &store = program.store;
     const size_t slot = candidate.slot;
+    // An interpolator publication stands where it is met: a weight field's
+    // scalar read (oracle or published-only), or a property revision's Float
+    // input connected at `final` to a driven action or AnimatedMaps output,
+    // reads the same-generation interpolator publication in place of the
+    // overlay (its step declares the PoseWeight read).
+    if (candidate.poseWeight >= 0 && tag == RigExecWireInputTag::Float &&
+        size_t(candidate.poseWeight) < store.poseWeights.size()) {
+        *out = _RrFloatValue(store.poseWeights[size_t(candidate.poseWeight)]);
+        return true;
+    }
     if (context) {
-        if (candidate.poseWeight >= 0 && tag == RigExecWireInputTag::Float) {
-            *out = _RrFloatValue(store.poseWeights[size_t(candidate.poseWeight)]);
-            return true;
-        }
         const auto found = context->versionsBySlot.find(uint32_t(slot));
         if (found == context->versionsBySlot.end()) return false;
         for (auto it = found->second.rbegin(); it != found->second.rend(); ++it) {
@@ -966,6 +972,9 @@ bool RrEffectiveInputMemo(const RrProgram *program,uint32_t stepIndex,std::strin
             coveredTyped->push_back({uint32_t(domain),slot});
         };
         for(const auto *segment:{&input.propertyCandidates,&input.doubleCandidates})
+            for(const auto &hop:*segment) if(hop.poseWeight>=0)
+                add(RigExecWireSlotDomain::PoseWeight,uint32_t(hop.poseWeight));
+        for(const auto *segment:{&input.propertyCandidates,&input.doubleCandidates})
             for(const auto &hop:*segment) if(hop.crossDomain>=0) {
                 const auto &cross=program->file->crossDomainReads[size_t(hop.crossDomain)];
                 if(cross.kind==fb::CrossDomainReadKind::SpaceValue) add(RigExecWireSlotDomain::SpaceValue,uint32_t(cross.spaceValue));
@@ -1672,6 +1681,8 @@ RrInputsBindReads(RrProgram *program, std::string *error)
             return unbound("pose.pose_interpolators", i);
         }
     }
+    program->solverBone2dRead.assign(poses.solvers.size(), {});
+    program->solverBone2dSelectorRead.assign(poses.solvers.size(), {});
     for (size_t i = 0; i < poses.solvers.size(); ++i) {
         for (int field = 0; field < RrSolverFieldCount; ++field) {
             if(field>=14 && !_RrSolverField(poses.solvers[i],field))continue;
@@ -1679,6 +1690,28 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                       _RrFamily::Solver, i, size_t(field),
                       &program->solverRead[i][size_t(field)])) {
                 return unbound("pose.solvers", i);
+            }
+        }
+        // A 2D skeleton's channels, registered after the fixed fields as
+        // the bake numbered them (kRigExecBone2dChannelCount per bone,
+        // rigExec:joints order), then the selectors.
+        if (const auto *skeleton = poses.solvers[i].skeleton2d.get()) {
+            auto &reads = program->solverBone2dRead[i];
+            reads.assign(skeleton->channels.size(), -1);
+            for (size_t f = 0; f < skeleton->channels.size(); ++f) {
+                if (!bind(&skeleton->channels[f], _RrFamily::Solver, i,
+                          size_t(RrSolverFieldCount) + f, &reads[f])) {
+                    return unbound("pose.solvers.skeleton2d", i);
+                }
+            }
+            auto &selectorReads = program->solverBone2dSelectorRead[i];
+            selectorReads.assign(skeleton->selectorChannels.size(), -1);
+            for (size_t g = 0; g < skeleton->selectorChannels.size(); ++g) {
+                if (!bind(&skeleton->selectorChannels[g], _RrFamily::Solver, i,
+                          size_t(RrSolverFieldCount) + skeleton->channels.size() + g,
+                          &selectorReads[g])) {
+                    return unbound("pose.solvers.skeleton2d.selector", i);
+                }
             }
         }
     }

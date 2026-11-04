@@ -1,0 +1,172 @@
+#usda 1.0
+(
+    defaultPrim = "Arm"
+    doc = """A three-joint 3D FkChain arm with a capsule weight inside each joint
+    and a skin on a stroke (F4). Root, Mid and Tip sit two units apart on X;
+    Tip's End joint is its tip 1.5 units on. Each capsule has no
+    rigExec:segmentEnd, so it spans its joint to the first joint child; Tip's
+    tube is elliptical (inputs:scaleY 1.5). The stroke is a 29-point helix
+    along the arm; its last points lie past every capsule and keep zero rows.
+    The skin's rows are rigexec.binding.generate_skin_weights output. The
+    golden checks native, frozen and .rigexec evaluation against the same
+    bits."""
+    endTimeCode = 4
+    startTimeCode = 0
+)
+
+def Xform "Arm"
+{
+    def RigExecRoot "Rig"
+    {
+        def Scope "Controls"
+        {
+            def RigExecControl "Shoulder" (
+                prepend apiSchemas = ["RigExecControlAPI"]
+            )
+            {
+                double avars:ry.timeSamples = {
+                    0: 0,
+                    2: -25,
+                    4: 0,
+                }
+                double avars:rz.timeSamples = {
+                    0: 0,
+                    1: 15,
+                    2: 20,
+                    3: 5,
+                    4: 0,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+
+                def RigExecControl "Elbow" (
+                    prepend apiSchemas = ["RigExecControlAPI"]
+                )
+                {
+                    double avars:rz.timeSamples = {
+                        0: 0,
+                        1: 30,
+                        2: 60,
+                        3: 45,
+                        4: 10,
+                    }
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+
+                    def RigExecControl "Wrist" (
+                        prepend apiSchemas = ["RigExecControlAPI"]
+                    )
+                    {
+                        double avars:rx.timeSamples = {
+                            0: 0,
+                            1: 20,
+                            2: 60,
+                            3: 30,
+                            4: 0,
+                        }
+                        double avars:rz.timeSamples = {
+                            0: 0,
+                            2: 25,
+                            4: 0,
+                        }
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+                    }
+                }
+            }
+        }
+
+        def Scope "Joints"
+        {
+            def RigExecJoint "Root"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+
+                def RigExecJoint "Mid"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+
+                    def RigExecJoint "Tip"
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+
+                        def RigExecJoint "End"
+                        {
+                            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1.5, 0, 0, 1) )
+                        }
+
+                        def RigExecCapsuleWeight "Influence"
+                        {
+                            float inputs:falloffMax = 0.7
+                            float inputs:falloffMin = 0.15
+                            float inputs:scaleY = 1.5
+                        }
+                    }
+
+                    def RigExecCapsuleWeight "Influence"
+                    {
+                        float inputs:falloffMax = 0.9
+                        float inputs:falloffMin = 0.2
+                    }
+                }
+
+                def RigExecCapsuleWeight "Influence"
+                {
+                    float inputs:falloffMax = 0.9
+                    float inputs:falloffMin = 0.2
+                }
+            }
+        }
+
+        def Scope "Solvers"
+        {
+            def RigExecFkChain "Chain"
+            {
+                rel rigExec:controls = [
+                    </Arm/Rig/Controls/Shoulder>,
+                    </Arm/Rig/Controls/Shoulder/Elbow>,
+                    </Arm/Rig/Controls/Shoulder/Elbow/Wrist>,
+                ]
+                uniform token rigExec:controlSpace = "parentRelative"
+                rel rigExec:joints = [
+                    </Arm/Rig/Joints/Root>,
+                    </Arm/Rig/Joints/Root/Mid>,
+                    </Arm/Rig/Joints/Root/Mid/Tip>,
+                ]
+            }
+        }
+
+        def Scope "Movers"
+        {
+            def RigExecSkinMover "Bind" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                uniform int rigExec:elementSize = 2
+                rel rigExec:influences = [
+                    </Arm/Rig/Joints/Root>,
+                    </Arm/Rig/Joints/Root/Mid>,
+                    </Arm/Rig/Joints/Root/Mid/Tip>,
+                ] (
+                    rigExecReadPhase = "final"
+                )
+                int[] rigExec:jointIndices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 0]
+                float[] rigExec:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.93751615, 0.062483825, 0.6721347, 0.3278653, 0.5291773, 0.4708227, 0.5, 0.5, 0.4708227, 0.5291773, 0.3278653, 0.6721347, 0.062483825, 0.93751615, 1, 0, 1, 0, 0.8091351, 0.19086494, 0.54789275, 0.45210725, 0.4997938, 0.5002062, 0.47687745, 0.52312255, 0.34021598, 0.659784, 0.067028046, 0.93297195, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0]
+                rel rigExec:moves = </Arm/Art/Stroke.points>
+                uniform token rigExec:skinningMethod = "classicLinear"
+            }
+        }
+    }
+
+    def Scope "Art"
+    {
+        def BasisCurves "Stroke"
+        {
+            int[] curveVertexCounts = [29]
+            point3f[] points = [(-0.5, -0.1512966, 0.19902095), (-0.25, -0.0798272, 0.23691268), (0, 0, 0.25), (0.25, 0.0798272, 0.23691268), (0.5, 0.1512966, 0.19902095), (0.75, 0.20692547, 0.14029202), (1, 0.24088955, 0.066874705), (1.25, 0.24963284, -0.013544284), (1.5, 0.23223993, -0.09254521), (1.75, 0.19053183, -0.16185679), (2, 0.12887534, -0.2142222), (2.25, 0.053725787, -0.24415885), (2.5, -0.027048783, -0.24853241), (2.75, -0.104991384, -0.226885), (3, -0.17194153, -0.18148308), (3.25, -0.22088967, -0.11708012), (3.5, -0.24671097, -0.040419053), (3.75, -0.24670199, 0.040473834), (4, -0.22086367, 0.11712917), (4.25, -0.17190124, 0.18152125), (4.5, -0.104941, 0.22690833), (4.75, -0.026993599, 0.24853842), (5, 0.053779997, 0.24414691), (5.25, 0.12892291, 0.21419357), (5.5, 0.19056778, 0.16181448), (5.75, 0.23226047, 0.09249364), (6, 0.24963583, 0.013488855), (6.25, 0.2408747, -0.06692819), (6.5, 0.20689432, -0.14033796)]
+            uniform token type = "linear"
+            float[] widths = [0.05] (
+                interpolation = "constant"
+            )
+            uniform token wrap = "nonperiodic"
+        }
+    }
+}
+

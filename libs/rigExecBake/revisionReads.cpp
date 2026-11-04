@@ -93,6 +93,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((onSurface, "onSurface"))
     ((combineWeight, "RigExecCombineWeight"))
     ((sphereWeight, "RigExecSphereWeight"))
+    ((capsuleWeight, "RigExecCapsuleWeight"))
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
 );
@@ -572,6 +573,7 @@ _Weight(const RigExecResolvedInputs &overlay, _Enumeration E,
     if (weight.type == _readTokens->combineWeight) {
         gather(weight.combineTargetPoints);
     } else if (weight.type == _readTokens->sphereWeight ||
+               weight.type == _readTokens->capsuleWeight ||
                weight.type == _readTokens->planeWeight ||
                weight.type == _readTokens->curveWeight) {
         if (weight.falloffSamplesLeaf >= 0) {

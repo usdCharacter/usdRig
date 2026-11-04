@@ -5,6 +5,8 @@
 // weightReference retains independent scalar reference arithmetic.
 #include "bakedProgramImpl.h"
 
+#include "capsuleSegment.h"
+#include "pathText.h"
 #include "types.h"
 #include "weightPackets.h"
 
@@ -30,6 +32,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((dynamicWeight, "RigExecDynamicWeight"))
     ((combineWeight, "RigExecCombineWeight"))
     ((sphereWeight, "RigExecSphereWeight"))
+    ((capsuleWeight, "RigExecCapsuleWeight"))
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
     ((falloffSamples, "inputs:falloffSamples"))
@@ -64,6 +67,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (strict)
     ((rigExecCombineMode, "rigExec:combineMode"))
     ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    ((rigExecSegmentEnd, "rigExec:segmentEnd"))
     (y)
     ((rigExecPlaneBounds, "rigExec:planeBounds"))
     (unbounded)
@@ -78,6 +82,8 @@ void
 RigExecBakedWeightsTouchTokens()
 {
     (void)_tokens.Get();
+    // The capsule segment-end rule's own table, read while Build binds.
+    (void)RigExecCapsuleWeightType();
 }
 
 int
@@ -191,12 +197,34 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     };
 
     const bool volumetric = object.type == _tokens->sphereWeight ||
+                            object.type == _tokens->capsuleWeight ||
                             object.type == _tokens->planeWeight ||
                             object.type == _tokens->curveWeight;
     if (volumetric) {
         object.providerSlot = ctx->SlotOf(path);
         if (object.providerSlot < 0) {
             ctx->Refuse("volume weight is not a pose provider", path);
+        }
+        if (object.type == _tokens->capsuleWeight) {
+            // The segment end is another provider's frame, read every run
+            // like the placement, so an animated end moves the segment. The
+            // relationship is folded: retargeting it rebuilds the program.
+            ctx->Targets(prim, _tokens->rigExecSegmentEnd);
+            std::string why;
+            const SdfPath end = RigExecCapsuleSegmentEnd(prim, &why);
+            if (!why.empty()) {
+                ctx->Refuse(why, path);
+            } else if (!end.IsEmpty()) {
+                object.segmentEndSlot = ctx->SlotOf(end);
+                if (object.segmentEndSlot < 0) {
+                    std::string text;
+                    if (!RigExecSpellPathText(end, &text)) {
+                        text = end.GetAsString();
+                    }
+                    ctx->Refuse("capsule segment end " + text +
+                                " is not a pose provider", path);
+                }
+            }
         }
         object.falloffMin = ctx->Bind(prim, _tokens->inputsFalloffMin, 0.0f);
         object.falloffMax = ctx->Bind(prim, _tokens->inputsFalloffMax, 1.0f);
@@ -347,6 +375,7 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
         return RigExecRunWeightPacket(record,packet);
     }
     if (object.type == _tokens->sphereWeight ||
+        object.type == _tokens->capsuleWeight ||
         object.type == _tokens->planeWeight ||
         object.type == _tokens->curveWeight) {
         RigExecVolumeWeightInputs inputs;
@@ -365,6 +394,13 @@ RigExecBakedWeightPacket(const RigExecBakedProgramImpl &program,
             inputs.placement =
                 B.base[size_t(B.baseLast[size_t(object.providerSlot)])];
             inputs.hasPlacement = true;
+        }
+        // The capsule's end, from the same (base) phase as its placement.
+        if (object.segmentEndSlot >= 0) {
+            inputs.capsuleEnd =
+                B.base[size_t(B.baseLast[size_t(object.segmentEndSlot)])]
+                    .Origin();
+            inputs.hasCapsuleEnd = true;
         }
         inputs.params.falloffMin = rd(object.falloffMin);
         inputs.params.falloffMax = rd(object.falloffMax);
@@ -545,6 +581,11 @@ RigExecBakedBuildWeightSteps(RigExecBakedProgramImpl *program)
         if (weight.providerSlot >= 0) {
             step.reads.push_back(RigExecBakedOne(
                 RigExecBakedSlotDomain::PoseBase, B.baseLast[size_t(weight.providerSlot)]));
+        }
+        if (weight.segmentEndSlot >= 0 &&
+            weight.segmentEndSlot != weight.providerSlot) {
+            step.reads.push_back(RigExecBakedOne(
+                RigExecBakedSlotDomain::PoseBase, B.baseLast[size_t(weight.segmentEndSlot)]));
         }
         step.writes.push_back(
             RigExecBakedOne(RigExecBakedSlotDomain::WeightPacket, int(i)));

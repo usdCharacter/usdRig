@@ -335,12 +335,14 @@ python docs/render_media.py --page space_switch
 - `inputs:sourceWeights` has no meaning here — the index is the selector — and authoring it is a compile error rather than a silent no-op.
 - A pole vector that should follow a hand's twist but not its swing takes `rigExec:rotationFilters = ["all", "twist"]` with `rigExec:twistAxis` along the forearm.
 - A source or `rigExec:space` under the switch's own target, with no other switched control in between, moves with the answer it feeds: that is a cycle and refuses to compile, as do two switches that each need the other composed first. A source under another switched control is fine, even one nested inside this switch's target: the nested switch resolves first.
+- A switch whose target is a bone of a [Skeleton 2D](skeleton_2d.md) is read by that skeleton inside its solve, not run as a step of its own; its sources may then be bones of the skeleton, and the rig root stands for the skeleton's start frame.
 
 ## See also
 
 - [Control](control.md)
 - [Parent Constraint](parent_constraint.md)
 - [Two-Bone IK](two_bone_ik.md)
+- [Skeleton 2D](skeleton_2d.md)
 
 ---
 

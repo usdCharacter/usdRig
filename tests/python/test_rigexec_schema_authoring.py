@@ -133,6 +133,7 @@ CONCRETE_SCHEMA_TYPES = (
     "RigExecBlendPointFrames",
     "RigExecBlendSample",
     "RigExecBlendShapeMover",
+    "RigExecCapsuleWeight",
     "RigExecClothMover",
     "RigExecClothBinding",
     "RigExecClothMap",
@@ -204,7 +205,7 @@ class SchemaFacadeTests(_ContractTestCase):
         self.stage = Usd.Stage.CreateInMemory()
 
     def test_all_concrete_types_define_and_get(self):
-        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 43)
+        self.assertEqual(len(CONCRETE_SCHEMA_TYPES), 44)
         self.assertEqual(
             set(rigexec.schema.names()), set(CONCRETE_SCHEMA_TYPES))
         self.assertFalse(hasattr(rigexec.schema, "CustomConstraint"))
@@ -548,6 +549,59 @@ class BuilderDependencyTests(_ContractTestCase):
         with self.assertRaises(TypeError):
             set_rotation_sign("x", 1.0, 1.0)
         self.assertEqual(tuple(sign.Get()), (-1.0, 1.0, -1.0))
+
+    def test_capsule_weight_handle_authors_its_segment(self):
+        self._make_points()
+        shoulder = self.builder.add_joint("Shoulder")
+        elbow = self.builder.add_joint("Elbow", parent_joint=shoulder)
+        define_capsule = self.require_method(
+            self.builder, "define_capsule_weight")
+        capsule = define_capsule(
+            Sdf.Path(str(shoulder.path) + "/Influence"), "/Geometry.points",
+            falloff_min=0.1, falloff_max=0.8)
+        self.assertIsInstance(capsule, rigexec.CapsuleWeight)
+        self.assertIsInstance(capsule, rigexec.VolumeWeight)
+        prim = self.stage.GetPrimAtPath(capsule.path)
+        self.assertEqual(str(prim.GetTypeName()), "RigExecCapsuleWeight")
+        self.assertIn("NodeGraphNodeAPI", _applied_schema_names(prim))
+        self.assertEqual(
+            _targets(prim.GetRelationship("rigExec:weightTarget")),
+            ["/Geometry.points"])
+        self.assertAlmostEqual(
+            prim.GetAttribute("inputs:falloffMin").Get(), 0.1, places=6)
+        self.assertAlmostEqual(
+            prim.GetAttribute("inputs:falloffMax").Get(), 0.8, places=6)
+        # Under the shoulder with no end authored: the default segment runs
+        # to the shoulder's first joint child, so nothing is written.
+        end_rel = prim.GetRelationship("rigExec:segmentEnd")
+        self.assertEqual(_targets(end_rel), [])
+
+        set_segment_end = self.require_method(capsule, "set_segment_end")
+        set_segment_end(elbow)
+        self.assertEqual(_targets(end_rel), [elbow.path])
+        set_segment_end(None)
+        self.assertEqual(_targets(end_rel), [])
+
+        set_scales = self.require_method(capsule, "set_scales")
+        set_scales(1.0, 0.5, 1.0)
+        scale_y = prim.GetAttribute("inputs:scaleY")
+        self.assertFalse(scale_y.IsCustom())
+        self.assertEqual(scale_y.GetTypeName(), Sdf.ValueTypeNames.Float)
+        self.assertEqual(scale_y.Get(), 0.5)
+
+        add_capsule = self.require_method(self.builder, "add_capsule_weight")
+        tube = add_capsule("Tube", "/Geometry.points", segment_end=elbow)
+        self.assertEqual(tube.path, "/Rig/Weights/Tube")
+        tube_prim = self.stage.GetPrimAtPath(tube.path)
+        self.assertEqual(
+            _targets(tube_prim.GetRelationship("rigExec:segmentEnd")),
+            [elbow.path])
+        self.assertIn("CapsuleWeight", rigexec.__all__)
+        defined = rigexec.schema.CapsuleWeight.define(
+            self.stage, "/Rig/Weights/Schema")
+        self.assertEqual(str(self.stage.GetPrimAtPath(
+            "/Rig/Weights/Schema").GetTypeName()), "RigExecCapsuleWeight")
+        del defined
 
     def test_volume_weight_handle_exposes_strict_avar_spin(self):
         self._make_points()

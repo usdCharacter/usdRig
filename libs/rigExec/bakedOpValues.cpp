@@ -945,6 +945,8 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
     auto coverWalk=[&](const RigExecBakedWalk &walk) {
         for(const auto *hops:{&walk.hops,&walk.doubleHops})for(const auto &hop:*hops) {
             coverCross(hop.crossDomain);
+            if(typed && hop.poseWeight>=0)
+                typed->emplace_back(uint32_t(RigExecBakedSlotDomain::PoseWeight),uint32_t(hop.poseWeight));
             if(covered && hop.chain>=0 && size_t(hop.chain)<B.propertyChains.size()) {
                 const auto &chain=B.propertyChains[size_t(hop.chain)];covered->push_back(chain.versionBase+uint32_t(chain.revisions.size()));
             }
@@ -1039,6 +1041,7 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
                 if(record.kind==3)for(int i=11;i<=16;++i)scalar(i);
                 if(record.kind==4){Put(out,input.axis);Put(out,input.bounds);if(input.bounds=="bounded"){scalar(17);scalar(18);}}
                 if(record.kind==5)points(input.phasedPoints[2].declared?input.phasedPoints[2]:input.rawPoints[2]);
+                if(record.kind==6){Put(out,input.hasSegmentEnd);if(input.hasSegmentEnd)Put(out,input.segmentEnd);}
             }
         }
         if(covered) {

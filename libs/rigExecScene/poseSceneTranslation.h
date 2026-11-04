@@ -25,6 +25,9 @@ struct RigExecScenePoseInterpolatorDescriptor {
     bool ml=false;
     /// A RigExecAnimatedMaps node.
     bool maps=false;
+    /// A RigExecDrivenAction: poseWeights are outputs:frame, outputs:weight,
+    /// outputs:active and each RigExecActionChannel's outputs:value.
+    bool driven=false;
     std::vector<RigExecSceneTypedRead> numericReads;
     /// Per numeric driver, whether it is a float property (ML movers and
     /// animated maps bind each with its own type; interpolators read

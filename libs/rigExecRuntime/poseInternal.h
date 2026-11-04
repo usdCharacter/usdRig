@@ -7,6 +7,7 @@
 #include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
+#include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/poseArithmeticKernel.h"
 #include <array>
@@ -274,6 +275,18 @@ struct RrPoseSolverState {
     std::array<RrVec3d, 4> twistEndRest;
     std::vector<double> twistWeights;
     std::vector<RrVec3f> ribbonRestPoints;
+    // RigExecSkeleton2d: the file's setup (solve order) and the solve's
+    // scratch (rigExecMath/skeleton2dKernel.h, the native body). Its start
+    // frame is startRest and its outside parent spaces are controlRests.
+    std::vector<uint32_t> bone2dOrder;
+    std::vector<RigExecBone2dSetup> bone2dSetup;
+    std::vector<int32_t> bone2dSpaceSources, bone2dTargetCandidates;
+    std::vector<RigExecBone2dGroup> bone2dGroups;
+    std::vector<int32_t> bone2dGroupMembers;
+    RigExecSkeleton2dScratch bone2d;
+    std::vector<double> bone2dSelectors;
+    std::array<RrVec3d, 4> bone2dStartPose;
+    std::vector<std::array<RrVec3d, 4>> bone2dExternalPoses;
 };
 
 struct RrPoseScratch {
@@ -318,6 +331,9 @@ struct RrPoseScratch {
     std::vector<RigExecMlNetwork> interpNetworks;
     /// Animated maps' tables, reconstituted from the wire; empty otherwise.
     std::vector<RigExecAnimatedMapsTable> interpMaps;
+    /// Driven actions' search tables, reconstituted from the wire; empty
+    /// otherwise.
+    std::vector<RigExecDrivenActionTable> interpDriven;
     std::vector<std::vector<double>> interpScratch;
     // Solver live rests and per-run elements.
     std::vector<RrPoseSolverState> solvers;

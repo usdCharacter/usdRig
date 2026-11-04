@@ -25,6 +25,9 @@ struct RigExecWeightGraphObject {
     bool paintedArraysDeclared=false;
     RigExecValueId axis=UINT64_MAX,bounds=UINT64_MAX,placement=UINT64_MAX,baseFrame=UINT64_MAX,
         packet=UINT64_MAX,basePacket=UINT64_MAX;
+    /// A capsule's segment end provider frame, in the field's placement
+    /// phase and in the packet's base phase.
+    RigExecValueId segmentEndPlacement=UINT64_MAX,segmentEndBaseFrame=UINT64_MAX;
     std::vector<RigExecValueId> inputPackets;
     bool axisAttribute=false,boundsAttribute=false;
     bool cycleBlocked=false;

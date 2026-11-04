@@ -558,6 +558,7 @@ python docs/render_media.py --page sphere_weight
 
 - [Static Weight](static_weight.md)
 - [Dynamic Weight](dynamic_weight.md)
+- [Capsule Weight](capsule_weight.md)
 - [Matrix Mover](matrix_mover.md)
 
 ---

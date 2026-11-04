@@ -35,10 +35,12 @@ RigExecSceneDomain Domain(const TfToken &type) {
     if (name == "RigExecControl" || name == "RigExecJoint") return RigExecSceneDomain::Provider;
     if (name == "RigExecFkChain" || name == "RigExecTwoBoneIk" || name == "RigExecBlendPointFrames" ||
         name == "RigExecTwistDistribution" || name == "RigExecRibbon" || name == "RigExecSplineIk") return RigExecSceneDomain::Solver;
+    if (name == "RigExecSkeleton2d") return RigExecSceneDomain::Solver;
     if (name == "RigExecFloatMathMover" || name == "RigExecVec3fMathMover" || name == "RigExecMatrixMathMover") return RigExecSceneDomain::PropertyMover;
     if (name == "RigExecAutoClavicle") return RigExecSceneDomain::AutoClavicle;
     if (name == "RigExecSpaceSwitch") return RigExecSceneDomain::SpaceSwitch;
-    if (name == "RigExecPoseInterpolator" || name == "RigExecAnimatedMaps")
+    if (name == "RigExecPoseInterpolator" || name == "RigExecAnimatedMaps" ||
+        name == "RigExecDrivenAction")
         return RigExecSceneDomain::PoseInterpolator;
     if (name == "RigExecSurfaceProjector") return RigExecSceneDomain::GeometryMover;
     if(name.rfind("RigExec",0)==0 && UsdSchemaRegistry::GetTypeFromSchemaTypeName(type).IsUnknown()) {
@@ -51,7 +53,7 @@ RigExecSceneDomain Domain(const TfToken &type) {
     if (name.size() >= 5 && name.compare(name.size()-5, 5, "Mover") == 0) return RigExecSceneDomain::GeometryMover;
     if (name.rfind("RigExec", 0) != 0 || name == "RigExecRoot" || name == "RigExecBlendInput" ||
         name == "RigExecBlendSample" || name == "RigExecPose" || name == "RigExecMlOutput" ||
-        name == "RigExecAnimatedMap" ||
+        name == "RigExecAnimatedMap" || name == "RigExecActionChannel" ||
         name.rfind("RigExecPicker",0) == 0 ||
         name.rfind("RigExecTouch",0) == 0) return RigExecSceneDomain::Data;
     for(const auto &handler:RigExecMoverHandlers())for(const auto &schema:handler.sceneDataSchemas)
@@ -88,7 +90,8 @@ bool Expression(const RigExecSceneDescriptors &scene, const SdfPath &path) {
     if (node == scene.nodes.end()) return false;
     const auto type=node->second.fact.type;
     if (node->second.domain != RigExecSceneDomain::Provider && type!="RigExecSphereWeight" &&
-        type!="RigExecPlaneWeight" && type!="RigExecCurveWeight") return false;
+        type!="RigExecPlaneWeight" && type!="RigExecCurveWeight" &&
+        type!="RigExecCapsuleWeight") return false;
     const auto name = path.GetNameToken();
     return name == "default:space" || name == "avars:defaultSpace" || name == "posed:defaultSpace" ||
         name == "parent:space" || name == "parent:defaultSpace";

@@ -55,7 +55,8 @@ bool RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         const auto node=scene.nodes.find(path);if(node==scene.nodes.end())continue;
         const auto type=node->second.fact.type;
         if(node->second.fact.active && (type=="RigExecControl" || type=="RigExecJoint" ||
-           type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight")) {parent=path;break;}
+           type=="RigExecSphereWeight" || type=="RigExecPlaneWeight" || type=="RigExecCurveWeight" ||
+           type=="RigExecCapsuleWeight")) {parent=path;break;}
     }
     if(!named(source.target,"computeAvarMatrix",&packet.avars) ||
        !attribute(_tokens->posedDefaultSpace,&packet.posedDefault) ||

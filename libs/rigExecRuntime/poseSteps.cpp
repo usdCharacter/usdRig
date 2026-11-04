@@ -1278,11 +1278,13 @@ RrRunPoseStep(RrProgram *program, size_t step, std::string *error)
         }
         auto &solver=scratch->interpSolvers[object];
         RigExecPoseInterpolatorRecordT<decltype(solver),const RigExecRbfMethodTable &,
-            const RigExecMlNetwork *,const RigExecAnimatedMapsTable *> record{
+            const RigExecMlNetwork *,const RigExecAnimatedMapsTable *,
+            const RigExecDrivenActionTable *> record{
             solver,interp.enableTranslation,interp.allowNegativeWeights,interp.poseSlots.size(),
             bool(interp.method),scratch->interpMethods[object],
             bool(interp.network),&scratch->interpNetworks[object],
-            bool(interp.maps),&scratch->interpMaps[object]};
+            bool(interp.maps),&scratch->interpMaps[object],
+            bool(interp.drivenAction),&scratch->interpDriven[object]};
         std::vector<double> &interpScratch=scratch->interpScratch[object];
         const auto status=RigExecRunPoseInterpolatorArithmetic<RrPoseInterpolatorMath>(
             record,input,&interpScratch);

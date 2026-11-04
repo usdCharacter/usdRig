@@ -2710,6 +2710,7 @@ _BinaryCompareWeightObject(
                wire.combineTargetValid);
     CHECK(uint64_t(live.costElements) == wire.costElements);
     CHECK(int64_t(live.providerSlot) == int64_t(wire.providerSlot));
+    CHECK(int64_t(live.segmentEndSlot) == int64_t(wire.segmentEndSlot));
     _BinaryCompareInput(live.falloffMin, wire.falloffMin, file);
     _BinaryCompareInput(live.falloffMax, wire.falloffMax, file);
     _BinaryCompareInput(live.scaleXPos, wire.scaleXPos, file);
@@ -2999,6 +3000,7 @@ _BinaryCompareDomainGeometry(const rigExec::RigExecRigEvaluator &evaluator,
         CHECK(live.object == wire.object && live.consumer == wire.consumer && live.part == wire.part);
         CHECK(uint8_t(live.placementPhase) == uint8_t(wire.placementPhase));
         _BinaryCheckEqual(live.volumes, wire.volumes);
+        _BinaryCheckEqual(live.segmentEnds, wire.segmentEnds);
         _BinaryCheckEqual(live.availableChains, wire.availableChains);
         _BinaryCheckEqual(live.scalarObjects, wire.scalarObjects);
         CHECK(live.scalarMembers.size() == wire.scalarMembers.size());
@@ -3879,7 +3881,8 @@ _BinaryArrayOwners(const rigExec::RigExecRigEvaluator &evaluator,
         const auto &facts = object.oracleFacts;
         const auto prim = program.stage->GetPrimAtPath(object.path);
         if (oracleObjects.count(int(index)) && facts.phaseError.empty() &&
-            (object.type == "RigExecSphereWeight" || object.type == "RigExecPlaneWeight" || object.type == "RigExecCurveWeight")) {
+            (object.type == "RigExecSphereWeight" || object.type == "RigExecPlaneWeight" || object.type == "RigExecCurveWeight" ||
+             object.type == "RigExecCapsuleWeight")) {
             for (const char *name : {"rigExec:sampleSource", "rigExec:weightTarget", "rigExec:curve"}) {
                 if (std::string(name) == "rigExec:curve" && object.type != "RigExecCurveWeight") continue;
                 if (std::string(name) != "rigExec:curve" && facts.samplesInFlight) continue;

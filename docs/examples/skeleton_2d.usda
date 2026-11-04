@@ -1,0 +1,172 @@
+#usda 1.0
+(
+    defaultPrim = "Skeleton2dAsset"
+    doc = """
+    Docs example: RigExecSkeleton2d bound by generated skin rows.
+
+    Three nested bones -- Hip, Thigh and Shin, each the first joint child of
+    the one before, Shin ending at its End joint -- and a pin bone Foot with
+    no joint child. One RigExecSkeleton2d solves them in the asset space's
+    XY plane. Each bone holds a RigExecCapsuleWeight with no
+    rigExec:segmentEnd, so its segment runs from the bone to its first
+    joint child (Foot's capsule is a sphere). The leg mesh is bound by one
+    RigExecSkinMover whose rigExec:jointIndices / rigExec:jointWeights were
+    written by rigexec.binding.generate_skin_weights from those capsules:
+    regenerate them after moving a bone's rest or a capsule's radius. The
+    small tab quad off to the side lies outside every capsule, so its rows
+    are zero and it holds still. Turn on Display -> Display Purposes ->
+    Guide to see the capsules.
+    """
+    endTimeCode = 1024
+    metersPerUnit = 0.01
+    startTimeCode = 1001
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "Skeleton2dAsset"
+{
+    def RigExecRoot "Rig"
+    {
+        uniform token rigExec:partition = "Skeleton2dAsset"
+
+        def Scope "Bones"
+        {
+            def RigExecJoint "Hip" (
+                prepend apiSchemas = ["RigExecBone2dAPI"]
+            )
+            {
+                double avars:rz.timeSamples = {
+                    1001: 0,
+                    1006.75: 10,
+                    1012.5: 10,
+                    1018.25: -10,
+                    1024: 0,
+                }
+                matrix4d rest:space = ( (2.220446049250313e-16, -1, 0, 0), (1, 2.220446049250313e-16, 0, 0), (0, 0, 1, 0), (0, 2.5, 0, 1) )
+
+                def RigExecJoint "Thigh" (
+                    prepend apiSchemas = ["RigExecBone2dAPI"]
+                )
+                {
+                    double avars:rz.timeSamples = {
+                        1001: 0,
+                        1006.75: 20,
+                        1012.5: 30,
+                        1018.25: 35,
+                        1024: 0,
+                    }
+                    double avars:sx.timeSamples = {
+                        1001: 1,
+                        1006.75: 1,
+                        1012.5: 1.25,
+                        1018.25: 1.25,
+                        1024: 1,
+                    }
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.5, 0, 0, 1) )
+
+                    def RigExecJoint "Shin" (
+                        prepend apiSchemas = ["RigExecBone2dAPI"]
+                    )
+                    {
+                        double avars:rz.timeSamples = {
+                            1001: 0,
+                            1006.75: -30,
+                            1012.5: -45,
+                            1018.25: 0,
+                            1024: 10,
+                        }
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1) )
+
+                        def RigExecJoint "End"
+                        {
+                            matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1) )
+                        }
+
+                        def RigExecCapsuleWeight "Influence"
+                        {
+                            float inputs:falloffMax = 0.45
+                            float inputs:falloffMin = 0.1
+                        }
+                    }
+
+                    def RigExecCapsuleWeight "Influence"
+                    {
+                        float inputs:falloffMax = 0.45
+                        float inputs:falloffMin = 0.1
+                    }
+                }
+
+                def RigExecCapsuleWeight "Influence"
+                {
+                    float inputs:falloffMax = 0.35
+                    float inputs:falloffMin = 0.05
+                }
+            }
+
+            def RigExecJoint "Foot" (
+                prepend apiSchemas = ["RigExecBone2dAPI"]
+            )
+            {
+                double avars:tx.timeSamples = {
+                    1001: 0,
+                    1006.75: 0,
+                    1012.5: 0,
+                    1018.25: 0.2,
+                    1024: 0,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.35, 0, 0, 1) )
+
+                def RigExecCapsuleWeight "Influence"
+                {
+                    float inputs:falloffMax = 0.3
+                    float inputs:falloffMin = 0.05
+                }
+            }
+        }
+
+        def RigExecSkeleton2d "Skeleton"
+        {
+            rel rigExec:joints = [
+                </Skeleton2dAsset/Rig/Bones/Hip>,
+                </Skeleton2dAsset/Rig/Bones/Hip/Thigh>,
+                </Skeleton2dAsset/Rig/Bones/Hip/Thigh/Shin>,
+                </Skeleton2dAsset/Rig/Bones/Foot>,
+            ]
+        }
+
+        def Scope "Movers"
+        {
+            def RigExecSkinMover "Bind" (
+                prepend apiSchemas = ["RigExecMoverAPI"]
+            )
+            {
+                uniform int rigExec:elementSize = 2
+                rel rigExec:influences = [
+                    </Skeleton2dAsset/Rig/Bones/Hip>,
+                    </Skeleton2dAsset/Rig/Bones/Hip/Thigh>,
+                    </Skeleton2dAsset/Rig/Bones/Hip/Thigh/Shin>,
+                    </Skeleton2dAsset/Rig/Bones/Foot>,
+                ] (
+                    rigExecReadPhase = "final"
+                )
+                int[] rigExec:jointIndices = [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 3, 2, 3, 3, 0, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                float[] rigExec:jointWeights = [1, 0, 1, 0, 0.6383371, 0.36166292, 0.6383371, 0.36166292, 0.4807674, 0.51923263, 0.4807674, 0.51923263, 0.15133332, 0.84866667, 0.15133332, 0.84866667, 1, 0, 1, 0, 0.65591043, 0.34408957, 0.65591043, 0.34408957, 0.5, 0.5, 0.5, 0.5, 0.34408957, 0.65591043, 0.34408957, 0.65591043, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.9057935, 0.09420648, 0.56487566, 0.4351243, 1, 0, 0.6312467, 0.36875334, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                rel rigExec:moves = </Skeleton2dAsset/Art/Leg.points>
+                uniform token rigExec:skinningMethod = "classicLinear"
+            }
+        }
+    }
+
+    def Scope "Art"
+    {
+        def Mesh "Leg"
+        {
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 9, 8, 8, 9, 11, 10, 10, 11, 13, 12, 12, 13, 15, 14, 14, 15, 17, 16, 16, 17, 19, 18, 18, 19, 21, 20, 22, 23, 25, 24, 26, 27, 29, 28]
+            point3f[] points = [(-0.1, 2.5, 0), (0.1, 2.5, 0), (-0.1, 2.25, 0), (0.1, 2.25, 0), (-0.1, 2, 0), (0.1, 2, 0), (-0.1, 1.75, 0), (0.1, 1.75, 0), (-0.1, 1.5, 0), (0.1, 1.5, 0), (-0.1, 1.25, 0), (0.1, 1.25, 0), (-0.1, 1, 0), (0.1, 1, 0), (-0.1, 0.75, 0), (0.1, 0.75, 0), (-0.1, 0.5, 0), (0.1, 0.5, 0), (-0.1, 0.25, 0), (0.1, 0.25, 0), (-0.1, 0, 0), (0.1, 0, 0), (0.2, -0.05, 0), (0.45, -0.05, 0), (0.2, 0.1, 0), (0.45, 0.1, 0), (1, 1, 0), (1.2, 1, 0), (1, 1.2, 0), (1.2, 1.2, 0)]
+            uniform token subdivisionScheme = "none"
+        }
+    }
+}
+

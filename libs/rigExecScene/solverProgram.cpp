@@ -121,6 +121,45 @@ bool RigExecRunSolver(const RigExecSolverRecord &s,const RigExecSolverInputs &in
         }
         return true;
     }
+    case RigExecSolverKind::Skeleton2d: {
+        // Rests and outputs in rigExec:joints order; the kernel runs in solve
+        // order, in the start frame's plane. A failed solve publishes every
+        // bone's setup frame (no deformation) and says why.
+        const size_t n=s.bone2dOrder.size();
+        if(s.jointRests.size()!=n || s.bone2dSetup.size()!=n || input.bone2dChannels.size()!=n ||
+           input.controls.size()!=s.controlRests.size()) {
+            if(error)*error="2D skeleton bone, rest, channel and parent-space counts differ";
+            return false;
+        }
+        const RigExecSkeleton2dStatic extra=RigExecSkeleton2dStaticOf(s.bone2dSpaceSources,
+            s.bone2dTargetCandidates,s.bone2dGroups,s.bone2dGroupMembers);
+        auto &posed=scratch->bone2dExternalPoses;
+        posed.resize(input.controls.size());
+        for(size_t e=0;e<input.controls.size();++e)posed[e]=input.controls[e].points;
+        RigExecSkeleton2dLandmarkInputs<RigExecSolverRest> frames;
+        if(s.hasStart) {frames.startRest=&s.startRest;frames.startPose=&input.start.points;}
+        frames.externalRests=s.controlRests.data();frames.externalPoses=posed.data();
+        frames.externalCount=posed.size();
+        frames.selectors=input.bone2dSelectors.data();frames.selectorCount=input.bone2dSelectors.size();
+        const RigExecSkeleton2dResult result=RigExecSolveSkeleton2dJoints(s.bone2dOrder,s.jointRests,
+            s.bone2dSetup,extra,frames,
+            [&](size_t j,RigExecBone2dChannels *channels){*channels=input.bone2dChannels[j];},
+            RigExecPointFrameValid,&scratch->bone2d,&aggregate.frames);
+        if(result==RigExecSkeleton2dResult::Malformed) {
+            if(error)*error="2D skeleton solve order is malformed";
+            return false;
+        }
+        aggregate.rests=s.jointRests;
+        if(result==RigExecSkeleton2dResult::NotPlanar) {
+            if(error)*error="a 2D bone's rest (its rest:space, or the frame a pose step below the skeleton wrote) or parent space is not a rotation about +Z in the skeleton's plane; publishing the rests";
+            return false;
+        }
+        if(result==RigExecSkeleton2dResult::NotFinite) {
+            if(error)*error="2D skeleton solve failed (a non-finite channel); publishing setup frames";
+            return false;
+        }
+        return true;
+    }
     }
     if(error)*error="unknown solver kind";
     return false;

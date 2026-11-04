@@ -677,6 +677,8 @@ _SynthCompileGraph(fb::RigExecWireFile *file, std::string *error)
         for (int input : object.inputs) step.reads.push_back(one(D::WeightPacket, uint32_t(input)));
         if (object.providerSlot >= 0)
             step.reads.push_back(one(D::WeightFrames, uint32_t(object.providerSlot)));
+        if (object.segmentEndSlot >= 0)
+            step.reads.push_back(one(D::PoseBase, uint32_t(object.segmentEndSlot)));
         for (size_t c = 0; c < file->geometry->chains.size(); ++c)
             for (uint32_t target : object.targetPoints)
                 if (target == file->geometry->chains[c].target)
@@ -1362,6 +1364,53 @@ _TestSyntheticBuilders()
         in.samplePoints = samplePoints;
         expected.push_back(RigExecBuildVolumeWeightPacket(
             TfToken("RigExecSphereWeight"), in));
+    }
+    // 31: capsule, beside the sphere (object 11) in kind: an elliptical
+    // tube (scaleZ) whose segment end is slot 1's base frame origin, read
+    // per run like the placement. The pools hold default frames, so the
+    // end coincides with the origin and the packet equals the shared
+    // builder's for that end.
+    {
+        fb::RigExecWireWeightObject object = _SynthObject(
+            writer, "/w/capsule", "RigExecCapsuleWeight", "dense",
+            "clamp");
+        object.providerSlot = 0;
+        object.segmentEndSlot = 1;
+        object.falloffMin = _SynthFloat(writer, 0.25f);
+        object.falloffMax = _SynthFloat(writer, 2.0f);
+        object.scaleZ = _SynthFloat(writer, 0.5f);
+        object.falloffCurve =
+            RigExecBuildFalloffLut(RigExecFalloffProfile::Smooth);
+        _SynthAttr(writer, "/mesh.points", &object.targetPoints,
+                   &object.targetValid);
+        geometry.weightObjects.push_back(std::move(object));
+        RigExecVolumeWeightInputs in = volumeInputs("y", "unbounded");
+        in.params.falloffMin = 0.25f;
+        in.scales = GfVec3f(1.0f, 1.0f, 0.5f);
+        in.params.curve =
+            RigExecBuildFalloffLut(RigExecFalloffProfile::Smooth);
+        in.capsuleEnd = placement.Origin();
+        in.hasCapsuleEnd = true;
+        expected.push_back(RigExecBuildVolumeWeightPacket(
+            TfToken("RigExecCapsuleWeight"), in));
+    }
+    // 32: capsule with no segment end: the sphere about its origin.
+    {
+        fb::RigExecWireWeightObject object = _SynthObject(
+            writer, "/w/capsuleNoEnd", "RigExecCapsuleWeight", "dense",
+            "clamp");
+        object.providerSlot = 0;
+        object.falloffMax = _SynthFloat(writer, 2.0f);
+        _SynthAttr(writer, "/mesh.points", &object.targetPoints,
+                   &object.targetValid);
+        geometry.weightObjects.push_back(std::move(object));
+        const RigExecVolumeWeightInputs in = volumeInputs("y", "unbounded");
+        const RigExecWeightPacket capsule = RigExecBuildVolumeWeightPacket(
+            TfToken("RigExecCapsuleWeight"), in);
+        const RigExecWeightPacket sphere = RigExecBuildVolumeWeightPacket(
+            TfToken("RigExecSphereWeight"), in);
+        CHECK(capsule.valid && capsule.values == sphere.values);
+        expected.push_back(capsule);
     }
 
     // One chain feeding object 15's target, its base held.

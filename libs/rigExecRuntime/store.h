@@ -89,6 +89,8 @@ enum RrSolverField : int {
     RrSolverPin=14,RrSolverUpperScale=15,RrSolverLowerScale=16,RrSolverSoftDistance=17,RrSolverLimbTwist=18,
     RrSolverFieldCount = 19,
 };
+static_assert(size_t(RrSolverFieldCount) == RigExecWireSolverFixedFieldCount,
+              "solver fixed fields: format.h, serialize.cpp, computedCapture.cpp");
 
 enum RrConstraintField : int {
     RrConstraintEnabled = 0,
@@ -782,6 +784,12 @@ struct RrProgram {
     std::vector<std::vector<int32_t>> avarReaderSteps, chainBaseSteps, revisionSteps;
     std::vector<int32_t> revisionStaticStep;
     std::vector<std::array<int32_t, RrSolverFieldCount>> solverRead;
+    // Per solver, a RigExecSkeleton2d's channel reads (thirteen per bone,
+    // Skeleton2d.channels order) and selector reads (each group's
+    // activeBone, then each space switch's active index;
+    // Skeleton2d.selector_channels order); empty for every other solver.
+    std::vector<std::vector<int32_t>> solverBone2dRead;
+    std::vector<std::vector<int32_t>> solverBone2dSelectorRead;
     std::vector<std::array<int32_t, RrConstraintFieldCount>> constraintRead;
     std::vector<std::array<int32_t, RrWeightFieldCount>> weightRead;
 

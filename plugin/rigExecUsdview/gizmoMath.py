@@ -68,6 +68,7 @@ _COMPUTED_SPACES = (DEFAULT_SPACE, AVAR_DEFAULT_SPACE, POSED_DEFAULT_SPACE,
 # registered and Tf cannot answer an IsA question.
 VOLUME_WEIGHT_TYPE_NAMES = (
     "RigExecSphereWeight",
+    "RigExecCapsuleWeight",
     "RigExecPlaneWeight",
     "RigExecCurveWeight",
 )

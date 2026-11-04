@@ -175,6 +175,27 @@ RigExecSphereWeightField(const std::vector<GfVec3f> &points,
 {
     RigExecSphereWeightField({points.data(),points.size()},matrix,params,weights,positive,negative);
 }
+bool
+RigExecCapsuleLocalEnd(const GfMatrix4d &scaledWorldToLocal,
+                       const GfVec3d &end, GfVec3f *localEnd)
+{
+    const GfVec3d local = scaledWorldToLocal.TransformAffine(end);
+    const GfVec3f narrow(local);
+    if (!std::isfinite(narrow[0]) || !std::isfinite(narrow[1]) ||
+        !std::isfinite(narrow[2])) {
+        return false;
+    }
+    *localEnd = narrow;
+    return true;
+}
+
+void
+RigExecCapsuleWeightField(const std::vector<GfVec3f> &points,
+    const GfMatrix4d &matrix, const GfVec3f &localEnd,
+    const RigExecFalloffParams &params, std::vector<float> *weights)
+{
+    RigExecCapsuleWeightField({points.data(),points.size()},matrix,localEnd,params,weights);
+}
 void
 RigExecPlaneWeightField(const std::vector<GfVec3f> &points,
     const GfMatrix4d &matrix, int axis, const RigExecFalloffParams &params,
@@ -212,6 +233,28 @@ RigExecSphereWeightField(
                     ? negativeScales[axis] : positiveScales[axis];
             }
             const float d = RigExecSphereDistance(local);
+            out[i] = RigExecEvaluateFalloff(d, params);
+        }
+    });
+}
+
+void
+RigExecCapsuleWeightField(
+    RigExecWeightPointView points,
+    const GfMatrix4d &worldToLocal,
+    const GfVec3f &localEnd,
+    const RigExecFalloffParams &params,
+    std::vector<float> *weights,
+    const RigExecRangeRunner *ranges)
+{
+    weights->resize(points.count);
+    float *const out = weights->data();
+    const GfVec3f origin(0.0f);
+    RigExecRunRanges(ranges, points.count, kRigExecFieldGrain,
+                     [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            const float d = RigExecSegmentDistance(
+                _ToLocal(worldToLocal, points.data[i]), origin, localEnd);
             out[i] = RigExecEvaluateFalloff(d, params);
         }
     });
