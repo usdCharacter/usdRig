@@ -4,8 +4,8 @@ summary: Choose volume guides and surface color mappings for resolved weight fie
 order: 75
 ---
 
-Open **RigExec → Volume Weight Authoring**, select a weight object, and
-choose its `guide:drawMode` in the parameter panel:
+Open **RigExec → Animation Editors → Volume Weight Editor**, select a weight
+object, and choose its `guide:drawMode` in the parameter panel:
 
 | Mode | Drawing |
 | --- | --- |
@@ -50,11 +50,11 @@ and Hydra publication do not author results onto the stage.
 
 ## Editing weights
 
-Open **RigExec > Volume Weight Authoring** to edit a weight. The Weight tab
-contains its inner and outer boundaries, strength, inversion and falloff
-profile. Shape / placement contains axis scales and placement. Display /
-options contains guide styling and surface coloring. The influence overlay
-remains independent of selection.
+Open **RigExec > Animation Editors > Volume Weight Editor** to edit a weight.
+The Weight tab contains its inner and outer boundaries, strength, inversion
+and falloff profile. Shape / placement contains axis scales and placement.
+Display / options contains guide styling and surface coloring. The influence
+overlay remains independent of selection.
 
 While the editor is open, drag a drawn inner shell or outer cage with the left
 mouse button to expand or contract that boundary. Shift-drag a sphere to

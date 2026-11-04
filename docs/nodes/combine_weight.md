@@ -29,11 +29,10 @@ result is an ordinary weight object that any mover can bind. One combine
 carries one mode; mixed compositions nest combines inside combines rather
 than tagging individual targets.
 
-Folds an ordered list of weight objects into one field
-(spec section 4.1, volumetric extension). This is what makes weight
-objects composable: a painted RigExecStaticWeight masked by a
-RigExecSphereWeight, two spheres unioned with `max`, a driven
-RigExecDynamicWeight subtracted out.
+Folds an ordered list of weight objects into one field.
+This is what makes weight objects composable: a painted
+RigExecStaticWeight masked by a RigExecSphereWeight, two spheres
+unioned with `max`, a driven RigExecDynamicWeight subtracted out.
 
 Combines nest, and nesting is how mixed modes are expressed -- one
 combine carries one mode, so a relationship never has to carry
@@ -73,7 +72,7 @@ its points through unchanged.
 Valid values: `tint`, `heatmap`, `bands`.
 
 Selected influence overlay: tint blends gray to red;
-heatmap interpolates blue, cyan, green, yellow and red at weights
+heatmap interpolates dark blue, blue, teal, yellow and red at weights
 0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
 Colors use resolved vertex weights, clamped to [0,1] for display;
 faces interpolate them, so bands are approximate on coarse meshes.
@@ -136,8 +135,8 @@ Valid values: `multiply`, `add`, `subtract`, `max`, `min`, `average`, `overlay`.
 multiply, add, max, min, and average are order
 independent. subtract and overlay are NOT: they seed from the
 first input and fold the rest in authored target order, which is
-the one place this extension departs from the spec section 7.2
-rule that target-list permutation cannot change a result. Authors
+where weight composition departs from the rule that target-list
+permutation cannot change a result. Authors
 who need a permutation-proof composition use a commutative mode.
 
 #### `inputs:strength`
@@ -180,7 +179,7 @@ python docs/render_media.py --page combine_weight
 
 - `multiply`, `add`, `max`, `min`, and `average` are order independent; `subtract` and `overlay` seed from the first target and consume the authored order, so reordering the relationship changes the result for those two alone.
 - A combine must publish `dense` — it is the schema fallback and the only value its kernel accepts — but its inputs may be constant, sparse, dense, or generated; each is resolved to dense before the fold.
-- `rigExec:rangePolicy` is inherited unchanged from `RigExecWeightObject`, so a combine falls back to `strict` -- unlike the volume weights, which redeclare it as `clamp`. Author `clamp`, as the example does, or an `add` that overlaps past 1 (or an overdriven `inputs:strength`) invalidates the packet and the mover silently passes its points through.
+- `rigExec:rangePolicy` is inherited unchanged from `RigExecWeightObject`, so a combine falls back to `strict` -- unlike the volume weights, which redeclare it as `clamp`. Author `clamp`, as the example does, or an `add` that overlaps past 1 (or an overdriven `inputs:strength`) invalidates the packet and the mover passes its points through with a `MoverFailed` diagnostic.
 
 ## See also
 

@@ -34,7 +34,7 @@ the cloth is large enough, uses the legacy scalar material and nothing else
 in the rig reads its points. Relationship-linked profiles use the shared CPU
 solver in live, frozen and binary playback. Link `rigExec:constraints` to
 `RigExecClothConstraintSet` prims for stretch, bend, damping, pins, tethers,
-cloth/cloth attachments and self-contact. Each supports UV warp/weft response,
+attachments, collision and self-contact. Each supports UV warp/weft response,
 painted maps and a force-to-strength curve. See
 [cloth materials and bindings](../concepts/secondary-motion.md#cloth-materials-and-bindings)
 for authoring and binding conventions. Attachment constraint sets draw guide
@@ -136,7 +136,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -180,7 +181,7 @@ Optional mesh or exact point3f[] property defining rest distances and material f
 
 *Relationship.*
 
-Exact float2[] or texCoord2f[] primvar defining warp/weft. Supports vertex and indexed faceVarying UVs.
+Exact float2[] or texCoord2f[] primvar defining warp/weft, with vertex, varying or faceVarying interpolation, indexed or not. Absent, a constraint profile with directional response (warp, weft and normal unequal, or painted) is a compile error.
 
 #### `rigExec:pinWeights`
 
@@ -211,7 +212,7 @@ side, the window starts at the latest earlier frame that is clear for
 rigExec:windowFrames frames on both sides, checking only through the
 current frame. This gives contact a consistent settling interval and
 keeps the cloth on the side it came from. A value at most rigExec:windowFrames turns
-this off. It is also the history the evaluator keeps.
+this off. The evaluator keeps the longer of the two as history.
 
 #### `rigExec:substeps`
 

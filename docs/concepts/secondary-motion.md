@@ -151,9 +151,9 @@ reader->Execute(&error);
 Fed this way, the reader publishes what the native evaluator does, bit for
 bit. A reader's first frames have less history than the window;
 `rigExec:ignoreFirstFrame` keeps the harmonics constraint from ringing at the
-jolt of starting from rest. The runtime plays the cloth itself
-(`RigExecClothPlaybackKernel`), so a file plays in a host that loads no mover
-library. `usdview`'s binary playback pushes on consecutive frames and rebuilds
+jolt of starting from rest. The runtime plays the cloth itself (the cloth
+mover is a built-in module in the runtime's generated mover catalog), so a
+file plays in a host that loads no mover library. `usdview`'s binary playback pushes on consecutive frames and rebuilds
 the history on a jump. `rigExecPose --verify-binary` replays history for a
 rig with windowed operations.
 
@@ -340,5 +340,6 @@ substeps, a shorter window or a smaller collision depth cost less.
   are fixed for a compile; editing them recompiles.
 - A frame the cloth is disabled at holds no packet, so the history after it
   starts there.
-- Mover plugins built for API 5 must be rebuilt for API 6, which added the
-  windowed hooks ([external movers](external-movers.md#windowed-movers)).
+- Mover plugins built for API 5 or 6 must be rebuilt for API 7, whose
+  windowed hooks include `windowFramesScene`
+  ([external movers](external-movers.md#windowed-movers)).

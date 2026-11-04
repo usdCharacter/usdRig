@@ -89,6 +89,8 @@ One focus area per file, numbered roughly from simplest to most involved.
 | [`16_ConnectionReadPhases.usda`](../../examples/16_ConnectionReadPhases.usda) | Read phases through connections |
 | [`17_PatchCurveShapes.usda`](../../examples/17_PatchCurveShapes.usda) | Mixing UV shapes on a patch with avars |
 | [`18_PatchMouth.usda`](../../examples/18_PatchMouth.usda) | Two lips on one patch, mixed by ARKit avars, never crossing |
+| [`19_HarmonicsChain.usda`](../../examples/19_HarmonicsChain.usda) | Harmonics secondary motion on a chain, read as rotation |
+| [`20_MatrixSphere.usda`](../../examples/20_MatrixSphere.usda) | One matrix mover carrying a dense sphere |
 
 The full list, including the composition-arc and constraint test stages, is
 in the [example catalog](../../examples/README.md).

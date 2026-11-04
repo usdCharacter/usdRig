@@ -47,9 +47,9 @@ re-evaluation.
 
 ## What it costs
 
-- **Memory, bounded per rig:** 256 MiB by default — about 80 full biped
-  frames (the ±8 neighborhood plus a ±32 sweep) — with least-recently-used
-  eviction past the cap. Long sessions cannot grow it.
+- **Memory, bounded per rig:** 1280 MiB by default — about 420 full biped
+  frames, against the 80 of the ±8 neighborhood plus a ±32 sweep — with
+  least-recently-used eviction past the cap. Long sessions cannot grow it.
 - **CPU:** two background workers at below-normal priority. They run hot
   while the UI is idle and yield while it is busy.
 - **One short burst per edit:** sampling the ±8 neighborhood's inputs at

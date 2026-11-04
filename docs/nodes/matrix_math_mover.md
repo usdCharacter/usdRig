@@ -30,7 +30,7 @@ channel — a control's `posed:space` makes an animator handle the second
 matrix in the product.
 
 Statically typed multiply or blend over an exact matrix4d
-property target (spec section 4.1). Distinct from the point-moving
+property target. Distinct from the point-moving
 RigExecMatrixMover.
 
 multiply post-multiplies (inputs:value applied AFTER the incoming
@@ -46,9 +46,9 @@ exact at both endpoints, so a `blend` at weight 1 is a straight
 substitution and a partial weight is a crossfade between two frames.
 `inputs:value` may be CONNECTED, which is how a control drives the
 arithmetic: the mover reads the same `posed:space` matrix the control is
-posed and drawn at. A property chain reads property values, not evaluated
-provider frames, so the operand has to be a matrix that already stands on
-the stage, authored or connected.
+posed and drawn at. Connected to a joint's or control's `posed:space`, it
+reads that provider's evaluated frame: after its solvers by default, or
+after its constraints when the input declares `rigExecReadPhase = "final"`.
 
 ## Wiring
 
@@ -81,7 +81,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -138,7 +139,7 @@ python docs/render_media.py --page matrix_math_mover
 ## Tips
 
 - Post-multiplication order matters: the value applies AFTER the incoming matrix, so it acts in the incoming frame's parent — a translation runs along the parent axes whatever rotation came before it, and the incoming transform happens first.
-- Connect `inputs:value` to a control's `posed:space` to make the operand animatable. A joint's posed frame is not available here: the chain resolves before the solve, so what it would read is the authored identity.
+- Connect `inputs:value` to a control's `posed:space` to make the operand animatable. A joint's `posed:space` works the same way: the connection reads its solved frame, and `rigExecReadPhase = "final"` on the input reads it after its constraints.
 - Two movers on one matrix are a stack, and composed children execute bottom-up — author the `blend` that establishes the frame BELOW the `multiply` that offsets it.
 
 ## See also

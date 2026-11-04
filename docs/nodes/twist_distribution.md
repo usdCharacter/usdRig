@@ -101,9 +101,8 @@ Valid values: `minimumEnergy`.
 
 *Relationship.*
 
-Ordered output joints posed by the distributed twist frames
-(view-free extraction). The compiler authors each joint's
-one aggregate element.
+Ordered output joints posed by the distributed twist frames.
+The compiler binds each joint to one aggregate element.
 
 #### `rigExec:jointElements`
 
@@ -112,8 +111,7 @@ one aggregate element.
 Optional aggregate element index for each rigExec:joints
 entry (parallel array). When absent/empty, element = list position.
 Lets a joint bind a specific distributed frame (e.g. the middle of
-an N-frame twist) without listing every element, matching the
-deleted view's arbitrary-element selection.
+an N-frame twist) without listing every element.
 
 #### `guide:radius`
 
@@ -124,12 +122,10 @@ element: the exact counterpart of RigExecJoint's guide:radius,
 including the rule that zero or negative draws no guides at all,
 which is how a solver's diagnostics are turned off.
 
-Without it the elements are stuck at Hydra's fallback radius of
-1.0. That is proportionate on an asset authored at tens of units
-and several times the size of the whole character on one authored
-at one unit -- the joints were given this knob for exactly that
-reason and the aggregate solvers were not, so turning guide
-display on for a small asset buried it in solver geometry.
+Without it the elements draw at Hydra's fallback radius of 1.0,
+which is proportionate on an asset authored at tens of units and
+several times the size of the whole character on one authored at
+one unit.
 
 #### `guide:displayColor`
 
@@ -160,7 +156,7 @@ python docs/render_media.py --page twist_distribution
 ## Tips
 
 - Drive the end with `avars:rspin` (roll about the bone axis), not a tilt: only axial roll becomes distributed twist.
-- Feed the run to a Ribbon as `twistFrames` so a spine strip inherits the same unwind.
+- Naming this solver on a Ribbon's `rigExec:twistFrames` orders the ribbon after it but adds no twist: the ribbon's frames come from its driver curve alone.
 
 ## See also
 

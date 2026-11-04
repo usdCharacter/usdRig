@@ -42,8 +42,9 @@ root when none is named) at the current frame and at each earlier frame
 of a fixed window. Every earlier frame's acceleration rings as a damped
 sine, and the sum of the rings still sounding is added to the target's
 translation, scaled by the MoverAPI envelope. The window is
-rigExec:waves * rigExec:waveLength / rigExec:frequency frames, so the
-result depends only on the frames in it: scrubbing, playback and a
+rigExec:waves * rigExec:waveLength / rigExec:frequency frames (all three
+above zero and the window at most 4094 frames, or the compile fails), so
+the result depends only on the frames in it: scrubbing, playback and a
 background cache all agree. While a control is dragged the earlier
 frames are the authored animation and the current frame is the dragged
 pose, so the ring answers the drag.
@@ -101,7 +102,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -262,7 +264,9 @@ Per-axis multipliers, along the axes of rigExec:space.
 
 *Type:* `double`. *Default:* `3`.
 
-How fast a ring dies away; 0 rings at full amplitude until it ends.
+How fast a ring dies away. The envelope falls from 1 at the
+impulse to inputs:termination as the ring ends; at 0 it falls
+linearly.
 
 #### `inputs:termination`
 

@@ -130,8 +130,11 @@ nav:
       - concepts/baked-vs-dynamic.md
       - concepts/frame-cache-warming.md
       - concepts/wrinkle-deformation.md
+      - concepts/secondary-motion.md
+      - concepts/riglogic.md
       - concepts/external-movers.md
       - concepts/live-evaluator-inspection.md
+      - concepts/paths.md
       - Multi-stage imaging: multistage-imaging.md
   # The node reference's sections are filled in by docs/_mkdocs/hooks.py
   # from docs/operator_notes.py, so they follow the generator.

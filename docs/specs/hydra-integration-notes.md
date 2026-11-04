@@ -140,7 +140,9 @@ world-space matrix with `resetXformStack = true` and have flattening honor it.
 Stock usdview constructs the engine directly:
 `pxr/usdImaging/usdviewq/stageView.py:965-968` —
 `self._renderer = UsdImagingGL.Engine(params)`. The engine builds the full
-chain in `_CreateSceneIndexChainAndRenderer` (engine.cpp:1748-1794). Scene index
+chain in `_CreateSceneIndicesAndRenderer` (engine.cpp:1506-1597), which calls
+`_CreateSceneIndexChainAndRenderer` (engine.cpp:1748-1794) and
+`_CreateUsdImagingSceneIndices` (engine.cpp:1677-1701). Scene index
 mode is on by default (`USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX` default `true`,
 engine.cpp:78-79). **Net: running stock usdview with
 `USDIMAGINGGL_ENGINE_ENABLE_EXEC_SCENE_INDEX=1` (and a `PXR_BUILD_EXEC=ON`
@@ -197,12 +199,12 @@ There is no discovery mechanism: the stage arrives only because
 ### 3.1 Driving methods (all called by the engine on the render thread)
 
 The engine drives the exec SI in lock-step with the UsdImaging SI, from
-`UsdImagingGLEngine::Render` / `_PreSetTime` — i.e. on whatever thread calls
-`Render()` (the main thread in usdview), with the GIL released
-(`TF_PY_ALLOW_THREADS_IN_SCOPE`, engine.cpp:481):
+`UsdImagingGLEngine::PrepareBatch` (called by `Render`) / `_PreSetTime` — i.e.
+on whatever thread calls `Render()` (the main thread in usdview), with the GIL
+released (`TF_PY_ALLOW_THREADS_IN_SCOPE`, engine.cpp:481):
 
 ```cpp
-// engine.cpp:484-498 (Render -> scene time)
+// engine.cpp:484-498 (PrepareBatch -> scene time)
 _usdImagingSceneIndex->SetTime(params.frame);
 if (_execStageSceneIndex) {
     _execStageSceneIndex->SetTime(params.frame);
@@ -565,7 +567,7 @@ sampling, warming and binary playback.
 
 ### 6.4 UsdImagingSceneIndexPlugin — plugin hook INSIDE the UsdImaging chain
 
-New in v26.x (`pxr/usdImaging/usdImaging/sceneIndexPlugin.h`, Copyright 2025):
+Available since v25.05 (`pxr/usdImaging/usdImaging/sceneIndexPlugin.h`):
 "A base class for scene index plugins that can insert filtering scene indices
 into UsdImaging ... intended for UsdSkelImaging" (:27-33). It is TfType/Plug
 discovered — **open to third parties**:

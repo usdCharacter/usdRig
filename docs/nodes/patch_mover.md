@@ -43,9 +43,9 @@ alone moves them past each other.
 
 Evaluates a UsdGeomNurbsPatch at normalized UV parameters read from
 a point-based UV input prim and writes an exact native UsdGeomPointBased
-points property. Both rigExec:patch and rigExec:uvPoints honor
-rigExecReadPhase metadata, so controllers can deform the patch or drive the
-UV input points through earlier movers. Weighted UV shapes mix into the UV
+points property. rigExec:patch, rigExec:uvPoints and rigExec:uvShapes
+honor rigExecReadPhase metadata, so controllers can deform the patch or
+drive the UV input points through earlier movers. Weighted UV shapes mix into the UV
 points before the patch is evaluated, so avars such as smile, frown or
 mouthOpen can slide the attachment across the surface together. Contact
 pairs then keep paired points from crossing in v, so two curves on one
@@ -101,7 +101,10 @@ Native UsdGeomNurbsPatch prim supplying the NURBS surface.
 
 Native UsdGeomPointBased prim or points property whose XY
 coordinates supply normalized (u, v) parameters on the patch: the
-neutral the UV shapes are measured from.
+neutral the UV shapes are measured from. It holds one point per
+target point, or a single point every target point shares. A
+parameter is clamped to [0, 1] on an open patch axis and wrapped on
+a closed or periodic one.
 
 #### `rigExec:uvShapes`
 

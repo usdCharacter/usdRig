@@ -7,23 +7,24 @@ under its own EULA; see [third-party notices](../../THIRD_PARTY_NOTICES.md).
 ## Open a stage
 
 ```bat
-bin\launch_usdview.bat examples\biped\Biped_everything.usda
+bin\launch_usdview.bat examples\biped\Biped_stack.usda
 ```
 
-On Linux or macOS, use `bin/usdview.sh` with the same stage path. Open
-`Biped_layered.usda` for the body rig, or `Biped_stack.usda` for the composed
-body and face layers. The [asset README](../../examples/biped/README.md)
+On Linux or macOS, use `bin/usdview.sh` with the same stage path.
+`Biped_stack.usda` composes the face and body branches. Open `Biped_body.usda`
+for the body branch alone, or `Biped.usda` for the body rig flattened into one
+file. The [asset README](../../examples/biped/README.md)
 lists the available layers and their composition.
 
 ## Controls
 
 | Area | Controls |
 |---|---|
-| Root | `hips_ctl` moves the body |
+| Root | `M_Body` moves the body, under the `Main`, `Shot`, and `Aux` masters |
 | Spine and neck | Root, middle, and end controls shape the spline chains |
 | Girdles | Clavicle and pelvis controls carry their limbs |
 | Limbs | IK effectors and poles, plus FK controls |
-| IK/FK blend | `avars:ikfk` on `arm_l_params`, `arm_r_params`, `leg_l_params`, and `leg_r_params`; 0 is FK, 1 is IK |
+| IK/FK blend | `avars:ikfk` on `L_Arm`, `R_Arm`, `L_Leg`, and `R_Leg`; 0 is FK, 1 is IK |
 | Feet | Heel, toe, ball-roll, and bank controls beneath the leg IK controls |
 | Face | Skull, upper/lower face, jaw, nose, eyes, brows, and mouth layers |
 

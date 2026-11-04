@@ -132,11 +132,15 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 |---|---|
 | `libs/rigExecMath` | Solver, deformation, interpolation, and weight math |
 | `libs/rigExecSchema` | Authored USD schema definitions |
-| `libs/rigExec` | Scene binding, compiled evaluation, independent checks, and caches |
+| `libs/rigExec` | Evaluator, compiled evaluation, invalidation, and caches |
+| `libs/rigExecScene` | USD scene translation into the shared operation graph |
 | `libs/rigExecGraph` | Shared operation compiler, typed values, and executor |
+| `libs/rigExecOracle` | Optional independent reference checks and golden capture |
 | `libs/rigExecRigging` | C++ authoring API |
 | `libs/rigExecImaging` | Hydra scene indices and viewport publication |
+| `libs/rigExecGpu` | OpenGL compute path for per-vertex deformation and cloth |
 | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime` | Binary export, format, and playback |
+| `libs/rigExecSampler` | Stage values copied into binary-runtime inputs |
 | `libs/rigExecStandalone` | Experimental stage-free scene runtime and rigpack backend |
 | `python` | Python bindings and authoring helpers |
 | `plugin` | Schema resources and optional viewer tools |

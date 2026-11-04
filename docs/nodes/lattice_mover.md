@@ -29,11 +29,13 @@ shaping — bulges, bends, squash and stretch.
 
 Reads cage points from a native mesh/points prim and writes
 exactly one exact native UsdGeomPointBased points property through
-tensor-product basis evaluation (spec sections 4.1, 7.5).
+tensor-product basis evaluation. rigExec:cage honors rigExecReadPhase
+metadata. rigExec:evaluation selects the basis; rigExec:basis is not
+read.
 
 ## How it works
 
-The default `rigExec:evaluation = legacy` preserves the existing
+The default `rigExec:evaluation = legacy` is the tensor-product
 Bernstein cage evaluator. `regularGrid` interpolates cage displacement from
 canonical `origin` and `spacing`, with separate linear, cardinal, B-spline or
 Catmull-Rom interpolation on each axis. `divisions` uses x-fastest ordering;
@@ -44,7 +46,10 @@ basis weights while individual cage indices clamp at the boundary.
 envelope. `cageMatrix` and `targetMatrix`, optionally followed by the two
 `frames` providers, define the coordinate spaces. `pointSpace = common` is for
 points already in a shared asset space; `local` is for object-local points.
-The cage relationship reads its selected base or final revision.
+These settings and `frames` belong to `regularGrid`; authoring them with
+`legacy` fails the mover's compile check. The cage points are read at the
+`rigExecReadPhase` declared on `rigExec:cage`; `frames` providers take
+`base` or `final`.
 
 `.rigexec` exports carry these settings from format revision 21. A revision
 20 file has none of them and plays the legacy cage evaluator.
@@ -80,7 +85,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -119,7 +125,7 @@ Valid values: `bspline`, `bernstein`.
 
 Valid values: `legacy`, `regularGrid`.
 
-Legacy retains the bound Bernstein cage. Regular grid interpolates current cage displacement against canonical origin/spacing at each incoming point.
+Legacy binds each base point into the bound of the cage's default-time points and moves the incoming point by the Bernstein blend of the cage's motion from them; it needs at least two divisions per axis, and an authored regular-grid setting (interpolation, origin, spacing, strength, mask, pointSpace, cageMatrix, targetMatrix or frames) is a compile error. Regular grid interpolates current cage displacement against canonical origin/spacing at each incoming point and needs at least one division per axis.
 
 #### `rigExec:interpolationU`
 
@@ -173,7 +179,7 @@ Valid values: `local`, `common`.
 
 *Relationship.*
 
-Optional cage and target rest-to-pose providers, in that order, applied after their local-to-common matrices.
+Optional cage and target rest-to-pose providers: none, or exactly these two in that order, applied after their local-to-common matrices. Regular grid only; a checkpoint read phase is a compile error.
 
 ## Example
 

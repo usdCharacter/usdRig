@@ -39,7 +39,7 @@ write side draws everywhere: <prim>.points is the geometry domain and a
 bare prim path is the transform domain.
 
 GEOMETRY. One native point3f[] points property. Each point blends
-p' = q + w (T q - q) (spec section 7.4).
+p' = q + w (T q - q).
 
 TRANSFORM. One Xformable, RigExecControl or RigExecJoint. Its frame
 blends M' = T_w M, the exact twin of the point form and of UsdSkel's own
@@ -56,15 +56,15 @@ approximating one with a blend of constraint sources.
 ## How it works
 
 The provider publishes `computeMatrix`, the rest-to-posed map of its
-own frame (computations.cpp:401-415), and the mover blends it over the
-incoming points as `p' = q + w (T q - q)` (schema.usda:1677-1679), where
+own frame (computations.cpp:416-432), and the mover blends it over the
+incoming points as `p' = q + w (T q - q)` (schema.usda:2557-2558), where
 `w` is the bound weight field or, with none bound,
 `inputs:defaultWeight`. `rigExecReadPhase` metadata on
 `rigExec:transform` chooses which revision of the provider is read: the default `base` binds the provider
 itself, `final` binds the head of its frame chain
-(moverGraph.cpp:1366-1379). The result is passed down the point chain,
+(matrixMover.cpp:105-118). The result is passed down the point chain,
 and the compiler synthesizes the recompute revisions that keep authored
-`normals` and `extent` on that gprim current (rigEvaluator.cpp:5821-5863).
+`normals` and `extent` on that gprim current (rigEvaluatorCompile.cpp:2275-2335).
 
 ## Wiring
 
@@ -98,7 +98,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -228,7 +229,7 @@ Valid values: `linear`, `radial`.
 
 How a partial weight is taken.
 
-linear is the historical form and the default: p' = q + w(Tq - q),
+linear is the default: p' = q + w(Tq - q),
 exact at both ends and a straight line between them.
 
 radial takes a fraction of the transform's ROTATION instead, so a
@@ -263,9 +264,9 @@ python docs/render_media.py --page matrix_mover
 
 ## Tips
 
-- The provider may be a control as readily as a joint: those are the only two types `rigExec:transform` accepts (rigEvaluator.cpp:7221-7231).
-- `final` binds the provider's frame-chain head, so every pose step above it is included; the default `base` is the joint after the LAST SOLVER wrote it, which is not the same as "before every constraint" — a constraint that sits below the last solver is folded into `base` through that solver. Name a prim if you want a specific moment: the `Solvers` scope means "after the last solver", the `Movers` scope "after the last constraint" (moverGraph.cpp:1366-1379, schema.usda:1685).
-- Same-target movers are an ordinary stack ordered by the composed namespace: reverse-sibling post-order, so descendants run before their parent and the bottom sibling before the top (spec section 4.2). Stacking is how you layer rigid follows, not how you blend influences on one point — use the Skin Mover for that (schema.usda:1700-1705).
+- The provider may be a control as readily as a joint: those are the only two types `rigExec:transform` accepts (matrixMover.cpp:273-279).
+- `final` binds the provider's frame-chain head, so every pose step above it is included; the default `base` is the joint after the LAST SOLVER wrote it, which is not the same as "before every constraint" — a constraint that sits below the last solver is folded into `base` through that solver. Name a prim if you want a specific moment: the `Solvers` scope means "after the last solver", the `Movers` scope "after the last constraint" (matrixMover.cpp:105-118).
+- Same-target movers are an ordinary stack ordered by the composed namespace: reverse-sibling post-order, so descendants run before their parent and the bottom sibling before the top (spec section 4.2). Stacking is how you layer rigid follows, not how you blend influences on one point — use the Skin Mover for that (schema.usda:2690-2695).
 - `rigExec:weightBlend = "radial"` blends a fraction of the rotation instead of the chord, so a partly weighted point keeps its distance from the driver's pivot; the default `linear` is the classic cluster. A frame mover blends its landmark points the same way (examples/15_TransformMatrixMover.usda).
 
 ## See also

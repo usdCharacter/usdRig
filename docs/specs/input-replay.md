@@ -135,14 +135,15 @@ refused. Original native replay validates those boundaries without running
 current comparison code. These boundaries establish native caller chronology;
 they do not claim an original frozen/runtime numerical judge.
 
-The PropertyOps direct successful program run has an explicit adapter: the
-actual run is followed by a real owning native Evaluate with the same authored
-inputs, options and time; exact publication bytes must agree. Original replay
-independently judges that added native visit. No produced value is passed as
-input. This changes that harness's visit count and is recorded in its source
-provenance. The later compiled rig binding refusal retains its false/empty status
-assertions and the unchanged original negative test; it has no mathematical
-native counterpart. Distinct direct overrides or frozen/runtime histories
+The SkinTopology harness's direct successful program runs have an explicit
+adapter (`tests/rigExecInputActionsAdapters.h`): the actual run is followed by
+a real owning native Evaluate with the same authored inputs, options and time;
+exact publication bytes must agree. Original replay independently judges that
+added native visit. No produced value is passed as input. This changes that
+harness's visit count and is recorded in its source provenance. A refused run
+gets no native visit: a compiled rig binding refusal has no mathematical native
+counterpart, and its caller keeps its false/empty status assertions. Distinct
+direct overrides or frozen/runtime histories
 without such a counterpart need their own input adapter and coverage entry.
 
 

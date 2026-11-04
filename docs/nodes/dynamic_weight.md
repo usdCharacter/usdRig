@@ -30,7 +30,8 @@ place of the field it modulates.
 
 Fixed-shape weight field recomputed from statically
 declared inputs, optionally modulating a base weight object:
-r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i) (spec section 4.1).
+r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i). Without
+rigExec:baseWeight, b_i = 1 and the field must be constant.
 
 ## How it works
 
@@ -67,7 +68,7 @@ back to the stage.
 Valid values: `tint`, `heatmap`, `bands`.
 
 Selected influence overlay: tint blends gray to red;
-heatmap interpolates blue, cyan, green, yellow and red at weights
+heatmap interpolates dark blue, blue, teal, yellow and red at weights
 0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
 Colors use resolved vertex weights, clamped to [0,1] for display;
 faces interpolate them, so bands are approximate on coarse meshes.
@@ -145,7 +146,7 @@ python docs/render_media.py --page dynamic_weight
 
 ## Tips
 
-- `rangePolicy: clamp` is what lets `inputs:scale` overdrive the paint: a result outside [0, 1] is clamped instead of failing the pose, so a driver can push part of a painted ramp to fully followed while the rest of it still fades.
+- `rangePolicy: clamp` is what lets `inputs:scale` overdrive the paint: a result outside [0, 1] is clamped instead of invalidating the field and passing the mover's points through, so a driver can push part of a painted ramp to fully followed while the rest of it still fades.
 - The influence overlay paints the field a mover consumed, so point it at the dynamic weight, not the base it wraps: an unbound base has no resolved field of its own to show.
 - Drive the driver from another channel (a float math mover or a connection) to tie corrective strength to posing; each of driver, scale, and bias takes at most one float connection. A connection to a channel that float math movers revise reads its authored base unless the input declares `rigExecReadPhase = "final"`.
 

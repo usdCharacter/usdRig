@@ -26,17 +26,18 @@ its weighted channel delta, the mover sums them all, scales the total by
 its weight object, and adds it to the moved points. Channels compose
 independently, so a smile and a brow raise layer without interfering.
 
-Applies independently composed blend inputs and native
-target-shape points samples to an exact standard UsdGeomPointBased.points
-property, then applies the common MoverAPI envelope to the accumulated
-delta (spec section 7.3).
+Applies independently composed blend inputs and their
+target-shape samples (native points or UsdSkelBlendShape offsets) to an
+exact standard UsdGeomPointBased.points property, then applies the
+common MoverAPI envelope to the accumulated delta.
 
 ## How it works
 
 Every `rigExec:blendInputs` channel evaluates its samples against
 its weight (interpolating in-betweens by activation), producing one
 delta array. The mover sums the channel deltas, multiplies by the common
-envelope and the bound mask field, and revises the points. Target
+envelope (the bound mask field, or `inputs:defaultWeight` when none is
+bound), and revises the points. Target
 topology must match the moved mesh point for point.
 
 ## Wiring
@@ -71,7 +72,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -98,7 +100,7 @@ every application of the atomic mover.
 
 Valid values: `target`, `surfaceFrame`.
 
-Target-space offsets by default; surfaceFrame rotates rest offsets into corresponding orthonormal vertex frames of the preceding mesh revision. Detail strength is independent of surface stretch.
+Target-space offsets by default; surfaceFrame rotates rest offsets into corresponding orthonormal vertex frames of the preceding mesh revision. Detail strength is independent of surface stretch. surfaceFrame requires Mesh targets.
 
 ## Example
 

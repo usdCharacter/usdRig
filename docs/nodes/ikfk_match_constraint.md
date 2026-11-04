@@ -37,9 +37,11 @@ switch sits exactly on its FK value the IK control and the pole are
 revised onto where the joints are; on its IK value the three FK
 controls are. Between the two nothing is revised. Every control under a
 revised one rides with it, as under any constraint, so a foot's roll
-controls follow the IK control. The revision is a later version of each
-control: the solvers below this constraint read the controls as their
-own channels put them, so the limb itself does not move.
+controls follow the IK control. The revision is presentation, applied
+where control frames are published: no solver, constraint or mover
+reads it, so the limb itself does not move. rigExec:moves names exactly
+the five controls it revises: the IK control, the pole and the three FK
+controls.
 
 Each frame it also publishes, whichever half drives:
 
@@ -136,7 +138,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

@@ -34,7 +34,7 @@ compile error, so a translate this mover drives has to be authored at
 float precision.
 
 Statically typed add, multiply, clamp, remap, or blend over an
-exact float3/vector-valued property target (spec section 4.1).
+exact float3, vector3f, point3f, normal3f or color3f property target.
 
 Every operation is component-wise, which is why the bounds are float3
 rather than float. Remap and common MoverAPI-envelope semantics match
@@ -94,7 +94,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

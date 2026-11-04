@@ -41,8 +41,9 @@ Mechanics (exact, from the macro body):
 - The block lives in namespace `exec_registration`, which is why `AttributeValue`, `Computation`,
   `Relationship`, `Constant`, etc. are usable unqualified inside the block.
 - Works for **typed and applied (API) schemas** alike. Only **one macro invocation per schema
-  per process** (a second registration for the same schema is an error — see
-  `TestExecConflictingPluginRegistration*`). Computations registered for base schema types and
+  per process** (a second registration for the same schema is an error —
+  `definitionRegistry.cpp:554`; two plugins declaring the same schema in `Exec.Schemas` is also
+  an error — see `TestExecConflictingPluginRegistration*`). Computations registered for base schema types and
   applied API schemas are all found when resolving a computation on a prim.
 - Computation names must NOT start with `__` (reserved prefix for builtins,
   `builtinComputationRegistry.cpp`).
@@ -93,9 +94,11 @@ declare which schemas it registers computations for:
   **`"Type": "resource"`** plugin (see
   `execUsd/testenv/testExecUsdAttributeValueInput/resources/plugInfo.json`, which defines the
   schema `Types` only, while the computations are statically linked in the test binary). If your
-  computations are linked into the host app instead of a plugin, they register at static-init
-  time and no `Exec` plugInfo block is needed — the block exists purely so exec knows *which
-  library to load on demand*.
+  computations are linked into the host app instead of a plugin, they register when exec first
+  builds its definition registry (`definitionRegistry.cpp:81`) and no `Exec` plugInfo block is
+  needed — the block exists purely so exec knows *which library to load on demand*. RigExec
+  takes this route: `librigExec` holds its registrations, and the `rigExecSchema` plugin (whose
+  build-generated plugInfo names `rigExecImaging` as its library) has no `Exec` block.
 - Standalone tools must make the plugins discoverable, e.g.
   `PlugRegistry::GetInstance().RegisterPlugins(path)` or `PXR_PLUGINPATH_NAME`.
 
@@ -116,37 +119,34 @@ TfType ExecTypeRegistry::CheckForRegistration() const;  // fatal error if not re
 Correct registry-function tag is exactly `TF_REGISTRY_FUNCTION(ExecTypeRegistry)`:
 
 ```cpp
-// rigExec/types.h
-struct RigExecBezierSegment {
-    std::array<GfVec3d, 4> cps;
-    uint32_t flags = 0;
+// rigExecMath/pointFrame.h (namespace rigExec)
+struct RigExecPointFrame {
+    std::array<GfVec3d, 4> points{ GfVec3d(0), GfVec3d(1, 0, 0),
+                                   GfVec3d(0, 1, 0), GfVec3d(0, 0, 1) };
+    uint32_t flags = RigExecPointFrameValid;
 
-    friend bool operator==(const RigExecBezierSegment &a,
-                           const RigExecBezierSegment &b) {
-        return a.cps == b.cps && a.flags == b.flags;
+    bool operator==(const RigExecPointFrame &o) const {
+        return points == o.points && flags == o.flags;
     }
-    friend bool operator!=(const RigExecBezierSegment &a,
-                           const RigExecBezierSegment &b) { return !(a == b); }
+    bool operator!=(const RigExecPointFrame &o) const { return !(*this == o); }
 
-    // Only needed if the type is ever used with Constant(...) inputs:
-    template <typename HashState>
-    friend void TfHashAppend(HashState &h, const RigExecBezierSegment &s) {
-        h.Append(s.cps, s.flags);
-    }
+    // A TfHashAppend overload is needed only if the type is used with
+    // Constant(...) inputs; RigExecPointFrame has none.
 };
 
 // rigExec/types.cpp
 #include "pxr/exec/exec/typeRegistry.h"
 TF_REGISTRY_FUNCTION(ExecTypeRegistry)
 {
-    ExecTypeRegistry::RegisterType(RigExecBezierSegment{});   // arg = fallback value
+    ExecTypeRegistry::RegisterType(rigExec::RigExecPointFrame{});   // arg = fallback value
+    // ... eight more RigExec value types
 }
 ```
 
 Requirements / behavior (all verified in source):
 - **Equality comparable** — `static_assert(VdfIsEqualityComparable<ValueType>, ...)`.
-  (`VdfIsEqualityComparable<T>` in `vdf/traits.h` is `std::equality_comparable` with recursive
-  specializations for `std::vector`, `std::pair`, `std::map`, `std::unordered_map`.)
+  (`VdfIsEqualityComparable<T>` in `vdf/traits.h` detects a valid `T == T` expression, with
+  recursive specializations for `std::vector`, `std::pair`, `std::map`, `std::unordered_map`.)
 - **Not a VtArray** — `static_assert(!VtIsArray<ValueType>::value, ...)`. VtArray is never an
   exec value type; arrays flow as *vectorized element values* (see §3b).
 - **Copyable + a valid fallback value** — the fallback is returned by
@@ -164,16 +164,17 @@ Requirements / behavior (all verified in source):
 - Registering the same type twice is allowed but all calls must pass an equal fallback.
 - Registration must be **loaded before use**: put `types.cpp` in the same plugin library as the
   computations (execIr does exactly this: `execIr/types.cpp`).
-- The type registry is preloaded with **every Sdf attribute/metadata value type** (double,
-  GfVec3d, TfToken, SdfPath, GfMatrix4d, std::string, ...) — do not re-register those.
+- The type registry is preloaded with **every Sdf attribute value type** (`SDF_VALUE_TYPES`:
+  double, GfVec3d, TfToken, GfMatrix4d, std::string, ...) and its `VtArray`, plus `EfTime`,
+  `SdfPath` and `VtArray<SdfPath>` (`typeRegistry.cpp`) — do not re-register those.
 - Precedent for a container-as-scalar value type: execIr registers
   `using ExecIrResult = TfDenseHashMap<TfToken, VtValue, TfToken::HashFunctor>;` and callbacks
   simply `return ExecIrResult{...};`.
 
 Using it: once registered, the type works anywhere a `ResultType` is accepted —
-`.Callback<RigExecBezierSegment>(...)`, `Computation<RigExecBezierSegment>(token)`,
-`Relationship(rel).TargetedObjects<RigExecBezierSegment>(token)`,
-`ctx.GetInputValue<RigExecBezierSegment>(token)`, `ctx.SetOutput(seg)`. Every DSL specifier
+`.Callback<RigExecPointFrame>(...)`, `Computation<RigExecPointFrame>(token)`,
+`Relationship(rel).TargetedObjects<RigExecPointFrame>(token)`,
+`ctx.GetInputValue<RigExecPointFrame>(token)`, `ctx.SetOutput(frame)`. Every DSL specifier
 calls `ExecTypeRegistry::GetInstance().CheckForRegistration<T>()` at registration time and
 emits a **fatal error** if the type is unknown.
 
@@ -338,8 +339,8 @@ self.PrimComputation(_tokens->computeArrayAttr)
 ```
 (The test registers `ExecTypeRegistry::RegisterType(std::vector<GfVec3f>{})` to use
 `std::vector<GfVec3f>` as the *result* type — VtArray can't be a result type either. For a
-`point3d[4]` attribute you'd read 4 `GfVec3d` elements and pack them into your registered
-struct, e.g. `RigExecBezierSegment` — this is exactly the intended pattern.)
+`point3d[4]` attribute you'd read 4 `GfVec3d` elements and pack them into a registered struct
+of four points, such as `RigExecPointFrame`.)
 `GetInputValue<GfVec3d>` on an array input would return only the first element; use the
 iterator. `RegisterType` note: extraction of a *VtArray-typed attribute's computed value* back
 to `VtValue` (cache view) yields `VtArray<Element>` automatically via the built-in extractors.
@@ -364,12 +365,13 @@ self.PrimComputation(_tokens->computeUsingCustomRel)
         Relationship(_tokens->customRel)
         .TargetedObjects<int>(ExecBuiltinComputations->computeValue));
 ```
-With a custom struct result on the targeted prims (RigExec case):
+With a custom struct result on the targeted prims (RigExec's FkChain,
+`libs/rigExec/computations.cpp:764`):
 ```cpp
-.Inputs(Relationship(_tokens->sources)
-            .TargetedObjects<RigExecBezierSegment>(_tokens->computeSegment)
-            .InputName(_tokens->segments))       // optional rename
-// callback: VdfReadIterator<RigExecBezierSegment> it(ctx, _tokens->segments);
+.Inputs(Relationship(_tokens->controls)
+            .TargetedObjects<RigExecPointFrame>(_tokens->computePointFrame)
+            .InputName(_tokens->controlFrames))  // optional rename
+// callback: VdfReadIterator<RigExecPointFrame> it(ctx, _tokens->controlFrames);
 ```
 Targets that don't provide the computation contribute no value (input is optional by default);
 `.Required()` errors if nothing can be compiled. `.FallsBackToDispatched()` lets targets match
@@ -475,7 +477,7 @@ A callback whose output should hold N elements (rather than one struct):
     for (int i = 0; !out.IsAtEnd(); ++out, ++i) { *out = GfVec3d(i); }
 })
 ```
-For RigExec's fixed 4-point data, prefer the registered struct (`RigExecBezierSegment`) as a
+RigExec carries its fixed 4-point frames as the registered struct (`RigExecPointFrame`), a
 single scalar value — simpler extraction and equality-based invalidation.
 
 ---
@@ -502,6 +504,9 @@ pxr_library(rigExec
 )
 ```
 
+RigExec does not use `pxr_library`: `librigExec` is a plain CMake target that links
+`exec execUsd ef vdf` publicly and holds both its type registrations and its computations.
+
 - **Minimum link set for a computation-only plugin**: `tf` + `exec` (that's all
   `TestExecPluginComputation` links: `pxr_build_test_shared_lib(TestExecPluginComputation
   INSTALL_PREFIX ExecPlugins LIBRARIES tf exec CPPFILES ...)`). Add `gf`/`vt`/`sdf` for value
@@ -516,10 +521,11 @@ pxr_library(rigExec
   `pxr_register_test(... TESTENV ...)`; codeless schema plugins for tests live in
   `testenv/<test>/resources/plugInfo.json` (`"Type": "resource"`, `"ResourcePath": "."`) and
   are loaded at runtime with `PlugRegistry::GetInstance().RegisterPlugins(TfAbsPath("resources"))`.
-- execIr note for Windows/MSVC + generated schemas: it unsets `CMAKE_CXX_VISIBILITY_PRESET`
-  before `pxr_library` (generated schema code and hidden visibility issue).
-- Test plugins require `BUILD_SHARED_LIBS` (static builds don't support plugin loading of test
-  libs — guarded in execGeom's CMakeLists).
+- execIr note for generated schemas: it unsets `CMAKE_CXX_VISIBILITY_PRESET` before
+  `pxr_library`, working around a Linux symbol-export problem in generated schema code under
+  hidden visibility.
+- Tests that rely on plugins require `BUILD_SHARED_LIBS` (static builds don't support them —
+  guarded in exec's and execGeom's CMakeLists).
 
 ---
 

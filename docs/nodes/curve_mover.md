@@ -1,6 +1,6 @@
 # ![Curve Mover](../../icons/curve_mover.png) Curve Mover
 
-*Transports points through a solver's frame array, or emits its frame origins.*
+*Transports points through a solver's frame array, follows a NURBS wire curve, or emits frame origins.*
 
 | | |
 |---|---|
@@ -27,13 +27,16 @@ the point is mapped by the rest-relative rigid transform read there — so a
 dense mesh spread across the parameter bends, while a prop whose every
 vertex shares one parameter rides rigidly. In `emitGuidePoints` mode the
 mover skips the bind and writes the frame origins straight out as points.
-Nothing in either mode samples a curve: the frames are the input, and any
-solver that publishes a frame array — a ribbon, an FK chain, spline IK, a
-twist distribution — can supply them.
+Neither mode samples a curve: the frames are the input, and any solver that
+publishes a frame array — a ribbon, an FK chain, spline IK, a twist
+distribution — can supply them. `wire` mode does read a curve: each point
+moves by the displacement of the `UsdGeomNurbsCurves` named by
+`rigExec:driverCurve` at the parameter it was bound to.
 
-Reads standard basis-curve properties for wire, spline-IK,
-ribbon, and curve-coordinate movement and writes an exact native
-UsdGeomPointBased points property (spec section 7.5).
+Moves an exact native UsdGeomPointBased points property by a
+curve, in one of the rigExec:mode forms: ribbon transport along a
+solver aggregate's frames, guide-point emission from those frames, or a
+wire driven by a UsdGeomNurbsCurves.
 
 ## How it works
 
@@ -45,17 +48,21 @@ bind u to [0, 1], scaling it across the array, and blending the two
 neighbouring maps' results — so the array's cardinality, not a curve, sets
 the resolution of the transport. Guide emission needs no bind at all: it
 copies frame origin `i` to point `i`, and fails the revision if the counts
-differ. The compiler maintains the moved mesh's normals and extent
-afterwards.
+differ. In `wire` mode the mover instead reads the driver curve's posed
+control points at the `rigExecReadPhase` declared on `rigExec:driverCurve`,
+or poses them from `rigExec:driverTransforms`, and adds each point the
+curve's displacement from its authored shape at the point's bind u, faded
+over its bind distance by `inputs:dropoffDistance`. The compiler maintains
+the moved mesh's normals and extent afterwards.
 
 ## Wiring
 
 | Relationship | Points to | Required |
 |---|---|---|
-| `rigExec:driverFrames` | Any solver publishing a frame array (ribbon, FK chain, spline IK, twist distribution). | yes |
-| `rigExec:bindCoordinates` | Per-point `primvars:st`; u picks the spot in the frame array. | ribbon mode |
+| `rigExec:driverFrames` | Any solver publishing a frame array (ribbon, FK chain, spline IK, twist distribution). | ribbon and emitGuidePoints modes |
+| `rigExec:bindCoordinates` | Per-point `primvars:st`; u picks the spot in the frame array, or in `wire` mode (u, d) is the rest curve's parameter and the point's distance from it. | ribbon and wire modes |
 | `rigExec:moves` | Exact native points property to write. | yes |
-| `rigExec:driverCurve` | Unread on this node — the frames already carry the curve's shape. | no |
+| `rigExec:driverCurve` | `wire` mode: the `UsdGeomNurbsCurves` whose displacement the points follow. Unread in the other modes, where the frames already carry the curve's shape. | wire mode |
 
 ## Parameters
 
@@ -81,7 +88,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -116,8 +124,11 @@ every application of the atomic mover.
 
 Valid values: `ribbon`, `emitGuidePoints`, `wire`.
 
-ribbon transports points along a ribbon aggregate's frames;
-emitGuidePoints writes its sample positions; wire moves each point by
+ribbon transports points along the frames of the solver
+aggregate rigExec:driverFrames names (normally a RigExecRibbon's),
+each at the parameter of its rigExec:bindCoordinates entry;
+emitGuidePoints writes those frames' positions, one frame per point;
+wire moves each point by
 the displacement of rigExec:driverCurve (a UsdGeomNurbsCurves) at the
 parameter it was bound to: p' = p + f(d) * (C(u) - C0(u)), with (u, d)
 per point from rigExec:bindCoordinates, C the curve's posed control

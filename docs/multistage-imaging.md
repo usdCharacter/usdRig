@@ -259,9 +259,11 @@ context, answers exactly as an inactive registry would.
 | `int ClearFrameCache(const char *rig)` | `int ClearFrameCacheForStage(long long id, const char *rig)` |
 | `int WarmRange(const char *rig, const double *frames, int count)` | `int WarmRangeForStage(long long id, const char *rig, const double *frames, int count)` |
 | `long long GetWarmingCompletedCount()` | `long long GetWarmingCompletedCountForStage(long long id)` |
+| `long long GetWarmingProgressCount()` | `long long GetWarmingProgressCountForStage(long long id)` |
 | `int BeginPreview(const char *paths)` | `int BeginPreviewForStage(long long id, const char *paths)` (creates the context) |
 | `int UpdatePreview(const double *values, int count)` | `int UpdatePreviewForStage(long long id, const double *values, int count)` |
 | `int EndPreview()` | `int EndPreviewForStage(long long id)` |
+| `int EndPreviewWithoutPublish()` | `int EndPreviewWithoutPublishForStage(long long id)` |
 
 Every name above carries the `RigExecImaging_` prefix. The following functions
 already take the id and use **that** stage's context:
@@ -270,6 +272,8 @@ already take the id and use **that** stage's context:
   also makes the target the current context. Its twin
   `RigExecImaging_ActivateForStage` does not.
 - `int RigExecImaging_GetControlFrameAssetSpace(long long id, const char *prim, double frame, int isDefault, double out[16])`.
+- `int RigExecImaging_GetMovedDoublesForStage(long long id, const char *property, double frame, int isDefault, double *out, int capacity)`,
+  which has no legacy spelling.
 
 Two functions exist for diagnostics and tests:
 

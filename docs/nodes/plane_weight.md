@@ -33,7 +33,7 @@ default; `rigExec:planeBounds = "bounded"` clips the field to the
 between a half-space and a patch.
 
 Gradient across a plane: d is the SIGNED local coordinate
-along rigExec:planeAxis (spec section 4.1, volumetric extension).
+along rigExec:planeAxis.
 
 Signed rather than absolute so a falloffMin/falloffMax pair
 straddling zero authors a gradient ACROSS the plane -- the useful
@@ -96,18 +96,21 @@ Canonical prim or exact property carrying the weighted
 domain.
 
 Its rigExecReadPhase metadata chooses which points the distance
-function measures. `base`, the default, samples the STATIC
-authored points (or rigExec:sampleSource), so the field is
-computed once per rig compilation and a point keeps the weight its bind pose
-earned -- the behaviour of a painted map, and what a matrix mover
-wants so that its own output cannot feed back into its own weights.
+function measures. `base`, the default, samples the AUTHORED
+points (or rigExec:sampleSource) rather than any mover's output,
+so one field per evaluation is shared by every mover that binds
+the weight and a point keeps the weight its bind pose earned --
+the behaviour of a painted map, and what a matrix mover wants so
+that its own output cannot feed back into its own weights.
 
 `preceding` samples the points AS THEY STAND at the consuming
 operation's position in the mover stack, so the volume grabs
 whatever is inside it right now. That is the dynamic behaviour, and
 it is order dependent by construction: the same volume placed at
 two points in the stack legitimately yields two different fields.
-Any other phase is a compile error.
+`final` and checkpoint paths follow the ordinary read-phase rules;
+`final` on the consuming mover's own target includes that mover's
+output and is reported as an operation cycle.
 
 #### `rigExec:representation`
 
@@ -130,7 +133,8 @@ Valid values: `strict`, `clamp`.
 Defaults to clamp rather than the strict used by the
 authored weight objects: inputs:strength and inputs:invert are
 animatable, and an artist scrubbing strength past one should see
-the field saturate, not invalidate the rig mid-drag.
+the field saturate, not have the packet invalidated and its mover
+pass through mid-drag.
 
 #### `inputs:falloffMin`
 
@@ -208,7 +212,7 @@ This is a STRUCTURAL read, resampled to a lookup table once per
 compiled rig, NOT a per-frame input: a per-frame input is a
 value at one time, and a curve is the whole function. The animatable knobs are falloffMin/Max, invert, and
 strength; the curve is a rig-authoring parameter, which is also
-what keeps the field fixed-shape (spec section 4.1).
+what keeps the field fixed-shape.
 
 Held extrapolation outside [0, 1] is the Ts default and is
 exactly right here, so a curve authored over a shorter span still
@@ -218,12 +222,14 @@ yields a total field.
 
 *Relationship.*
 
-Optional explicit static points source to measure
-against, overriding rigExec:weightTarget for SAMPLING only. The
-weighted domain stays the weightTarget, so this is how a volume
-weights one mesh by another mesh's shape -- typically an
-unposed reference copy. Ignored when rigExec:weightTarget reads
-`preceding`.
+Optional explicit points source to measure against,
+overriding rigExec:weightTarget for SAMPLING only. The weighted
+domain stays the weightTarget, so this is how a volume weights one
+mesh by another mesh's shape -- typically an unposed reference
+copy -- and its point count must match the weightTarget's. Without
+rigExecReadPhase metadata it reads the authored points; a declared
+phase selects that version. Ignored when rigExec:weightTarget
+declares a phase other than `base`.
 
 #### `guide:weightDisplay`
 
@@ -232,7 +238,7 @@ unposed reference copy. Ignored when rigExec:weightTarget reads
 Valid values: `tint`, `heatmap`, `bands`.
 
 Selected influence overlay: tint blends gray to red;
-heatmap interpolates blue, cyan, green, yellow and red at weights
+heatmap interpolates dark blue, blue, teal, yellow and red at weights
 0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
 Colors use resolved vertex weights, clamped to [0,1] for display;
 faces interpolate them, so bands are approximate on coarse meshes.
@@ -263,7 +269,7 @@ the field.
 
 *Type:* `double`. *Default:* `0.05`.
 
-Width authored onto the wire curves; see RigExecControl.
+Width of the drawn wire guide curves; see RigExecControl.
 
 #### `guide:displayColor`
 
@@ -307,7 +313,7 @@ volume and the region it grabs read as one object.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Bind transform relative to the namespace frame provider's rest frame; always orthonormalized. A provider with no RigExec ancestor resolves against identity, so its rest:space is its local-to-world bind transform.
+Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized. A plain Xformable between the provider and that frame provider is composed in after it. A provider with no RigExec ancestor and no such Xformable resolves against identity, so its rest:space is its local-to-world bind transform.
 
 #### `default:tx`
 
@@ -348,9 +354,9 @@ identity value selects that fallback.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Final local-to-world transform. For a joint this is
-supplied by the compiler's private solver binding (view-free
-extraction); it may also be authored or
+Final local-to-world transform. For a joint a solver
+writes, this is supplied by the compiler's solver binding; it may
+also be authored or
 connected directly. Unwired xformables follow the parent chain
 with rest offsets and avars.
 
@@ -480,10 +486,9 @@ Whether the field extends forever across the plane, or
 stops at the inputs:extentU x inputs:extentV rectangle.
 
 `unbounded` is the default because it is the behaviour a
-half-space falloff wants and the one every plane weight authored
-before this property existed had. `bounded` zeroes the field
-outside the rectangle -- HARD, with no edge ramp, which is what
-was asked for and what makes the region exactly the drawn one.
+half-space falloff wants. `bounded` zeroes the field outside the
+rectangle -- HARD, with no edge ramp, so the region is exactly the
+drawn one.
 Softening the border is composition's job: multiply the bounded
 plane by a sphere or a second plane and the edge gets whatever
 falloff that volume has.
@@ -505,9 +510,9 @@ the whole point: falloffMin/falloffMax are distances ALONG the
 axis and say where the gradient starts and stops, while the
 extents are the size ACROSS it and say how far the sheet reaches.
 They are different directions and different quantities. Deriving
-one from the other -- which the guide used to do, sizing its
-drawn square from the band -- makes scrubbing the falloff appear
-to resize the plane, and leaves no way at all to say "this
+one from the other -- sizing the drawn square from the band --
+makes scrubbing the falloff appear to resize the plane, and leaves
+no way at all to say "this
 influence ends at the edge of this patch".
 
 The extents size the drawn guide whether or not the field is

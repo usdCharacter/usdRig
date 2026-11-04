@@ -1,10 +1,11 @@
 # RigExec examples
 
-Every file is a self-contained, animated stage (frames 1001-1048) with one
-`RigExecRoot`. View any of them live with:
+Each stage listed here holds one `RigExecRoot`, and most animate over frames
+1001-1048. View any of them live with:
 
 ```
-bin/launch_usdview.bat examples\<file>.usda
+bin\launch_usdview.bat examples\<file>.usda
+bin/usdview.sh examples/<file>.usda
 ```
 
 The rigExecUsdview plugin activates automatically for stages carrying a
@@ -28,21 +29,21 @@ performance or `2d/bust_dd_b/bust_dd_b_rig.usda` for the neutral rig.
 
 ## The original arm
 
-- **ArmRig.usda** — the spec §4.5 arm asset: FK + IK + blend, twist
+- **ArmRig.usda** — the arm asset: FK + IK + blend, twist
   distribution, ribbon, layered weighted-matrix skinning, blend shape,
   volume correction, guide emission, and a `rigComplexity` variant set
   (`film` / `animation` / `preview`; preview disables the volume-correct,
   ribbon-wrap, and guide-emission movers).
-- **ArmShotAnim.usda** — the spec §4.6 shot: references the arm asset,
+- **ArmShotAnim.usda** — the shot: references the arm asset,
   selects the `animation` variant, and layers IK animation, an IK/FK
   switch spline, and a driven-weight spline on top.
 
 ## Numbered series (one focus area per file)
 
 - **01_FkChainTail.usda** — `RigExecFkChain` in action: four tail controls
-  author local rotations through `rigExec:posePoints`; the chain composes
-  them down the hierarchy while animated `rigExec:twist` on the base rolls
-  the whole tail. Joints index the aggregate result and dense/sparse
+  author local rotations through `avars:rz`; the chain composes them down
+  the hierarchy while animated `avars:rspin` on the base control rolls the
+  whole tail. Joints index the aggregate result and dense/sparse
   weighted `RigExecMatrixMover`s skin a strip mesh; normals and extent
   are maintained automatically by the compiler.
 - **02_TwoBoneIkLeg.usda** — `RigExecTwoBoneIk`: a planted/reaching foot
@@ -50,11 +51,9 @@ performance or `2d/bust_dd_b/bust_dd_b_rig.usda` for the neutral rig.
   out-of-reach pose visibly stretches the chain under
   `clampWithSoftness`. A `RigExecDynamicWeight` modulates painted knee
   weights with an animated driver before skinning. Its bone lengths are
-  left unauthored, so they are measured from the bound joints' rests on
-  every evaluation: move a joint's rest and the limb re-proportions
-  itself. `03` and `ArmRig` bind their joints through
-  `RigExecBlendPointFrames` instead, so their solvers have no rests to
-  measure and must author the two absolute lengths.
+  measured from the bound joints' rests (`rigExec:upperLengthOffset` and
+  `rigExec:lowerLengthOffset` only adjust them): move a joint's rest and
+  the limb re-proportions itself.
 - **03_IkFkBlendClamp.usda** — `RigExecBlendPointFrames` blending an FK
   chain against a two-bone IK, plus a pose-phase `RigExecFloatMathMover`
   that clamps the deliberately overdriven blend weight (-0.25→1.3) to
@@ -123,6 +122,12 @@ performance or `2d/bust_dd_b/bust_dd_b_rig.usda` for the neutral rig.
   `/…/Movers/Cage/CageLift` gives the lifted-but-not-twisted cage, and
   `final` gives both — three different results from one rig with no other
   edit. Cyclic phase reads are rejected at compile.
+- **14_VolumeConstrainedSweep.usda** — a volume weight on a constraint.
+  The `RigExecPositionConstraint`'s `rigExec:moves` names a strip's
+  `.points`, so it revises geometry, and the `RigExecSphereWeight` on its
+  `rigExec:weightObject` applies per point: points inside the ball follow
+  the animated target and points outside stay put. The sphere sits inside
+  the `Band` control and rides it with nothing wired.
 - **15_TransformMatrixMover.usda** — a matrix mover in the transform
   domain: `rigExec:moves` names a joint rather than `.points`, and the
   joint's frame is carried by the driver's motion in its space. One
@@ -199,12 +204,13 @@ their node reference page (see [algorithm references](../docs/references.md)):
 
 ## Authoring conventions the engine expects
 
-- One `RigExecRoot` per stage (the usdview plugin and imaging bridge
-  activate the first one found). The rig declares no membership lists:
-  controls, joints, and movers are discovered from the namespace beneath
-  it.
+- One `RigExecRoot` per rig; a stage may hold several, and the usdview
+  plugin and imaging bridge activate every one. The rig declares no
+  membership lists: controls, joints, and movers are discovered from the
+  namespace beneath it.
 - Solvers live under `<rig>/Solvers` and movers under `<rig>/Movers` by
-  convention; discovery is by prim type anywhere beneath the rig. Mover
+  convention; discovery is by schema and wiring anywhere beneath the rig
+  (a mover is any prim with `rigExec:moves`). Mover
   order is a reverse-sibling post-order walk: descendants apply before their
   mover parent and sibling rows apply bottom-to-top. For example,
   `reorder nameChildren = ["Geometry", "Pose"]` displays Pose below Geometry,
@@ -212,8 +218,9 @@ their node reference page (see [algorithm references](../docs/references.md)):
 - Two movers writing the same target may be siblings or nested; the final
   composed hierarchy always supplies their deterministic stack order.
 - Joints and controls are `RigExecXformable`s, which follow the attribute
-  layout of OpenExec's `IrXformable`: orthonormal local-to-world
-  `matrix4d rest:space`, default and posed spaces, and avars for animation
+  layout of OpenExec's `IrXformable`: an orthonormal `matrix4d rest:space`
+  relative to the namespace parent provider's rest (local-to-world for a
+  provider with none), default and posed spaces, and avars for animation
   (rotations in degrees; `avars:rspin` is the twist channel). They differ
   from it: `RigExecXformable` is `Boundable`, adds `avars:rotationSign`,
   and defaults `avars:unitScaleFactor` to 1; its avars pose the xformable
@@ -224,7 +231,7 @@ their node reference page (see [algorithm references](../docs/references.md)):
   the compiler binds each listed joint to one element of that solver's
   aggregate result. The binding is internal — it exists only in the
   compiled program, is not a schema property, and is never authored on
-  your stage (there is no `RigExecPointFrameView` either). Authoring the
+  your stage. Authoring the
   solver's `rigExec:joints` list is the whole job. Joint hierarchy is prim
   nesting;
   an xformable with only a `rest:space` follows its rest (or its
@@ -234,16 +241,16 @@ their node reference page (see [algorithm references](../docs/references.md)):
 - Typed geometry movers write native `UsdGeomPointBased` `point3f[]`
   `points` attributes; matrix movers also accept a bare prim target,
   carried in the transform domain instead (see `15_TransformMatrixMover`).
-  Smooth, volume-correct, lattice, matrix, skin, patch,
-  surface-binding, delta-mush, and wrinkle movers take exactly one
-  canonical target in v0.1; surface, curve, and blendshape movers may
+  Smooth, volume-correct, lattice, matrix, skin, layered-skin, patch,
+  surface-binding, delta-mush, wrinkle, and cloth movers take exactly one
+  canonical target in v0.1; surface, curve, blendshape, and ML movers may
   move several targets.
 - A mover's output is not restricted to a joint frame. Three domains
   exist and a rig may publish any combination of them, including a rig
   with no `RigExecJoint` at all: **geometry** (the point chains above),
   **transforms** (`RigExecAimConstraint` on any `UsdGeomXformable` — its
   revised matrix is published and the subtree rides along), and
-  **properties** (the three math movers, over an exact `float`,
+  **properties** (the three math movers, over an exact `float`/`double`,
   `float3`/`vector3f`/`point3f`/`normal3f`/`color3f`, or `matrix4d`
   attribute — exactly one target each, and the target's value type must
   match the mover's static type). A rig with no controls, joints, placed

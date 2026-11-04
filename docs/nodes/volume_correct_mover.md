@@ -27,10 +27,10 @@ volume so bellies don't gain girth they shouldn't. It reacts to whatever
 ran before it in the chain — it has no driver of its own.
 
 Moves exactly one exact native UsdGeomPointBased points
-property by uniform centroid scaling toward the authored rest bound
-volume (spec section 7.6 revised: the former post-mover volumeCorrect
-operation as a first-class mover). The common MoverAPI envelope blends
-full bound-volume restoration over the incoming points.
+property by uniform centroid scaling toward the axis-aligned bound
+volume of the target's authored base points. The common MoverAPI
+envelope blends full bound-volume restoration over the incoming
+points; an authored inputs:strength is a compile error.
 
 ## How it works
 
@@ -69,7 +69,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

@@ -28,7 +28,7 @@ value.
 Each matrix property follows the same selection rule: its connected computed
 matrix is authoritative, including an identity matrix. Otherwise a non-identity
 authored matrix is authoritative. An identity authored matrix selects the
-computed fallback. This preserves the existing `posed:space` convention. To
+computed fallback. This matches the `posed:space` convention. To
 explicitly select world identity instead of an inherited space, connect a
 matrix-valued attribute containing identity.
 
@@ -58,8 +58,8 @@ skin, or anything constrained to the control. A manipulator reads and writes
 the EFFECTIVE angle, so the control turns the way it was dragged and the
 signed value is what reaches the stage.
 
-With all new channels at their schema defaults, the formula reduces to the
-previous `A * R * inverse(Rp) * parentPosed` behavior. Editing a default pose
+With the default-space channels at their schema defaults, the formula reduces
+to `A * R * inverse(Rp) * parentPosed`. Editing a default pose
 does not edit the rest frame. Solver-owned joint poses remain authoritative.
 
 For a `RigExecTwistDistribution`, `inputs:twistTurns` adds signed revolutions to

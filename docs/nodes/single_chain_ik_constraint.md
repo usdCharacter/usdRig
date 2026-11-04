@@ -24,7 +24,7 @@ On this page:
 FBX-style single-chain IK, and the only IK in UsdRig that is a
 **constraint** rather than a solver: it does not publish a frame array that
 joints extract from, it revises the joint frames that are already there —
-whatever the last solver in each joint's stack committed.
+whatever the steps below it in each joint's stack left.
 Name the two endpoints — `rigExec:firstJoint` and `rigExec:endJoint` — and the
 chain between them is inferred from namespace nesting, so the same node drives
 a two-joint chain or a ten-joint one. The first joint's origin stays planted,
@@ -32,24 +32,27 @@ segments keep their lengths by default, and the end joint lands on the effector
 whenever the goal is in reach.
 
 FBX-style single-chain IK constraint. The first and end joints
-identify an inclusive namespace joint chain, the effector supplies the
+identify an inclusive namespace joint chain of at least two joints,
+which rigExec:moves must name in full; the effector supplies the
 goal transform, and the pole may come from an authored asset-space point
 or an ordered blend of pole-vector objects. It does not use generic
 rigExec:sources.
 
 ## How it works
 
-The constraint runs in the pose phase, ordered BELOW the
-geometry movers in the Movers stack — the hierarchy runs bottom-up, so the
-chain is solved before the skin movers read it at their `final` transform
-read phase. At compile time it walks `endJoint`'s ancestors up to
+The constraint runs in the pose phase at its place in the
+rig's pose stack, and the skin movers read the solved chain at their
+`final` transform read phase, the top of each joint's stack. At compile
+time it walks `endJoint`'s ancestors up to
 `firstJoint` to infer the ordered chain, and `rigExec:moves` must restate that
 complete set. Each evaluation it reads the chain's current frames and the
 effector's frame, solves the positions with deterministic FABRIK inside the
 plane chosen by `rigExec:solverMode` (`rotatePlane` uses the pole point and
 `inputs:twistDegrees`; `singleChain` takes the plane from the effector's own
 orientation and ignores both), then rebuilds each non-end frame with its X axis
-aimed at the next solved joint and writes the whole chain back atomically — a
+aimed at the next solved joint (`rigExec:orientationMode = "preserve"` keeps
+each input frame's orientation relative to its bone instead) and writes the
+whole chain back atomically — a
 failed solve passes every joint through untouched rather than half-posing the
 limb. `rigExec:evaluationMode` decides whether the segment lengths come from
 the joints' rests (`neverTS`, the default) or from their animated translation
@@ -92,7 +95,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

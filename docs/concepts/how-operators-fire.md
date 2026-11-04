@@ -18,8 +18,8 @@ Inside it there are four jobs:
 
 - **Controls carry the animation.** A [control](../nodes/control.md) is the
   animator's handle. Keys go on its `avars:*` channels, composed over its
-  `rest:space`. Nothing in the rig revises a control — its base frame *is* its
-  posed frame — so everything downstream simply follows it.
+  `rest:space`. Its base frame *is* its posed frame, and only a constraint
+  that targets it revises it, so everything downstream simply follows it.
 - **Solvers and constraints pose joints.** An [FK chain](../nodes/fk_chain.md),
   a [two-bone IK](../nodes/two_bone_ik.md) or an
   [aim constraint](../nodes/aim_constraint.md) reads controls and writes frames
@@ -89,7 +89,7 @@ and phased weight sample targets also use this contract. A `float3` input
 selects one array element only when it authors the integer
 `rigExecInputElement`; a shorter current array uses the input's typed fallback
 and reports a diagnostic. See [Cross-domain inputs](../specs/cross-domain-inputs.md)
-for the S9 authoring rules and count recovery behavior.
+for the authoring rules and count recovery behavior.
 
 - `base` — the joint **after its last solver**. Note that this is not "before
   every constraint": a constraint that fell *below* the last solver is already
@@ -125,8 +125,9 @@ def RigExecMatrixMover "HandSkin" (
 
 Change that one value to `base` (or delete it) and the hand card follows the
 FK solve but ignores the aim constraint stacked above it. Nothing else in the
-file moves. [Example 13](../../examples/13_ReadPhases.usda) shows the
-checkpoint form on a lattice cage.
+file moves. [Example 13](../../examples/13_ReadPhases.usda) reads a lattice
+cage at `final`; its notes give the checkpoint that reads the cage halfway
+through its movers.
 
 ### Solver inputs
 
@@ -210,9 +211,9 @@ reads 1.4 at its base and 1.0 at `final`, during the drag and after it is
 released. A drag that is not finite skips the chain, as an authored one
 does, and readers see the dragged value. The `.rigexec` runtime's `SetInput`
 sets an avar the same way, as its authored value, an avar math movers revise
-included, and takes finite values only. One gap remains for now: a plugin mover applies the
-payload its bake assembled for the frame, so a drag that reaches an input
-the plugin reads does not move that mover's output.
+included, and takes finite values only. A plugin mover's playback kernel
+receives its declared inputs as they are set, so a drag on one moves that
+mover's output.
 [Example 16](../../examples/16_ConnectionReadPhases.usda) reads one dial
 three ways, with math movers and with mover envelopes.
 
@@ -280,7 +281,10 @@ full reach of the 3 + 3 unit chain, so the arm holds a slight bend. By frame
 
 ## Where this is specified
 
-Traversal order, the one pose stack over solvers and constraints, rest
-references, `base`/`preceding`/`final` and `AtPrim` checkpoints: spec §4.2
-(*Mover targeting, hierarchy order, and last-writer semantics*). Phase
-boundaries: §6.1. Bottom-up order and the other terms: §16.
+Traversal order is `_GetPoseStackOrder` in
+`libs/rigExec/rigEvaluatorInputs.cpp`, the one walk that numbers the pose
+stack over solvers and constraints and the mover stack, and that the
+structure digest also takes. `base`/`preceding`/`final` and `AtPrim`
+checkpoints are `RigExecReadPhaseKind` in `libs/rigExec/moverGraphTypes.h`.
+[Cross-domain inputs](../specs/cross-domain-inputs.md) gives the producer
+each phase selects for property, pose, geometry and weight reads.

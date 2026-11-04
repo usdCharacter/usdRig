@@ -26,6 +26,8 @@ connects to it, as it would to a pose's weight.
 
 One output of its parent RigExecMlMover's network, in namespace
 order among its RigExecMlOutput siblings, and the float it publishes.
+The parent needs one active child per network output; any other count
+is a compile error.
 
 ## How it works
 

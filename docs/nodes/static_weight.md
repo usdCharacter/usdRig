@@ -28,8 +28,8 @@ indices over a default. Bound through a mover's `rigExec:weightObject`,
 it scales that mover's effect per point.
 
 Time-invariant constant, dense, or sparse authored weight field;
-every target element resolves to an explicit value or the authored
-sparse default (spec section 4.1).
+every target element resolves to an explicit value or
+rigExec:defaultWeight.
 
 ## How it works
 
@@ -39,8 +39,9 @@ the revision consuming it: every target element gets an explicit value
 envelope in place of `inputs:defaultWeight` for that application. The
 fields are time-invariant by contract — time samples or connections on
 `rigExec:values`, `rigExec:indices`, `rigExec:defaultWeight`,
-`rigExec:representation`, or `rigExec:rangePolicy` fail the pose — and
-`strict` rejects a value outside [0, 1] where `clamp` bounds it.
+`rigExec:representation`, or `rigExec:rangePolicy` make compile set aside
+the mover that binds the field — and `strict` rejects a value outside
+[0, 1] where `clamp` bounds it.
 
 ## Wiring
 
@@ -60,7 +61,7 @@ fields are time-invariant by contract — time samples or connections on
 Valid values: `tint`, `heatmap`, `bands`.
 
 Selected influence overlay: tint blends gray to red;
-heatmap interpolates blue, cyan, green, yellow and red at weights
+heatmap interpolates dark blue, blue, teal, yellow and red at weights
 0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
 Colors use resolved vertex weights, clamped to [0,1] for display;
 faces interpolate them, so bands are approximate on coarse meshes.
@@ -127,7 +128,7 @@ python docs/render_media.py --page static_weight
 ## Tips
 
 - Dense suits small ordered targets; sparse suits hero meshes where most verts sit at the default.
-- A dense field must author exactly one value per target element and leave `rigExec:defaultWeight` at 0 — the canonical encoding — or the pose fails rather than padding.
+- A dense field must author exactly one value per target element and leave `rigExec:defaultWeight` at 0 — the canonical encoding — or compile sets aside the mover that binds it rather than padding.
 - A constant field of 1.0 is the rigid-attachment idiom: full follow, no paint.
 
 ## See also

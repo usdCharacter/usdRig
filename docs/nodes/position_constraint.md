@@ -85,7 +85,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -200,15 +201,18 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 
 ## Example
 
 Two posts stand at different heights and a plate hangs between them.
-The joint's rest sits exactly at the posts' midpoint, so an even blend leaves
-it there and every bit of motion you see is the blend: `inputs:sourceWeights`
+The joint's rest sits exactly at the posts' midpoint, so an even blend lands
+on it before the offset, and every bit of motion you see is the blend:
+`inputs:sourceWeights`
 starts even at (1, 1) — the blue ghost is that even-blend frame, the plate
 parked over the midpoint — then swings to (1, 0), to (0, 1), and back to even,
 so the plate departs from its rest in both directions with nothing else in the

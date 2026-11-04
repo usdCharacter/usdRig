@@ -47,8 +47,9 @@ specific source/parent relationships supply numerical inputs. Keep the
 provider's rest frame separate from its evaluated pose.
 
 These computations are operations in the shared evaluation graph: native
-evaluation and frame-cache workers run the same stage-free kernels from the
-provider's declared inputs, so editing an input re-runs the providers that
+evaluation, frame-cache workers and the `.rigexec` runtime run the same
+stage-free kernels from the provider's declared inputs, so editing an input
+re-runs the providers that
 read it and their dependents.
 
 ## Wiring

@@ -1,33 +1,36 @@
-# Control viewport guides — design (2026-08-02)
+# Control viewport guides
 
 Controls (`RigExecControl`) gain synthesized viewport guide drawing through the
 existing Hydra 2.0 results scene index, exactly parallel to the joint/solver
-sphere+cone guides (spec §10.3 extension), with authorable shape, draw mode,
+sphere+cone guides, with authorable shape, draw mode,
 and positive per-axis guide-scale multipliers.
 
-Build target: OpenUSD PR #4156 (usdNoodles branch), installed to the
-`CMakeLists.txt` default `../usd-install` (or the path supplied through
-`USD_INSTALL_DIR`).
+Build target: an unchanged OpenUSD 26.08 install at the `CMakeLists.txt`
+default `../usd-install` (or the path supplied through `USD_INSTALL_DIR`).
 
 ## Requirements
 
 - Every `RigExecControl` under a compiled rig can draw a guide in the viewport
   (Storm, via the RigExec filtering scene indices — never authored to the stage).
-- `guide:shape`: one of `sphere`, `circle`, `box`, `cube`, `diamond`, `pyramid`.
+- `guide:shape`: one of `sphere`, `circle`, `box`, `cube`, `diamond`, `pyramid`,
+  or `custom` (local wire polylines from `guide:points` and
+  `guide:curveVertexCounts`).
 - `guide:drawMode`: `wire` or `geometry`.
 - Positive per-axis guide-scale multipliers as **separate double properties**
   (`guide:scaleX`, `guide:scaleY`, `guide:scaleZ`) — deliberately NOT a vec3,
   per direction. Final drawn size is the evaluated control-frame axis
   magnitude multiplied by this authored guide multiplier.
 - Style parity with joint guides: `guide:displayColor`, `guide:displayOpacity`,
-  purpose `guide`, visibility and `primOrigin` inherited from the control prim
-  so picking a guide selects its control.
+  the control's resolved `purpose` (see host durability below), visibility and
+  `primOrigin` inherited from the control prim so picking a guide selects its
+  control.
 
 ### Locked interpretations (flagged as assumptions)
 
 - `circle` and `box` are the planar shapes (normal +Y, drawn in the local XZ
   plane); `cube` is the 3D box. This is the conventional rigging distinction
-  between the two box-ish tokens; `rest:space` and per-axis scale reorient.
+  between the two box-ish tokens; `guide:planeNormal`, `rest:space` and
+  per-axis scale reorient.
 - All unit shapes are centered at the frame origin with half-extent 1:
   sphere/circle radius 1, box/cube spanning ±1, diamond (octahedron) vertices
   at ±1 on each axis, pyramid base corners (±1, −1, ±1) with apex (0, 1, 0).
@@ -66,15 +69,16 @@ Build target: OpenUSD PR #4156 (usdNoodles branch), installed to the
   rig's controls can be clicked. Measured over 1681 single-pixel picks at
   the default complexity: 8 hits hairline, 8 widthed-but-unrefined, 89
   widthed and self-refined (97 at complexity "high").
-- The planar shapes (`circle`, `box`, normal +Y) are edge-on — a line —
-  from a front view; they suit rigs viewed from above. Examples favor the
-  3D shapes for front-facing legibility.
+- The planar shapes (`circle`, `box`, normal +Y by default) are edge-on —
+  a line — from a front view unless `guide:planeNormal` turns them; at the
+  default they suit rigs viewed from above. Examples favor the 3D shapes
+  for front-facing legibility.
 
 ## Schema (`libs/rigExecSchema/schema.usda`, class `RigExecControl`)
 
 ```usda
 uniform token guide:shape = "circle" (
-    allowedTokens = ["sphere", "circle", "box", "cube", "diamond", "pyramid"]
+    allowedTokens = ["sphere", "circle", "box", "cube", "diamond", "pyramid", "custom"]
 )
 uniform token guide:drawMode = "wire" (
     allowedTokens = ["wire", "geometry"]
@@ -87,23 +91,30 @@ color3f guide:displayColor = (1.0, 0.85, 0.2)
 float guide:displayOpacity = 1.0
 ```
 
+The class also carries `guide:points` and `guide:curveVertexCounts` (the
+`custom` shape), `guide:planeNormal`, `guide:offset`, `guide:orient`, the
+`guide:source` relationship, and `guide:displayOpacityInvert` /
+`guide:displayOpacityMin` for a connected opacity.
+
 Each attribute carries a doc string in the style of the `RigExecJoint` guide
 attrs (see `guide:radius` there). The codeless plugin
 `plugin/rigExecSchema/resources/generatedSchema.usda` is regenerated with
-`usdGenSchema` from the new install once USD finishes building (recipe:
+`usdGenSchema` after schema edits (recipe:
 `bin/gen_schema.sh`, or `bin\gen_schema.bat` on Windows -- both resolve the
 USD python layout themselves).
 
-## Evaluator (`libs/rigExec/rigEvaluator.{h,cpp}`)
+## Evaluator (`libs/rigExec/rigEvaluator.h`, `rigEvaluatorCompile.cpp`)
 
 - Compile: discover `_controlPaths` (all `RigExecControl` prims beneath the
-  rig, namespace walk parallel to `_DiscoverJointOutputs`; empty is fine) and
-  tap each control's `computePointFrame` (base phase — controls are inputs)
-  into `_controlFrameTaps`, following the `_jointFrameTaps` pattern. Phase-A
-  validation discipline applies: locals first, commit on success.
+  rig, `_DiscoverControls`, a namespace walk parallel to
+  `_DiscoverJointOutputs`; empty is fine). Phase-A validation discipline
+  applies: locals first, commit on success.
 - `RigExecRigPose` gains
   `std::map<SdfPath, RigExecPointFrame> controlFrames;` (ASSET-space, like
-  joint frames), filled in `Evaluate` from the taps.
+  joint frames), filled by the baked program in `Evaluate`
+  (`libs/rigExec/bakedPose.cpp`): each control's base frame, since controls
+  are inputs, or its revised frame when a pose constraint names the control
+  in `rigExec:moves`.
 
 ## Bridge (`libs/rigExecImaging/bridge.cpp`, `snapshotStore.h`)
 
@@ -119,51 +130,63 @@ GfVec3d controlGuideScale;      // |evaluated axes| * authored guide multipliers
 
 `_FillControlGuides(pose, snapshot)` (called from both `Evaluate` snapshot
 paths, like `_FillGuides`): for each `pose.controlFrames` entry, rigidize the
-frame (factor the orthonormalize/determinant/finite-check block out of
-`_AppendGuideFrame` into a shared helper) while retaining its three axis
+frame (`_RigidGuideMatrix`, the orthonormalize/determinant/finite-check
+helper `_AppendGuideFrame` shares) while retaining its three axis
 magnitudes. Read `guide:shape/drawMode/scaleX/scaleY/scaleZ` at `pose.time`,
 reject invalid authored multipliers, and publish their product with those
-evaluated magnitudes as `controlGuideScale`; reuse `_ReadGuideStyle` for
+evaluated magnitudes as `controlGuideScale`; `_ReadGuideStyleCached` reads
 color/opacity. `snapshot->assetRoot` must be set on this path too.
 
-Snapshot diff (`RigExecComputeChanges`): fold the new fields into the
-existing guide comparisons — `hasControlGuide`/shape/drawMode changes follow
-the structural (resync) arm; frame/scale/color/opacity changes set
+Snapshot diff (`RigExecSnapshotStore::_Diff` in `snapshotStore.h`): fold the
+new fields into the existing guide comparisons — `hasControlGuide`, shape,
+drawMode, `guide:planeNormal` and custom curve-count changes follow the
+structural (resync) arm; frame/scale changes set
+`RigExecChangeControlGuideXform` (a transform refresh only);
+color/opacity/width/purpose and custom-point changes set
 `RigExecChangeGuides`.
 
 ## Results scene index (`libs/rigExecImaging/sceneIndices.cpp`)
 
 - One synthesized child per guide-bearing control: fixed name `rigGuideCtrl`
   (single child; no index needed), announced/synced through the same
-  machinery as the sphere/cone children (`_DesiredGuideCount`-style
-  bookkeeping extended, `GetChildPrimPaths`, `_SyncGuideChildren` analog,
-  pulls resolved in `GetPrim` only while the parent exists upstream).
+  machinery as the sphere/cone children (`_DesiredControlGuideType` beside
+  `_DesiredGuideTopology`, `GetChildPrimPaths`, `_SyncControlGuideChild`
+  beside `_SyncGuideChildren`, pulls resolved in `GetPrim` only while the
+  parent exists upstream).
 - Prim type:
   - `wire` → `HdPrimTypeTokens->basisCurves`: linear, nonperiodic,
     closed rings by repeating the first point. Topologies:
     circle 1×33-pt ring; sphere 3 orthogonal 33-pt rings; box 1×5-pt ring;
     cube 2×5-pt rings + 4×2-pt pillars; diamond 3 orthogonal 5-pt rings
     through the axis vertices (the exact octahedron edge set);
-    pyramid 1×5-pt base ring + 4×2-pt apex edges. No widths authored.
+    pyramid 1×5-pt base ring + 4×2-pt apex edges; custom uses the authored
+    `guide:curveVertexCounts` over `guide:points` (wire only). Widths come
+    from `guide:wireWidth`, with `displayStyle.refineLevel = 1` when
+    widthed (see above).
   - `geometry` → implicit `sphere` (radius 1) and `cube` (size 2) reuse the
     Hydra implicits exactly as joint guides do; `circle` (one 32-vert face),
     `box` (one quad), `diamond` (8 tris), `pyramid` (4 tris + base quad) are
     meshes, `doubleSided = true`, no authored normals (flat shading is fine
     for guides). Meshes and curves publish local unit `HdExtentSchema`
     min/max; scale lives in the xform.
-- Xform: `S(abs(frameAxisX) * guide:scaleX, abs(frameAxisY) * guide:scaleY,
-  abs(frameAxisZ) * guide:scaleZ) × rigidFrame × assetRoot placement`, anchored
+- Xform: `P × S(abs(frameAxisX) * guide:scaleX, abs(frameAxisY) * guide:scaleY,
+  abs(frameAxisZ) * guide:scaleZ) × guideFrame × assetRoot placement`, where
+  `P` turns the planar shapes to `guide:planeNormal` and `guideFrame` is the
+  rigid frame with `guide:orient` and `guide:offset` applied (a custom shape
+  keeps the evaluated affine frame and the authored multipliers), anchored
   exactly the way `_BuildGuidePrim` places sphere/cone guides (ASSET-space
   frames; asset root, not the guide's namespace parent). Signed avar scale
   affects frame handedness; the synthesized guide uses positive dimensions
   and a proper rigid placement.
-- Style/pick parity with `_BuildGuidePrim`: purpose `guide` render tag,
+- Style/pick parity with `_BuildGuidePrim`: render tag from the control's
+  resolved purpose (`_GuideRenderTag`; see host durability below),
   constant `displayColor`/`displayOpacity` primvars, hand-inherited
   visibility and `primOrigin` from the parent control.
 - Dirtying: `RigExecChangeGuides` on a control entry dirties/resyncs its
-  `rigGuideCtrl` child the same way sphere/cone children react today.
+  `rigGuideCtrl` child the same way sphere/cone children react;
+  `RigExecChangeControlGuideXform` dirties only its xform matrix.
 
-## Host-durability redesign (user-approved 2026-08-02)
+## Host durability
 
 Two usdview-adapter behaviors were patches, not architecture; both are
 replaced so the adapter shrinks to its irreducible duties (stage handoff +
@@ -239,9 +262,9 @@ time forwarding):
      box is inflated by half its effective wire width.
    - Discovery mechanics: the checked-in schema resources stay a pure
      data-only codeless plugin — no `implementsComputeExtent`, no
-     LibraryPath, and `schema.usda` carries no `extraPlugInfo` (an earlier
-     revision put the flag there, which regeneration then re-emitted into
-     the unloadable checked-in plugInfo). CMake's generated-copy rewrite
+     LibraryPath, and `schema.usda`'s `extraPlugInfo` carries node-graph
+     icons only, never the flag (regeneration would re-emit it into the
+     unloadable checked-in plugInfo). CMake's generated-copy rewrite
      is the SINGLE injection point: it stamps `implementsComputeExtent`
      onto the boundable types and a LibraryPath to the imaging library
      into `build/usd/rigExecSchema/resources/plugInfo.json` (and the
@@ -260,10 +283,11 @@ time forwarding):
    `guide`; `RigExecControl` keeps the inherited `default`.
    Controls are the rig's interaction surface: their guides publish
    purpose `default` (geometry render tag) so they draw whenever the rig
-   draws — no viewer setting involved, and the plugin stops flipping
-   `displayGuide`. A new `uniform token guide:purpose = "default"`
-   (allowedTokens `default`, `guide`) on `RigExecControl` lets pipelines
-   opt back into guide-tag behavior per control. Joint/solver guides stay
+   draws — no viewer setting involved. (The usdview plugin still turns
+   `displayGuide` on at activation so joint, solver and weight guides
+   draw.) Authoring the stock `purpose` on a `RigExecControl` (`guide`,
+   `proxy` or `render`) opts that control into the matching render tag;
+   there is no RigExec-specific purpose token. Joint/solver guides stay
    purpose `guide` (diagnostics).
 
 ## Tests (`tests/testRigExecImaging.cpp` + example)
@@ -271,12 +295,14 @@ time forwarding):
 - A control-guides section: author each shape × mode on controls of an
   example rig; assert synthesized child exists with the expected prim type,
   curve-count/vertex-count or face-count topology, evaluated-axis magnitude ×
-  authored guide scale visible in the xform's basis lengths, purpose guide,
+  authored guide scale visible in the xform's basis lengths, the geometry
+  render tag (and `guide` once the control's `purpose` is authored `guide`),
   constant color/opacity, parent visibility inheritance, and `primOrigin`
   resolving to the control path.
 - Zero, signed zero, and sub-`1e-4` avar scales resolve to the signed floor and
-  keep the guide publishable; ordinary negative avar scale preserves reflected
-  deformation while the guide uses its positive magnitude.
+  keep the guide publishable (`testRigExecArm`, `testRigExecBounds`); ordinary
+  negative avar scale preserves reflected deformation while the guide uses its
+  positive magnitude.
 - Zero/negative `guide:scaleY` (e.g.) draws nothing.
 - `testRigExecNoAuthoring` (whole-scene equality) must keep passing — the
   guides are synthesized, never authored.

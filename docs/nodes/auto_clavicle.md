@@ -114,7 +114,11 @@ the bone lengths of the IK estimate and the rest root.
 
 Optional: the prim whose posed origin the IK half reaches
 for, normally the IK effector. Without it the FK direction is used
-whatever the blend says.
+whatever the blend says. When a RigExecTwoBoneIk with stretchPolicy
+softDistance names this prim as its rigExec:effectorControl and
+rigExec:poleControl as its pole, the estimate solves with that
+solver's rest lengths, stretch, pin, scales, soft distance and
+twist.
 
 #### `rigExec:poleControl`
 
@@ -151,6 +155,9 @@ animator's on/off dial. Absent reads as 1.
 *Type:* `double`. *Default:* `0.4`.
 
 Scales the summed pose weights into the blend weight w.
+Read once at compile, as are rigExec:ikValue, rigExec:basis, the pose
+arrays, rigExec:kernel and rigExec:regularization: a time-sampled
+value is a compile error.
 
 #### `rigExec:basis`
 

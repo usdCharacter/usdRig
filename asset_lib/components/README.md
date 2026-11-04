@@ -11,7 +11,7 @@ them twice with separate fits and destinations for a bilateral character.
 | [leg](leg/component.json) | Hip root, foot IK, knee pole, three joints, two-bone solver, deformation and weight templates | Hips, world, rig root |
 | [spine](spine/component.json) | Two spine controls and chest; deformation and weight templates | COG |
 | [torso](torso/component.json) | World, COG, hips; deformation and weight templates | Rig root |
-| [arm](arm/component.json) | Clavicle, shoulder root, hand IK, elbow pole, three joints, wrist follow, five three-joint fingers; deformation and weight templates | Chest, world, rig root |
+| [arm](arm/component.json) | Clavicle, shoulder root, hand IK, elbow pole, three joints, wrist follow, hand control with five three-control fingers; deformation and weight templates | Chest, world, rig root |
 | [head](head/component.json) | Neck, head, nose, cheeks, ears, brows and their inner/outer controls; shared gaze/blink control | Chest |
 | [eye](eye/component.json) | One eye aim, eye rotation and shader channels, projector, upper/lower lids, three samples per blink, summed/clamped blink channels | Head, shared gaze, eyeball and two lid meshes |
 | [mouth](mouth/component.json) | Jaw, lower/upper lip, two corners; deformation and weight templates | Head |

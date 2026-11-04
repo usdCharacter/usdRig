@@ -49,7 +49,8 @@ two skeletons' joints, and an intermediate chain can sit a little off the
 average of the poses it is between. The blend still MEASURES both inputs
 against the rests carried inside the A aggregate, but it APPLIES the blended
 map to the joint's own rest reference — the frame a pose step below the blend
-left there (spec section 4.2) — so a constrained joint carries its
+left there ([How operators fire](../concepts/how-operators-fire.md#the-order-you-can-predict))
+— so a constrained joint carries its
 displacement through the blend rather than losing it.
 
 ## Wiring
@@ -108,9 +109,9 @@ Valid values: `log`, `linear`.
 
 *Relationship.*
 
-Ordered output joints posed by the blended result (view-free
-extraction). List position is the element index; the compiler
-binds each joint to one aggregate element.
+Ordered output joints posed by the blended result. List
+position is the element index; the compiler binds each joint to one
+aggregate element.
 
 #### `guide:radius`
 
@@ -121,12 +122,10 @@ element: the exact counterpart of RigExecJoint's guide:radius,
 including the rule that zero or negative draws no guides at all,
 which is how a solver's diagnostics are turned off.
 
-Without it the elements are stuck at Hydra's fallback radius of
-1.0. That is proportionate on an asset authored at tens of units
-and several times the size of the whole character on one authored
-at one unit -- the joints were given this knob for exactly that
-reason and the aggregate solvers were not, so turning guide
-display on for a small asset buried it in solver geometry.
+Without it the elements draw at Hydra's fallback radius of 1.0,
+which is proportionate on an asset authored at tens of units and
+several times the size of the whole character on one authored at
+one unit.
 
 #### `guide:displayColor`
 

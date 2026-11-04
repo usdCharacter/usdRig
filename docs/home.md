@@ -44,15 +44,15 @@ and other viewers.</p>
 
     [:octicons-arrow-right-24: How operators fire](concepts/how-operators-fire.md)
 
--   :material-speedometer:{ .lg .middle } **Dynamic and baked**
+-   :material-speedometer:{ .lg .middle } **One operation graph**
 
     ---
 
-    Evaluate through OpenExec while authoring, or through a baked program
-    built for playback. Both share the same math kernels and produce the
-    same pose.
+    The viewport, background frame-cache workers and the `.rigexec` runtime
+    run the same compiled operation graph and kernels, and produce the same
+    pose.
 
-    [:octicons-arrow-right-24: Baked and dynamic](concepts/baked-vs-dynamic.md)
+    [:octicons-arrow-right-24: Evaluation and checks](concepts/baked-vs-dynamic.md)
 
 -   :material-vector-polyline:{ .lg .middle } **Solvers and deformers**
 
@@ -104,10 +104,6 @@ These are rendered straight from them.
   <a href="nodes/curve_mover/"><img src="gifs/curve_mover.gif" alt="Curve mover" loading="lazy"><span>Curve mover</span></a>
   <a href="nodes/blendshape_mover/"><img src="gifs/blendshape_mover.gif" alt="Blend shape mover" loading="lazy"><span>Blend shapes</span></a>
 </div>
-
-## Two ways to evaluate, one pose
-
-![Baked and dynamic execution share math kernels, diverge in scheduling and data storage, and produce the same rig pose.](images/baked-vs-dynamic-execution.png)
 
 ## Status
 

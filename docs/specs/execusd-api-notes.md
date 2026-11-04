@@ -81,9 +81,11 @@ Notes:
   (verified by `testExecUsdRequest.cpp` `TestTimeVaryingCache`).
 - `EfTime` (ef/time.h) is the internal time type: wraps a `UsdTimeCode` plus
   app-specific `SplineEvaluationFlags` (uint8_t). Client-facing ExecUsd API
-  only speaks `UsdTimeCode`. **There is no "PreTime"/evaluation-location API
-  in this version** (left-side evaluation is not exposed; EfTime has only
-  timeCode + spline flags).
+  only speaks `UsdTimeCode`. Left-side evaluation uses
+  `ChangeTime(UsdTimeCode::PreTime(t))`: the pre-time flag rides in the
+  `EfTime`'s time code, and attribute input nodes resolve values with it
+  (`exec/attributeInputNode.cpp:72-75`). `PreTime(t)` and `t` are distinct
+  times.
 - The builtin stage computation `ExecBuiltinComputations->computeTime`
   produces an `EfTime` (used as an input by time-dependent plugin
   computations; can also be requested directly with the stage pseudo-root
@@ -99,19 +101,30 @@ ExecUsdValueKey(const UsdAttribute &provider, const TfToken &computation);
 ExecUsdValueKey(const UsdPrim &provider, const TfToken &computation);
 ```
 
-- Brace-init works in the vector: `{prim, TfToken("computeXf")}`,
-  `{attr}` (attribute computeValue), `{attr, someAttrComputation}`.
+- Brace-init works in the vector for the two-argument forms:
+  `{prim, TfToken("computeXf")}`, `{attr, someAttrComputation}`. The
+  one-argument attribute constructor is `explicit`, so spell it
+  `ExecUsdValueKey{attr}` (attribute computeValue); a bare `{attr}` does not
+  compile.
 - Keys are copyable value types holding a `std::variant` of
   {expired, attribute-computation, prim-computation}. Keys for objects that
-  get removed from the stage are internally "expired" (request stays safe;
-  see `testExecUsdRequestExpiration.cpp`).
+  get removed from the stage are internally "expired"; the request's
+  `IsValid()` then returns false and `PrepareRequest`/`Compute` post errors,
+  so build a new request (see `testExecUsdRequestExpiration.cpp`).
+- In 26.08, removing a prim while a system is alive also posts "Applying
+  predicate to invalid prim": `EsfUsdStageData::_UpdateForResync` applies
+  `UsdPrimDefaultPredicate` to the missing prim (`esfUsd/stageData.cpp:361`).
+  `RigExecTapSet` drops its requests and system before that listener runs
+  (`libs/rigExec/tapSet.cpp:118-136`).
 
 ### Builtin computation tokens (`exec/builtinComputations.h`)
 Accessed via `ExecBuiltinComputations->...`:
 - `computeValue` (attribute provider) — attribute's computed value:
-  1) registered attribute expression, else 2) single valid connection's
-  computed value, else 3) resolved (authored) value. Result type = the
-  attribute's scalar value type.
+  1) registered attribute expression, else 2) the computed value of the
+  target of its single connection, when that target is a valid attribute of
+  the same type, else 3) resolved (authored) value. Result type = the
+  attribute's scalar value type (an attribute expression may produce any
+  type).
 - `computeResolvedValue` (attribute provider) — always the resolved authored
   value at the current system time (respects default/timeSamples/splines;
   see `testExecUsdInvalidation.cpp`).
@@ -123,7 +136,7 @@ Accessed via `ExecBuiltinComputations->...`:
 - **Move-only** handle (`unique_ptr` impl). Keep it alive as long as you
   compute with it / want invalidation callbacks.
 - `bool IsValid() const` — true means Prepare/Compute may be called (not that
-  anything is cached/compiled).
+  anything is cached/compiled); false once any of its keys has expired.
 - Value-key **index = position in the vector** passed to `BuildRequest`; the
   same indices are used by `CacheView::Get(i)` and both callbacks.
 - Destroying the request unregisters it (callbacks stop).
@@ -151,7 +164,7 @@ double d = v.Get<double>();       // typed extraction; v.IsHolding<T>() to test
 
 ## 6. Invalidation (`exec/request.h`)
 
-Callbacks are registered **only at BuildRequest time** (3rd/2nd args):
+Callbacks are registered **only at BuildRequest time** (2nd and 3rd args):
 
 ```cpp
 using ExecRequestIndexSet = pxr_tsl::robin_set<int>;   // set of request indices
@@ -171,17 +184,21 @@ Semantics (system.h docs + `testExecUsdRequestInvalidation.cpp`):
   `IsEmpty()`, `Contains(EfTime)`, `GetTimeMultiInterval()`, and `|=` to
   accumulate). Multiple simultaneous invalidations may be batched into one
   invocation (e.g. one `SdfChangeBlock` → one callback).
-- **One-shot interest**: each callback is only guaranteed once per
-  (index, interval) combination *after a Compute*. Re-calling `Compute()`
-  renews interest; repeated edits between Computes may not re-notify.
+- **One-shot interest**: each callback is guaranteed to fire at least once
+  per (index, interval) combination, and only *after a Compute*. Re-calling
+  `Compute()` renews interest; repeated edits between Computes may not
+  re-notify.
   Pattern: on callback → mark dirty; next pull → Compute → extract.
 - **timeCallback**: fired from within `ChangeTime()` with the indices of
   time-dependent keys whose inputs actually differ between old and new time.
   No interval argument.
 - **Threading/reentrancy caveats**:
-  - Callbacks run **synchronously on the thread doing the authoring**
-    (`attr.Set(...)`, change-block close) or the thread calling
-    `ChangeTime()`. There is no queue/deferral.
+  - Callbacks run **synchronously inside the authoring call**
+    (`attr.Set(...)`, change-block close) or inside `ChangeTime()`: that call
+    returns only after they finish. There is no queue/deferral. Exec visits
+    the system's requests with `WorkParallelForEach`
+    (`exec/requestTracker.h:97-107`), so a callback may run on a worker
+    thread, and callbacks of different requests may run concurrently.
   - You must NOT call back into execution (Compute, PrepareRequest, value
     extraction, ...) from inside either callback. Record dirty state and
     return.
@@ -233,7 +250,7 @@ void Run()
     std::vector<ExecUsdValueKey> keys {
         {xform, ExecGeomXformableTokens->computeLocalToWorldTransform}, // [0] prim comp
         {xform, TfToken("computeMyCustomThing")},                       // [1] custom plugin comp
-        {in},                                       // [2] attribute computeValue (builtin)
+        ExecUsdValueKey{in},                        // [2] attribute computeValue (builtin)
     };
 
     // 3. Request with invalidation subscriptions (registered here, only here).
@@ -279,8 +296,9 @@ Custom computations are published from a plugin via
 `EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(SchemaTypeName) { self.PrimComputation(token).Callback<T>(...).Inputs(...); }`
 (`pxr/exec/exec/registerSchema.h`; expands to a
 `TF_REGISTRY_FUNCTION(ExecDefinitionRegistryTag)`), living in a library whose
-schema types are declared in `plugInfo.json`. Exec loads the plugin defining
-computations for a schema on demand.
+`plugInfo.json` lists the schema under `Info.Exec.Schemas`. Exec loads the
+plugin defining computations for a schema on demand
+(`exec/pluginData.cpp:42-52`).
 
 ## 9. Linking and environment
 
@@ -301,9 +319,11 @@ Minimum for pure evaluation + invalidation: `execUsd exec ef usd sdf tf gf vt`
 computations you also need `vdf` (VdfContext) and `plug`.
 
 Build/runtime requirements:
-- OpenUSD must be built with exec enabled (`PXR_BUILD_EXEC=ON` /
-  `build_usd.py --exec`); the `pxr/exec` tree is v26.08-era and marked
-  experimental/in-development.
+- OpenUSD must be built with exec enabled: `PXR_BUILD_EXEC` defaults to
+  `ON` (forced off for Wasm), and `build_usd.py` has no exec switch. Only the
+  execIr invertible-rig schemas and APIs carry a "not yet ready for
+  production" warning (`execIr/README.md`); the execUsd and exec READMEs
+  carry none.
 - Plugin discovery: `execUsd`, `execGeom`, and any custom computation plugin
   must be discoverable via the usual `PXR_PLUGINPATH_NAME` / installed
   `plugInfo.json` mechanism.
@@ -326,9 +346,10 @@ Build/runtime requirements:
   stage; `libs/rigExec/tapSet.cpp:82-147`).
 - Rebuilding the tap set means building a *new* request (keys are fixed at
   BuildRequest; there is no append API).
-- Invalidations arrive synchronously on authoring/ChangeTime threads: your
-  callback should only flip dirty bits / forward notifications; evaluation
-  must happen later on the caller's pull.
+- Invalidations arrive synchronously inside authoring and ChangeTime calls,
+  possibly on a worker thread: your callback should only flip atomic dirty
+  bits / forward notifications; evaluation must happen later on the caller's
+  pull. `RigExecTapSet` sets a `std::atomic<bool>` (`libs/rigExec/tapSet.h:214`).
 - Re-Compute after invalidation to keep callbacks flowing (interest renewal).
 - Cache views are transient: compute → extract → drop; never store a view
   across stage edits, ChangeTime, or request/system destruction.

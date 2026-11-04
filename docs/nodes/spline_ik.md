@@ -30,8 +30,8 @@ at its successor, a twist linear in arc position is added, and
 `rigExec:volumeWeights` thins the off-axis handles as the curve
 stretches.
 
-Control-driven spline IK for a spine or neck: the counterpart of
-The spline IK solver as the biped uses it. Three control
+Control-driven spline IK for a spine or neck, as the biped uses
+it. Three control
 frames (root, mid, end) shape an open degree-2 four-CV B-spline; the
 ordered rigExec:joints chain is laid along it by arc length, each joint
 aims +X at its successor with its rest up carried by the minimal
@@ -121,8 +121,8 @@ Control carrying the curve end (cv2, cv3) and the end twist.
 
 *Relationship.*
 
-Ordered chain, root to tip, posed by this solve (view-free
-extraction). The chain IS the solver's cardinality: it produces
+Ordered chain, root to tip, posed by this solve. The chain
+IS the solver's cardinality: it produces
 exactly one frame per entry, and the rest CVs and segment spacing
 are measured from these joints' rest frames on every evaluation.
 
@@ -150,9 +150,9 @@ rigExec:joints (in chain-slot order). Empty means zero everywhere
 Valid values: `curve`, `chain`.
 
 What the stretch ratio is measured against. `curve`: the
-rest curve's arc length, so ratio == 1 at rest (read
-curveInfo.arcLength; the last joint then overshoots the curve end
-by the chain/curve difference, absorbed by maintained offsets).
+rest curve's arc length, so ratio == 1 at rest (the last joint
+then overshoots the curve end by the chain/curve difference,
+absorbed by maintained offsets).
 `chain`: the sum of rest segment lengths, so the chain spans the
 curve exactly.
 
@@ -226,12 +226,10 @@ element: the exact counterpart of RigExecJoint's guide:radius,
 including the rule that zero or negative draws no guides at all,
 which is how a solver's diagnostics are turned off.
 
-Without it the elements are stuck at Hydra's fallback radius of
-1.0. That is proportionate on an asset authored at tens of units
-and several times the size of the whole character on one authored
-at one unit -- the joints were given this knob for exactly that
-reason and the aggregate solvers were not, so turning guide
-display on for a small asset buried it in solver geometry.
+Without it the elements draw at Hydra's fallback radius of 1.0,
+which is proportionate on an asset authored at tens of units and
+several times the size of the whole character on one authored at
+one unit.
 
 #### `guide:displayColor`
 
@@ -248,8 +246,9 @@ display on for a small asset buried it in solver geometry.
 The prim whose movement away from its rest defines the
 space this chain is measured in -- normally a TRS master.
 
-The spline places joint i at `arcLength / restArcLength` along the
-posed curve. The curve is posed and the rest is not, so scaling
+The spline places each joint at its rest arc spacing times
+`arcLength / restArcLength` along the posed curve. The curve is
+posed and the rest is not, so scaling
 whatever the rig hangs from doubles the ratio and the solve reads
 a pure scale as a 2x STRETCH: the chain still spans the curve, but
 every stretch-driven effect -- volume preservation, twist

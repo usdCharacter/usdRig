@@ -152,7 +152,7 @@ _SolveParentConstraint(const _ConstraintSolveContext &c)
             *c.resolved, c.prim, _kAffectRotationX,
             _kAffectRotationY, _kAffectRotationZ, c.time);
         // FBX disables scale by default; the explicit false fallback is the
-        // authored contract, not an oversight (schema.usda:769-771).
+        // authored contract, not an oversight (schema.usda:775-777).
         params.scaleAxes = _ReadConstraintAxisMask(
             *c.resolved, c.prim, _kAffectScaleX,
             _kAffectScaleY, _kAffectScaleZ, c.time, false);

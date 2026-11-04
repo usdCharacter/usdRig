@@ -121,19 +121,16 @@ lives under the **RigExec** menu.
 
 </div>
 
-## Dynamic or baked
+## One evaluation path
 
-RigExec evaluates a frame in one of two ways: **dynamic**, through OpenExec,
-which follows every authored change; or **baked**, a compiled step program
-built for playback. Both produce the same pose. Choose the starting mode with
-an environment variable before launching:
+RigExec compiles each rig into one operation graph. The viewport, the
+background frame-cache workers and `.rigexec` playback all run that graph;
+there is no evaluator mode to choose. A rig that cannot compile reports the
+reason instead of falling back to another evaluator. OpenExec answers only
+optional reference checks.
 
-```bat
-set RIGEXEC_EVALUATION_MODE=baked
-```
-
-[Baked and dynamic evaluation](../concepts/baked-vs-dynamic.md) explains
-what each is for and how to switch at run time.
+[Evaluation and independent checks](../concepts/baked-vs-dynamic.md) explains
+the compiled rig, frozen evaluation and those checks.
 
 ## Run the tests
 

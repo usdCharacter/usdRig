@@ -24,7 +24,7 @@ select the rig's controls, flip its switches, and zero its pose. A picker
 is not a sidecar file beside the rig — it is `RigExecPicker` prims in the
 rig's own layer stack, so it composes, it layers, and an animator can
 override one button with an `over` instead of re-authoring anything.
-Open it from usdview's **RigExec ▸ Control Picker** menu, or press P
+Open it from usdview's **RigExec ▸ Animation Editors ▸ Control Picker** menu, or press P
 (**RigExec ▸ Animation Editors ▸ Hover Picker**) to draw its tabs straight
 into the viewport: drag a tab's round handle to move it, Shift-drag the
 handle to scale it, double-click the handle to collapse it, and
@@ -38,6 +38,9 @@ Discovery is by TYPE, never by path. The panel traverses the stage for
 RigExecPicker prims and builds a tab for each, so a stage carrying two
 characters gets two tabs with no code and no configuration. Order
 within the panel follows ui:order, then the prim's namespace order.
+The walk does not descend into RigExec-typed prims other than
+RigExecRoot, so a picker may sit anywhere except beneath rig graph
+prims such as joints, controls and movers.
 
 A picker names the rig it drives through rigExec:picker:rig. Left
 unauthored, buttons resolve against the whole stage, which is right
@@ -51,14 +54,16 @@ schema classes are not imageable. The usdview panel finds pickers BY TYPE
 — `Usd.PrimRange` over the stage, `IsA(RigExecPicker)`, pruning any prim
 whose type starts with `RigExec` and is not the root or a picker — and
 builds one character tab per picker, sorted on `ui:order`
-(`plugin/rigExecUsdview/pickerScene.py:181-222`). Each picker reads its
+(`plugin/rigExecUsdview/pickerScene.py:207-248`). Each picker reads its
 `RigExecPickerPanel` children as sub-tabs and their `RigExecPickerButton`
 grandchildren as items, then resolves every button target against the rig
 named by `rigExec:picker:rig` — controls and joints only — to decide which
-buttons are live (`pickerScene.py:152-178`, `:235-266`). Clicks drive
+buttons are live (`pickerScene.py:176-204`, `:345-378`). Clicks drive
 usdview's own selection; the stage is only written when a switch button
-edits its attribute, or the `zero_ctrls` command clears authored pose
-avars.
+edits its attribute (with the matched pose channels of an IK/FK or space
+switch), when the `zero_ctrls` command clears authored pose avars, or when
+the `ctrl_vis` command hides or shows the rig's controls through
+session-layer visibility opinions.
 
 ## Wiring
 
@@ -90,7 +95,8 @@ Sort key among sibling pickers. Ties break on prim order.
 *Relationship.*
 
 The RigExecRoot this picker drives. Buttons resolve their
-control targets inside it. Unauthored means the whole stage.
+control targets inside it. Unauthored means the whole stage; a
+target that does not resolve leaves only command buttons live.
 
 ## Example
 
@@ -110,9 +116,9 @@ bin\launch_usdview.bat docs\examples\picker.usda
 
 ## Tips
 
-- A picker can be parented anywhere except inside rig graph: discovery prunes joints, controls, solvers, movers and weights, but not the `RigExecRoot`, so beside the rig or inside it both work (`pickerScene.py:213-222`).
-- Layer the picker rather than editing it: an `over` on one button moves, recolours, relabels or retargets it, and `active = false` on a button, a panel or the whole picker removes it — all asserted in `tests/python/test_picker_scene.py:189-256`.
-- Two characters on a stage give two tabs with nothing configured, but name each picker's rig anyway: without it liveness is computed against every control and joint on the whole stage (`pickerScene.py:246-266`, `pickerModel.py:311-322`).
+- A picker can be parented anywhere except inside rig graph: discovery prunes joints, controls, solvers, movers and weights, but not the `RigExecRoot`, so beside the rig or inside it both work (`pickerScene.py:229-248`).
+- Layer the picker rather than editing it: an `over` on one button moves, recolours, relabels or retargets it, and `active = false` on a button, a panel or the whole picker removes it — all asserted in `tests/python/test_picker_scene.py:200-264`.
+- Two characters on a stage give two tabs with nothing configured, but name each picker's rig anyway: without it liveness is computed against every control and joint on the whole stage (`pickerScene.py:356-378`, `pickerModel.py:358-369`).
 
 ## See also
 

@@ -3689,7 +3689,7 @@ class GizmoController(QtCore.QObject):
         # geometry. showGuides=False drops joints and solvers, whose
         # schema fallback is purpose "guide", but NOT controls, whose
         # fallback is the stock UsdGeomImageable "default"
-        # (libs/rigExecSchema/schema.usda:121-196,
+        # (libs/rigExecSchema/schema.usda:123-199,
         # libs/rigExecImaging/sceneIndices.cpp:939-944). Point and
         # Edge already refuse them for not being PointBased; Surface
         # would otherwise land the pivot on a drawn control circle.

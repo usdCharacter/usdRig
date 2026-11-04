@@ -3,8 +3,7 @@
 The one-loop evaluator binds every computed input to a typed producer value.
 Property revisions can read pose matrices and selected geometry points. A
 Ribbon can read a revised driver curve. Volume and curve weights can read
-revised sample targets and curves. These are new S9 capabilities; the existing
-scalar-reference fixtures remain the contract for previously supported rigs.
+revised sample targets and curves.
 
 Author `rigExecReadPhase` on the consuming attribute or relationship:
 

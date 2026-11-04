@@ -25,7 +25,8 @@ A control is the rig's interaction surface. An animator keys its
 translation, rotation, scale, and spin avars, and solvers and movers read
 the resulting posed frame. Controls draw a viewport guide at the posed
 origin — `sphere`, `circle`, `box`, `cube`, `diamond` or `pyramid`, drawn
-as curves (`wire`) or as solids (`geometry`) — so the handle can be picked
+as curves (`wire`) or as solids (`geometry`), or `custom` wire polylines
+from `guide:points` — so the handle can be picked
 directly; unlike joints and solvers, a control is not a diagnostic, so it
 keeps the default render purpose.
 
@@ -33,22 +34,24 @@ An animator-facing RigExecXformable: animation is authored
 on the avars (or an authored/connected posed:space). Channel
 semantics live on the applied
 RigExecControlAPI. Publishes computePointFrame/computeRestFrame/
-computeMatrix (spec section 4.1). A synthesized viewport guide can be
-drawn at the posed frame origin (see guide:shape), purpose guide, the
-same synthesis-only style as the RigExecJoint guides.
+computeMatrix. A synthesized viewport guide can be drawn at the posed
+frame origin (see guide:shape) in the same synthesis-only style as the
+RigExecJoint guides; it carries the control's resolved purpose, which
+stays `default` unless authored.
 
 ## How it works
 
-A control is evaluated in the base phase only — it is an input, so
-nothing in the pose domain revises it and its base frame IS its posed
-frame. The frame comes from `rest:space` plus the avars each frame:
-translations and Euler rotations compose over the rest offset inside the
-selected parent and default spaces (`avars * posed:defaultSpace *
+A control is an input: no solver writes it, and its base frame
+comes from `rest:space` plus the avars each frame: translations and Euler
+rotations compose over the rest offset inside the selected parent and
+default spaces (`avars * posed:defaultSpace *
 inverse(parent:defaultSpace) * parent:space`), and scale avars apply
-before rotation and translation. Anything downstream — an FK chain
-listing the control, a constraint naming it as a source, a matrix mover
-reading its frame — follows the animated result with no further
-wiring.
+before rotation and translation. A pose constraint that names the control
+on `rigExec:moves`, such as a harmonics jiggle, revises it in the pose
+phase, and a consumer that reads `final` sees the revision. Anything
+downstream — an FK chain listing the control, a constraint naming it as a
+source, a matrix mover reading its frame — follows the animated result
+with no further wiring.
 
 ## Wiring
 
@@ -96,7 +99,7 @@ Valid values: `pose`, `switch`, `tweak`.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Bind transform relative to the namespace frame provider's rest frame; always orthonormalized. A provider with no RigExec ancestor resolves against identity, so its rest:space is its local-to-world bind transform.
+Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized. A plain Xformable between the provider and that frame provider is composed in after it. A provider with no RigExec ancestor and no such Xformable resolves against identity, so its rest:space is its local-to-world bind transform.
 
 #### `default:tx`
 
@@ -137,9 +140,9 @@ identity value selects that fallback.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Final local-to-world transform. For a joint this is
-supplied by the compiler's private solver binding (view-free
-extraction); it may also be authored or
+Final local-to-world transform. For a joint a solver
+writes, this is supplied by the compiler's solver binding; it may
+also be authored or
 connected directly. Unwired xformables follow the parent chain
 with rest offsets and avars.
 
@@ -300,7 +303,7 @@ Local Z scale applied before rotation and translation; finite magnitudes below 1
 Valid values: `sphere`, `circle`, `box`, `cube`, `diamond`, `pyramid`, `custom`.
 
 Guide primitive synthesized at the control's posed frame
-origin (spec section 10.3 extension), exactly parallel to the
+origin (docs/specs/control-guides.md), exactly parallel to the
 RigExecJoint sphere/cone guides. The built-in shapes are unit-sized and
 centered at the origin: sphere and circle have radius 1, box and
 cube span +-1, diamond (octahedron) has vertices at +-1 on each
@@ -321,7 +324,7 @@ Local vertices of a custom wire guide, placed by the evaluated control frame.
 
 *Type:* `int[]`. *Default:* `[]`.
 
-Consecutive polyline sizes for guide:shape=custom. Each is at least two; their sum must equal guide:points size.
+Consecutive polyline sizes for guide:shape=custom. Each is at least two and their sum must equal guide:points size; otherwise no guide is drawn.
 
 #### `guide:planeNormal`
 
@@ -336,8 +339,7 @@ A rig's control curves lie in whichever plane the rigger drew
 them in. A planar guide drawn in a different plane from its
 curve shows edge-on, as a sliver of the right size.
 
-Y is the default and reproduces the historical drawing exactly,
-so a control that does not author this is unchanged.
+Y is the default.
 
 #### `guide:drawMode`
 
@@ -346,20 +348,21 @@ so a control that does not author this is unchanged.
 Valid values: `wire`, `geometry`.
 
 wire draws the guide as curves, widthed by
-guide:wireWidth. geometry draws solid shapes instead.
+guide:wireWidth. geometry draws solid shapes instead; custom draws
+only as wire, so custom with geometry draws no guide.
 
 #### `guide:wireWidth`
 
 *Type:* `double`. *Default:* `0.05`.
 
-Width authored onto the wire curves, in the LOCAL
+Width of the drawn wire guide curves, in the LOCAL
 pre-scale units of the unit shape -- so the drawn width tracks the
 evaluated control-frame scale multiplied by guide:scaleX/Y/Z along
 with the rest of the shape. A non-uniform effective scale thickens
 the curve anisotropically exactly as it stretches the points.
 
-Zero or negative authors no widths at all and falls back to
-hairline rendering; geometry draw mode ignores this entirely.
+Zero, negative, or non-finite publishes no widths and falls back
+to hairline rendering; geometry draw mode ignores this entirely.
 
 It has a default rather than being left unauthored because
 usdview picks with a single-pixel window: an unwidthed hairline
@@ -466,13 +469,13 @@ the opacity is not connected.
 
 ## Example
 
-Twelve controls in a 6x2 grid draw every `guide:shape` in every
-`guide:drawMode`. Left to right in both rows: sphere, circle, box, cube,
+Twelve controls in a 6x2 grid draw every built-in `guide:shape` in
+every `guide:drawMode`. Left to right in both rows: sphere, circle, box, cube,
 diamond, pyramid — `box` is the planar square lying flat in XZ, `cube` the
 solid six-sided one. The top row is `wire` (the guide is drawn as curves),
 the bottom row `geometry` (the same shape drawn as a solid). All twelve
 carry the same animation — `avars:ry` 0 → 90°, `avars:rz` 0 → 22° and
-`avars:ty` 0 → 0.25 over 1001-1024 — and all twelve do real work: each
+`avars:ty` 0 → 0.25 by 1012, back to 0 by 1024 — and all twelve do real work: each
 feeds an FK chain that poses a joint resting at the control, and a matrix
 mover carries the grey card a unit below it. Watch either row against the
 blue rest outline the cards leave behind: `ry` spins the card about the

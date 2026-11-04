@@ -27,11 +27,11 @@ pops, and rounds low-poly cages — anywhere high-frequency shape needs
 taking down without leaving the mover stack.
 
 Moves exactly one exact native UsdGeomPointBased points
-property through uniform-weight Laplacian smoothing with fixed edge
-adjacency taken from the destination's standard topology (spec
-section 7.6 revised: the former post-mover smooth operation as a
-first-class mover). The common MoverAPI envelope blends the full
-Laplacian step over the incoming points.
+property through one iteration of uniform-weight Laplacian smoothing
+with fixed edge adjacency taken from the destination's standard
+topology. The common MoverAPI envelope blends the full Laplacian step
+over the incoming points; an authored inputs:strength is a compile
+error.
 
 ## How it works
 
@@ -77,7 +77,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

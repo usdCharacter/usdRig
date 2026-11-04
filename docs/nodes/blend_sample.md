@@ -33,7 +33,8 @@ rigExec:blendShape may be authored.
 
 ## How it works
 
-Each sample names its sculpt through `rigExec:targetPoints` and its
+Each sample names its sculpt through `rigExec:targetPoints`, or as
+sparse offsets on a UsdSkelBlendShape through `rigExec:blendShape`, and its
 position on the channel through `rigExec:activation`. The channel
 interpolates between neighboring samples by weight, so a 0.5 sample is
 the pose the channel passes through halfway up.
@@ -42,7 +43,8 @@ the pose the channel passes through halfway up.
 
 | Relationship | Points to | Required |
 |---|---|---|
-| `rigExec:targetPoints` | Native points prim holding the sculpt. | yes |
+| `rigExec:targetPoints` | Native points prim or exact points property holding the sculpt. | one of these two |
+| `rigExec:blendShape` | A UsdSkelBlendShape holding the sculpt as sparse offsets; authoring both is a compile error. | one of these two |
 | (listed by) | The parent blend input's `rigExec:samples`. | - |
 
 ## Parameters

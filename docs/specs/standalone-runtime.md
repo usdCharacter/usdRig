@@ -6,7 +6,7 @@ run OpenExec. Preparation captures scene descriptors from the database and
 translates them with `RigExecTranslateSceneProgram` into a `RigExecSceneProgram`,
 which uses the shared operation-graph compiler, readiness rules and kernels
 (`libs/rigExecStandalone/sceneRuntime.cpp:4-18`,
-`libs/rigExecGraph/sceneProgramTranslation.cpp:648`). The library still links
+`libs/rigExecScene/sceneProgramTranslation.cpp:905`). The library still links
 the OpenUSD libraries and `rigExec`; this is stage independence, not a
 USD-free binary dependency tree.
 
@@ -21,7 +21,7 @@ control frames are `RigExecSceneProgram::presentedPoses`), space switches,
 auto-clavicles, weights, pose interpolators, and geometry and property movers.
 An active
 prim of an unknown RigExec type fails preparation
-(`libs/rigExecGraph/sceneProgramTranslation.cpp:71-72`). Native USD attributes
+(`libs/rigExecScene/sceneProgramTranslation.cpp:116-117`). Native USD attributes
 are source values. The runtime and [pack exporter/loader](standalone-pack.md)
 validate capabilities by preparing the same scene program. A tap phase must
 be `base` or `final`. An unknown requested computation fails instead of
@@ -56,8 +56,9 @@ Direct taps on raw attributes, including RigExec avars and custom attributes,
 report an explicit no-value state before execution. The check follows a valid
 single source connection; an inactive connection target uses the destination's
 own value. Explicit `computeResolvedValue` taps read the raw sample and also
-report missing raw states. Only the five matrix-space properties on Control and
-Joint skip this source check: `default:space`, `avars:defaultSpace`,
+report missing raw states. Only the five matrix-space properties on Control,
+Joint and the sphere, plane and curve volume weights skip this source check:
+`default:space`, `avars:defaultSpace`,
 `posed:defaultSpace`, `parent:space` and `parent:defaultSpace`. They resolve
 through their connection or computed fallback, as described in
 [default spaces](xformable-default-spaces.md).

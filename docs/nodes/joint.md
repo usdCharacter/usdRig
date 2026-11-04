@@ -56,8 +56,8 @@ constraint reads that same incoming frame and writes a revised one over it. A
 joint no solver names is still evaluated — it follows its namespace parent's
 posed space with its own rest offset and avars — and a joint with no step
 before a solver hands that solver its authored `rest:space` rest, which is why
-a rig whose constraints all sit above its solvers behaves exactly as it always
-did. A mover reads the `base` frame — the joint after the LAST SOLVER in the
+constraints that all sit above a rig's solvers never change what those
+solvers measure. A mover reads the `base` frame — the joint after the LAST SOLVER in the
 chain — unless it asks for `final`, which is the top of the chain, or names a
 prim, which is the joint as of when the walk finished with it.
 
@@ -100,7 +100,7 @@ prim, which is the joint as of when the walk finished with it.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Bind transform relative to the namespace frame provider's rest frame; always orthonormalized. A provider with no RigExec ancestor resolves against identity, so its rest:space is its local-to-world bind transform.
+Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized. A plain Xformable between the provider and that frame provider is composed in after it. A provider with no RigExec ancestor and no such Xformable resolves against identity, so its rest:space is its local-to-world bind transform.
 
 #### `default:tx`
 
@@ -141,9 +141,9 @@ identity value selects that fallback.
 
 *Type:* `matrix4d`. *Default:* `( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )`.
 
-Final local-to-world transform. For a joint this is
-supplied by the compiler's private solver binding (view-free
-extraction); it may also be authored or
+Final local-to-world transform. For a joint a solver
+writes, this is supplied by the compiler's solver binding; it may
+also be authored or
 connected directly. Unwired xformables follow the parent chain
 with rest offsets and avars.
 

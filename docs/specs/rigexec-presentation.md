@@ -25,7 +25,7 @@ silently discarded.
 
 ## Contents
 
-* `version` is 1.
+* `version` is 1 or 2. Version 2 adds material opacity and rigid meshes.
 * Each `PresentationControl` has a public `name`, the `input` it sets (the
   attribute path of one of the carrying file's inputs) and a `unit`: asset
   units, degrees or ratio. A control holds no default; the input's default
@@ -38,9 +38,13 @@ silently discarded.
   `source_point_count` is at most 65535, else `stencil_indices32`, with one
   `stencil_weights` float each. `vertex_indices` lists triangles by render
   vertex, with two `uvs` per entry.
+* A version 2 rigid mesh has no stencils and an empty `points_path`. It names
+  a `transform_path` whose evaluated provider transform moves its static
+  `positions` and `normals`, with two `uvs` per position.
 * A mesh's `PresentationMaterial` names its `model` (`UsdPreviewSurface`),
   embeds the texture as raw PNG bytes, and carries diffuse and emission
-  scales, roughness, metallic, specular and the S and T wrap modes.
+  scales, roughness, metallic, specular and the S and T wrap modes. Version 2
+  adds `opacity`, where 1 is opaque.
 * `source_json` is the exporter's description of its source, as JSON text.
 
 These floats are display data, so the schema is exempt from `rigexec.fbs`'s
@@ -49,12 +53,12 @@ rule against float scalars in tables.
 ## Current exporter and consumer
 
 The Godot add-on verifies the nested buffer again before reading it. It
-accepts version 1, at least one mesh, controls on `double` or `float`
+accepts version 1 or 2, at least one mesh, controls on `double` or `float`
 inputs, and the `UsdPreviewSurface` model with repeat S and clamp T. Any
 part it cannot read rejects the whole presentation, and the asset then
 exposes no controls or geometry. Its exporter,
-`tools/export_ball_assets.py` in the `godot_rigExec` checkout, supports only
-the rolling-ball tutorial's graph: one Catmull-Clark mesh without creases or
+`tools/export_ball_assets.py` in the `godot_rigExec` checkout, writes version
+1 and supports only the rolling-ball tutorial's graph: one Catmull-Clark mesh without creases or
 holes, face-varying `st`, and a `UsdPreviewSurface` whose diffuse and
 emissive inputs read the same `UsdUVTexture`. Its controls come from
 `rigExec:exposedAvars` and `rigExec:publicName` on `RigExecControl` prims.

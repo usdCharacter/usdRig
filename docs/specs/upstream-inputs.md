@@ -32,7 +32,7 @@ pool types are int, float, double, vec2f and vec3f. The exact admitted paths,
 types, time kinds and consumers come from
 `RigExecBakedUpstreamAdmissibleArrays(evaluator)`.
 
-Array admission currently defaults off and is available through the test hook
+Array admission is on by default; tests can suspend it with
 `RigExecSetUpstreamArrayAdmissionForTesting`. Structural arrays are excluded:
 painted values and indices read per element by weight packets, folded solver
 volume weights, ribbon structural points and Derived bases do not become
@@ -87,7 +87,7 @@ warm frames.
 
 ## Binary playback
 
-Current format-7 playback admits scalar keys only when `FindInput` finds the
+Binary playback admits a key only when `FindInput` finds the
 attribute, the file's input tag matches the value type, and the stage attribute
 is unconnected and has a value. Drop diagnostics follow live admission.
 
@@ -131,8 +131,9 @@ An authored upstream array replaces both AtDefault and AtTime reads. With a
 varying upstream source, each evaluated frame's upstream value also feeds its
 AtDefault leaves; it does not freeze those leaves at the bake time. If one cage
 attribute supplies both rest and live lattice reads, both see the standing value.
-A stage time sample alone reaches AtTime reads only. Format-8 playback must keep
-this distinction when applying upstream arrays.
+A stage time sample alone reaches AtTime reads only. Playback keeps this
+distinction: upstream arrays use the authored set, and the stage sampler sets
+only the AtTime side.
 
 ## Baking
 

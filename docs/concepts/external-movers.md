@@ -183,9 +183,12 @@ using namespace rigExec;
 
 namespace {
 
+// Interned once: building a token from text locks the token registry.
+const TfToken kOffset("inputs:offset");
+
 bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 {
-    const UsdAttribute attr = ctx.prim.GetAttribute(TfToken("inputs:offset"));
+    const UsdAttribute attr = ctx.prim.GetAttribute(kOffset);
     if (!attr || attr.GetTypeName() != SdfValueTypeNames->Float3) {
         *error = "SampleOffsetMover requires float3 inputs:offset";
         return false;
@@ -196,7 +199,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 void DeclareInputs(const RigExecMoverBindContext &ctx,
                    std::vector<RigExecRevisionLeafKey> *inputs)
 {
-    inputs->push_back({ctx.moverPrim.GetPath().AppendProperty(TfToken("inputs:offset")),
+    inputs->push_back({ctx.moverPrim.GetPath().AppendProperty(kOffset),
         RigExecRevisionLeafType::Vec3f, RigExecRevisionLeafTime::AtTime,
         RigExecRevisionLeafFlavour::Resolved, VtValue(GfVec3f(0))});
 }
@@ -204,7 +207,7 @@ void DeclareInputs(const RigExecMoverBindContext &ctx,
 bool CompileScene(const RigExecSceneDescriptors &scene,const SdfPath &mover,
                   const SdfPath &,RigExecRevisionBinding *binding,std::string *error)
 {
-    const auto path=mover.AppendProperty(TfToken("inputs:offset"));
+    const auto path=mover.AppendProperty(kOffset);
     const auto found=scene.attributes.find(path);
     if(found==scene.attributes.end() || found->second.fact.type!=SdfValueTypeNames->Float3) {
         *error="SampleOffsetMover requires float3 inputs:offset";return false;
@@ -331,20 +334,22 @@ A `.rigexec` file is played by a runtime that has no stage, so it cannot call
 `assembleExternal`. Two optional handler fields let a rig holding the mover
 export and replay:
 
-- `encodeExternal` runs at export, once per baked frame, on the payload
-  `assembleExternal` produced. It splits the payload into compiled data bytes, which
-  must be identical on every frame and are written once, and frame bytes,
-  which are written per frame (identical frames share storage).
+- `encodeExternal` runs once at export, on the payload `assembleExternal`
+  produced at the bake time. It splits the payload into compiled data bytes
+  and frame bytes. Both are written once, and playback hands the kernel the
+  same frame bytes on every run. When the handler also sets
+  `encodeExternalCompiledData`, that callback supplies the compiled data
+  bytes from the binding alone.
 - `runtimeKernel` is the playback half, declared in
   `rigExecBinary/external.h` without any USD types. `prepare` decodes a
-  revision's compiled data bytes once per opened file; `apply` revises the preceding
-  points in place from that state, the frame's bytes, and the points the
-  binding reads at a declared phase.
+  revision's compiled data bytes each time a kernel is installed; `apply`
+  revises the preceding points in place from that state, the frame bytes,
+  and the points the binding reads at a declared phase.
 
 The bytes are the plugin's own format; RigExec stores them without reading
 them. Start the compiled data bytes with a format tag so `prepare` can refuse bytes it
 does not understand. Points named in `binding.phases` reach `apply` as playback
-evaluated them, so a playback posed through `SetAvar` moves them; frame bytes
+evaluated them, so a playback posed through `SetInput` moves them; frame bytes
 can still carry the value the export read, for a phase playback holds no value
 at. API4 also passes declared input values, typed and in declaration order,
 with their actual availability and element count. Kernels must validate the
@@ -359,8 +364,8 @@ A mover whose result follows its influences or its transform provider sets
 hands it `RigExecExternalProviders`: the binding's transform and influence
 matrices as playback evaluated them at the binding's phase, and the chain's
 base points, the values `assembleExternal` receives as
-`RigExecExternalProviderValues`. The built-in `RigExecLayeredSkinMover` and
-`RigExecSurfaceBindingMover` play this way: their kernels rebuild the payload
+`RigExecExternalProviderValues`. The built-in `RigExecLayeredSkinMover`,
+`RigExecSurfaceBindingMover` and `RigExecPatchMover` play this way: their kernels rebuild the payload
 with their own `assembleExternal` logic and deform with `applyExternal`'s, so
 playback matches native evaluation bit for bit and a posed playback follows
 the providers.
@@ -413,8 +418,9 @@ bool Play(const void *, const uint8_t *frame, size_t frameSize,
 ```
 
 Export fails, naming the mover, when its plugin provides no `encodeExternal`
-or encodes different compiled data bytes on two frames. A frame on which assembly
-failed exports as a failed frame, and playback fails the mover there too.
+or an encoding callback returns false. When assembly fails at the bake time,
+the file holds no frame bytes for the mover: playback passes the kernel null
+frame bytes, and fails the mover when it declares no inputs.
 
 A host that opens a `.rigexec` file installs kernels with
 `RigExecRuntimeReader::SetExternalKernel(type, kernel)`, by the type name the
@@ -424,7 +430,8 @@ usdview playback path installs `runtimeKernel` from every loaded plugin. A mover
 whose type has no kernel in the runtime is a no-op: its points pass through
 unchanged, and every `Execute` adds a `warning:` line naming the mover to the
 reader's diagnostics. A runtime built without USD carries a kernel only if it
-links one in; RigExec itself ships none.
+links one in: `Open` installs the modules in RigExec's generated catalog (the
+cloth mover), and the host installs any other.
 
 Kernels may be installed or replaced after execution. The next `Execute`
 updates the affected revisions and their consumers, even when inputs are
@@ -488,7 +495,7 @@ inside the usdRig build and from an installed SDK.
 When integrating a mover, check the independent reference and exact golden results, animated and connected
 inputs, override updates, envelope weights, disabled behavior, and failure
 pass-through. If it exports, check that playback matches the independently captured published pose on
-every exported frame and with a posed `SetAvar`. Also check that an unavailable
+every played frame and when posed through `SetInput`. Also check that an unavailable
 library or incompatible plugin version produces a diagnostic instead of a
 successful deformation.
 

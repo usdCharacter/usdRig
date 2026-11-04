@@ -4,7 +4,7 @@ Pip is a 1930s "rubber-hose" bellhop: a big round head with pie-cut eyes, a
 bean body, bendy noodle limbs, white four-finger gloves and oversized shoes.
 He is **flat 2D cut-out art** -- planar meshes in the XY plane with flat
 colours and ink outlines -- and he is rigged with exactly the same RigExec
-schema the 252-joint 3D biped uses. No application was involved: a Python script
+schema the 459-joint 3D biped uses. No application was involved: a Python script
 authors plain OpenUSD, and RigExec evaluates it live in stock `usdview` /
 Hydra.
 
@@ -12,7 +12,7 @@ Hydra.
 |---|---|
 | `build_rubberhose.py` | the generator: writes the three layers below, deterministically |
 | `rubberhose_rig.usda` | the character at rest: geometry + rig under one `RigExecRoot` (`/Pip/Rig`) |
-| `rubberhose_anim.usda` | a 120-frame, 24 fps **loop** (frame 121 == frame 1) that sublayers the rig and keys only controls, face dials, two IK length offsets and the hat hand-off |
+| `rubberhose_anim.usda` | a 120-frame, 24 fps **loop** (frame 121 == frame 1) that sublayers the rig and keys only controls, face dials, the four limb IKs' length offsets and the hat hand-off |
 | `rubberhose_picker.usda` | the control picker: `Body` and `Face` pages (`/Pip/Rig/Pip`) selecting the 29 animator controls, sublayered by the rig |
 | `rubberhose.usdz` | the packaged character: anim, rig and picker in one file, built with `usdzip -c rubberhose.usdz -a rubberhose_anim.usda` |
 | `render_preview.py` | offscreen Storm stills/sequences: flat unlit pass + optional lit guide pass |
@@ -63,10 +63,11 @@ reached by selecting `Face_ctl`.
 | **space switch / prop hand-off** | the hat rides the head top; a parent constraint whose envelope is keyed 0 -> 1 -> 0 hands it to the left glove and back (the grab offset is authored in the shot) | `RigExecParentConstraint` (`inputs:defaultWeight`, `translationOffsets`, `rotationOffsets`) |
 | draw order / ink | parts are layered by small Z offsets; every outline is geometry in the same mesh as its fill, so the same movers deform both | plain `UsdGeomMesh` + `primvars:displayColor` (uniform) |
 
-Totals: 34 controls, 74 joints, 5 spline IKs, 4 two-bone IKs, 2 aim + 2
+Totals: 40 controls (29 animator controls and 11 hidden helpers), 74
+joints, 5 spline IKs, 4 two-bone IKs, 2 aim + 2
 parent constraints, 44 mover applications (22 matrix, 10 lattice, 4 curve,
 2 skin, 2 blend-shape movers + 5 blend inputs / 8 samples), 23 meshes /
-6,478 points. `rigExecPose --repeat` evaluates a frame in about 2.5 ms.
+6,478 points. `rigExecPose --repeat` evaluates a frame in about 0.4 ms.
 
 ## The performance (`rubberhose_anim.usda`)
 
@@ -147,8 +148,8 @@ frames and the release 3.2-3.6, no other sign change on any limb; the
 arms never cross the head (closest ink gap +0.09), the hat curl stands
 at least 0.35 off the head through the hold (it comes within 0.15 only for
 about 1.4 frames as the hand arrives on the hat, and within 0.24 as it sets
-it down), the gloves stay at least 0.18 from the shoes and at most 2 arm
-joints come near a leg. The previous version of the loop, run through the
+it down), the gloves stay at least 0.32 from the shoes and no arm joint
+comes near a leg. The previous version of the loop, run through the
 same check, fails with the hat arm drawn across the face on the release,
 tangents all through the hold, the gloves on the shoes in the squash and in
 the strut, and the arms merged with the legs in the squash.

@@ -60,7 +60,7 @@ stage when the gesture ends, as one undoable edit.
 | Tool | Where | What it is for |
 |---|---|---|
 | Layer Stack and Layer Opinions | **RigExec ▸ General Editors** | Which layer an opinion comes from, and which one an edit lands in. |
-| Exec Stack | **RigExec ▸ General Editors ▸ Exec Stack** | The evaluated movers on a prim, in order. |
+| Execution Stack | **RigExec ▸ General Editors ▸ Execution Stack** | The evaluated movers on a prim, in order. |
 | Deformer Toggles | **RigExec ▸ General Editors ▸ Deformer Toggles** | Switch deformers on and off to see what each contributes. |
 | Profiler | **RigExec ▸ General Editors ▸ Profiler** | Where a frame's time goes, and how many threads it ran on. |
 | Cache Strip | **RigExec ▸ General Editors ▸ Cache Strip** | Which frames are warm in the cache. See [frame cache warming](../concepts/frame-cache-warming.md). |

@@ -41,7 +41,9 @@ uses the cursor-distance ratio from the handle origin; negative scale can be
 disabled in Settings.
 
 Settings include World/Object/Parent orientation, Gimbal rotation, step size,
-free rotation, negative-scale prevention, Preserve Children, and handle size.
+free rotation, negative-scale prevention, Preserve Children, the group pivot
+for a multi-selection (Selection Centre, Last Selected, or Individual
+Origins), and handle size.
 Axes viewed end-on are disabled when projection makes the drag unstable.
 Settings last for the session.
 
@@ -58,6 +60,8 @@ Snap targets come from visible evaluated geometry where supported.
 |---|---|
 | `Q`, `W`, `E`, `R` | Select, Move, Rotate, Scale |
 | `D` / `Insert` | Toggle pivot editing |
+| `L` | Toggle Global/Local orientation |
+| `Shift+P` | Cycle the group pivot |
 | `+` / `-` | Change handle size |
 | Hold `J` | Step snap during a drag |
 | Hold `X` | Grid snap |
@@ -74,7 +78,8 @@ drag before pressing Ctrl because Qt can treat Ctrl-click as a right click.
 ## Implementation and tests
 
 Qt-free interaction code lives in `gizmoMath.py`, `gizmoScreen.py`,
-`gizmoDrag.py`, and `gizmoSnap.py` under `plugin/rigExecUsdview`.
+`gizmoDrag.py`, `gizmoSnap.py`, `gizmoSettings.py`, `gizmoPreview.py`,
+`gizmoMarquee.py`, and `gizmoPerformance.py` under `plugin/rigExecUsdview`.
 `gizmoUI.py` connects it to usdview and the shared undo stack.
 Run the corresponding `test_gizmo_*` suites with the Python test helper;
 `bin/test/run_testusdview_gizmo.sh` or `.bat` checks the viewport path.

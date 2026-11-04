@@ -1,8 +1,5 @@
 # Guided composition arcs (usdview)
 
-Added 2026-09-08. Editing extended to the arcs that already exist
-2026-09-09.
-
 The Layer Opinions panel authors composition arcs and edits the ones a
 prim already has. Right-click anywhere in its tree and take **Add
 Composition Arc**:
@@ -25,6 +22,10 @@ want to give it a reference.
 Right-clicking a *layer* group aims the flow at that layer. Otherwise it
 opens on usdview's own edit target, which is where every other edit in
 the application goes.
+
+usdview's own prim context menu, in the hierarchy and the viewport,
+carries the same submenu, driving the same flows onto the same undo
+stack.
 
 ## Arcs that are already there
 
@@ -201,7 +202,7 @@ that is what leaving the field empty means. An asset that declares none
 warns — an arc with no target prim would compose nothing — and the
 answer is to name a prim from this list.
 
-Three cases fall back to the stage's own prims, because there the stage
+Two cases fall back to the stage's own prims, because there the stage
 really is the target or the best guess available: an **internal** arc,
 and an asset path that is still **empty**. An asset path that is typed
 but does not **resolve** offers nothing instead: the asset may not exist
@@ -215,12 +216,18 @@ They are different things and the dialog treats them differently.
 A **refusal** disables Author and says why. These are requests USD would
 reject or that produce a stage nobody wanted: a prim targeting itself, an
 ancestor **or a descendant** (all three are `ErrorArcCycle`), a relative
-target path, a non-finite time offset or scale, a zero time scale, a
-variant set with a non-identifier name, a layer sublayering itself **or
-any layer that already pulls it in** (`ErrorSublayerCycle`), and four
-relocate cases — a root prim as the source (Pcp
-ignores it), a target that already exists, a target whose parent does
-not, and a source that no composition arc brought in.
+target prim on an **external** reference or payload (internal targets,
+inherits, specializes and relocates may be relative to the selected
+prim), a non-finite time offset or scale, a zero time scale, a variant
+set with a non-identifier name, a variant name Sdf rejects (`8k`,
+`foo-bar` and `.abc` are all valid variant names; only the **set** name
+must be an identifier), repeated variant names, a selection that is not
+one of the set's variants, a layer sublayering itself **or any layer
+that already pulls it in** (`ErrorSublayerCycle`), and six relocate
+cases — a source and target that are the same path, a target inside its
+own source, a root prim as the source (Pcp ignores it), a target that
+already exists, a target whose parent does not, and a source that no
+composition arc brought in.
 
 That last one is worth stating plainly, because USD gives no error for
 it. A relocate only moves what a composition arc brought in. Applied to
@@ -252,10 +259,8 @@ yet. The warnings that fire:
   (the arc would compose nothing);
 - an inherit or specialize target is not a `class` prim, or does not
   exist on the stage;
+- an internal reference or payload target does not exist on the stage;
 - a variant set is being authored with no variants, or with no selection;
-- a variant name is not an Sdf identifier (legal, and common — `8k`,
-  `foo-bar` and `.abc` are all valid variant names; only the **set** name
-  must be an identifier);
 - the set already exists, so the new variants are being *added* to it;
 - a relocate's source does not compose on the stage at all;
 - a relocate moves a prim under a different parent rather than renaming
@@ -301,9 +306,11 @@ remove-and-copy does not:
 
 - **Sibling order.** `Sdf.CopySpec` *appends*, so restoring a spec into
   the middle of its parent lands it at the end: `B,C,D` comes back as
-  `B,D,C`. In RigExec that is not cosmetic — mover evaluation order **is**
-  sibling order (README: "the bottom sibling fires first") — so an undo
-  would silently change which mover runs when. `Restore` records the
+  `B,D,C`. In RigExec that is not cosmetic — the stack order of steps
+  that touch the same data **is** sibling order
+  ([how operators fire](../concepts/how-operators-fire.md#the-order-you-can-predict):
+  "the bottom sibling executes first") — so an undo would silently change
+  which mover runs when. `Restore` records the
   siblings that followed and pushes them back behind the restored spec.
 - **The ancestors the arc created.** Authoring into a layer holding
   nothing for the prim creates the whole chain as overs. The snapshot is
@@ -356,6 +363,7 @@ mis-ordered:
 | `plugin/rigExecUsdview/compositionArcsUI.py` | one dialog class that builds its form from the arc's `Field` descriptors and serves both adding and editing, plus the submenu builder and `RunArcEditFlow`. |
 | `plugin/rigExecUsdview/layerOpinionsModel.py` | expanding an arc field into one row per arc, formatting and parsing an entry, and the writes that set, remove and reorder one. Imports no Qt. |
 | `plugin/rigExecUsdview/layerOpinionsUI.py` | `_AddArcMenu` / `_OnArcAuthored`: raising the submenu and pushing what it returns. `_AddRowActions` / `_EditArc`: the per-arc menu and the route into the edit flow. |
+| `plugin/rigExecUsdview/outlinerArcMenu.py` | `InstallPrimContextMenuHook`: the same submenu on usdview's own prim context menu. |
 
 Adding a field — or a whole arc — is a change to the model and nothing
 in the Qt file. The split is the same one

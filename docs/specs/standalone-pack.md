@@ -58,7 +58,7 @@ the prior database afterward.
 
 Export, load and runtime preparation share one capability validation: each
 prepares the standalone scene program (`RigExecSceneDb::ValidateCapabilities`,
-`libs/rigExecStandalone/sceneDb.cpp:93`). Export rejects native instances and
+`libs/rigExecStandalone/sceneDb.cpp:94`). Export rejects native instances and
 instance proxies. Preparation rejects an active prim of an unknown RigExec
 type and any RigExec applied API it does not lower (see the
 [runtime guide](standalone-runtime.md)); other applied APIs are ignored. Movers, solver joint bindings and

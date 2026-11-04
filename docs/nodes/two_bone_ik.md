@@ -88,8 +88,10 @@ rig's interaction surface, not a diagnostic -- and authoring
 Delta added to the measured upper length. The upper
 bone is measured from the bound joints' rest positions (root to mid)
 and this offset adjusts it -- zero leaves the measured bone
-length exact. This is the only control over the upper bone's
-length: the bone itself is always the measured rest distance.
+length exact. There is no absolute length attribute: the bone is
+the measured rest distance in the space of rigExec:space and
+rigExec:spaceMatrix, the offset scales with that space, and
+softDistance multiplies the result by inputs:upperScale.
 
 #### `rigExec:lowerLengthOffset`
 
@@ -98,8 +100,10 @@ length: the bone itself is always the measured rest distance.
 Delta added to the measured lower length. The lower
 bone is measured from the bound joints' rest positions (mid to end)
 and this offset adjusts it -- zero leaves the measured bone
-length exact. This is the only control over the lower bone's
-length: the bone itself is always the measured rest distance.
+length exact. There is no absolute length attribute: the bone is
+the measured rest distance in the space of rigExec:space and
+rigExec:spaceMatrix, the offset scales with that space, and
+softDistance multiplies the result by inputs:lowerScale.
 
 #### `rigExec:stretchPolicy`
 
@@ -197,9 +201,9 @@ Soft-reach fraction of the chain length.
 
 *Relationship.*
 
-Ordered output joints [root, mid, end] posed by this solve
-(view-free extraction). Position is the element index; the compiler
-binds each joint to one aggregate element.
+Ordered output joints [root, mid, end] posed by this solve.
+Position is the element index; the compiler binds each joint to one
+aggregate element.
 
 #### `rigExec:space`
 
@@ -232,14 +236,14 @@ scaled master and the goal moves twice as far away while the
 chain keeps its authored length, so the solve clamps and the limb
 straightens instead of scaling.
 
-Connect this to the posed space of whatever the rig hangs from --
-a TRS master, a shot transform -- and the rests are carried into
-the same space the frames are already in. Identity, the fallback,
-is exactly the old behaviour, so a rig that connects nothing is
-unchanged. The matrix is an INPUT rather than a name the solver
-looks up: which prim defines the space is the asset's business,
-not this schema's, and a rig with several nested masters connects
-the one it means.
+Name whatever the rig hangs from -- a TRS master, a shot
+transform -- on rigExec:space rather than connecting this to its
+posed:space: that space is computed, so the connection reads the
+unauthored identity. This matrix is an explicit extra factor,
+composed after rigExec:space's rest-to-posed map; the length
+offsets and inputs:softDistance ride the same space. Identity, the
+fallback, measures the rests as authored, so a rig that authors
+nothing is unchanged.
 
 #### `guide:radius`
 
@@ -250,12 +254,10 @@ element: the exact counterpart of RigExecJoint's guide:radius,
 including the rule that zero or negative draws no guides at all,
 which is how a solver's diagnostics are turned off.
 
-Without it the elements are stuck at Hydra's fallback radius of
-1.0. That is proportionate on an asset authored at tens of units
-and several times the size of the whole character on one authored
-at one unit -- the joints were given this knob for exactly that
-reason and the aggregate solvers were not, so turning guide
-display on for a small asset buried it in solver geometry.
+Without it the elements draw at Hydra's fallback radius of 1.0,
+which is proportionate on an asset authored at tens of units and
+several times the size of the whole character on one authored at
+one unit.
 
 #### `guide:displayColor`
 

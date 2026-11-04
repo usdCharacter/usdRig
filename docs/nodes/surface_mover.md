@@ -29,9 +29,13 @@ deforming skin. In v0.1 `rigExec:mode` selects no numeric difference —
 `attach` and `project` both project at full strength — so the mover is a
 contact pass, not a slide-along-the-surface follow.
 
-Reads standard mesh properties for attachment/projection/
-sliding and surface-driven correction and writes an exact native
-UsdGeomPointBased points property (spec sections 4.1, 7.5).
+Snaps each target point to the nearest point on the driver
+mesh's triangles (the rigExec:surface points with its faceVertexCounts
+and faceVertexIndices, or rigExec:triangles) as rigExec:snapMode and
+rigExec:offset direct, and writes exact native UsdGeomPointBased points
+properties. rigExec:surface honors rigExecReadPhase metadata.
+rigExec:mode is not read: every surface mover projects. Persistent
+attachment is RigExecSurfaceBindingMover.
 
 ## How it works
 
@@ -63,7 +67,7 @@ are not implemented by these nearest-surface settings.
 
 | Relationship | Points to | Required |
 |---|---|---|
-| `rigExec:surface` | Native mesh prim supplying the driver surface; without it the mover is inert, not an error. | yes |
+| `rigExec:surface` | Native mesh prim supplying the driver surface; without exactly one, compile sets the mover aside with a warning and the rest of the rig still runs. | yes |
 | `rigExec:moves` | Exact points property to drape. | yes |
 | `rigExec:surface` `rigExecReadPhase` | Metadata: `base` for the driver's authored points, `final` when the driver is itself rigged. | no |
 
@@ -91,7 +95,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -132,7 +137,7 @@ Nearest-triangle snap policy. Inside/outside retain points already on the requir
 
 *Type:* `float`. *Default:* `0`.
 
-Side clearance measured in surface metric coordinates, independent of the mover envelope and binding delta multiplier.
+Side clearance measured in surface metric coordinates, independent of the mover envelope.
 
 #### `rigExec:mask`
 
@@ -144,7 +149,7 @@ Optional target-vertex weights in [0,1]; empty affects every vertex.
 
 *Type:* `int[]`. *Default:* `[]`.
 
-Optional explicit surface vertex-index triples. Empty uses each polygon's legacy fan triangulation.
+Optional explicit surface vertex-index triples. Empty uses each polygon's fan triangulation about its first corner.
 
 #### `rigExec:pointSpace`
 
@@ -166,7 +171,7 @@ Local arrays use their respective matrices. Common arrays already share coordina
 
 *Relationship.*
 
-Optional surface and target rest-to-pose providers, in that order, applied after their local-to-common matrices.
+Optional surface and target rest-to-pose providers: none, or exactly these two in that order, applied after their local-to-common matrices. A checkpoint read phase is a compile error.
 
 ## Example
 

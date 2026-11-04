@@ -36,6 +36,10 @@ enabled on every axis by default. Scale is disabled on every axis by
 default to match the FBX runtime default. Offset arrays are parallel to
 the inherited ordered rigExec:sources relationship.
 
+An optional rigExec:space relationship, not declared by this schema,
+works as on RigExecRotationConstraint: with two or more sources, the
+mean of their Euler angles is taken in that provider's space.
+
 ## How it works
 
 In the pose phase the constraint resolves each entry of the ordered
@@ -59,7 +63,7 @@ posed it before the constraint ran.
 |---|---|---|
 | `rigExec:sources` | Ordered transform providers that carry the target; order is shared with every parallel array. | yes |
 | `rigExec:moves` | The one transform provider this constraint revises (pose phase). | yes |
-| `rigExec:weightObject` | Optional constant weight field supplying the attach envelope instead of `inputs:defaultWeight`. | no |
+| `rigExec:weightObject` | Optional weight field supplying the attach envelope instead of `inputs:defaultWeight`. | no |
 | `inputs:translationOffsets` | Per-source translation offsets, parallel to `rigExec:sources` (empty = zero). | no |
 | `inputs:rotationOffsets` | Per-source Euler offsets in degrees, parallel to `rigExec:sources` (empty = zero). | no |
 | `inputs:sourceWeights` | Per-source blend weights (empty = every source at full weight). | no |
@@ -88,7 +92,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -203,7 +208,9 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 

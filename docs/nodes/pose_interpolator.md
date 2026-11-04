@@ -26,8 +26,8 @@ driver joint in, one weight per authored `RigExecPose` child out. Each pose
 records where the driver stands — a quaternion measured in the driver's own
 parent frame, relative to the driver's rest — plus how wide its influence
 reaches, and the interpolator publishes each pose's share of wherever the
-driver is now. It writes no transform and no points, which is why it lives
-in its own scope rather than under `Movers`; what makes it useful is that a
+driver is now. It writes no transform and no points, so it is not a mover
+and carries no `rigExec:moves`; what makes it useful is that a
 `RigExecBlendInput` connects its `inputs:weight` to a pose's
 `outputs:weight`, so a corrective shape can be retargeted or layered without
 touching the interpolator that fires it.
@@ -49,8 +49,8 @@ so the weights come out of the rig's own arithmetic rather than
 something that resembles it.
 
 The maths is a radial basis function and lives in libs/rigExecMath/rbf.h,
-pinned at 3.41e-11 over 13,400 evaluations by the parity fixture
-(tests/fixtures/psd_parity.json).
+held to 1e-6 by the parity fixture (tests/fixtures/psd_parity.json),
+whose 13,400 biped evaluations agree to 3.41e-11.
 The solve is a per-interpolator CONSTANT -- invert the matrix of every
 pose's kernel value at every other pose -- so it happens once and only the
 kernel row is per-frame. Nothing on this prim is that inverted matrix,
@@ -74,22 +74,26 @@ the interpolator that drives it.
 The maths is a radial basis function (`libs/rigExecMath/rbf.h`). Compile
 reads the driver, the kernel, the channel switches and every enabled pose's rotation,
 type and radius, and inverts the kernel matrix once — it is a pure function
-of the authored poses, so nothing on the prim stores it. Evaluation happens
-in its own phase, after the whole pose walk and before the geometry chains
-(`rigEvaluator.cpp:11990-11998`): it takes the driver's final and rest
-frames, forms `delta = restLocal⁻¹ · (parent⁻¹ · world)`
-(`rigEvaluator.cpp:3073-3076`), runs one kernel row through the inverted
-matrix, and publishes a `float` on each pose's `outputs:weight` into both the
-resolved-input table a consumer reads through and the pose's moved-property
-map (`rigEvaluator.cpp:3019-3026`). A driver with no published final frame
-is diagnosed and the interpolator publishes zeros rather than quietly
-measuring a rest (`rigEvaluator.cpp:3048-3056`).
+of the authored poses, so nothing on the prim stores it. Evaluation is one
+operation of the shared graph that reads the last version of its driver's
+frame and of its nearest joint or control ancestor's, so dependencies place
+it after every operation that writes them and before the blend channels
+that read its weights (`libs/rigExec/bakedPose.cpp:2627-2635`): it takes
+the driver's final and rest frames, forms
+`delta = restLocal⁻¹ · (parent⁻¹ · world)`
+(`libs/rigExecMath/poseArithmeticKernel.h:305-307`), runs one kernel row
+through the inverted matrix, and publishes a `float` on each pose's
+`outputs:weight` into both the resolved-input table a consumer reads
+through and the rig pose's moved-property map (`bakedPose.cpp:5914-5917`).
+A driver with no usable final frame is diagnosed and the interpolator
+publishes zeros rather than quietly measuring a rest
+(`bakedPose.cpp:5656-5661`).
 
 ## Wiring
 
 | Relationship | Points to | Required |
 |---|---|---|
-| `rigExec:driver` | Exactly one `RigExecJoint` or `RigExecControl` whose local rotation every pose is measured against. | yes |
+| `rigExec:driver` | One `RigExecJoint` or `RigExecControl` whose local rotation every pose is measured against; a RigLogic solve takes several. Omit it when `rigExec:driverAttributes` names numeric drivers instead. | unless numeric drivers |
 | `RigExecPose` children | One prim per pose, directly under the interpolator; any other child type is a compile error. | yes |
 | `<pose>.outputs:weight` | Read by a consumer — a `RigExecBlendInput`'s `inputs:weight` connects to it. The pose's own `outputs:weight` must carry no authored connection. | - |
 | `rigExec:poseControls` | Authoring provenance on each pose: the control properties that put the rig into it. Never read at evaluation. | no |
@@ -132,17 +136,17 @@ the thing that was wrong. Skipping it moved the skin about two
 millimetres.
 
 Measured against this port's own drivers it lands at 0.00 degrees on
-the elbow, the knee and the toe and 1.64 on the shoulder;
-The verification gate prints the angle per pose, which is the
-fidelity number.
+the elbow, the knee and the toe and 1.64 on the shoulder.
 
 #### `rigExec:translation`
 
 *Type:* `float3`. *Default:* `(0, 0, 0)`.
 
-The driver's translation in this pose, in CENTIMETRES, in the
-driver's own frame. Read only when the interpolator has
-rigExec:enableTranslation on; an interpolator with no authored
+The driver's translation in this pose, in the driver's own
+rest frame and its frame's units (CENTIMETRES on the shipped biped).
+Read only when the interpolator has rigExec:enableTranslation on or
+numeric drivers, whose values it then holds in their own units
+(rigExec:driverAttributes); an interpolator with no authored
 translations has nothing to say about translation, and saying every
 pose is equally close would peg its weights at 1/n.
 
@@ -166,24 +170,29 @@ shoulder's weights to 9.
 RigExecRbfFitWidth therefore fits it per interpolator to two
 requirements, in order: no dead zone (the kernels sum to at least 0.5
 everywhere between the poses), then the least overshoot among the
-widths that manage it. A painted rigExec:falloff other than the default 0.3
-default is applied on top as falloff/0.3.
+widths that manage it. A painted rigExec:falloff other than the
+default 0.3 is applied on top as falloff/0.3.
 
-Zero means measure one from the poses, and is what an editor should
-author when it wants the fit back rather than a number it invented.
+Compile uses the authored width as it stands and fits nothing. Zero
+is a zero width: the pose reads as infinitely far from every
+rotation but its own, so its kernel contributes nothing between the
+poses. To get the fit, run rigexec.rbf_fit_width (RigExecRbfFitWidth)
+and author the widths it returns.
 
 #### `rigExec:translationRadius`
 
 *Type:* `float`. *Default:* `0`.
 
-The same width for the translation channel, in CENTIMETRES.
+The same width for the translation channel, in
+rigExec:translation's units.
 
 It is NOT the rotation radius and must not be borrowed from it: a
 brow's poses sit millimetres apart and a rotation width would swallow
-every one of them. Fitted by the same swept scale, because the metric
-already divides each channel by its own width -- the shape of the pose
-space is fixed by the RATIO of the two and only its overall size is
-free.
+every one of them. rigexec.rbf_fit_width fits it by the same swept
+scale, because the metric already divides each channel by its own
+width -- the shape of the pose space is fixed by the RATIO of the two
+and only its overall size is free. As with rigExec:rotationRadius,
+compile reads it as authored and zero is a zero width.
 
 #### `rigExec:rotations`
 
@@ -192,7 +201,8 @@ free.
 A RigLogic solve with several frame drivers: where each
 driver stands in this pose, one rotation per rigExec:driver target in
 order, measured as rigExec:rotation is. Empty with one driver reads
-rigExec:rotation.
+rigExec:rotation; any other count than one per driver is a compile
+error.
 
 #### `rigExec:scale`
 
@@ -208,8 +218,8 @@ this before the threshold: RigLogic's pose scale.
 poseFalloff, kept as provenance and as the editable
 dial: the share the artist painted on top of the fitted width, where
 0.3 is the default and means just reach the closest other pose. 0.3
-on every pose of the shipped biped except the clavicles, which are
-0.5.
+on every pose of the shipped biped except the clavicles and the
+mouth corners, which are 0.5.
 
 The radii above already carry it (falloff/0.3, floored at 0.05), so it
 is not applied a second time at runtime. It is here so that an editor
@@ -221,14 +231,13 @@ hand-tuned still says what it started from.
 *Relationship.*
 
 The exact control PROPERTIES that put the rig into this pose
--- </Rig/Controls/arm_l_fk_shoulder_l_bind.avars:ry> and the like --
+-- an L_LoArm control's avars:rz on the shipped biped, and the like --
 parallel to rigExec:poseControlValues. Properties rather than prims
 because a control carries nine channels and a pose usually sets one.
 
-The same thing is carried per pose, and it is what lets
-a shape editor jump the rig to a pose to sculpt against it. It is
-authoring data: nothing in evaluation reads it, and a pose with none
-is still a valid pose.
+It is authoring data for a tool that jumps the rig to a pose to
+sculpt against it: nothing in evaluation or in the bundled Shape
+Editor reads it, and a pose with none is still a valid pose.
 
 #### `rigExec:poseControlValues`
 
@@ -275,9 +284,10 @@ blend muddy.
 
 *Relationship.*
 
-The driver: a RigExecJoint (or any RigExecXformable) whose
-LOCAL rotation -- its pose relative to its own rest, in its parent's
-frame -- is what every pose is measured against. At most one target
+The driver: a RigExecJoint or RigExecControl whose
+LOCAL rotation -- its pose relative to its own rest, in the frame of
+its nearest joint or control ancestor -- is what every pose is
+measured against. At most one target
 for the pose solver; a RigLogic solver (rigExec:solver additive or
 interpolative) takes several, each one quaternion of the input row
 in target order.
@@ -303,8 +313,9 @@ the solve, the fit and the baked program are the ones the translation
 channel already had -- the only difference is where the position
 comes from.
 
-Authoring this makes rigExec:driver optional and measures no
-rotation: there is no frame to take one from. Up to three because
+Authoring this makes rigExec:driver optional (a RigLogic solve
+refuses both) and measures no rotation: there is no frame to take
+one from. Up to three because
 that is what one position is; a corrective wanting more channels is
 two interpolators whose weights multiply.
 
@@ -387,8 +398,8 @@ normalized, scaled weight is at or below this.
 
 Valid values: `gaussian`, `linear`, `exponential`, `cubic`, `quintic`.
 
-How a pose's weight falls away with distance. On the shipped biped 16 interpolators
-are gaussian and 53 linear.
+How a pose's weight falls away with distance. Of the parity
+fixture's 67 biped interpolators, 16 are gaussian and 51 linear.
 
 exponential, cubic and quintic are RigLogic's weight functions:
 exp(-2 d/r), max(0, 1 - (d/r)^3) and max(0, 1 - (d/r)^5). In the
@@ -407,8 +418,9 @@ measuring.
 
 enableRotation: measure the driver's rotation.
 
-Honoured rather than assumed. On the shipped biped the two channels
-are mutually exclusive -- 39 interpolators rotation, 28 translation --
+Honoured rather than assumed. On the biped the two channels are
+mutually exclusive -- 39 of the parity fixture's interpolators
+rotation, 28 translation --
 and reading a translation interpolator as a rotation makes every one
 of its poses identity, so it solves degenerate and drives nothing.
 
@@ -461,11 +473,12 @@ Valid values: `X`, `Y`, `Z`.
 
 The axis a twist pose spins about, in the DRIVER's own frame.
 driverTwistAxis (0 X, 1 Y, 2 Z), and X on every body
-interpolator of the shipped biped because the bind skeleton aims +X
-down the bone.
+interpolator of the shipped biped but the torso's (Y), because the
+bind skeleton aims +X down the bone.
 
 Read only by poses whose rigExec:poseType is swing or twist; a whole
-pose measures the entire rotation and never splits it.
+pose measures the entire rotation and never splits it. A RigLogic
+solve reads it only for the swingAngle and twistAngle metrics.
 
 #### `inputs:enabled`
 
@@ -483,8 +496,8 @@ to the Upper and Fore joints. The interpolator watches the **Fore joint** —
 not the Elbow control the animator keys — and carries three poses, `neutral`
 at identity, `half` at 40 degrees and `bent` at 80, each 0.7 radians wide,
 which is the spacing between them. Watch the three floats trade: at rest
-`neutral` reads 1.000 and `half` and `bent` 0.000; a third of the way in they
-split 0.529 / 0.601 / 0.000; on the first hold `half` reads 1.000 alone; on
+`neutral` reads 1.000 and `half` and `bent` 0.000; at frame 1004, halfway to
+the first hold, they split 0.529 / 0.601 / 0.000; on the first hold `half` reads 1.000 alone; on
 the second `bent` reads 1.000 and the others 0.000. Only `bent.outputs:weight`
 is connected to the blend channel, so the corrective swells on the outside of
 the elbow exactly when that one float does — nothing at the `half` hold, full
@@ -515,9 +528,9 @@ python docs/render_media.py --page pose_interpolator
 
 ## Tips
 
-- Author a non-zero `rigExec:rotationRadius` on every pose, roughly the angle between neighbouring poses. A per-pose zero is used literally rather than fitted (`rbf.cpp:992-1001`, `rbf.cpp:407-413`), and an interpolator whose radii are all zero reads 1 only when the driver stands exactly on a pose and 0 everywhere else.
-- Drive from a joint whose parent already carries the motion you do not want measured: the phase measures the driver's rotation relative to its rest in its nearest frame-publishing ancestor's frame, so the parent subtracts its own share back out. Measuring against anything other than the immediate namespace parent is reported as a warning.
-- `rigExec:enableTranslation` is not measured by this phase — it warns and judges the poses on rotation alone (`rigEvaluator.cpp:2852-2862`). Disabling a whole interpolator publishes zeros, while disabling one pose drops it out of the solve entirely so the other poses' weights change.
+- Author a non-zero `rigExec:rotationRadius` on every pose, roughly the angle between neighbouring poses. A per-pose zero is used literally rather than fitted (`rbf.cpp:974-983`, `rbf.cpp:401-407`), and an interpolator whose radii are all zero reads 1 only when the driver stands exactly on a pose and 0 everywhere else.
+- Drive from a joint whose parent already carries the motion you do not want measured: the interpolator measures the driver's rotation relative to its rest in its nearest joint or control ancestor's frame, so the parent subtracts its own share back out. Measuring against anything other than the immediate namespace parent is reported as a warning.
+- `rigExec:enableTranslation` also measures the driver's translation from rest, in its own rest frame, against each pose's `rigExec:translation` and `rigExec:translationRadius` (`poseArithmeticKernel.h:337-343`). Disabling a whole interpolator publishes zeros, while disabling one pose drops it out of the solve entirely so the other poses' weights change.
 - A radius wider than the pose spacing makes the Gaussian rows overlap enough that the inverse pushes a far pose negative between two near ones. `rigExec:allowNegativeWeights = 0` clamps that lobe; leave it on only when a consumer wants the extrapolation.
 - `rigExec:solver` `additive` or `interpolative` switches to Epic Games RigLogic's radial-basis solvers: several frame drivers (one quaternion each, with `rigExec:rotations` on each pose), the euclidean, quaternion, swing and twist distances, RigLogic's five weight functions, its normalize methods, an automatic radius, a weight threshold and a per-pose `rigExec:scale`. The default `pose` solver is unchanged. In a RigLogic solve `gaussian` is RigLogic's exp(-d/r^2), whose shape depends on the radius's units. [RigLogic behaviours](../concepts/riglogic.md) covers the solvers, their example and their provenance (OpenRigLogic, MIT; see [algorithm references](../references.md)).
 - An interpolative RigLogic solve inverts the pose-to-pose kernel matrix, so two poses at the same place under the distance method (a pure twist about the twist axis has the neutral's swing) make it singular; compile warns.

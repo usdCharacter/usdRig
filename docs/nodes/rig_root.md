@@ -30,8 +30,7 @@ not Xformable, so guide bounds propagate up to the enclosing asset for camera
 framing while the rig itself never adds a transform.
 
 Character root: partition and namespace root for control,
-joint, and mover discovery (spec section 4.1). Publishes
-computeDiagnostics. It is Imageable (but deliberately not Xformable) so
+joint, and mover discovery. It is Imageable (but deliberately not Xformable) so
 bounds from guide-only controls and joints propagate through the rig root
 to the enclosing asset for host camera framing.
 
@@ -83,8 +82,8 @@ optional judges and do not choose an evaluation path.
 *Type:* `uniform asset`. *Default:* `@@`.
 
 Baked-playback selector: when set, hosts that can play a
-.rigexec file (usdview through rigExecImaging, the Godot player)
-answer this rig from the binary instead of evaluating it, and when
+.rigexec file (usdview through rigExecImaging) answer this rig from
+the binary instead of evaluating it, and when
 unset the rig evaluates live. The path resolves like any asset
 attribute -- relative to the layer that authors it -- and names a
 single .rigexec file with no sidecar.
@@ -113,7 +112,7 @@ bin\launch_usdview.bat docs\examples\two_bone_ik.usda
 
 ## Tips
 
-- Keep the deformed geometry inside the same asset prim as the rig: a mover whose target is outside the rig root's parent fails compile with "targets outside the rig asset".
+- Keep the deformed geometry inside the same asset prim as the rig: compile sets aside a mover whose target is outside the rig root's parent, with "targets outside the rig asset", and that mover writes nothing.
 - Order two movers that write the same target — or a solver against a constraint, or two solvers against each other, which are all steps of ONE pose stack — by arranging them in namespace: nesting, or `reorder nameChildren` on their parent. The bottom composed sibling executes first, the compiler reads the final composed order and nothing about how it arose, and nothing else breaks a tie. Put `Solvers` at the bottom of the rig root for the classic "solve, then revise" shape.
 
 ## See also

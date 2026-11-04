@@ -77,7 +77,7 @@ Storm viewport with the rig guides on.
 | ![Skin Mover](../icons/skin_mover.png) | [Skin Mover](nodes/skin_mover.md) | Blends many influences per point in one pass, UsdSkel-style. |
 | ![Layered Skin Mover](../icons/concept.png) | [Layered Skin Mover](nodes/layered_skin_mover.md) | Applies masked linear or dual-quaternion skin over a point revision. |
 | ![Blendshape Mover](../icons/blendshape_mover.png) | [Blendshape Mover](nodes/blendshape_mover.md) | Sums sculpted blend channels into one delta pass. |
-| ![Curve Mover](../icons/curve_mover.png) | [Curve Mover](nodes/curve_mover.md) | Transports points through a solver's frame array, or emits its frame origins. |
+| ![Curve Mover](../icons/curve_mover.png) | [Curve Mover](nodes/curve_mover.md) | Transports points through a solver's frame array, follows a NURBS wire curve, or emits frame origins. |
 | ![Lattice Mover](../icons/lattice_mover.png) | [Lattice Mover](nodes/lattice_mover.md) | Deforms points through a legacy cage or a regular interpolation grid. |
 | ![Surface Mover](../icons/surface_mover.png) | [Surface Mover](nodes/surface_mover.md) | Drapes points onto an animated driver surface. |
 | ![Surface Binding Mover](../icons/concept.png) | [Surface Binding Mover](nodes/surface_binding_mover.md) | Follows fixed barycentric attachments with vector offsets. |

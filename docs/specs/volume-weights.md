@@ -1,16 +1,14 @@
 # Volumetric weight objects
 
-Spec §4.1, volumetric extension. Added 2026-08-07.
-
 A weight object publishes a total scalar field over the logical elements
-of one exact prim or property target. Until now RigExec had two: an
-authored table (`RigExecStaticWeight`) and a scalar-driven modulation of
-one (`RigExecDynamicWeight`). Neither knows where anything *is* — a
-painted map is the only way a point gets a weight, and painting is the
-one thing a composition-native, code-authored rig cannot do.
+of one exact prim or property target. Two weight objects carry no
+position: an authored table (`RigExecStaticWeight`) and a scalar-driven
+modulation of one (`RigExecDynamicWeight`). With them a painted map is the
+only way a point gets a weight, and painting is the one thing a
+composition-native, code-authored rig cannot do.
 
-This adds four more, three of which **generate** a field from a placed
-volume:
+Four more types fill that gap; three of them **generate** a field from a
+placed volume:
 
 | Type | Base | Distance function |
 |---|---|---|
@@ -69,6 +67,13 @@ curve changes only numbers. Every profile pins `f(0) = 0` and `f(1) = 1`,
 so switching never moves the band's endpoints, only its shape between
 them.
 
+A nonempty `inputs:falloffSamples` array replaces that table: uniformly
+spaced samples of `Curve` from the outer boundary (0) to the inner
+boundary (1), read as an ordinary per-frame input. The weight editor
+previews a curve edit through it without authoring, then commits the
+spline on release. Binary format 27 and later carry it; an older
+`.rigexec` plays its compiled table.
+
 ## Three decisions worth knowing
 
 ### 1. A volume weight is an `RigExecXformable`, not a `RigExecWeightObject`
@@ -78,10 +83,10 @@ inherit from one other schema at most"* (`usdGenSchema:512-522`, verified
 empirically). The three `RigExecWeightObject` contract properties are
 therefore **redeclared** on `RigExecVolumeWeight`, so the composed prim
 definition is identical; what is lost is only `IsA`-testability, and
-RigExec already dispatches weight objects by type *name* everywhere
-(`rigEvaluator.cpp` did this for `RigExecDynamicWeight` long before this
-change). `_IsWeightObjectType` in `rigEvaluator.cpp` is now the single
-place that knows the set.
+RigExec already dispatches weight objects by type *name* everywhere.
+`_IsWeightObjectType` in `libs/rigExec/rigEvaluatorInputs.cpp` names the
+set for the evaluator; `bakedProgram.cpp` repeats it as
+`_IsBakedWeightType`.
 
 Spending the one base on the xformable side is what buys the behaviour a
 rigger needs: the volume is one selectable, framable, `UsdGeomBoundable`
@@ -101,7 +106,7 @@ a shape they cannot see. So the rigid placement positions the volume and
 authority on its size. Guide and field agree by construction.
 
 Both the weight-packet kernel (`libs/rigExec/weightPackets.cpp`) and the CPU
-reference (`libs/rigExec/weightReference.cpp`) call `RemoveScaleShear()` on
+reference (`libs/rigExecOracle/weightReference.cpp`) call `RemoveScaleShear()` on
 the placement before inverting it, for exactly this reason.
 
 ### 3. The falloff curve is structural
@@ -113,7 +118,8 @@ packet until the next compiled rig. The consequence is that the curve's *shape* 
 a rig-authoring parameter rather than an animation channel — which is also
 what keeps the field fixed-shape. The animatable knobs are
 `falloffMin`/`falloffMax`, `invert`, and `strength`, all of which are
-ordinary per-frame inputs.
+ordinary per-frame inputs; a shape that has to change per frame goes
+through `inputs:falloffSamples` rather than the curve.
 
 OpenExec 26.08 has no accessor for an attribute's spline (`// XXX:TODO
 Accessors for AnimSpline` in `exec/computationBuilders.h:584`), so the
@@ -121,8 +127,10 @@ OpenExec registration's `computeFalloffLut` is a stub, and the
 [reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
 supplies the compiled table as a `RigExecValueOverride`.
 
-Editing the curve changes the structure digest and begins a new compiled rig;
-the knots are hashed, the animatable floats deliberately are not.
+Editing the curve changes the structure digest and begins a new compiled rig.
+The digest hashes the baked table, which also covers
+`rigExec:falloffProfile`, rather than the knots; the animatable floats and
+`inputs:falloffSamples` deliberately are not hashed.
 
 ## The plane's two axes: the band along it, the extents across it
 
@@ -178,7 +186,7 @@ drawn at any scale.
 
 Two independent implementations apply the bound — the weight-packet kernel
 in `libs/rigExec/weightPackets.cpp` and the CPU reference in
-`libs/rigExec/weightReference.cpp` — and the CPU reference check holds them
+`libs/rigExecOracle/weightReference.cpp` — and the CPU reference check holds them
 together. A bound applied by only one of them still moves points, just not
 the same ones, and the reference mismatch that produces is exactly the
 failure `TestPlaneBounded` exists to catch.
@@ -242,16 +250,16 @@ missing tail.
 |---|---|
 | Schema | `libs/rigExecSchema/schema.usda` (volumetric section) |
 | Pure kernels | `libs/rigExecMath/weightFields.{h,cpp}` |
-| Weight packets | `libs/rigExec/weightPackets.cpp`, `libs/rigExecGraph/weightProgram.cpp` |
+| Weight packets | `libs/rigExec/weightPackets.cpp`, `libs/rigExecScene/weightProgram.cpp` |
 | OpenExec registrations, used only by the reference check | `libs/rigExec/moverKernels.cpp` (`_Build*WeightPacket`), `libs/rigExec/computations.cpp` (`RIGEXEC_REGISTER_XFORMABLE(RigExecVolumeWeight)`) |
 | LUT packet type | `libs/rigExec/types.h` (`RigExecFalloffLut`) |
-| CPU reference | `libs/rigExec/weightReference.cpp` |
-| Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp` |
+| CPU reference | `libs/rigExecOracle/weightReference.cpp` |
+| Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp`, `libs/rigExec/rigEvaluatorGeometry.cpp` (`_BakeFalloffLut`) |
 | Resolved field for tools | `RigExecRigPose::weightFields` |
-| Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py` |
+| Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py`, `plugin/rigExecUsdview/weightViewport.py` |
 | Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlay`) |
 | Example | `examples/11_VolumeWeights.usda` |
-| Tests | `tests/testRigExecWeightFields.cpp`, `tests/testRigExecVolumeWeights.cpp`, `tests/testRigExecWeightOverlay.cpp`, `bin/test/run_testusdview_overlay.bat` |
+| Tests | `tests/testRigExecWeightFields.cpp`, `tests/testRigExecWeightProgram.cpp`, `tests/testRigExecVolumeWeights.cpp`, `tests/testRigExecWeightOverlay.cpp`, `bin/test/run_testusdview_overlay.bat` |
 
 ## Registering computations on an abstract base
 
@@ -278,14 +286,19 @@ schema opened exactly once.
 
 `RigExecImaging_SetWeightOverlay(primPath)` paints a weight object's
 resolved field onto its target geometry as a vertex `displayColor`, grey
-at 0 to red at 1 — the Rhythm & Hues Voodoo idiom. Pass `""` to turn it
-off. The volume's own falloffMin and falloffMax iso-surfaces draw as
-guides through the same synthesis protocol the control and joint guides
-use. A sphere weight in wire mode draws the max-weight interior
-(falloffMin) as geometry at 50% opacity with dotted great-circle rings
-on that fill, and the exterior falloff (falloffMax) as a dotted wire.
-Plane and curve weights still draw both iso-surfaces as continuous
-wires. `geometry` draws every iso-surface solid.
+at 0 to red at 1 — the Rhythm & Hues Voodoo idiom — under the default
+`guide:weightDisplay = "tint"`; `heatmap` and `bands` use a five-color
+ramp instead. Pass `""` to turn it off. The volume's own falloffMin and
+falloffMax iso-surfaces draw as guides through the same synthesis
+protocol the control and joint guides use. The default `guide:drawMode`
+is `falloff`: a soft inner shell at falloffMin and a dashed exterior cage
+at falloffMax, with `cage`, `brackets`, and `shell` as lighter variants
+and `none` hiding the guide. A sphere weight in `wire` mode draws the
+max-weight interior (falloffMin) as geometry at 50% opacity with dotted
+great-circle rings on that fill, and the exterior falloff (falloffMax)
+as a dotted wire. Plane and curve weights in `wire` mode draw both
+iso-surfaces as continuous wires. `geometry` draws every iso-surface
+solid.
 
 **A primvar appearing is a resync, not a dirty.**
 `HdSceneIndexAdapterSceneDelegate` caches each rprim's primvar
@@ -340,7 +353,7 @@ picture moves and only the final value is wrong.
 *first*. A listener that re-evaluates must therefore run after every
 listener that drops cached values for the same edit, or it publishes a
 pre-edit answer. The registry registers its listener before `Compile()`
-(`libs/rigExecImaging/registry.cpp:1422`), which puts it at the back of the
+(`libs/rigExecImaging/registry.cpp:1511`), which puts it at the back of the
 delivery list.
 
 Production evaluation holds no OpenExec `ExecUsdSystem`, whose
@@ -348,7 +361,7 @@ Production evaluation holds no OpenExec `ExecUsdSystem`, whose
 authored. Only the `RigExecTapSet` requests of the
 [reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
 and of tests create one. `_OnObjectsChanged` first calls
-`RigExecTapSet::PrepareStageChange` (`registry.cpp:3925`), which retires
+`RigExecTapSet::PrepareStageChange` (`registry.cpp:4324`), which retires
 those requests when a prim is removed.
 
 Two things are worth carrying forward. First, a direct `SetTime()` call
@@ -422,12 +435,3 @@ extent is rejected by the weight-packet kernel (an invalid packet) and by the
 CPU reference (an error), and both have to mean **pass-through** downstream. A
 kernel that read a negative extent as "unbounded" would move points the
 reference leaves alone and only the reference check would see it.
-
-## A build trap this change walked into
-
-Adding members to `RigExecRigEvaluator` and `RigExecRigPose` changes their
-layout. Building only the `rigExec` target leaves `testRigExecArm.exe`,
-`rigExecImaging.dll` and friends linked against the *old* layout, which
-presents as a segfault and a `0xc0000374` heap corruption rather than a
-link error. Any header change under `libs/rigExec/` needs a full
-`cmake --build build`, not a targeted one.

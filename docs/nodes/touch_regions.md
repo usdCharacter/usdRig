@@ -33,9 +33,8 @@ for a studio that ships one prim holding the whole rig.
 Regions are annotation, not rig: a stage evaluates identically with them,
 without them, or with half of them unpainted. They are deliberately *not*
 `GeomSubset`s — hdSt collects every face subset under a mesh whatever its
-`familyName`, so a touch set collided with the `materialBind` subset owning
-the same face (16,739 warnings on open), and the sets were moved into a
-scope of their own.
+`familyName`, so a touch set would collide with the `materialBind` subset
+owning the same face; the sets live in a scope of their own.
 
 A mesh's touch regions: the shared palette, and one
 RigExecTouchRegion child per named set.
@@ -45,13 +44,11 @@ annotations on drawable geometry, and an imageable container costs
 nothing and keeps the door open for anything drawable parented under
 it later.
 
-THE HIGHLIGHT OVERLAY IS NOT HERE. It is a real rprim, and a prim inside
-the asset is inside the rig's read roots: authoring the hover array there
-invalidates the rig on every region crossing, which a prim at the stage
-root does not. It also cannot carry its own schema type -- a concrete type
-with no UsdImaging adapter never becomes an rprim at all. So the
-overlay is a plain Mesh at the stage root, named for its asset so a
-shot full of characters does not share one.
+THE HIGHLIGHT IS NOT GEOMETRY. TouchPose tints the touched mesh in its
+own Storm shader, through a Hydra scene index that adds a per-face
+region primvar and a per-region colour table
+(libs/rigExecImaging/touchPoseHighlight.h). A hover authors nothing on
+the stage and never invalidates the rig.
 
 Found BY TYPE, so the regions may be parented anywhere -- beside the
 geometry they annotate, or inside the RigExecRoot for a studio that
@@ -66,9 +63,10 @@ appears nowhere under `libs/rigExec`, so they add nothing to the pose walk.
 They are read at UI time by the usdview TouchPose plugin, which traverses
 the stage for prims typed `RigExecTouchRegions`, keeps the scopes whose
 `rigExec:touch:mesh` targets the mesh being touched (a scope naming no
-mesh matches whichever mesh is asked for), takes the first of them that
-has region children, and flattens those into a single `face -> region`
-int array (−1 for unpainted skin).
+mesh matches whichever mesh is asked for), orders the ones that have
+region children by `rigExec:touch:layerOrder`, opens the first (or the one
+the editor's layer switch names) as the live layer, and flattens its
+regions into a single `face -> region` int array (−1 for unpainted skin).
 That table goes to the native mesh in `rigExecImaging`, which keeps a BVH
 over the *posed* triangles and refits it whenever the rig publishes a new
 pose, so a pick ray hits the deformed skin and resolves to a face, a
@@ -115,9 +113,9 @@ attribute when one is wanted.
 
 *Relationship.*
 
-The control a click in this region selects. Unauthored
-means the region is drawn but drives nothing, which is how an
-unfinished paint reads.
+The control a click in this region selects. Unauthored,
+TouchPose skips the region: its faces read as unpainted skin, where
+a plain click clears the selection.
 
 ### Node parameters
 

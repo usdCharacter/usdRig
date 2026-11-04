@@ -6,8 +6,9 @@ straight from libs/rigExecSchema/schema.usda at generation time.
 
 Three optional keys steer the media: "example_key" points a page at another
 operator's stage in docs/examples/ instead of its own, "no_gif" marks
-a page that documents an annotation rather than a motion, so no GIF is
-rendered for it (such a page still links a stage if it sets "example_key"),
+a page that renders no GIF of its own, such as one that documents an
+annotation rather than a motion (such a page still links a stage if it sets
+"example_key"),
 and "extra_gifs" lists (GIF name, repo-relative stage, caption) for more
 GIFs shown in the page's Example section.
 """
@@ -74,11 +75,13 @@ production operation graph. Scene sampling, detached frozen jobs, and binary
 playback execute typed declarations through that graph; reference checks are
 optional judges and do not choose an evaluation path.""",
         "wiring": [
-            # Type-based discovery over the whole subtree: rigEvaluator.cpp:1014
-            # (_DiscoverControls), :939 (_DiscoverJointOutputs), :986 (pose
-            # interpolators), :1037 (volume weights), :1071 (aggregate solvers).
-            # Each is a plain UsdPrimRange(rig) type-name walk; no manifest and no
-            # relationship on the root itself.
+            # Type-based discovery over the whole subtree:
+            # rigEvaluatorDependencies.cpp:208 (_DiscoverControls), :136
+            # (_DiscoverJointOutputs), :189 (pose interpolators), :221 (volume
+            # weights), :247 (aggregate solvers). Each is a UsdPrimRange(rig)
+            # type-name walk (joints also take the RigExecJoints that operators
+            # name on rigExec:joints); no manifest and no relationship on the
+            # root itself.
             ("(namespace)", "Everything composed beneath the root is the rig; controls, "
              "joints, solvers, and weight volumes are discovered by prim type.", "-"),
             # No child NAME is looked up: _DiscoverMovers walks the whole rig
@@ -90,8 +93,8 @@ optional judges and do not choose an evaluation path.""",
             ("`Movers` child", "The conventional scope for movers: discovery is by "
              "`rigExec:moves` anywhere beneath the root; the scope only groups "
              "them in the walk order.", "no"),
-            # assetRoot = _rigPath.GetParentPath() (rigEvaluator.cpp:3596) and the
-            # HasPrefix check that rejects anything outside it (:3609).
+            # assetRoot = _rigPath.GetParentPath() (rigEvaluatorValidation.cpp:508)
+            # and the HasPrefix check that rejects anything outside it (:520).
             ("(parent prim)", "The rig root's parent is the asset: movers may only target "
              "prims under it, and geometry lives there too.", "-"),
         ],
@@ -103,9 +106,10 @@ cards in a sibling `Geom` scope. The scope names are all convention — the
 compiler discovers by prim type — and the geometry sits
 under `IkAsset` because that parent is what bounds the rig's write set.""",
         "tips": [
-            "Keep the deformed geometry inside the same asset prim as the rig: a "
-            "mover whose target is outside the rig root's parent fails compile "
-            "with \"targets outside the rig asset\".",
+            "Keep the deformed geometry inside the same asset prim as the rig: "
+            "compile sets aside a mover whose target is outside the rig root's "
+            "parent, with \"targets outside the rig asset\", and that mover "
+            "writes nothing.",
             "Order two movers that write the same target — or a solver against a "
             "constraint, or two solvers against each other, which are all steps "
             "of ONE pose stack — by arranging them in namespace: nesting, or "
@@ -130,28 +134,33 @@ under `IkAsset` because that parent is what bounds the rig's write set.""",
 translation, rotation, scale, and spin avars, and solvers and movers read
 the resulting posed frame. Controls draw a viewport guide at the posed
 origin — `sphere`, `circle`, `box`, `cube`, `diamond` or `pyramid`, drawn
-as curves (`wire`) or as solids (`geometry`) — so the handle can be picked
+as curves (`wire`) or as solids (`geometry`), or `custom` wire polylines
+from `guide:points` — so the handle can be picked
 directly; unlike joints and solvers, a control is not a diagnostic, so it
 keeps the default render purpose.""",
-        "how_it_works": """A control is evaluated in the base phase only — it is an input, so
-nothing in the pose domain revises it and its base frame IS its posed
-frame. The frame comes from `rest:space` plus the avars each frame:
-translations and Euler rotations compose over the rest offset inside the
-selected parent and default spaces (`avars * posed:defaultSpace *
+        "how_it_works": """A control is an input: no solver writes it, and its base frame
+comes from `rest:space` plus the avars each frame: translations and Euler
+rotations compose over the rest offset inside the selected parent and
+default spaces (`avars * posed:defaultSpace *
 inverse(parent:defaultSpace) * parent:space`), and scale avars apply
-before rotation and translation. Anything downstream — an FK chain
-listing the control, a constraint naming it as a source, a matrix mover
-reading its frame — follows the animated result with no further
-wiring.""",
+before rotation and translation. A pose constraint that names the control
+on `rigExec:moves`, such as a harmonics jiggle, revises it in the pose
+phase, and a consumer that reads `final` sees the revision. Anything
+downstream — an FK chain listing the control, a constraint naming it as a
+source, a matrix mover reading its frame — follows the animated result
+with no further wiring.""",
         "wiring": [
-            # A control declares no input relationships of its own (it adds only
-            # avars:s* and guide:* to RigExecXformable, schema.usda:144-260);
-            # consumers name it. FK chain: libs/rigExec/computations.cpp:704-707
+            # A control declares no evaluation input relationships of its own (it
+            # adds avars:s*, guide:*, rigExec:channelSpaces and
+            # rigExec:translationEnabled to RigExecXformable,
+            # schema.usda:141-309; guide:source is read only by imaging and
+            # rigExec:channelSpaces only by the usdview manipulator); consumers
+            # name it. FK chain: libs/rigExec/computations.cpp:769-776
             # registers rigExec:controls with .Required(). Matrix mover frames:
-            # libs/rigExec/rigEvaluator.cpp:7203 rejects a matrix mover whose
-            # rigExec:transform does not have exactly one target, and the kernel
-            # reads the compiled rigExec:resolvedTransform
-            # (libs/rigExec/moverKernels.cpp:1108).
+            # libs/rigExec/movers/matrixMover.cpp:223-226 rejects a matrix mover
+            # whose rigExec:transform does not have exactly one target, and
+            # _BindMatrixMover (matrixMover.cpp:100-118) binds that provider, or
+            # its frame-chain head for `final`, into the compiled revision.
             ("(none)", "Controls are read by solvers, constraints, and movers; "
              "they take no input relationships.", "-"),
         ],
@@ -159,13 +168,13 @@ wiring.""",
             ("Control channel", "RigExecControlAPI"),
             ("Transform provider", "RigExecXformable"),
         ],
-        "example": """Twelve controls in a 6x2 grid draw every `guide:shape` in every
-`guide:drawMode`. Left to right in both rows: sphere, circle, box, cube,
+        "example": """Twelve controls in a 6x2 grid draw every built-in `guide:shape` in
+every `guide:drawMode`. Left to right in both rows: sphere, circle, box, cube,
 diamond, pyramid — `box` is the planar square lying flat in XZ, `cube` the
 solid six-sided one. The top row is `wire` (the guide is drawn as curves),
 the bottom row `geometry` (the same shape drawn as a solid). All twelve
 carry the same animation — `avars:ry` 0 → 90°, `avars:rz` 0 → 22° and
-`avars:ty` 0 → 0.25 over 1001-1024 — and all twelve do real work: each
+`avars:ty` 0 → 0.25 by 1012, back to 0 by 1024 — and all twelve do real work: each
 feeds an FK chain that poses a joint resting at the control, and a matrix
 mover carries the grey card a unit below it. Watch either row against the
 blue rest outline the cards leave behind: `ry` spins the card about the
@@ -180,12 +189,12 @@ visible.""",
             # No guide:* token is read anywhere in libs/rigExec (the evaluator);
             # only the imaging plugin consumes them, and an unrecognized pair
             # resolves to no guide at all in _FindControlGuideShape
-            # (libs/rigExecImaging/sceneIndices.cpp:968).
+            # (libs/rigExecImaging/sceneIndices.cpp:1217).
             "`guide:shape` and `guide:drawMode` change the pickable viewport "
             "guide without touching evaluation; a pair the build does not draw "
             "synthesizes no guide at all rather than falling back to one.",
             # guide:wireWidth is only consulted on the basisCurves path
-            # (libs/rigExecImaging/sceneIndices.cpp:520), and it is authored in
+            # (libs/rigExecImaging/sceneIndices.cpp:1321-1324), and it is authored in
             # the unit shape's pre-scale units, so guide:scaleX/Y/Z multiply it.
             "`guide:wireWidth` is in the unit shape's local units — the drawn "
             "width is scaled by `guide:scaleX/Y/Z` along with the shape — and "
@@ -224,22 +233,24 @@ constraint reads that same incoming frame and writes a revised one over it. A
 joint no solver names is still evaluated — it follows its namespace parent's
 posed space with its own rest offset and avars — and a joint with no step
 before a solver hands that solver its authored `rest:space` rest, which is why
-a rig whose constraints all sit above its solvers behaves exactly as it always
-did. A mover reads the `base` frame — the joint after the LAST SOLVER in the
+constraints that all sit above a rig's solvers never change what those
+solvers measure. A mover reads the `base` frame — the joint after the LAST SOLVER in the
 chain — unless it asks for `final`, which is the top of the chain, or names a
 prim, which is the joint as of when the walk finished with it.""",
         "wiring": [
-            # rigEvaluator.cpp records every solver that names a joint and
-            # serializes them into one ordered stack per joint (pose-graph
-            # dependency order first, the solver stack ordinal breaking ties); a
-            # joint no solver names at all is legal (every joint is tapped for a
-            # frame regardless, rigEvaluator.cpp:5513), which is why this is "-".
+            # rigEvaluatorCompile.cpp records every solver that names a joint
+            # (newJointBinding, :1118) and orders each joint's writers by the
+            # pose stack ordinal alone (:3094-3176); a joint no solver names at
+            # all is legal (every RigExecJoint under the rig is discovered by
+            # type and publishes a frame regardless,
+            # rigEvaluatorDependencies.cpp:136), which is why this is "-".
             ("(posed by)", "Any number of solvers' `rigExec:joints` name this joint; "
              "the writes stack in hierarchical order and the last one supplies "
              "its base frame.", "-"),
-            # rigEvaluator.cpp:5478 pushes each constraint onto a per-target LIST,
-            # so the count is unbounded; in examples/biped/Biped.usda 27 of the
-            # 252 joints carry more than one (22 with two, 5 with three).
+            # rigEvaluatorCompile.cpp:2012-2014 pushes each constraint onto a
+            # per-target LIST, so the count is unbounded; in
+            # examples/biped/Biped.usda 27 of the 262 joints carry more than one
+            # (22 with two, 5 with three).
             # Ordering is the pose stack ordinal (_GetPoseStackOrder): the
             # per-joint writer chain orders a joint's writers, and a frame
             # read orders a reader against the writers of that frame;
@@ -267,15 +278,15 @@ deliberately left unanimated, so the Upper panel sits on its own rest ghost
 for the whole loop and the only motion in frame comes from the one driver.""",
         "tips": [
             # Hierarchy is namespace nesting and the guide cones follow it:
-            # schema.usda RigExecJoint doc (libs/rigExecSchema/schema.usda:369-379).
+            # schema.usda RigExecJoint doc (libs/rigExecSchema/schema.usda:458-465).
             # rest:space is "relative to the namespace frame provider's rest
-            # frame" (libs/rigExecSchema/schema.usda:307-308).
+            # frame" (libs/rigExecSchema/schema.usda:364).
             "Nest joints (Elbow inside Shoulder) so hierarchy, guides, and FK "
             "composition all agree — and remember `rest:space` is measured from "
             "the parent joint's rest, not from the world.",
-            # The solver stack: the writer order is settled against the finished
-            # pose graph. Unlimited constraints per joint: rigEvaluator.cpp:5478,
-            # ordered by rigEvaluator.cpp:6157.
+            # The solver stack: the pose stack ordinal alone orders a joint's
+            # writers (rigEvaluatorCompile.cpp:3094-3176). Unlimited constraints
+            # per joint: rigEvaluatorCompile.cpp:2012-2014.
             "Several solvers may pose one joint, and pose constraints are steps "
             "of the same kind in the same stack: the order is the composed "
             "namespace of the whole rig and nothing else, bottom sibling first. "
@@ -283,9 +294,9 @@ for the whole loop and the only motion in frame comes from the one driver.""",
             "then revise\" shape; a constraint that ends up BELOW a solver feeds "
             "it instead — every solver kind composes over the frame the steps "
             "below it left, so nothing is discarded either way.",
-            # The consumed-solver relaxation: rigEvaluator.cpp:4915-4923, which is
-            # how examples/biped/Biped.usda lets leg_l_twoBoneIk, leg_l_fkChain
-            # and leg_l_ikfk all list ankle_l_bind.
+            # The consumed-solver relaxation: rigEvaluatorCompile.cpp:843-897 and
+            # :1092-1100, which is how examples/biped/Biped.usda lets
+            # leg_l_twoBoneIk, leg_l_fkChain and leg_l_ikfk all list ankle_l_def.
             "A solver whose output another solver reads is naming joints for "
             "their rests, not claiming them, so an IK and an FK chain can both "
             "list the chain that their IK/FK blend actually poses.",
@@ -352,7 +363,8 @@ identity, which is how "world" is spelled. The inherited per-axis masks
 act on the delta the space contributes, expressed in the target's own
 default frame, and `rigExec:rotationFilters` can pass only the twist of a
 source's rotation about `rigExec:twistAxis`, or only the swing, by an
-exact swing-twist decomposition. The index is an ordinary per-frame input:
+exact swing-twist decomposition, or take only its rotation (`orient`).
+The index is an ordinary per-frame input:
 the native program, frozen jobs, the frame cache and a `.rigexec`
 binary all re-read it every frame, and keying it re-runs only the compose
 of the switched control's subtree.""",
@@ -428,39 +440,43 @@ frames above it. `rigExec:controlSpace` decides how the deltas compose:
 `world` chains them (W_i = W_(i-1) . A_i) for sibling controls, while
 `parentRelative` takes each delta as-is because a nested control's frame
 already travels with its parent. The chain MEASURES its deltas from its
-*controls'* rests, but the basis it composes them onto is the joint's rest
-reference — which the pose stack replaces with the frame the steps below the
-chain left (spec section 4.2). So a constraint below the chain moves the
-joint and the chain carries that displacement through its solve instead of
-replacing it; a joint no step below it wrote keeps its authored rest and the
-chain answers exactly as it always did. Rest offsets between joints set the bone
-lengths and pivots — nothing is measured in absolute numbers — but the
-solve itself is absolute: unless `rigExec:startFrame` names the provider
-the chain hangs from, the chain ignores whatever its joints sit under.
+*controls'* rests and composes them onto those same rests, except on a
+joint that a step below the chain wrote: there the basis is the frame that
+step left
+([How operators fire](../concepts/how-operators-fire.md#the-order-you-can-predict)).
+So a constraint below the chain moves the joint and the chain carries that
+displacement through its solve instead of replacing it. Rest offsets between
+joints set the bone lengths and pivots — nothing is measured in absolute
+numbers — but the solve itself is absolute: unless `rigExec:startFrame`
+names the provider the chain hangs from, or `rigExec:startFramePolicy =
+"parent"` derives it from the joint hierarchy, the chain ignores whatever
+its joints sit under.
 Skinning movers then read the posed joints at the `final` phase.""",
         "wiring": [
             # Both control inputs are .Required() on the computation
-            # (libs/rigExec/computations.cpp:704-711), and the compiler enforces
+            # (libs/rigExec/computations.cpp:769-776), and the compiler enforces
             # it from the other end: a bound joint's element index is checked
-            # against the control count (libs/rigExec/rigEvaluator.cpp:4773-4779
-            # takes knownCount = rigExec:controls size; 4853-4858 rejects an
-            # element >= it). Measured: deleting this relationship from the
-            # stage fails compile with "element 0 for .../Seg1 is out of range
-            # (solver produces 0 frames)".
+            # against the control count
+            # (libs/rigExec/rigEvaluatorCompile.cpp:958-964 takes knownCount =
+            # rigExec:controls size; 1035-1040 rejects an element >= it).
+            # Measured: with this relationship deleted, compile sets the chain
+            # aside with "element 0 for .../Seg1 is out of range (solver
+            # produces 0 frames)" and every joint stays at its rest.
             ("`rigExec:controls`", "Ordered animator controls, one per joint.", "yes"),
             # NOT enforced: an FkChain with no joints compiles and evaluates
-            # (empty targets are skipped at libs/rigExec/rigEvaluator.cpp:4726-
-            # 4728), but nothing then extracts its elements and no joint moves
-            # (measured on this stage with the relationship deleted: Seg2 stays
-            # at its rest x = 2 at frame 1006 instead of x = 1.88). The ordered
-            # list IS the solver->joint binding:
-            # libs/rigExec/rigEvaluator.cpp:2114-2118, schema.usda:509-515.
+            # (empty targets are skipped at
+            # libs/rigExec/rigEvaluatorCompile.cpp:914-916), but nothing then
+            # extracts its elements and no joint moves (measured on this stage
+            # with the relationship deleted: Seg2 stays at its rest x = 2 at
+            # frame 1006 instead of x = 1.88). The ordered list IS the
+            # solver->joint binding: libs/rigExec/rigEvaluatorCompile.cpp:1026-1029
+            # and :1118, schema.usda:641-645.
             ("`rigExec:joints`", "Ordered nested joints the chain poses; with "
              "none, the solver publishes frames nothing reads.", "no"),
             # Plain AttributeValue input, no .Required(), default "world":
-            # libs/rigExec/computations.cpp:720 and schema.usda:454. It must be
+            # libs/rigExec/computations.cpp:791 and schema.usda:549. It must be
             # "parentRelative" whenever the controls are nested, or the parent's
-            # motion is composed in twice (libs/rigExec/computations.cpp:680).
+            # motion is composed in twice (libs/rigExec/computations.cpp:601-608).
             ("`rigExec:controlSpace`", "`parentRelative` when the controls are "
              "nested under each other; `world` for sibling controls.", "no"),
         ],
@@ -471,9 +487,10 @@ Skinning movers then read the posed joints at the `final` phase.""",
         #   Seg1:  1     1     1     0.75  0.5   0.25  0     0     0    0    0
         #   Seg2:  0     0     0     0.25  0.5   0.5   0.5   0.25  0    0    0
         #   Seg3:  0     0     0     0     0     0.25  0.5   0.75  1    1    1
-        # Every column sums to 1; the joint columns (x = 2, x = 4) are 0.5/0.5
-        # between the two joints that meet there and the midline between Seg2
-        # and Seg3 (x = 3) is 0.5/0.5 as well. That is what makes both bends
+        # Every column sums to 1; the Seg2 column (x = 2) is 0.5/0.5 with Seg1,
+        # the midline between Seg2 and Seg3 (x = 3) is 0.5/0.5, and from the
+        # Seg3 column (x = 4) on the strip is Seg3's alone. That is what makes
+        # both bends
         # draw as arcs of the same kind in the GIF instead of one hard crease
         # at Seg1-Seg2 and one two-facet blend at Seg2-Seg3.
         "example": """Three controls curl a ten-quad strip. C2 is a namespace child of C1
@@ -483,10 +500,9 @@ one above it — the chain reads them with `rigExec:controlSpace =
 "parentRelative"`. One matrix mover per joint skins the strip through a
 linear weight ramp, so each joint hands its influence to the next across a
 two-unit span: the column on Seg2 is split 0.5 with Seg1, the midline
-between Seg2 and Seg3 is split 0.5 to each, and the column on Seg3 is split
-0.5 with Seg2. Both bends therefore draw as arcs rather than creases, and
-the same handover is happening at every joint — the strip ends at x = 5 so
-no part of it is a rigid slab hanging off the last one.""",
+between Seg2 and Seg3 is split 0.5 to each, and from the column on Seg3 to
+the strip's end at x = 5 the strip is Seg3's alone. Both bends therefore
+draw as arcs rather than creases.""",
         "tips": [
             "Nesting the controls only works with `rigExec:controlSpace = "
             "\"parentRelative\"`: a nested control's frame already carries its "
@@ -494,8 +510,10 @@ no part of it is a rigid slab hanging off the last one.""",
             "time. On this stage, dropping the token sends Seg3 to x = -0.45 at "
             "frame 1006 instead of x = 3.03.",
             "Point `rigExec:startFrame` at the joint the chain hangs from when "
-            "that joint is posed by another solver; without it the chain is an "
-            "absolute solve and the limb detaches from its parent.",
+            "that joint is posed by another solver, or set "
+            "`rigExec:startFramePolicy = \"parent\"` to derive it from the joint "
+            "hierarchy; without either the chain is an absolute solve and the "
+            "limb detaches from its parent.",
             "FK pairs well with IK: blend the two aggregates through a Blend "
             "Point Frames node, or stack both solvers on the same joints — "
             "`rigExec:joints` is an ordered write, so the later writer simply "
@@ -579,14 +597,14 @@ that reference length is the rest curve or the rest chain), gets
 published as `computePointFrameArray`, one frame per `rigExec:joints`
 entry, which the bound joints extract view-free.""",
         "wiring": [
-            # computations.cpp:1195-1198 -- computePointFrame input .Required()
+            # computations.cpp:1383-1386 -- computePointFrame input .Required()
             ("`rigExec:rootControl`", "Provider carrying cv0 and cv1 and the root roll.", "yes"),
-            # computations.cpp:1202-1205 -- .Required(); translation only, schema.usda:843-846
+            # computations.cpp:1390-1393 -- .Required(); translation only, schema.usda:1057-1060
             ("`rigExec:midControl`", "Provider whose translation offset bends cv1 and cv2.", "yes"),
-            # computations.cpp:1209-1212 -- .Required()
+            # computations.cpp:1397-1400 -- .Required()
             ("`rigExec:endControl`", "Provider carrying cv2 and cv3 and the end twist.", "yes"),
-            # computations.cpp:1073 -- an empty list warns and produces no frames
-            # (compile simply skips a solver with no joints, rigEvaluator.cpp:4726)
+            # computations.cpp:1221-1224 -- an empty list warns and produces no frames
+            # (compile simply skips a solver with no joints, rigEvaluatorCompile.cpp:914)
             ("`rigExec:joints`", "Ordered chain, root to tip: the solve's cardinality "
              "and its rest CVs. Naming a joint another step also writes stacks the "
              "two, and the last writer in that stack supplies the joint's base "
@@ -594,7 +612,7 @@ entry, which the bound joints extract view-free.""",
              "carry ON ENTRY, so a step below this one that moves a joint changes "
              "the rest curve it solves against.", "yes"),
         ],
-        # RigExecSplineIk inherits Boundable directly (schema.usda:797-798): no
+        # RigExecSplineIk inherits Boundable directly (schema.usda:1008-1009): no
         # RigExecXformable, RigExecConstraint or RigExecMoverAPI attributes apply,
         # and its guide:* knobs are declared on the class itself.
         "param_groups": [],
@@ -652,34 +670,35 @@ two skeletons' joints, and an intermediate chain can sit a little off the
 average of the poses it is between. The blend still MEASURES both inputs
 against the rests carried inside the A aggregate, but it APPLIES the blended
 map to the joint's own rest reference — the frame a pose step below the blend
-left there (spec section 4.2) — so a constrained joint carries its
+left there ([How operators fire](../concepts/how-operators-fire.md#the-order-you-can-predict))
+— so a constrained joint carries its
 displacement through the blend rather than losing it.""",
         "wiring": [
             # Both are declared .Required() in the exec registration
-            # (libs/rigExec/computations.cpp:950-959), but nothing enforces
+            # (libs/rigExec/computations.cpp:1093-1102), but nothing enforces
             # either one: a stage with inputB deleted, and one with BOTH
-            # deleted, compiles and evaluates (verify_examples.py ok in both
-            # native and frozen execution). A missing target is the computation's
+            # deleted, compiles and evaluates (rigExecPose reports the pose
+            # valid). A missing target is the computation's
             # null pointer, and a null pointer returns the OTHER input by
-            # value (libs/rigExec/computations.cpp:876-881,
-            # libs/rigExec/bakedPose.cpp:2514-2523); with neither wired the
+            # value (libs/rigExec/computations.cpp:1009-1014,
+            # libs/rigExecScene/solverProgram.cpp:70-72); with neither wired the
             # blend publishes nothing and its joints fall back to their rest
-            # chain (libs/rigExec/bakedPose.cpp:2589-2591, 3340-3352).
+            # chain (libs/rigExec/bakedPose.cpp:4836-4839, 5776-5785).
             ("`rigExec:inputA`", "Aggregate solver selected at weight 0; "
              "unwired, inputB's pose passes through at every weight.", "no"),
             ("`rigExec:inputB`", "Aggregate solver selected at weight 1; "
              "unwired, inputA's pose passes through at every weight.", "no"),
             # Not enforced: a guide-only blend with no joints is a supported
-            # shape (libs/rigExec/bakedProgram.cpp:1943-1944) and compiles --
+            # shape (libs/rigExec/bakedProgram.cpp:3667-3683) and compiles --
             # the stage with this relationship deleted still verifies. List
             # position is the element index
-            # (libs/rigExecSchema/schema.usda:640-644).
+            # (libs/rigExecSchema/schema.usda:853-857).
             ("`rigExec:joints`", "Ordered joints the blend poses, one per "
              "aggregate element; omit only for a guide-only blend another "
              "solver reads.", "no"),
         ],
         # RigExecBlendPointFrames inherits Boundable directly
-        # (libs/rigExecSchema/schema.usda:608-609), so there is no RigExec base
+        # (libs/rigExecSchema/schema.usda:817-818), so there is no RigExec base
         # class carrying parameters: every knob is on the node itself.
         "param_groups": [],
         "example": """Two FK chains hold very different poses of one three-joint arm, four
@@ -735,8 +754,9 @@ turns half as far, swinging the fin card it skins.""",
         "tips": [
             "Drive the end with `avars:rspin` (roll about the bone axis), not "
             "a tilt: only axial roll becomes distributed twist.",
-            "Feed the run to a Ribbon as `twistFrames` so a spine strip "
-            "inherits the same unwind.",
+            "Naming this solver on a Ribbon's `rigExec:twistFrames` orders "
+            "the ribbon after it but adds no twist: the ribbon's frames come "
+            "from its driver curve alone.",
         ],
         "see_also": [
             ("ribbon", "Ribbon"),
@@ -756,50 +776,52 @@ off this prim directly; naming a joint per sample on `rigExec:joints` is
 optional, and buys a posed chain that constraints and matrix movers can
 read like any other joint.""",
         "how_it_works": """All of it is pose phase: the solve is one solver operation
-(`libs/rigExecGraph/solverProgram.cpp:92`), and `RigExecRibbon` is one of
-the six compiled solver types (`libs/rigExec/bakedProgram.cpp:156`). The
+(`libs/rigExecScene/solverProgram.cpp:91`), and `RigExecRibbon` is one of
+the six compiled solver types (`libs/rigExec/bakedProgram.cpp:160`). The
 compiler resolves `rigExec:driverCurve` to the target's native `points`
 attribute and the solve reads two values of it — the live one, at the read
 phase declared on `rigExec:driverCurve`
 (`libs/rigExec/crossDomainInputs.cpp:244`), and the bind-time (default)
 one — then samples both at equal arc length and transports a
 rotation-minimizing frame along each
-(`libs/rigExecMath/geometryKernels.cpp:741`), publishing the posed frames
+(`libs/rigExecMath/geometryKernels.cpp:805`), publishing the posed frames
 paired with their rests as one `computePointFrameArray`. Each
 `rigExec:joints` entry takes one element of that array as its whole posed
 frame through the compiled solver-to-joint binding. What a wrap measures
 against is the bind-time curve.""",
         "wiring": [
-            # rigEvaluator.cpp:3468-3479 resolves the target to its `.points`;
-            # with no target nothing is resolved and solverKernels.cpp:28
+            # rigEvaluatorCompile.cpp:587-599 resolves the target to its `.points`;
+            # with no target nothing is resolved and solverKernels.cpp:66
             # returns an empty array, so the mover downstream passes points
             # through untouched. NOT enforced: no compile error names this
-            # relationship (grep rigEvaluator.cpp for driverCurve -- every hit
+            # relationship (grep rigEvaluator*.cpp for driverCurve -- every hit
             # is a digest, a resolve or a read-phase check). "yes" here means
             # the node does nothing without it, the way surface_mover's
             # rigExec:surface is written up.
             ("`rigExec:driverCurve`", "Native BasisCurves supplying the spine path; "
              "without it the solver publishes no frames rather than erroring.", "yes"),
-            # bakedPose.cpp:475-481: "rigExec:parameterization, frameTransport,
+            # bakedPose.cpp:574-579: "rigExec:parameterization, frameTransport,
             # startFrame, endFrame and twistFrames are
             # deliberately NOT read: the computation does not read them
-            # either". The exec computation's inputs are sampleCount and the two
-            # point packets and nothing else (moverKernels.cpp:1203-1208). The
-            # frame relationships declare authoring intent without adding
-            # inputs to this computation.
+            # either". The exec computation's inputs are sampleCount, the
+            # joints' rest frames and the two point packets
+            # (moverKernels.cpp:877-885). The frame relationships declare
+            # authoring intent without adding inputs to this computation; a
+            # solver they name is still a scheduling prerequisite
+            # (RigExecSolverRelationshipPorts, libs/rigExecScene/solverProgram.h:13).
             ("`rigExec:startFrame`", "Joint provider naming the run's base; declared "
              "for authoring intent, read by no computation.", "no"),
             ("`rigExec:endFrame`", "Joint provider naming the run's tip; the same.", "no"),
             ("`rigExec:twistFrames`", "Twist solver named as the run's unwind; the "
              "same.", "no"),
-            # rigEvaluator.cpp:4795-4803: cardinality is sampleCount (zero
+            # rigEvaluatorCompile.cpp:980-989: cardinality is sampleCount (zero
             # below two, so no element binds), and jointElements defaults to
-            # list position (schema.usda:776-779). A solver with an empty
+            # list position (schema.usda:989-992). A solver with an empty
             # joints list is simply skipped by the claim pass
-            # (rigEvaluator.cpp:4724-4727).
+            # (rigEvaluatorCompile.cpp:914-916).
             ("`rigExec:joints`", "Ordered joints posed along the run, one per sample.", "no"),
         ],
-        # RigExecRibbon inherits Boundable directly (schema.usda:729-730): it
+        # RigExecRibbon inherits Boundable directly (schema.usda:938-939): it
         # is not a RigExecXformable and applies no RigExec API schema, so every
         # knob it has is already on its own page.
         "param_groups": [],
@@ -830,22 +852,24 @@ ribbon.""",
             "Never bind the driver perfectly straight. The seed normal is the "
             "world axis least parallel to the first tangent, picked once per "
             "curve, and a tie is broken by declaration order X, Y, Z "
-            "(`libs/rigExecMath/geometryKernels.cpp:583-592`), so a straight "
+            "(`libs/rigExecMath/geometryKernels.cpp:893-900`), so a straight "
             "bind against bent poses picks a different axis for the rest than "
             "for the pose and rolls the whole wrap 90 degrees. Rest it at a "
             "lean and keep the leaning component of the first tangent larger "
             "than the other one all the way through the animation.",
             "`rigExec:startFrame`, `rigExec:endFrame` and `rigExec:twistFrames` "
             "are declared but never read: the solve's only inputs are the "
-            "driver points and `rigExec:sampleCount` "
-            "(`libs/rigExec/moverKernels.cpp:1203-1208`, "
-            "`libs/rigExec/bakedPose.cpp:475`). What actually pins the run is "
+            "driver points, `rigExec:sampleCount` and the rests of the joints "
+            "on `rigExec:joints` "
+            "(`libs/rigExec/moverKernels.cpp:877-885`, "
+            "`libs/rigExec/bakedPose.cpp:574`). A solver one of them names is "
+            "still scheduled before the ribbon. What actually pins the run is "
             "the bind-time driver curve.",
             "`rigExec:sampleCount` is the run's cardinality. Below two the "
             "solver publishes no frames at all "
-            "(`libs/rigExec/solverKernels.cpp:28`) and no joint element can "
+            "(`libs/rigExec/solverKernels.cpp:66`) and no joint element can "
             "bind, and time-sampling it is rejected at compile "
-            "(`libs/rigExec/rigEvaluator.cpp:4589`).",
+            "(`libs/rigExec/rigEvaluatorCompile.cpp:824`).",
         ],
         "see_also": [
             ("curve_mover", "Curve Mover"),
@@ -869,18 +893,18 @@ rotation offset shape the result per channel, and only rotation is
 written. New assets use `sources`; `aimTarget`/`aimAxis`/`upPolicy`/
 `preserve` are the legacy contract kept for existing stages.""",
         "wiring": [
-            # rigEvaluator.cpp:5333-5339 -- empty sources is a compile error
+            # rigEvaluatorCompile.cpp:1663-1667 -- empty sources is a compile error
             # ("has no constraint sources"), but for this schema type alone an
-            # authored rigExec:aimTarget is read first as the legacy spelling
-            # (rigEvaluator.cpp:5327-5332).
+            # authored rigExec:aimTarget stands in for empty sources as the
+            # legacy spelling (rigEvaluatorCompile.cpp:1656-1662).
             ("`rigExec:sources`", "Ordered transform sources to track.", "yes"),
-            # rigEvaluator.cpp:3661-3668 -- a source constraint "must move exactly
+            # rigEvaluatorValidation.cpp:566-572 -- a source constraint "must move exactly
             # one transform-provider prim"; that target must be a UsdGeomXformable
-            # (rigEvaluator.cpp:3705-3713).
+            # (rigEvaluatorValidation.cpp:603-614).
             ("`rigExec:moves`", "Exactly one joint or provider to re-aim (pose phase).", "yes"),
-            # rigEvaluator.cpp:5353-5371 -- at most one target, and only bound at
+            # rigEvaluatorCompile.cpp:1728-1744 -- at most one target, and only bound at
             # all for RigExecAimConstraint; an empty binding is legal and the
-            # object world-up modes fall back at rigEvaluator.cpp:11657-11682.
+            # object world-up modes fall back at bakedPose.cpp:5417-5443.
             ("`rigExec:worldUpObject`", "Provider for object world-up modes.", "no"),
         ],
         "param_groups": [
@@ -946,23 +970,24 @@ which axes are claimed, and the common `RigExecMoverAPI` envelope
 over the incoming origin. Only the origin changes; the frame's other
 landmarks are carried along with it.""",
         "wiring": [
-            # libs/rigExec/rigEvaluator.cpp:5333 -- empty sources is reported and the
-            # compile fails.
+            # libs/rigExec/rigEvaluatorCompile.cpp:1663-1667 -- empty sources is
+            # reported and the compile fails.
             ("`rigExec:sources`", "Ordered transform providers whose origins are "
              "blended; the order pairs with `inputs:sourceWeights`.", "yes"),
-            # libs/rigExec/rigEvaluator.cpp:3544-3551 -- a constraint with no
-            # rigExec:moves at all is an error; rigEvaluator.cpp:3662-3667 -- a source
-            # constraint must move exactly one.
+            # libs/rigExec/rigEvaluatorValidation.cpp:438-445 -- a constraint with no
+            # rigExec:moves at all is an error; rigEvaluatorValidation.cpp:566-572 --
+            # a source constraint must move exactly one, and :574-597 accepts
+            # <mesh>.points on a UsdGeomPointBased prim as the geometry domain.
             ("`rigExec:moves`", "Exactly one provider to reposition, or one "
              "`<mesh>.points` property for the geometry domain.", "yes"),
-            # libs/rigExec/rigEvaluator.cpp:9724 -- empty is legal (all sources weight
-            # 1.0 at rigEvaluator.cpp:9731); any other length than the source count
-            # returns false at 9729 and rigEvaluator.cpp:11537-11542 passes the
-            # constraint through with a diagnostic.
+            # libs/rigExec/bakedPose.cpp:4598-4608 -- empty is legal (all sources
+            # weight 1.0 at bakedPose.cpp:4606); any other length than the source
+            # count returns false at 4602-4605 and bakedPose.cpp:5239-5267 passes
+            # the constraint through with a diagnostic.
             ("`inputs:sourceWeights`", "One float per source. Empty means every "
              "source at equal, full weight.", "no"),
-            # libs/rigExec/rigEvaluator.cpp:11322-11336 -- resolved to one scalar in
-            # the transform domain; rigEvaluator.cpp:11369-11376 -- per point in the
+            # libs/rigExec/bakedPose.cpp:4998-5011 -- resolved to one scalar in the
+            # transform domain; bakedPose.cpp:5272-5277 -- per point in the
             # geometry domain, where the solve runs unweighted.
             ("`rigExec:weightObject`", "Optional envelope field; replaces "
              "`inputs:defaultWeight` when bound.", "no"),
@@ -973,8 +998,9 @@ landmarks are carried along with it.""",
             ("Ordered sources", "RigExecSourceConstraint"),
         ],
         "example": """Two posts stand at different heights and a plate hangs between them.
-The joint's rest sits exactly at the posts' midpoint, so an even blend leaves
-it there and every bit of motion you see is the blend: `inputs:sourceWeights`
+The joint's rest sits exactly at the posts' midpoint, so an even blend lands
+on it before the offset, and every bit of motion you see is the blend:
+`inputs:sourceWeights`
 starts even at (1, 1) — the blue ghost is that even-blend frame, the plate
 parked over the midpoint — then swings to (1, 0), to (0, 1), and back to even,
 so the plate departs from its rest in both directions with nothing else in the
@@ -983,23 +1009,23 @@ origins define; `inputs:translationOffset` of (0, 0.9, 0) is the visible gap
 between that line and the joint, which is the whole of "maintain offset" here
 — there is no such switch.""",
         "tips": [
-            # libs/rigExecMath/solvers.cpp:833-839 -- target accumulates origin*w,
+            # libs/rigExecMath/solvers.cpp:1027-1033 -- target accumulates origin*w,
             # then divides by the running total before the offset is added.
             "Weights are ratios, not percentages: the blend divides by their "
             "total, so (1, 0) and (5, 0) give the same answer. Only their "
             "relative size matters, and nothing needs to sum to one.",
-            # libs/rigExecMath/solvers.cpp:836-838 -- totalWeight == 0 returns the
-            # input unchanged; solvers.cpp:775-776, checked at 824-825 -- a negative
+            # libs/rigExecMath/solvers.cpp:1030-1031 -- totalWeight == 0 returns the
+            # input unchanged; solvers.cpp:966-971, checked at 1018-1019 -- a negative
             # or non-finite source weight fails the solve atomically rather than
             # being clamped.
             "All-zero weights are an exact pass-through, not a collapse to the "
             "origin — but a negative weight invalidates the solve instead of "
             "being clamped, so keep animated weights at or above zero.",
-            # libs/rigExec/rigEvaluator.cpp:4282-4302 (masks and offsets) and
-            # 4304-4310 (rotation order) -- authoring a channel property the operator
-            # does not honor is reported and the compile fails; the table row at
-            # rigEvaluator.cpp:255-257 gives Position translation only, no rotation
-            # order.
+            # libs/rigExec/rigEvaluatorValidation.cpp:983-1002 (masks and offsets)
+            # and 1004-1010 (rotation order) -- authoring a channel property the
+            # operator does not honor is reported and the compile fails; the table
+            # row at rigEvaluatorPose.cpp:50-52 gives Position translation only, no
+            # rotation order.
             "There is no maintain-offset switch: author "
             "`inputs:translationOffset`, which is added after the blend. "
             "`inputs:rotationOffset`, the `affectRotation*`/`affectScale*` masks "
@@ -1034,15 +1060,15 @@ and the common mover envelope (`inputs:defaultWeight`, or a bound
 target one. Only the rotation of the decomposed frame is replaced before
 the frame is rebuilt, which is why the origin and scale survive.""",
         "wiring": [
-            # rigEvaluator.cpp:5333-5339 -- empty sources is a hard compile error
+            # rigEvaluatorCompile.cpp:1663-1667 -- empty sources is a hard compile error
             ("`rigExec:sources`", "Ordered transform providers whose orientations are blended.", "yes"),
-            # rigEvaluator.cpp:3661-3667 -- source constraints must move exactly one prim
+            # rigEvaluatorValidation.cpp:566-572 -- source constraints must move exactly one prim
             ("`rigExec:moves`", "Exactly one transform-provider prim to re-orient.", "yes"),
-            # rigEvaluator.cpp:9720-9735 -- empty array is legal (weights assign 1.0 per
-            # source); a wrong-length one fails the read, and rigEvaluator.cpp:11537-11542
+            # bakedPose.cpp:4598-4608 -- empty array is legal (weights assign 1.0 per
+            # source); a wrong-length one fails the read, and bakedPose.cpp:5239-5267
             # turns that into a per-frame diagnostic and pass-through, not a compile error
             ("`inputs:sourceWeights`", "Per-source weights parallel to `rigExec:sources`; empty means every source at full weight.", "no"),
-            # rigEvaluator.cpp:11321-11337 -- optional; when bound it replaces inputs:defaultWeight
+            # bakedPose.cpp:4998-5022 -- optional; when bound it replaces inputs:defaultWeight
             ("`rigExec:weightObject`", "Weight field supplying the envelope instead of `inputs:defaultWeight`.", "no"),
         ],
         "param_groups": [
@@ -1098,27 +1124,28 @@ decomposed scale of the incoming frame — one axis at a time, only where
 `inputs:affectScaleX/Y/Z` is on. The common mover envelope
 (`inputs:defaultWeight`, or a bound `rigExec:weightObject`) then mixes the
 candidate over the incoming scale, so a zero envelope is an exact
-pass-through. Translation, rotation and shear of the moved frame are
-carried through untouched, and downstream skinning reading the joint at
-`final` picks the new scale up automatically.""",
+pass-through. Translation and rotation of the moved frame are carried
+through untouched, and so is its shear unless `rigExec:blendShear` is on
+with all three scale axes governed; downstream skinning reading the joint
+at `final` picks the new scale up automatically.""",
         "wiring": [
-            # rigEvaluator.cpp:5326-5340 -- empty rigExec:sources (no aimTarget
+            # rigEvaluatorCompile.cpp:1656-1667 -- empty rigExec:sources (no aimTarget
             # fallback outside Aim) is "has no constraint sources", compile fails.
             ("`rigExec:sources`", "Ordered transform providers whose scales are "
              "blended into the goal.", "yes"),
-            # rigEvaluator.cpp:3661-3667 -- a source-frame constraint whose
+            # rigEvaluatorValidation.cpp:566-572 -- a source-frame constraint whose
             # rigExec:moves is not exactly one target is rejected:
             # "must move exactly one transform-provider prim".
             ("`rigExec:moves`", "Exactly one transform provider to rescale "
              "(pose phase).", "yes"),
-            # rigEvaluator.cpp:9719-9734 -- an empty (or absent) array is legal
+            # bakedPose.cpp:4598-4608 -- an empty (or absent) array is legal
             # and means every source at 1.0; a non-empty array of the wrong
             # length is a diagnostic and the constraint is passed through
-            # unapplied (rigEvaluator.cpp:11537-11542).
+            # unapplied (bakedPose.cpp:5239-5267).
             ("`inputs:sourceWeights`", "Per-source weights parallel to "
              "`rigExec:sources`; empty means all-equal.", "no"),
-            # rigEvaluator.cpp:5302-5309 -- at most one target, validated in
-            # phase A; schema.usda:79-88 -- when bound it replaces
+            # rigEvaluatorValidation.cpp:744-749 -- at most one target, validated
+            # in phase A; schema.usda:82-91 -- when bound it replaces
             # inputs:defaultWeight rather than multiplying into it.
             ("`rigExec:weightObject`", "Weight field supplying the envelope "
              "instead of `inputs:defaultWeight`.", "no"),
@@ -1137,7 +1164,7 @@ place while its centre never moves.""",
         "tips": [
             "`inputs:scaleOffset` is ADDITIVE: its identity is (0, 0, 0), not "
             "(1, 1, 1), because the kernel computes blended scale + offset "
-            "(`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:945).",
+            "(`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:1203).",
             "Only the scale channel is honored — authoring "
             "`inputs:translationOffset`, `inputs:rotationOffset`, any "
             "`inputs:affectTranslation*`/`inputs:affectRotation*`, or "
@@ -1181,30 +1208,30 @@ that provider afterwards -- a skinning mover whose input carries
 result. A zero envelope is an exact pass-through: the target keeps whatever
 posed it before the constraint ran.""",
         "wiring": [
-            # rigEvaluator.cpp:5333-5339 -- empty sources is a compile error
+            # rigEvaluatorCompile.cpp:1656-1667 -- empty sources is a compile error
             # ("... has no constraint sources"); the aimTarget fallback there is
             # Aim-only.
             ("`rigExec:sources`", "Ordered transform providers that carry the target; "
              "order is shared with every parallel array.", "yes"),
-            # rigEvaluator.cpp:3661-3667 -- a source constraint "must move exactly
-            # one transform-provider prim"; the target must be a UsdGeomXformable
-            # (rigEvaluator.cpp:3702-3712).
+            # rigEvaluatorValidation.cpp:566-572 -- a source constraint "must move
+            # exactly one transform-provider prim"; the target must be a
+            # UsdGeomXformable (rigEvaluatorValidation.cpp:598-614).
             ("`rigExec:moves`", "The one transform provider this constraint revises "
              "(pose phase).", "yes"),
-            # rigEvaluator.cpp:3951-3961 -- more than one target is an error; empty
-            # is fine and inputs:defaultWeight supplies the envelope instead
-            # (rigEvaluator.cpp:11337-11340).
-            ("`rigExec:weightObject`", "Optional constant weight field supplying the "
+            # rigEvaluatorValidation.cpp:744-749 -- more than one target is an error;
+            # empty is fine and inputs:defaultWeight supplies the envelope instead
+            # (bakedPose.cpp:5012-5013).
+            ("`rigExec:weightObject`", "Optional weight field supplying the "
              "attach envelope instead of `inputs:defaultWeight`.", "no"),
-            # rigEvaluator.cpp:9740-9763 -- an empty array is the neutral value and
+            # bakedPose.cpp:4610-4620 -- an empty array is the neutral value and
             # a non-empty one must have exactly one entry per source; read for this
-            # schema type only at rigEvaluator.cpp:10839-10846.
+            # schema type only (bakedPose.cpp:787-788, 4622-4624).
             ("`inputs:translationOffsets`", "Per-source translation offsets, parallel "
              "to `rigExec:sources` (empty = zero).", "no"),
-            # rigEvaluator.cpp:9740-9763, same rule.
+            # bakedPose.cpp:4610-4620, same rule.
             ("`inputs:rotationOffsets`", "Per-source Euler offsets in degrees, parallel "
              "to `rigExec:sources` (empty = zero).", "no"),
-            # rigEvaluator.cpp:9712-9735 -- empty means every source at full weight;
+            # bakedPose.cpp:4598-4608 -- empty means every source at full weight;
             # non-empty must be exactly one entry per source.
             ("`inputs:sourceWeights`", "Per-source blend weights (empty = every source "
              "at full weight).", "no"),
@@ -1375,23 +1402,25 @@ settles with its segment lengths unchanged.""",
         "description": """FBX-style single-chain IK, and the only IK in UsdRig that is a
 **constraint** rather than a solver: it does not publish a frame array that
 joints extract from, it revises the joint frames that are already there —
-whatever the last solver in each joint's stack committed.
+whatever the steps below it in each joint's stack left.
 Name the two endpoints — `rigExec:firstJoint` and `rigExec:endJoint` — and the
 chain between them is inferred from namespace nesting, so the same node drives
 a two-joint chain or a ten-joint one. The first joint's origin stays planted,
 segments keep their lengths by default, and the end joint lands on the effector
 whenever the goal is in reach.""",
-        "how_it_works": """The constraint runs in the pose phase, ordered BELOW the
-geometry movers in the Movers stack — the hierarchy runs bottom-up, so the
-chain is solved before the skin movers read it at their `final` transform
-read phase. At compile time it walks `endJoint`'s ancestors up to
+        "how_it_works": """The constraint runs in the pose phase at its place in the
+rig's pose stack, and the skin movers read the solved chain at their
+`final` transform read phase, the top of each joint's stack. At compile
+time it walks `endJoint`'s ancestors up to
 `firstJoint` to infer the ordered chain, and `rigExec:moves` must restate that
 complete set. Each evaluation it reads the chain's current frames and the
 effector's frame, solves the positions with deterministic FABRIK inside the
 plane chosen by `rigExec:solverMode` (`rotatePlane` uses the pole point and
 `inputs:twistDegrees`; `singleChain` takes the plane from the effector's own
 orientation and ignores both), then rebuilds each non-end frame with its X axis
-aimed at the next solved joint and writes the whole chain back atomically — a
+aimed at the next solved joint (`rigExec:orientationMode = "preserve"` keeps
+each input frame's orientation relative to its bone instead) and writes the
+whole chain back atomically — a
 failed solve passes every joint through untouched rather than half-posing the
 limb. `rigExec:evaluationMode` decides whether the segment lengths come from
 the joints' rests (`neverTS`, the default) or from their animated translation
@@ -1399,24 +1428,25 @@ and scale. `inputs:stretch` blends uniform extension from zero (rigid lengths)
 to one (full extension to a goal beyond the chain's reach). It never shortens
 the chain, and the common mover envelope also blends that extension.""",
         "wiring": [
-            # rigEvaluator.cpp:5384-5392 -- exactly one prim target, or compile fails.
+            # rigEvaluatorCompile.cpp:1860-1873 -- exactly one prim target, or compile fails.
             ("`rigExec:firstJoint`", "Joint that anchors the chain; its origin never moves.", "yes"),
-            # rigEvaluator.cpp:5393-5419 -- must be a namespace descendant of firstJoint,
+            # rigEvaluatorCompile.cpp:1874-1896 -- must be a namespace descendant of firstJoint,
             # and every prim between them must be a RigExecJoint.
             ("`rigExec:endJoint`", "Final joint of the chain, nested under the first.", "yes"),
-            # rigEvaluator.cpp:5384-5392 (exactly one) and 5443-5450 (bound as a frame source).
+            # rigEvaluatorCompile.cpp:1860-1873 (exactly one) and 1915-1921 (bound as a frame source).
             ("`rigExec:effector`", "Single transform provider supplying the IK goal.", "yes"),
-            # rigEvaluator.cpp:5430-5441 -- moves must EQUAL the inferred chain, no more,
-            # no less; rigEvaluator.cpp:3715-3727 additionally requires >= 2 prim targets.
+            # rigEvaluatorCompile.cpp:1904-1913 -- moves must EQUAL the inferred chain,
+            # no more, no less; rigEvaluatorValidation.cpp:616-628 additionally
+            # requires >= 2 prim targets.
             ("`rigExec:moves`", "Every joint of the inferred chain, restated exactly.", "yes"),
-            # rigEvaluator.cpp:5451-5474 -- bound only in rotatePlane mode, and never
-            # required at compile time; rigEvaluator.cpp:11428-11435 downgrades an empty
-            # list in object pole mode to a pass-through diagnostic.
+            # rigEvaluatorCompile.cpp:1922-1944 -- bound only in rotatePlane mode, and
+            # never required at compile time; bakedPose.cpp:5115-5124 downgrades an
+            # empty list in object pole mode to a pass-through diagnostic.
             ("`rigExec:poleVectorObjects`", "Providers blended into the pole point when "
              "`poleVectorMode` is `object`; unused by `singleChain`.", "no"),
-            # schema.usda:79-89 -- optional on every mover; when bound it replaces
-            # inputs:defaultWeight as the envelope. rigEvaluator.cpp:858-865 and
-            # 5305-5310: this operator is always multi-target, so the only legal
+            # schema.usda:82-91 -- optional on every mover; when bound it replaces
+            # inputs:defaultWeight as the envelope. rigEvaluatorValidation.cpp:750-759
+            # and 322-328: this operator is always multi-target, so the only legal
             # binding is a CONSTANT one-element field whose rigExec:weightTarget is
             # the constraint prim itself.
             ("`rigExec:weightObject`", "Constant one-element weight field targeting the "
@@ -1472,29 +1502,32 @@ is the Skin Mover's job. Naming a bare prim — a joint, a control or an
 Xformable — instead of a `points` property moves that prim's FRAME the
 same way, as a step of the pose stack.""",
         "how_it_works": """The provider publishes `computeMatrix`, the rest-to-posed map of its
-own frame (computations.cpp:401-415), and the mover blends it over the
-incoming points as `p' = q + w (T q - q)` (schema.usda:1677-1679), where
+own frame (computations.cpp:416-432), and the mover blends it over the
+incoming points as `p' = q + w (T q - q)` (schema.usda:2557-2558), where
 `w` is the bound weight field or, with none bound,
 `inputs:defaultWeight`. `rigExecReadPhase` metadata on
 `rigExec:transform` chooses which revision of the provider is read: the default `base` binds the provider
 itself, `final` binds the head of its frame chain
-(moverGraph.cpp:1366-1379). The result is passed down the point chain,
+(matrixMover.cpp:105-118). The result is passed down the point chain,
 and the compiler synthesizes the recompute revisions that keep authored
-`normals` and `extent` on that gprim current (rigEvaluator.cpp:5821-5863).""",
+`normals` and `extent` on that gprim current (rigEvaluatorCompile.cpp:2275-2335).""",
         "wiring": [
-            # rigEvaluator.cpp:7203 rejects anything but exactly one target, and
-            # :7221-7231 rejects a target that is not a RigExecControl or
-            # RigExecJoint ("not a catalogued matrix provider").
+            # movers/matrixMover.cpp:223-226 rejects anything but exactly one
+            # target, and :273-279 rejects a target that is not a
+            # RigExecControl or RigExecJoint ("not a catalogued matrix provider").
             ("`rigExec:transform`", "Exactly one control or joint to follow.", "yes"),
-            # rigEvaluator.cpp:3956-3960: more than one binding is an error, none
+            # rigEvaluatorValidation.cpp:744-749: more than one binding is an error, none
             # is fine -- the envelope then comes from inputs:defaultWeight.
             ("`rigExec:weightObject`", "Weight field scaling the follow (optional; "
              "overrides the envelope when bound).", "no"),
-            # rigEvaluator.cpp:7172-7196: one native point3f[] `points` property on
-            # a stock PointBased prim, nothing else. (Omitting the relationship
-            # entirely is not an error: the prim is then not a mover at all --
-            # skipped as a grouping scope, :3543-3557 -- and an authored but empty
-            # one is reported inert, :3561-3578.)
+            # movers/matrixMover.cpp:167-216: one native point3f[] `points`
+            # property on a stock PointBased prim, or one bare Xformable, control
+            # or joint for the transform domain. (No rigExec:moves is not an
+            # error: without RigExecMoverAPI the prim is then not a mover at
+            # all -- skipped as a grouping scope,
+            # rigEvaluatorValidation.cpp:437-449 -- and with the API's empty
+            # fallback, or an authored but empty one, it is reported inert,
+            # :473-489.)
             ("`rigExec:moves`", "Exact points property to deform, or a bare joint, "
              "control or Xformable whose frame to move.", "yes"),
         ],
@@ -1510,7 +1543,7 @@ stays at 1, so the follow is full strength over every point of the card.""",
         "tips": [
             "The provider may be a control as readily as a joint: those are the "
             "only two types `rigExec:transform` accepts "
-            "(rigEvaluator.cpp:7221-7231).",
+            "(matrixMover.cpp:273-279).",
             "`final` binds the provider's frame-chain head, so every pose step "
             "above it is included; the default `base` is the joint after the LAST "
             "SOLVER wrote it, which is not the same as \"before every "
@@ -1518,13 +1551,13 @@ stays at 1, so the follow is full strength over every point of the card.""",
             "folded into `base` through that solver. Name a prim if you want a "
             "specific moment: the `Solvers` scope means \"after the last "
             "solver\", the `Movers` scope \"after the last constraint\" "
-            "(moverGraph.cpp:1366-1379, schema.usda:1685).",
+            "(matrixMover.cpp:105-118).",
             "Same-target movers are an ordinary stack ordered by the composed "
             "namespace: reverse-sibling post-order, so descendants run before "
             "their parent and the bottom sibling before the top (spec section "
             "4.2). Stacking is how you layer rigid follows, not how you blend "
             "influences on one point — use the Skin Mover for that "
-            "(schema.usda:1700-1705).",
+            "(schema.usda:2690-2695).",
             "`rigExec:weightBlend = \"radial\"` blends a fraction of the "
             "rotation instead of the chord, so a partly weighted point keeps "
             "its distance from the driver's pivot; the default `linear` is the "
@@ -1569,19 +1602,19 @@ compile and again whenever the cached layout is resolved, and the
 influence matrices are checked every frame (finite, affine); a mismatch
 fails the application rather than skinning a truncated array.""",
         "wiring": [
-            # rigEvaluator.cpp:7276-7280 -- empty rigExec:influences is a compile error.
-            # rigEvaluator.cpp:7281-7291 -- each target must be a RigExecControl or RigExecJoint.
+            # movers/skinMover.cpp:109-113 -- empty rigExec:influences is refused at compile.
+            # movers/skinMover.cpp:114-126 -- each target must be a RigExecControl or RigExecJoint.
             ("`rigExec:influences`", "Ordered joints or controls the indices "
              "address; at least one, and each must be a catalogued provider.", "yes"),
-            # rigEvaluator.cpp:7247-7270 -- exactly one exact point3f[] points
+            # movers/skinMover.cpp:80-102 -- exactly one exact point3f[] points
             # property on a stock PointBased prim.
             ("`rigExec:moves`", "The one exact `points` property to skin.", "yes"),
-            # rigEvaluator.cpp:7335-7350 -- lengths must match each other and, for a
+            # movers/skinMover.cpp:160-175 -- lengths must match each other and, for a
             # non-empty target mesh, points * elementSize.
             ("`rigExec:jointIndices` / `rigExec:jointWeights`",
              "Parallel per-point arrays, `elementSize` slots per point in point "
              "order.", "yes"),
-            # moverGraph.cpp:1746-1749 -- no weight object means inputs:defaultWeight
+            # moverGraph.cpp:2792-2795 -- no weight object means inputs:defaultWeight
             # broadcasts as the envelope; a bound packet supplies it per point.
             ("`rigExec:weightObject`", "Optional field supplying the envelope "
              "instead of `inputs:defaultWeight`; fades the whole skin.", "no"),
@@ -1607,8 +1640,8 @@ holds 1.500 at every column.""",
             "position in proportion rather than dragging it to the origin.",
             "Influences must be RigExec provider prims (controls or joints), not "
             "arbitrary matrix attributes, and the read phase accepts only `base` "
-            "or `final` even though the schema lists `preceding`; read `final` so "
-            "constraints that revise a joint are included.",
+            "or `final`; read `final` so constraints that revise a joint are "
+            "included.",
             "`classicLinear` has the SIMD path and is the cheaper blend; "
             "`dualQuaternion` is scalar but keeps volume through twists, which is "
             "what a candy-wrapped wrist or the pinch at a bent elbow is missing.",
@@ -1630,7 +1663,8 @@ independently, so a smile and a brow raise layer without interfering.""",
         "how_it_works": """Every `rigExec:blendInputs` channel evaluates its samples against
 its weight (interpolating in-betweens by activation), producing one
 delta array. The mover sums the channel deltas, multiplies by the common
-envelope and the bound mask field, and revises the points. Target
+envelope (the bound mask field, or `inputs:defaultWeight` when none is
+bound), and revises the points. Target
 topology must match the moved mesh point for point.""",
         "wiring": [
             ("`rigExec:blendInputs`", "Blend channels to sum.", "yes"),
@@ -1658,16 +1692,18 @@ up, all under a constant mask.""",
     "curve_mover": {
         "title": "Curve Mover",
         "schema": "RigExecCurveMover",
-        "summary": "Transports points through a solver's frame array, or emits its frame origins.",
+        "summary": "Transports points through a solver's frame array, follows a NURBS wire curve, or emits frame origins.",
         "description": """Frame transport for geometry. In `ribbon` mode each moved point
 carries a bind parameter that picks a spot in the driver frame array, and
 the point is mapped by the rest-relative rigid transform read there — so a
 dense mesh spread across the parameter bends, while a prop whose every
 vertex shares one parameter rides rigidly. In `emitGuidePoints` mode the
 mover skips the bind and writes the frame origins straight out as points.
-Nothing in either mode samples a curve: the frames are the input, and any
-solver that publishes a frame array — a ribbon, an FK chain, spline IK, a
-twist distribution — can supply them.""",
+Neither mode samples a curve: the frames are the input, and any solver that
+publishes a frame array — a ribbon, an FK chain, spline IK, a twist
+distribution — can supply them. `wire` mode does read a curve: each point
+moves by the displacement of the `UsdGeomNurbsCurves` named by
+`rigExec:driverCurve` at the parameter it was bound to.""",
         "how_it_works": """The mover runs as one revision on its `rigExec:moves` target's point
 chain, reading the driver solver's frames after the pose phase has solved
 them. It builds one rigid map per element from that element's rest
@@ -1676,34 +1712,44 @@ bind u to [0, 1], scaling it across the array, and blending the two
 neighbouring maps' results — so the array's cardinality, not a curve, sets
 the resolution of the transport. Guide emission needs no bind at all: it
 copies frame origin `i` to point `i`, and fails the revision if the counts
-differ. The compiler maintains the moved mesh's normals and extent
-afterwards.""",
+differ. In `wire` mode the mover instead reads the driver curve's posed
+control points at the `rigExecReadPhase` declared on `rigExec:driverCurve`,
+or poses them from `rigExec:driverTransforms`, and adds each point the
+curve's displacement from its authored shape at the point's bind u, faded
+over its bind distance by `inputs:dropoffDistance`. The compiler maintains
+the moved mesh's normals and extent afterwards.""",
         "wiring": [
-            # libs/rigExec/moverKernels.cpp:816-821 (exec) and
-            # libs/rigExec/moverGraph.cpp:2262-2267 (translated graph): empty frames,
+            # libs/rigExec/movers/curveMover.cpp:92-98 (exec) and
+            # libs/rigExec/moverGraph.cpp:3369-3373 (assembly): empty frames,
             # or rests that do not match the frame count, leave the parameters
             # invalid. Not a compile error: the revision passes through and the
             # chain sweep reports "MoverFailed <path>: execution rejected its
             # inputs; revision passed through" (libs/rigExec/bakedGeometry.cpp:
-            # 2094-2097) with the pose still valid.
+            # 4720-4727) with the pose still valid. The wire assembly
+            # (moverGraph.cpp:3385) reads no frames.
             ("`rigExec:driverFrames`", "Any solver publishing a frame array "
-             "(ribbon, FK chain, spline IK, twist distribution).", "yes"),
-            # libs/rigExec/moverKernels.cpp:823-827 and moverGraph.cpp:2269-2276:
-            # `params.valid = !params.bindCoords.empty()` in ribbon mode only;
-            # emitGuidePoints sets valid unconditionally.
+             "(ribbon, FK chain, spline IK, twist distribution).",
+             "ribbon and emitGuidePoints modes"),
+            # libs/rigExec/movers/curveMover.cpp:100-106 and
+            # moverGraph.cpp:3375-3381: `params.valid =
+            # !params.bindCoords.empty()` in ribbon mode; emitGuidePoints sets
+            # valid unconditionally. The wire reads (u, d) per point
+            # (moverGraph.cpp:3459-3469; geometryKernels.h:329-346).
             ("`rigExec:bindCoordinates`", "Per-point `primvars:st`; u picks the "
-             "spot in the frame array.", "ribbon mode"),
-            # libs/rigExec/rigEvaluator.cpp:3766-3800: a typed points mover's
-            # target must be a point3f[] `points` property on a UsdGeomPointBased
-            # prim, or the compile is rejected.
+             "spot in the frame array, or in `wire` mode (u, d) is the rest "
+             "curve's parameter and the point's distance from it.",
+             "ribbon and wire modes"),
+            # libs/rigExec/movers/moverRegistry.cpp:373-394
+            # (RigExecValidateMoverTargets): a typed points mover's target must
+            # be a point3f[] `points` property on a UsdGeomPointBased prim, or
+            # compile refuses the mover.
             ("`rigExec:moves`", "Exact native points property to write.", "yes"),
-            # libs/rigExec/moverGraph.cpp:1489-1503 builds this mover's binding
-            # from bindCoordinates and driverFrames only; rigEvaluator.cpp:2704
-            # merely hashes driverCurve into the compiled rig signature, and the only prim
-            # whose rigExec:driverCurve is resolved is RigExecRibbon
-            # (rigEvaluator.cpp:3468-3479). No kernel reads it here.
-            ("`rigExec:driverCurve`", "Unread on this node — the frames already "
-             "carry the curve's shape.", "no"),
+            # libs/rigExec/movers/curveMover.cpp:134-151 binds the curve's
+            # points (at this relationship's read phase), order and knots for
+            # the wire; ribbon and emitGuidePoints read only driverFrames.
+            ("`rigExec:driverCurve`", "`wire` mode: the `UsdGeomNurbsCurves` "
+             "whose displacement the points follow. Unread in the other modes, "
+             "where the frames already carry the curve's shape.", "wire mode"),
         ],
         "param_groups": [
             ("Common mover envelope", "RigExecMoverAPI"),
@@ -1745,7 +1791,7 @@ geometry, and posing the cage (default time is the bind, timeSamples are
 the posed cage) carries the moved points through tensor-product basis
 evaluation. Fewer cage points than mesh vertices drive broad, smooth
 shaping — bulges, bends, squash and stretch.""",
-        "how_it_works": """The default `rigExec:evaluation = legacy` preserves the existing
+        "how_it_works": """The default `rigExec:evaluation = legacy` is the tensor-product
 Bernstein cage evaluator. `regularGrid` interpolates cage displacement from
 canonical `origin` and `spacing`, with separate linear, cardinal, B-spline or
 Catmull-Rom interpolation on each axis. `divisions` uses x-fastest ordering;
@@ -1756,7 +1802,10 @@ basis weights while individual cage indices clamp at the boundary.
 envelope. `cageMatrix` and `targetMatrix`, optionally followed by the two
 `frames` providers, define the coordinate spaces. `pointSpace = common` is for
 points already in a shared asset space; `local` is for object-local points.
-The cage relationship reads its selected base or final revision.
+These settings and `frames` belong to `regularGrid`; authoring them with
+`legacy` fails the mover's compile check. The cage points are read at the
+`rigExecReadPhase` declared on `rigExec:cage`; `frames` providers take
+`base` or `final`.
 
 `.rigexec` exports carry these settings from format revision 21. A revision
 20 file has none of them and plays the legacy cage evaluator.""",
@@ -1815,9 +1864,9 @@ rest-to-pose map converts driver points back to surface-local coordinates;
 `surfaceToBinding` maps them into binding space. `targetRestMatrix` times the
 second provider's map returns bound positions to target point space. Without
 frames, the authored matrices alone perform this conversion. Evaluation never
-writes to the stage. Native evaluation and frame-cache workers apply the same
-immutable payload; binary `.rigexec` export currently rejects this mover
-because it has no external payload encoder.""",
+writes to the stage. Native evaluation, frame-cache workers and `.rigexec`
+playback apply the same immutable payload; a `.rigexec` plays it through
+the mover's external playback kernel.""",
         "wiring": [
             ("`rigExec:surface`", "Driver point-based prim; final phase follows its completed modifier chain.", "yes"),
             ("`rigExec:moves`", "One exact native point3f[] points property.", "yes"),
@@ -1950,16 +1999,19 @@ are not implemented by these nearest-surface settings.
 `.rigexec` exports carry these settings from format revision 21. A revision
 20 file has none of them and plays the legacy closest-point snap.""",
         "wiring": [
-            # rigEvaluator.cpp:8795-8797 (`if (surfaces.empty()) { continue; }`)
-            # and moverKernels.cpp:795-796 (params.valid false without surface
-            # points): an unwired surface is never a compile error, the mover
-            # just passes its incoming points through (verified: the stage still
-            # compiles and evaluates with the relationship deleted).
+            # movers/surfaceMover.cpp:231 (ValidateSurface) refuses anything
+            # but exactly one surface target. Compile sets the mover aside as a
+            # skipped operation with a warning and the rest of the rig compiles
+            # (verified: with the relationship cleared, the example stage
+            # compiles, evaluates, and lists DrapeStickers in
+            # skipped_operations).
             ("`rigExec:surface`", "Native mesh prim supplying the driver "
-             "surface; without it the mover is inert, not an error.", "yes"),
-            # rigEvaluator.cpp:3545-3557: a mover prim with no rigExec:moves is
-            # reclassified as a grouping scope; 3560-3577: authored but empty
-            # targets report a notice and go inert for the generation.
+             "surface; without exactly one, compile sets the mover aside with "
+             "a warning and the rest of the rig still runs.", "yes"),
+            # rigEvaluatorValidation.cpp:437-449: a prim with no rigExec:moves
+            # relationship (no RigExecMoverAPI) is passed over as a grouping
+            # scope; 473-489: empty targets report a notice and go inert for
+            # the generation.
             ("`rigExec:moves`", "Exact points property to drape.", "yes"),
             # Only a non-base phase binds the driver to a moved chain
             # output; an unparseable phase is a compile error.
@@ -2024,10 +2076,11 @@ exactly to its neighbors' centroid, so partial envelopes are the normal
 working range. Points with no neighbors are left alone, and invalid
 topology passes straight through.""",
         "wiring": [
-            # rigEvaluator.cpp:3544 a mover with no rigExec:moves is skipped as a
-            # grouping scope (it would silently do nothing), :3779 the target must
-            # be a native UsdGeomPointBased point3f[] points property, and :3810
-            # a smooth mover must have exactly one such target in v0.1.
+            # rigEvaluatorValidation.cpp:438 a mover with no rigExec:moves is skipped
+            # as a grouping scope (it would silently do nothing),
+            # movers/moverRegistry.cpp:384 the target must be a native
+            # UsdGeomPointBased point3f[] points property, and :396 a smooth mover
+            # (handler.singleTarget) must have exactly one such target in v0.1.
             ("`rigExec:moves`", "Exact points property to relax.", "yes"),
         ],
         "param_groups": [
@@ -2074,8 +2127,8 @@ the same smoothing settings to rest and incoming points. It transports the
 rest-to-smoothed offset into the deformed local surface frame. Native,
 frozen and binary evaluation share `libs/rigExecMath/deltaMushKernel.h`.
 
-Defaults preserve the existing rest-weighted smoothing and vertex-frame
-transport. Choose `smoothing = simple` or `lengthWeighted` with
+The defaults are rest-weighted smoothing (`smoothing = rest`) and
+vertex-frame transport (`frameTransport = vertex`). Choose `smoothing = simple` or `lengthWeighted` with
 `frameTransport = corner` for deformation-dependent smoothing and corner-frame
 detail restoration.
 `smoothWeights` participates inside every smoothing iteration, separate from
@@ -2164,7 +2217,7 @@ the cloth is large enough, uses the legacy scalar material and nothing else
 in the rig reads its points. Relationship-linked profiles use the shared CPU
 solver in live, frozen and binary playback. Link `rigExec:constraints` to
 `RigExecClothConstraintSet` prims for stretch, bend, damping, pins, tethers,
-cloth/cloth attachments and self-contact. Each supports UV warp/weft response,
+attachments, collision and self-contact. Each supports UV warp/weft response,
 painted maps and a force-to-strength curve. See
 [cloth materials and bindings](../concepts/secondary-motion.md#cloth-materials-and-bindings)
 for authoring and binding conventions. Attachment constraint sets draw guide
@@ -2274,15 +2327,16 @@ corrector, so the pair shows exactly what the correction takes away.""",
         "schema": "RigExecBlendInput",
         "summary": "One weighted channel of sculpted targets inside a blendshape pass.",
         "description": """A single channel — a smile, a brow raise, a phoneme. It carries one
-animated `inputs:weight` and an ordered list of target samples; the
-blendshape mover sums every bound channel into the final delta. Channels
+animated `inputs:weight` and a set of target samples, applied in activation
+order; the blendshape mover sums every bound channel into the final delta. Channels
 are independent, so weights layer without interfering.""",
         "how_it_works": """The channel evaluates its samples against the weight: below the
 first activation the delta fades in, between samples it interpolates,
-past the last it holds (or extrapolates, per the mover). The result is
+past the last it holds: the weight is clamped to [0, last activation]. The result is
 one delta array the mover adds to its sum.""",
         "wiring": [
-            ("`rigExec:samples`", "Ordered target samples for this channel.", "yes"),
+            ("`rigExec:samples`", "Target samples for this channel, applied in "
+             "activation order whatever the list order.", "yes"),
             ("(bound by)", "A blendshape mover's `rigExec:blendInputs` sums this channel.", "-"),
         ],
         "example": """One channel, one target: the Smirk weight sweeps 0 → 1 → 0 and the
@@ -2308,12 +2362,16 @@ blend channel.""",
 in-betweens anywhere between. In-betweens shape the path — corners that
 widen before they lift, lids that lag then catch up — instead of the
 straight line one target would give.""",
-        "how_it_works": """Each sample names its sculpt through `rigExec:targetPoints` and its
+        "how_it_works": """Each sample names its sculpt through `rigExec:targetPoints`, or as
+sparse offsets on a UsdSkelBlendShape through `rigExec:blendShape`, and its
 position on the channel through `rigExec:activation`. The channel
 interpolates between neighboring samples by weight, so a 0.5 sample is
 the pose the channel passes through halfway up.""",
         "wiring": [
-            ("`rigExec:targetPoints`", "Native points prim holding the sculpt.", "yes"),
+            ("`rigExec:targetPoints`", "Native points prim or exact points property "
+             "holding the sculpt.", "one of these two"),
+            ("`rigExec:blendShape`", "A UsdSkelBlendShape holding the sculpt as sparse "
+             "offsets; authoring both is a compile error.", "one of these two"),
             ("(listed by)", "The parent blend input's `rigExec:samples`.", "-"),
         ],
         "example": """One channel with two samples: at activation 0.5 the card shifts
@@ -2340,35 +2398,45 @@ driver joint in, one weight per authored `RigExecPose` child out. Each pose
 records where the driver stands — a quaternion measured in the driver's own
 parent frame, relative to the driver's rest — plus how wide its influence
 reaches, and the interpolator publishes each pose's share of wherever the
-driver is now. It writes no transform and no points, which is why it lives
-in its own scope rather than under `Movers`; what makes it useful is that a
+driver is now. It writes no transform and no points, so it is not a mover
+and carries no `rigExec:moves`; what makes it useful is that a
 `RigExecBlendInput` connects its `inputs:weight` to a pose's
 `outputs:weight`, so a corrective shape can be retargeted or layered without
 touching the interpolator that fires it.""",
         "how_it_works": """The maths is a radial basis function (`libs/rigExecMath/rbf.h`). Compile
 reads the driver, the kernel, the channel switches and every enabled pose's rotation,
 type and radius, and inverts the kernel matrix once — it is a pure function
-of the authored poses, so nothing on the prim stores it. Evaluation happens
-in its own phase, after the whole pose walk and before the geometry chains
-(`rigEvaluator.cpp:11990-11998`): it takes the driver's final and rest
-frames, forms `delta = restLocal⁻¹ · (parent⁻¹ · world)`
-(`rigEvaluator.cpp:3073-3076`), runs one kernel row through the inverted
-matrix, and publishes a `float` on each pose's `outputs:weight` into both the
-resolved-input table a consumer reads through and the pose's moved-property
-map (`rigEvaluator.cpp:3019-3026`). A driver with no published final frame
-is diagnosed and the interpolator publishes zeros rather than quietly
-measuring a rest (`rigEvaluator.cpp:3048-3056`).""",
+of the authored poses, so nothing on the prim stores it. Evaluation is one
+operation of the shared graph that reads the last version of its driver's
+frame and of its nearest joint or control ancestor's, so dependencies place
+it after every operation that writes them and before the blend channels
+that read its weights (`libs/rigExec/bakedPose.cpp:2627-2635`): it takes
+the driver's final and rest frames, forms
+`delta = restLocal⁻¹ · (parent⁻¹ · world)`
+(`libs/rigExecMath/poseArithmeticKernel.h:305-307`), runs one kernel row
+through the inverted matrix, and publishes a `float` on each pose's
+`outputs:weight` into both the resolved-input table a consumer reads
+through and the rig pose's moved-property map (`bakedPose.cpp:5914-5917`).
+A driver with no usable final frame is diagnosed and the interpolator
+publishes zeros rather than quietly measuring a rest
+(`bakedPose.cpp:5656-5661`).""",
         "wiring": [
-            # rigEvaluator.cpp:2794 -- driverTargets.size() != 1 is a compile error
-            ("`rigExec:driver`", "Exactly one `RigExecJoint` or `RigExecControl` "
-             "whose local rotation every pose is measured against.", "yes"),
-            # rigEvaluator.cpp:2929-2932 -- "has no RigExecPose children" is a compile
-            # error; rigEvaluator.cpp:2866-2874 -- any other child type is an error too
+            # poseSceneTranslation.cpp:292-295 -- the pose solver needs exactly one
+            # frame driver unless numeric drivers replace it; a RigLogic solve
+            # takes frame drivers or numeric drivers, not both.
+            ("`rigExec:driver`", "One `RigExecJoint` or `RigExecControl` whose "
+             "local rotation every pose is measured against; a RigLogic solve "
+             "takes several. Omit it when `rigExec:driverAttributes` names "
+             "numeric drivers instead.", "unless numeric drivers"),
+            # poseSceneTranslation.cpp:387 -- "has no pose children" is a compile
+            # error; poseSceneTranslation.cpp:344-346 -- any other active child type
+            # is an error too
             ("`RigExecPose` children", "One prim per pose, directly under the "
              "interpolator; any other child type is a compile error.", "yes"),
-            # rigEvaluator.cpp:2878-2886 -- an authored connection ON outputs:weight is
-            # an error; the consumer side connects INTO it (testRigExecPoseInterpolator
-            # .cpp:172-178) and nothing requires that a consumer exist
+            # poseSceneTranslation.cpp:347-349 -- an authored connection ON
+            # outputs:weight is an error; the consumer side connects INTO it
+            # (testRigExecPoseInterpolator.cpp:179-187) and nothing requires that
+            # a consumer exist
             ("`<pose>.outputs:weight`", "Read by a consumer — a "
              "`RigExecBlendInput`'s `inputs:weight` connects to it. The pose's own "
              "`outputs:weight` must carry no authored connection.", "-"),
@@ -2387,8 +2455,8 @@ to the Upper and Fore joints. The interpolator watches the **Fore joint** —
 not the Elbow control the animator keys — and carries three poses, `neutral`
 at identity, `half` at 40 degrees and `bent` at 80, each 0.7 radians wide,
 which is the spacing between them. Watch the three floats trade: at rest
-`neutral` reads 1.000 and `half` and `bent` 0.000; a third of the way in they
-split 0.529 / 0.601 / 0.000; on the first hold `half` reads 1.000 alone; on
+`neutral` reads 1.000 and `half` and `bent` 0.000; at frame 1004, halfway to
+the first hold, they split 0.529 / 0.601 / 0.000; on the first hold `half` reads 1.000 alone; on
 the second `bent` reads 1.000 and the others 0.000. Only `bent.outputs:weight`
 is connected to the blend channel, so the corrective swells on the outside of
 the elbow exactly when that one float does — nothing at the `half` hold, full
@@ -2407,17 +2475,19 @@ compared at a glance; open it with
         "tips": [
             "Author a non-zero `rigExec:rotationRadius` on every pose, roughly the "
             "angle between neighbouring poses. A per-pose zero is used literally "
-            "rather than fitted (`rbf.cpp:992-1001`, `rbf.cpp:407-413`), and an "
+            "rather than fitted (`rbf.cpp:974-983`, `rbf.cpp:401-407`), and an "
             "interpolator whose radii are all zero reads 1 only when the driver "
             "stands exactly on a pose and 0 everywhere else.",
             "Drive from a joint whose parent already carries the motion you do not "
-            "want measured: the phase measures the driver's rotation relative to "
-            "its rest in its nearest frame-publishing ancestor's frame, so the "
+            "want measured: the interpolator measures the driver's rotation "
+            "relative to its rest in its nearest joint or control ancestor's "
+            "frame, so the "
             "parent subtracts its own share back out. Measuring against anything "
             "other than the immediate namespace parent is reported as a warning.",
-            "`rigExec:enableTranslation` is not measured by this phase — it warns "
-            "and judges the poses on rotation alone "
-            "(`rigEvaluator.cpp:2852-2862`). Disabling a whole interpolator "
+            "`rigExec:enableTranslation` also measures the driver's translation "
+            "from rest, in its own rest frame, against each pose's "
+            "`rigExec:translation` and `rigExec:translationRadius` "
+            "(`poseArithmeticKernel.h:337-343`). Disabling a whole interpolator "
             "publishes zeros, while disabling one pose drops it out of the solve "
             "entirely so the other poses' weights change.",
             "A radius wider than the pose spacing makes the Gaussian rows overlap "
@@ -2463,15 +2533,17 @@ pose's radius, or switch it off, without restating the other seven.""",
 interpolator builds and inverts its RBF matrix once: `rigExec:rotation`
 (the driver's local rotation relative to its own rest, in the driver's
 parent frame), `rigExec:translation`, `rigExec:poseType`, the two radii,
-and `inputs:enabled` all feed that solve, and those same six are the
+and `inputs:enabled` all feed that solve; a RigLogic solve also reads
+`rigExec:rotations` and `rigExec:scale`. Those eight are the
 pose's share of the compiled rig signature, so editing any of them recompiles the
 interpolator. The other three — `rigExec:falloff`,
 `rigExec:poseControls` and `rigExec:poseControlValues` — are provenance
 that evaluation never reads, and the translation pair is dropped unless
-the interpolator sets `rigExec:enableTranslation`, which the evaluation
-phase warns it does not measure. Evaluation happens in the pose-interpolator
-phase — after the complete pose walk, every constraint included, and
-before the geometry chains that consume the weights — where the
+the interpolator sets `rigExec:enableTranslation` or names numeric drivers.
+Evaluation is the interpolator's operation in the shared graph: it reads
+the final version of its driver's frame, every constraint included, and
+the geometry chains that consume the weights read its outputs, so
+dependencies place it between them. There the
 interpolator measures its driver's final local rotation against every
 pose and publishes one float per pose into both the resolved-input map a
 consumer reads through and the rig pose's `movedProperties` map. The metric is
@@ -2480,23 +2552,25 @@ driver's rotation, split about the interpolator's `rigExec:twistAxis`,
 while a `whole` pose is judged on the entire rotation.""",
         "wiring": [
             # Poses are reached ONLY as children of an interpolator
-            # (rigEvaluator.cpp:986-1001 discovers interpolators; 2866-2873 walks
-            # their children), any non-RigExecPose child is a compile error
-            # (rigEvaluator.cpp:2867-2874), and an interpolator with no pose
-            # children is a compile error (rigEvaluator.cpp:2929-2933).
+            # (rigEvaluatorDependencies.cpp:189-196 discovers interpolators;
+            # poseSceneTranslation.cpp:344-345 walks their children), any active
+            # non-RigExecPose child is a compile error
+            # (poseSceneTranslation.cpp:346), and an interpolator with no pose
+            # children is a compile error (poseSceneTranslation.cpp:387).
             ("(child of)", "The `RigExecPoseInterpolator` that solves it. A pose "
              "anywhere else is never read, and a non-`RigExecPose` child of an "
              "interpolator is a compile error.", "yes"),
-            # Authored only by rigBuilder.cpp:1674-1688; grepping libs/rigExec for
-            # poseControls / poseControlValues returns no reader at all, and the
+            # Authored by rigBuilder.cpp:1805-1826 (and the 2D bust example
+            # builders); grepping libs/ for poseControls / poseControlValues
+            # finds no reader at all, and the
             # schema says so outright (schema.usda rigExec:poseControls).
             ("`rigExec:poseControls`", "The exact control *properties* that put "
              "the rig into this pose, parallel to `rigExec:poseControlValues`. "
              "Authoring data for a shape editor; nothing in evaluation reads it.",
              "no"),
-            # Published by the interpolator (rigEvaluator.cpp:3020-3021, 3100);
+            # Published by the interpolator (bakedPose.cpp:5674-5680, 5914-5917);
             # an authored connection ON it is refused at compile
-            # (rigEvaluator.cpp:2877-2887).
+            # (poseSceneTranslation.cpp:347-349).
             ("`outputs:weight`", "Written by the interpolator every evaluation; a "
              "`RigExecBlendInput`'s `inputs:weight` connects *to* it. An authored "
              "connection on it is a compile error.", "-"),
@@ -2504,12 +2578,13 @@ while a `whole` pose is judged on the entire rotation.""",
         "param_groups": [
             ("Interpolator settings", "RigExecPoseInterpolator"),
         ],
-        "example": """The `ElbowSwing` interpolator carries two poses — `neutral` at
-identity and `bent` at 80 degrees about Z — and the bent pose's
-`outputs:weight` is the only thing wired into the corrective blend
-channel. Measured on the stage, the bent pose publishes 0.000 with the
-arm straight, 0.423 at frame 1004 three frames into the bend, and 1.000
-at frame 1008 when the elbow reaches the pose exactly.""",
+        "example": """The `ElbowSwing` interpolator carries three poses — `neutral` at
+identity, `half` at 40 degrees and `bent` at 80, both about Z — and the
+bent pose's `outputs:weight` is the only thing wired into the corrective
+blend channel. Measured on the stage, the bent pose publishes 0.000 with
+the arm straight and through the 40-degree hold, 0.529 at frame 1012
+halfway to the second hold, and 1.000 from frame 1015, when the elbow
+reaches the pose exactly.""",
         "tips": [
             "Author a non-zero `rigExec:rotationRadius` by hand. The evaluator "
             "hands the per-pose radii straight to the solver, and a width of "
@@ -2556,15 +2631,16 @@ the revision consuming it: every target element gets an explicit value
 envelope in place of `inputs:defaultWeight` for that application. The
 fields are time-invariant by contract — time samples or connections on
 `rigExec:values`, `rigExec:indices`, `rigExec:defaultWeight`,
-`rigExec:representation`, or `rigExec:rangePolicy` fail the pose — and
-`strict` rejects a value outside [0, 1] where `clamp` bounds it.""",
+`rigExec:representation`, or `rigExec:rangePolicy` make compile set aside
+the mover that binds the field — and `strict` rejects a value outside
+[0, 1] where `clamp` bounds it.""",
         "wiring": [
-            # rigEvaluator.cpp:874 "must have exactly one target"; :882 also
-            # requires it to resolve to the binding mover's own target.
+            # rigEvaluatorValidation.cpp:336 "must have exactly one target"; :344
+            # also requires it to resolve to the binding mover's own target.
             ("`rigExec:weightTarget`", "Exact points property this field covers; "
              "must match the target of the mover that binds it.", "yes"),
-            # rigEvaluator.cpp:12406 keys pose.weightFields by the mover's
-            # BOUND weight object, so only a bound field is ever resolved.
+            # bakedGeometry.cpp:5618-5620 keys pose.weightFields by the mover's
+            # BOUND weight object, so only a bound field is ever published.
             ("(bound by)", "A mover's `rigExec:weightObject` applies this field.",
              "-"),
         ],
@@ -2583,11 +2659,12 @@ pose swings through it.""",
         "tips": [
             "Dense suits small ordered targets; sparse suits hero meshes "
             "where most verts sit at the default.",
-            # rigEvaluator.cpp:7924 "dense weight cardinality mismatch";
-            # :7930 "dense weight requires canonical defaultWeight 0".
+            # rigEvaluatorValidation.cpp:202-211 refuses both at compile, which
+            # sets the binding mover aside; libs/rigExecScene/weightProgram.cpp
+            # :158-159 repeats them when the field is built.
             "A dense field must author exactly one value per target element and "
             "leave `rigExec:defaultWeight` at 0 — the canonical encoding — or "
-            "the pose fails rather than padding.",
+            "compile sets aside the mover that binds it rather than padding.",
             "A constant field of 1.0 is the rigid-attachment idiom: full "
             "follow, no paint.",
         ],
@@ -2621,21 +2698,23 @@ resolved envelope is handed to the mover and, when the influence overlay
 is armed, published as the field a rigger is shown; nothing is written
 back to the stage.""",
         "wiring": [
-            # rigEvaluator.cpp:794 rejects more than one target; :799 makes the
-            # relationship mandatory for every non-constant representation
-            # ("a DynamicWeight without a base must be constant"), :7786/:7793
-            # repeat both in the CPU resolver, and weightPackets.cpp:114-118 is
-            # the same rule in the packet kernel exec and the baked path share
-            # (moverKernels.cpp:238, bakedWeights.cpp:335).
+            # rigEvaluatorValidation.cpp:256 rejects more than one target; :261
+            # makes the relationship mandatory for every non-constant
+            # representation ("a DynamicWeight without a base must be
+            # constant"), libs/rigExecOracle/weightReference.cpp:434/:442 repeat
+            # both in the CPU oracle, and weightPackets.cpp:190-194 is the same
+            # rule in the packet kernel exec and the baked path share
+            # (moverKernels.cpp:250; bakedWeights.cpp:286 through
+            # libs/rigExecScene/weightProgram.cpp:220).
             ("`rigExec:baseWeight`", "Weight field this one modulates; required "
              "unless the representation is `constant`, and at most one target.",
              "yes"),
-            # rigEvaluator.cpp:874 "must have exactly one target"; :882 also
-            # requires it to resolve to the binding mover's own target.
+            # rigEvaluatorValidation.cpp:336 "must have exactly one target"; :344
+            # also requires it to resolve to the binding mover's own target.
             ("`rigExec:weightTarget`", "Exact points property this field covers; "
              "must match the target of the mover that binds it.", "yes"),
-            # rigEvaluator.cpp:12406 keys pose.weightFields by the mover's
-            # BOUND weight object, so only a bound field is ever resolved.
+            # bakedGeometry.cpp:5618-5620 keys pose.weightFields by the mover's
+            # BOUND weight object, so only a bound field is ever published.
             ("(bound by)", "A mover's `rigExec:weightObject` applies this field.",
              "-"),
         ],
@@ -2654,21 +2733,25 @@ the field the mover actually consumed — grey at weight 0, red at
 weight 1 — so the ramp and the curl that follows it are the same
 event.""",
         "tips": [
-            # rigEvaluator.cpp:7883-7889: out-of-range only survives under
-            # `clamp`; `strict` fails the pose with "strict range violation".
+            # weightPackets.cpp:211-214 and libs/rigExecScene/weightProgram.cpp
+            # :142-145: out-of-range only survives under `clamp`; `strict`
+            # invalidates the field and the mover passes its points through
+            # with a MoverFailed diagnostic (bakedGeometry.cpp:3274-3287).
             "`rangePolicy: clamp` is what lets `inputs:scale` overdrive the "
-            "paint: a result outside [0, 1] is clamped instead of failing the "
-            "pose, so a driver can push part of a painted ramp to fully "
-            "followed while the rest of it still fades.",
-            # rigEvaluator.cpp:12406 publishes pose.weightFields under the
-            # BOUND weight object; bridge.cpp:1521 looks the overlay up there.
+            "paint: a result outside [0, 1] is clamped instead of invalidating "
+            "the field and passing the mover's points through, so a driver can "
+            "push part of a painted ramp to fully followed while the rest of it "
+            "still fades.",
+            # bakedGeometry.cpp:5618-5620 publishes pose.weightFields under the
+            # BOUND weight object; bridge.cpp:2217 looks the overlay up there.
             "The influence overlay paints the field a mover consumed, so point "
             "it at the dynamic weight, not the base it wraps: an unbound base "
             "has no resolved field of its own to show.",
-            # rigEvaluator.cpp:776-786 validates at most one float connection per
-            # input ("scalar input must have at most one connection"); and
-            # rigEvaluator.cpp:10561-10570 runs the property chains BEFORE exec
-            # and feeds their results to packet assembly, so a
+            # rigEvaluatorValidation.cpp:240-250 validates at most one float
+            # connection per input (:49-52, "scalar input must have at most one
+            # connection"); and _CompilePropertyChains
+            # (rigEvaluatorProperties.cpp) binds each connected input to the
+            # chain it reads at its declared read phase, so a
             # RigExecFloatMathMover can move `.inputs:driver` the same way
             # float_math_mover.usda moves a blend input's `.inputs:weight`.
             "Drive the driver from another channel (a float math mover or a "
@@ -2721,20 +2804,20 @@ the points as they stand at that position in the mover stack. The band, invert a
 are live per-frame inputs; `rigExec:falloffProfile` and `rigExec:falloffCurve` are
 structural and are baked to one lookup table per compiled rig.""",
         "wiring": [
-            # Exactly one target: libs/rigExec/rigEvaluator.cpp:872; and it must be
-            # the same property the bound mover moves: rigEvaluator.cpp:882.
+            # Exactly one target: libs/rigExec/rigEvaluatorValidation.cpp:336; and
+            # it must be the same property the bound mover moves: :344.
             ("`rigExec:weightTarget`", "Exact points property this generated field "
              "covers; must be the same target the bound mover moves.", "yes"),
             # Optional: an empty sampleSource simply falls back to the weightTarget
-            # points (libs/rigExec/weightPackets.cpp:277,
-            # libs/rigExec/rigEvaluator.cpp:7562), and only its cardinality is
-            # checked when it is authored (weightPackets.cpp:269).
+            # points (libs/rigExec/weightPackets.cpp:366,
+            # libs/rigExecOracle/weightReference.cpp:227-230), and only its
+            # cardinality is checked when it is authored (weightPackets.cpp:364).
             ("`rigExec:sampleSource`", "Static points to measure against instead of "
              "the target — typically an unposed reference copy. The weighted "
              "domain stays the target.", "no"),
             # No relationship places the volume: the packet reads the prim's own
-            # posed point frame (libs/rigExec/moverKernels.cpp:294), so an unwired
-            # volume follows its namespace-parent xformable (schema.usda:1344).
+            # posed point frame (libs/rigExec/moverKernels.cpp:304), so an unwired
+            # volume follows its namespace-parent xformable (schema.usda:330).
             ("(placement)", "No wiring: the volume is posed by its own `rest:space` "
              "and avars, or follows its namespace-parent xformable when unwired.", "-"),
             # The packet is only ever consumed through a mover's weightObject;
@@ -2810,25 +2893,28 @@ points are measured is the `rigExecReadPhase` metadata on
 points, `preceding` the points as they stand at that mover's position in
 the stack.""",
         "wiring": [
-            # rigEvaluator.cpp:874 ("rigExec:weightTarget must have exactly one
-            # target") and :882 (must equal the bound mover's target).
+            # rigEvaluatorValidation.cpp:336 ("rigExec:weightTarget must have
+            # exactly one target") and :344 (must equal the bound mover's target).
             ("`rigExec:weightTarget`", "Exact points property this field covers; "
              "must match the target of the mover that binds it.", "yes"),
             # Nothing to author: computePointFrame is a .Required() input of the
-            # packet computation (moverKernels.cpp:965-967), but every
-            # RigExecXformable publishes one (computations.cpp:516), and an
-            # unplaced volume simply resolves to identity
-            # (rigEvaluator.cpp:9941-9948). rigEvaluator.cpp:7530-7532 is the CPU
-            # oracle's "no resolved placement for this volume weight".
+            # packet computation (moverKernels.cpp:713-715), but every
+            # RigExecXformable publishes one (computations.cpp:532), and the
+            # baked program places every volume weight as a pose provider
+            # (bakedWeights.cpp:159-161 refuses one that is not), so an unplaced
+            # volume still has a posed frame.
+            # libs/rigExecOracle/weightReference.cpp:193-196 is the CPU oracle's
+            # "no resolved placement for this volume weight".
             ("(placement)", "No wiring: the volume's own posed frame, from its "
              "avars (optionally connected to a control's, as in the example) or "
              "from an xformable namespace parent it rides.", "-"),
-            # rigEvaluator.cpp:7563 - sampleSource is tried first and falls back
-            # to weightTarget, so authoring it is optional.
+            # libs/rigExecOracle/weightReference.cpp:227-230 - sampleSource is
+            # tried first and falls back to weightTarget (weightPackets.cpp:366
+            # in the packet kernel), so authoring it is optional.
             ("`rigExec:sampleSource`", "Optional static points to measure against "
              "instead of the weighted domain; ignored when `rigExec:weightTarget` "
              "reads `preceding`.", "no"),
-            # rigEvaluator.cpp:4041 - the mover's weightObject binding is what
+            # rigEvaluatorValidation.cpp:826 - the mover's weightObject binding is what
             # runs _ValidateWeightObjectDomain, so an unbound volume weight is
             # never validated or compiled at all.
             ("(bound by)", "A mover's `rigExec:weightObject` applies this field.",
@@ -2899,22 +2985,24 @@ dense float per target element, published as the envelope of whichever
 mover binds it through `rigExec:weightObject` — a matrix mover then
 applies `p' = q + w (T q - q)`.""",
         "wiring": [
-            # rigEvaluator.cpp:5135-5159 - exactly one target, and it must resolve
-            # to a point3f[] attribute, or compile fails.
+            # rigEvaluatorCompile.cpp:1401-1425 - exactly one target, and it must
+            # resolve to a point3f[] attribute, or compile fails
+            # (rigEvaluatorCompile.cpp:3496-3497).
             ("`rigExec:curve`", "Exactly one native points source — a BasisCurves prim "
              "or an exact `point3f[]` property — whose control polygon the distance "
              "is measured to.", "yes"),
-            # rigEvaluator.cpp:872-884 - "rigExec:weightTarget must have exactly
-            # one target", and it must equal the bound mover's target, or compile
-            # fails; weightPackets.cpp:266 - empty target points invalidates the
-            # packet.
+            # rigEvaluatorValidation.cpp:336-349 - "rigExec:weightTarget must have
+            # exactly one target", and it must equal the bound mover's target, or
+            # compile sets that mover aside; weightPackets.cpp:363 - empty target
+            # points invalidates the packet.
             ("`rigExec:weightTarget`", "Exact points property this field covers.", "yes"),
-            # rigEvaluator.cpp:5133 - requireTargets(..., 1, "at most one points
-            # source"); weightPackets.cpp:270 - must match the target's cardinality.
+            # rigEvaluatorCompile.cpp:1399 - requireTargets(..., 1, "at most one
+            # points source"); weightPackets.cpp:364 - must match the target's
+            # cardinality.
             ("`rigExec:sampleSource`", "Optional unposed points to measure *instead of* "
              "the target, at the same element count; the weighted domain stays the "
              "target.", "no"),
-            # schema.usda:79-88 (RigExecMoverAPI) - optional, at most one target.
+            # schema.usda:82-91 (RigExecMoverAPI) - optional, at most one target.
             ("(bound by)", "A mover's `rigExec:weightObject` applies this field.", "-"),
         ],
         "param_groups": [
@@ -2980,22 +3068,23 @@ its points through unchanged.""",
         "wiring": [
             # Not enforced: an empty list folds to the mode's identity (0 for
             # add/subtract/max/average/overlay, 1 for multiply/min) and compiles
-            # cleanly -- libs/rigExecMath/weightFields.cpp:288-291 and
-            # libs/rigExecMath/weightFields.cpp:236-250. Verified by compiling
+            # cleanly -- libs/rigExecMath/weightFields.h:252-254 and
+            # libs/rigExecMath/weightFields.cpp:310-325. Verified by compiling
             # the example stage with the relationship deleted: it compiles, the
             # pose is valid, and the panel stays flat (max identity 0).
             ("`rigExec:inputWeights`", "Ordered weight objects to fold; every one "
              "must cover the same target as this combine.", "no"),
-            # libs/rigExec/rigEvaluator.cpp:872 (exactly one target) and
-            # libs/rigExec/rigEvaluator.cpp:880 (must equal the mover's target),
-            # applied recursively to every input at rigEvaluator.cpp:887-899.
-            # A bare PointBased prim is accepted and canonicalized to .points
-            # for a point domain (rigEvaluator.cpp:877-879).
+            # libs/rigExec/rigEvaluatorValidation.cpp:336 (exactly one target) and
+            # libs/rigExec/rigEvaluatorValidation.cpp:344 (must equal the mover's
+            # target), applied recursively to every input at
+            # rigEvaluatorValidation.cpp:351-365. A bare PointBased prim is
+            # accepted and canonicalized to .points for a point domain
+            # (rigEvaluatorValidation.cpp:341-343).
             ("`rigExec:weightTarget`", "The weighted domain, matching the bound "
              "mover's exact target; read only for its element count.", "yes"),
             # No relationship of its own: the mover names the combine, and the
             # binding is validated from the mover side in
-            # libs/rigExec/rigEvaluator.cpp:584-593.
+            # libs/rigExec/rigEvaluatorValidation.cpp:739-833.
             ("(bound by)", "A mover's `rigExec:weightObject` applies the folded "
              "field.", "-"),
         ],
@@ -3027,7 +3116,7 @@ intersection.""",
             "unlike the volume weights, which redeclare it as `clamp`. Author "
             "`clamp`, as the example does, or an `add` that overlaps past 1 (or "
             "an overdriven `inputs:strength`) invalidates the packet and the "
-            "mover silently passes its points through.",
+            "mover passes its points through with a `MoverFailed` diagnostic.",
         ],
         "see_also": [
             ("sphere_weight", "Sphere Weight"),
@@ -3039,7 +3128,7 @@ intersection.""",
         "title": "Float Math Mover",
         "schema": "RigExecFloatMathMover",
         "summary": "Arithmetic on one scalar channel: add, clamp, remap, blend, curve, quantize, path.",
-        "description": """The property domain's calculator: it revises an exact float attribute
+        "description": """The property domain's calculator: it revises an exact float or double attribute
 — a blendshape weight, a blend factor, an envelope — instead of geometry.
 The everyday job is unit plumbing. A channel arrives in whatever range the
 department upstream authored it in, and `remap` divides it down into the
@@ -3067,13 +3156,14 @@ value through and one applies the operation outright. Movers sharing one
 target revise it in mover-stack order: a reversed namespace walk, each
 parent after its children, so the last sibling listed runs first.""",
         "wiring": [
-            # rigEvaluator.cpp:3847 rejects anything but exactly one target
+            # movers/moverRegistry.cpp:407 rejects anything but exactly one target
             # ("its parameters are mover-level, so a fan-out would alias them");
-            # :3864 requires an exact property path, :3895 requires type float.
+            # :419 requires an exact property path, :427-433 type float or double.
             # An authored-but-empty rigExec:moves is not an error -- the mover is
-            # inert for that generation and says so (rigEvaluator.cpp:3577) -- so
-            # "yes" here means "required for the mover to revise anything".
-            ("`rigExec:moves`", "Exact float property to revise; exactly one.", "yes"),
+            # inert for that generation and says so (rigEvaluatorValidation.cpp:
+            # 473-488) -- so "yes" here means "required for the mover to revise
+            # anything".
+            ("`rigExec:moves`", "Exact float or double property to revise; exactly one.", "yes"),
             ("`rigExec:path`", "The path operation's curve: one UsdGeomBasisCurves prim holding one linear, bezier, bspline or catmullRom curve, nonperiodic or pinned.", "for path"),
         ],
         "param_groups": [
@@ -3096,24 +3186,26 @@ panel shows what came out. The wire sphere at the origin is the `Hinge`
 joint, a landmark on the line the panel curls about: nothing targets it
 and it drives nothing, the blendshape does all the work.""",
         "tips": [
-            # rigEvaluator.cpp:5540-5548: "the chain's base is the target
+            # rigEvaluatorCompile.cpp:2142-2149: "the chain's base is the target
             # attribute's own authored value ... evaluable BEFORE exec runs".
             "Property chains run before the operations that read their "
             "target, so a revised weight reaches solvers and movers in the "
             "same evaluation.",
-            # rigEvaluator.cpp:149-163 (_GetMoverExecutionOrder reverses the
-            # composed pre-order), confirmed by evaluating the example stage:
+            # rigEvaluatorInputs.cpp:136-175 (_GetMoverExecutionOrder is
+            # _GetPoseStackOrder, which reverses the composed pre-order),
+            # confirmed by evaluating the example stage:
             # listing Bound first is what makes Normalize run first.
             "Same-target math movers run in mover-stack order — the reversed "
             "namespace walk — so the LAST sibling listed executes FIRST. "
             "`reorder nameChildren` is how the example puts remap before clamp.",
-            # libs/rigExecMath/propertyMath.cpp:51-55: (base - min) / span, span == 0 -> 0, with
-            # no min/max pinning afterwards.
+            # libs/rigExecMath/propertyMathKernel.h:185-188: (base - min) / span,
+            # span == 0 -> 0, with no min/max pinning afterwards.
             "`remap` only normalizes: `(v − min) / (max − min)`, with a "
             "zero-width range returning 0 rather than dividing. Chain a `clamp` "
             "after it whenever the incoming channel can overshoot.",
             # rigEvaluatorProperties.cpp, _CompilePropertyChains: the phased
-            # connections, published on the reader by _EvaluatePropertyChains.
+            # connections, published on the reader by
+            # RigExecBakedPublishPropertyChains (bakedProperties.cpp).
             "A connection to a property these movers revise reads its base, "
             "the authored value before any of them. Declare "
             "`rigExecReadPhase = \"final\"` on the connected input to read "
@@ -3122,8 +3214,8 @@ and it drives nothing, the blendshape does all the work.""",
             "the rig root, whatever operator it belongs to; see "
             "[Connected inputs](../concepts/how-operators-fire.md#connected-inputs) "
             "and example 16.",
-            # rigEvaluatorProperties.cpp, _EvaluatePropertyChains: a drag on
-            # the target is the chain's base, in every evaluator.
+            # bakedProperties.cpp, Base: a drag on the target is the chain's
+            # base, in every evaluator.
             "Dragging the revised property itself edits its base: the movers "
             "revise the dragged value as they would the authored one, so a "
             "channel clamped to [0, 1] and dragged to 1.4 shows 1.0, during "
@@ -3179,23 +3271,23 @@ produced by another property chain is ordered after its producer. That
 input reads the producer's base, its authored value, unless it declares `rigExecReadPhase = "final"` or a checkpoint (see
 [Connected inputs](../concepts/how-operators-fire.md#connected-inputs)).""",
         "wiring": [
-            # rigEvaluator.cpp:3842-3866 -- a property mover's parameters are
+            # movers/moverRegistry.cpp:405-423 -- a property mover's parameters are
             # mover-level, so a fan-out would alias them across targets: exactly
             # one exact property path, never a prim path (which canonicalizes to
             # .points).
             ("`rigExec:moves`", "Exactly one exact vector-valued property to "
              "revise (`float3`, `vector3f`, `point3f`, `normal3f`, `color3f`).",
              "yes"),
-            # rigEvaluator.cpp:8995-9020 (_PinnedRead) and 9063 -- a connected
-            # input is handed to RigExecResolvedInputs::GetAttribute, the only
-            # code that follows a connection chain, and read at the frame time.
+            # bakedProperties.cpp:719-754 (RigExecBakedResolveWalk, the Connected
+            # arm) -- a connected input follows its connection hops, bound at
+            # Build, and reads the source as sampled at the frame time.
             ("`inputs:value.connect`", "Optional connection supplying the "
              "operand from another `float3` attribute — a control's animated "
              "channel, say — instead of an authored constant.", "no"),
-            # schema.usda:79-88 -- when bound, the weight object's field is
+            # schema.usda:82-91 -- when bound, the weight object's field is
             # authoritative and inputs:defaultWeight is ignored;
-            # rigEvaluator.cpp:9175-9188 -- a property chain resolves it as a
-            # single-element field.
+            # bakedProperties.cpp:1980-1990 -- a property revision resolves it as
+            # a single-element field.
             ("`rigExec:weightObject`", "Optional one-element weight field "
              "supplying the envelope instead of `inputs:defaultWeight`.", "no"),
         ],
@@ -3249,9 +3341,9 @@ exact at both endpoints, so a `blend` at weight 1 is a straight
 substitution and a partial weight is a crossfade between two frames.
 `inputs:value` may be CONNECTED, which is how a control drives the
 arithmetic: the mover reads the same `posed:space` matrix the control is
-posed and drawn at. A property chain reads property values, not evaluated
-provider frames, so the operand has to be a matrix that already stands on
-the stage, authored or connected.""",
+posed and drawn at. Connected to a joint's or control's `posed:space`, it
+reads that provider's evaluated frame: after its solvers by default, or
+after its constraints when the input declares `rigExecReadPhase = "final"`.""",
         "wiring": [
             ("`rigExec:moves`", "Exact matrix4d property to revise.", "yes"),
             ("`inputs:value.connect`", "Optional matrix4d source for the operand. "
@@ -3279,9 +3371,10 @@ the rest pose the pair departs from.""",
             "translation runs along the parent axes whatever rotation came "
             "before it, and the incoming transform happens first.",
             "Connect `inputs:value` to a control's `posed:space` to make the "
-            "operand animatable. A joint's posed frame is not available here: "
-            "the chain resolves before the solve, so what it would read is the "
-            "authored identity.",
+            "operand animatable. A joint's `posed:space` works the same way: "
+            "the connection reads its solved frame, and "
+            "`rigExecReadPhase = \"final\"` on the input reads it after its "
+            "constraints.",
             "Two movers on one matrix are a stack, and composed children "
             "execute bottom-up — author the `blend` that establishes the frame "
             "BELOW the `multiply` that offsets it.",
@@ -3336,9 +3429,10 @@ cache and the `.rigexec` runtime all run one header-only kernel.""",
         "param_groups": [],
         "example": """The biped's eyes are the worked example
 ([Biped_eyes.usda](../../examples/biped/Biped_eyes.usda)). Each eye mesh
-has one projector whose source is the eye's bind joint and whose source
-space is its socket, so turning the head carries the iris and only the
-eye's own look aims it. The material, a glslfx shader in
+has one projector whose source is the eye's bind joint (for the right eye,
+a mirrored joint beneath it) and whose `rigExec:space` is the rig's master,
+so the rest ray still meets the eyeball wherever the master carries the
+rig. The material, a glslfx shader in
 `examples/biped/shaders`, reads `eyeProjector` to place the iris and
 pupil and `eyeDials` for the pupil and iris sizes and offsets, which are
 avars on each eye control. Nothing on the eye mesh moves; open the stage
@@ -3375,7 +3469,7 @@ select the rig's controls, flip its switches, and zero its pose. A picker
 is not a sidecar file beside the rig — it is `RigExecPicker` prims in the
 rig's own layer stack, so it composes, it layers, and an animator can
 override one button with an `over` instead of re-authoring anything.
-Open it from usdview's **RigExec ▸ Control Picker** menu, or press P
+Open it from usdview's **RigExec ▸ Animation Editors ▸ Control Picker** menu, or press P
 (**RigExec ▸ Animation Editors ▸ Hover Picker**) to draw its tabs straight
 into the viewport: drag a tab's round handle to move it, Shift-drag the
 handle to scale it, double-click the handle to collapse it, and
@@ -3387,22 +3481,24 @@ schema classes are not imageable. The usdview panel finds pickers BY TYPE
 — `Usd.PrimRange` over the stage, `IsA(RigExecPicker)`, pruning any prim
 whose type starts with `RigExec` and is not the root or a picker — and
 builds one character tab per picker, sorted on `ui:order`
-(`plugin/rigExecUsdview/pickerScene.py:181-222`). Each picker reads its
+(`plugin/rigExecUsdview/pickerScene.py:207-248`). Each picker reads its
 `RigExecPickerPanel` children as sub-tabs and their `RigExecPickerButton`
 grandchildren as items, then resolves every button target against the rig
 named by `rigExec:picker:rig` — controls and joints only — to decide which
-buttons are live (`pickerScene.py:152-178`, `:235-266`). Clicks drive
+buttons are live (`pickerScene.py:176-204`, `:345-378`). Clicks drive
 usdview's own selection; the stage is only written when a switch button
-edits its attribute, or the `zero_ctrls` command clears authored pose
-avars.""",
+edits its attribute (with the matched pose channels of an IK/FK or space
+switch), when the `zero_ctrls` command clears authored pose avars, or when
+the `ctrl_vis` command hides or shows the rig's controls through
+session-layer visibility opinions.""",
         "wiring": [
-            # pickerScene.py:225-232 reads the relationship, and :246-266 falls
+            # pickerScene.py:251-264 reads the relationship, and :370-377 falls
             # back to pickerModel.live_control_paths(stage) when it is absent --
             # nothing errors, the buttons just resolve against the whole stage.
             ("`rigExec:picker:rig`", "The `RigExecRoot` whose controls and joints "
              "the buttons resolve against. Unauthored means the whole stage, "
              "which is right until a shot holds two characters.", "no"),
-            # pickerScene.py:157-171: panels are GetChildren() filtered on
+            # pickerScene.py:179-196: panels are GetChildren() filtered on
             # IsA(RigExecPickerPanel), buttons are the panels' own children. A
             # picker with no panel children simply produces an empty tab.
             ("(child prims)", "`RigExecPickerPanel` children — direct children "
@@ -3420,15 +3516,15 @@ and click rather than scrubbing.""",
             "A picker can be parented anywhere except inside rig graph: "
             "discovery prunes joints, controls, solvers, movers and weights, "
             "but not the `RigExecRoot`, so beside the rig or inside it both "
-            "work (`pickerScene.py:213-222`).",
+            "work (`pickerScene.py:229-248`).",
             "Layer the picker rather than editing it: an `over` on one button "
             "moves, recolours, relabels or retargets it, and `active = false` "
             "on a button, a panel or the whole picker removes it — all asserted "
-            "in `tests/python/test_picker_scene.py:189-256`.",
+            "in `tests/python/test_picker_scene.py:200-264`.",
             "Two characters on a stage give two tabs with nothing configured, "
             "but name each picker's rig anyway: without it liveness is "
             "computed against every control and joint on the whole stage "
-            "(`pickerScene.py:246-266`, `pickerModel.py:311-322`).",
+            "(`pickerScene.py:356-378`, `pickerModel.py:358-369`).",
         ],
         "see_also": [
             ("picker_panel", "Picker Panel"),
@@ -3448,44 +3544,45 @@ buttons are placed in. The origin is the TOP LEFT with y increasing
 downward, matching every picker authoring tool and the Qt widget the panel
 is drawn into, so positions copied out of a conventional picker land where
 they did there. A panel holds nothing but `RigExecPickerButton` children
-and a background colour.""",
+and a background colour or image.""",
         "how_it_works": """Read in usdview only, in no rig phase: `pickerScene.read()` takes the
 picker's children that are `RigExecPickerPanel`, sorts them on `ui:order`
 with namespace order breaking ties, and makes one sub-tab each; its own
 children that are `RigExecPickerButton` become that tab's items
-(`plugin/rigExecUsdview/pickerScene.py:152-178`). `ui:background` is
+(`plugin/rigExecUsdview/pickerScene.py:176-204`). `ui:background` is
 converted from the schema's 0-1 colour to 8-bit for Qt, and `ui:label`
 falls back to the prim name. `ui:size` is the declared extent, but the
 view fits the tab to the BUTTONS' bounding box plus a 12-unit margin when
-the panel has any, and only falls back to `ui:size` for an empty panel
-(`pickerModel.py:325-349`).""",
+the panel has any, adds the declared extent to that box when
+`ui:backgroundImage` is set, and only falls back to `ui:size` for an empty
+panel without an image (`pickerModel.py:372-400`).""",
         "wiring": [
-            # pickerScene.py:169-171 -- buttons are the panel's own children,
+            # pickerScene.py:194-196 -- buttons are the panel's own children,
             # filtered on IsA(RigExecPickerButton); a grandchild is not found.
             # Nothing enforces this: an empty panel is a blank tab, not an error.
             ("(child prims)", "`RigExecPickerButton` children — direct children "
              "only — are this tab's items.", "no"),
-            # pickerScene.py:157-158: GetChildren() uses the default predicate,
+            # pickerScene.py:179-182: GetChildren() uses the default predicate,
             # so `active = false` on the panel drops the whole sub-tab
-            # (tests/python/test_picker_scene.py:247-250).
+            # (tests/python/test_picker_scene.py:256-259).
             ("(none)", "A panel names nothing else; it is placed by being a "
              "child of its `RigExecPicker`.", "-"),
         ],
         "param_groups": [],
         "example": """`picker.usda` carries a single `Body` panel, 200 by 260 picker units on
-a dark grey ground, holding nine buttons: a backdrop, two mode-filtered
-pairs, a multi-control `All FK` button, an IK/FK switch and a `Zero Ctrls`
-command. Its buttons happen to fill the declared `ui:size` exactly, so the
+a dark grey ground, holding nine buttons: a backdrop, a shoulder select
+button, two mode-filtered pairs, a multi-control `All FK` button, an IK/FK
+switch and a `Zero Ctrls` command. Its buttons happen to fill the declared `ui:size` exactly, so the
 fitted view and the declaration agree.""",
         "tips": [
             "Author button positions as if `ui:size` were the frame, but do not "
             "rely on it: the tab is fitted to the buttons, so a panel split out "
-            "of a shared canvas still reads (`pickerModel.py:325-349`).",
+            "of a shared canvas still reads (`pickerModel.py:372-400`).",
             "y grows DOWNWARD in panel units — a button at y=24 is near the top "
-            "of the tab, not the bottom (`schema.usda:2379-2382`).",
+            "of the tab, not the bottom (`schema.usda:4312-4315`).",
             "`ui:label` is the tab caption and empty means the prim name, so a "
             "panel named `Body` needs no label at all "
-            "(`pickerScene.py:164`).",
+            "(`pickerScene.py:188`).",
         ],
         "see_also": [
             ("picker", "Picker"),
@@ -3512,33 +3609,35 @@ a flag: `pickerScene` turns the relationships into target paths and the
 model marks a selecting or switching button live only when every target —
 or, for a switch, the prim owning the attribute — is a `RigExecControl` or
 `RigExecJoint` inside the rig named by `rigExec:picker:rig`, or anywhere on
-the stage when the picker names none (`pickerModel.py:89-98`,
-`pickerScene.py:235-243`, `:246-266`); a command button the panel
-implements is live on its own (`pickerModel.py:89-90`). A button that
+the stage when the picker names none (`pickerModel.py:107-116`,
+`pickerScene.py:345-353`, `:356-378`); a command button the panel
+implements is live on its own (`pickerModel.py:107-108`). A button that
 resolves to nothing is not drawn at all, though `coverage()` still counts
-it for the panel's status line (`pickerModel.py:222-223`, `:296-306`,
-`pickerUI.py:804-817`). A click selects the targets in order, or cycles the
-switch's attribute one step and writes it back as a float
-(`pickerUI.py:819-838`, `:984-998`); the hit test is the button's bounding
-box rather than its drawn outline, and `ui:size` is clamped up to 4 units
-so a fingertip button is still catchable (`pickerModel.py:23`, `:41-42`,
-`:240-262`).""",
+it for the panel's status line (`pickerModel.py:241-242`, `:344-354`,
+`pickerUI.py:1087-1100`). A click selects the targets in order, or steps
+the switch's attribute to its next label and writes it back as a float,
+matching the pose first when the switch drives an IK/FK limb or a space
+switch; a switch with more than two labels opens a menu of them instead
+(`pickerUI.py:1102-1160`, `:1302-1338`, `:1439-1464`); the hit test is
+the button's bounding box rather than its drawn outline, and `ui:size` is
+clamped up to 4 units so a fingertip button is still catchable
+(`pickerModel.py:23`, `:57-58`, `:288-310`).""",
         "wiring": [
-            # pickerScene.py:62-70 reads the targets; pickerModel.py:96-98 makes
+            # pickerScene.py:81-89 reads the targets; pickerModel.py:114-116 makes
             # the button live only if ALL of them resolve. Nothing requires it:
             # a button with no targets and no attribute is a decoration
-            # (pickerModel.py:100-104).
+            # (pickerModel.py:118-122).
             ("`rigExec:picker:controls`", "The `RigExecControl` or `RigExecJoint` "
              "prims this button selects, in order.", "no"),
-            # pickerScene.py:72-86 takes the first target only, splitting it into
-            # prim path + property name; pickerModel.py:91-93 tests that PRIM for
+            # pickerScene.py:91-105 takes the first target only, splitting it into
+            # prim path + property name; pickerModel.py:109-111 tests that PRIM for
             # liveness, so the attribute must live on a control or a joint.
             ("`rigExec:picker:attribute`", "The single attribute a switch edits, "
              "as a property path on a control or joint. Mutually exclusive with "
              "`rigExec:picker:controls`; on a plain click the attribute wins.",
              "no"),
-            # pickerScene.py:88-92, :140-142: an authored rigExec:picker:mode is
-            # DROPPED unless this relationship resolves, because a mode with no
+            # pickerScene.py:107-111, :164-166: an authored rigExec:picker:mode is
+            # DROPPED unless this relationship has a target, because a mode with no
             # dial cannot be tested.
             ("`rigExec:picker:modeDial`", "The attribute `rigExec:picker:mode` is "
              "tested against — the limb's IK/FK dial.",
@@ -3556,15 +3655,15 @@ buttons swap out when the switch is clicked.""",
             "Leave `ui:text` unauthored on a command button. The panel falls "
             "back to the command's own title (`Zero Ctrls`) and then dispatches "
             "on that LABEL, so a friendlier caption makes the button inert "
-            "(`pickerScene.py:130-131`, `pickerModel.py:28`, `:77-80`).",
+            "(`pickerScene.py:154-155`, `pickerModel.py:28`, `:94-97`).",
             "Author a switch's attribute on a control or a joint — a custom "
             "`avars:ikfk` on a params control, connected onward to the blend — "
             "because an attribute on a solver prim fails the liveness test and "
-            "the button is never drawn (`pickerModel.py:91-93`, `:222-223`).",
+            "the button is never drawn (`pickerModel.py:109-111`, `:241-242`).",
             "`rigExec:picker:mode` is ignored without `rigExec:picker:modeDial`, "
             "and a dial resting between 0.001 and 0.999 counts as neither mode, "
             "so both halves stay reachable mid-handover "
-            "(`pickerScene.py:140-142`, `pickerUI.py:950-956`).",
+            "(`pickerScene.py:164-166`, `pickerUI.py:1239-1245`).",
         ],
         "see_also": [
             ("picker", "Picker"),
@@ -3591,17 +3690,17 @@ for a studio that ships one prim holding the whole rig.
 Regions are annotation, not rig: a stage evaluates identically with them,
 without them, or with half of them unpainted. They are deliberately *not*
 `GeomSubset`s — hdSt collects every face subset under a mesh whatever its
-`familyName`, so a touch set collided with the `materialBind` subset owning
-the same face (16,739 warnings on open), and the sets were moved into a
-scope of their own.""",
+`familyName`, so a touch set would collide with the `materialBind` subset
+owning the same face; the sets live in a scope of their own.""",
         "how_it_works": """Touch regions belong to no compile or evaluation phase: `rigExec:touch:*`
 appears nowhere under `libs/rigExec`, so they add nothing to the pose walk.
 They are read at UI time by the usdview TouchPose plugin, which traverses
 the stage for prims typed `RigExecTouchRegions`, keeps the scopes whose
 `rigExec:touch:mesh` targets the mesh being touched (a scope naming no
-mesh matches whichever mesh is asked for), takes the first of them that
-has region children, and flattens those into a single `face -> region`
-int array (−1 for unpainted skin).
+mesh matches whichever mesh is asked for), orders the ones that have
+region children by `rigExec:touch:layerOrder`, opens the first (or the one
+the editor's layer switch names) as the live layer, and flattens its
+regions into a single `face -> region` int array (−1 for unpainted skin).
 That table goes to the native mesh in `rigExecImaging`, which keeps a BVH
 over the *posed* triangles and refits it whenever the rig publishes a new
 pose, so a pick ray hits the deformed skin and resolves to a face, a
@@ -3613,7 +3712,7 @@ surface terminal for a generated shader that runs the original one and
 then mixes `table[slot]` into the lit colour — a hover is one
 constant-primvar upload, not a resync.""",
         "wiring": [
-            # touchPoseModel.py:88-91 -- FindRegionScopes keeps a scope only when
+            # touchPoseModel.py:88-92 -- FindRegionScopes keeps a scope only when
             # its rigExec:touch:mesh targets include the mesh being touched. A
             # scope with NO targets is not filtered out (it then matches whatever
             # mesh is asked for), and nothing under libs/rigExec reads it at all.
@@ -3621,19 +3720,20 @@ constant-primvar upload, not a resync.""",
              "under this scope indexes. Nothing enforces it: a scope with no "
              "target is kept for whichever mesh is asked for, which is only safe "
              "while the stage holds one character.", "no"),
-            # touchPoseModel.py:219-227 -- the reader takes the first scope whose
+            # touchPoseModel.py:120-130 -- FindLayers keeps only the scopes whose
             # children are typed RigExecTouchRegion (or carry the legacy
-            # touchpose:faces attribute); a scope with none is skipped entirely.
+            # touchpose:faces attribute), and FromStage (:321-331) reads the
+            # first of them or the named layer; a scope with none is skipped.
             ("(children)", "One `RigExecTouchRegion` per named set. A scope with "
              "no region children is passed over.", "yes"),
-            # touchPoseModel.py:196 + 240-241 -- FromStage defaults
+            # touchPoseModel.py:285 + 343-346 -- FromStage defaults
             # require_control=True and `continue`s past a region that binds
             # nothing: "a region the click cannot act on must not swallow the
             # click that would otherwise reach usdview's own picking".
             ("`rigExec:touch:control`", "Per region: the control a click inside it "
              "selects. Unenforced, but a region without one is dropped by the "
              "reader's default rather than drawn inert.", "no"),
-            # touchPoseModel.py:167-172 -- the region's faces are scattered into
+            # touchPoseModel.py:254-261 -- the region's faces are scattered into
             # the face->region table; an absent or empty array leaves the region
             # owning no faces, so it is never hit.
             ("`rigExec:touch:faces`", "Per region: the face indices it owns on the "
@@ -3682,44 +3782,44 @@ inside that set should select. Touch a shoulder in the viewport and the
 shoulder's control is selected, with no picker window and no knowledge of where
 the rig parked its controls. Regions are *not* `GeomSubset`s — hdSt collects
 every face subset under a mesh whatever its `familyName`, so touch sets living
-there collided with the material-bind sets sharing the same faces
-(schema.usda:2532-2536); they sit in their own `RigExecTouchRegions` scope
+there would collide with the material-bind sets sharing the same faces
+(schema.usda:4508-4512); they sit in their own `RigExecTouchRegions` scope
 instead, found by type rather than by position.""",
         "how_it_works": """Nothing about a touch region runs in an evaluation
 phase — the rig evaluator never reads a `rigExec:touch:*` token at all (no
 match for `rigExec:touch` anywhere under `libs/rigExec/`), so a region adds no
 compile record, no step and no cost to a pose. It is read once at *attach* time
 by the TouchPose viewport tool, which finds every `RigExecTouchRegions` scope by
-type, filters them by the mesh they name, and reads each typed
-`RigExecTouchRegion` child in namespace order
-(touchPoseModel.py:73-93, 217-244). From those it builds a flat
+type, filters them by the mesh they name, opens one of them as the live
+layer, and reads each typed `RigExecTouchRegion` child in namespace order
+(touchPoseModel.py:74-130, 321-358). From those it builds a flat
 face → region-index array — `-1` for unpainted skin — and hands it to the
-native mesh once (touchPoseModel.py:167-189); a pick is then a BVH ray cast to a
+native mesh once (touchPoseModel.py:254-278); a pick is then a BVH ray cast to a
 face plus one array index, and the first target of `rigExec:touch:control`
-becomes the prim the selection is replaced with (touchPoseModel.py:239,
-touchPoseUI.py:1011-1029). The
+becomes the prim the selection is replaced with (touchPoseModel.py:343-344,
+touchPoseUI.py:1563-1630). The
 region writes nothing to the stage: the highlight is a Storm shader tint fed by
 two synthetic primvars, `rigExecTouchRegion` (face → slot) and
 `rigExecTouchTable` (slot → colour), added by a scene-index filter
-(touchPoseHighlight.h:5-31).""",
+(touchPoseHighlight.h:3-25).""",
         "wiring": [
             # Nothing enforces this: the evaluator never reads it, and an empty
             # face set is simply skipped when the face -> region table is built
-            # (plugin/touchPose/touchPoseModel.py:169). A region with no faces
+            # (plugin/touchPose/touchPoseModel.py:258). A region with no faces
             # can never be picked.
             ("`rigExec:touch:faces`", "Face indices on the mesh named by the parent "
              "scope's `rigExec:touch:mesh`. Indices outside the mesh's face range "
              "are dropped silently.", "no"),
-            # schema.usda:2639-2643: unauthored means "drawn but drives nothing".
+            # schema.usda:4625-4628: unauthored means "drawn but drives nothing".
             # The reader's default drops such a region entirely so the click falls
             # through to usdview's own picking
-            # (plugin/touchPose/touchPoseModel.py:196, 238-241).
+            # (plugin/touchPose/touchPoseModel.py:285, 343-346).
             ("`rigExec:touch:control`", "The prim a click inside this region "
              "selects. Only the first target is used; unauthored means the region "
              "is skipped by the default reader.", "no"),
             # The parent is what names the mesh and carries the palette; a region
             # is located by walking the children of a RigExecTouchRegions scope
-            # (plugin/touchPose/touchPoseModel.py:216-224).
+            # (plugin/touchPose/touchPoseModel.py:321-331).
             ("(parent scope)", "A `RigExecTouchRegions` prim, which names the mesh "
              "and holds the shared palette. Regions are only found as its "
              "children.", "yes"),
@@ -3735,7 +3835,7 @@ follow the deformation for free because they index faces, not points.""",
         "tips": [
             "Regions must not overlap: the face → region table is built by "
             "assignment, so a face claimed twice ends up owned by whichever region "
-            "comes LAST in namespace order (touchPoseModel.py:172).",
+            "comes LAST in namespace order (touchPoseModel.py:261).",
             "`rigExec:touch:elementType` only allows `face` today, and nothing "
             "reads it yet — the exporter writes it and the reader ignores it. It is "
             "there so a point or edge set does not need a second attribute later.",
@@ -3764,8 +3864,9 @@ specific source/parent relationships supply numerical inputs. Keep the
 provider's rest frame separate from its evaluated pose.
 
 These computations are operations in the shared evaluation graph: native
-evaluation and frame-cache workers run the same stage-free kernels from the
-provider's declared inputs, so editing an input re-runs the providers that
+evaluation, frame-cache workers and the `.rigexec` runtime run the same
+stage-free kernels from the provider's declared inputs, so editing an input
+re-runs the providers that
 read it and their dependents."""
 
 OPERATORS.update({
@@ -4025,9 +4126,11 @@ The common mover envelope then applies independently. Empty masks mean full
 strength; populated masks have one finite [0,1] value per point. Joint index
 and weight arrays follow the elementSize skin layout.
 
-The computation and handler live in core. The external revision has no binary payload
-encoder; `.rigexec` export rejects it rather than silently omitting it.
-Evaluation of USD stages remains supported without the converter plugin.""",
+The computation and handler live in core. A `.rigexec` export carries it as an
+external revision: its playback kernel rebuilds the skin from the declared
+inputs and the influence frames playback evaluated, so playback matches native
+evaluation. A host that plays the file supplies that kernel; without it the
+revision passes its points through.""",
         "wiring": [("`rigExec:moves`", "One exact point3f[] points property.", "yes"),
                    ("`rigExec:influences`", "Native joint/control influence providers.", "yes"),
                    ("`rigExec:transform`", "Incoming point map when transformInput is enabled.", "no")],
@@ -4052,5 +4155,6 @@ for _key, _example in _AFFINE_EXAMPLES.items():
         "List every consumed provider in rigExec:poseInputs when using an affine frame expression."
     ] if _key != "layered_skin_mover" else [
         "The per-point mask and common mover envelope are independent.",
-        "This external revision has no USD-free binary payload encoder."
+        "A .rigexec player needs this mover's playback kernel; without it the "
+        "revision passes its points through."
     ]

@@ -12,8 +12,8 @@ drag tangent handles to change their slope or length. Moved keys retain their
 order. Insert Key adds a knot without replacing the rest of the curve.
 New keys use Auto tangents; editing an existing key preserves its tangent setup.
 
-Edits use the shared undo stack when the viewport toolbar is present. They
-are authored to the active edit target. Broken tangent state is stored in
+Edits use the same undo stack as the viewport tools. They are authored to the
+active edit target. Broken tangent state is stored in
 the knot's `rigExec` custom data because equal slopes do not imply unified
 tangents. Unify copies the outgoing slope to the incoming side.
 
@@ -41,7 +41,7 @@ drawn. Frame All fits the keys; a tangent overshoot may extend outside that view
 | `I` | Insert key |
 | `Delete` / `Backspace` | Delete selected keys |
 | `Escape` | Cancel a drag or clear selection |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| `Ctrl+Z` / `Ctrl+Shift+Z`, `Shift+Z`, `Ctrl+Y` | Undo / redo |
 
 Shortcuts apply to the editor window and yield to text-entry widgets.
 Clamped/Plateau tangents, audio, retiming tools, and Euler filtering are not

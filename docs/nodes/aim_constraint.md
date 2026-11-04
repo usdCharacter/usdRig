@@ -78,7 +78,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -193,7 +194,9 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 
@@ -201,8 +204,8 @@ have exactly one entry per source.
 
 *Type:* `uniform bool`. *Default:* `false`.
 
-Take the world-up direction from the up object's ROTATION
-alone, orthonormalizing its frame first. A rotation extracted from a
+objectRotationUp: take the world-up direction from the up
+object's ROTATION alone, orthonormalizing its frame first. A rotation extracted from a
 scaled or sheared frame is not that frame's rotation, so under a
 scaled rig root the derived up can swing far enough to turn an
 aim-constrained foot. Off (the default) extracts the rotation from
@@ -224,13 +227,18 @@ Local-space vector used to stabilize roll around the aim direction.
 
 *Type:* `double3`. *Default:* `(0, 1, 0)`.
 
-World-space up vector used by vector world-up modes.
+World-space up direction for the vector world-up mode. For
+objectRotationUp it is expressed in the up object's axes and turned
+by that object's rotation, or used as is when no up object is
+named.
 
 #### `rigExec:worldUpObject`
 
 *Relationship.*
 
-Optional single transform provider used by object world-up modes.
+Optional single transform provider used by object world-up
+modes. With none named, objectUp points the up at the scene
+origin.
 
 #### `rigExec:worldUpType`
 
@@ -242,7 +250,10 @@ Valid values: `sceneUp`, `objectUp`, `objectRotationUp`, `vector`, `none`.
 
 *Relationship.*
 
-Legacy single aim source; retained for backward compatibility.
+Legacy single aim source, read only when rigExec:sources is
+empty; retained for backward compatibility. With it and no world-up
+direction, the solve keeps the input frame's up rather than taking
+the minimum swing.
 
 #### `rigExec:aimAxis`
 
@@ -250,7 +261,8 @@ Legacy single aim source; retained for backward compatibility.
 
 Valid values: `x`, `y`, `z`.
 
-Legacy positive-axis selector retained for existing assets.
+Legacy positive-axis selector retained for existing assets:
+it selects the aim axis only when inputs:aimVector is unauthored.
 
 #### `rigExec:upPolicy`
 
@@ -264,7 +276,10 @@ Legacy up policy retained for existing assets.
 
 *Type:* `uniform token[]`. *Default:* `["origin", "scale"]`.
 
-Legacy component-preservation declaration retained for existing assets.
+Legacy component-preservation declaration retained for
+existing assets. Only the default is accepted; any other value is a
+compile error, and the inputs:affect* masks choose the channels
+instead.
 
 ## Example
 

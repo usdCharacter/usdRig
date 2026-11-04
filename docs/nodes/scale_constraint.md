@@ -45,9 +45,10 @@ decomposed scale of the incoming frame — one axis at a time, only where
 `inputs:affectScaleX/Y/Z` is on. The common mover envelope
 (`inputs:defaultWeight`, or a bound `rigExec:weightObject`) then mixes the
 candidate over the incoming scale, so a zero envelope is an exact
-pass-through. Translation, rotation and shear of the moved frame are
-carried through untouched, and downstream skinning reading the joint at
-`final` picks the new scale up automatically.
+pass-through. Translation and rotation of the moved frame are carried
+through untouched, and so is its shear unless `rigExec:blendShear` is on
+with all three scale axes governed; downstream skinning reading the joint
+at `final` picks the new scale up automatically.
 
 ## Wiring
 
@@ -82,7 +83,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -197,7 +199,9 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 
@@ -237,7 +241,7 @@ python docs/render_media.py --page scale_constraint
 
 ## Tips
 
-- `inputs:scaleOffset` is ADDITIVE: its identity is (0, 0, 0), not (1, 1, 1), because the kernel computes blended scale + offset (`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:945).
+- `inputs:scaleOffset` is ADDITIVE: its identity is (0, 0, 0), not (1, 1, 1), because the kernel computes blended scale + offset (`RigExecApplyScaleConstraint`, libs/rigExecMath/solvers.cpp:1203).
 - Only the scale channel is honored — authoring `inputs:translationOffset`, `inputs:rotationOffset`, any `inputs:affectTranslation*`/`inputs:affectRotation*`, or `rigExec:rotationOrder` on a scale constraint is a compile error, never a silent no-op.
 - Several sources average, they do not multiply: two equally weighted sources at scale 2 and 1 land the target at 1.5. Use `inputs:sourceWeights` to bias between them.
 

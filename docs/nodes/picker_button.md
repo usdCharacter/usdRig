@@ -28,14 +28,15 @@ a backdrop, a silhouette, a label. Everything else on the class is
 appearance and visibility: outline, colours, text, draw order, and
 which half of an IK/FK pair a button belongs to.
 
-One button. Selects the prims in rigExec:picker:controls, or
-edits the attribute in rigExec:picker:attribute, or neither -- a
-button with no target of either kind is a decoration: the body
-silhouette, a backdrop, a label.
+One button. Selects the prims in rigExec:picker:controls,
+edits the attribute in rigExec:picker:attribute, runs a
+rigExec:picker:command, or none of these -- such a button is a
+decoration: the body silhouette, a backdrop, a label.
 
-LIVENESS is the resolve result, not a flag. A relationship whose
-targets have all gone is an empty target list, and the panel draws
-that button as unavailable. USD remaps the targets through renames
+LIVENESS is the resolve result, not a flag. A button is live when
+every prim it targets is a RigExecControl or RigExecJoint of the
+picker's rig, and the panel does not draw a button that is not. USD
+remaps the targets through renames
 and reparents on its own, which a path string in a sidecar file
 cannot do, so a control that MOVES keeps its button and only a
 control that is DELETED loses one.
@@ -48,17 +49,19 @@ a flag: `pickerScene` turns the relationships into target paths and the
 model marks a selecting or switching button live only when every target —
 or, for a switch, the prim owning the attribute — is a `RigExecControl` or
 `RigExecJoint` inside the rig named by `rigExec:picker:rig`, or anywhere on
-the stage when the picker names none (`pickerModel.py:89-98`,
-`pickerScene.py:235-243`, `:246-266`); a command button the panel
-implements is live on its own (`pickerModel.py:89-90`). A button that
+the stage when the picker names none (`pickerModel.py:107-116`,
+`pickerScene.py:345-353`, `:356-378`); a command button the panel
+implements is live on its own (`pickerModel.py:107-108`). A button that
 resolves to nothing is not drawn at all, though `coverage()` still counts
-it for the panel's status line (`pickerModel.py:222-223`, `:296-306`,
-`pickerUI.py:804-817`). A click selects the targets in order, or cycles the
-switch's attribute one step and writes it back as a float
-(`pickerUI.py:819-838`, `:984-998`); the hit test is the button's bounding
-box rather than its drawn outline, and `ui:size` is clamped up to 4 units
-so a fingertip button is still catchable (`pickerModel.py:23`, `:41-42`,
-`:240-262`).
+it for the panel's status line (`pickerModel.py:241-242`, `:344-354`,
+`pickerUI.py:1087-1100`). A click selects the targets in order, or steps
+the switch's attribute to its next label and writes it back as a float,
+matching the pose first when the switch drives an IK/FK limb or a space
+switch; a switch with more than two labels opens a menu of them instead
+(`pickerUI.py:1102-1160`, `:1302-1338`, `:1439-1464`); the hit test is
+the button's bounding box rather than its drawn outline, and `ui:size` is
+clamped up to 4 units so a fingertip button is still catchable
+(`pickerModel.py:23`, `:57-58`, `:288-310`).
 
 ## Wiring
 
@@ -82,13 +85,17 @@ Top-left corner in panel units.
 
 *Type:* `uniform float2`. *Default:* `(10, 10)`.
 
-Width and height in panel units.
+Width and height in panel units, at least 4. Clicks and
+marquees test this box, not the drawn outline or ui:rotation.
 
 #### `ui:depth`
 
 *Type:* `uniform float`. *Default:* `0`.
 
-Painter's-algorithm order; higher draws later, on top.
+Painter's-algorithm order; higher draws later, on top, and
+a click finds the topmost. Equal depths keep prim order, and
+widgetControl buttons draw above every other shape whatever their
+depth.
 
 #### `ui:rotation`
 
@@ -103,33 +110,41 @@ Degrees clockwise about the button's own centre.
 Valid values: `rectangle`, `roundedRectangle`, `circle`, `ellipse`, `hexagon`, `triangle`, `trapezoid`, `polygon`, `bezier`, `widgetControl`, `slider`.
 
 Outline. `polygon` reads ui:polygon, `bezier` reads
-ui:bezier, and every other token is generated from ui:size.
+ui:bezier, and every other token is generated from ui:size;
+`circle` fills that box like `ellipse`. `widgetControl` draws as a
+rectangle, and `slider` is not drawn.
 
 #### `ui:roundness`
 
 *Type:* `uniform float`. *Default:* `0`.
 
-Corner radius fraction for roundedRectangle, 0 to 1.
+Corner radius in panel units for rectangle, widgetControl,
+polygon and trapezoid outlines. roundedRectangle uses at least 35%
+of the shorter side.
 
 #### `ui:polygon`
 
 *Type:* `uniform float2[]`. *Default:* `[]`.
 
-Outline vertices for ui:shape = polygon, panel units.
+Outline vertices for ui:shape = polygon, in panel units
+relative to ui:position.
 
 #### `ui:bezier`
 
 *Type:* `uniform float2[]`. *Default:* `[]`.
 
-Cubic control points for ui:shape = bezier, THREE per
-knot -- on-curve point, out-tangent, in-tangent -- flattened,
-with each span completed by the following knot's in-tangent.
+Cubic control points for ui:shape = bezier, in panel
+units relative to ui:position, THREE per knot -- on-curve point,
+out-tangent, in-tangent -- flattened, with each span completed by
+the following knot's in-tangent. The last knot closes back to the
+first.
 
 #### `ui:fill`
 
 *Type:* `uniform color4f`. *Default:* `(0.5, 0.5, 0.5, 1)`.
 
-Interior colour, linear, alpha premultiplied by the view.
+Interior colour, drawn as authored with no colour-space
+conversion and with straight (not premultiplied) alpha.
 
 #### `ui:stroke`
 
@@ -147,7 +162,8 @@ Outline width in panel units.
 
 *Type:* `uniform string`. *Default:* `""`.
 
-Label drawn inside the button.
+Label drawn inside the button. A command button with no
+text is labelled with its command.
 
 #### `ui:fontSize`
 
@@ -189,28 +205,39 @@ distinct from its label: `Foot` is drawn in ui:textColor and the
 
 Valid values: `top`, `bottom`, `left`, `right`.
 
-Which edge a trapezoid or triangle points at.
+Which edge a triangle points at. On a trapezoid, `top` and
+`bottom` let the slopes inset the horizontal edges and `left` and
+`right` the vertical ones; the slope signs choose which edge.
 
 #### `ui:slopeLeft`
 
 *Type:* `uniform float`. *Default:* `0`.
 
-Trapezoid left-edge inset, as a fraction of ui:size width.
+Trapezoid inset at the left end, in panel units. With
+ui:direction `top` or `bottom`, a positive value insets the top
+edge and a negative one the bottom edge; with `left` or `right` it
+shortens the left edge from the top (positive) or the bottom
+(negative).
 
 #### `ui:slopeRight`
 
 *Type:* `uniform float`. *Default:* `0`.
 
-Trapezoid right-edge inset, as a fraction of ui:size width.
+Trapezoid inset at the right end, in panel units. With
+ui:direction `top` or `bottom`, a positive value insets the top
+edge and a negative one the bottom edge; with `left` or `right` it
+shortens the right edge from the top (positive) or the bottom
+(negative).
 
 #### `ui:alternate`
 
 *Type:* `uniform bool`. *Default:* `false`.
 
 This button shares a slot with another and is the one
-hidden at rest. Where rigExec:picker:mode is authored that is the
-authority and this is ignored: a stacked IK/FK pair is a mode
-pair, not an alternate.
+the panel hides. Where rigExec:picker:mode and
+rigExec:picker:modeDial are authored they are the authority and
+this is ignored: a stacked IK/FK pair is a mode pair, not an
+alternate.
 
 #### `rigExec:picker:command`
 
@@ -219,7 +246,11 @@ pair, not an alternate.
 A named action this button runs, instead of selecting or
 editing. The panel implements a fixed set and ignores the rest, so
 a picker may carry actions a given host cannot perform without
-those buttons pretending to work.
+those buttons pretending to work. The usdview panel implements
+`zero_ctrls`, which clears the authored pose channels of the
+selected controls and joints (every control when none is
+selected), and `ctrl_vis`, a checkbox that hides or shows the
+rig's controls with session-layer visibility opinions.
 
 #### `rigExec:picker:controls`
 
@@ -240,10 +271,12 @@ dial. Mutually exclusive with rigExec:picker:controls.
 
 *Type:* `uniform token[]`. *Default:* `[]`.
 
-Labels for the values rigExec:picker:attribute cycles
-through, low to high, e.g. ["IK", "FK"]. The button shows the
-label matching the attribute's CURRENT value; it never caches the
-value it was authored with.
+Labels for the values rigExec:picker:attribute takes:
+label i names value i, e.g. ["FK", "IK"] on an IK/FK blend. The
+button shows the label matching the attribute's CURRENT value,
+rounded; it never caches the value it was authored with. A click
+writes the next label's value, or opens a menu when there are more
+than two.
 
 #### `rigExec:picker:mode`
 
@@ -251,9 +284,11 @@ value it was authored with.
 
 Valid values: `, `, `, `.
 
-Show this button only while its limb is in this mode.
-Empty means always shown, which is right for anything that is not
-half of an IK/FK pair.
+Show this button only while its limb is in this mode, as
+read from rigExec:picker:modeDial: `ik` at 1, `fk` at 0, and both
+halves show in between. Empty, or no modeDial target, means always
+shown, which is right for anything that is not half of an IK/FK
+pair.
 
 #### `rigExec:picker:modeDial`
 
@@ -280,9 +315,9 @@ bin\launch_usdview.bat docs\examples\picker.usda
 
 ## Tips
 
-- Leave `ui:text` unauthored on a command button. The panel falls back to the command's own title (`Zero Ctrls`) and then dispatches on that LABEL, so a friendlier caption makes the button inert (`pickerScene.py:130-131`, `pickerModel.py:28`, `:77-80`).
-- Author a switch's attribute on a control or a joint — a custom `avars:ikfk` on a params control, connected onward to the blend — because an attribute on a solver prim fails the liveness test and the button is never drawn (`pickerModel.py:91-93`, `:222-223`).
-- `rigExec:picker:mode` is ignored without `rigExec:picker:modeDial`, and a dial resting between 0.001 and 0.999 counts as neither mode, so both halves stay reachable mid-handover (`pickerScene.py:140-142`, `pickerUI.py:950-956`).
+- Leave `ui:text` unauthored on a command button. The panel falls back to the command's own title (`Zero Ctrls`) and then dispatches on that LABEL, so a friendlier caption makes the button inert (`pickerScene.py:154-155`, `pickerModel.py:28`, `:94-97`).
+- Author a switch's attribute on a control or a joint — a custom `avars:ikfk` on a params control, connected onward to the blend — because an attribute on a solver prim fails the liveness test and the button is never drawn (`pickerModel.py:109-111`, `:241-242`).
+- `rigExec:picker:mode` is ignored without `rigExec:picker:modeDial`, and a dial resting between 0.001 and 0.999 counts as neither mode, so both halves stay reachable mid-handover (`pickerScene.py:164-166`, `pickerUI.py:1239-1245`).
 
 ## See also
 

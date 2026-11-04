@@ -21,7 +21,7 @@ On this page:
 
 ![Float Math Mover effect](../gifs/float_math_mover.gif)
 
-The property domain's calculator: it revises an exact float attribute
+The property domain's calculator: it revises an exact float or double attribute
 — a blendshape weight, a blend factor, an envelope — instead of geometry.
 The everyday job is unit plumbing. A channel arrives in whatever range the
 department upstream authored it in, and `remap` divides it down into the
@@ -39,18 +39,23 @@ foot's landing beside the path. See
 [Paths and walking](../concepts/paths.md).
 
 Statically typed add, multiply, clamp, remap, blend, curve,
-quantize, or path over an exact float property target (spec section
-4.1).
+quantize, or path over one exact float property target, or a double one
+such as a control's avar, which the mover computes in float.
 
 The revision is r = op(incoming), then the common MoverAPI envelope mixes
 it back over the incoming value. Zero is a pass-through and one applies
 the operation outright -- the same rule every mover follows.
 
+add and multiply apply inputs:value, clamp reads inputs:min and
+inputs:max, and blend returns inputs:value, so the envelope mixes toward
+it.
+
 remap normalizes from [inputs:min, inputs:max] to [0, 1] and does NOT
 clamp; compose a clamp mover after it to bound the result.
 
 curve maps the incoming value through inputs:keys, piecewise linear
-between keys and extrapolated linearly past the first and last key.
+between keys (a cubic Hermite when inputs:tangents is authored) and
+extrapolated linearly past the first and last key.
 
 quantize rounds the incoming value down to inputs:min + k * inputs:value
 for the largest integer k that does not exceed it: a stair of step
@@ -80,7 +85,7 @@ parent after its children, so the last sibling listed runs first.
 
 | Relationship | Points to | Required |
 |---|---|---|
-| `rigExec:moves` | Exact float property to revise; exactly one. | yes |
+| `rigExec:moves` | Exact float or double property to revise; exactly one. | yes |
 | `rigExec:path` | The path operation's curve: one UsdGeomBasisCurves prim holding one linear, bezier, bspline or catmullRom curve, nonperiodic or pinned. | for path |
 
 ## Parameters
@@ -107,7 +112,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 

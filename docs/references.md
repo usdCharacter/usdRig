@@ -78,10 +78,10 @@ The shared, stage-free kernels implement the selected mathematical behavior;
 Blender-generated fixture coordinates test the results independently.
 
 Newly authored surface, Delta Mush, or lattice settings require updated runtime
-consumers. Binary exports mark these semantics using wire revision aliases
-19 (SurfaceProject), 20 (DeltaMush), and 21 (Lattice). Current readers normalize
-these to the existing operations; older readers reject the unsupported opcode.
-Exports using only legacy settings retain their original operation codes.
+consumers. Binary exports carry these settings on the existing SurfaceProject,
+DeltaMush and Lattice revisions from format 21
+(`RigExecFormatExtendedSettingsVersion` in `libs/rigExecBinary/format.h`); a
+format-20 file holds none of them and plays the legacy deformer.
 USD assets must likewise be opened with the updated schema and runtime.
 
 

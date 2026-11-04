@@ -212,8 +212,9 @@ parallel lanes. Many ordinary calls take a lock and serialize those lanes:
 - A function-local `static` runs a thread-safe initialization guard. Library
   calls hide some: `TfToken::GetString()` on an empty token reads one, and
   `SdfPath::IsPrimPath()` may.
-- `RIGEXEC_PROFILE_SCOPE` takes three mutexes even when recording is off.
-  Steps store their own clock reads and the epilogue replays them.
+- `RIGEXEC_PROFILE_SCOPE` takes the profiler's event mutex for every
+  interval it records while profiling is on. Steps never open one: they
+  store their own clock reads and the epilogue replays them.
 - Posting a Tf diagnostic (`TF_WARN`, `TF_CODING_ERROR`, a failing
   `TF_VERIFY`), `TF_DEBUG` output, and `printf` all lock. On MSVC,
   constructing any iostream, `std::ostringstream` included, takes the global
@@ -305,8 +306,9 @@ Linking rules:
 ### Windows and Git Bash
 
 - Git Bash and PowerShell have no MSVC environment, so `cmake --build` fails
-  as soon as anything compiles. `bin/test_changed.sh --run` and the
-  `usdview` helpers rebuild first and then report "build failed". Build with
+  as soon as anything compiles. `bin/test_changed.sh --run` stops at its
+  build step, and the `usdview` helpers rebuild first and then report
+  "build failed". Build with
   `cmd //c 'call bin\_vcvars.bat && cmake --build build --target <targets>'`
   from Git Bash (`cmd /c "..."` from PowerShell), then run the ctest line.
 - Git Bash rewrites an argument or environment value that starts with `/`
@@ -335,10 +337,16 @@ with `python docs/build_pages.py`. It rewrites `docs/nodes/*.md` and
 `.github/workflows/docs.yml` with `--strict`; its `site/` output is ignored.
 Keep Markdown links relative and verify their targets after moving files.
 
-Use short functional comments for contracts, numerical conventions, ownership,
-and non-obvious constraints. Omit change diaries, issue transcripts, product
-comparisons, and comments that repeat the code. Preserve copyright, license,
-source attribution, and tooling directives.
+Keep code comments to the critical minimum. Add one only when a reader would
+otherwise misread or break the code: a contract or invariant, a numerical or
+coordinate convention, ownership or threading rules, a non-obvious
+constraint, or a pointer to a cited source. Keep it to a line or two. Do not
+narrate what the code does, restate names or types, or explain routine
+steps, and omit change diaries, issue transcripts, and product comparisons.
+When a change makes an existing comment wrong or unnecessary, fix or delete
+it. Before reporting a change, reread every comment it adds and remove any
+that is not critical. Preserve copyright, license, source attribution, and
+tooling directives.
 
 Describe behavior in project terms. Cite public algorithm sources in
 `docs/references.md` and link them from affected kernels or guides. Never

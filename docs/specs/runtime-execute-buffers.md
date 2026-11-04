@@ -1,9 +1,8 @@
 # Execute publication buffers
 
-A successful `RigExecRuntimeReader::Execute` used to copy every moved point
-array and every resolved weight field out of the retained buffer into the
-vectors `GetPoints` and `GetWeightFields` returned. It now shares those
-buffers.
+A successful `RigExecRuntimeReader::Execute` shares every moved point array
+and every resolved weight field it retains with the views `GetPoints` and
+`GetWeightFields` return. It does not copy their elements.
 
 `RigExecRuntimePoints::points` is a `RigExecSharedArray<RrVec3f>`.
 `RigExecRuntimeWeightField::weights` is a `RigExecSharedArray<float>`.
@@ -19,8 +18,8 @@ Copying either view copies the pointer, not the elements.
 Bit-exact checks `memcmp` `data()`. They do not `memcmp` the view object,
 and they do not use `operator==` where a NaN payload or a signed zero matters.
 
-`Execute` still clears its publication maps after handing out the shares.
-The chain keeps its own retainer. The geometry step still copies points into
+`Execute` clears its publication maps after handing out the shares.
+The chain keeps its own retainer. The geometry step copies points into
 a spare and then swaps that spare into the chain; that copy builds the next
 snapshot. While a share of the published buffer is alive, the swap does not
 reuse that buffer and does not change its bytes. `Write()` copy-on-writes in
@@ -37,11 +36,11 @@ An empty publication shares one immutable empty vector. It is not a null view.
 ## usdRig_godot
 
 This repository does not modify the sibling `usdRig_godot` tree. Playback
-there that reads `GetPoints()` or `GetWeightFields()` after `Execute` needs
-these updates:
+there that reads `GetPoints()` or `GetWeightFields()` after `Execute`
+follows these rules:
 
-* Stop deep-copying `points` and `weights` inside the success path. The
-  runtime no longer does that copy.
+* Do not deep-copy `points` and `weights` inside the success path; the views
+  already share the published buffers.
 * A `std::vector<RrVec3f>` or `std::vector<float>` member does not bind to
   the view. Read `points.Vector()` or `weights.Vector()` for the frame being
   drawn. `data()`, `size()`, `operator[]`, and range-for on the view itself

@@ -1,13 +1,13 @@
 #usda 1.0
 (
     """
-    RigExec schema domain (spec section 4).
+    RigExec schema domain.
 
     Granular, composition-native rig object model: controls, joints,
     transform providers, solvers, constraints, movers, reusable weight objects, and
     blend inputs/samples each receive independent layer opinions. Movers
     author rel rigExec:moves naming the exact prim/property they modify;
-    the composed Movers namespace supplies operation order.
+    the composed rig namespace orders movers that write the same target.
     """
     subLayers = [
         @usd/schema.usda@,
@@ -36,9 +36,11 @@ class "RigExecControlAPI" (
         string className = "ControlAPI"
         token apiSchemaType = "singleApply"
     }
-    doc = """Channel semantics and computational limits for animator-authored
-    controls. Keyability, mirroring, presentation, and manipulation metadata
-    are deferred (spec section 4.1)."""
+    doc = """Channel role for animator-authored controls: rigExec:channelRole
+    is pose, switch, or tweak. Authoring tools set it; evaluation, imaging,
+    and the bundled editors do not read it. Mirroring is declared with
+    avars:rotationSign on the control. Keyability, presentation, and
+    manipulation metadata are not part of this API."""
 )
 {
     uniform token rigExec:channelRole = "pose" (
@@ -55,7 +57,7 @@ class "RigExecMoverAPI" (
     doc = """Marks an operation for hierarchy-ordered compilation. rigExec:moves
     targets the exact prim or property the operation modifies; target-list
     order is non-semantic. The mover prim's position in the composed USD
-    namespace supplies operation order (spec sections 4.1-4.2).
+    namespace orders it against other movers that write the same target.
 
     Every mover has one common envelope. With no rigExec:weightObject target,
     inputs:defaultWeight broadcasts over every logical target element. When a
@@ -74,7 +76,8 @@ class "RigExecMoverAPI" (
         doc = """Normalized common mover envelope in [0, 1]. With no bound
         rigExec:weightObject it broadcasts over every logical element: zero
         passes the incoming value through bit-for-bit and one applies the
-        mover's full-strength result."""
+        mover's full-strength result. A non-finite value or one outside
+        [0, 1] passes the incoming value through with a diagnostic."""
     )
     rel rigExec:weightObject (
         doc = """Optional compatible total weight field, at most one target.
@@ -101,8 +104,7 @@ class RigExecRoot "RigExecRoot" (
         string className = "Root"
     }
     doc = """Character root: partition and namespace root for control,
-    joint, and mover discovery (spec section 4.1). Publishes
-    computeDiagnostics. It is Imageable (but deliberately not Xformable) so
+    joint, and mover discovery. It is Imageable (but deliberately not Xformable) so
     bounds from guide-only controls and joints propagate through the rig root
     to the enclosing asset for host camera framing.
 
@@ -117,8 +119,8 @@ class RigExecRoot "RigExecRoot" (
     uniform token rigExec:partition = ""
     uniform asset rigExec:asset = @@ (
         doc = """Baked-playback selector: when set, hosts that can play a
-        .rigexec file (usdview through rigExecImaging, the Godot player)
-        answer this rig from the binary instead of evaluating it, and when
+        .rigexec file (usdview through rigExecImaging) answer this rig from
+        the binary instead of evaluating it, and when
         unset the rig evaluates live. The path resolves like any asset
         attribute -- relative to the layer that authors it -- and names a
         single .rigexec file with no sidecar.
@@ -148,9 +150,10 @@ class RigExecControl "RigExecControl" (
     on the avars (or an authored/connected posed:space). Channel
     semantics live on the applied
     RigExecControlAPI. Publishes computePointFrame/computeRestFrame/
-    computeMatrix (spec section 4.1). A synthesized viewport guide can be
-    drawn at the posed frame origin (see guide:shape), purpose guide, the
-    same synthesis-only style as the RigExecJoint guides."""
+    computeMatrix. A synthesized viewport guide can be drawn at the posed
+    frame origin (see guide:shape) in the same synthesis-only style as the
+    RigExecJoint guides; it carries the control's resolved purpose, which
+    stays `default` unless authored."""
 )
 {
     rel rigExec:channelSpaces (
@@ -183,7 +186,7 @@ class RigExecControl "RigExecControl" (
     uniform token guide:shape = "circle" (
         allowedTokens = ["sphere", "circle", "box", "cube", "diamond", "pyramid", "custom"]
         doc = """Guide primitive synthesized at the control's posed frame
-        origin (spec section 10.3 extension), exactly parallel to the
+        origin (docs/specs/control-guides.md), exactly parallel to the
         RigExecJoint sphere/cone guides. The built-in shapes are unit-sized and
         centered at the origin: sphere and circle have radius 1, box and
         cube span +-1, diamond (octahedron) has vertices at +-1 on each
@@ -198,7 +201,7 @@ class RigExecControl "RigExecControl" (
         doc = "Local vertices of a custom wire guide, placed by the evaluated control frame."
     )
     int[] guide:curveVertexCounts = [] (
-        doc = "Consecutive polyline sizes for guide:shape=custom. Each is at least two; their sum must equal guide:points size."
+        doc = "Consecutive polyline sizes for guide:shape=custom. Each is at least two and their sum must equal guide:points size; otherwise no guide is drawn."
     )
     uniform token guide:planeNormal = "Y" (
         allowedTokens = ["X", "Y", "Z"]
@@ -209,23 +212,23 @@ class RigExecControl "RigExecControl" (
         them in. A planar guide drawn in a different plane from its
         curve shows edge-on, as a sliver of the right size.
 
-        Y is the default and reproduces the historical drawing exactly,
-        so a control that does not author this is unchanged."""
+        Y is the default."""
     )
     uniform token guide:drawMode = "wire" (
         allowedTokens = ["wire", "geometry"]
         doc = """wire draws the guide as curves, widthed by
-        guide:wireWidth. geometry draws solid shapes instead."""
+        guide:wireWidth. geometry draws solid shapes instead; custom draws
+        only as wire, so custom with geometry draws no guide."""
     )
     double guide:wireWidth = 0.05 (
-        doc = """Width authored onto the wire curves, in the LOCAL
+        doc = """Width of the drawn wire guide curves, in the LOCAL
         pre-scale units of the unit shape -- so the drawn width tracks the
         evaluated control-frame scale multiplied by guide:scaleX/Y/Z along
         with the rest of the shape. A non-uniform effective scale thickens
         the curve anisotropically exactly as it stretches the points.
 
-        Zero or negative authors no widths at all and falls back to
-        hairline rendering; geometry draw mode ignores this entirely.
+        Zero, negative, or non-finite publishes no widths and falls back
+        to hairline rendering; geometry draw mode ignores this entirely.
 
         It has a default rather than being left unauthored because
         usdview picks with a single-pixel window: an unwidthed hairline
@@ -312,20 +315,22 @@ class "RigExecXformable" (
     }
     doc = """An abstract animation interface for an animatable coordinate
     space, following the attribute layout of OpenExec's IrXformable:
-    matrix4d local-to-world rest/default/posed/parent spaces and scalar
-    translation/rotation avars (rotations in degrees). Unlike IrXformable
+    matrix4d spaces -- rest:space relative to the namespace frame
+    provider's rest, local-to-world default/posed/parent spaces -- and
+    scalar translation/rotation avars (rotations in degrees). Unlike IrXformable
     it is Boundable, adds avars:rotationSign, defaults
     avars:unitScaleFactor to 1, and its avars pose it directly rather than
     through a separate controller. Concrete controls and joints add local scale
     avars; volume weights deliberately do not because their shape comes from
-    inputs:scaleX/Y/Z. For a joint, the posed space comes from the compiler's
-    private solver binding (view-free extraction: one element of the
-    source solver's computePointFrameArray); a connected or
+    their own shape inputs. For a joint a solver writes, the posed space
+    comes from the compiler's solver binding (one element of that solver's
+    computePointFrameArray, revised by any constraint above it in the
+    joint's stack); a connected or
     non-identity authored posed:space is otherwise used directly;
     otherwise the xformable follows its namespace-parent xformable's posed
     space with its local rest offset and avars applied. Rest spaces are
     always orthonormalized (per Ir); stretch survives because the
-    extracted frame carries posed/rest axis length ratios. Point frames (spec section 5) remain the engine's
+    extracted frame carries posed/rest axis length ratios. Point frames remain the engine's
     internal value type: xformables publish
     computePointFrame/computeRestFrame/computeMatrix derived from these
     spaces.
@@ -341,10 +346,12 @@ class "RigExecXformable" (
     The xformOps that arrive with Xformable are NOT a transform authority
     here. rest:space plus the avars remain the only one (the Ir
     alignment), and authoring ops on a provider would create a second,
-    silently-ignored one; the compiler warns when it finds any. For the
-    same reason the computed extent bakes the posed frame into
-    asset-relative space, which is correct exactly while no Xformable sits
-    between the asset root and the provider -- also a compiler warning."""
+    silently-ignored one; the compiler warns when it finds any. A plain
+    Xformable between the asset root and the provider is supported:
+    evaluation composes it into the published frames, and the computed
+    extent divides out every transform UsdGeomBBoxCache re-applies (that
+    Xformable and any ops on the provider itself), so the box stays on the
+    drawn guide."""
 )
 {
     double rest:tx = 0
@@ -354,7 +361,7 @@ class "RigExecXformable" (
     double rest:ry = 0
     double rest:rz = 0
     matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        doc = "Bind transform relative to the namespace frame provider's rest frame; always orthonormalized. A provider with no RigExec ancestor resolves against identity, so its rest:space is its local-to-world bind transform."
+        doc = "Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized. A plain Xformable between the provider and that frame provider is composed in after it. A provider with no RigExec ancestor and no such Xformable resolves against identity, so its rest:space is its local-to-world bind transform."
     )
     double default:tx = 0
     double default:ty = 0
@@ -371,9 +378,9 @@ class "RigExecXformable" (
         identity value selects that fallback."""
     )
     matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        doc = """Final local-to-world transform. For a joint this is
-        supplied by the compiler's private solver binding (view-free
-        extraction); it may also be authored or
+        doc = """Final local-to-world transform. For a joint a solver
+        writes, this is supplied by the compiler's solver binding; it may
+        also be authored or
         connected directly. Unwired xformables follow the parent chain
         with rest offsets and avars."""
     )
@@ -495,10 +502,10 @@ class RigExecJoint "RigExecJoint" (
 ################################################################
 # Solvers
 #
-# View-free extraction: every solver owns an ordered rigExec:joints list; the compiler
-# binds each listed joint to one aggregate element in the
-# derived layer (list position = aggregate element index; length = sample
-# count). The joint self-extracts its posed frame from the solver's
+# Every solver owns an ordered rigExec:joints list; the compiler binds each
+# listed joint to one aggregate element in the compiled program (list
+# position = aggregate element index unless rigExec:jointElements remaps
+# it). The joint reads its posed frame from the solver's
 # computePointFrameArray. No per-element view prim and no connections.
 ################################################################
 
@@ -512,7 +519,7 @@ class RigExecFkChain "RigExecFkChain" (
     }
     doc = """Applies control frames/offsets to a rest hierarchy. Publishes
     aggregate computePointFrameArray; addressable joint providers publish
-    scalar frames (spec section 4.1)."""
+    scalar frames."""
 )
 {
     uniform token purpose = "guide" (
@@ -530,13 +537,13 @@ class RigExecFkChain "RigExecFkChain" (
     )
 
     rel rigExec:controls (
-        doc = "Ordered chain controls (parents resolved via rigExec:parent)."
+        doc = "Ordered chain controls, root to tip: element i composes onto element i-1 (see rigExec:controlSpace)."
     )
     uniform token rigExec:segmentScale = "none" (
         allowedTokens = ["none", "toChild"]
-        doc = """toChild: a joint whose next element is its child scales
-        along the bone to it by the bone's posed length over its rest
-        length, so a child control pushed outward stretches the joint above
+        doc = """toChild: each joint scales along the bone to the next
+        element (the chain is ordered root to tip) by the bone's posed
+        length over its rest length, so a child control pushed outward stretches the joint above
         it rather than only moving the one below."""
     )
     uniform token rigExec:controlSpace = "world" (
@@ -570,8 +577,8 @@ class RigExecFkChain "RigExecFkChain" (
         W_i = S . A_i for every i, since there each control's delta is
         already the whole chain map).
 
-        Unauthored is the historical behaviour, bit for bit: the chain is
-        an ABSOLUTE world solve that ignores whatever its joints hang from.
+        Unauthored, the chain is an ABSOLUTE world solve that ignores
+        whatever its joints hang from.
         That is what this relationship exists to fix. Measured on a
         synthetic `a -> b -> c` with an FkChain over `[b, c]` only: posing
         `a` with avars:rz = 90 left b at (10,0,0) and c at (20,0,0) -- they
@@ -582,14 +589,13 @@ class RigExecFkChain "RigExecFkChain" (
         Nesting the chain's first control under the thing it should follow
         is NOT a substitute when that thing is solver-posed: a
         solver-posed joint is an absolute override and namespace pose does
-        not propagate through it (see rigEvaluator's hierarchicalProviders
-        rule), and nesting under the arm's FK control follows in FK and
+        not propagate through it, and nesting under the arm's FK control follows in FK and
         stands still in IK. Pointing this relationship at the joint the
         chain hangs from -- the wrist, claimed by the arm's IK/FK blend --
         follows in BOTH.
 
         The target is an ordinary frame input with positional read
-        semantics (spec section 4.2): the chain reads the version
+        semantics: the chain reads the version
         standing at its own place in the pose stack, so the chain must
         execute AFTER whatever poses the target -- later in the stack,
         i.e. earlier in the file, since siblings execute bottom-first.
@@ -605,9 +611,8 @@ class RigExecFkChain "RigExecFkChain" (
         doc = """Who names the start provider when rigExec:startFrame has no
         authored targets.
 
-        `none` (the default): nobody. Unauthored is the historical
-        behaviour, bit for bit -- an absolute solve that ignores
-        whatever the joints hang from.
+        `none` (the default): nobody. The chain is an absolute solve
+        that ignores whatever the joints hang from.
 
         `parent`: the compiler derives the provider from the JOINT
         HIERARCHY, structurally, with no name matching of any kind: the
@@ -634,9 +639,8 @@ class RigExecFkChain "RigExecFkChain" (
         (a reparented joint, a policy edit) re-derives it."""
     )
     rel rigExec:joints (
-        doc = """Ordered output joints this solver poses (view-free
-        extraction). List position is the
-        aggregate element index; length is the effective sample count.
+        doc = """Ordered output joints this solver poses. List position is
+        the aggregate element index; length is the effective sample count.
         The compiler binds each joint to one aggregate element
         in the compiled program."""
     )
@@ -646,12 +650,10 @@ class RigExecFkChain "RigExecFkChain" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -690,15 +692,19 @@ class RigExecTwoBoneIk "RigExecTwoBoneIk" (
         doc = """Delta added to the measured upper length. The upper
         bone is measured from the bound joints' rest positions (root to mid)
         and this offset adjusts it -- zero leaves the measured bone
-        length exact. This is the only control over the upper bone's
-        length: the bone itself is always the measured rest distance."""
+        length exact. There is no absolute length attribute: the bone is
+        the measured rest distance in the space of rigExec:space and
+        rigExec:spaceMatrix, the offset scales with that space, and
+        softDistance multiplies the result by inputs:upperScale."""
     )
     double rigExec:lowerLengthOffset = 0 (
         doc = """Delta added to the measured lower length. The lower
         bone is measured from the bound joints' rest positions (mid to end)
         and this offset adjusts it -- zero leaves the measured bone
-        length exact. This is the only control over the lower bone's
-        length: the bone itself is always the measured rest distance."""
+        length exact. There is no absolute length attribute: the bone is
+        the measured rest distance in the space of rigExec:space and
+        rigExec:spaceMatrix, the offset scales with that space, and
+        softDistance multiplies the result by inputs:lowerScale."""
     )
     uniform token rigExec:stretchPolicy = "uniformSegments" (
         allowedTokens = ["uniformSegments", "softDistance"]
@@ -755,9 +761,9 @@ class RigExecTwoBoneIk "RigExecTwoBoneIk" (
         doc = "Soft-reach fraction of the chain length."
     )
     rel rigExec:joints (
-        doc = """Ordered output joints [root, mid, end] posed by this solve
-        (view-free extraction). Position is the element index; the compiler
-        binds each joint to one aggregate element."""
+        doc = """Ordered output joints [root, mid, end] posed by this solve.
+        Position is the element index; the compiler binds each joint to one
+        aggregate element."""
     )
     rel rigExec:space (
         doc = """The prim whose movement away from its rest defines the
@@ -784,14 +790,14 @@ class RigExecTwoBoneIk "RigExecTwoBoneIk" (
         chain keeps its authored length, so the solve clamps and the limb
         straightens instead of scaling.
 
-        Connect this to the posed space of whatever the rig hangs from --
-        a TRS master, a shot transform -- and the rests are carried into
-        the same space the frames are already in. Identity, the fallback,
-        is exactly the old behaviour, so a rig that connects nothing is
-        unchanged. The matrix is an INPUT rather than a name the solver
-        looks up: which prim defines the space is the asset's business,
-        not this schema's, and a rig with several nested masters connects
-        the one it means."""
+        Name whatever the rig hangs from -- a TRS master, a shot
+        transform -- on rigExec:space rather than connecting this to its
+        posed:space: that space is computed, so the connection reads the
+        unauthored identity. This matrix is an explicit extra factor,
+        composed after rigExec:space's rest-to-posed map; the length
+        offsets and inputs:softDistance ride the same space. Identity, the
+        fallback, measures the rests as authored, so a rig that authors
+        nothing is unchanged."""
     )
     double guide:radius = 1.0 (
         doc = """Radius of the sphere and cone drawn at each aggregate
@@ -799,12 +805,10 @@ class RigExecTwoBoneIk "RigExecTwoBoneIk" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -847,9 +851,9 @@ class RigExecBlendPointFrames "RigExecBlendPointFrames" (
         allowedTokens = ["log", "linear"]
     )
     rel rigExec:joints (
-        doc = """Ordered output joints posed by the blended result (view-free
-        extraction). List position is the element index; the compiler
-        binds each joint to one aggregate element."""
+        doc = """Ordered output joints posed by the blended result. List
+        position is the element index; the compiler binds each joint to one
+        aggregate element."""
     )
     double guide:radius = 1.0 (
         doc = """Radius of the sphere and cone drawn at each aggregate
@@ -857,12 +861,10 @@ class RigExecBlendPointFrames "RigExecBlendPointFrames" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -909,16 +911,14 @@ class RigExecTwistDistribution "RigExecTwistDistribution" (
         allowedTokens = ["minimumEnergy"]
     )
     rel rigExec:joints (
-        doc = """Ordered output joints posed by the distributed twist frames
-        (view-free extraction). The compiler authors each joint's
-        one aggregate element."""
+        doc = """Ordered output joints posed by the distributed twist frames.
+        The compiler binds each joint to one aggregate element."""
     )
     uniform int[] rigExec:jointElements = [] (
         doc = """Optional aggregate element index for each rigExec:joints
         entry (parallel array). When absent/empty, element = list position.
         Lets a joint bind a specific distributed frame (e.g. the middle of
-        an N-frame twist) without listing every element, matching the
-        deleted view's arbitrary-element selection."""
+        an N-frame twist) without listing every element."""
     )
     double guide:radius = 1.0 (
         doc = """Radius of the sphere and cone drawn at each aggregate
@@ -926,12 +926,10 @@ class RigExecTwistDistribution "RigExecTwistDistribution" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -945,9 +943,17 @@ class RigExecRibbon "RigExecRibbon" (
         }
         string className = "Ribbon"
     }
-    doc = """Samples a native UsdGeomBasisCurves.points driver, constructs
-    transported frames, and optionally conforms to a native mesh surface.
-    Publishes computePointFrameArray (spec section 4.1)."""
+    doc = """Samples a native UsdGeomBasisCurves.points driver, read as one
+    nonperiodic cubic uniform B-spline (linear below four points), at
+    rigExec:sampleCount equal arc-length steps and transports a
+    rotation-minimizing frame along it. The rest frames come from the
+    driver's default-time points. Publishes computePointFrameArray; an
+    empty driver or fewer than two samples publishes no frames.
+
+    Sampling is always by arc length with rotation-minimizing transport,
+    whatever rigExec:parameterization and rigExec:frameTransport say.
+    rigExec:startFrame, rigExec:endFrame and rigExec:twistFrames order the
+    solve after any solver they name but supply no value to it."""
 )
 {
     uniform token purpose = "guide" (
@@ -977,9 +983,8 @@ class RigExecRibbon "RigExecRibbon" (
         allowedTokens = ["rotationMinimizing"]
     )
     rel rigExec:joints (
-        doc = """Ordered output joints posed along the ribbon (view-free
-        extraction). The compiler authors each joint's
-        one aggregate element."""
+        doc = """Ordered output joints posed along the ribbon. The compiler
+        binds each joint to one aggregate element."""
     )
     uniform int[] rigExec:jointElements = [] (
         doc = """Optional aggregate element index per rigExec:joints entry
@@ -991,12 +996,10 @@ class RigExecRibbon "RigExecRibbon" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -1010,8 +1013,8 @@ class RigExecSplineIk "RigExecSplineIk" (
         }
         string className = "SplineIk"
     }
-    doc = """Control-driven spline IK for a spine or neck: the counterpart of
-    The spline IK solver as the biped uses it. Three control
+    doc = """Control-driven spline IK for a spine or neck, as the biped uses
+    it. Three control
     frames (root, mid, end) shape an open degree-2 four-CV B-spline; the
     ordered rigExec:joints chain is laid along it by arc length, each joint
     aims +X at its successor with its rest up carried by the minimal
@@ -1059,8 +1062,8 @@ class RigExecSplineIk "RigExecSplineIk" (
         doc = "Control carrying the curve end (cv2, cv3) and the end twist."
     )
     rel rigExec:joints (
-        doc = """Ordered chain, root to tip, posed by this solve (view-free
-        extraction). The chain IS the solver's cardinality: it produces
+        doc = """Ordered chain, root to tip, posed by this solve. The chain
+        IS the solver's cardinality: it produces
         exactly one frame per entry, and the rest CVs and segment spacing
         are measured from these joints' rest frames on every evaluation."""
     )
@@ -1078,9 +1081,9 @@ class RigExecSplineIk "RigExecSplineIk" (
     uniform token rigExec:restLength = "curve" (
         allowedTokens = ["curve", "chain"]
         doc = """What the stretch ratio is measured against. `curve`: the
-        rest curve's arc length, so ratio == 1 at rest (read
-        curveInfo.arcLength; the last joint then overshoots the curve end
-        by the chain/curve difference, absorbed by maintained offsets).
+        rest curve's arc length, so ratio == 1 at rest (the last joint
+        then overshoots the curve end by the chain/curve difference,
+        absorbed by maintained offsets).
         `chain`: the sum of rest segment lengths, so the chain spans the
         curve exactly."""
     )
@@ -1132,12 +1135,10 @@ class RigExecSplineIk "RigExecSplineIk" (
         including the rule that zero or negative draws no guides at all,
         which is how a solver's diagnostics are turned off.
 
-        Without it the elements are stuck at Hydra's fallback radius of
-        1.0. That is proportionate on an asset authored at tens of units
-        and several times the size of the whole character on one authored
-        at one unit -- the joints were given this knob for exactly that
-        reason and the aggregate solvers were not, so turning guide
-        display on for a small asset buried it in solver geometry."""
+        Without it the elements draw at Hydra's fallback radius of 1.0,
+        which is proportionate on an asset authored at tens of units and
+        several times the size of the whole character on one authored at
+        one unit."""
     )
     color3f guide:displayColor = (0.3, 0.6, 1.0)
     float guide:displayOpacity = 0.5
@@ -1145,8 +1146,9 @@ class RigExecSplineIk "RigExecSplineIk" (
         doc = """The prim whose movement away from its rest defines the
         space this chain is measured in -- normally a TRS master.
 
-        The spline places joint i at `arcLength / restArcLength` along the
-        posed curve. The curve is posed and the rest is not, so scaling
+        The spline places each joint at its rest arc spacing times
+        `arcLength / restArcLength` along the posed curve. The curve is
+        posed and the rest is not, so scaling
         whatever the rig hangs from doubles the ratio and the solve reads
         a pure scale as a 2x STRETCH: the chain still spans the curve, but
         every stretch-driven effect -- volume preservation, twist
@@ -1251,7 +1253,9 @@ class "RigExecSourceConstraint" (
     float[] inputs:sourceWeights = [] (
         doc = """Per-source weights parallel to rigExec:sources. An empty
         array gives every source equal, full weight. A non-empty array must
-        have exactly one entry per source."""
+        have exactly one entry per source. Weights are relative: the sources
+        mix by weight over their total, and each must be finite and not
+        negative."""
     )
 }
 
@@ -1276,8 +1280,8 @@ class RigExecAimConstraint "RigExecAimConstraint" (
 {
     # inputs:rotationOffset and rigExec:rotationOrder are inherited.
     uniform bool rigExec:worldUpRotationOnly = false (
-        doc = """Take the world-up direction from the up object's ROTATION
-        alone, orthonormalizing its frame first. A rotation extracted from a
+        doc = """objectRotationUp: take the world-up direction from the up
+        object's ROTATION alone, orthonormalizing its frame first. A rotation extracted from a
         scaled or sheared frame is not that frame's rotation, so under a
         scaled rig root the derived up can swing far enough to turn an
         aim-constrained foot. Off (the default) extracts the rotation from
@@ -1290,10 +1294,15 @@ class RigExecAimConstraint "RigExecAimConstraint" (
         doc = "Local-space vector used to stabilize roll around the aim direction."
     )
     double3 inputs:worldUpVector = (0, 1, 0) (
-        doc = "World-space up vector used by vector world-up modes."
+        doc = """World-space up direction for the vector world-up mode. For
+        objectRotationUp it is expressed in the up object's axes and turned
+        by that object's rotation, or used as is when no up object is
+        named."""
     )
     rel rigExec:worldUpObject (
-        doc = "Optional single transform provider used by object world-up modes."
+        doc = """Optional single transform provider used by object world-up
+        modes. With none named, objectUp points the up at the scene
+        origin."""
     )
     uniform token rigExec:worldUpType = "none" (
         allowedTokens = ["sceneUp", "objectUp", "objectRotationUp", "vector", "none"]
@@ -1303,18 +1312,25 @@ class RigExecAimConstraint "RigExecAimConstraint" (
 
     # Legacy RigExecAimConstraint contract, preserved for existing assets.
     rel rigExec:aimTarget (
-        doc = "Legacy single aim source; retained for backward compatibility."
+        doc = """Legacy single aim source, read only when rigExec:sources is
+        empty; retained for backward compatibility. With it and no world-up
+        direction, the solve keeps the input frame's up rather than taking
+        the minimum swing."""
     )
     uniform token rigExec:aimAxis = "x" (
         allowedTokens = ["x", "y", "z"]
-        doc = "Legacy positive-axis selector retained for existing assets."
+        doc = """Legacy positive-axis selector retained for existing assets:
+        it selects the aim axis only when inputs:aimVector is unauthored."""
     )
     uniform token rigExec:upPolicy = "preserveInputUp" (
         allowedTokens = ["preserveInputUp"]
         doc = "Legacy up policy retained for existing assets."
     )
     uniform token[] rigExec:preserve = ["origin", "scale"] (
-        doc = "Legacy component-preservation declaration retained for existing assets."
+        doc = """Legacy component-preservation declaration retained for
+        existing assets. Only the default is accepted; any other value is a
+        compile error, and the inputs:affect* masks choose the channels
+        instead."""
     )
 }
 
@@ -1346,7 +1362,15 @@ class RigExecRotationConstraint "RigExecRotationConstraint" (
     doc = """FBX-style rotation constraint. It blends the ordered source
     orientations, applies the authored Euler offset and axis masks, and
     blends the result over the incoming pose by the common MoverAPI
-    envelope."""
+    envelope.
+
+    An optional rigExec:space relationship, not declared by this schema,
+    names one RigExecControl or RigExecJoint, typically the rig's master.
+    The input and every source are then measured with that provider's
+    motion from its default frame removed, the masks run in that space, and
+    the result is carried back, so a partial mask does not discard part of
+    the master's rotation. More than one target is a compile error; a
+    target that is not a control or joint is ignored."""
 )
 {
     # inputs:affectRotation*, inputs:rotationOffset and rigExec:rotationOrder
@@ -1390,7 +1414,11 @@ class RigExecParentConstraint "RigExecParentConstraint" (
     doc = """FBX-style parent constraint. Translation and rotation are
     enabled on every axis by default. Scale is disabled on every axis by
     default to match the FBX runtime default. Offset arrays are parallel to
-    the inherited ordered rigExec:sources relationship."""
+    the inherited ordered rigExec:sources relationship.
+
+    An optional rigExec:space relationship, not declared by this schema,
+    works as on RigExecRotationConstraint: with two or more sources, the
+    mean of their Euler angles is taken in that provider's space."""
 )
 {
     # Parent is the one operator that writes all three groups, and the one
@@ -1430,7 +1458,8 @@ class RigExecSingleChainIkConstraint "RigExecSingleChainIkConstraint" (
         string className = "SingleChainIkConstraint"
     }
     doc = """FBX-style single-chain IK constraint. The first and end joints
-    identify an inclusive namespace joint chain, the effector supplies the
+    identify an inclusive namespace joint chain of at least two joints,
+    which rigExec:moves must name in full; the effector supplies the
     goal transform, and the pole may come from an authored asset-space point
     or an ordered blend of pole-vector objects. It does not use generic
     rigExec:sources."""
@@ -1496,9 +1525,11 @@ class RigExecIkFkMatchConstraint "RigExecIkFkMatchConstraint" (
     revised onto where the joints are; on its IK value the three FK
     controls are. Between the two nothing is revised. Every control under a
     revised one rides with it, as under any constraint, so a foot's roll
-    controls follow the IK control. The revision is a later version of each
-    control: the solvers below this constraint read the controls as their
-    own channels put them, so the limb itself does not move.
+    controls follow the IK control. The revision is presentation, applied
+    where control frames are published: no solver, constraint or mover
+    reads it, so the limb itself does not move. rigExec:moves names exactly
+    the five controls it revises: the IK control, the pole and the three FK
+    controls.
 
     Each frame it also publishes, whichever half drives:
 
@@ -1635,8 +1666,9 @@ class RigExecHarmonicsConstraint "RigExecHarmonicsConstraint" (
     of a fixed window. Every earlier frame's acceleration rings as a damped
     sine, and the sum of the rings still sounding is added to the target's
     translation, scaled by the MoverAPI envelope. The window is
-    rigExec:waves * rigExec:waveLength / rigExec:frequency frames, so the
-    result depends only on the frames in it: scrubbing, playback and a
+    rigExec:waves * rigExec:waveLength / rigExec:frequency frames (all three
+    above zero and the window at most 4094 frames, or the compile fails), so
+    the result depends only on the frames in it: scrubbing, playback and a
     background cache all agree. While a control is dragged the earlier
     frames are the authored animation and the current frame is the dragged
     pose, so the ring answers the drag.
@@ -1678,7 +1710,9 @@ class RigExecHarmonicsConstraint "RigExecHarmonicsConstraint" (
         doc = "Per-axis multipliers, along the axes of rigExec:space."
     )
     double inputs:decay = 3 (
-        doc = "How fast a ring dies away; 0 rings at full amplitude until it ends."
+        doc = """How fast a ring dies away. The envelope falls from 1 at the
+        impulse to inputs:termination as the ring ends; at 0 it falls
+        linearly."""
     )
     double inputs:termination = 0 (
         doc = "The fraction of the amplitude a ring has left when it ends."
@@ -1727,7 +1761,8 @@ class RigExecSpaceSwitch "RigExecSpaceSwitch" (
 {
     rel rigExec:target (
         doc = """The one RigExecXformable whose parent space is switched.
-        Exactly one target; zero or several is a compile error."""
+        Exactly one target; zero or several is a compile error, and so is a
+        target named by more than one space switch."""
     )
     rel rigExec:space (
         doc = """The prim whose movement away from its rest carries the
@@ -1755,7 +1790,8 @@ class RigExecSpaceSwitch "RigExecSpaceSwitch" (
     uniform token[] rigExec:spaceLabels = [] (
         doc = """UI labels parallel to rigExec:sources. Empty falls back to
         the source prims' names. A non-empty array must have exactly one
-        entry per source."""
+        entry per source. A token-valued rigExec:activeSpaceAttribute selects
+        a space by these labels."""
     )
     double inputs:activeSpace = 0 (
         doc = """Index into rigExec:sources, clamped to the list. A whole
@@ -1764,10 +1800,13 @@ class RigExecSpaceSwitch "RigExecSpaceSwitch" (
         Ignored when rigExec:activeSpaceAttribute names a property."""
     )
     rel rigExec:activeSpaceAttribute (
-        doc = """Optional single float or double PROPERTY supplying the
+        doc = """Optional single float, double or token PROPERTY supplying the
         index, so the animator-facing channel can live on the control itself
-        -- `space:active` beside its avars -- rather than on this prim. When
-        authored it is authoritative and inputs:activeSpace is ignored."""
+        -- `space:active` beside its avars -- rather than on this prim. A
+        token selects the source whose label (rigExec:spaceLabels, or the
+        source prim's name) it holds; a token that matches none selects
+        index 0. When authored it is authoritative and inputs:activeSpace is
+        ignored."""
     )
     uniform token[] rigExec:rotationFilters = [] (
         allowedTokens = ["all", "twist", "swing", "orient"]
@@ -1862,7 +1901,11 @@ class RigExecAutoClavicle "RigExecAutoClavicle" (
     rel rigExec:ikTarget (
         doc = """Optional: the prim whose posed origin the IK half reaches
         for, normally the IK effector. Without it the FK direction is used
-        whatever the blend says."""
+        whatever the blend says. When a RigExecTwoBoneIk with stretchPolicy
+        softDistance names this prim as its rigExec:effectorControl and
+        rigExec:poleControl as its pole, the estimate solves with that
+        solver's rest lengths, stretch, pin, scales, soft distance and
+        twist."""
     )
     rel rigExec:poleControl (
         doc = """Optional: the pole the IK estimate bends toward. Without it
@@ -1883,7 +1926,10 @@ class RigExecAutoClavicle "RigExecAutoClavicle" (
         animator's on/off dial. Absent reads as 1."""
     )
     double inputs:gain = 0.4 (
-        doc = """Scales the summed pose weights into the blend weight w."""
+        doc = """Scales the summed pose weights into the blend weight w.
+        Read once at compile, as are rigExec:ikValue, rigExec:basis, the pose
+        arrays, rigExec:kernel and rigExec:regularization: a time-sampled
+        value is a compile error."""
     )
     matrix4d rigExec:basis = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
         doc = """The frame rigExec:poseRotations are expressed in, relative
@@ -1922,18 +1968,23 @@ class RigExecFloatMathMover "RigExecFloatMathMover" (
         string className = "FloatMathMover"
     }
     doc = """Statically typed add, multiply, clamp, remap, blend, curve,
-    quantize, or path over an exact float property target (spec section
-    4.1).
+    quantize, or path over one exact float property target, or a double one
+    such as a control's avar, which the mover computes in float.
 
     The revision is r = op(incoming), then the common MoverAPI envelope mixes
     it back over the incoming value. Zero is a pass-through and one applies
     the operation outright -- the same rule every mover follows.
 
+    add and multiply apply inputs:value, clamp reads inputs:min and
+    inputs:max, and blend returns inputs:value, so the envelope mixes toward
+    it.
+
     remap normalizes from [inputs:min, inputs:max] to [0, 1] and does NOT
     clamp; compose a clamp mover after it to bound the result.
 
     curve maps the incoming value through inputs:keys, piecewise linear
-    between keys and extrapolated linearly past the first and last key.
+    between keys (a cubic Hermite when inputs:tangents is authored) and
+    extrapolated linearly past the first and last key.
 
     quantize rounds the incoming value down to inputs:min + k * inputs:value
     for the largest integer k that does not exceed it: a stair of step
@@ -2006,13 +2057,13 @@ class "RigExecWeightObject" (
     }
     doc = """Abstract common contract for a total scalar weight field over
     the logical elements of one exact prim or property target. Publishes
-    computeWeightDescriptor and computeWeightPacket (spec section 4.1)."""
+    computeWeightPacket."""
 )
 {
     uniform token guide:weightDisplay = "tint" (
         allowedTokens = ["tint", "heatmap", "bands"]
         doc = """Selected influence overlay: tint blends gray to red;
-        heatmap interpolates blue, cyan, green, yellow and red at weights
+        heatmap interpolates dark blue, blue, teal, yellow and red at weights
         0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
         Colors use resolved vertex weights, clamped to [0,1] for display;
         faces interpolate them, so bands are approximate on coarse meshes.
@@ -2040,8 +2091,8 @@ class RigExecStaticWeight "RigExecStaticWeight" (
         string className = "StaticWeight"
     }
     doc = """Time-invariant constant, dense, or sparse authored weight field;
-    every target element resolves to an explicit value or the authored
-    sparse default (spec section 4.1)."""
+    every target element resolves to an explicit value or
+    rigExec:defaultWeight."""
 )
 {
     uniform float[] rigExec:values = []
@@ -2059,7 +2110,8 @@ class RigExecDynamicWeight "RigExecDynamicWeight" (
     }
     doc = """Fixed-shape weight field recomputed from statically
     declared inputs, optionally modulating a base weight object:
-    r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i) (spec section 4.1)."""
+    r_i = (b_i * d) * s + a; w_i = RangePolicy(r_i). Without
+    rigExec:baseWeight, b_i = 1 and the field must be constant."""
 )
 {
     rel rigExec:baseWeight
@@ -2089,15 +2141,17 @@ class "RigExecVolumeWeight" (
     doc = """Abstract placed volume that GENERATES a total scalar weight
     field over the logical elements of one exact prim or property target,
     instead of storing one. Publishes computeWeightPacket, exactly like
-    the authored weight objects (spec section 4.1, volumetric extension).
+    the authored weight objects (docs/specs/volume-weights.md).
 
     INHERITANCE DEVIATION, stated rather than hidden: this is a
     RigExecXformable, NOT a RigExecWeightObject, because usdGenSchema
     permits a typed schema exactly one base ("Schemas can only inherit
-    from one other schema at most"). The three RigExecWeightObject
-    contract properties are redeclared verbatim below, so the composed
-    prim definition is identical; what is lost is only IsA-testability,
-    and RigExec dispatches weight objects by type NAME everywhere already.
+    from one other schema at most"). The RigExecWeightObject contract
+    properties are redeclared below -- rigExec:representation and
+    rigExec:rangePolicy with the volume fallbacks documented on each --
+    so the composed prim carries the same contract; what is lost is only
+    IsA-testability, and RigExec dispatches weight objects by type NAME
+    everywhere already.
 
     Inheriting the xformable side is what buys the behaviour a rigger
     needs: the volume is one selectable, framable, Boundable prim that is
@@ -2111,9 +2165,9 @@ class "RigExecVolumeWeight" (
     scale baked into the transform would deform the field without
     deforming the drawn guide, and the artist would be painting with a
     shape they cannot see. The rigid placement therefore positions the
-    volume and inputs:scaleX/Y/Z plus inputs:falloffMin/falloffMax are
-    the SOLE authority on its size -- guide and field agree by
-    construction."""
+    volume, and inputs:falloffMin/falloffMax plus each shape's own scale
+    or extent inputs are the SOLE authority on its size -- guide and
+    field agree by construction."""
 )
 {
     uniform token purpose = "guide" (
@@ -2129,18 +2183,21 @@ class "RigExecVolumeWeight" (
         domain.
 
         Its rigExecReadPhase metadata chooses which points the distance
-        function measures. `base`, the default, samples the STATIC
-        authored points (or rigExec:sampleSource), so the field is
-        computed once per rig compilation and a point keeps the weight its bind pose
-        earned -- the behaviour of a painted map, and what a matrix mover
-        wants so that its own output cannot feed back into its own weights.
+        function measures. `base`, the default, samples the AUTHORED
+        points (or rigExec:sampleSource) rather than any mover's output,
+        so one field per evaluation is shared by every mover that binds
+        the weight and a point keeps the weight its bind pose earned --
+        the behaviour of a painted map, and what a matrix mover wants so
+        that its own output cannot feed back into its own weights.
 
         `preceding` samples the points AS THEY STAND at the consuming
         operation's position in the mover stack, so the volume grabs
         whatever is inside it right now. That is the dynamic behaviour, and
         it is order dependent by construction: the same volume placed at
         two points in the stack legitimately yields two different fields.
-        Any other phase is a compile error."""
+        `final` and checkpoint paths follow the ordinary read-phase rules;
+        `final` on the consuming mover's own target includes that mover's
+        output and is reported as an operation cycle."""
     )
     uniform token rigExec:representation = "dense" (
         allowedTokens = ["dense"]
@@ -2155,7 +2212,8 @@ class "RigExecVolumeWeight" (
         doc = """Defaults to clamp rather than the strict used by the
         authored weight objects: inputs:strength and inputs:invert are
         animatable, and an artist scrubbing strength past one should see
-        the field saturate, not invalidate the rig mid-drag."""
+        the field saturate, not have the packet invalidated and its mover
+        pass through mid-drag."""
     )
 
     float inputs:falloffMin = 0 (
@@ -2214,7 +2272,7 @@ class "RigExecVolumeWeight" (
         compiled rig, NOT a per-frame input: a per-frame input is a
         value at one time, and a curve is the whole function. The animatable knobs are falloffMin/Max, invert, and
         strength; the curve is a rig-authoring parameter, which is also
-        what keeps the field fixed-shape (spec section 4.1).
+        what keeps the field fixed-shape.
 
         Held extrapolation outside [0, 1] is the Ts default and is
         exactly right here, so a curve authored over a shorter span still
@@ -2222,18 +2280,20 @@ class "RigExecVolumeWeight" (
     )
 
     rel rigExec:sampleSource (
-        doc = """Optional explicit static points source to measure
-        against, overriding rigExec:weightTarget for SAMPLING only. The
-        weighted domain stays the weightTarget, so this is how a volume
-        weights one mesh by another mesh's shape -- typically an
-        unposed reference copy. Ignored when rigExec:weightTarget reads
-        `preceding`."""
+        doc = """Optional explicit points source to measure against,
+        overriding rigExec:weightTarget for SAMPLING only. The weighted
+        domain stays the weightTarget, so this is how a volume weights one
+        mesh by another mesh's shape -- typically an unposed reference
+        copy -- and its point count must match the weightTarget's. Without
+        rigExecReadPhase metadata it reads the authored points; a declared
+        phase selects that version. Ignored when rigExec:weightTarget
+        declares a phase other than `base`."""
     )
 
     uniform token guide:weightDisplay = "tint" (
         allowedTokens = ["tint", "heatmap", "bands"]
         doc = """Selected influence overlay: tint blends gray to red;
-        heatmap interpolates blue, cyan, green, yellow and red at weights
+        heatmap interpolates dark blue, blue, teal, yellow and red at weights
         0, .25, .5, .75 and 1. bands assigns five colors in .2-wide bins.
         Colors use resolved vertex weights, clamped to [0,1] for display;
         faces interpolate them, so bands are approximate on coarse meshes.
@@ -2257,7 +2317,7 @@ class "RigExecVolumeWeight" (
         the field."""
     )
     double guide:wireWidth = 0.05 (
-        doc = "Width authored onto the wire curves; see RigExecControl."
+        doc = "Width of the drawn wire guide curves; see RigExecControl."
     )
     color3f guide:displayColor = (1.0, 0.2, 0.2) (
         doc = """Red by convention, matching the influence overlay the
@@ -2278,10 +2338,9 @@ class RigExecSphereWeight "RigExecSphereWeight" (
     doc = """Radial falloff about the volume's placed origin:
     d = |(px/sx, py/sy, pz/sz)| in rigid volume-local space, so
     inputs:falloffMin/falloffMax are the inner and outer radii and
-    inputs:scaleX/Y/Z make the iso-surfaces ellipsoidal (spec section
-    4.1, volumetric extension). The scaleXPos/YPos/ZPos and
-    scaleXNeg/YNeg/ZNeg inputs multiply the shared scale on each local
-    half-axis independently, keeping the origin fixed."""
+    inputs:scaleX/Y/Z make the iso-surfaces ellipsoidal. The
+    scaleXPos/YPos/ZPos and scaleXNeg/YNeg/ZNeg inputs multiply the shared
+    scale on each local half-axis independently, keeping the origin fixed."""
 )
 {
     float inputs:scaleX = 1 (
@@ -2322,7 +2381,7 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
         string className = "PlaneWeight"
     }
     doc = """Gradient across a plane: d is the SIGNED local coordinate
-    along rigExec:planeAxis (spec section 4.1, volumetric extension).
+    along rigExec:planeAxis.
 
     Signed rather than absolute so a falloffMin/falloffMax pair
     straddling zero authors a gradient ACROSS the plane -- the useful
@@ -2350,10 +2409,9 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
         stops at the inputs:extentU x inputs:extentV rectangle.
 
         `unbounded` is the default because it is the behaviour a
-        half-space falloff wants and the one every plane weight authored
-        before this property existed had. `bounded` zeroes the field
-        outside the rectangle -- HARD, with no edge ramp, which is what
-        was asked for and what makes the region exactly the drawn one.
+        half-space falloff wants. `bounded` zeroes the field outside the
+        rectangle -- HARD, with no edge ramp, so the region is exactly the
+        drawn one.
         Softening the border is composition's job: multiply the bounded
         plane by a sphere or a second plane and the edge gets whatever
         falloff that volume has.
@@ -2372,9 +2430,9 @@ class RigExecPlaneWeight "RigExecPlaneWeight" (
         axis and say where the gradient starts and stops, while the
         extents are the size ACROSS it and say how far the sheet reaches.
         They are different directions and different quantities. Deriving
-        one from the other -- which the guide used to do, sizing its
-        drawn square from the band -- makes scrubbing the falloff appear
-        to resize the plane, and leaves no way at all to say "this
+        one from the other -- sizing the drawn square from the band --
+        makes scrubbing the falloff appear to resize the plane, and leaves
+        no way at all to say "this
         influence ends at the edge of this patch".
 
         The extents size the drawn guide whether or not the field is
@@ -2404,8 +2462,7 @@ class RigExecCurveWeight "RigExecCurveWeight" (
     }
     doc = """Tubular falloff about a curve: d is the distance to the
     nearest point on the polyline through the target curve's points,
-    measured in rigid volume-local space after inputs:scaleX/Y/Z (spec
-    section 4.1, volumetric extension).
+    measured in rigid volume-local space after inputs:scaleX/Y/Z.
 
     The polyline through the control points is deliberate rather than a
     basis evaluation: a weight field wants a stable, cheap, monotone
@@ -2434,11 +2491,10 @@ class RigExecCombineWeight "RigExecCombineWeight" (
         }
         string className = "CombineWeight"
     }
-    doc = """Folds an ordered list of weight objects into one field
-    (spec section 4.1, volumetric extension). This is what makes weight
-    objects composable: a painted RigExecStaticWeight masked by a
-    RigExecSphereWeight, two spheres unioned with `max`, a driven
-    RigExecDynamicWeight subtracted out.
+    doc = """Folds an ordered list of weight objects into one field.
+    This is what makes weight objects composable: a painted
+    RigExecStaticWeight masked by a RigExecSphereWeight, two spheres
+    unioned with `max`, a driven RigExecDynamicWeight subtracted out.
 
     Combines nest, and nesting is how mixed modes are expressed -- one
     combine carries one mode, so a relationship never has to carry
@@ -2469,8 +2525,8 @@ class RigExecCombineWeight "RigExecCombineWeight" (
         doc = """multiply, add, max, min, and average are order
         independent. subtract and overlay are NOT: they seed from the
         first input and fold the rest in authored target order, which is
-        the one place this extension departs from the spec section 7.2
-        rule that target-list permutation cannot change a result. Authors
+        where weight composition departs from the rule that target-list
+        permutation cannot change a result. Authors
         who need a permutation-proof composition use a commutative mode."""
     )
     float inputs:strength = 1
@@ -2499,7 +2555,7 @@ class RigExecMatrixMover "RigExecMatrixMover" (
     bare prim path is the transform domain.
 
     GEOMETRY. One native point3f[] points property. Each point blends
-    p' = q + w (T q - q) (spec section 7.4).
+    p' = q + w (T q - q).
 
     TRANSFORM. One Xformable, RigExecControl or RigExecJoint. Its frame
     blends M' = T_w M, the exact twin of the point form and of UsdSkel's own
@@ -2604,7 +2660,7 @@ class RigExecMatrixMover "RigExecMatrixMover" (
         allowedTokens = ["linear", "radial"]
         doc = """How a partial weight is taken.
 
-        linear is the historical form and the default: p' = q + w(Tq - q),
+        linear is the default: p' = q + w(Tq - q),
         exact at both ends and a straight line between them.
 
         radial takes a fraction of the transform's ROTATION instead, so a
@@ -2681,16 +2737,16 @@ class RigExecBlendShapeMover "RigExecBlendShapeMover" (
         }
         string className = "BlendShapeMover"
     }
-    doc = """Applies independently composed blend inputs and native
-    target-shape points samples to an exact standard UsdGeomPointBased.points
-    property, then applies the common MoverAPI envelope to the accumulated
-    delta (spec section 7.3)."""
+    doc = """Applies independently composed blend inputs and their
+    target-shape samples (native points or UsdSkelBlendShape offsets) to an
+    exact standard UsdGeomPointBased.points property, then applies the
+    common MoverAPI envelope to the accumulated delta."""
 )
 {
     rel rigExec:blendInputs
     uniform token rigExec:deltaSpace = "target" (
         allowedTokens = ["target", "surfaceFrame"]
-        doc = "Target-space offsets by default; surfaceFrame rotates rest offsets into corresponding orthonormal vertex frames of the preceding mesh revision. Detail strength is independent of surface stretch."
+        doc = "Target-space offsets by default; surfaceFrame rotates rest offsets into corresponding orthonormal vertex frames of the preceding mesh revision. Detail strength is independent of surface stretch. surfaceFrame requires Mesh targets."
     )
 }
 
@@ -2703,7 +2759,9 @@ class RigExecBlendInput "RigExecBlendInput" (
         string className = "BlendInput"
     }
     doc = """One independently composable blend channel with an authored or
-    connected weight and relationships to samples."""
+    connected weight and relationships to samples. The weight is clamped to
+    [0, largest sample activation] and interpolates linearly between the
+    bracketing samples, with an implicit zero-delta sample at activation 0."""
 )
 {
     float inputs:weight = 0
@@ -2775,8 +2833,8 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
     something that resembles it.
 
     The maths is a radial basis function and lives in libs/rigExecMath/rbf.h,
-    pinned at 3.41e-11 over 13,400 evaluations by the parity fixture
-    (tests/fixtures/psd_parity.json).
+    held to 1e-6 by the parity fixture (tests/fixtures/psd_parity.json),
+    whose 13,400 biped evaluations agree to 3.41e-11.
     The solve is a per-interpolator CONSTANT -- invert the matrix of every
     pose's kernel value at every other pose -- so it happens once and only the
     kernel row is per-frame. Nothing on this prim is that inverted matrix,
@@ -2797,9 +2855,10 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
 )
 {
     rel rigExec:driver (
-        doc = """The driver: a RigExecJoint (or any RigExecXformable) whose
-        LOCAL rotation -- its pose relative to its own rest, in its parent's
-        frame -- is what every pose is measured against. At most one target
+        doc = """The driver: a RigExecJoint or RigExecControl whose
+        LOCAL rotation -- its pose relative to its own rest, in the frame of
+        its nearest joint or control ancestor -- is what every pose is
+        measured against. At most one target
         for the pose solver; a RigLogic solver (rigExec:solver additive or
         interpolative) takes several, each one quaternion of the input row
         in target order.
@@ -2822,8 +2881,9 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
         channel already had -- the only difference is where the position
         comes from.
 
-        Authoring this makes rigExec:driver optional and measures no
-        rotation: there is no frame to take one from. Up to three because
+        Authoring this makes rigExec:driver optional (a RigLogic solve
+        refuses both) and measures no rotation: there is no frame to take
+        one from. Up to three because
         that is what one position is; a corrective wanting more channels is
         two interpolators whose weights multiply."""
     )
@@ -2881,8 +2941,8 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
     )
     uniform token rigExec:kernel = "gaussian" (
         allowedTokens = ["gaussian", "linear", "exponential", "cubic", "quintic"]
-        doc = """How a pose's weight falls away with distance. On the shipped biped 16 interpolators
-        are gaussian and 53 linear.
+        doc = """How a pose's weight falls away with distance. Of the parity
+        fixture's 67 biped interpolators, 16 are gaussian and 51 linear.
 
         exponential, cubic and quintic are RigLogic's weight functions:
         exp(-2 d/r), max(0, 1 - (d/r)^3) and max(0, 1 - (d/r)^5). In the
@@ -2898,8 +2958,9 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
     bool rigExec:enableRotation = true (
         doc = """enableRotation: measure the driver's rotation.
 
-        Honoured rather than assumed. On the shipped biped the two channels
-        are mutually exclusive -- 39 interpolators rotation, 28 translation --
+        Honoured rather than assumed. On the biped the two channels are
+        mutually exclusive -- 39 of the parity fixture's interpolators
+        rotation, 28 translation --
         and reading a translation interpolator as a rotation makes every one
         of its poses identity, so it solves degenerate and drives nothing."""
     )
@@ -2936,11 +2997,12 @@ class RigExecPoseInterpolator "RigExecPoseInterpolator" (
         allowedTokens = ["X", "Y", "Z"]
         doc = """The axis a twist pose spins about, in the DRIVER's own frame.
         driverTwistAxis (0 X, 1 Y, 2 Z), and X on every body
-        interpolator of the shipped biped because the bind skeleton aims +X
-        down the bone.
+        interpolator of the shipped biped but the torso's (Y), because the
+        bind skeleton aims +X down the bone.
 
         Read only by poses whose rigExec:poseType is swing or twist; a whole
-        pose measures the entire rotation and never splits it."""
+        pose measures the entire rotation and never splits it. A RigLogic
+        solve reads it only for the swingAngle and twistAngle metrics."""
     )
     bool inputs:enabled = true (
         doc = """Shape-preserving enable. A disabled interpolator publishes
@@ -2998,14 +3060,14 @@ class RigExecPose "RigExecPose" (
         millimetres.
 
         Measured against this port's own drivers it lands at 0.00 degrees on
-        the elbow, the knee and the toe and 1.64 on the shoulder;
-        The verification gate prints the angle per pose, which is the
-        fidelity number."""
+        the elbow, the knee and the toe and 1.64 on the shoulder."""
     )
     float3 rigExec:translation = (0, 0, 0) (
-        doc = """The driver's translation in this pose, in CENTIMETRES, in the
-        driver's own frame. Read only when the interpolator has
-        rigExec:enableTranslation on; an interpolator with no authored
+        doc = """The driver's translation in this pose, in the driver's own
+        rest frame and its frame's units (CENTIMETRES on the shipped biped).
+        Read only when the interpolator has rigExec:enableTranslation on or
+        numeric drivers, whose values it then holds in their own units
+        (rigExec:driverAttributes); an interpolator with no authored
         translations has nothing to say about translation, and saying every
         pose is equally close would peg its weights at 1/n."""
     )
@@ -3026,27 +3088,33 @@ class RigExecPose "RigExecPose" (
         RigExecRbfFitWidth therefore fits it per interpolator to two
         requirements, in order: no dead zone (the kernels sum to at least 0.5
         everywhere between the poses), then the least overshoot among the
-        widths that manage it. A painted rigExec:falloff other than the default 0.3
-        default is applied on top as falloff/0.3.
+        widths that manage it. A painted rigExec:falloff other than the
+        default 0.3 is applied on top as falloff/0.3.
 
-        Zero means measure one from the poses, and is what an editor should
-        author when it wants the fit back rather than a number it invented."""
+        Compile uses the authored width as it stands and fits nothing. Zero
+        is a zero width: the pose reads as infinitely far from every
+        rotation but its own, so its kernel contributes nothing between the
+        poses. To get the fit, run rigexec.rbf_fit_width (RigExecRbfFitWidth)
+        and author the widths it returns."""
     )
     float rigExec:translationRadius = 0 (
-        doc = """The same width for the translation channel, in CENTIMETRES.
+        doc = """The same width for the translation channel, in
+        rigExec:translation's units.
 
         It is NOT the rotation radius and must not be borrowed from it: a
         brow's poses sit millimetres apart and a rotation width would swallow
-        every one of them. Fitted by the same swept scale, because the metric
-        already divides each channel by its own width -- the shape of the pose
-        space is fixed by the RATIO of the two and only its overall size is
-        free."""
+        every one of them. rigexec.rbf_fit_width fits it by the same swept
+        scale, because the metric already divides each channel by its own
+        width -- the shape of the pose space is fixed by the RATIO of the two
+        and only its overall size is free. As with rigExec:rotationRadius,
+        compile reads it as authored and zero is a zero width."""
     )
     quatf[] rigExec:rotations = [] (
         doc = """A RigLogic solve with several frame drivers: where each
         driver stands in this pose, one rotation per rigExec:driver target in
         order, measured as rigExec:rotation is. Empty with one driver reads
-        rigExec:rotation."""
+        rigExec:rotation; any other count than one per driver is a compile
+        error."""
     )
     uniform float rigExec:scale = 1 (
         doc = """A RigLogic solve multiplies this pose's normalized weight by
@@ -3056,8 +3124,8 @@ class RigExecPose "RigExecPose" (
         doc = """poseFalloff, kept as provenance and as the editable
         dial: the share the artist painted on top of the fitted width, where
         0.3 is the default and means just reach the closest other pose. 0.3
-        on every pose of the shipped biped except the clavicles, which are
-        0.5.
+        on every pose of the shipped biped except the clavicles and the
+        mouth corners, which are 0.5.
 
         The radii above already carry it (falloff/0.3, floored at 0.05), so it
         is not applied a second time at runtime. It is here so that an editor
@@ -3066,14 +3134,13 @@ class RigExecPose "RigExecPose" (
     )
     rel rigExec:poseControls (
         doc = """The exact control PROPERTIES that put the rig into this pose
-        -- </Rig/Controls/arm_l_fk_shoulder_l_bind.avars:ry> and the like --
+        -- an L_LoArm control's avars:rz on the shipped biped, and the like --
         parallel to rigExec:poseControlValues. Properties rather than prims
         because a control carries nine channels and a pose usually sets one.
 
-        The same thing is carried per pose, and it is what lets
-        a shape editor jump the rig to a pose to sculpt against it. It is
-        authoring data: nothing in evaluation reads it, and a pose with none
-        is still a valid pose."""
+        It is authoring data for a tool that jumps the rig to a pose to
+        sculpt against it: nothing in evaluation or in the bundled Shape
+        Editor reads it, and a pose with none is still a valid pose."""
     )
     double[] rigExec:poseControlValues = [] (
         doc = """The value for each target of rigExec:poseControls, in OUR
@@ -3199,7 +3266,9 @@ class RigExecMlOutput "RigExecMlOutput" (
         string className = "MlOutput"
     }
     doc = """One output of its parent RigExecMlMover's network, in namespace
-    order among its RigExecMlOutput siblings, and the float it publishes."""
+    order among its RigExecMlOutput siblings, and the float it publishes.
+    The parent needs one active child per network output; any other count
+    is a compile error."""
 )
 {
     float outputs:weight = 0 (
@@ -3290,9 +3359,10 @@ class RigExecCurveMover "RigExecCurveMover" (
         }
         string className = "CurveMover"
     }
-    doc = """Reads standard basis-curve properties for wire, spline-IK,
-    ribbon, and curve-coordinate movement and writes an exact native
-    UsdGeomPointBased points property (spec section 7.5)."""
+    doc = """Moves an exact native UsdGeomPointBased points property by a
+    curve, in one of the rigExec:mode forms: ribbon transport along a
+    solver aggregate's frames, guide-point emission from those frames, or a
+    wire driven by a UsdGeomNurbsCurves."""
 )
 {
     rel rigExec:driverCurve
@@ -3300,8 +3370,11 @@ class RigExecCurveMover "RigExecCurveMover" (
     rel rigExec:bindCoordinates
     uniform token rigExec:mode = "ribbon" (
         allowedTokens = ["ribbon", "emitGuidePoints", "wire"]
-        doc = """ribbon transports points along a ribbon aggregate's frames;
-        emitGuidePoints writes its sample positions; wire moves each point by
+        doc = """ribbon transports points along the frames of the solver
+        aggregate rigExec:driverFrames names (normally a RigExecRibbon's),
+        each at the parameter of its rigExec:bindCoordinates entry;
+        emitGuidePoints writes those frames' positions, one frame per point;
+        wire moves each point by
         the displacement of rigExec:driverCurve (a UsdGeomNurbsCurves) at the
         parameter it was bound to: p' = p + f(d) * (C(u) - C0(u)), with (u, d)
         per point from rigExec:bindCoordinates, C the curve's posed control
@@ -3435,7 +3508,7 @@ class RigExecVec3fMathMover "RigExecVec3fMathMover" (
         string className = "Vec3fMathMover"
     }
     doc = """Statically typed add, multiply, clamp, remap, or blend over an
-    exact float3/vector-valued property target (spec section 4.1).
+    exact float3, vector3f, point3f, normal3f or color3f property target.
 
     Every operation is component-wise, which is why the bounds are float3
     rather than float. Remap and common MoverAPI-envelope semantics match
@@ -3459,7 +3532,7 @@ class RigExecMatrixMathMover "RigExecMatrixMathMover" (
         string className = "MatrixMathMover"
     }
     doc = """Statically typed multiply or blend over an exact matrix4d
-    property target (spec section 4.1). Distinct from the point-moving
+    property target. Distinct from the point-moving
     RigExecMatrixMover.
 
     multiply post-multiplies (inputs:value applied AFTER the incoming
@@ -3483,7 +3556,9 @@ class RigExecLatticeMover "RigExecLatticeMover" (
     }
     doc = """Reads cage points from a native mesh/points prim and writes
     exactly one exact native UsdGeomPointBased points property through
-    tensor-product basis evaluation (spec sections 4.1, 7.5)."""
+    tensor-product basis evaluation. rigExec:cage honors rigExecReadPhase
+    metadata. rigExec:evaluation selects the basis; rigExec:basis is not
+    read."""
 )
 {
     rel rigExec:cage (
@@ -3495,7 +3570,7 @@ class RigExecLatticeMover "RigExecLatticeMover" (
     int3 rigExec:divisions = (2, 2, 2)
     uniform token rigExec:evaluation = "legacy" (
         allowedTokens = ["legacy", "regularGrid"]
-        doc = "Legacy retains the bound Bernstein cage. Regular grid interpolates current cage displacement against canonical origin/spacing at each incoming point."
+        doc = "Legacy binds each base point into the bound of the cage's default-time points and moves the incoming point by the Bernstein blend of the cage's motion from them; it needs at least two divisions per axis, and an authored regular-grid setting (interpolation, origin, spacing, strength, mask, pointSpace, cageMatrix, targetMatrix or frames) is a compile error. Regular grid interpolates current cage displacement against canonical origin/spacing at each incoming point and needs at least one division per axis."
     )
     uniform token rigExec:interpolationU = "bspline" (allowedTokens = ["bspline", "linear", "cardinal", "catmullRom"])
     uniform token rigExec:interpolationV = "bspline" (allowedTokens = ["bspline", "linear", "cardinal", "catmullRom"])
@@ -3508,7 +3583,7 @@ class RigExecLatticeMover "RigExecLatticeMover" (
     matrix4d rigExec:cageMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
     matrix4d rigExec:targetMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
     rel rigExec:frames (
-        doc = "Optional cage and target rest-to-pose providers, in that order, applied after their local-to-common matrices."
+        doc = "Optional cage and target rest-to-pose providers: none, or exactly these two in that order, applied after their local-to-common matrices. Regular grid only; a checkpoint read phase is a compile error."
     )
 }
 
@@ -3520,9 +3595,13 @@ class RigExecSurfaceMover "RigExecSurfaceMover" (
         }
         string className = "SurfaceMover"
     }
-    doc = """Reads standard mesh properties for attachment/projection/
-    sliding and surface-driven correction and writes an exact native
-    UsdGeomPointBased points property (spec sections 4.1, 7.5)."""
+    doc = """Snaps each target point to the nearest point on the driver
+    mesh's triangles (the rigExec:surface points with its faceVertexCounts
+    and faceVertexIndices, or rigExec:triangles) as rigExec:snapMode and
+    rigExec:offset direct, and writes exact native UsdGeomPointBased points
+    properties. rigExec:surface honors rigExecReadPhase metadata.
+    rigExec:mode is not read: every surface mover projects. Persistent
+    attachment is RigExecSurfaceBindingMover."""
 )
 {
     rel rigExec:surface (
@@ -3536,13 +3615,13 @@ class RigExecSurfaceMover "RigExecSurfaceMover" (
         doc = "Nearest-triangle snap policy. Inside/outside retain points already on the required side with at least the declared clearance."
     )
     float rigExec:offset = 0 (
-        doc = "Side clearance measured in surface metric coordinates, independent of the mover envelope and binding delta multiplier."
+        doc = "Side clearance measured in surface metric coordinates, independent of the mover envelope."
     )
     float[] rigExec:mask = [] (
         doc = "Optional target-vertex weights in [0,1]; empty affects every vertex."
     )
     int[] rigExec:triangles = [] (
-        doc = "Optional explicit surface vertex-index triples. Empty uses each polygon's legacy fan triangulation."
+        doc = "Optional explicit surface vertex-index triples. Empty uses each polygon's fan triangulation about its first corner."
     )
     uniform token rigExec:pointSpace = "local" (
         allowedTokens = ["local", "common"]
@@ -3551,7 +3630,7 @@ class RigExecSurfaceMover "RigExecSurfaceMover" (
     matrix4d rigExec:surfaceMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
     matrix4d rigExec:targetMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
     rel rigExec:frames (
-        doc = "Optional surface and target rest-to-pose providers, in that order, applied after their local-to-common matrices."
+        doc = "Optional surface and target rest-to-pose providers: none, or exactly these two in that order, applied after their local-to-common matrices. A checkpoint read phase is a compile error."
     )
 }
 
@@ -3562,7 +3641,11 @@ class RigExecSurfaceBindingMover "RigExecSurfaceBindingMover" (
     blends one or more bindings. Offsets are vectors in the current surface's
     tangent, bitangent, normal frame. Polygon bindings and optional limit
     position/derivative stencils are immutable authored attributes; evaluation
-    only reads the selected phase of the driver points."""
+    rebinds nothing and reads the driver points at the rigExec:surface read
+    phase. Of the inherited RigExecSurfaceMover settings it reads
+    rigExec:surface, rigExec:mask and rigExec:frames; rigExec:mode,
+    rigExec:snapMode, rigExec:offset, rigExec:triangles, rigExec:pointSpace,
+    rigExec:surfaceMatrix and rigExec:targetMatrix are not read."""
 )
 {
     int[] rigExec:vertices = []
@@ -3592,7 +3675,7 @@ class RigExecSurfaceBindingMover "RigExecSurfaceBindingMover" (
     float[] rigExec:limitDuWeights = []
     float[] rigExec:limitDvWeights = []
     rel rigExec:frames (
-        doc = "Optional surface and target rest-to-pose providers, in that order."
+        doc = "Optional surface and target rest-to-pose providers: none, or exactly these two in that order, composed after rigExec:surfaceRestMatrix and rigExec:targetRestMatrix."
     )
     matrix4d rigExec:surfaceRestMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
     matrix4d rigExec:targetRestMatrix = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
@@ -3609,9 +3692,9 @@ class RigExecPatchMover "RigExecPatchMover" (
     }
     doc = """Evaluates a UsdGeomNurbsPatch at normalized UV parameters read from
     a point-based UV input prim and writes an exact native UsdGeomPointBased
-    points property. Both rigExec:patch and rigExec:uvPoints honor
-    rigExecReadPhase metadata, so controllers can deform the patch or drive the
-    UV input points through earlier movers. Weighted UV shapes mix into the UV
+    points property. rigExec:patch, rigExec:uvPoints and rigExec:uvShapes
+    honor rigExecReadPhase metadata, so controllers can deform the patch or
+    drive the UV input points through earlier movers. Weighted UV shapes mix into the UV
     points before the patch is evaluated, so avars such as smile, frown or
     mouthOpen can slide the attachment across the surface together. Contact
     pairs then keep paired points from crossing in v, so two curves on one
@@ -3625,7 +3708,10 @@ class RigExecPatchMover "RigExecPatchMover" (
     rel rigExec:uvPoints (
         doc = """Native UsdGeomPointBased prim or points property whose XY
         coordinates supply normalized (u, v) parameters on the patch: the
-        neutral the UV shapes are measured from."""
+        neutral the UV shapes are measured from. It holds one point per
+        target point, or a single point every target point shares. A
+        parameter is clamped to [0, 1] on an open patch axis and wrapped on
+        a closed or periodic one."""
     )
     rel rigExec:uvShapes (
         doc = """Ordered UV shapes: native UsdGeomPointBased prims or points
@@ -3666,6 +3752,9 @@ class RigExecSurfaceProjector "RigExecSurfaceProjector" (
     stage value and moves no point: the surface named by rigExec:moves
     keeps exactly the geometry its other movers produce, and the frame
     reaches only imaging and other consumers of the evaluated pose.
+    rigExec:moves names Mesh points; a mesh no mover deforms publishes
+    nothing, with a warning, and an animated transform on the mesh or an
+    ancestor is a compile error.
 
     A ray in the surface's object space picks a MATERIAL point on the
     surface's base points -- a triangle and a place inside it. The frame
@@ -3771,7 +3860,7 @@ class RigExecSurfaceProjector "RigExecSurfaceProjector" (
         the projector off its frame with a scale -- the radius the
         shader's unit eyeball is quoted against -- and that scale has to
         travel with the matrix, because the surface prim's transform is
-        its placement and no longer carries it."""
+        its placement and does not carry it."""
     )
     uniform token rigExec:shaderPrimvar = "eyeProjector" (
         doc = """Name of the constant matrix primvar published on the
@@ -3779,7 +3868,7 @@ class RigExecSurfaceProjector "RigExecSurfaceProjector" (
         HdGet_<name>(), which for a glslfx sourceAsset requires the name
         to appear in that shader's "attributes" configuration block --
         Storm filters every other primvar out before the shader sees
-        it."""
+        it. Empty publishes no frame."""
     )
     rel rigExec:shaderDialSources (
         doc = """Scalar properties an animator turns, published to the
@@ -3808,7 +3897,7 @@ class RigExecSurfaceProjector "RigExecSurfaceProjector" (
 class RigExecDeltaMushMover "RigExecDeltaMushMover" (
     inherits = </Typed>
     customData = { string className = "DeltaMushMover" }
-    doc = "Native detail-preserving smoothing. Smooth reference and incoming points, then transport reference detail in surface frames. Smoothing masks apply within every iteration; the common mover envelope blends the candidate once."
+    doc = "Native detail-preserving smoothing. Smooth reference and incoming points, then transport reference detail in surface frames. Smoothing masks apply within every iteration; the common mover envelope blends the candidate once. The target must be a Mesh. inputs:restPoints, inputs:smoothing, inputs:frameTransport and inputs:edges must be static and unconnected; empty restPoints use the target's base points."
 )
 {
     point3f[] inputs:restPoints
@@ -3819,7 +3908,7 @@ class RigExecDeltaMushMover "RigExecDeltaMushMover" (
     float inputs:displacement = 1
     uniform token inputs:smoothing = "rest" (
         allowedTokens = ["rest", "simple", "lengthWeighted"]
-        doc = "Rest uses fixed inverse-distance reference weights and step/displacement in [0,1]. Simple averages incident edge displacements. LengthWeighted recomputes current edge lengths per iteration and divides by length sum times edge valence, using twice the step. The latter modes permit any finite step and detail scale."
+        doc = "Rest uses fixed reference edge weights, each edge's reference length to the power -distanceWeight (uniform at the default 0), and needs step and displacement in [0,1]. Simple averages incident edge displacements. LengthWeighted recomputes current edge lengths per iteration and divides by length sum times edge valence, using twice the step. The latter modes permit any finite step and detail scale."
     )
     uniform token inputs:frameTransport = "vertex" (
         allowedTokens = ["vertex", "corner"]
@@ -3838,7 +3927,7 @@ class RigExecDeltaMushMover "RigExecDeltaMushMover" (
         doc = "Nonsingular affine row-vector map from the reference/smoothing coordinate space into the target points space. Reference points remain in computation space; incoming points transform back before smoothing. Explicit restPoints are required for a nonidentity map or frame provider, except in onlySmooth mode."
     )
     rel rigExec:frame (
-        doc = "Optional single rest-to-pose frame provider composed after computationToTarget, using the declared transform read phase."
+        doc = "Optional single rest-to-pose frame provider composed after computationToTarget, read at its base or final phase; a checkpoint is a compile error."
     )
 }
 
@@ -3952,7 +4041,7 @@ class RigExecClothConstraintSet "RigExecClothConstraintSet" (
     inherits = </Boundable>
     customData = { string className = "ClothConstraintSet" }
     doc = """A relationship-linked cloth constraint profile. Material profiles
-    replace the legacy scalar response in their selected region; later profiles
+    replace the mover's own scalar response of their kind in their selected region; later profiles
     win where regions overlap. Attachment profiles add explicit links without
     excluding their regions from independently authored collision profiles.
     Soft constraints use XPBD compliance divided by strength;
@@ -4047,7 +4136,7 @@ class RigExecClothMover "RigExecClothMover" (
         doc = "Optional mesh or exact point3f[] property defining rest distances and material frames. Same vertex order/count and coordinate space as the target. Absent uses target points at Default."
     )
     rel rigExec:uvSet (
-        doc = "Exact float2[] or texCoord2f[] primvar defining warp/weft. Supports vertex and indexed faceVarying UVs."
+        doc = "Exact float2[] or texCoord2f[] primvar defining warp/weft, with vertex, varying or faceVarying interpolation, indexed or not. Absent, a constraint profile with directional response (warp, weft and normal unequal, or painted) is a compile error."
     )
     uniform float[] rigExec:pinWeights = [] (
         doc = """One weight per cloth point in [0,1]. A point at 1 (0.999
@@ -4069,7 +4158,7 @@ class RigExecClothMover "RigExecClothMover" (
         rigExec:windowFrames frames on both sides, checking only through the
         current frame. This gives contact a consistent settling interval and
         keeps the cloth on the side it came from. A value at most rigExec:windowFrames turns
-        this off. It is also the history the evaluator keeps."""
+        this off. The evaluator keeps the longer of the two as history."""
     )
     uniform int rigExec:substeps = 10 (
         doc = "Solver steps per frame, in [1,256]. More steps are stiffer and collide more accurately."
@@ -4131,11 +4220,11 @@ class RigExecSmoothMover "RigExecSmoothMover" (
         string className = "SmoothMover"
     }
     doc = """Moves exactly one exact native UsdGeomPointBased points
-    property through uniform-weight Laplacian smoothing with fixed edge
-    adjacency taken from the destination's standard topology (spec
-    section 7.6 revised: the former post-mover smooth operation as a
-    first-class mover). The common MoverAPI envelope blends the full
-    Laplacian step over the incoming points."""
+    property through one iteration of uniform-weight Laplacian smoothing
+    with fixed edge adjacency taken from the destination's standard
+    topology. The common MoverAPI envelope blends the full Laplacian step
+    over the incoming points; an authored inputs:strength is a compile
+    error."""
 )
 {
 }
@@ -4149,16 +4238,16 @@ class RigExecVolumeCorrectMover "RigExecVolumeCorrectMover" (
         string className = "VolumeCorrectMover"
     }
     doc = """Moves exactly one exact native UsdGeomPointBased points
-    property by uniform centroid scaling toward the authored rest bound
-    volume (spec section 7.6 revised: the former post-mover volumeCorrect
-    operation as a first-class mover). The common MoverAPI envelope blends
-    full bound-volume restoration over the incoming points."""
+    property by uniform centroid scaling toward the axis-aligned bound
+    volume of the target's authored base points. The common MoverAPI
+    envelope blends full bound-volume restoration over the incoming
+    points; an authored inputs:strength is a compile error."""
 )
 {
 }
 
 ################################################################
-# Generated application schemas (spec section 4.1). These are
+# Generated application schemas. These are
 # compiler-owned hidden behavior hosts authored only in the derived
 # session layer under __RigExecGenerated; they are not authorable
 # geometry schemas. Their attributes use only stock Sdf value types.
@@ -4166,7 +4255,7 @@ class RigExecVolumeCorrectMover "RigExecVolumeCorrectMover" (
 
 
 ################################################################
-# Control picker (spec section 12). Scene data, not a sidecar: the
+# Control picker. Scene data, not a sidecar: the
 # picker is part of the rig deliverable, so it composes, it layers,
 # and an animator overrides one button with an `over` instead of
 # re-authoring a file. Nothing here is imageable -- these prims
@@ -4188,6 +4277,9 @@ class RigExecPicker "RigExecPicker" (
     RigExecPicker prims and builds a tab for each, so a stage carrying two
     characters gets two tabs with no code and no configuration. Order
     within the panel follows ui:order, then the prim's namespace order.
+    The walk does not descend into RigExec-typed prims other than
+    RigExecRoot, so a picker may sit anywhere except beneath rig graph
+    prims such as joints, controls and movers.
 
     A picker names the rig it drives through rigExec:picker:rig. Left
     unauthored, buttons resolve against the whole stage, which is right
@@ -4204,7 +4296,8 @@ class RigExecPicker "RigExecPicker" (
     )
     rel rigExec:picker:rig (
         doc = """The RigExecRoot this picker drives. Buttons resolve their
-        control targets inside it. Unauthored means the whole stage."""
+        control targets inside it. Unauthored means the whole stage; a
+        target that does not resolve leaves only command buttons live."""
     )
 }
 
@@ -4229,7 +4322,11 @@ class RigExecPickerPanel "RigExecPickerPanel" (
         doc = "Sort key among sibling panels."
     )
     uniform float2 ui:size = (400, 600) (
-        doc = "Panel extent in picker units, before the view's fit scale."
+        doc = """Declared panel extent in picker units: the area
+        ui:backgroundImage is stretched over from the panel origin, and the
+        canvas of a panel with no buttons. The view fits the box around the
+        panel's buttons (and background image) plus a margin, not this
+        size."""
     )
     uniform color4f ui:background = (0.16, 0.16, 0.16, 1) (
         doc = "Panel fill behind every button."
@@ -4247,14 +4344,15 @@ class RigExecPickerButton "RigExecPickerButton" (
         }
         string className = "PickerButton"
     }
-    doc = """One button. Selects the prims in rigExec:picker:controls, or
-    edits the attribute in rigExec:picker:attribute, or neither -- a
-    button with no target of either kind is a decoration: the body
-    silhouette, a backdrop, a label.
+    doc = """One button. Selects the prims in rigExec:picker:controls,
+    edits the attribute in rigExec:picker:attribute, runs a
+    rigExec:picker:command, or none of these -- such a button is a
+    decoration: the body silhouette, a backdrop, a label.
 
-    LIVENESS is the resolve result, not a flag. A relationship whose
-    targets have all gone is an empty target list, and the panel draws
-    that button as unavailable. USD remaps the targets through renames
+    LIVENESS is the resolve result, not a flag. A button is live when
+    every prim it targets is a RigExecControl or RigExecJoint of the
+    picker's rig, and the panel does not draw a button that is not. USD
+    remaps the targets through renames
     and reparents on its own, which a path string in a sidecar file
     cannot do, so a control that MOVES keeps its button and only a
     control that is DELETED loses one."""
@@ -4264,10 +4362,14 @@ class RigExecPickerButton "RigExecPickerButton" (
         doc = "Top-left corner in panel units."
     )
     uniform float2 ui:size = (10, 10) (
-        doc = "Width and height in panel units."
+        doc = """Width and height in panel units, at least 4. Clicks and
+        marquees test this box, not the drawn outline or ui:rotation."""
     )
     uniform float ui:depth = 0 (
-        doc = "Painter's-algorithm order; higher draws later, on top."
+        doc = """Painter's-algorithm order; higher draws later, on top, and
+        a click finds the topmost. Equal depths keep prim order, and
+        widgetControl buttons draw above every other shape whatever their
+        depth."""
     )
     uniform float ui:rotation = 0 (
         doc = "Degrees clockwise about the button's own centre."
@@ -4277,21 +4379,29 @@ class RigExecPickerButton "RigExecPickerButton" (
                          "ellipse", "hexagon", "triangle", "trapezoid",
                          "polygon", "bezier", "widgetControl", "slider"]
         doc = """Outline. `polygon` reads ui:polygon, `bezier` reads
-        ui:bezier, and every other token is generated from ui:size."""
+        ui:bezier, and every other token is generated from ui:size;
+        `circle` fills that box like `ellipse`. `widgetControl` draws as a
+        rectangle, and `slider` is not drawn."""
     )
     uniform float ui:roundness = 0 (
-        doc = "Corner radius fraction for roundedRectangle, 0 to 1."
+        doc = """Corner radius in panel units for rectangle, widgetControl,
+        polygon and trapezoid outlines. roundedRectangle uses at least 35%
+        of the shorter side."""
     )
     uniform float2[] ui:polygon = [] (
-        doc = "Outline vertices for ui:shape = polygon, panel units."
+        doc = """Outline vertices for ui:shape = polygon, in panel units
+        relative to ui:position."""
     )
     uniform float2[] ui:bezier = [] (
-        doc = """Cubic control points for ui:shape = bezier, THREE per
-        knot -- on-curve point, out-tangent, in-tangent -- flattened,
-        with each span completed by the following knot's in-tangent."""
+        doc = """Cubic control points for ui:shape = bezier, in panel
+        units relative to ui:position, THREE per knot -- on-curve point,
+        out-tangent, in-tangent -- flattened, with each span completed by
+        the following knot's in-tangent. The last knot closes back to the
+        first."""
     )
     uniform color4f ui:fill = (0.5, 0.5, 0.5, 1) (
-        doc = "Interior colour, linear, alpha premultiplied by the view."
+        doc = """Interior colour, drawn as authored with no colour-space
+        conversion and with straight (not premultiplied) alpha."""
     )
     uniform color4f ui:stroke = (0, 0, 0, 0.8) (
         doc = "Outline colour."
@@ -4300,7 +4410,8 @@ class RigExecPickerButton "RigExecPickerButton" (
         doc = "Outline width in panel units."
     )
     uniform string ui:text = "" (
-        doc = "Label drawn inside the button."
+        doc = """Label drawn inside the button. A command button with no
+        text is labelled with its command."""
     )
     uniform float ui:fontSize = 8 (
         doc = "Label size in panel units."
@@ -4322,25 +4433,40 @@ class RigExecPickerButton "RigExecPickerButton" (
     )
     uniform token ui:direction = "top" (
         allowedTokens = ["top", "bottom", "left", "right"]
-        doc = "Which edge a trapezoid or triangle points at."
+        doc = """Which edge a triangle points at. On a trapezoid, `top` and
+        `bottom` let the slopes inset the horizontal edges and `left` and
+        `right` the vertical ones; the slope signs choose which edge."""
     )
     uniform float ui:slopeLeft = 0 (
-        doc = "Trapezoid left-edge inset, as a fraction of ui:size width."
+        doc = """Trapezoid inset at the left end, in panel units. With
+        ui:direction `top` or `bottom`, a positive value insets the top
+        edge and a negative one the bottom edge; with `left` or `right` it
+        shortens the left edge from the top (positive) or the bottom
+        (negative)."""
     )
     uniform float ui:slopeRight = 0 (
-        doc = "Trapezoid right-edge inset, as a fraction of ui:size width."
+        doc = """Trapezoid inset at the right end, in panel units. With
+        ui:direction `top` or `bottom`, a positive value insets the top
+        edge and a negative one the bottom edge; with `left` or `right` it
+        shortens the right edge from the top (positive) or the bottom
+        (negative)."""
     )
     uniform bool ui:alternate = false (
         doc = """This button shares a slot with another and is the one
-        hidden at rest. Where rigExec:picker:mode is authored that is the
-        authority and this is ignored: a stacked IK/FK pair is a mode
-        pair, not an alternate."""
+        the panel hides. Where rigExec:picker:mode and
+        rigExec:picker:modeDial are authored they are the authority and
+        this is ignored: a stacked IK/FK pair is a mode pair, not an
+        alternate."""
     )
     uniform token rigExec:picker:command = "" (
         doc = """A named action this button runs, instead of selecting or
         editing. The panel implements a fixed set and ignores the rest, so
         a picker may carry actions a given host cannot perform without
-        those buttons pretending to work."""
+        those buttons pretending to work. The usdview panel implements
+        `zero_ctrls`, which clears the authored pose channels of the
+        selected controls and joints (every control when none is
+        selected), and `ctrl_vis`, a checkbox that hides or shows the
+        rig's controls with session-layer visibility opinions."""
     )
     rel rigExec:picker:controls (
         doc = """The prims this button selects, in order. Targets may be
@@ -4352,16 +4478,20 @@ class RigExecPickerButton "RigExecPickerButton" (
         dial. Mutually exclusive with rigExec:picker:controls."""
     )
     uniform token[] rigExec:picker:attributeLabels = [] (
-        doc = """Labels for the values rigExec:picker:attribute cycles
-        through, low to high, e.g. ["IK", "FK"]. The button shows the
-        label matching the attribute's CURRENT value; it never caches the
-        value it was authored with."""
+        doc = """Labels for the values rigExec:picker:attribute takes:
+        label i names value i, e.g. ["FK", "IK"] on an IK/FK blend. The
+        button shows the label matching the attribute's CURRENT value,
+        rounded; it never caches the value it was authored with. A click
+        writes the next label's value, or opens a menu when there are more
+        than two."""
     )
     uniform token rigExec:picker:mode = "" (
         allowedTokens = ["", "ik", "fk"]
-        doc = """Show this button only while its limb is in this mode.
-        Empty means always shown, which is right for anything that is not
-        half of an IK/FK pair."""
+        doc = """Show this button only while its limb is in this mode, as
+        read from rigExec:picker:modeDial: `ik` at 1, `fk` at 0, and both
+        halves show in between. Empty, or no modeDial target, means always
+        shown, which is right for anything that is not half of an IK/FK
+        pair."""
     )
     rel rigExec:picker:modeDial (
         doc = """The attribute rigExec:picker:mode is tested against. Only
@@ -4371,7 +4501,7 @@ class RigExecPickerButton "RigExecPickerButton" (
 
 
 ################################################################
-# TouchPose regions (spec section 13). Named face sets on a mesh,
+# TouchPose regions. Named face sets on a mesh,
 # each naming the control that poses them, so a click on the model
 # selects the control that drives that part of it.
 #
@@ -4398,13 +4528,11 @@ class RigExecTouchRegions "RigExecTouchRegions" (
     nothing and keeps the door open for anything drawable parented under
     it later.
 
-    THE HIGHLIGHT OVERLAY IS NOT HERE. It is a real rprim, and a prim inside
-    the asset is inside the rig's read roots: authoring the hover array there
-    invalidates the rig on every region crossing, which a prim at the stage
-    root does not. It also cannot carry its own schema type -- a concrete type
-    with no UsdImaging adapter never becomes an rprim at all. So the
-    overlay is a plain Mesh at the stage root, named for its asset so a
-    shot full of characters does not share one.
+    THE HIGHLIGHT IS NOT GEOMETRY. TouchPose tints the touched mesh in its
+    own Storm shader, through a Hydra scene index that adds a per-face
+    region primvar and a per-region colour table
+    (libs/rigExecImaging/touchPoseHighlight.h). A hover authors nothing on
+    the stage and never invalidates the rig.
 
     Found BY TYPE, so the regions may be parented anywhere -- beside the
     geometry they annotate, or inside the RigExecRoot for a studio that
@@ -4452,36 +4580,22 @@ class RigExecTouchOverlay "RigExecTouchOverlay" (
     customData = {
         string className = "TouchOverlay"
     }
-    doc = """The surface TouchPose lights the hovered region on.
-
-    SHIPPED WITH THE ASSET, one per RigExecTouchRegions scope. The
-    alternative was a single prim at the stage root, which is a global:
-    two characters in a shot author into the same prim and fight over
-    it. An asset that carries its own overlay works beside any number of
-    others, and a shot gains no prims it did not open with.
-
-    A Mesh, because Hydra has to draw it, and unbound on purpose -- an
-    unbound mesh gets the fallback material, which is the only surface
-    that reads displayColor and displayOpacity. Those two arrays are the
-    whole mechanism: a face is lit in the hover, lead, selected or edit
-    colour, or its opacity is zero and it is not lit at all.
+    doc = """An empty, invisible Mesh that the TouchPose exporter ships in
+    each RigExecTouchRegions scope. TouchPose does not draw on it: the
+    hover, lead, selected and paint highlights are a tint in the touched
+    mesh's own shader (see RigExecTouchRegions), and nothing is authored on
+    the stage.
 
     INHERITING Mesh IS NOT ENOUGH TO DRAW IT. UsdImaging binds adapters
     by concrete type name, so this type needs one of its own;
     rigExecImaging registers it (touchOverlayAdapter.cpp) and without
     that registration the prim composes perfectly and changes zero
-    pixels.
-
-    It ships EMPTY and invisible. The points are the mesh's own deformed
-    points for the painted faces, which do not exist until a rig has
-    been evaluated, so the runtime fills them in a session layer and
-    nothing about a hover is ever saved into the asset. What ships is
-    the declaration: the prim, its type, and where it sits."""
+    pixels."""
 )
 {
     token visibility = "invisible" (
-        doc = """Hidden until TouchPose lights it. An asset opened by
-        anything else sees an empty invisible mesh and draws nothing."""
+        doc = """Invisible, and TouchPose leaves it so: any host sees an
+        empty invisible mesh and draws nothing."""
     )
 }
 
@@ -4509,9 +4623,9 @@ class RigExecTouchRegion "RigExecTouchRegion" (
         attribute when one is wanted."""
     )
     rel rigExec:touch:control (
-        doc = """The control a click in this region selects. Unauthored
-        means the region is drawn but drives nothing, which is how an
-        unfinished paint reads."""
+        doc = """The control a click in this region selects. Unauthored,
+        TouchPose skips the region: its faces read as unpainted skin, where
+        a plain click clears the selection."""
     )
 }
 
@@ -4522,7 +4636,7 @@ class RigExecTouchRegion "RigExecTouchRegion" (
 class RigExecLayeredSkinMover "RigExecLayeredSkinMover" (
     inherits = </Typed>
     customData = { string className = "LayeredSkinMover" }
-    doc = """Masked linear or dual-quaternion skin revision. Candidate skin input may be the base or incoming points. transformInput maps incoming points before mask blending; influences produce candidate points. The common mover envelope remains independent. Binary serialization of this external revision is not supported."""
+    doc = """Masked linear or dual-quaternion skin revision. Candidate skin input may be the base or incoming points. transformInput maps incoming points before mask blending; influences produce candidate points. The common mover envelope remains independent. A .rigexec plays it through the mover's runtime kernel, which usdview playback takes from the mover registry and a standalone host supplies at Open."""
 )
 {
     rel rigExec:influences

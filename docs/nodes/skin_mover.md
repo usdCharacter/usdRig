@@ -108,7 +108,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -190,7 +191,7 @@ python docs/render_media.py --page skin_mover
 ## Tips
 
 - `rigExec:elementSize` is the same for every point: pad a point that needs fewer influences with a zero weight. Weights are never renormalized, and a sum below one holds the point toward its rest position in proportion rather than dragging it to the origin.
-- Influences must be RigExec provider prims (controls or joints), not arbitrary matrix attributes, and the read phase accepts only `base` or `final` even though the schema lists `preceding`; read `final` so constraints that revise a joint are included.
+- Influences must be RigExec provider prims (controls or joints), not arbitrary matrix attributes, and the read phase accepts only `base` or `final`; read `final` so constraints that revise a joint are included.
 - `classicLinear` has the SIMD path and is the cheaper blend; `dualQuaternion` is scalar but keeps volume through twists, which is what a candy-wrapped wrist or the pinch at a bent elbow is missing.
 
 ## See also

@@ -58,11 +58,7 @@ runtime stores their bytes and calls the kernel a host installs with
 no kernel passes its points through, with a warning in every `Execute`. A
 kernel that sets `applyWithProviders` also receives the binding's transform
 and influence matrices and the chain's base points as playback evaluated
-them; the layered skin and surface binding movers play this way.
-
-The frozen frame-cache executor and the provider-only `.rigpack` runtime
-remain separate subsets and reject Wrinkle movers. The `.rigexec` binary
-runtime supports them.
+them; the layered skin, surface binding and patch movers play this way.
 
 Playback runs the steps in index order, source steps first, and never reads
 their edges. `Open` therefore refuses a file whose step graph that order does
@@ -92,4 +88,5 @@ read through such inputs. Structural painted arrays and excluded point reads
 keep private storage slots, inaccessible to the public input APIs; `ResetInput` returns each to the
 file's value, and a skin layout to the one `Open` expanded unless the layout
 standing equals it by value, which stays, as the evaluator's layout op keeps
-it. The input sampler does not sample array inputs.
+it. The input sampler samples the animated array inputs the file reads at
+the evaluation time.

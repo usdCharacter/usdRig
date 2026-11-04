@@ -28,7 +28,11 @@ Persistent generalized barycentric attachments. Each affected vertex
 blends one or more bindings. Offsets are vectors in the current surface's
 tangent, bitangent, normal frame. Polygon bindings and optional limit
 position/derivative stencils are immutable authored attributes; evaluation
-only reads the selected phase of the driver points.
+rebinds nothing and reads the driver points at the rigExec:surface read
+phase. Of the inherited RigExecSurfaceMover settings it reads
+rigExec:surface, rigExec:mask and rigExec:frames; rigExec:mode,
+rigExec:snapMode, rigExec:offset, rigExec:triangles, rigExec:pointSpace,
+rigExec:surfaceMatrix and rigExec:targetMatrix are not read.
 
 ## How it works
 
@@ -56,9 +60,9 @@ rest-to-pose map converts driver points back to surface-local coordinates;
 `surfaceToBinding` maps them into binding space. `targetRestMatrix` times the
 second provider's map returns bound positions to target point space. Without
 frames, the authored matrices alone perform this conversion. Evaluation never
-writes to the stage. Native evaluation and frame-cache workers apply the same
-immutable payload; binary `.rigexec` export currently rejects this mover
-because it has no external payload encoder.
+writes to the stage. Native evaluation, frame-cache workers and `.rigexec`
+playback apply the same immutable payload; a `.rigexec` plays it through
+the mover's external playback kernel.
 
 ## Wiring
 
@@ -156,7 +160,7 @@ Valid values: `geometric`, `smooth`.
 
 *Relationship.*
 
-Optional surface and target rest-to-pose providers, in that order.
+Optional surface and target rest-to-pose providers: none, or exactly these two in that order, composed after rigExec:surfaceRestMatrix and rigExec:targetRestMatrix.
 
 #### `rigExec:surfaceRestMatrix`
 

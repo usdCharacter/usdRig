@@ -33,6 +33,14 @@ orientations, applies the authored Euler offset and axis masks, and
 blends the result over the incoming pose by the common MoverAPI
 envelope.
 
+An optional rigExec:space relationship, not declared by this schema,
+names one RigExecControl or RigExecJoint, typically the rig's master.
+The input and every source are then measured with that provider's
+motion from its default frame removed, the masks run in that space, and
+the result is carried back, so a partial mask does not discard part of
+the master's rotation. More than one target is a compile error; a
+target that is not a control or joint is ignored.
+
 ## How it works
 
 It runs in the pose phase at its place in the pose stack, once the
@@ -80,7 +88,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -195,7 +204,9 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 

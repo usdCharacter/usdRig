@@ -78,7 +78,8 @@ identity, which is how "world" is spelled. The inherited per-axis masks
 act on the delta the space contributes, expressed in the target's own
 default frame, and `rigExec:rotationFilters` can pass only the twist of a
 source's rotation about `rigExec:twistAxis`, or only the swing, by an
-exact swing-twist decomposition. The index is an ordinary per-frame input:
+exact swing-twist decomposition, or take only its rotation (`orient`).
+The index is an ordinary per-frame input:
 the native program, frozen jobs, the frame cache and a `.rigexec`
 binary all re-read it every frame, and keying it re-runs only the compose
 of the switched control's subtree.
@@ -194,7 +195,9 @@ array.
 
 Per-source weights parallel to rigExec:sources. An empty
 array gives every source equal, full weight. A non-empty array must
-have exactly one entry per source.
+have exactly one entry per source. Weights are relative: the sources
+mix by weight over their total, and each must be finite and not
+negative.
 
 ### Node parameters
 
@@ -203,7 +206,8 @@ have exactly one entry per source.
 *Relationship.*
 
 The one RigExecXformable whose parent space is switched.
-Exactly one target; zero or several is a compile error.
+Exactly one target; zero or several is a compile error, and so is a
+target named by more than one space switch.
 
 #### `rigExec:space`
 
@@ -237,7 +241,8 @@ carry.
 
 UI labels parallel to rigExec:sources. Empty falls back to
 the source prims' names. A non-empty array must have exactly one
-entry per source.
+entry per source. A token-valued rigExec:activeSpaceAttribute selects
+a space by these labels.
 
 #### `inputs:activeSpace`
 
@@ -252,10 +257,13 @@ Ignored when rigExec:activeSpaceAttribute names a property.
 
 *Relationship.*
 
-Optional single float or double PROPERTY supplying the
+Optional single float, double or token PROPERTY supplying the
 index, so the animator-facing channel can live on the control itself
--- `space:active` beside its avars -- rather than on this prim. When
-authored it is authoritative and inputs:activeSpace is ignored.
+-- `space:active` beside its avars -- rather than on this prim. A
+token selects the source whose label (rigExec:spaceLabels, or the
+source prim's name) it holds; a token that matches none selects
+index 0. When authored it is authoritative and inputs:activeSpace is
+ignored.
 
 #### `rigExec:rotationFilters`
 

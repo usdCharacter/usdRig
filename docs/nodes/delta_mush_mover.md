@@ -23,7 +23,7 @@ Smooths rest and incoming mesh points, then transports rest detail
 into the smoothed deformed surface. Method reference: Mancewicz, Derksen,
 and Wilson (2014), [Delta Mush](https://doi.org/10.1145/2614106.2614144).
 
-Native detail-preserving smoothing. Smooth reference and incoming points, then transport reference detail in surface frames. Smoothing masks apply within every iteration; the common mover envelope blends the candidate once.
+Native detail-preserving smoothing. Smooth reference and incoming points, then transport reference detail in surface frames. Smoothing masks apply within every iteration; the common mover envelope blends the candidate once. The target must be a Mesh. inputs:restPoints, inputs:smoothing, inputs:frameTransport and inputs:edges must be static and unconnected; empty restPoints use the target's base points.
 
 ## How it works
 
@@ -32,8 +32,8 @@ the same smoothing settings to rest and incoming points. It transports the
 rest-to-smoothed offset into the deformed local surface frame. Native,
 frozen and binary evaluation share `libs/rigExecMath/deltaMushKernel.h`.
 
-Defaults preserve the existing rest-weighted smoothing and vertex-frame
-transport. Choose `smoothing = simple` or `lengthWeighted` with
+The defaults are rest-weighted smoothing (`smoothing = rest`) and
+vertex-frame transport (`frameTransport = vertex`). Choose `smoothing = simple` or `lengthWeighted` with
 `frameTransport = corner` for deformation-dependent smoothing and corner-frame
 detail restoration.
 `smoothWeights` participates inside every smoothing iteration, separate from
@@ -78,7 +78,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -125,7 +126,7 @@ every application of the atomic mover.
 
 Valid values: `rest`, `simple`, `lengthWeighted`.
 
-Rest uses fixed inverse-distance reference weights and step/displacement in [0,1]. Simple averages incident edge displacements. LengthWeighted recomputes current edge lengths per iteration and divides by length sum times edge valence, using twice the step. The latter modes permit any finite step and detail scale.
+Rest uses fixed reference edge weights, each edge's reference length to the power -distanceWeight (uniform at the default 0), and needs step and displacement in [0,1]. Simple averages incident edge displacements. LengthWeighted recomputes current edge lengths per iteration and divides by length sum times edge valence, using twice the step. The latter modes permit any finite step and detail scale.
 
 #### `inputs:frameTransport`
 
@@ -163,7 +164,7 @@ Nonsingular affine row-vector map from the reference/smoothing coordinate space 
 
 *Relationship.*
 
-Optional single rest-to-pose frame provider composed after computationToTarget, using the declared transform read phase.
+Optional single rest-to-pose frame provider composed after computationToTarget, read at its base or final phase; a checkpoint is a compile error.
 
 ## Example
 

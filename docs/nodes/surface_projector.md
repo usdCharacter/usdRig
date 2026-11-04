@@ -32,6 +32,9 @@ renderer, as a constant matrix primvar on that surface. It writes no
 stage value and moves no point: the surface named by rigExec:moves
 keeps exactly the geometry its other movers produce, and the frame
 reaches only imaging and other consumers of the evaluated pose.
+rigExec:moves names Mesh points; a mesh no mover deforms publishes
+nothing, with a warning, and an animated transform on the mesh or an
+ancestor is a compile error.
 
 A ray in the surface's object space picks a MATERIAL point on the
 surface's base points -- a triangle and a place inside it. The frame
@@ -194,7 +197,7 @@ frame, pre-multiplied into the published primvar. The rig hangs
 the projector off its frame with a scale -- the radius the
 shader's unit eyeball is quoted against -- and that scale has to
 travel with the matrix, because the surface prim's transform is
-its placement and no longer carries it.
+its placement and does not carry it.
 
 #### `rigExec:shaderPrimvar`
 
@@ -205,7 +208,7 @@ surface prim carrying the projector's frame. A shader reads it as
 HdGet_<name>(), which for a glslfx sourceAsset requires the name
 to appear in that shader's "attributes" configuration block --
 Storm filters every other primvar out before the shader sees
-it.
+it. Empty publishes no frame.
 
 #### `rigExec:shaderDialSources`
 
@@ -239,9 +242,10 @@ its own "attributes" block lists it.
 
 The biped's eyes are the worked example
 ([Biped_eyes.usda](../../examples/biped/Biped_eyes.usda)). Each eye mesh
-has one projector whose source is the eye's bind joint and whose source
-space is its socket, so turning the head carries the iris and only the
-eye's own look aims it. The material, a glslfx shader in
+has one projector whose source is the eye's bind joint (for the right eye,
+a mirrored joint beneath it) and whose `rigExec:space` is the rig's master,
+so the rest ray still meets the eyeball wherever the master carries the
+rig. The material, a glslfx shader in
 `examples/biped/shaders`, reads `eyeProjector` to place the iris and
 pupil and `eyeDials` for the pupil and iris sizes and offsets, which are
 avars on each eye control. Nothing on the eye mesh moves; open the stage

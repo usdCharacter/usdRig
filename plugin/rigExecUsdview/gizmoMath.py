@@ -2573,7 +2573,7 @@ class _XformTarget(Target):
         A RigExec prim is never a candidate even though the schema makes
         it a UsdGeomXformable with an empty (so XformCommonAPI-
         compatible) op stack: RigExecXformable inherits Boundable
-        (libs/rigExecSchema/schema.usda:197-198). The evaluator places
+        (libs/rigExecSchema/schema.usda:200-201). The evaluator places
         those prims from their avars and never reads an xformOp, so
         authoring one would not hold the child still AND would break the
         project rule that RigExec prims carry no xformOps. FindRigRoot

@@ -31,7 +31,7 @@ declares.
 
 Applies control frames/offsets to a rest hierarchy. Publishes
 aggregate computePointFrameArray; addressable joint providers publish
-scalar frames (spec section 4.1).
+scalar frames.
 
 ## How it works
 
@@ -44,15 +44,17 @@ frames above it. `rigExec:controlSpace` decides how the deltas compose:
 `world` chains them (W_i = W_(i-1) . A_i) for sibling controls, while
 `parentRelative` takes each delta as-is because a nested control's frame
 already travels with its parent. The chain MEASURES its deltas from its
-*controls'* rests, but the basis it composes them onto is the joint's rest
-reference — which the pose stack replaces with the frame the steps below the
-chain left (spec section 4.2). So a constraint below the chain moves the
-joint and the chain carries that displacement through its solve instead of
-replacing it; a joint no step below it wrote keeps its authored rest and the
-chain answers exactly as it always did. Rest offsets between joints set the bone
-lengths and pivots — nothing is measured in absolute numbers — but the
-solve itself is absolute: unless `rigExec:startFrame` names the provider
-the chain hangs from, the chain ignores whatever its joints sit under.
+*controls'* rests and composes them onto those same rests, except on a
+joint that a step below the chain wrote: there the basis is the frame that
+step left
+([How operators fire](../concepts/how-operators-fire.md#the-order-you-can-predict)).
+So a constraint below the chain moves the joint and the chain carries that
+displacement through its solve instead of replacing it. Rest offsets between
+joints set the bone lengths and pivots — nothing is measured in absolute
+numbers — but the solve itself is absolute: unless `rigExec:startFrame`
+names the provider the chain hangs from, or `rigExec:startFramePolicy =
+"parent"` derives it from the joint hierarchy, the chain ignores whatever
+its joints sit under.
 Skinning movers then read the posed joints at the `final` phase.
 
 ## Wiring
@@ -87,7 +89,7 @@ rig's interaction surface, not a diagnostic -- and authoring
 
 *Relationship.*
 
-Ordered chain controls (parents resolved via rigExec:parent).
+Ordered chain controls, root to tip: element i composes onto element i-1 (see rigExec:controlSpace).
 
 #### `rigExec:segmentScale`
 
@@ -95,9 +97,9 @@ Ordered chain controls (parents resolved via rigExec:parent).
 
 Valid values: `none`, `toChild`.
 
-toChild: a joint whose next element is its child scales
-along the bone to it by the bone's posed length over its rest
-length, so a child control pushed outward stretches the joint above
+toChild: each joint scales along the bone to the next
+element (the chain is ordered root to tip) by the bone's posed
+length over its rest length, so a child control pushed outward stretches the joint above
 it rather than only moving the one below.
 
 #### `rigExec:controlSpace`
@@ -138,8 +140,8 @@ W_0 = S . A_0 instead of W_0 = A_0 (and in `parentRelative`,
 W_i = S . A_i for every i, since there each control's delta is
 already the whole chain map).
 
-Unauthored is the historical behaviour, bit for bit: the chain is
-an ABSOLUTE world solve that ignores whatever its joints hang from.
+Unauthored, the chain is an ABSOLUTE world solve that ignores
+whatever its joints hang from.
 That is what this relationship exists to fix. Measured on a
 synthetic `a -> b -> c` with an FkChain over `[b, c]` only: posing
 `a` with avars:rz = 90 left b at (10,0,0) and c at (20,0,0) -- they
@@ -150,14 +152,13 @@ moment the arm moves.
 Nesting the chain's first control under the thing it should follow
 is NOT a substitute when that thing is solver-posed: a
 solver-posed joint is an absolute override and namespace pose does
-not propagate through it (see rigEvaluator's hierarchicalProviders
-rule), and nesting under the arm's FK control follows in FK and
+not propagate through it, and nesting under the arm's FK control follows in FK and
 stands still in IK. Pointing this relationship at the joint the
 chain hangs from -- the wrist, claimed by the arm's IK/FK blend --
 follows in BOTH.
 
 The target is an ordinary frame input with positional read
-semantics (spec section 4.2): the chain reads the version
+semantics: the chain reads the version
 standing at its own place in the pose stack, so the chain must
 execute AFTER whatever poses the target -- later in the stack,
 i.e. earlier in the file, since siblings execute bottom-first.
@@ -177,9 +178,8 @@ Valid values: `none`, `parent`.
 Who names the start provider when rigExec:startFrame has no
 authored targets.
 
-`none` (the default): nobody. Unauthored is the historical
-behaviour, bit for bit -- an absolute solve that ignores
-whatever the joints hang from.
+`none` (the default): nobody. The chain is an absolute solve
+that ignores whatever the joints hang from.
 
 `parent`: the compiler derives the provider from the JOINT
 HIERARCHY, structurally, with no name matching of any kind: the
@@ -209,9 +209,8 @@ The relationship itself stays empty on the stage; a recompile
 
 *Relationship.*
 
-Ordered output joints this solver poses (view-free
-extraction). List position is the
-aggregate element index; length is the effective sample count.
+Ordered output joints this solver poses. List position is
+the aggregate element index; length is the effective sample count.
 The compiler binds each joint to one aggregate element
 in the compiled program.
 
@@ -224,12 +223,10 @@ element: the exact counterpart of RigExecJoint's guide:radius,
 including the rule that zero or negative draws no guides at all,
 which is how a solver's diagnostics are turned off.
 
-Without it the elements are stuck at Hydra's fallback radius of
-1.0. That is proportionate on an asset authored at tens of units
-and several times the size of the whole character on one authored
-at one unit -- the joints were given this knob for exactly that
-reason and the aggregate solvers were not, so turning guide
-display on for a small asset buried it in solver geometry.
+Without it the elements draw at Hydra's fallback radius of 1.0,
+which is proportionate on an asset authored at tens of units and
+several times the size of the whole character on one authored at
+one unit.
 
 #### `guide:displayColor`
 
@@ -248,10 +245,9 @@ one above it — the chain reads them with `rigExec:controlSpace =
 "parentRelative"`. One matrix mover per joint skins the strip through a
 linear weight ramp, so each joint hands its influence to the next across a
 two-unit span: the column on Seg2 is split 0.5 with Seg1, the midline
-between Seg2 and Seg3 is split 0.5 to each, and the column on Seg3 is split
-0.5 with Seg2. Both bends therefore draw as arcs rather than creases, and
-the same handover is happening at every joint — the strip ends at x = 5 so
-no part of it is a rigid slab hanging off the last one.
+between Seg2 and Seg3 is split 0.5 to each, and from the column on Seg3 to
+the strip's end at x = 5 the strip is Seg3's alone. Both bends therefore
+draw as arcs rather than creases.
 
 Open it live with:
 
@@ -268,7 +264,7 @@ python docs/render_media.py --page fk_chain
 ## Tips
 
 - Nesting the controls only works with `rigExec:controlSpace = "parentRelative"`: a nested control's frame already carries its parent's motion, so the default `world` composes it in a second time. On this stage, dropping the token sends Seg3 to x = -0.45 at frame 1006 instead of x = 3.03.
-- Point `rigExec:startFrame` at the joint the chain hangs from when that joint is posed by another solver; without it the chain is an absolute solve and the limb detaches from its parent.
+- Point `rigExec:startFrame` at the joint the chain hangs from when that joint is posed by another solver, or set `rigExec:startFramePolicy = "parent"` to derive it from the joint hierarchy; without either the chain is an absolute solve and the limb detaches from its parent.
 - FK pairs well with IK: blend the two aggregates through a Blend Point Frames node, or stack both solvers on the same joints — `rigExec:joints` is an ordered write, so the later writer simply replaces the frames the earlier one committed.
 
 ## See also

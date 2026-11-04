@@ -20,7 +20,7 @@ On this page:
 
 Supports sequential skin revisions with explicit candidate and incoming point spaces.
 
-Masked linear or dual-quaternion skin revision. Candidate skin input may be the base or incoming points. transformInput maps incoming points before mask blending; influences produce candidate points. The common mover envelope remains independent. Binary serialization of this external revision is not supported.
+Masked linear or dual-quaternion skin revision. Candidate skin input may be the base or incoming points. transformInput maps incoming points before mask blending; influences produce candidate points. The common mover envelope remains independent. A .rigexec plays it through the mover's runtime kernel, which usdview playback takes from the mover registry and a standalone host supplies at Open.
 
 ## How it works
 
@@ -31,9 +31,11 @@ The common mover envelope then applies independently. Empty masks mean full
 strength; populated masks have one finite [0,1] value per point. Joint index
 and weight arrays follow the elementSize skin layout.
 
-The computation and handler live in core. The external revision has no binary payload
-encoder; `.rigexec` export rejects it rather than silently omitting it.
-Evaluation of USD stages remains supported without the converter plugin.
+The computation and handler live in core. A `.rigexec` export carries it as an
+external revision: its playback kernel rebuilds the skin from the declared
+inputs and the influence frames playback evaluated, so playback matches native
+evaluation. A host that plays the file supplies that kernel; without it the
+revision passes its points through.
 
 ## Wiring
 
@@ -67,7 +69,8 @@ revision through unchanged (value-only edit).
 Normalized common mover envelope in [0, 1]. With no bound
 rigExec:weightObject it broadcasts over every logical element: zero
 passes the incoming value through bit-for-bit and one applies the
-mover's full-strength result.
+mover's full-strength result. A non-finite value or one outside
+[0, 1] passes the incoming value through with a diagnostic.
 
 #### `rigExec:weightObject`
 
@@ -127,7 +130,7 @@ Two points with a single translation influence of two units in X and masks [0.25
 ## Tips
 
 - The per-point mask and common mover envelope are independent.
-- This external revision has no USD-free binary payload encoder.
+- A .rigexec player needs this mover's playback kernel; without it the revision passes its points through.
 
 ## See also
 

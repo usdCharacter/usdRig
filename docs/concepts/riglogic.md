@@ -202,21 +202,22 @@ Each example has two tests:
 - `example_graph_docs_<name>` compares the evaluators, the CPU reference and
   the exec cross-check at frames between the keys.
 - `verify_binary_docs_<name>` bakes the stage and holds the `.rigexec`
-  runtime to the native evaluator, under animation and under drags of a
-  control and of an operator input.
+  runtime to the native evaluator, under animation and under drags of
+  controls and operator inputs.
 
 ## In a .rigexec file
 
-Format 24 carries the three solves on the `PoseInterpolator` record:
+From format 24 on, the `PoseInterpolator` record carries the three solves:
 
 - `RbfMethod`: the solved constants (the stored targets, the radius with
   any automatic radius applied, and for an interpolative solve the inverted
   kernel matrix), with `extra_driver_slots` and `extra_parent_slots`.
-- `MlNetwork`, and the mask as a per-frame `Input`.
+- `MlNetwork`, and the mask as an `Input`.
 - `AnimatedMaps`, with `primvar_slots` and `primvar_sources`.
 
 A file never has to re-derive a solve. A reader built before format 24
-refuses these files, and a current reader still opens older ones.
+refuses these files, and a current reader opens older ones back to
+format 20.
 
 ## Verification
 

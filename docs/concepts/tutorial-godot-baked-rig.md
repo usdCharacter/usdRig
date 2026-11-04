@@ -24,9 +24,8 @@ the compiled execution program.
 
 The gameplay and material GIFs are **1280 × 800 at 30 fps**, captured from
 lossless PNG frames with 4× antialiasing and a fresh 256-color palette per
-frame. They show the current reference-matched texture:
-yellow, a red star centred on the +Y top cap, and a continuous blue equatorial
-band. The usdview GIFs also show this corrected asset, using native-resolution
+frame. They show the asset's basketball texture: orange pebbled leather
+with black seams. The usdview GIFs also show this asset, using native-resolution
 application captures in **1180 × 1120** captioned inspection checkpoints.
 Each checkpoint pauses for 4.5 seconds. Open GIFs directly for full-size viewing.
 
@@ -101,7 +100,7 @@ bin\launch_usdview.bat docs\examples\tutorial_rolling_ball_free.usda
 2. Select **Geom → Ball**, click the ball in the viewport and press **F**.
    Check **Resolved Preview Material** is `/BallAsset/Looks/BallMaterial`.
 3. Expand **Looks → BallMaterial → Texture**. The texture is
-   `textures/pixar_ball.png`, with diffuse scale `0.75`, repeat S and clamp T.
+   `textures/basketball.png`, with diffuse scale `1`, repeat S and clamp T.
 
 ![Inspecting the free variant, mesh material binding and source texture in usdview](../gifs/concepts/godot_step01_usdview.gif)
 
@@ -209,7 +208,7 @@ graph; it is not a general USD material translator.
 5. Expand the **Controls** groups in the Inspector. The exposed Move and
    Roll channels come from the asset. There is no skeleton path to assign.
 
-**Checkpoint:** the star and blue band are visible, and the Inspector exposes
+**Checkpoint:** the black seams are visible, and the Inspector exposes
 only the six authored controller channels as rig inputs. Rendering resources
 are created internally from the file, not saved as editable rig nodes.
 
@@ -289,22 +288,17 @@ The seam pass checks the rendered equator at 180 angles: the blue band remains
 continuous through the texture seam. The top-down pass checks the star's rendered centre
 at 12 orientations. [View the top-down checkpoint](../images/godot_ball_top.png).
 
-The source [texture](../examples/textures/pixar_ball.png) places the stripe
-at the UV equator, with matching stripe boundaries at its left and right
-edges. The renderer repeats U in the texture sampler, retaining continuous
-UV derivatives for mip filtering, and clamps V to the pole texels. Applying
+The source [texture](../examples/textures/basketball.png) feeds both the
+diffuse and emission readers. The renderer repeats U in the texture sampler,
+retaining continuous UV derivatives for mip filtering, and clamps V to the
+pole texels. Applying
 `fract()` before sampling would introduce a derivative discontinuity at the
 wrap seam. After rebaking, reimport the asset in Godot so an older cached
 `.rigexec` import does not keep showing the previous texture.
 
-The star uses a planar UV island centred on the source sphere's **north pole
-(+Y)**, directly above the equatorial stripe. Its geometric centre, rather
-than its asymmetric bounding-box centre, maps to the pole. This avoids the
-pinching of latitude/longitude UVs. A separate side island preserves the
-stripe's latitude coordinates and samples undecorated yellow above it, so
-there are no repeated star fragments between the cap and band. The export
-passes these source `st` coordinates into Godot.
-`tools/retarget_ball_star_uvs.py` reproduces this atlas-specific source edit.
+The mesh maps the texture through two hemispherical face-varying UV islands;
+their border UVs align the atlas's curved seam crossings. The export passes
+these source `st` coordinates and their indices into Godot.
 
 The export reads `/BallAsset/Geom/Ball`, its face-varying `st` topology and
 bound `/BallAsset/Looks/BallMaterial`. It preserves the original texture
@@ -312,16 +306,16 @@ bytes and these authored values:
 
 | USD input | Embedded material |
 |---|---|
-| Texture | Original `pixar_ball.png`, sRGB |
-| Diffuse / emission scale | `(0.75, 0.75, 0.75)` / `(0.5, 0.5, 0.5)` |
-| Roughness / metallic / specular | `0.5 / 0 / 0.35` |
+| Texture | Original `basketball.png`, sRGB |
+| Diffuse / emission scale | `(1, 1, 1)` / `(0, 0, 0)` |
+| Roughness / metallic / specular | `0.8 / 0 / 0.25` |
 | Wrap S / T | Repeat / clamp |
 
 OpenSubdiv computes level-two limit-surface stencils during the export. At
 runtime these stencils map **rigExec's deformed points** to render vertices;
 derivative stencils provide normals. UV seams remain independent of position
-indices. The tutorial's inward source winding is corrected for Godot.
-No Godot skeleton participates in this evaluation.
+indices. The export turns any inward-wound source face outward for Godot's
+back-face culling. No Godot skeleton participates in this evaluation.
 
 Lighting and tone mapping differ between usdview and Godot, so the same
 material data need not produce pixel-identical renders. The plugin's
@@ -348,7 +342,7 @@ instance `rolling_ball_practice.tscn` as **Ball**, disable its Automatic
 Physics, save and press **F6**. Running the ball scene alone with F6 does
 not supply a floor or camera.
 
-**Checkpoint:** the HUD says **USD RIG LIVE / 6 CONTROLS**. The star and band
+**Checkpoint:** the HUD says **USD RIG LIVE / 6 CONTROLS**. The seams
 roll continuously through direction changes. When pushing into a wall,
 zero actual ground travel produces zero rolling increment.
 
