@@ -151,8 +151,7 @@ def _Stage(rows):
         "    }\n"
         '    def Scope "Actions"\n    {\n'
         '        def RigExecAnimatedMaps "Act"\n        {\n'
-        "            rel rigExec:driverAttributes = <%s.avars:rz> (\n"
-        '                rigExecReadPhase = "final"\n            )\n' % DIAL +
+        "            rel rigExec:driverAttributes = <%s.avars:rz>\n" % DIAL +
         maps +
         "        }\n    }\n"
         '    def Scope "Movers"\n    {\n' +

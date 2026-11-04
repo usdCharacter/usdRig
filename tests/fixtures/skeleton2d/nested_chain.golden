@@ -1,7 +1,7 @@
 rigexec-golden 2
 fixture "nested_chain.usda" rig "/Char/Rig"
 protocol exact-bits guides=1 fields=1 visits=first,held,forward,reverse,cold,actions
-layers 9bfab6de2af391fe dcaeaa013ca9876c
+layers 33515fcb7498146a dcaeaa013ca9876c
 visit "first" 0 time=0000000000000000
 v valid "" 1
 v jointFramesBase "/Char/Rig/Bones/Foot" frame 00000001 3fe3333333333333 3fc999999999999a 0000000000000000 3ff999999999999a 3fc999999999999a 0000000000000000 3fe3333333333333 3ff3333333333333 0000000000000000 3fe3333333333333 3fc999999999999a 3ff0000000000000

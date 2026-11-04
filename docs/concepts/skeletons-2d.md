@@ -190,10 +190,10 @@ corrective shape). RigExec has no node of its own for this. One
 [Animated Maps](../nodes/animated_maps.md) node per action is a step table
 over the dial, and property movers read it.
 
-- **The node.** `rigExec:driverAttributes` targets the dial's `avars:rz` at
-  `rigExecReadPhase "final"`, so the table reads the dial after every math
-  mover on it. It has no `rigExec:meshes`: the values are read through
-  connections, not published as primvars.
+- **The node.** `rigExec:driverAttributes` targets the dial's `avars:rz`.
+  Declare `rigExecReadPhase "final"` on it only when math movers revise the
+  dial (a chained dial or a full turn, below). It has no `rigExec:meshes`:
+  the values are read through connections, not published as primvars.
 - **The rows.** Every [Animated Map](../nodes/animated_map.md) child carries
   the same slope-0 rows, one per cell of the dial, so each map publishes its
   `rowCut` for the action frame of the dial angle. A cell holds the angles

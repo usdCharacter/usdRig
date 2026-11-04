@@ -281,10 +281,12 @@ MapText(const MapSpec &map)
            i + "}\n";
 }
 
-// The action's table node: its drivers read at `final`, no meshes.
+// The action's table node, no meshes; drivers that math movers revise are
+// read at `final`.
 std::string
 Action(const char *name, const std::vector<std::string> &drivers,
-       const std::vector<MapSpec> &maps, const std::string &extra = std::string())
+       const std::vector<MapSpec> &maps, const std::string &extra = std::string(),
+       bool revised = false)
 {
     std::string targets;
     for (const std::string &d : drivers) {
@@ -293,8 +295,8 @@ Action(const char *name, const std::vector<std::string> &drivers,
     }
     std::string text = std::string("            def RigExecAnimatedMaps \"") + name +
                        "\"\n            {\n"
-                       "                rel rigExec:driverAttributes = [" + targets +
-                       "] (rigExecReadPhase = \"final\")\n" + extra;
+                       "                rel rigExec:driverAttributes = [" + targets + "]" +
+                       (revised ? " (rigExecReadPhase = \"final\")" : "") + "\n" + extra;
     for (const MapSpec &map : maps) text += MapText(map);
     return text + "            }\n";
 }
@@ -538,11 +540,13 @@ MakeStage(const Options &options = Options())
     actions += Action("D11", {Driver("D11")}, ActionMaps(Ramp(100.0, 100), +1, false,
         {{"Switch", Samples(100, [](int k) { return k == 100 ? 1.0 : 0.0; }), true}}));
     actions += Action("D9", {Driver("D9")}, ActionMaps(Ramp(100.0, 100), +1, false,
-        {{"D10_rz", Samples(100, [](int k) { return 45.0 * double(k) / 100.0; })}}));
+        {{"D10_rz", Samples(100, [](int k) { return 45.0 * double(k) / 100.0; })}}),
+        std::string(), options.cycle);
     std::vector<ChannelSpec> d10 = {
         {"Q6_tx", Samples(90, [](int k) { return double(k) / 100.0; })}};
     if (options.cycle) d10.push_back({"D9_rz", Samples(90, [](int k) { return double(k); })});
-    actions += Action("D10", {Driver("D10")}, ActionMaps(Ramp(90.0, 90), +1, false, d10));
+    actions += Action("D10", {Driver("D10")}, ActionMaps(Ramp(90.0, 90), +1, false, d10),
+                      std::string(), true);
 
     std::string movers;
     movers += MathMover("D1_Q_tx", Control("Q") + ".avars:tx", "add",
@@ -587,7 +591,7 @@ MakeStage(const Options &options = Options())
         "            def RigExecSkinMover \"StrokeSkin\" (prepend apiSchemas = [\"RigExecMoverAPI\"])\n"
         "            {\n"
         "                rel rigExec:moves = </Char/Art/Stroke.points>\n"
-        "                rel rigExec:influences = [</Char/Rig/Joints/B>] (rigExecReadPhase = \"final\")\n"
+        "                rel rigExec:influences = [</Char/Rig/Joints/B>]\n"
         "                int[] rigExec:jointIndices = [0, 0, 0]\n"
         "                float[] rigExec:jointWeights = [1, 1, 1]\n"
         "                uniform int rigExec:elementSize = 1\n";
@@ -855,9 +859,9 @@ MakeTableStage()
     actions += Action("Ts", {t}, ActionMaps(stepped, +1, false, {}));
     actions += Action("Tsl", {t}, ActionMaps(stepped, +1, true, {}));
     actions += Action("Wp", {ActionPath("Wp") + ".turn:angle", Driver("W")},
-                      ActionMaps(Ramp(360.0, 72), +1, false, SpinChannels()), turnFloats);
+                      ActionMaps(Ramp(360.0, 72), +1, false, SpinChannels()), turnFloats, true);
     actions += Action("Wn", {ActionPath("Wn") + ".turn:angle", Driver("V")},
-                      ActionMaps(Ramp(-360.0, 72), -1, false, SpinChannels()), turnFloats);
+                      ActionMaps(Ramp(-360.0, 72), -1, false, SpinChannels()), turnFloats, true);
     const std::string movers = WrapMovers("Wp", Driver("W"), +1) +
                                WrapMovers("Wn", Driver("V"), -1);
     const std::string text =

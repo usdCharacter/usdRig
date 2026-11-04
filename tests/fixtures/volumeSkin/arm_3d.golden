@@ -1,7 +1,7 @@
 rigexec-golden 2
 fixture "arm_3d.usda" rig "/Arm/Rig"
 protocol exact-bits guides=1 fields=1 visits=first,held,forward,reverse,cold,actions
-layers 58d2d39feb053fef dcaeaa013ca9876c
+layers 5cf175a559efae4b dcaeaa013ca9876c
 visit "first" 0 time=0000000000000000
 v valid "" 1
 v jointFramesBase "/Arm/Rig/Joints/Root" frame 00000001 0000000000000000 0000000000000000 0000000000000000 3ff0000000000000 0000000000000000 0000000000000000 0000000000000000 3ff0000000000000 0000000000000000 0000000000000000 0000000000000000 3ff0000000000000

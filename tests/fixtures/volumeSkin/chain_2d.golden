@@ -1,7 +1,7 @@
 rigexec-golden 2
 fixture "chain_2d.usda" rig "/Char/Rig"
 protocol exact-bits guides=1 fields=1 visits=first,held,forward,reverse,cold,actions
-layers a4d034985fa688a4 dcaeaa013ca9876c
+layers 32c6aec6fa2283d6 dcaeaa013ca9876c
 visit "first" 0 time=0000000000000000
 v valid "" 1
 v jointFramesBase "/Char/Rig/Bones/Foot" frame 00000001 3fd6666666666666 0000000000000000 0000000000000000 3ff599999999999a 0000000000000000 0000000000000000 3fd6666666666666 3ff0000000000000 0000000000000000 3fd6666666666666 0000000000000000 3ff0000000000000

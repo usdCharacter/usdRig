@@ -454,7 +454,7 @@ def Xform "Asset"
             def RigExecMatrixMover "Follow" (prepend apiSchemas = ["RigExecMoverAPI"])
             {
                 rel rigExec:moves = </Asset/Geom/Strip.points>
-                rel rigExec:transform = </Asset/Rig/Joints/Shoulder> (rigExecReadPhase = "final")
+                rel rigExec:transform = </Asset/Rig/Joints/Shoulder>
                 rel rigExec:weightObject = </Asset/Rig/Joints/Shoulder/Influence>
             }
         }

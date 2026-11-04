@@ -84,9 +84,7 @@ def Xform "Char"
                     </Char/Rig/Bones/Hip>,
                     </Char/Rig/Bones/Hip/Thigh>,
                     </Char/Rig/Bones/Hip/Thigh/Shin>,
-                ] (
-                    rigExecReadPhase = "final"
-                )
+                ]
                 int[] rigExec:jointIndices = [0, 1, 0, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1]
                 float[] rigExec:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.75, 0.25, 0.75, 0.25, 0.5, 0.5, 0.5, 0.5, 0.25, 0.75, 0.25, 0.75, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
                 rel rigExec:moves = </Char/Art/Leg.points>

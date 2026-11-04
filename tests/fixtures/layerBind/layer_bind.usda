@@ -69,9 +69,7 @@ def Xform "Char"
             )
             {
                 rel rigExec:moves = </Char/Art/Parent/Head>
-                rel rigExec:transform = </Char/Rig/Bones/FC> (
-                    rigExecReadPhase = "final"
-                )
+                rel rigExec:transform = </Char/Rig/Bones/FC>
             }
         }
     }
