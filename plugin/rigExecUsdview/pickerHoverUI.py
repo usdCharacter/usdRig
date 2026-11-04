@@ -45,6 +45,7 @@ from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 if __name__ != "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pickerHoverModel as hoverModel
+import editorExtension
 import pickerUI
 import sessionRegistry
 
@@ -178,8 +179,13 @@ class HoverPickerOverlay(QtWidgets.QWidget):
 class HoverPickerController(QtCore.QObject):
     """Places, paints and routes the hover picker for one usdview."""
 
-    def __init__(self, usdviewApi, undoStack=None, parent=None):
+    def __init__(self, usdviewApi, undoStack=None, parent=None,
+                 installFilters=True):
         super(HoverPickerController, self).__init__(parent)
+        # False when an editor extension owns input: no stage-view filter;
+        # the owner forwards presses, hover and the geometry events to
+        # HandleViewEvent.
+        self._installFilters = installFilters
         self._api = usdviewApi
         self._view = StageView(usdviewApi)
         self._layout = LoadLayout()
@@ -203,7 +209,8 @@ class HoverPickerController(QtCore.QObject):
         # stage view tracks no button-less moves, and turning tracking on
         # would make it run a GPU pick on every one.
         self._view.setAttribute(QtCore.Qt.WA_Hover, True)
-        self._view.installEventFilter(self)
+        if installFilters:
+            self._view.installEventFilter(self)
         selection = getattr(getattr(usdviewApi, "dataModel", None),
                             "selection", None)
         signal = getattr(selection, "signalPrimSelectionChanged", None)
@@ -225,6 +232,25 @@ class HoverPickerController(QtCore.QObject):
 
     def IsVisible(self):
         return self._overlay is not None and self._overlay.isVisible()
+
+    def InstallsFilters(self):
+        return self._installFilters
+
+    def IsShown(self):
+        return (self._overlay is not None and self._view is not None
+                and self._overlay.isVisible())
+
+    def HandleViewEvent(self, event):
+        """The stage-view filter for one event; True when consumed."""
+        return bool(self._view is not None
+                    and self.eventFilter(self._view, event))
+
+    def CancelGesture(self):
+        self._gesture = None
+        self._Update()
+
+    def ClearHover(self):
+        self._SetHover(None)
 
     def SetVisible(self, visible):
         self._layout.enabled = bool(visible)
@@ -737,6 +763,12 @@ _hotkeys = sessionRegistry.SessionRegistry("hover picker hotkeys")
 def InstallHotkey(usdviewApi, undoStack=None):
     """The session's P hotkey, installed once."""
     hotkey = _hotkeys.Get(usdviewApi)
+    if hotkey is None and editorExtension.OwnsInput(usdviewApi):
+        # The host binds the toggle to its own key.
+        editorExtension.EditorAdded(
+            usdviewApi, editorExtension.HOVER_PICKER_TOGGLE,
+            lambda: ToggleHoverPicker(usdviewApi, undoStack))
+        return None
     if hotkey is None:
         application = QtWidgets.QApplication.instance()
         if application is None:
@@ -759,8 +791,13 @@ def InstallHoverPicker(usdviewApi, undoStack=None):
     """The session's hover picker, built on first use."""
     controller = _controllers.Get(usdviewApi)
     if controller is None:
+        yielded = editorExtension.OwnsInput(usdviewApi)
         controller = _controllers.Set(
-            usdviewApi, HoverPickerController(usdviewApi, undoStack))
+            usdviewApi, HoverPickerController(usdviewApi, undoStack,
+                                              installFilters=not yielded))
+        if yielded:
+            editorExtension.EditorAdded(
+                usdviewApi, editorExtension.HOVER_PICKER, controller)
     return controller
 
 

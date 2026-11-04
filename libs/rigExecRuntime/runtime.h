@@ -140,6 +140,14 @@ struct RigExecRuntimeMatrixPrimvar {
     RrMat4d matrix;
 };
 
+// A scalar-primvar output: a property chain's float or double
+// `<prim>.primvars:<name>` result, which playback publishes as a constant
+// float primvar on its prim.
+struct RigExecRuntimeScalarPrimvar {
+    std::string path;
+    float value = 0.0f;
+};
+
 // A weight-frame output: the volume weight's path plus its placement.
 struct RigExecRuntimeWeightFrame {
     std::string path;
@@ -466,6 +474,12 @@ public:
     {
         return _matrixPrimvars;
     }
+
+    // The file's compiled scalar primvars (File.scalar_primvar_chains, the
+    // evaluator's GetScalarPrimvarTargets) as the last Execute computed
+    // them, in path order; a double result as a float. A chain that did not
+    // publish this run is not listed.
+    std::vector<RigExecRuntimeScalarPrimvar> GetScalarPrimvars() const;
 
     // Volume weight placements, in path order.
     const std::vector<RigExecRuntimeWeightFrame> &GetWeightFrames() const

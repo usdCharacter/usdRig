@@ -163,6 +163,127 @@ void TestRegistration(const char *pluginDirectory)
 }
 
 
+// A generic declared structural property is retained independently of whether
+// the provider's pose closure needs it. Missing paths are declarations too.
+const SdfPath kCustomStructure("/Rig/Ctl.actions:test:structure");
+
+void TestCustomExternalStructurePresence()
+{
+    auto handler = *RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"));
+    handler.schemaType = "ExternalStructurePresenceMover";
+    handler.bind = [](const RigExecMoverBindContext &ctx) {
+        RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"))->bind(ctx);
+        ctx.binding->externalStructure.push_back(kCustomStructure);
+    };
+    handler.compileScene = [](const RigExecSceneDescriptors &scene,
+                              const SdfPath &mover, const SdfPath &target,
+                              RigExecRevisionBinding *binding, std::string *error) {
+        if (!RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"))
+                 ->compileScene(scene, mover, target, binding, error)) return false;
+        binding->externalStructure.push_back(kCustomStructure);
+        return true;
+    };
+    std::string error;
+    CHECK(RigExecRegisterMoverHandler(handler, &error));
+    const auto stage = UsdStage::CreateInMemory();
+    RigExecRigBuilder::Create(stage, kRig);
+    CHECK(UsdGeomPoints::Define(stage, kTarget.GetPrimPath()).CreatePointsAttr().Set(kBase));
+    auto owner = stage->DefinePrim(kControl, TfToken("RigExecJoint"));
+    const auto solver = stage->DefinePrim(SdfPath("/Rig/FK"), TfToken("RigExecFkChain"));
+    CHECK(solver.CreateRelationship(TfToken("rigExec:joints"), false).SetTargets({kControl}));
+    const auto mover = stage->DefinePrim(SdfPath("/Rig/External"),
+                                         TfToken("ExternalStructurePresenceMover"));
+    CHECK(mover.AddAppliedSchema(TfToken("RigExecMoverAPI")));
+    CHECK(mover.CreateRelationship(TfToken("rigExec:moves"), false).SetTargets({kTarget}));
+    CHECK(mover.CreateAttribute(TfToken("inputs:gain"), SdfValueTypeNames->Float).Set(0.5f));
+    RigExecRigEvaluator rig(stage, kRig);
+    Compile(&rig);
+    CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+    size_t signature = rig.GetCompiledRigSignature();
+    const auto changed = [&]() {
+        CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+        CHECK(rig.GetCompiledRigSignature() != signature);
+        signature = rig.GetCompiledRigSignature();
+    };
+    for (int redo = 0; redo != 2; ++redo) {
+        auto attribute = owner.CreateAttribute(kCustomStructure.GetNameToken(),
+            SdfValueTypeNames->Double, true, SdfVariabilityUniform);
+        CHECK(attribute.Set(1.0));
+        changed();
+        CHECK(attribute.Set(2.0));
+        changed();
+        CHECK(owner.RemoveProperty(kCustomStructure.GetNameToken()));
+        changed();
+    }
+}
+
+// A varying structure attribute (a per-frame input) is watched by type and
+// sample count only: a value edit leaves the compiled rig alone. A
+// compile source resolves its Default into the compiled data: editing its
+// value recompiles.
+const SdfPath kVaryingStructure("/Rig/Ctl.actions:test:varying");
+const SdfPath kCompileSource("/Rig/Ctl.actions:test:source");
+
+void TestVaryingStructureAndCompileSources()
+{
+    auto handler = *RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"));
+    handler.schemaType = "ExternalCompileSourceMover";
+    handler.bind = [](const RigExecMoverBindContext &ctx) {
+        RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"))->bind(ctx);
+        ctx.binding->externalStructure.push_back(kVaryingStructure);
+        ctx.binding->externalStructure.push_back(kCompileSource);
+        ctx.binding->externalCompileSources.push_back(kCompileSource);
+    };
+    handler.compileScene = [](const RigExecSceneDescriptors &scene,
+                              const SdfPath &mover, const SdfPath &target,
+                              RigExecRevisionBinding *binding, std::string *error) {
+        if (!RigExecFindMoverHandler(TfToken("ExternalQuadraticMover"))
+                 ->compileScene(scene, mover, target, binding, error)) return false;
+        binding->externalStructure.push_back(kVaryingStructure);
+        binding->externalStructure.push_back(kCompileSource);
+        binding->externalCompileSources.push_back(kCompileSource);
+        return true;
+    };
+    std::string error;
+    CHECK(RigExecRegisterMoverHandler(handler, &error));
+    const auto stage = UsdStage::CreateInMemory();
+    RigExecRigBuilder::Create(stage, kRig);
+    CHECK(UsdGeomPoints::Define(stage, kTarget.GetPrimPath()).CreatePointsAttr().Set(kBase));
+    auto owner = stage->DefinePrim(kControl, TfToken("RigExecJoint"));
+    const auto solver = stage->DefinePrim(SdfPath("/Rig/FK"), TfToken("RigExecFkChain"));
+    CHECK(solver.CreateRelationship(TfToken("rigExec:joints"), false).SetTargets({kControl}));
+    const auto mover = stage->DefinePrim(SdfPath("/Rig/External"),
+                                         TfToken("ExternalCompileSourceMover"));
+    CHECK(mover.AddAppliedSchema(TfToken("RigExecMoverAPI")));
+    CHECK(mover.CreateRelationship(TfToken("rigExec:moves"), false).SetTargets({kTarget}));
+    CHECK(mover.CreateAttribute(TfToken("inputs:gain"), SdfValueTypeNames->Float).Set(0.5f));
+    auto varying = owner.CreateAttribute(kVaryingStructure.GetNameToken(),
+                                         SdfValueTypeNames->Double);
+    auto source = owner.CreateAttribute(kCompileSource.GetNameToken(),
+                                        SdfValueTypeNames->Double);
+    CHECK(varying.Set(1.0));
+    CHECK(source.Set(1.0));
+    RigExecRigEvaluator rig(stage, kRig);
+    Compile(&rig);
+    CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+    size_t signature = rig.GetCompiledRigSignature();
+    // Value edits of the varying attribute stay neutral.
+    for (double v : {2.0, 3.0, 4.0}) {
+        CHECK(varying.Set(v));
+        CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+        CHECK(rig.GetCompiledRigSignature() == signature);
+    }
+    // A sample is a structure change.
+    CHECK(varying.Set(5.0, UsdTimeCode(3)));
+    CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+    CHECK(rig.GetCompiledRigSignature() != signature);
+    signature = rig.GetCompiledRigSignature();
+    // A compile source's value is compiled in.
+    CHECK(source.Set(2.0));
+    CHECK(rig.Evaluate(UsdTimeCode(1)).valid);
+    CHECK(rig.GetCompiledRigSignature() != signature);
+}
+
 void CensusInputs(const SdfPath &path,
                   std::vector<RigExecRevisionLeafKey> *inputs)
 {
@@ -1252,6 +1373,8 @@ int main(int argc, char **argv)
         TestExactDoubleLeafRoutes();
         TestExternalFailureAtomicAndStagingRecovery();
         TestDeclaredScalarPublicCensus();
+        TestCustomExternalStructurePresence();
+        TestVaryingStructureAndCompileSources();
         TestEvaluation();
         TestTimeVaryingInputsKeyFramesApart();
         TestDetachedExternalProgram();

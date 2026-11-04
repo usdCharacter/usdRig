@@ -74,6 +74,7 @@
 #ifndef RIGEXEC_IMAGING_REGISTRY_H
 #define RIGEXEC_IMAGING_REGISTRY_H
 
+#include "frameTable.h"
 #include "bridge.h"
 #include "playback.h"
 #include "sceneIndices.h"
@@ -247,6 +248,31 @@ public:
     /// frame on this thread without changing the published viewport.
     size_t OnIdle(
         RigExecFrozenStepRunner runner = RigExecFrozenStepRunner());
+
+    /// Frames on demand (frameTable.h, docs/specs/frames-on-demand.md).
+    /// Turns the frames Hydra readers asked for at a time offset into
+    /// frame-table entries, at most \p maxFrames per call, nearest the
+    /// playhead first. NEVER evaluates a live rig: a frame the frame cache
+    /// holds becomes an entry; any other one is queued for the background
+    /// workers (the rewarm lane the idle sweep visits first) and stays
+    /// pending. A .rigexec playback plays its binary at the frame. Waits
+    /// while an interactive preview stands. Sends PrimsDirtied for the
+    /// rig's outputs when entries were added or a stale table was dropped.
+    /// With \p allowFallback (OnIdle passes it; playback never does), a
+    /// frame still pending after kFrameDemandFallbackAge calls -- a rig
+    /// that cannot warm in the background, or a frame outside the warm
+    /// window -- is evaluated on this thread, at most one per call, so
+    /// every asked-for frame is eventually answered.
+    /// Returns the entries added. Owner thread; OnIdle calls it first.
+    size_t ServiceFrameDemand(size_t maxFrames = 8, bool allowFallback = false);
+    static constexpr int kFrameDemandFallbackAge = 40;
+
+    /// True while readers' demand or pending frames wait (an atomic read
+    /// plus a short lock; never evaluates). Owner thread.
+    bool HasFrameDemand();
+
+    /// The context's frame table, for tests.
+    RigExecFrameTablePtr GetFrameTableForTesting() const { return _frameTable; }
 
     /// Factory calls plus calling-thread fill attempts. Idle drivers use
     /// this to distinguish advancing past failed frames from no work.
@@ -1001,6 +1027,17 @@ private:
 
     mutable std::mutex _mutex;
 
+    // Frames on demand: every combined snapshot this context publishes
+    // carries this table; frames still waiting for the frame cache.
+    RigExecFrameTablePtr _frameTable = std::make_shared<RigExecFrameTable>();
+    std::vector<double> _pendingFrameDemand;
+    std::map<int64_t, int> _pendingFrameAge;  // service calls a frame waited
+    uint64_t _FrameTableStampLocked() const;
+    bool _CachedFrameLocked(double time,
+                            std::shared_ptr<RigExecImagingSnapshot> *frame,
+                            bool evaluate = false);
+    void _BroadcastFramesChanged();
+
     /// Millisecond slice for one standing-burst rebuild; see
     /// SetWarmBurstPrepSliceMs. UI thread, _mutex held.
     double _warmBurstPrepSliceMs = 50.0;
@@ -1124,6 +1161,11 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_OnEditCommitted();
 /// call from the frame loop when the UI is idle. Returns 0 on success,
 /// non-zero when nothing is active.
 RIGEXEC_IMAGING_C_API int RigExecImaging_OnIdle();
+/// Frames on demand (RigExecImagingRegistry::ServiceFrameDemand): returns
+/// the frame-table entries added, or -1 when nothing is active. Owner
+/// thread. HasFrameDemand: 1 while demand waits, 0 when none, -1 inactive.
+RIGEXEC_IMAGING_C_API int RigExecImaging_ServiceFrameDemand();
+RIGEXEC_IMAGING_C_API int RigExecImaging_HasFrameDemand();
 /// Per-phase viewport profile totals to a text file, then cleared. Needs
 /// RIGEXEC_IMAGING_PROFILE set when the rig was activated.
 RIGEXEC_IMAGING_C_API int RigExecImaging_WriteProfileSummary(const char *path);
@@ -1273,12 +1315,32 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_SetTimeForStage(
     long long stageCacheId, double frame);
 RIGEXEC_IMAGING_C_API int RigExecImaging_OnEditCommittedForStage(
     long long stageCacheId);
+RIGEXEC_IMAGING_C_API int RigExecImaging_ServiceFrameDemandForStage(
+    long long stageCacheId);
+RIGEXEC_IMAGING_C_API int RigExecImaging_HasFrameDemandForStage(
+    long long stageCacheId);
 RIGEXEC_IMAGING_C_API int RigExecImaging_OnIdleForStage(
     long long stageCacheId);
 RIGEXEC_IMAGING_C_API int RigExecImaging_WriteProfileSummaryForStage(
     long long stageCacheId, const char *path);
 RIGEXEC_IMAGING_C_API void RigExecImaging_DeactivateForStage(
     long long stageCacheId);
+/// What the displayed generation publishes for one prim (frames on demand
+/// serves other frames through Hydra; these read only what the last SetTime
+/// published, for tools and tests without a Hydra chain). Never evaluate.
+/// Points: the count (xyz written when it fits \p capacity points), -1 when
+/// the prim publishes no points, -2 with no context. Scalar: 1 with the
+/// compiled scalar primvar \p primvarName (no "primvars:" prefix), 0 when
+/// not published, -2 with no context. Revision: 1 with revised * base^-1
+/// (the asset-space map the rig applies to the prim's world), 0 when the
+/// rig drives no transform there, -2 with no context.
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetPublishedPointsForStage(
+    long long stageCacheId, const char *primPath, float *xyz, int capacity);
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetPublishedScalarPrimvarForStage(
+    long long stageCacheId, const char *primPath, const char *primvarName,
+    float *out);
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetPublishedXformRevisionForStage(
+    long long stageCacheId, const char *primPath, double *out16);
 RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGenerationForStage(
     long long stageCacheId);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloatsForStage(

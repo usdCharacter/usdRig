@@ -43,6 +43,7 @@ if __name__ != "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import markingMenuDefs as defs
 import markingMenuModel as mm
+import editorExtension
 import sessionRegistry
 
 # Prims the menu treats as controls: what the picker selects.
@@ -576,8 +577,13 @@ class ControlMarkingMenu(QtCore.QObject):
     """Owns the right-click gesture over the viewport for one usdview."""
 
     def __init__(self, usdviewApi, undoStack=None, switchIkFk=None,
-                 knownLimbs=None, parent=None):
+                 knownLimbs=None, parent=None, installFilters=True):
         super(ControlMarkingMenu, self).__init__(parent)
+        # False when an editor extension owns input: no stage-view filter
+        # and no application Escape filter; the owner forwards the
+        # right-button gesture (and, while the menu is up, pointer events
+        # and Escape) to HandleViewEvent / Cancel.
+        self._installFilters = installFilters
         self._api = usdviewApi
         self._undo = undoStack
         self._switchIkFk = switchIkFk
@@ -607,7 +613,8 @@ class ControlMarkingMenu(QtCore.QObject):
         self.clock = None
         if self._view is not None:
             self._view.setAttribute(QtCore.Qt.WA_Hover, True)
-            self._view.installEventFilter(self)
+            if installFilters:
+                self._view.installEventFilter(self)
 
     # -- the world ---------------------------------------------------------
 
@@ -663,6 +670,28 @@ class ControlMarkingMenu(QtCore.QObject):
 
     def IsOpen(self):
         return self._gesture is not None
+
+    # -- input from an owner (installFilters=False; editorExtension) ------
+
+    def InstallsFilters(self):
+        return self._installFilters
+
+    def HasView(self):
+        return self._view is not None
+
+    def HandleViewEvent(self, event):
+        """The stage-view filter for one event; True when consumed."""
+        return bool(self._view is not None
+                    and self.eventFilter(self._view, event))
+
+    def OpenForClicking(self, point, controls):
+        """Open at `point` with the press already released, so the menu
+        stays up for a click. True when it is open."""
+        self.Open(point, controls)
+        if self._gesture is not None:
+            self._pressed = False
+            self._Handle(self._gesture.Release(point[0], point[1]))
+        return self.IsOpen()
 
     # -- what the right-click is about --------------------------------------
 
@@ -732,7 +761,7 @@ class ControlMarkingMenu(QtCore.QObject):
         self._Handle(self._gesture.Press(point[0], point[1]))
         self._timer.start()
         application = QtWidgets.QApplication.instance()
-        if application is not None:
+        if application is not None and self._installFilters:
             application.installEventFilter(self._escape)
 
     def _Close(self):
@@ -1101,6 +1130,11 @@ def InstallMarkingMenu(usdviewApi, undoStack=None, switchIkFk=None,
     """The session's right-click marking menu, installed once."""
     menu = _menus.Get(usdviewApi)
     if menu is None and StageView(usdviewApi) is not None:
+        yielded = editorExtension.OwnsInput(usdviewApi)
         menu = _menus.Set(usdviewApi, ControlMarkingMenu(
-            usdviewApi, undoStack, switchIkFk, knownLimbs))
+            usdviewApi, undoStack, switchIkFk, knownLimbs,
+            installFilters=not yielded))
+        if yielded:
+            editorExtension.EditorAdded(
+                usdviewApi, editorExtension.MARKING_MENU, menu)
     return menu

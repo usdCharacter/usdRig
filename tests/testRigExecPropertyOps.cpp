@@ -1542,12 +1542,13 @@ TestABakeAfterAnEvaluationExportsTheChains(const std::string &examples)
 }
 
 // A chain input connected to a pose interpolator's outputs:weight, which
-// carries an authored value: the chains run before the interpolator
-// publishes, so both paths compute the chain from the authored value, bit
-// for bit, while the interpolator publishes another weight later in the
-// generation.
+// carries an authored value. Undeclared, the connection reads that authored
+// base, bit for bit in both paths, while the interpolator publishes another
+// weight in the same generation. With \p atFinal the input declares
+// rigExecReadPhase = "final" and reads the published weight instead: the
+// revision runs after the interpolator.
 void
-TestAChainReadsAnInterpolatorWeightAsAuthored()
+TestAChainReadsAnInterpolatorWeight(bool atFinal)
 {
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     const SdfPath rig("/Asset/Rig");
@@ -1597,6 +1598,10 @@ TestAChainReadsAnInterpolatorWeightAsAuthored()
     UsdAttribute value = mover.GetAttribute(TfToken("inputs:value"));
     value.Set(0.0f);
     value.AddConnection(weight);
+    if (atFinal) {
+        CHECK(value.SetMetadata(TfToken("rigExecReadPhase"),
+                                std::string("final")));
+    }
     // The driver on Forward, so the interpolator publishes 1 there.
     stage->GetPrimAtPath(driver).GetAttribute(TfToken("avars:rz")).Set(45.0);
 
@@ -1613,11 +1618,20 @@ TestAChainReadsAnInterpolatorWeightAsAuthored()
     params.op = RigExecPropertyOp::Add;
     params.value = 0.25f;
     params.weight = 1.0f;
-    const float authored = RigExecApplyFloatMath(0.125f, params);
+    // The published weight at Forward is 1 up to the kernel's rounding, so
+    // the final read takes it from the pose itself.
+    if (atFinal && want.valid) {
+        const auto published = want.movedProperties.find(weight);
+        if (published != want.movedProperties.end() &&
+            published->second.IsHolding<float>()) {
+            params.value = published->second.UncheckedGet<float>();
+        }
+    }
+    const float expected = RigExecApplyFloatMath(0.125f, params);
     for (const RigExecRigPose *pose : {&want, &got}) {
         const auto found = pose->movedProperties.find(gain);
         CHECK(found != pose->movedProperties.end() &&
-              RigExecBakedHeadValueSame(found->second, VtValue(authored)));
+              RigExecBakedHeadValueSame(found->second, VtValue(expected)));
         const auto published = pose->movedProperties.find(weight);
         CHECK(published != pose->movedProperties.end() &&
               published->second.IsHolding<float>() &&
@@ -1626,7 +1640,8 @@ TestAChainReadsAnInterpolatorWeightAsAuthored()
     }
     if (Program(*baked)) {
         CHECK(CheckFreshEvaluator(baked.get(), t, got,
-                                       "interpolator weight") == 0);
+                                       atFinal ? "interpolator weight at final"
+                                               : "interpolator weight") == 0);
     }
 }
 
@@ -2421,7 +2436,8 @@ main(int argc, char **argv)
     TestUnavailableConstraintTargetKeepsIndependentChains(examples);
     TestACleanHeadTierStillPublishes(examples);
     TestABakeAfterAnEvaluationExportsTheChains(examples);
-    TestAChainReadsAnInterpolatorWeightAsAuthored();
+    TestAChainReadsAnInterpolatorWeight(false);
+    TestAChainReadsAnInterpolatorWeight(true);
     TestOnlyReadersOfTheChangedVersionRerun();
     TestAStandAsideReaderDeclaresItsHops();
     TestARecordOfAnotherTypeShadowsNothing();

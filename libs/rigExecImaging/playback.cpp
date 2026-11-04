@@ -122,6 +122,13 @@ RigExecBakedPlayback::_ResolveOutputPath(const std::string &text)
         resolved.primPath = resolved.path.GetPrimPath();
         if (resolved.isProperty) {
             resolved.name = resolved.path.GetNameToken();
+            constexpr char kPrimvars[] = "primvars:";
+            constexpr size_t kLength = sizeof(kPrimvars) - 1;
+            const std::string &nameText = resolved.name.GetString();
+            if (nameText.size() > kLength &&
+                nameText.compare(0, kLength, kPrimvars) == 0) {
+                resolved.primvar = TfToken(nameText.substr(kLength));
+            }
         }
     }
     return _outputPaths.emplace(text, std::move(resolved)).first->second;
@@ -510,6 +517,18 @@ RigExecBakedPlayback::EvaluateAndPublishResult(UsdTimeCode time)
             published->extentMax = GfVec3d(
                 moved.points[1][0], moved.points[1][1], moved.points[1][2]);
         }
+    }
+    // Property chains' compiled scalar primvars (File.scalar_primvar_chains,
+    // the bridge's GetScalarPrimvarTargets list) as constant float primvars.
+    for (const RigExecRuntimeScalarPrimvar &scalar :
+         _reader->GetScalarPrimvars()) {
+        const _OutputPath &output = _ResolveOutputPath(scalar.path);
+        if (!output.ok || !output.isProperty || output.primvar.IsEmpty()) {
+            continue;
+        }
+        RigExecPublishedPrim &published = snapshot->prims[output.primPath];
+        published.assetRoot = _assetRoot;
+        published.shaderFloats[output.primvar] = scalar.value;
     }
 
     // Evaluated provider frames serve manipulators and pose readers without

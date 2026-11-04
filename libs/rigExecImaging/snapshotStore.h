@@ -281,6 +281,8 @@ struct RigExecPublishedPrim {
     GfMatrix4d volumeGuideFrame{1.0};
 };
 
+class RigExecFrameTable;
+
 /// One complete immutable generation (consumers see complete
 /// RigExecSnapshot generations only).
 struct RigExecImagingSnapshot {
@@ -360,6 +362,14 @@ struct RigExecImagingSnapshot {
     /// The evaluated sample time. Default() is its own value, not 0.
     bool sampleTimeIsDefault = true;
     double sampleTime = 0.0;
+
+    /// Frames on demand (frameTable.h, docs/specs/frames-on-demand.md):
+    /// the context's table of other frames. The results scene index
+    /// answers a rig output sampled at a time offset from it, recording a
+    /// miss as demand. Null for snapshots published outside a registry
+    /// (tests, a bare bridge): offsets then answer the explicit motion
+    /// samples or the displayed value, as before.
+    std::shared_ptr<RigExecFrameTable> frameTable;
 
     /// True when this generation describes \p queryStage at \p time.
     bool Describes(const UsdStageWeakPtr &queryStage,

@@ -6,7 +6,7 @@ call "%~dp0..\_vcvars.bat"
 call "%~dp0..\_env.bat"
 call "%~dp0..\_require_python.bat"
 if errorlevel 1 exit /b 1
-cmake --build "%RIG%\build" >nul
+cmake --build "%_RIGEXEC_BUILD%" >nul
 if errorlevel 1 exit /b 1
 set RENDERER_ARG=
 if not "%~1"=="" set RENDERER_ARG=--renderer %~1

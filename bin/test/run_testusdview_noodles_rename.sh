@@ -21,7 +21,7 @@ set -euo pipefail
 rigexec_require_python
 rigexec_require_usd "$TESTUSDVIEW"
 
-if [ ! -f "$RIG/build/python/UsdNoodles/plugInfo.json" ]; then
+if [ ! -f "$_RIGEXEC_BUILD/python/UsdNoodles/plugInfo.json" ]; then
     echo "ERROR: build/python/UsdNoodles is not staged; run bin/build_rigexec.sh" >&2
     exit 1
 fi

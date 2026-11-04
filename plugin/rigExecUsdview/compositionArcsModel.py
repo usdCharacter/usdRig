@@ -274,7 +274,8 @@ def ClassPrimPaths(stage):
 # remove the entries these arcs add, and are named here because that is
 # where the arcs that use them are. Both satisfy the same contract
 # rigExecUndo.Edit relies on: a Restore() that puts the layer back
-# exactly, called inside the Edit's own change block.
+# exactly, called inside the Edit's own change block, and a Recapture()
+# that snapshots the same scope again for the Edit's rollback.
 
 SublayerSnapshot = layerOpinionsModel.SublayerSnapshot
 RelocatesSnapshot = layerOpinionsModel.RelocatesSnapshot
@@ -359,7 +360,7 @@ class _Arc(object):
     def _Snapshot(cls, layer, primPath):
         """
         Capture whatever this arc is about to change, as an object with
-        a Restore() -- the only thing rigExecUndo.Edit asks of it.
+        a Restore() and a Recapture() -- all rigExecUndo.Edit asks of it.
 
         Declared per arc rather than branched on inside Author: a
         layer-scoped arc added later would otherwise silently inherit

@@ -77,10 +77,12 @@ these defaults when declaring leaves. Read time, read phase, provider binding,
 and computational semantics remain explicit adapter contracts. Scalars,
 tokens, numeric vectors, matrices, and their supported arrays are emitted as
 USD-free constants; unsupported defaults fail generation. Use `SCHEMA_DEPENDS`
-for additional local schema layers. Schema plugins must set
-`skipCodeGeneration = true`; the helper runs `usdGenSchema` when the OpenUSD
-install has Python bindings and packages its codeless resources beside the
-adapter plugin. Against a Python-less install it reads the schema text
+for additional local schema layers. `SCHEMA_READS` lists further schema types
+(an API schema or a related prim type) whose defaults the adapter reads; their
+constants are emitted in nested namespaces named after the type. Schema plugins
+must set `skipCodeGeneration = true`; the helper runs `usdGenSchema` when the
+OpenUSD install has Python bindings and packages its codeless resources beside
+the adapter plugin. Against a Python-less install it reads the schema text
 directly instead: one concrete class inheriting `</Typed>`, emitting
 identical headers and documentation-free resources. Anything outside that
 shape fails naming the construct, so a richer schema still needs a
@@ -505,3 +507,19 @@ ordered typed `externalInputs`, and retains no source access. The same
 `assembleExternal` and `applyExternal` callbacks run in native, frozen and
 detached graphs. Plugins declare any auxiliary source-only schema types in
 `sceneDataSchemas`; those records remain data rather than extra operations.
+
+Every attribute a binding lists in `externalStructure` is watched: its type,
+sample count and connections are digested. A uniform one recompiles when its
+Default value changes. A varying one is a per-frame input (a weight array, a
+UV primvar): a value edit stays neutral, and only a sample or spline change
+recompiles.
+
+`externalCompileSources` lists the attributes whose Default value is resolved
+into `externalCompileData` (a setup transform composed from xform operations,
+say). Editing one recompiles even when it is varying, because its value is
+digested. List a source in `externalStructure` as well when the baked program
+must also name it. The digest hashes a dictionary payload by value, so facts
+the adapter resolves at compile belong in `externalCompileData`, and the
+attributes they come from in `externalCompileSources`. Both compilers must
+produce them identically. Build paths only for attributes the compile
+actually read; do not list every attribute of a prim.

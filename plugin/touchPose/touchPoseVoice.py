@@ -440,6 +440,19 @@ class VoiceHotkeyFilter(QtCore.QObject):
         return False
 
 
+# Set as `_filter` while an editor extension owns the push-to-talk key.
+_YIELDED = object()
+
+
+def _EditorExtension():
+    """The editorExtension module, or None outside a RigExec session."""
+    try:
+        import editorExtension
+    except ImportError:
+        return None
+    return editorExtension
+
+
 def _TypingFocus():
     focus = QtWidgets.QApplication.focusWidget()
     if focus is None:
@@ -606,6 +619,13 @@ class TouchPoseVoice(QtCore.QObject):
     def _Install(self):
         if self._filter is not None:
             return
+        extension = _EditorExtension()
+        if extension is not None and extension.OwnsInput(self._api):
+            # The owner binds PUSH_TO_TALK_KEY to Press / Release.
+            extension.EditorAdded(
+                self._api, extension.TOUCH_POSE_VOICE, self)
+            self._filter = _YIELDED
+            return
         application = QtWidgets.QApplication.instance()
         if application is None:
             return
@@ -614,6 +634,13 @@ class TouchPoseVoice(QtCore.QObject):
 
     def _Uninstall(self):
         if self._filter is None:
+            return
+        if self._filter is _YIELDED:
+            extension = _EditorExtension()
+            if extension is not None:
+                extension.EditorRemoved(
+                    self._api, extension.TOUCH_POSE_VOICE, self)
+            self._filter = None
             return
         application = QtWidgets.QApplication.instance()
         if application is not None:

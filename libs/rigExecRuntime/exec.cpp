@@ -519,6 +519,37 @@ RigExecRuntimeReader::GetPropertyValues() const
     return out;
 }
 
+std::vector<RigExecRuntimeScalarPrimvar>
+RigExecRuntimeReader::GetScalarPrimvars() const
+{
+    std::vector<RigExecRuntimeScalarPrimvar> out;
+    const RigExecWireFile *file = _program->inputState.file;
+    if (!file) {
+        return out;
+    }
+    out.reserve(file->scalarPrimvarChains.size());
+    for (const uint32_t c : file->scalarPrimvarChains) {
+        // Open validated the indices (format.cpp).
+        const uint32_t target = file->propertyChains[c].target;
+        if (target >= file->inputs.size()) {
+            continue;
+        }
+        const uint32_t name = file->inputs[target].name();
+        const auto found = _program->store.propertyResults.find(name);
+        if (found == _program->store.propertyResults.end()) {
+            continue;
+        }
+        const RrPropertyValue &value = found->second;
+        if (value.tag == RrPropertyValue::Tag::Float) {
+            out.push_back({_program->TextOrEmpty(name), value.f32});
+        } else if (value.tag == RrPropertyValue::Tag::Double) {
+            out.push_back({_program->TextOrEmpty(name), float(value.f64)});
+        }
+    }
+    _SortByPath(&out);
+    return out;
+}
+
 std::vector<RigExecRuntimeIkFkMatch>
 RigExecRuntimeReader::GetIkFkMatches() const
 {

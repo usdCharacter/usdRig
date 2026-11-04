@@ -260,6 +260,7 @@ struct RigExecWirePresentationMaterial : public ::flatbuffers::NativeTable {
   float specular = 0.0f;
   rigExec::fb::PresentationWrap wrapS = rigExec::fb::PresentationWrap::Repeat;
   rigExec::fb::PresentationWrap wrapT = rigExec::fb::PresentationWrap::Repeat;
+  float opacity = 1.0f;
   RigExecWirePresentationMaterial() = default;
   RigExecWirePresentationMaterial(const RigExecWirePresentationMaterial &o);
   RigExecWirePresentationMaterial(RigExecWirePresentationMaterial&&) FLATBUFFERS_NOEXCEPT = default;
@@ -282,7 +283,8 @@ struct PresentationMaterial FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_METALLIC = 14,
     VT_SPECULAR = 16,
     VT_WRAPS = 18,
-    VT_WRAPT = 20
+    VT_WRAPT = 20,
+    VT_OPACITY = 22
   };
   /// "UsdPreviewSurface".
   const ::flatbuffers::String *model() const {
@@ -313,6 +315,10 @@ struct PresentationMaterial FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   rigExec::fb::PresentationWrap wrapT() const {
     return static_cast<rigExec::fb::PresentationWrap>(GetField<uint8_t>(VT_WRAPT, 0));
   }
+  /// Version 2: material opacity; 1 is opaque.
+  float opacity() const {
+    return GetField<float>(VT_OPACITY, 1.0f);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -327,6 +333,7 @@ struct PresentationMaterial FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            VerifyField<float>(verifier, VT_SPECULAR, 4) &&
            VerifyField<uint8_t>(verifier, VT_WRAPS, 1) &&
            VerifyField<uint8_t>(verifier, VT_WRAPT, 1) &&
+           VerifyField<float>(verifier, VT_OPACITY, 4) &&
            verifier.EndTable();
   }
   RigExecWirePresentationMaterial *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -365,6 +372,9 @@ struct PresentationMaterialBuilder {
   void add_wrapT(rigExec::fb::PresentationWrap wrapT) {
     fbb_.AddElement<uint8_t>(PresentationMaterial::VT_WRAPT, static_cast<uint8_t>(wrapT), 0);
   }
+  void add_opacity(float opacity) {
+    fbb_.AddElement<float>(PresentationMaterial::VT_OPACITY, opacity, 1.0f);
+  }
   explicit PresentationMaterialBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -386,8 +396,10 @@ inline ::flatbuffers::Offset<PresentationMaterial> CreatePresentationMaterial(
     float metallic = 0.0f,
     float specular = 0.0f,
     rigExec::fb::PresentationWrap wrapS = rigExec::fb::PresentationWrap::Repeat,
-    rigExec::fb::PresentationWrap wrapT = rigExec::fb::PresentationWrap::Repeat) {
+    rigExec::fb::PresentationWrap wrapT = rigExec::fb::PresentationWrap::Repeat,
+    float opacity = 1.0f) {
   PresentationMaterialBuilder builder_(_fbb);
+  builder_.add_opacity(opacity);
   builder_.add_specular(specular);
   builder_.add_metallic(metallic);
   builder_.add_roughness(roughness);
@@ -415,7 +427,8 @@ inline ::flatbuffers::Offset<PresentationMaterial> CreatePresentationMaterialDir
     float metallic = 0.0f,
     float specular = 0.0f,
     rigExec::fb::PresentationWrap wrapS = rigExec::fb::PresentationWrap::Repeat,
-    rigExec::fb::PresentationWrap wrapT = rigExec::fb::PresentationWrap::Repeat) {
+    rigExec::fb::PresentationWrap wrapT = rigExec::fb::PresentationWrap::Repeat,
+    float opacity = 1.0f) {
   auto model__ = model ? _fbb.CreateString(model) : 0;
   auto texturePng__ = texturePng ? _fbb.CreateVector<uint8_t>(*texturePng) : 0;
   return rigExec::fb::CreatePresentationMaterial(
@@ -428,7 +441,8 @@ inline ::flatbuffers::Offset<PresentationMaterial> CreatePresentationMaterialDir
       metallic,
       specular,
       wrapS,
-      wrapT);
+      wrapT,
+      opacity);
 }
 
 ::flatbuffers::Offset<PresentationMaterial> CreatePresentationMaterial(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePresentationMaterial *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -445,6 +459,9 @@ struct RigExecWirePresentationMesh : public ::flatbuffers::NativeTable {
   std::vector<uint32_t> vertexIndices{};
   std::vector<float> uvs{};
   std::unique_ptr<rigExec::fb::RigExecWirePresentationMaterial> material{};
+  std::string transformPath{};
+  std::vector<float> positions{};
+  std::vector<float> normals{};
   RigExecWirePresentationMesh() = default;
   RigExecWirePresentationMesh(const RigExecWirePresentationMesh &o);
   RigExecWirePresentationMesh(RigExecWirePresentationMesh&&) FLATBUFFERS_NOEXCEPT = default;
@@ -468,7 +485,10 @@ struct PresentationMesh FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_STENCILWEIGHTS = 16,
     VT_VERTEXINDICES = 18,
     VT_UVS = 20,
-    VT_MATERIAL = 22
+    VT_MATERIAL = 22,
+    VT_TRANSFORMPATH = 24,
+    VT_POSITIONS = 26,
+    VT_NORMALS = 28
   };
   const ::flatbuffers::String *path() const {
     return GetPointer<const ::flatbuffers::String *>(VT_PATH);
@@ -505,6 +525,17 @@ struct PresentationMesh FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::PresentationMaterial *material() const {
     return GetPointer<const rigExec::fb::PresentationMaterial *>(VT_MATERIAL);
   }
+  /// Version 2 rigid meshes: an evaluated provider transform moves
+  /// static positions/normals instead of deforming stencil points.
+  const ::flatbuffers::String *transformPath() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_TRANSFORMPATH);
+  }
+  const ::flatbuffers::Vector<float> *positions() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_POSITIONS);
+  }
+  const ::flatbuffers::Vector<float> *normals() const {
+    return GetPointer<const ::flatbuffers::Vector<float> *>(VT_NORMALS);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -527,6 +558,12 @@ struct PresentationMesh FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(uvs()) &&
            VerifyOffset(verifier, VT_MATERIAL) &&
            verifier.VerifyTable(material()) &&
+           VerifyOffset(verifier, VT_TRANSFORMPATH) &&
+           verifier.VerifyString(transformPath()) &&
+           VerifyOffset(verifier, VT_POSITIONS) &&
+           verifier.VerifyVector(positions()) &&
+           VerifyOffset(verifier, VT_NORMALS) &&
+           verifier.VerifyVector(normals()) &&
            verifier.EndTable();
   }
   RigExecWirePresentationMesh *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -568,6 +605,15 @@ struct PresentationMeshBuilder {
   void add_material(::flatbuffers::Offset<rigExec::fb::PresentationMaterial> material) {
     fbb_.AddOffset(PresentationMesh::VT_MATERIAL, material);
   }
+  void add_transformPath(::flatbuffers::Offset<::flatbuffers::String> transformPath) {
+    fbb_.AddOffset(PresentationMesh::VT_TRANSFORMPATH, transformPath);
+  }
+  void add_positions(::flatbuffers::Offset<::flatbuffers::Vector<float>> positions) {
+    fbb_.AddOffset(PresentationMesh::VT_POSITIONS, positions);
+  }
+  void add_normals(::flatbuffers::Offset<::flatbuffers::Vector<float>> normals) {
+    fbb_.AddOffset(PresentationMesh::VT_NORMALS, normals);
+  }
   explicit PresentationMeshBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -591,8 +637,14 @@ inline ::flatbuffers::Offset<PresentationMesh> CreatePresentationMesh(
     ::flatbuffers::Offset<::flatbuffers::Vector<float>> stencilWeights = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> vertexIndices = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<float>> uvs = 0,
-    ::flatbuffers::Offset<rigExec::fb::PresentationMaterial> material = 0) {
+    ::flatbuffers::Offset<rigExec::fb::PresentationMaterial> material = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> transformPath = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> positions = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<float>> normals = 0) {
   PresentationMeshBuilder builder_(_fbb);
+  builder_.add_normals(normals);
+  builder_.add_positions(positions);
+  builder_.add_transformPath(transformPath);
   builder_.add_material(material);
   builder_.add_uvs(uvs);
   builder_.add_vertexIndices(vertexIndices);
@@ -622,7 +674,10 @@ inline ::flatbuffers::Offset<PresentationMesh> CreatePresentationMeshDirect(
     const std::vector<float> *stencilWeights = nullptr,
     const std::vector<uint32_t> *vertexIndices = nullptr,
     const std::vector<float> *uvs = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::PresentationMaterial> material = 0) {
+    ::flatbuffers::Offset<rigExec::fb::PresentationMaterial> material = 0,
+    const char *transformPath = nullptr,
+    const std::vector<float> *positions = nullptr,
+    const std::vector<float> *normals = nullptr) {
   auto path__ = path ? _fbb.CreateString(path) : 0;
   auto pointsPath__ = pointsPath ? _fbb.CreateString(pointsPath) : 0;
   auto stencilOffsets__ = stencilOffsets ? _fbb.CreateVector<uint32_t>(*stencilOffsets) : 0;
@@ -631,6 +686,9 @@ inline ::flatbuffers::Offset<PresentationMesh> CreatePresentationMeshDirect(
   auto stencilWeights__ = stencilWeights ? _fbb.CreateVector<float>(*stencilWeights) : 0;
   auto vertexIndices__ = vertexIndices ? _fbb.CreateVector<uint32_t>(*vertexIndices) : 0;
   auto uvs__ = uvs ? _fbb.CreateVector<float>(*uvs) : 0;
+  auto transformPath__ = transformPath ? _fbb.CreateString(transformPath) : 0;
+  auto positions__ = positions ? _fbb.CreateVector<float>(*positions) : 0;
+  auto normals__ = normals ? _fbb.CreateVector<float>(*normals) : 0;
   return rigExec::fb::CreatePresentationMesh(
       _fbb,
       path__,
@@ -642,7 +700,10 @@ inline ::flatbuffers::Offset<PresentationMesh> CreatePresentationMeshDirect(
       stencilWeights__,
       vertexIndices__,
       uvs__,
-      material);
+      material,
+      transformPath__,
+      positions__,
+      normals__);
 }
 
 ::flatbuffers::Offset<PresentationMesh> CreatePresentationMesh(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePresentationMesh *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -810,7 +871,8 @@ inline RigExecWirePresentationMaterial::RigExecWirePresentationMaterial(const Ri
         metallic(o.metallic),
         specular(o.specular),
         wrapS(o.wrapS),
-        wrapT(o.wrapT) {
+        wrapT(o.wrapT),
+        opacity(o.opacity) {
 }
 
 inline RigExecWirePresentationMaterial &RigExecWirePresentationMaterial::operator=(RigExecWirePresentationMaterial o) FLATBUFFERS_NOEXCEPT {
@@ -823,6 +885,7 @@ inline RigExecWirePresentationMaterial &RigExecWirePresentationMaterial::operato
   std::swap(specular, o.specular);
   std::swap(wrapS, o.wrapS);
   std::swap(wrapT, o.wrapT);
+  std::swap(opacity, o.opacity);
   return *this;
 }
 
@@ -844,6 +907,7 @@ inline void PresentationMaterial::UnPackTo(RigExecWirePresentationMaterial *_o, 
   { auto _e = specular(); _o->specular = _e; }
   { auto _e = wrapS(); _o->wrapS = _e; }
   { auto _e = wrapT(); _o->wrapT = _e; }
+  { auto _e = opacity(); _o->opacity = _e; }
 }
 
 inline ::flatbuffers::Offset<PresentationMaterial> CreatePresentationMaterial(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePresentationMaterial *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -863,6 +927,7 @@ inline ::flatbuffers::Offset<PresentationMaterial> PresentationMaterial::Pack(::
   auto _specular = _o->specular;
   auto _wrapS = _o->wrapS;
   auto _wrapT = _o->wrapT;
+  auto _opacity = _o->opacity;
   return rigExec::fb::CreatePresentationMaterial(
       _fbb,
       _model,
@@ -873,7 +938,8 @@ inline ::flatbuffers::Offset<PresentationMaterial> PresentationMaterial::Pack(::
       _metallic,
       _specular,
       _wrapS,
-      _wrapT);
+      _wrapT,
+      _opacity);
 }
 
 inline RigExecWirePresentationMesh::RigExecWirePresentationMesh(const RigExecWirePresentationMesh &o)
@@ -886,7 +952,10 @@ inline RigExecWirePresentationMesh::RigExecWirePresentationMesh(const RigExecWir
         stencilWeights(o.stencilWeights),
         vertexIndices(o.vertexIndices),
         uvs(o.uvs),
-        material((o.material) ? new rigExec::fb::RigExecWirePresentationMaterial(*o.material) : nullptr) {
+        material((o.material) ? new rigExec::fb::RigExecWirePresentationMaterial(*o.material) : nullptr),
+        transformPath(o.transformPath),
+        positions(o.positions),
+        normals(o.normals) {
 }
 
 inline RigExecWirePresentationMesh &RigExecWirePresentationMesh::operator=(RigExecWirePresentationMesh o) FLATBUFFERS_NOEXCEPT {
@@ -900,6 +969,9 @@ inline RigExecWirePresentationMesh &RigExecWirePresentationMesh::operator=(RigEx
   std::swap(vertexIndices, o.vertexIndices);
   std::swap(uvs, o.uvs);
   std::swap(material, o.material);
+  std::swap(transformPath, o.transformPath);
+  std::swap(positions, o.positions);
+  std::swap(normals, o.normals);
   return *this;
 }
 
@@ -922,6 +994,9 @@ inline void PresentationMesh::UnPackTo(RigExecWirePresentationMesh *_o, const ::
   { auto _e = vertexIndices(); if (_e) { _o->vertexIndices.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->vertexIndices[_i] = _e->Get(_i); } } else { _o->vertexIndices.resize(0); } }
   { auto _e = uvs(); if (_e) { _o->uvs.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->uvs[_i] = _e->Get(_i); } } else { _o->uvs.resize(0); } }
   { auto _e = material(); if (_e) { if(_o->material) { _e->UnPackTo(_o->material.get(), _resolver); } else { _o->material = std::unique_ptr<rigExec::fb::RigExecWirePresentationMaterial>(_e->UnPack(_resolver)); } } else if (_o->material) { _o->material.reset(); } }
+  { auto _e = transformPath(); if (_e) _o->transformPath = _e->str(); }
+  { auto _e = positions(); if (_e) { _o->positions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->positions[_i] = _e->Get(_i); } } else { _o->positions.resize(0); } }
+  { auto _e = normals(); if (_e) { _o->normals.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->normals[_i] = _e->Get(_i); } } else { _o->normals.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<PresentationMesh> CreatePresentationMesh(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePresentationMesh *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -942,6 +1017,9 @@ inline ::flatbuffers::Offset<PresentationMesh> PresentationMesh::Pack(::flatbuff
   auto _vertexIndices = _o->vertexIndices.size() ? _fbb.CreateVector(_o->vertexIndices) : 0;
   auto _uvs = _o->uvs.size() ? _fbb.CreateVector(_o->uvs) : 0;
   auto _material = _o->material ? CreatePresentationMaterial(_fbb, _o->material.get(), _rehasher) : 0;
+  auto _transformPath = _o->transformPath.empty() ? 0 : _fbb.CreateString(_o->transformPath);
+  auto _positions = _o->positions.size() ? _fbb.CreateVector(_o->positions) : 0;
+  auto _normals = _o->normals.size() ? _fbb.CreateVector(_o->normals) : 0;
   return rigExec::fb::CreatePresentationMesh(
       _fbb,
       _path,
@@ -953,7 +1031,10 @@ inline ::flatbuffers::Offset<PresentationMesh> PresentationMesh::Pack(::flatbuff
       _stencilWeights,
       _vertexIndices,
       _uvs,
-      _material);
+      _material,
+      _transformPath,
+      _positions,
+      _normals);
 }
 
 inline RigExecWirePresentation::RigExecWirePresentation(const RigExecWirePresentation &o)
@@ -1075,14 +1156,15 @@ inline const ::flatbuffers::TypeTable *PresentationMaterialTypeTable() {
     { ::flatbuffers::ET_FLOAT, 0, -1 },
     { ::flatbuffers::ET_FLOAT, 0, -1 },
     { ::flatbuffers::ET_UCHAR, 0, 1 },
-    { ::flatbuffers::ET_UCHAR, 0, 1 }
+    { ::flatbuffers::ET_UCHAR, 0, 1 },
+    { ::flatbuffers::ET_FLOAT, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::PresentationColorTypeTable,
     rigExec::fb::PresentationWrapTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 9, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 10, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -1098,13 +1180,16 @@ inline const ::flatbuffers::TypeTable *PresentationMeshTypeTable() {
     { ::flatbuffers::ET_FLOAT, 1, -1 },
     { ::flatbuffers::ET_UINT, 1, -1 },
     { ::flatbuffers::ET_FLOAT, 1, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 },
+    { ::flatbuffers::ET_FLOAT, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::PresentationMaterialTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 10, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 13, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

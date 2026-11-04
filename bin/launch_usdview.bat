@@ -50,8 +50,8 @@ if not exist "%USDVIEW%" (
 
 rem Build if the tree is already configured; a no-op when up to date. Silent
 rem unless it fails, because these scripts are run to see their own output.
-if exist "%RIG%\build\CMakeCache.txt" (
-    cmake --build "%RIG%\build" >nul 2>&1
+if exist "%_RIGEXEC_BUILD%\CMakeCache.txt" (
+    cmake --build "%_RIGEXEC_BUILD%" >nul 2>&1
     if errorlevel 1 (
         >&2 echo ERROR: build failed; run bin\build_rigexec.bat to see why.
         exit /b 1
@@ -65,8 +65,8 @@ rem editor as pxr.UsdNoodles; the in-repo copy takes its place when both are
 rem present (UsdNoodles\__init__.py, _supersedeInstalledCopy), so registering
 rem it is always right. rigexec_register_usdnoodles in _env.sh is the POSIX
 rem twin.
-if exist "%RIG%\build\python\UsdNoodles\plugInfo.json" (
-    set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\build\python\UsdNoodles"
+if exist "%_RIGEXEC_BUILD%\python\UsdNoodles\plugInfo.json" (
+    set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%_RIGEXEC_BUILD%\python\UsdNoodles"
     set "USD_NOODLES="
     if exist "%USD%\Lib\site-packages\pxr\UsdNoodles" set "USD_NOODLES=%USD%\Lib\site-packages\pxr\UsdNoodles"
     if exist "%USD%\lib\python\pxr\UsdNoodles" set "USD_NOODLES=%USD%\lib\python\pxr\UsdNoodles"

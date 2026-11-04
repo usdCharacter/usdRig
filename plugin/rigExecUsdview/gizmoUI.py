@@ -90,6 +90,7 @@ try:
     import gizmoSnap
     import gizmoPreview
     import pathCurveModel
+    import editorExtension
     import rigExecUndo
     import sessionRegistry
 except ImportError:                    # loader that did not add our dir
@@ -103,6 +104,7 @@ except ImportError:                    # loader that did not add our dir
     import gizmoSnap
     import gizmoPreview
     import pathCurveModel
+    import editorExtension
     import rigExecUndo
     import sessionRegistry
 
@@ -163,6 +165,13 @@ CONE_LENGTH_RATIO = 3.0
 HIT_PIXELS = gizmoScreen.HIT_PIXELS
 
 _CAMERA_MODIFIERS = (QtCore.Qt.AltModifier | QtCore.Qt.MetaModifier)
+
+
+def _SnapTooltip(prefix=""):
+    """Tooltip of the Move pivot snap button; `prefix` precedes each hold key."""
+    return ("Where the Move pivot lands: hold %sX (grid), %sC (edge) or "
+            "%sV (point) for one drag, or keep a mode on here. Rotate "
+            "offers Grid on a Gimbal ring only." % (prefix, prefix, prefix))
 
 
 def StageView(usdviewApi):
@@ -443,6 +452,9 @@ class ViewportStatusBar(QtWidgets.QLabel):
     def __init__(self, parent=None):
         super(ViewportStatusBar, self).__init__(parent)
         self._full = ""
+        # fn(text) on every change of the status text; an input owner may
+        # show it elsewhere.
+        self.statusListeners = []
         self.setContentsMargins(6, 1, 6, 1)
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
                            QtWidgets.QSizePolicy.Fixed)
@@ -453,6 +465,12 @@ class ViewportStatusBar(QtWidgets.QLabel):
         if text != self._full:
             self._full = text
             self.setToolTip(text or "No viewport gizmo.")
+            for listener in list(self.statusListeners):
+                try:
+                    listener(text)
+                except Exception as error:
+                    Tf.Warn("rigExecUsdview: status listener failed: %s"
+                            % error)
         self._Elide()
 
     def FullText(self):
@@ -523,6 +541,12 @@ class ViewportToolbar(QtWidgets.QToolBar):
             " QToolButton:checked { background: #4879b4; color: white;"
             " border: 1px solid #79a6dc; border-radius: 3px; }")
         self.setContentsMargins(0, 0, 0, 0)
+        # Set when Qt destroys the bar. An owner may reparent the bar, so
+        # it can die before the stage view, and a late undo-stack or
+        # selection notice must then not touch its deleted actions.
+        self._dead = [False]
+        self.destroyed.connect(
+            lambda *args, dead=self._dead: dead.__setitem__(0, True))
 
         self._toolActions = {}
         self._channelActions = {}
@@ -684,10 +708,7 @@ class ViewportToolbar(QtWidgets.QToolBar):
         self._snapButton.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         self._snapButton.setPopupMode(
             QtWidgets.QToolButton.InstantPopup)
-        self._snapButton.setToolTip(
-            "Where the Move pivot lands: hold X (grid), C (edge) or "
-            "V (point) for one drag, or keep a mode on here. Rotate "
-            "offers Grid on a Gimbal ring only.")
+        self._snapButton.setToolTip(_SnapTooltip())
         self._snapMenu = QtWidgets.QMenu(self._snapButton)
         group = QtActionWidgets.QActionGroup(self._snapMenu)
         group.setExclusive(True)
@@ -838,10 +859,15 @@ class ViewportToolbar(QtWidgets.QToolBar):
     def _BuildUndo(self):
         # Qt.ApplicationShortcut so undo works with focus in the prim
         # tree or the attribute view, not only over the viewport.
+        # An input owner (installFilters=False) owns the Undo / Redo chords:
+        # the buttons stay but carry no shortcuts.
+        managed = not getattr(self._controller, "InstallsFilters",
+                              lambda: True)()
         self.undoAction = QtActionWidgets.QAction("Undo", self)
         self.undoAction.setIcon(gizmoIcons.Icon("undo"))
-        self.undoAction.setShortcut(QtGui.QKeySequence("Ctrl+Z"))
-        self.undoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+        if not managed:
+            self.undoAction.setShortcut(QtGui.QKeySequence("Ctrl+Z"))
+            self.undoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.undoAction.triggered.connect(
             lambda checked=False: self._controller.Undo())
         self.addAction(self.undoAction)
@@ -850,10 +876,11 @@ class ViewportToolbar(QtWidgets.QToolBar):
         self.redoAction.setIcon(gizmoIcons.Icon("redo"))
         # Ctrl+Shift+Z is the user's ask, Shift+Z is a common redo, Ctrl+Y is
         # what a Windows-trained hand reaches for.
-        self.redoAction.setShortcuts([QtGui.QKeySequence("Ctrl+Shift+Z"),
-                                      QtGui.QKeySequence("Shift+Z"),
-                                      QtGui.QKeySequence("Ctrl+Y")])
-        self.redoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+        if not managed:
+            self.redoAction.setShortcuts([QtGui.QKeySequence("Ctrl+Shift+Z"),
+                                          QtGui.QKeySequence("Shift+Z"),
+                                          QtGui.QKeySequence("Ctrl+Y")])
+            self.redoAction.setShortcutContext(QtCore.Qt.ApplicationShortcut)
         self.redoAction.triggered.connect(
             lambda checked=False: self._controller.Redo())
         self.addAction(self.redoAction)
@@ -905,6 +932,23 @@ class ViewportToolbar(QtWidgets.QToolBar):
 
     def Sync(self):
         """Mirror the controller's state onto the widgets."""
+        # Test stand-ins borrow this method without running __init__
+        # (tests/python/test_gizmo_deferred_release.py), so the shutdown
+        # guard and _SyncNow are reached without relying on either.
+        dead = getattr(self, "_dead", None)
+        if dead is not None and dead[0]:
+            return
+        try:
+            ViewportToolbar._SyncNow(self)
+        except RuntimeError as error:
+            if "already deleted" not in str(error):
+                raise
+            # Qt deleted the bar or the status row (before the stage view,
+            # at shutdown): nothing left to mirror on.
+            if dead is not None:
+                dead[0] = True
+
+    def _SyncNow(self):
         controller = self._controller
         for tool, action in self._toolActions.items():
             action.setChecked(tool == controller.Tool())
@@ -1000,6 +1044,22 @@ class ViewportToolbar(QtWidgets.QToolBar):
     def StatusLabel(self):
         """The status row widget (a ViewportStatusBar, not in the bar)."""
         return self._status
+
+    def SetToolButtonsVisible(self, visible):
+        """Show or hide the Select / Move / Rotate / Scale buttons.
+
+        Hidden while a host picks the tool elsewhere: a second set of
+        tool buttons could disagree with it."""
+        for action in self._toolActions.values():
+            action.setVisible(bool(visible))
+
+    def ToolButtonsVisible(self):
+        return any(a.isVisible() for a in self._toolActions.values())
+
+    def SetSnapHoldPrefix(self, prefix):
+        """Prefix the hold keys named in the snap button's tooltip
+        (for example "Control+")."""
+        self._snapButton.setToolTip(_SnapTooltip(prefix))
 
 
 # Tool settings window
@@ -1414,10 +1474,15 @@ class GizmoController(QtCore.QObject):
     """
 
     def __init__(self, usdviewApi, undoStack, parent=None,
-                 openGraphEditor=None):
+                 openGraphEditor=None, installFilters=True):
         super(GizmoController, self).__init__(parent)
         self.usdviewApi = usdviewApi
         self.undoStack = undoStack
+        # False: no stage-view or application filter; an input owner
+        # forwards events to the Handle* methods below.
+        self._installFilters = installFilters
+        # fn(tool) after SetTool changes the tool token.
+        self.toolChangedHooks = []
         # The container's opener, so this module never imports
         # graphEditorUI at module scope and stays loadable in the
         # headless contexts the C++ tests use. None falls back to a
@@ -1502,10 +1567,12 @@ class GizmoController(QtCore.QObject):
 
         self._InstallToolbar()
         self._InstallUndoShortcuts()
-        self._hotkeys = ViewportHotkeyFilter(self)
+        if installFilters:
+            self._hotkeys = ViewportHotkeyFilter(self)
         application = QtWidgets.QApplication.instance()
         if application is not None:
-            application.installEventFilter(self._hotkeys)
+            if self._hotkeys is not None:
+                application.installEventFilter(self._hotkeys)
             # Undo / redo are application-wide shortcuts, and two sessions
             # in one process would make every Ctrl+Z an ambiguous overload
             # that fires in neither window. See _ScopeShortcuts.
@@ -1515,7 +1582,8 @@ class GizmoController(QtCore.QObject):
         if view is not None:
             # The stage view keeps the MOUSE filter; keys go through the
             # application filter above (see ViewportHotkeyFilter).
-            view.installEventFilter(self)
+            if installFilters:
+                view.installEventFilter(self)
             view.destroyed.connect(self._onViewDestroyed)
             # WA_Hover, not setMouseTracking: the pre-selection
             # highlight needs mouse moves with no button down, and Qt
@@ -1558,6 +1626,27 @@ class GizmoController(QtCore.QObject):
         layout.insertWidget(1, self.statusBar)
         self.toolbar.Sync()
 
+    def IsToolbarRowReleased(self):
+        return getattr(self, "_rowReleased", False)
+
+    def ReleaseToolbarRow(self):
+        """
+        Take the toolbar and status rows out of glFrame for good, for a
+        host that shows the toolbar elsewhere. The controller keeps both
+        widgets. Idempotent; a plain session never calls it.
+        """
+        if getattr(self, "_rowReleased", False):
+            return
+        self._rowReleased = True
+        for widget in (self.toolbar, self.statusBar):
+            try:
+                if widget.parent() is not None:
+                    widget.hide()
+                    widget.setParent(None)
+            except RuntimeError:
+                pass
+        self.toolbar.SetToolButtonsVisible(False)
+
     def _UndoActions(self):
         return [a for a in (getattr(self.toolbar, "undoAction", None),
                             getattr(self.toolbar, "redoAction", None))
@@ -1577,6 +1666,9 @@ class GizmoController(QtCore.QObject):
         toolbar, so they are still destroyed with it, and Detach takes
         them back off for the case where the toolbar outlives its view.
         """
+        if not getattr(self, "_installFilters", True):
+            # An input owner owns the Undo / Redo chords.
+            return
         window = self._MainWindow()
         if window is None:
             return
@@ -1596,11 +1688,16 @@ class GizmoController(QtCore.QObject):
         if self._controlPicking is not None:
             self._controlPicking.Detach()
             self._controlPicking = None
-        if self._hotkeys is None:
+        managed = not getattr(self, "_installFilters", True)
+        if self._hotkeys is None and not managed:
             return
+        if managed and getattr(self, "_detached", False):
+            return
+        self._detached = True
         application = QtWidgets.QApplication.instance()
         if application is not None:
-            application.removeEventFilter(self._hotkeys)
+            if self._hotkeys is not None:
+                application.removeEventFilter(self._hotkeys)
             try:
                 application.focusWindowChanged.disconnect(
                     self._onFocusWindowChanged)
@@ -1748,6 +1845,12 @@ class GizmoController(QtCore.QObject):
         self.toolbar.Sync()
         if self._panel is not None:
             self._panel.Rebuild()
+        for hook in list(getattr(self, "toolChangedHooks", ())):
+            try:
+                hook(tool)
+            except Exception as error:
+                Tf.Warn("rigExecUsdview: tool change hook failed: %s"
+                        % error)
 
     def Channels(self):
         return self._channels
@@ -1796,14 +1899,84 @@ class GizmoController(QtCore.QObject):
     def IsVisible(self):
         return self._visible
 
+    # -- input from an owner (installFilters=False; editorExtension) ------
+    # Each method runs the body the matching filter runs, so forwarded
+    # events take the same code.
+
+    def InstallsFilters(self):
+        return getattr(self, "_installFilters", True)
+
+    def HasView(self):
+        return self._view is not None
+
+    def HasTarget(self):
+        return self._target is not None
+
+    def ForwardViewEvent(self, event):
+        """The stage-view filter for one event; True when consumed."""
+        view = self._view
+        return bool(view is not None and self.eventFilter(view, event))
+
+    def HandlePress(self, event):
+        """A viewport press: ends a text edit first, as a click does."""
+        self._DropTypingFocus()
+        return bool(self._OnPress(event))
+
+    def IsMarqueePending(self):
+        return self._marqueeAt is not None
+
+    def HandleMove(self, event):
+        return bool(self._OnMove(event))
+
+    def HandleRelease(self, event):
+        return bool(self._OnRelease(event))
+
+    def HandleHover(self, point):
+        """Pre-selection at physical pixel `point`; None: the pointer left."""
+        self._UpdateHover(point)
+
+    def HandleKeyRelease(self, event, key):
+        """`event`: a QKeyEvent, or any object with isAutoRepeat(),
+        modifiers() and key()."""
+        if key == self._claimedKey:
+            self._claimedKey = None
+        return bool(self._ReleaseHold(event, key))
+
+    def HandleDragKey(self, key):
+        return bool(self._DragKey(key))
+
+    def HandleToolKey(self, key, modifiers):
+        """`modifiers`: the Qt modifiers the key acts with."""
+        self._keyModifiers = modifiers
+        return bool(self._ToolKey(key))
+
+    def CancelGesture(self):
+        """Abort a drag and drop a pending marquee."""
+        if self.IsDragging():
+            self._AbortDrag()
+        if self._marqueeAt is not None:
+            self._marqueeAt = None
+            self._marqueeBand = None
+            self._marqueeWas = ()
+            self._HideBand()
+
+    def ClearHolds(self):
+        self._ClearHolds()
+
     def SetVisible(self, visible):
         visible = bool(visible)
         if visible == self._visible:
             return
         self._visible = visible
         self._AbortDrag()
-        self.toolbar.setVisible(visible)
-        self.statusBar.setVisible(visible)
+        if getattr(self, "_rowReleased", False):
+            # Shown elsewhere (or nowhere): never show a parentless
+            # toolbar or status row as a window.
+            if self.toolbar.parent() is not None:
+                self.toolbar.setVisible(visible)
+        else:
+            self.toolbar.setVisible(visible)
+            self.statusBar.setVisible(visible)
         if self.overlay is not None:
             self.overlay.setVisible(visible)
         self._RebuildHandles()
@@ -4221,7 +4394,10 @@ class GizmoController(QtCore.QObject):
             # the stage by now. The whole drag authors here, once.
             self._committing = (drag.target, drag.target.writer.Pending())
             try:
-                authored = drag.target.writer.CommitToStage()
+                # An editor extension may route this deferred commit (it
+                # runs on a later turn) to its document layer.
+                with editorExtension.DocumentEdit(self.usdviewApi):
+                    authored = drag.target.writer.CommitToStage()
             finally:
                 self._committing = None
             edit = drag.recorder.Commit(label)
@@ -4331,9 +4507,14 @@ def InstallViewportTools(usdviewApi, undoStack, retries=_INSTALL_RETRIES,
 
             QtCore.QTimer.singleShot(0, _Retry)
         return None
+    yielded = editorExtension.OwnsInput(usdviewApi)
     controller = GizmoController(usdviewApi, undoStack,
-                                 openGraphEditor=openGraphEditor)
+                                 openGraphEditor=openGraphEditor,
+                                 installFilters=not yielded)
     _controllers.Set(usdviewApi, controller)
+    if yielded:
+        editorExtension.EditorAdded(usdviewApi, editorExtension.GIZMO,
+                                    controller)
     # A second session changes which undo / redo may be application-wide.
     for installed in _controllers.Values():
         scope = getattr(installed, "_ScopeShortcuts", None)

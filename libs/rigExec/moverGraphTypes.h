@@ -153,6 +153,12 @@ struct RigExecRevisionBinding {
     VtValue externalCompileData;
     /// Existence/type/connection/subtree facts used by the compile manifest.
     std::vector<SdfPath> externalStructure;
+    /// Attributes whose Default value is resolved into externalCompileData
+    /// (a setup transform composed from xform ops, say). Editing one
+    /// recompiles, whether or not it is varying. List them in
+    /// externalStructure as well when the baked program must also name them;
+    /// a varying attribute read per frame belongs in neither.
+    std::vector<SdfPath> externalCompileSources;
     std::vector<RigExecRevisionLeafKey> externalInputs;
     SdfPath moverPath;        ///< the authored mover
     SdfPath target;           ///< canonical exact write target

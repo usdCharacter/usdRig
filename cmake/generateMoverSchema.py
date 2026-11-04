@@ -78,24 +78,19 @@ def write_if_changed(path, text):
         path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def emit_header(type_name, namespace, attributes):
-    """Shared header emission. attributes holds (name, kind, uniform,
-    has_value, value) records sorted by name from either reader."""
-    lines = ["// Generated from schema.usda; do not edit.", "#pragma once",
-             '#include "rigExecBinary/external.h"', "#include <array>",
-             "#include <cstdint>", "#include <string_view>",
-             f"namespace rigExec {{ namespace {namespace} {{",
-             f"inline constexpr char Type[] = {json.dumps(type_name)};",
-             "struct Attribute { const char *name; const char *type; bool uniform; };"]
-    emitted = []
+def _default_lines(attributes, emitted=None):
+    """attributes holds (name, kind, uniform, has_value, value) records
+    sorted by name from either reader."""
+    lines = []
     names = set()
     for name, kind, uniform, has_value, value in attributes:
         cpp_name = identifier(name)
         if cpp_name in names:
             raise ValueError(f"Attribute identifier collision: {name}")
         names.add(cpp_name)
-        emitted.append("{" + json.dumps(name) + ", " + json.dumps(kind) +
-                       ", " + ("true" if uniform else "false") + "}")
+        if emitted is not None:
+            emitted.append("{" + json.dumps(name) + ", " + json.dumps(kind) +
+                           ", " + ("true" if uniform else "false") + "}")
         if not has_value:
             continue
         element = kind[:-2] if kind.endswith("[]") else kind
@@ -105,6 +100,24 @@ def emit_header(type_name, namespace, attributes):
         if kind.endswith("[]"):
             cpp_type = f"std::array<{cpp_type}, {len(value)}>"
         lines.append(f"inline constexpr {cpp_type} {cpp_name} = {literal(value, kind)};")
+    return lines
+
+
+def emit_header(type_name, namespace, attributes, reads=()):
+    """Shared header emission. reads holds (type, attributes) pairs for other
+    schema types the adapter reads; their defaults go in nested namespaces."""
+    lines = ["// Generated from schema.usda; do not edit.", "#pragma once",
+             '#include "rigExecBinary/external.h"', "#include <array>",
+             "#include <cstdint>", "#include <string_view>",
+             f"namespace rigExec {{ namespace {namespace} {{",
+             f"inline constexpr char Type[] = {json.dumps(type_name)};",
+             "struct Attribute { const char *name; const char *type; bool uniform; };"]
+    emitted = []
+    lines += _default_lines(attributes, emitted)
+    for read_type, read_attributes in reads:
+        lines.append(f"namespace {identifier(read_type)} {{")
+        lines += _default_lines(read_attributes)
+        lines.append("}")
     lines += [f"inline constexpr std::array<Attribute, {len(emitted)}> Attributes = {{{{",
               ",\n".join("    " + a for a in emitted), "}};", "}} // namespace rigExec", ""]
     return "\n".join(lines)
@@ -847,16 +860,22 @@ def _generate_with_pxr(args, namespace):
     stage = Usd.Stage.Open(str(Path(args.schema).resolve()))
     if not stage:
         raise ValueError(f"Cannot open schema: {args.schema}")
-    prim = stage.GetPrimAtPath("/" + args.type)
-    if not prim or not prim.IsAbstract():
-        raise ValueError(f"Schema has no class {args.type}")
-    attributes = []
-    for attr in sorted(prim.GetAttributes(), key=lambda a: a.GetName()):
-        name, kind = attr.GetName(), str(attr.GetTypeName())
-        uniform = attr.GetVariability() == Sdf.VariabilityUniform
-        value = attr.Get()
-        attributes.append((name, kind, uniform, value is not None, value))
-    write_if_changed(args.header, emit_header(args.type, namespace, attributes))
+
+    def records(type_name):
+        prim = stage.GetPrimAtPath("/" + type_name)
+        if not prim or not prim.IsAbstract():
+            raise ValueError(f"Schema has no class {type_name}")
+        attributes = []
+        for attr in sorted(prim.GetAttributes(), key=lambda a: a.GetName()):
+            name, kind = attr.GetName(), str(attr.GetTypeName())
+            uniform = attr.GetVariability() == Sdf.VariabilityUniform
+            value = attr.Get()
+            attributes.append((name, kind, uniform, value is not None, value))
+        return attributes
+
+    reads = [(read_type, records(read_type)) for read_type in args.read_type]
+    write_if_changed(args.header,
+                     emit_header(args.type, namespace, records(args.type), reads))
     if args.resources:
         global_prim = stage.GetPrimAtPath("/GLOBAL")
         if not global_prim or global_prim.GetCustomDataByKey("skipCodeGeneration") is not True:
@@ -884,28 +903,39 @@ def _generate_with_pxr(args, namespace):
     del dll_dirs
 
 
-def _generate_from_text(args, namespace):
-    _check_text_sublayers(args.schema)
-    class_ident, members, inherits, class_data, global_data = \
-        _read_text_schema(args.schema, args.type)
-    converted = []
-    for member, record in members:
-        if member == "rel":
-            converted.append((member, record))
-            continue
-        name, kind, uniform, custom, has_value, value, allowed = record
-        if has_value:
-            value = _convert_default(kind, value, name)
-        converted.append((member, (name, kind, uniform, custom, has_value,
-                                   value, allowed)))
+def _convert_record(record):
+    name, kind, uniform, custom, has_value, value, allowed = record
+    if has_value:
+        value = _convert_default(kind, value, name)
+    return (name, kind, uniform, custom, has_value, value, allowed)
+
+
+def _text_records(members):
     records = []
-    for member, record in converted:
+    for member, record in members:
         if member != "attr":
             continue
         name, kind, uniform, custom, has_value, value, allowed = record
         records.append((name, kind, uniform, has_value, value))
     records.sort(key=lambda item: item[0])
-    write_if_changed(args.header, emit_header(args.type, namespace, records))
+    return records
+
+
+def _generate_from_text(args, namespace):
+    _check_text_sublayers(args.schema)
+    class_ident, members, inherits, class_data, global_data = \
+        _read_text_schema(args.schema, args.type)
+    converted = [(member, _convert_record(record) if member == "attr" else record)
+                 for member, record in members]
+    records = _text_records(converted)
+    reads = []
+    for read_type in args.read_type:
+        read_members = _read_text_schema(args.schema, read_type)[1]
+        reads.append((read_type, _text_records(
+            (member, _convert_record(record))
+            for member, record in read_members if member == "attr")))
+    write_if_changed(args.header,
+                     emit_header(args.type, namespace, records, reads))
     if args.resources:
         if global_data.get("skipCodeGeneration") is not True:
             raise ValueError("Mover schemas must set GLOBAL customData skipCodeGeneration = true")
@@ -961,6 +991,7 @@ def main():
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--header", required=True)
     parser.add_argument("--resources")
+    parser.add_argument("--read-type", action="append", default=[])
     args = parser.parse_args()
     namespace = identifier(args.namespace)
     use_pxr = os.environ.get("RIGEXEC_MOVER_SCHEMA_TEXT_ONLY") != "1"

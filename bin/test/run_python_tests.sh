@@ -10,8 +10,14 @@ rigexec_require_python
 
 # The native evaluator binding is optional (built in build-python, not
 # build); test_gizmo_math compares against it when importable.
-export PYTHONPATH="$RIG/build-python/python:$PYTHONPATH"
-SCHEMA="$RIG/build/usd/rigExecSchema/resources"
+# Prefer the selected tree's binding: _env.sh pairs its Python modules
+# with its native libraries. Keep the legacy build-python fallback only
+# for the default tree, never for an explicitly selected build.
+if [ -z "${RIGEXEC_BUILD_DIR:-}" ] &&
+   ! ls "$_RIGEXEC_BUILD"/python/_rigexec*.so >/dev/null 2>&1; then
+    export PYTHONPATH="$RIG/build-python/python:$PYTHONPATH"
+fi
+SCHEMA="$_RIGEXEC_BUILD/usd/rigExecSchema/resources"
 
 TESTS=("$@")
 if [ ${#TESTS[@]} -eq 0 ]; then
@@ -23,7 +29,8 @@ if [ ${#TESTS[@]} -eq 0 ]; then
            test_gizmo_preview
            test_touchpose_model test_gizmo_marquee
            test_picker_scene test_picker_hover_model test_marking_menu_model test_marking_menu_ui test_pip_picker test_picker_layout
-           test_imaging_handle test_session_state)
+           test_imaging_handle test_session_state test_env_build_dir
+           test_editor_extension)
 fi
 
 # Only the tests listed here read argv[1], to Plug-register the generated

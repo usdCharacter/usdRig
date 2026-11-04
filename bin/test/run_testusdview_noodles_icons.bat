@@ -32,11 +32,11 @@ call "%~dp0..\_env.bat"
 call "%~dp0..\_require_python.bat"
 if errorlevel 1 exit /b 1
 
-if not exist "%RIG%\build\python\UsdNoodles\plugInfo.json" (
+if not exist "%_RIGEXEC_BUILD%\python\UsdNoodles\plugInfo.json" (
     >&2 echo ERROR: build\python\UsdNoodles is not staged; run bin\build_rigexec.bat
     exit /b 1
 )
-set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\build\python\UsdNoodles"
+set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%_RIGEXEC_BUILD%\python\UsdNoodles"
 
 set RENDERER_ARG=
 if not "%~1"=="" set RENDERER_ARG=--renderer %~1

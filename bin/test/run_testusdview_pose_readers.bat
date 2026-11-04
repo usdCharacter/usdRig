@@ -8,8 +8,8 @@ call "%~dp0..\_vcvars.bat"
 call "%~dp0..\_env.bat"
 call "%~dp0..\_require_python.bat"
 if errorlevel 1 exit /b 1
-if exist "%RIG%\build\CMakeCache.txt" (
-    cmake --build "%RIG%\build" >nul
+if exist "%_RIGEXEC_BUILD%\CMakeCache.txt" (
+    cmake --build "%_RIGEXEC_BUILD%" >nul
     if errorlevel 1 exit /b 1
 )
 set "PXR_PLUGINPATH_NAME=%PXR_PLUGINPATH_NAME%;%RIG%\plugin\shapeEditor"

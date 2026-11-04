@@ -52,6 +52,12 @@ using RigExecXformOverrideSceneIndexRefPtr =
 bool RigExecControlGuideIsDrawn(
     const TfToken &shape, const TfToken &drawMode);
 
+/// The checked inverse the results scene index composes driven transforms
+/// with: false for a non-finite, ill-conditioned or singular \p m, and
+/// \p inverse is then unspecified. The published-revision reader
+/// (RigExecImaging_GetPublishedXformRevisionForStage) uses the same test.
+bool RigExecTryInvertXform(const GfMatrix4d &m, GfMatrix4d *inverse);
+
 /// The Hydra container and leaf naming the rig adapter's time-varying
 /// trigger (rigAdapter.cpp): UsdImagingStageSceneIndex::SetTime dirties
 /// rigExec/time on every RigExecRoot prim, and
@@ -360,6 +366,13 @@ public:
 
     void NotifyGenerationPublished(
         const RigExecPublishedDirtyVector &dirtied);
+
+    /// Frames on demand: the frame table gained or lost frames. Dirties the
+    /// value leaves every published prim answers at a time offset
+    /// (primvars, extent) and the transform of every driven subtree, so a
+    /// reader that got "not yet" (an empty value) reads again. Main thread;
+    /// no registry lock held.
+    void NotifyFramesChanged();
 
     /// The store this index reads (atomically swappable, see SetStore).
     std::shared_ptr<RigExecSnapshotStore> GetStore() const {

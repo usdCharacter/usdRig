@@ -32,6 +32,23 @@ import sys
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 
+def ControlIcon(style, standard):
+    """Host image shape in the dark Avars panel's foreground colors."""
+    source = style.standardIcon(standard)
+    icon = QtGui.QIcon()
+    for size in (16, 24, 48):
+        for mode, color in ((QtGui.QIcon.Normal, "#cfd4dc"),
+                            (QtGui.QIcon.Disabled, "#6e7074")):
+            pixmap = source.pixmap(size, size)
+            painter = QtGui.QPainter(pixmap)
+            painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceIn)
+            painter.fillRect(pixmap.rect(), QtGui.QColor(color))
+            painter.end()
+            icon.addPixmap(pixmap, mode, QtGui.QIcon.Off)
+            icon.addPixmap(pixmap, mode, QtGui.QIcon.On)
+    return icon
+
+
 # The vertical rhythm. A row is deliberately tighter than Qt's default:
 # a control with ten channels plus a Custom group has to fit a dock
 # without scrolling, and Qt's stock QLineEdit height (~24 px here) puts
@@ -281,10 +298,7 @@ class Section(QtWidgets.QWidget):
     remember which groups were open across a rebuild -- a selection
     change must not re-open the four groups somebody just closed.
 
-    The triangle is drawn as text rather than as an icon: this plugin
-    ships no icons of its own for it, the two glyphs are in every font
-    usdview runs with, and a QStyle arrow would take the palette of
-    whatever theme is loaded rather than this panel's.
+    Disclosure uses the host style image; the section title stays text.
     """
 
     toggled = QtCore.Signal(bool)
@@ -303,7 +317,10 @@ class Section(QtWidgets.QWidget):
         self._header.setCheckable(True)
         self._header.setChecked(True)
         self._header.setCursor(QtCore.Qt.PointingHandCursor)
-        self._header.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self._header.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self._header.setIconSize(QtCore.QSize(14, 14))
+        self._header.setIcon(ControlIcon(self.style(), QtWidgets.QStyle.SP_ArrowDown))
+        self._header.setAccessibleName(self._title)
         self._header.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                    QtWidgets.QSizePolicy.Fixed)
         self._header.setFixedHeight(ROW_HEIGHT)
@@ -337,8 +354,7 @@ class Section(QtWidgets.QWidget):
     # -- folding ----------------------------------------------------------
 
     def _HeaderText(self):
-        return "%s  %s" % ("▾" if self._expanded else "▸",
-                           self._title)
+        return self._title
 
     def IsExpanded(self):
         return self._expanded
@@ -349,6 +365,8 @@ class Section(QtWidgets.QWidget):
             return
         self._expanded = expanded
         self._header.setChecked(expanded)
+        self._header.setIcon(ControlIcon(self.style(),
+            QtWidgets.QStyle.SP_ArrowDown if expanded else QtWidgets.QStyle.SP_ArrowRight))
         self._header.setText(self._HeaderText())
         self._body.setVisible(expanded)
         self.toggled.emit(expanded)

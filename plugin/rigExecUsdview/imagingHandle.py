@@ -56,6 +56,8 @@ _PER_STAGE = {
     "SetTime": (_i, [_d]),
     "OnEditCommitted": (_i, []),
     "OnIdle": (_i, []),
+    "ServiceFrameDemand": (_i, []),
+    "HasFrameDemand": (_i, []),
     "WriteProfileSummary": (_i, [_s]),
     "Deactivate": (None, []),
     "GetGeneration": (_ll, []),
@@ -299,6 +301,16 @@ class ImagingHandle(object):
 
     def OnIdle(self):
         return self._Entry("OnIdle")()
+
+    def ServiceFrameDemand(self):
+        """Frames on demand: cached frames Hydra readers asked for become
+        frame-table entries (docs/specs/frames-on-demand.md). Returns the
+        count added, -1 when inactive."""
+        return self._Entry("ServiceFrameDemand")()
+
+    def HasFrameDemand(self):
+        """1 while frames on demand wait, 0 when none, -1 when inactive."""
+        return self._Entry("HasFrameDemand")()
 
     def WriteProfileSummary(self, path):
         if isinstance(path, str):

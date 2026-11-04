@@ -170,7 +170,13 @@ def _push_undo_command(description, do_func, undo_func, *, view):
     Callbacks accept the view invoking undo/redo and capture edit data only.
     """
     if view._undoHistory is not None:
-        view._undoHistory.push(description, do_func, undo_func)
+        if getattr(view._undoHistory, "bridged", lambda: False)():
+            # An external history backend (undoHistory.set_history_backend)
+            # records the push; the view is kept weakly for replays.
+            view._undoHistory.push(description, do_func, undo_func,
+                                   view=view)
+        else:
+            view._undoHistory.push(description, do_func, undo_func)
 
 
 def _make_prim_activation_undo(paths, activate):
@@ -5892,13 +5898,19 @@ class GraphView(QGLWidget):
             return
 
         Tf.Status(f"Undo: executing '{mgr.undoDescription()}'")
+        # A bridged backend reloads every view after its replay; reload
+        # here only on failure.
+        bridged = getattr(mgr, "bridged", lambda: False)()
+        failed = False
         try:
             mgr.undo(self)
         except Exception as e:
+            failed = True
             Tf.Warn(f"Undo callback failed: {e}")
         # Always reload so the visual state matches the USD layer state,
         # even when the undo callback raised an exception.
-        self._reloadCurrentGraph()
+        if not bridged or failed:
+            self._reloadCurrentGraph()
 
     def _performRedo(self):
         """Execute redo in this view's stage history."""
@@ -5908,13 +5920,17 @@ class GraphView(QGLWidget):
         if not mgr.canRedo():
             return
 
+        bridged = getattr(mgr, "bridged", lambda: False)()
+        failed = False
         try:
             mgr.redo(self)
         except Exception as e:
+            failed = True
             Tf.Warn(f"Redo callback failed: {e}")
         # Always reload so the visual state matches the USD layer state,
         # even when the redo callback raised an exception.
-        self._reloadCurrentGraph()
+        if not bridged or failed:
+            self._reloadCurrentGraph()
 
     def _reloadCurrentGraph(self):
         """Reload the graph from USD after undo/redo.

@@ -133,6 +133,7 @@ nav:
       - concepts/secondary-motion.md
       - concepts/riglogic.md
       - concepts/external-movers.md
+      - concepts/skeletons-2d.md
       - concepts/live-evaluator-inspection.md
       - concepts/paths.md
       - Multi-stage imaging: multistage-imaging.md
@@ -151,6 +152,7 @@ nav:
       - Execute publication buffers: specs/runtime-execute-buffers.md
       - Bake and inverse APIs: specs/python-bake-inverse.md
       - Composition arcs: specs/composition-arcs.md
+      - Editor extensions: specs/editor-extensions.md
       - Control guides: specs/control-guides.md
       - Volume weights: specs/volume-weights.md
       - Default spaces: specs/xformable-default-spaces.md

@@ -543,6 +543,16 @@ public:
     /// this compiled rig, sorted: the only moved floats imaging hands to
     /// Hydra as primvars.
     std::vector<SdfPath> GetAnimatedMapPrimvars() const;
+    /// The float or double `primvars:` properties property chains revise
+    /// in this compiled rig (a float math mover's target), sorted: imaging
+    /// and .rigexec playback publish exactly these as constant float
+    /// primvars on their prims (RigExecIsScalarPrimvarTarget). A float
+    /// chain on any other property (a dial) publishes nothing. Built once
+    /// per compile; the names omit `primvars:` and run parallel.
+    const std::vector<SdfPath> &GetScalarPrimvarTargets() const
+    { return _scalarPrimvarTargets; }
+    const std::vector<TfToken> &GetScalarPrimvarNames() const
+    { return _scalarPrimvarNames; }
 
     /// Composed mover-stack applications: descendants before their mover
     /// parent, sibling branches in reverse composed child order (the bottom
@@ -1485,6 +1495,10 @@ private:
         _CompileFailure *failure) const;
     /// Exact scalar property target -> its revisions, in mover execution order.
     std::map<SdfPath, std::vector<_PropertyRevision>> _propertyChains;
+    /// The scalar primvar subset of _propertyChains, sorted by target, and
+    /// each name without `primvars:`. Rebuilt at the compile commit.
+    std::vector<SdfPath> _scalarPrimvarTargets;
+    std::vector<TfToken> _scalarPrimvarNames;
     /// Phased connections; see GetPhasedConnections.
     std::vector<RigExecPhasedConnection> _phasedConnections;
 
@@ -1788,6 +1802,13 @@ size_t RigExecConstraintHandlerTotal();
 /// Whether \p schemaType's operator honors rigExec:rotationOrder. False for a
 /// type with no registry row.
 bool RigExecConstraintUsesRotationOrder(const TfToken &schemaType);
+
+/// Whether a property chain on \p target, whose attribute holds \p valueType,
+/// publishes as a constant float primvar: a float or double `primvars:<name>`
+/// property. Compile and the .rigexec export (File.scalar_primvar_chains)
+/// apply it.
+bool RigExecIsScalarPrimvarTarget(const SdfPath &target,
+                                  const SdfValueTypeName &valueType);
 
 }  // namespace rigExec
 

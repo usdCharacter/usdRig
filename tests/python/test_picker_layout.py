@@ -51,21 +51,18 @@ class _Bag(object):
         self.buttons = buttons
 
 
-class _Panel(object):
-    def __init__(self, w, h, ident="p"):
-        self.id, self.w, self.h = ident, w, h
-
-
-def content_box(buttons, panel_w, panel_h):
-    """THE REAL ONE, through a pair of stand-ins.
+def content_box(buttons, panel_w, panel_h, **panel_fields):
+    """The real model and panel, with lightweight button records.
 
     Calling pickerModel.content_box rather than restating it: a test that
     keeps its own copy of the rule passes happily while the rule it is
     guarding changes underneath it.
     """
     import pickerModel
+    panel = pickerModel.Panel(dict(id="p", w=panel_w, h=panel_h,
+                                   **panel_fields))
     return pickerModel.content_box(
-        _Bag([_Box("p", *b) for b in buttons]), _Panel(panel_w, panel_h))
+        _Bag([_Box("p", *b) for b in buttons]), panel)
 
 
 def main():
@@ -100,6 +97,14 @@ def main():
     (ex, ey), (ew, eh) = content_box([], 400.0, 600.0)
     check("an empty panel falls back to its declared size",
           (ex, ey) == (0.0, 0.0) and (ew, eh) == (400.0, 600.0))
+
+    check("an image retains its declared canvas and margins",
+          content_box([], 400.0, 600.0, backgroundImage=b"image",
+                      x=20.0, y=30.0) == ((8.0, 18.0), (424.0, 624.0)))
+    check("buttons outside an image expand its content box",
+          content_box([(-10.0, 10.0, 20.0, 20.0)], 400.0, 600.0,
+                      backgroundImage=b"image", x=20.0, y=30.0)
+          == ((-22.0, -2.0), (454.0, 644.0)))
 
     print("")
     print("paint and click agree")

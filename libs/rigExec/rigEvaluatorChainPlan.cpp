@@ -3,7 +3,6 @@
 #include "rigEvaluatorInternal.h"
 #include "rigEvaluatorDependencies.h"
 #include "rigExecScene/poseSceneTranslation.h"
-#include "movers/moverRegistry.h"
 
 #include <algorithm>
 #include <set>
@@ -37,6 +36,19 @@ RigExecRigEvaluator::GetAnimatedMapPrimvars() const
         }
     }
     return std::vector<SdfPath>(primvars.begin(), primvars.end());
+}
+
+bool
+RigExecIsScalarPrimvarTarget(const SdfPath &target,
+                             const SdfValueTypeName &valueType)
+{
+    constexpr char kPrimvars[] = "primvars:";
+    constexpr size_t kLength = sizeof(kPrimvars) - 1;
+    const std::string &name = target.GetName();
+    return name.size() > kLength &&
+           name.compare(0, kLength, kPrimvars) == 0 &&
+           (valueType == SdfValueTypeNames->Float ||
+            valueType == SdfValueTypeNames->Double);
 }
 
 bool

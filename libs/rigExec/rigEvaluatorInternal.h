@@ -245,6 +245,10 @@ _IsFrameProviderType(const TfToken &type);
 bool
 _IsFrameProvider(const UsdPrim &prim);
 
+// Own roots only: explicitly named connection sources are never filtered.
+bool
+_IsPoseInputSeed(const UsdAttribute &attribute);
+
 bool
 _IsWeightObjectType(const TfToken &typeName);
 

@@ -68,6 +68,10 @@ class AttributeSnapshot(object):
             for t in layer.ListTimeSamplesForPath(snap.specPath)}
         return snap
 
+    def Recapture(self):
+        """The current state of the same spec (Edit._Apply's rollback)."""
+        return type(self).Capture(self.layer, self.specPath)
+
     def _EnsureSpec(self):
         spec = self.layer.GetAttributeAtPath(self.specPath)
         if spec is not None:
@@ -217,6 +221,10 @@ class SpecSnapshot(object):
         Sdf.CopySpec(layer, snap.specPath, snap._scratch, snap.specPath)
         return snap
 
+    def Recapture(self):
+        """The current state of the same spec (Edit._Apply's rollback)."""
+        return type(self).Capture(self.layer, self.specPath)
+
     def Restore(self):
         _RemoveSpec(self.layer, self.specPath)
         if not self.existed:
@@ -291,17 +299,19 @@ class Edit(object):
                 raise RuntimeError("Undo layer is not editable: %s" %
                                    entry.layer.identifier)
             target = entry.after if useAfter else entry.before
-            rollbackPath = entry.specPath
-            snapshotType = type(target)
+            current = None
             # Restoring a property can create an entire missing parent chain.
             # Roll back from its first absent ancestor to remove those specs too.
             for prefix in entry.specPath.GetPrefixes():
                 if entry.layer.GetObjectAtPath(prefix) is None:
-                    rollbackPath = prefix
-                    snapshotType = SpecSnapshot
+                    current = SpecSnapshot.Capture(entry.layer, prefix)
                     break
-            snapshots.append((target, snapshotType.Capture(
-                entry.layer, rollbackPath)))
+            if current is None:
+                # Capture's arguments differ per snapshot kind (an info
+                # field needs its key, a layer's sublayers or relocates
+                # need no path), so each snapshot recaptures its own scope.
+                current = target.Recapture()
+            snapshots.append((target, current))
         # ONE change block around the whole edit, not one per attribute.
         # An xform edit writes the op attributes and xformOpOrder as
         # separate specs; restoring them in separate blocks lets the

@@ -20,6 +20,7 @@ rigexec_test_env.SetupPluginTest()
 from pxr import Gf, Sdf, Usd, Vt  # noqa: E402
 
 import layerOpinionsModel as lom  # noqa: E402
+import rigExecUndo  # noqa: E402
 
 
 def _Check(condition, message):
@@ -563,6 +564,104 @@ def TestLayerArcsAreListedUnderTheirLayer():
     edit.Undo()
     _Check(list(root.relocates)[0][1] == Sdf.Path("/Rig/New"),
            "undo restores it")
+
+
+def TestEveryOpinionKindUndoesThroughOneStack():
+    """
+    Regression: undoing an info, arc-item, variant-selection, sublayer or
+    relocate edit raised TypeError in Edit._Apply, which recaptured the
+    current state as `type(target).Capture(layer, path)` -- a signature
+    only the attribute and spec snapshots have. The failed edit stayed on
+    top of the shared stack, so every later Ctrl+Z raised the same error.
+    Each kind is pushed onto ONE stack and the whole history is walked
+    back and forward, so a jam anywhere shows up as the next step failing.
+    """
+    stage, root, sub = _ArcStage()
+    root.GetPrimAtPath("/Rig/IK").SetInfo("kind", "component")
+    original = root.ExportToString()
+
+    stack = rigExecUndo.UndoStack()
+    steps = [
+        lambda rows: lom.SetRowValue(rows["kind"], '"assembly"'),
+        lambda rows: lom.SetRowValue(rows["prepend references [0]"],
+                                     "@./new.usda@</Y>"),
+        lambda rows: lom.MoveRow(rows["prepend references [0]"], 1),
+        lambda rows: lom.SetRowValue(rows["lod"], "lo"),
+        lambda rows: lom.SetRowValue(rows["subLayer [1]"],
+                                     "@./other.usda@ (offset = 3)"),
+        lambda rows: lom.MoveRow(rows["subLayer [0]"], 1),
+        lambda rows: lom.SetRowValue(rows["relocate [0]"],
+                                     "</Rig/Old>: </Rig/Renamed>"),
+        lambda rows: lom.DeleteRow(rows["relocate [1]"]),
+        lambda rows: lom.DeleteRow(rows["prepend inherits [0]"]),
+        lambda rows: lom.DeleteRow(rows["kind"]),
+    ]
+    labels = []
+    for step in steps:
+        edit = step(_ArcRows(stage))
+        _Check(edit is not None, "every step is an edit")
+        stack.Push(edit)
+        labels.append(edit.label)
+    edited = root.ExportToString()
+    _Check(edited != original, "precondition: the steps changed the layer")
+
+    for label in reversed(labels):
+        _Check(stack.UndoText() == label,
+               "the stack moved past the previous undo: expected %r on "
+               "top, got %r" % (label, stack.UndoText()))
+        _Check(stack.Undo(), "undo of %r applied" % label)
+    _Check(not stack.CanUndo(), "the whole history was undone")
+    _Check(root.ExportToString() == original,
+           "undoing every kind restores the layer exactly:\n%s"
+           % root.ExportToString())
+
+    for label in labels:
+        _Check(stack.RedoText() == label,
+               "redo walks forward in order: expected %r, got %r"
+               % (label, stack.RedoText()))
+        _Check(stack.Redo(), "redo of %r applied" % label)
+    _Check(root.ExportToString() == edited,
+           "redoing every kind reapplies the edits exactly")
+
+    # The recapture is the rollback: when a later entry of the same edit
+    # fails, the entries already restored go back to what they were, and
+    # that needs the current state captured in each snapshot's own scope.
+    infoBefore = lom.InfoSnapshot.Capture(root, "/Rig/IK", "kind")
+    root.GetPrimAtPath("/Rig/IK").SetInfo("kind", "subcomponent")
+    infoAfter = lom.InfoSnapshot.Capture(root, "/Rig/IK", "kind")
+    subBefore = lom.SublayerSnapshot.Capture(root)
+    root.subLayerPaths.append("./third.usda")
+    subAfter = lom.SublayerSnapshot.Capture(root)
+    relBefore = lom.RelocatesSnapshot.Capture(root)
+    root.ClearRelocates()
+    relAfter = lom.RelocatesSnapshot.Capture(root)
+    changed = root.ExportToString()
+
+    restore = relBefore.Restore
+    def FailAfterRestore():
+        restore()
+        raise RuntimeError("injected failure on the last entry")
+    relBefore.Restore = FailAfterRestore
+    failing = rigExecUndo.Edit("Three kinds", [
+        rigExecUndo.EditEntry(root, "/Rig/IK", infoBefore, infoAfter),
+        rigExecUndo.EditEntry(root, Sdf.Path.absoluteRootPath,
+                              subBefore, subAfter),
+        rigExecUndo.EditEntry(root, Sdf.Path.absoluteRootPath,
+                              relBefore, relAfter)])
+    try:
+        failing.Undo()
+        raise AssertionError("the injected failure must propagate")
+    except RuntimeError as error:
+        _Check("injected" in str(error), "the injected error, got %s" % error)
+    _Check(root.ExportToString() == changed,
+           "a failed undo rolls every kind back to the current state:\n%s"
+           % root.ExportToString())
+    relBefore.Restore = restore
+    failing.Undo()
+    _Check(not root.GetPrimAtPath("/Rig/IK").HasInfo("kind")
+           and "./third.usda" not in list(root.subLayerPaths)
+           and len(root.relocates) == 1,
+           "with the failure gone the same edit undoes")
 
 
 def TestLayerArcsAreNotShownForAReferencedLayer():
@@ -1125,6 +1224,8 @@ def main():
         ("move an arc", TestMovingAnArcReordersItWithinItsArm),
         ("variant selection", TestVariantSelectionIsEditedPerSet),
         ("layer arcs", TestLayerArcsAreListedUnderTheirLayer),
+        ("every opinion kind undoes through one stack",
+         TestEveryOpinionKindUndoesThroughOneStack),
         ("no layer arcs for a referenced layer",
          TestLayerArcsAreNotShownForAReferencedLayer),
         ("a composing list op is not overridden",

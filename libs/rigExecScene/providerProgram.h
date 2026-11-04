@@ -5,6 +5,7 @@
 #include "rigExecGraph/providerRecords.h"
 #include <limits>
 #include <set>
+#include <string_view>
 
 namespace rigExec {
 constexpr RigExecValueId RigExecNoProviderValue=std::numeric_limits<RigExecValueId>::max();
@@ -92,6 +93,28 @@ bool RigExecCloneProviderContext(RigExecProviderProgram *,RigExecValueId result,
     const std::string &prefix,const std::map<std::string,std::string> &externalNames,
     const std::map<RigExecValueId,RigExecValueId> &replacements,
     RigExecValueId *output,std::string *error,RigExecProviderContextIndex *index);
+/// Where RigExecComposeLocalXform finds an xform operation's value. \p find
+/// receives the operation name as the order spells it (the "!invert!" prefix
+/// removed) and answers false when the prim captured no such operation. On
+/// true it sets \p *value to the operation's value, or to null when it has
+/// none; \p *type to a UsdGeomXformOp::Type, or -1 to derive it from the
+/// name. Plain function pointer and context: no allocation per call.
+struct RigExecXformOpLookup {
+    void *context;
+    bool (*find)(void *context,std::string_view name,int *type,const VtValue **value);
+};
+/// The local transform of one prim from its xformOpOrder \p order: the
+/// operations compose last-to-first and stop at "!resetXformStack!" (\p
+/// *resets), an adjacent op/!invert!op pair cancels, an identity operation
+/// is skipped. The one body behind the provider LocalXform op and the
+/// setup transforms movers resolve at compile. An operation whose value is
+/// null fails ("xform operation unavailable"), unless \p missingIsIdentity:
+/// an op with no Default value then contributes identity. On false \p error
+/// gets the reason and \p failedOp (optional) the order token it names.
+/// Spells no path and builds no token.
+bool RigExecComposeLocalXform(const VtTokenArray &order,const RigExecXformOpLookup &lookup,
+    bool missingIsIdentity,GfMatrix4d *local,bool *resets,std::string *error,
+    TfToken *failedOp=nullptr);
 bool RigExecRunProviderOp(const RigExecProviderProgram &program,uint32_t originalIndex,
     RigExecTypedValueStore *store,std::string *error=nullptr);
 /// Whether op \p index of \p program can run at all: it exists, its output

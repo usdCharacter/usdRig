@@ -22,16 +22,16 @@ set "_RIGEXEC_MOVER_ARGS="
 if defined RIGEXEC_MOVER_PLUGIN_DIRS set _RIGEXEC_MOVER_ARGS="-DRIGEXEC_MOVER_PLUGIN_DIRS=%RIGEXEC_MOVER_PLUGIN_DIRS%"
 set "_RIGEXEC_CCACHE_ARGS=-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
 where ccache >nul 2>&1 && set "_RIGEXEC_CCACHE_ARGS=%_RIGEXEC_CCACHE_ARGS% -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
-cmake -S "%RIG%" -B "%RIG%\build" -G Ninja ^
+cmake -S "%RIG%" -B "%_RIGEXEC_BUILD%" -G Ninja ^
       -DCMAKE_BUILD_TYPE=Release ^
       -DUSD_INSTALL_DIR="%USD%" ^
       -DCMAKE_PREFIX_PATH="%USD%" %_RIGEXEC_CCACHE_ARGS% %_RIGEXEC_MOVER_ARGS%
 if errorlevel 1 exit /b 1
-cmake --build "%RIG%\build" -j %JOBS%
+cmake --build "%_RIGEXEC_BUILD%" -j %JOBS%
 if errorlevel 1 exit /b 1
 
 if "%~1"=="--no-test" exit /b 0
 rem Bound concurrent test processes independently of compile jobs.
 if not defined CTEST_PARALLEL_LEVEL set "CTEST_PARALLEL_LEVEL=4"
-ctest --test-dir "%RIG%\build" --output-on-failure
+ctest --test-dir "%_RIGEXEC_BUILD%" --output-on-failure
 exit /b %errorlevel%

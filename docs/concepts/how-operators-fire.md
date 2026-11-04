@@ -182,6 +182,15 @@ float inputs:defaultWeight.connect = </Asset/Rig/Channels/Dial.rigExec:amount>
 - **a checkpoint** — an absolute prim path: the value as the last math mover
   at or beneath that prim left it.
 
+A pose interpolator's float output — a pose's `outputs:weight`, an animated
+map's or a driven action's `outputs:value`, a driven action's `outputs:active`
+— follows the same rule for a math mover's float inputs. Undeclared, the
+connection reads the output's authored value. At `final` it reads what the
+interpolator computed in the same evaluation, and the mover runs after the
+interpolator; two interpolators that drive each other's inputs this way are
+a cycle, set aside in every evaluator. Blend inputs and weight objects read
+the computed value without a declaration.
+
 `preceding` names a position in the reader's own chain, and a connection
 reads another property's, so it is refused. The phase applies to the first
 revised property along the connection's single-source hops, and the reading

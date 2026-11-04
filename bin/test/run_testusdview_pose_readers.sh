@@ -6,8 +6,8 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/../_env.sh"
-if [ -f "$RIG/build/CMakeCache.txt" ]; then
-    cmake --build "$RIG/build" >/dev/null
+if [ -f "$_RIGEXEC_BUILD/CMakeCache.txt" ]; then
+    cmake --build "$_RIGEXEC_BUILD" >/dev/null
 fi
 export PXR_PLUGINPATH_NAME="$PXR_PLUGINPATH_NAME:$RIG/plugin/shapeEditor"
 export PYTHONPATH="$RIG/plugin/shapeEditor:${PYTHONPATH:-}"

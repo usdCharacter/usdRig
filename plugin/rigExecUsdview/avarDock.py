@@ -160,7 +160,9 @@ class AvarDock(QtWidgets.QFrame):
         bar.addWidget(self._title, 1)
 
         self._pop = QtWidgets.QToolButton()
-        self._pop.setText("↗")
+        self._pop.setIcon(avarWidgets.ControlIcon(self.style(), QtWidgets.QStyle.SP_TitleBarNormalButton))
+        self._pop.setIconSize(QtCore.QSize(14, 14))
+        self._pop.setAccessibleName("Pop out Avars editor")
         self._pop.setToolTip("Put the editor back in its own window")
         self._pop.setCursor(QtCore.Qt.PointingHandCursor)
         self._pop.setFixedSize(16, 16)
@@ -251,7 +253,10 @@ class AvarDock(QtWidgets.QFrame):
         self.SetExpanded(not self._expanded)
 
     def _SyncFold(self):
-        self._fold.setText("▸" if self._expanded else "◂")
+        self._fold.setIcon(avarWidgets.ControlIcon(self.style(),
+            QtWidgets.QStyle.SP_ArrowRight if self._expanded else QtWidgets.QStyle.SP_ArrowLeft))
+        self._fold.setIconSize(QtCore.QSize(14, 14))
+        self._fold.setAccessibleName("Fold Avars editor" if self._expanded else "Open Avars editor")
         self._fold.setToolTip("Fold the editor away"
                               if self._expanded else "Open the editor")
         self._host.setVisible(self._expanded)

@@ -1616,6 +1616,10 @@ class InfoSnapshot(object):
             snap.value = spec.GetInfo(key)
         return snap
 
+    def Recapture(self):
+        """The current state of the same field (Edit._Apply's rollback)."""
+        return type(self).Capture(self.layer, self.primPath, self.key)
+
     def Restore(self):
         spec = self.layer.GetPrimAtPath(self.primPath)
         if spec is None:
@@ -1649,6 +1653,10 @@ class SublayerSnapshot(object):
         snap.offsets = [Sdf.LayerOffset(o) for o in layer.subLayerOffsets]
         return snap
 
+    def Recapture(self):
+        """The layer's current sublayers (Edit._Apply's rollback)."""
+        return type(self).Capture(self.layer)
+
     def Restore(self):
         # Assigning subLayerPaths resets every offset to identity, so
         # the offsets have to be written back afterwards -- restoring
@@ -1670,6 +1678,10 @@ class RelocatesSnapshot(object):
         snap = cls(layer)
         snap.relocates = list(layer.relocates)
         return snap
+
+    def Recapture(self):
+        """The layer's current relocates (Edit._Apply's rollback)."""
+        return type(self).Capture(self.layer)
 
     def Restore(self):
         if self.relocates:

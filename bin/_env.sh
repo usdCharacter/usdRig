@@ -18,6 +18,23 @@ RIG="${RIG:-$(cd "$_ENV_DIR/.." && pwd)}"
 _SIBLINGS="$(cd "$RIG/.." && pwd)"
 USD="${USD:-$_SIBLINGS/usd-install}"
 
+# RIGEXEC_BUILD_DIR selects the build tree the helpers use (default: build/).
+# A relative value is taken from the checkout root. Unset, nothing changes.
+# The tree is held in _RIGEXEC_BUILD; a caller's own BUILD is never touched.
+if [ -n "${RIGEXEC_BUILD_DIR:-}" ]; then
+    case "$RIGEXEC_BUILD_DIR" in
+        /*) ;;
+        *) RIGEXEC_BUILD_DIR="$RIG/$RIGEXEC_BUILD_DIR" ;;
+    esac
+    case "$RIGEXEC_BUILD_DIR" in
+        ?*/) RIGEXEC_BUILD_DIR="${RIGEXEC_BUILD_DIR%/}" ;;
+    esac
+    export RIGEXEC_BUILD_DIR
+    _RIGEXEC_BUILD="$RIGEXEC_BUILD_DIR"
+else
+    _RIGEXEC_BUILD="$RIG/build"
+fi
+
 # The python that has to import pxr. A venv beside the checkout is the layout
 # the README describes, but it is a default and not a requirement: an explicit
 # PY wins, then VENV in either of its two layouts (bin/ on POSIX, Scripts/ on
@@ -93,16 +110,16 @@ for _site in "$USD"/lib/python*/site-packages "$USD"/Lib/site-packages \
     fi
 done
 
-export PATH="$RIG/build:$USD/bin:$USD/lib:$PATH"
+export PATH="$_RIGEXEC_BUILD:$USD/bin:$USD/lib:$PATH"
 
 # The loader variable is not the same one on macOS and Linux, and setting only
 # the other platform's is indistinguishable from setting none.
 case "$(uname -s 2>/dev/null || echo unknown)" in
     Darwin)
-        export DYLD_LIBRARY_PATH="$USD/lib:$RIG/build${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="$USD/lib:$_RIGEXEC_BUILD${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
         ;;
     *)
-        export LD_LIBRARY_PATH="$USD/lib:$RIG/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="$USD/lib:$_RIGEXEC_BUILD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         ;;
 esac
 
@@ -184,13 +201,13 @@ fi
 
 # build/python is where the build stages the UsdNoodles package beside its
 # native module; see rigexec_register_usdnoodles below.
-export PYTHONPATH="$RIG/plugin/rigExecUsdview:$RIG/build/python${PY_SITE:+:$PY_SITE}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$RIG/plugin/rigExecUsdview:$_RIGEXEC_BUILD/python${PY_SITE:+:$PY_SITE}${PYTHONPATH:+:$PYTHONPATH}"
 
 # The schema resources MUST be the GENERATED directory: only the generated
 # plugInfo carries the LibraryPath and implementsComputeExtent that let Plug
 # load the compute-extent registration. The checked-in copy under plugin/ is a
 # data-only fallback and will not give RigExec prims their bounds.
-export PXR_PLUGINPATH_NAME="$RIG/build/usd/rigExecSchema/resources:$RIG/build/usd/rigExecImaging/resources:$RIG/build/usd/rigExecMoverPlugins:$RIG/plugin/rigExecUsdview${PXR_PLUGINPATH_NAME:+:$PXR_PLUGINPATH_NAME}"
+export PXR_PLUGINPATH_NAME="$_RIGEXEC_BUILD/usd/rigExecSchema/resources:$_RIGEXEC_BUILD/usd/rigExecImaging/resources:$_RIGEXEC_BUILD/usd/rigExecMoverPlugins:$RIG/plugin/rigExecUsdview${PXR_PLUGINPATH_NAME:+:$PXR_PLUGINPATH_NAME}"
 
 # The usdMayaRig sidecar (Maya ASCII file format) staged beside the repo,
 # when built: its build-tree plugInfo carries an absolute LibraryPath, and
@@ -210,11 +227,22 @@ done
 # test read the same install.
 export RIGEXEC_USD_INSTALL="$USD"
 
-# RIGEXEC_IMAGING_DLL is deliberately NOT set here. rigExecUsdview
-# .ImagingLibraryPath() resolves the platform's library name and the
-# installed-vs-build layout on its own, and both testusdview scripts go
-# through it. Set the variable yourself only to point at a library outside
-# either layout.
+# RIGEXEC_IMAGING_DLL is deliberately NOT set here for the default tree.
+# rigExecUsdview.ImagingLibraryPath() resolves the platform's library name
+# and the installed-vs-build layout on its own, and both testusdview scripts
+# go through it. That search knows only build/, so with RIGEXEC_BUILD_DIR the
+# variable names the selected tree's library (when it exists and the caller
+# set none). Set it yourself only to point at a library outside either layout.
+if [ -n "${RIGEXEC_BUILD_DIR:-}" ] && [ -z "${RIGEXEC_IMAGING_DLL:-}" ]; then
+    for _imaging_lib in "$_RIGEXEC_BUILD/librigExecImaging.dylib" \
+                        "$_RIGEXEC_BUILD/librigExecImaging.so" \
+                        "$_RIGEXEC_BUILD/rigExecImaging.dll"; do
+        if [ -f "$_imaging_lib" ]; then
+            export RIGEXEC_IMAGING_DLL="$_imaging_lib"
+            break
+        fi
+    done
+fi
 
 # Fail early and legibly rather than deep inside python.
 rigexec_require_python() {
@@ -265,8 +293,8 @@ rigexec_require_usd() {
 # (UsdNoodles/__init__.py, _supersedeInstalledCopy), so it is always
 # registered.
 rigexec_register_usdnoodles() {
-    if [ -f "$RIG/build/python/UsdNoodles/plugInfo.json" ]; then
-        export PXR_PLUGINPATH_NAME="$PXR_PLUGINPATH_NAME:$RIG/build/python/UsdNoodles"
+    if [ -f "$_RIGEXEC_BUILD/python/UsdNoodles/plugInfo.json" ]; then
+        export PXR_PLUGINPATH_NAME="$PXR_PLUGINPATH_NAME:$_RIGEXEC_BUILD/python/UsdNoodles"
         if [ -n "$PY_SITE" ] && [ -d "$PY_SITE/pxr/UsdNoodles" ]; then
             echo "usdNoodles: plugin/usdNoodles supersedes $PY_SITE/pxr/UsdNoodles" >&2
         fi
@@ -283,9 +311,9 @@ rigexec_require_stage() {
 # Build if the tree is already configured; a no-op when up to date. Silent
 # unless it fails, because these scripts are run to see their own output.
 rigexec_build() {
-    if [ -f "$RIG/build/CMakeCache.txt" ]; then
-        if ! cmake --build "$RIG/build" >/dev/null 2>&1; then
-            echo "ERROR: build failed; run bin/build_rigexec.sh to see why." >&2
+    if [ -f "$_RIGEXEC_BUILD/CMakeCache.txt" ]; then
+        if ! cmake --build "$_RIGEXEC_BUILD" >/dev/null 2>&1; then
+            echo "ERROR: build of $_RIGEXEC_BUILD failed; run cmake --build \"$_RIGEXEC_BUILD\" to see why." >&2
             exit 1
         fi
     fi

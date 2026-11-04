@@ -3,8 +3,8 @@
 #
 # The direct set is the inner loop. The transitive set is what to run
 # before pushing. --run configures nothing: it builds the direct
-# executables in ./build and runs the selector's ctest line, which uses
-# the usd-free or per-library labels.
+# executables in the tree bin/_env.sh selects (RIGEXEC_BUILD_DIR, default
+# ./build) and runs the selector's ctest line there.
 #
 # Usage:
 #   bin/test_changed.sh libs/rigExecMath/solvers.cpp
@@ -49,8 +49,12 @@ if [ -z "$build_line" ] || [ -z "$ctest_line" ]; then
     exit 1
 fi
 
+# The tree and environment bin/_env.sh selects (RIGEXEC_BUILD_DIR, else build/).
+. "$ROOT/bin/_env.sh"
 cd "$ROOT"
+targets="${build_line#cmake --build build --target }"
+ctest_args="${ctest_line#ctest --test-dir build }"
 # shellcheck disable=SC2086
-eval "$build_line"
+eval "cmake --build \"\$_RIGEXEC_BUILD\" --target $targets"
 # shellcheck disable=SC2086
-eval "$ctest_line"
+eval "ctest --test-dir \"\$_RIGEXEC_BUILD\" $ctest_args"

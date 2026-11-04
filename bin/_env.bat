@@ -15,6 +15,18 @@ rem No setlocal: these values are for the caller.
 if not defined RIG (for %%I in ("%~dp0..") do set "RIG=%%~fI")
 if not defined USD (for %%I in ("%RIG%\..\usd-install") do set "USD=%%~fI")
 
+rem RIGEXEC_BUILD_DIR selects the build tree the helpers use (default: build\).
+rem A relative value is taken from the checkout root. The tree is held in
+rem _RIGEXEC_BUILD; a caller's own BUILD is never touched.
+set "_RIGEXEC_BUILD=%RIG%\build"
+if not defined RIGEXEC_BUILD_DIR goto :rigexec_build_dir_set
+pushd "%RIG%"
+for %%I in ("%RIGEXEC_BUILD_DIR%") do set "RIGEXEC_BUILD_DIR=%%~fI"
+popd
+if "%RIGEXEC_BUILD_DIR:~-1%"=="\" set "RIGEXEC_BUILD_DIR=%RIGEXEC_BUILD_DIR:~0,-1%"
+set "_RIGEXEC_BUILD=%RIGEXEC_BUILD_DIR%"
+:rigexec_build_dir_set
+
 rem The python that has to import pxr. An explicit PY wins; then a venv, in
 rem either layout; then whatever python is on PATH, which is the right answer
 rem when the USD build's own interpreter is already the active one.
@@ -33,17 +45,17 @@ rem lib\python. Both are added when both exist rather than one being assumed,
 rem which is what let build_rigexec.bat and gen_schema.bat disagree about it.
 rem build\python is where the build stages the UsdNoodles package beside its
 rem native module; launch_usdview.bat registers it.
-set "PYTHONPATH=%RIG%\plugin\rigExecUsdview;%RIG%\build\python"
+set "PYTHONPATH=%RIG%\plugin\rigExecUsdview;%_RIGEXEC_BUILD%\python"
 if exist "%USD%\Lib\site-packages" set "PYTHONPATH=%PYTHONPATH%;%USD%\Lib\site-packages"
 if exist "%USD%\lib\python" set "PYTHONPATH=%PYTHONPATH%;%USD%\lib\python"
 
-set "PATH=%RIG%\build;%USD%\bin;%USD%\lib;%PATH%"
+set "PATH=%_RIGEXEC_BUILD%;%USD%\bin;%USD%\lib;%PATH%"
 
 rem The schema resources MUST be the GENERATED directory: only the generated
 rem plugInfo carries the LibraryPath and implementsComputeExtent that let Plug
 rem load the compute-extent registration. The checked-in copy under plugin\ is
 rem a data-only fallback and will not give RigExec prims their bounds.
-set "PXR_PLUGINPATH_NAME=%RIG%\build\usd\rigExecSchema\resources;%RIG%\build\usd\rigExecImaging\resources;%RIG%\build\usd\rigExecMoverPlugins;%RIG%\plugin\rigExecUsdview;%PXR_PLUGINPATH_NAME%"
+set "PXR_PLUGINPATH_NAME=%_RIGEXEC_BUILD%\usd\rigExecSchema\resources;%_RIGEXEC_BUILD%\usd\rigExecImaging\resources;%_RIGEXEC_BUILD%\usd\rigExecMoverPlugins;%RIG%\plugin\rigExecUsdview;%PXR_PLUGINPATH_NAME%"
 
 rem The usdMayaRig sidecar (Maya ASCII file format) staged beside the repo,
 rem when built: its build-tree plugInfo carries an absolute LibraryPath, and
@@ -66,4 +78,7 @@ rem .ImagingLibraryPath() resolves the platform's library name and the
 rem installed-vs-build layout on its own, and both testusdview scripts go
 rem through it. Set the variable yourself only to point at a library outside
 rem either layout.
+rem For a selected tree only, point RIGEXEC_IMAGING_DLL at its imaging library
+rem when it exists; the default tree is resolved by rigExecUsdview itself.
+if defined RIGEXEC_BUILD_DIR if not defined RIGEXEC_IMAGING_DLL if exist "%_RIGEXEC_BUILD%\rigExecImaging.dll" set "RIGEXEC_IMAGING_DLL=%_RIGEXEC_BUILD%\rigExecImaging.dll"
 exit /b 0

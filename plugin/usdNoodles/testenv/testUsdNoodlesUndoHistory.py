@@ -17,7 +17,7 @@ import weakref
 
 from pxr import Gf, Sdf, Usd
 from UsdNoodles.graphView import GraphView, _push_undo_command
-from UsdNoodles.undoHistory import history_for_stage
+from UsdNoodles.undoHistory import history_for_stage, set_history_backend
 
 
 def _stage():
@@ -183,6 +183,113 @@ class UndoHistoryTest(unittest.TestCase):
         self.assertEqual(attr.Get(), Gf.Vec2f(0, 0))
         GraphView._performRedo(peer)
         self.assertEqual(attr.Get(), Gf.Vec2f(2, 3))
+
+
+class _Backend:
+    def __init__(self):
+        self.calls = []
+        self.listeners = []
+        self.replaying = False
+        self.entries = []
+
+    def Push(self, description, do_func, undo_func, edit_target, view_ref):
+        self.calls.append(("push", description, view_ref()))
+        self.entries.append((description, do_func, undo_func))
+
+    def Undo(self):
+        self.calls.append(("undo",))
+
+    def Redo(self):
+        self.calls.append(("redo",))
+
+    def CanUndo(self):
+        return bool(self.entries)
+
+    def CanRedo(self):
+        return False
+
+    def UndoText(self):
+        return self.entries[-1][0] if self.entries else ""
+
+    def RedoText(self):
+        return "redo text"
+
+    def AddReloadListener(self, fn):
+        self.listeners.append(fn)
+        return len(self.listeners)
+
+    def IsReplaying(self):
+        return self.replaying
+
+
+class HistoryBackendTest(unittest.TestCase):
+    def tearDown(self):
+        set_history_backend(None)
+
+    def test_backend_receives_history_calls(self):
+        stage = _stage()
+        view = _View(stage)
+        backend = _Backend()
+        set_history_backend(lambda s: backend if s is stage else None)
+        self.assertTrue(view._undoHistory.bridged())
+        view.edit(5)
+        self.assertEqual(backend.calls[0][0], "push")
+        self.assertIs(backend.calls[0][2], view)
+        self.assertTrue(view._undoHistory.canUndo())
+        self.assertFalse(view._undoHistory.canRedo())
+        self.assertEqual(view._undoHistory.undoDescription(), backend.calls[0][1])
+        self.assertEqual(view._undoHistory.redoDescription(), "redo text")
+        view._undoHistory.undo(view)
+        view._undoHistory.redo(view)
+        self.assertEqual([c[0] for c in backend.calls], ["push", "undo", "redo"])
+        # The backend owns the stack; Noodles' own lists stay empty.
+        self.assertEqual(view._undoHistory._undo, [])
+
+    def test_one_reload_listener_per_backend(self):
+        stage = _stage()
+        view = _View(stage)
+        backend = _Backend()
+        set_history_backend(lambda s: backend if s is stage else None)
+        view.edit(1)
+        view.edit(2)
+        view._undoHistory.undo(view)
+        self.assertEqual(len(backend.listeners), 1)
+        backend.listeners[0]()
+        # With a QApplication (an earlier test may have made one) the reload
+        # runs one event-loop turn later; pump the loop until it has run.
+        try:
+            from pxr.Usdviewq.qt import QtCore, QtWidgets
+            app = QtWidgets.QApplication.instance()
+        except Exception:
+            app = None
+        for _ in range(10):
+            if view.reloads or app is None:
+                break
+            QtCore.QCoreApplication.processEvents()
+        self.assertEqual(view.reloads, 1)
+
+    def test_replay_guard_suppresses_notice_handling(self):
+        stage = _stage()
+        view = _View(stage)
+        seen = []
+        view._handleUsdChanges = lambda *a, **k: seen.append(a) or "handled"
+        backend = _Backend()
+        set_history_backend(lambda s: backend if s is stage else None)
+        view.edit(1)
+        view._handleUsdChanges(1)
+        self.assertEqual(seen, [(1,)])
+        backend.replaying = True
+        self.assertIsNone(view._handleUsdChanges(2))
+        self.assertEqual(seen, [(1,)])
+
+    def test_no_backend_uses_own_lists(self):
+        stage = _stage()
+        view = _View(stage)
+        self.assertFalse(view._undoHistory.bridged())
+        view.edit(3)
+        self.assertTrue(view._undoHistory.canUndo())
+        GraphView._performUndo(view)
+        self.assertEqual(_value(stage), 0)
 
 
 if __name__ == "__main__":

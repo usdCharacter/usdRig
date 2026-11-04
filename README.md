@@ -46,6 +46,11 @@ The helpers default to a sibling `../usd-install` installation. Set `USD`
 to use another prefix and `PY` to select its compatible Python interpreter.
 `VENV` optionally selects a Python virtual environment. On Windows, the build
 helper discovers Visual Studio; `RIGEXEC_VCVARS` can override its toolchain script.
+`RIGEXEC_BUILD_DIR` selects another build tree in place of `build/`; a
+relative value is taken from the checkout root.
+`bin/_env.sh` and `bin\_env.bat` then put that tree on `PATH`, the loader path,
+`PYTHONPATH` and `PXR_PLUGINPATH_NAME`; the build and launch helpers and
+`bin/test_changed.sh --run` build and test it.
 
 ### Windows
 
@@ -75,6 +80,11 @@ dependencies, including bake-before-playback tests.
 
 Platform support depends on a compatible OpenUSD build; these commands
 do not imply that every platform has been qualified for this checkout.
+
+CMake options: `RIGEXEC_BUILD_TESTS`, `RIGEXEC_BUILD_PYTHON` (on when pybind11
+is found), `RIGEXEC_BUILD_USDNOODLES`, `RIGEXEC_MOVER_PLUGIN_DIRS` (see
+[external movers](docs/concepts/external-movers.md)), `RIGEXEC_GOLDEN_SUITE_DIR`
+and `RIGEXEC_TEST_USD_DIR`.
 
 For manual configuration in an initialized compiler environment:
 

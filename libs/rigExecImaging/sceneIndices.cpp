@@ -1,6 +1,7 @@
 // RigExec Hydra scene-index filters implementation.
 #include "sceneIndices.h"
 
+#include "frameTable.h"
 #include "registry.h"
 
 #include "pxr/base/trace/trace.h"
@@ -459,6 +460,271 @@ _MotionValue(const T &base, const std::vector<float> &offsets,
         return _MotionDataSource<T>::New(base, offsets, samples);
     return HdRetainedTypedSampledDataSource<T>::New(base);
 }
+
+// ---------------------------------------------------------------------------
+// Frames on demand (frameTable.h, docs/specs/frames-on-demand.md).
+//
+// A rig output sampled at offset k answers, in order: k == 0 the displayed
+// value; an explicit motion sample at k; the frame table's entry for the
+// displayed time + k. A table miss records the time as demand and answers
+// "not yet": GetValue returns an EMPTY VtValue (a typed read returns the
+// displayed value, the only answer a typed reader can take). Nothing here
+// evaluates, so a pull is safe on Storm's sync threads.
+
+constexpr float kFrameOffsetEpsilon = 1.0e-4f;
+
+// Explicit motion samples a renderer should read for [start, end]: the
+// offsets inside it plus the nearest one outside each end. False with fewer
+// than two, as before (a single sample is no motion).
+bool
+_MotionSampleTimes(const std::vector<float> &offsets, float start, float end,
+                   std::vector<HdSampledDataSource::Time> *out)
+{
+    if (offsets.size() < 2 || !out) {
+        return false;
+    }
+    std::vector<float> sorted(offsets);
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<HdSampledDataSource::Time> times;
+    float below = 0.0f, above = 0.0f;
+    bool haveBelow = false, haveAbove = false;
+    for (const float offset : sorted) {
+        if (offset < start) {
+            below = offset;
+            haveBelow = true;
+        } else if (offset > end) {
+            if (!haveAbove) {
+                above = offset;
+                haveAbove = true;
+            }
+        } else {
+            times.push_back(offset);
+        }
+    }
+    if (haveBelow) times.insert(times.begin(), below);
+    if (haveAbove) times.push_back(above);
+    if (times.size() < 2) {
+        return false;
+    }
+    *out = std::move(times);
+    return true;
+}
+
+// Reads one published value of a prim; false when that frame has none.
+template <class T>
+using _PublishedField = bool (*)(const RigExecPublishedPrim &,
+                                 const TfToken &, T *);
+
+bool
+_PublishedPoints(const RigExecPublishedPrim &p, const TfToken &, VtVec3fArray *v)
+{
+    if (!p.hasPoints) return false;
+    *v = p.points;
+    return true;
+}
+
+bool
+_PublishedNormals(const RigExecPublishedPrim &p, const TfToken &, VtVec3fArray *v)
+{
+    if (!p.hasNormals) return false;
+    *v = p.normals;
+    return true;
+}
+
+bool
+_PublishedExtentMin(const RigExecPublishedPrim &p, const TfToken &, GfVec3d *v)
+{
+    if (!p.hasExtent) return false;
+    *v = p.extentMin;
+    return true;
+}
+
+bool
+_PublishedExtentMax(const RigExecPublishedPrim &p, const TfToken &, GfVec3d *v)
+{
+    if (!p.hasExtent) return false;
+    *v = p.extentMax;
+    return true;
+}
+
+bool
+_PublishedShaderFloat(const RigExecPublishedPrim &p, const TfToken &name, float *v)
+{
+    const auto it = p.shaderFloats.find(name);
+    if (it == p.shaderFloats.end()) return false;
+    *v = it->second;
+    return true;
+}
+
+bool
+_PublishedShaderMatrix(const RigExecPublishedPrim &p, const TfToken &name,
+                       GfMatrix4d *v)
+{
+    const auto it = p.shaderMatrices.find(name);
+    if (it == p.shaderMatrices.end()) return false;
+    *v = it->second;
+    return true;
+}
+
+// Where an offset read finds its frame: the context's table and the
+// displayed time the offset is relative to.
+struct _FrameSource {
+    RigExecFrameTablePtr table;
+    bool haveTime = false;
+    double time = 0.0;
+    SdfPath prim;
+
+    static _FrameSource From(const RigExecImagingSnapshot &snapshot,
+                             const SdfPath &prim) {
+        _FrameSource source;
+        source.table = snapshot.frameTable;
+        source.haveTime = !snapshot.sampleTimeIsDefault &&
+                          std::isfinite(snapshot.sampleTime);
+        source.time = snapshot.sampleTime;
+        source.prim = prim;
+        return source;
+    }
+
+    // The frame at \p offset, or null after recording the demand.
+    std::shared_ptr<const RigExecImagingSnapshot> Frame(float offset) const {
+        if (!table || !haveTime) {
+            return nullptr;
+        }
+        const double at = time + double(offset);
+        std::shared_ptr<const RigExecImagingSnapshot> frame = table->Find(at);
+        if (!frame) {
+            table->Demand(at);
+        }
+        return frame;
+    }
+
+    // True when offset reads go to the table (else the legacy answers).
+    bool Live() const { return table && haveTime; }
+};
+
+template <class T>
+class _FrameValueDataSource final : public HdTypedSampledDataSource<T> {
+public:
+    HD_DECLARE_DATASOURCE(_FrameValueDataSource);
+    using Time = HdSampledDataSource::Time;
+
+    VtValue GetValue(Time offset) override {
+        T value;
+        if (_Resolve(offset, &value)) {
+            return VtValue(std::move(value));
+        }
+        return VtValue();
+    }
+
+    T GetTypedValue(Time offset) override {
+        T value;
+        return _Resolve(offset, &value) ? value : _base;
+    }
+
+    bool GetContributingSampleTimesForInterval(
+        Time startTime, Time endTime,
+        std::vector<Time> *outSampleTimes) override {
+        return _MotionSampleTimes(_offsets, startTime, endTime,
+                                  outSampleTimes);
+    }
+
+private:
+    _FrameValueDataSource(T base, std::vector<float> offsets,
+                          std::vector<T> samples, _FrameSource source,
+                          TfToken name, _PublishedField<T> field)
+        : _base(std::move(base))
+        , _offsets(std::move(offsets))
+        , _samples(std::move(samples))
+        , _source(std::move(source))
+        , _name(std::move(name))
+        , _field(field) {
+        if (_samples.size() != _offsets.size()) {
+            _offsets.clear();
+            _samples.clear();
+        }
+    }
+
+    bool _Resolve(Time offset, T *value) const {
+        if (std::abs(offset) < kFrameOffsetEpsilon) {
+            *value = _base;
+            return true;
+        }
+        for (size_t i = 0; i < _offsets.size(); ++i) {
+            if (std::abs(_offsets[i] - offset) < kFrameOffsetEpsilon) {
+                *value = _samples[i];
+                return true;
+            }
+        }
+        if (!_source.Live()) {
+            // No table (a bare bridge): the nearest explicit sample, else
+            // the displayed value -- the answer before frames on demand.
+            size_t best = 0;
+            for (size_t i = 1; i < _offsets.size(); ++i) {
+                if (std::abs(_offsets[i] - offset) <
+                    std::abs(_offsets[best] - offset)) {
+                    best = i;
+                }
+            }
+            *value = _offsets.empty() ? _base : _samples[best];
+            return true;
+        }
+        const std::shared_ptr<const RigExecImagingSnapshot> frame =
+            _source.Frame(offset);
+        if (!frame) {
+            return false;
+        }
+        const auto it = frame->prims.find(_source.prim);
+        return it != frame->prims.end() && _field(it->second, _name, value);
+    }
+
+    T _base;
+    std::vector<float> _offsets;
+    std::vector<T> _samples;
+    _FrameSource _source;
+    TfToken _name;
+    _PublishedField<T> _field;
+};
+
+template <class T>
+typename HdTypedSampledDataSource<T>::Handle
+_FrameValue(const T &base, const std::vector<float> &offsets,
+            const std::vector<T> &samples, const _FrameSource &source,
+            _PublishedField<T> field, const TfToken &name = TfToken())
+{
+    if (!source.Live()) {
+        return _MotionValue(base, offsets, samples);
+    }
+    return _FrameValueDataSource<T>::New(base, offsets, samples, source, name,
+                                         field);
+}
+
+// A published shader matrix as the float primvar the shader reads, from the
+// frame-valued double matrix.
+class _ShaderMatrixDataSource final
+    : public HdTypedSampledDataSource<GfMatrix4f> {
+public:
+    HD_DECLARE_DATASOURCE(_ShaderMatrixDataSource);
+
+    GfMatrix4f GetTypedValue(Time offset) override {
+        return GfMatrix4f(_local->GetTypedValue(offset));
+    }
+    VtValue GetValue(Time offset) override {
+        const VtValue local = _local->GetValue(offset);
+        if (!local.IsHolding<GfMatrix4d>()) {
+            return VtValue();
+        }
+        return VtValue(GfMatrix4f(local.UncheckedGet<GfMatrix4d>()));
+    }
+    bool GetContributingSampleTimesForInterval(
+        Time start, Time end, std::vector<Time> *times) override {
+        return _local->GetContributingSampleTimesForInterval(start, end, times);
+    }
+
+private:
+    explicit _ShaderMatrixDataSource(HdMatrixDataSourceHandle local)
+        : _local(std::move(local)) {}
+    const HdMatrixDataSourceHandle _local;
+};
 
 HdTokenDataSourceHandle
 _Token(const TfToken &token)
@@ -1696,10 +1962,18 @@ public:
     HD_DECLARE_DATASOURCE(_WorldShaderMatrixDataSource);
 
     GfMatrix4f GetTypedValue(Time offset) override {
-        return GfMatrix4f(_local * _world->GetTypedValue(offset));
+        return GfMatrix4f(_local->GetTypedValue(offset) *
+                          _world->GetTypedValue(offset));
     }
     VtValue GetValue(Time offset) override {
-        return VtValue(GetTypedValue(offset));
+        // Frames on demand: a local the rig has no frame for yet is "not
+        // yet" here too.
+        const VtValue local = _local->GetValue(offset);
+        if (!local.IsHolding<GfMatrix4d>()) {
+            return VtValue();
+        }
+        return VtValue(GfMatrix4f(local.UncheckedGet<GfMatrix4d>() *
+                                  _world->GetTypedValue(offset)));
     }
     bool GetContributingSampleTimesForInterval(
         Time start, Time end, std::vector<Time> *times) override {
@@ -1707,10 +1981,10 @@ public:
     }
 
 private:
-    _WorldShaderMatrixDataSource(GfMatrix4d local,
+    _WorldShaderMatrixDataSource(HdMatrixDataSourceHandle local,
                                HdMatrixDataSourceHandle world)
         : _local(std::move(local)), _world(std::move(world)) {}
-    const GfMatrix4d _local;
+    const HdMatrixDataSourceHandle _local;
     const HdMatrixDataSourceHandle _world;
 };
 
@@ -1738,8 +2012,11 @@ _ShaderMatrixXformLocators(const RigExecImagingSnapshot &snapshot,
 HdContainerDataSourceHandle
 _BuildStrongRoot(const RigExecPublishedPrim &published,
                  const HdContainerDataSourceHandle &resolvedTarget,
-                 const SdfPath &primPath)
+                 const SdfPath &primPath,
+                 const RigExecImagingSnapshot &snapshot)
 {
+    // Offset reads of every value leaf below go to the frame table.
+    const _FrameSource frames = _FrameSource::From(snapshot, primPath);
     TfTokenVector names;
     std::vector<HdDataSourceBaseHandle> values;
 
@@ -1756,8 +2033,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         // points maps to the flat primvars/points/primvarValue leaf; a
         // stock built-in is always flat.
         primvarNames.push_back(HdTokens->points);
-        const HdSampledDataSourceHandle pointsSource = _MotionValue(
-            published.points, published.sampleOffsets, published.pointsSamples);
+        const HdSampledDataSourceHandle pointsSource = _FrameValue(
+            published.points, published.sampleOffsets, published.pointsSamples,
+            frames, &_PublishedPoints);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(pointsSource)
@@ -1783,12 +2061,14 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
     // float4x4 getter consumes 64. Float publication is also valid on the
     // double-capable backends and leaves authored matrix4d properties alone.
     for (const auto &[name, matrix] : published.shaderMatrices) {
-        HdSampledDataSourceHandle value =
-            HdRetainedTypedSampledDataSource<GfMatrix4f>::New(GfMatrix4f(matrix));
+        const HdMatrixDataSourceHandle local = _FrameValue(
+            matrix, {}, std::vector<GfMatrix4d>{}, frames,
+            &_PublishedShaderMatrix, name);
+        HdSampledDataSourceHandle value = _ShaderMatrixDataSource::New(local);
         if (published.targetLocalShaderMatrices.count(name)) {
             if (const HdMatrixDataSourceHandle world =
                     HdXformSchema::GetFromParent(resolvedTarget).GetMatrix()) {
-                value = _WorldShaderMatrixDataSource::New(matrix, world);
+                value = _WorldShaderMatrixDataSource::New(local, world);
             }
         }
         primvarNames.push_back(name);
@@ -1804,7 +2084,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         primvarNames.push_back(name);
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
-                .SetPrimvarValue(HdRetainedTypedSampledDataSource<float>::New(value))
+                .SetPrimvarValue(_FrameValue(value, {}, std::vector<float>{},
+                                             frames, &_PublishedShaderFloat,
+                                             name))
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->constant))
                 .Build());
     }
@@ -1826,8 +2108,9 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         primvarValues.push_back(
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(
-                    _MotionValue(published.normals, published.sampleOffsets,
-                                 published.normalsSamples))
+                    _FrameValue(published.normals, published.sampleOffsets,
+                                published.normalsSamples, frames,
+                                &_PublishedNormals))
                 .SetInterpolation(_Token(HdPrimvarSchemaTokens->vertex))
                 .SetRole(_Token(HdPrimvarSchemaTokens->normal))
                 .Build());
@@ -1881,10 +2164,12 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
         names.push_back(HdExtentSchemaTokens->extent);
         values.push_back(
             HdExtentSchema::Builder()
-                .SetMin(_MotionValue(published.extentMin, published.sampleOffsets,
-                                     published.extentMinSamples))
-                .SetMax(_MotionValue(published.extentMax, published.sampleOffsets,
-                                     published.extentMaxSamples))
+                .SetMin(_FrameValue(published.extentMin, published.sampleOffsets,
+                                    published.extentMinSamples, frames,
+                                    &_PublishedExtentMin))
+                .SetMax(_FrameValue(published.extentMax, published.sampleOffsets,
+                                    published.extentMaxSamples, frames,
+                                    &_PublishedExtentMax))
                 .Build());
     }
 
@@ -1896,6 +2181,12 @@ _BuildStrongRoot(const RigExecPublishedPrim &published,
 }
 
 }  // namespace
+
+bool
+RigExecTryInvertXform(const GfMatrix4d &m, GfMatrix4d *inverse)
+{
+    return _TryInvert(m, inverse);
+}
 
 bool
 RigExecControlGuideIsDrawn(const TfToken &shape, const TfToken &drawMode)
@@ -1927,12 +2218,17 @@ RigExecControlGuideIsDrawn(const TfToken &shape, const TfToken &drawMode)
 // Nested driven ancestors compose by post-multiplying innermost-first; each
 // delta is expressed in the un-revised world frame at its own level, which is
 // exactly what the input scene index still reports.
+namespace {
+
+// The body of RigExecResultsSceneIndex::_ComputeDrivenXform, free so a
+// frame-valued transform (below) can compose another frame's snapshot.
 bool
-RigExecResultsSceneIndex::_ComputeDrivenXform(
+_ComputeDrivenXformFrom(
+    const HdSceneIndexBaseRefPtr &input,
     const SdfPath &primPath,
     const HdContainerDataSourceHandle &inputDataSource,
     const RigExecImagingSnapshot &snapshot,
-    GfMatrix4d *result, float shutterOffset) const
+    GfMatrix4d *result, float shutterOffset)
 {
     // Fast path. This runs for EVERY prim on EVERY pull, so a rig that drives
     // no transforms at all (a points-only rig, the common case) must not pay
@@ -1959,8 +2255,7 @@ RigExecResultsSceneIndex::_ComputeDrivenXform(
         const GfMatrix4d worldOld =
             current == primPath
                 ? own
-                : _ReadXform(
-                      _GetInputSceneIndex()->GetPrim(current).dataSource, shutterOffset);
+                : _ReadXform(input->GetPrim(current).dataSource, shutterOffset);
         const auto &published = it->second;
         GfMatrix4d revised = published.xform, base = published.xformBase;
         if (!published.sampleOffsets.empty() &&
@@ -2002,6 +2297,109 @@ RigExecResultsSceneIndex::_ComputeDrivenXform(
     }
     *result = resolved;
     return true;
+}
+
+// The driven world transform of a prim (frames on demand): k == 0 the
+// displayed matrix, an explicit motion sample at k, else the frame table's
+// snapshot of the displayed time + k composed against the upstream world at
+// offset k. A frame with no driven ancestor for the prim answers the
+// upstream world itself. A miss is demand and "not yet" (an empty VtValue;
+// typed reads return the displayed matrix).
+class _DrivenXformDataSource final
+    : public HdTypedSampledDataSource<GfMatrix4d> {
+public:
+    HD_DECLARE_DATASOURCE(_DrivenXformDataSource);
+
+    VtValue GetValue(Time offset) override {
+        GfMatrix4d value;
+        if (_Resolve(offset, &value)) {
+            return VtValue(value);
+        }
+        return VtValue();
+    }
+    GfMatrix4d GetTypedValue(Time offset) override {
+        GfMatrix4d value;
+        return _Resolve(offset, &value) ? value : _base;
+    }
+    bool GetContributingSampleTimesForInterval(
+        Time start, Time end, std::vector<Time> *times) override {
+        return _MotionSampleTimes(_offsets, start, end, times);
+    }
+
+private:
+    _DrivenXformDataSource(HdSceneIndexBaseRefPtr input, SdfPath primPath,
+                           HdContainerDataSourceHandle inputDataSource,
+                           GfMatrix4d base, std::vector<float> offsets,
+                           std::vector<GfMatrix4d> samples,
+                           _FrameSource source)
+        : _input(std::move(input))
+        , _primPath(std::move(primPath))
+        , _inputDataSource(std::move(inputDataSource))
+        , _base(base)
+        , _offsets(std::move(offsets))
+        , _samples(std::move(samples))
+        , _source(std::move(source)) {
+        if (_samples.size() != _offsets.size()) {
+            _offsets.clear();
+            _samples.clear();
+        }
+    }
+
+    bool _Resolve(Time offset, GfMatrix4d *value) const {
+        if (std::abs(offset) < kFrameOffsetEpsilon) {
+            *value = _base;
+            return true;
+        }
+        for (size_t i = 0; i < _offsets.size(); ++i) {
+            if (std::abs(_offsets[i] - offset) < kFrameOffsetEpsilon) {
+                *value = _samples[i];
+                return true;
+            }
+        }
+        if (!_source.Live() || !_input) {
+            size_t best = 0;
+            for (size_t i = 1; i < _offsets.size(); ++i) {
+                if (std::abs(_offsets[i] - offset) <
+                    std::abs(_offsets[best] - offset)) {
+                    best = i;
+                }
+            }
+            *value = _offsets.empty() ? _base : _samples[best];
+            return true;
+        }
+        const std::shared_ptr<const RigExecImagingSnapshot> frame =
+            _source.Frame(offset);
+        if (!frame) {
+            return false;
+        }
+        if (!_ComputeDrivenXformFrom(_input, _primPath, _inputDataSource,
+                                     *frame, value, offset)) {
+            *value = _ReadXform(_inputDataSource, offset);
+        }
+        return true;
+    }
+
+    const HdSceneIndexBaseRefPtr _input;
+    const SdfPath _primPath;
+    const HdContainerDataSourceHandle _inputDataSource;
+    const GfMatrix4d _base;
+    std::vector<float> _offsets;
+    std::vector<GfMatrix4d> _samples;
+    const _FrameSource _source;
+};
+
+}  // namespace
+
+bool
+RigExecResultsSceneIndex::_ComputeDrivenXform(
+    const SdfPath &primPath,
+    const HdContainerDataSourceHandle &inputDataSource,
+    const RigExecImagingSnapshot &snapshot,
+    GfMatrix4d *result, float shutterOffset) const
+{
+    return _ComputeDrivenXformFrom(_GetInputSceneIndex(), primPath,
+                                   inputDataSource, snapshot, result,
+                                   shutterOffset);
 }
 
 HdSceneIndexPrim
@@ -2194,7 +2592,10 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
         static const TfToken xformName = HdXformSchemaTokens->xform;
         const HdDataSourceBaseHandle xformSource =
             HdXformSchema::Builder()
-                .SetMatrix(_MotionValue(drivenXform, offsets, samples))
+                .SetMatrix(_DrivenXformDataSource::New(
+                    _GetInputSceneIndex(), primPath, prim.dataSource,
+                    drivenXform, offsets, samples,
+                    _FrameSource::From(*snapshot, primPath)))
                 // TRUE: this matrix is fully composed, exactly like the one
                 // flattening produced upstream. Marking it false would invite
                 // a later flattener to compose the parent in a second time,
@@ -2216,7 +2617,8 @@ RigExecResultsSceneIndex::GetPrim(const SdfPath &primPath) const
         return prim;
     }
     if (HdContainerDataSourceHandle strongRoot =
-            _BuildStrongRoot(it->second, prim.dataSource, primPath)) {
+            _BuildStrongRoot(it->second, prim.dataSource, primPath,
+                             *snapshot)) {
         // Container-on-container overlap composes recursively: owned
         // value leaves win while topology, descriptors, and unrelated
         // schemas continue to come from upstream.
@@ -2716,6 +3118,40 @@ RigExecResultsSceneIndex::_IsDrivenXform(const SdfPath &path) const
     }
     const auto it = snapshot->prims.find(path);
     return it != snapshot->prims.end() && it->second.hasXform;
+}
+
+void
+RigExecResultsSceneIndex::NotifyFramesChanged()
+{
+    if (!_IsObserved()) {
+        return;
+    }
+    const RigExecImagingSnapshotConstPtr snapshot = _CurrentSnapshot();
+    if (!snapshot) {
+        return;
+    }
+    // The value leaves _BuildStrongRoot makes frame-valued, and the driven
+    // transform of every driven subtree. Readers sampling offset 0 re-read
+    // an unchanged value; readers that got "not yet" read the frame.
+    static const HdDataSourceLocatorSet values{
+        HdPrimvarsSchema::GetDefaultLocator(),
+        HdExtentSchema::GetDefaultLocator()};
+    static const HdDataSourceLocatorSet xform{
+        HdXformSchema::GetDefaultLocator()};
+    HdSceneIndexObserver::DirtiedPrimEntries entries;
+    for (const auto &[path, published] : snapshot->prims) {
+        if (published.hasPoints || published.hasNormals ||
+            published.hasExtent || !published.shaderFloats.empty() ||
+            !published.shaderMatrices.empty()) {
+            entries.emplace_back(path, values);
+        }
+        if (published.hasXform) {
+            _DirtySubtree(path, xform, &entries);
+        }
+    }
+    if (!entries.empty()) {
+        _SendPrimsDirtied(entries);
+    }
 }
 
 void

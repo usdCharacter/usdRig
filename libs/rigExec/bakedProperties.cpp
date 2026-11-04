@@ -334,6 +334,23 @@ struct BindState {
         if (record != recordOfConsumer.end()) {
             hop.record = record->second;
         }
+        // A property revision's Float input connected to a pose
+        // interpolator's publication (a driven action's channel value,
+        // weight or active flag; an AnimatedMaps column) at a declared
+        // `final` phase reads that same-generation value; undeclared, it
+        // reads the authored base like any other connection. The revision
+        // step declares the PoseWeight read (RigExecBakedBuildPropertySteps),
+        // so the shared graph orders it after the interpolator, and a
+        // two-way wiring is a cycle there.
+        if (consumer && hop.path != consumer.GetPath() &&
+            consumerType == HeadType::Float && hop.crossDomain < 0 &&
+            consumerPhase.kind == RigExecReadPhaseKind::Final &&
+            reader != std::numeric_limits<int>::max()) {
+            const auto pose = B.poseWeightIndex.find(hop.path);
+            if (pose != B.poseWeightIndex.end()) {
+                hop.poseWeight = pose->second;
+            }
+        }
         return hop;
     }
 
@@ -722,6 +739,15 @@ RigExecBakedResolveWalk(const RigExecBakedProgramImpl &B,
     }
     case Flavour::Connected:
         for (const RigExecBakedWalkHop &hop : walk.hops) {
+            // An interpolator publication stands where it is met, as in
+            // RigExecBakedReadOracleScalar.
+            if constexpr (std::is_same_v<T, float>) {
+                if (hop.poseWeight >= 0 &&
+                    size_t(hop.poseWeight) < B.poseWeights.size()) {
+                    *out = B.poseWeights[size_t(hop.poseWeight)];
+                    return true;
+                }
+            }
             const VtValue *v = Overlay(B, hop);
             if (v && v->IsHolding<T>()) {
                 *out = v->UncheckedGet<T>();
@@ -1559,7 +1585,7 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
             step.kind = RigExecBakedStepKind::PropertyRevision;
             step.object = int(c);
             step.part = int(k);
-            std::set<uint32_t> reads, writes, leaves, slots;
+            std::set<uint32_t> reads, writes, leaves, slots, poseWeights;
             std::set<std::pair<uint32_t, uint32_t>> shadowed;
             std::set<uint32_t> unshadowed;
             if (k == 0) {
@@ -1588,6 +1614,9 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                             }
                             if (hop.leaf >= 0) {
                                 leaves.insert(uint32_t(hop.leaf));
+                            }
+                            if (hop.poseWeight >= 0) {
+                                poseWeights.insert(uint32_t(hop.poseWeight));
                             }
                             if (hop.chain >= 0) {
                                 const Chain &other =
@@ -1627,6 +1656,10 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                 }
             }
             step.reads = Ranges(reads);
+            for (const uint32_t slot : poseWeights) {
+                step.reads.push_back(
+                    RigExecBakedOne(RigExecBakedSlotDomain::PoseWeight, slot));
+            }
             step.writes = Ranges(writes);
             for (const auto &[id, record] : shadowed) {
                 if (!unshadowed.count(id)) {

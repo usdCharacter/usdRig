@@ -177,6 +177,7 @@ private:
         SdfPath path;
         SdfPath primPath;
         TfToken name;
+        TfToken primvar; ///< <name> of a primvars:<name> property, else empty
         // Pin the runtime buffer identity while sharing its converted Hydra
         // array across publications. Replaced only when that buffer changes.
         std::shared_ptr<const void> pointsSource, weightsSource;

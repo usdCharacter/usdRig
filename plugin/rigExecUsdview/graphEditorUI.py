@@ -57,12 +57,14 @@ except ImportError:                                       # PySide2
     QtActionWidgets = QtWidgets
 
 try:
+    import editorExtension
     import graphModel
     import graphScreen
     import rigExecUndo
     import sessionRegistry
 except ImportError:                    # loader that did not add our dir
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import editorExtension
     import graphModel
     import graphScreen
     import rigExecUndo
@@ -296,13 +298,15 @@ class GraphCanvas(QtWidgets.QWidget):
         return QtCore.QRectF(x, y, w, h)
 
     def _Splines(self):
-        """The spline per curve, None where the curve is hidden."""
+        """The spline drawn per curve, None where the curve is hidden."""
         return self._panel.DrawSplines()
 
     def _Glyphs(self):
-        """(key glyphs, tangent glyphs) for the visible curves."""
+        """(key glyphs, tangent glyphs) for the visible curves: from the
+        KEY splines, so knots an edit hook filters out are never squares
+        or handles (GraphEditHook.KeySpline)."""
         curves = self._panel.Curves()
-        splines = self._Splines()
+        splines = self._panel.KeySplines()
         selection = self._panel.SelectionPairs()
         return (graphScreen.KeyGlyphs(curves, splines, self.transform,
                                       selection),
@@ -901,7 +905,7 @@ class _Gesture(object):
     own rounding or re-clamp an already clamped key.
     """
 
-    def __init__(self, panel, indices, label):
+    def __init__(self, panel, indices, label, preview=False):
         self.panel = panel
         self.indices = list(indices)
         self.label = label
@@ -912,28 +916,145 @@ class _Gesture(object):
         self.tangent = None
         self.anchor = (0.0, 0.0)
         self.width = 0.0
+        # Preview (GraphEditHook.PREVIEW): the moves stay here, one key
+        # spline per edited curve, and nothing is authored until Flush at
+        # the release. The recorder then begins right before that one
+        # write, so a drag that is abandoned has nothing to restore.
+        self.preview = {} if preview else None
+        self.token = None             # the edit hook's BeginEdit result
         paths = []
         curves = panel.Curves()
         for index in self.indices:
             self.origin[index] = panel.SplineCopy(index)
             paths.append(curves[index].attrPath)
         self.recorder = rigExecUndo.EditRecorder(panel.Stage(), paths)
+        self._begun = False
+        if self.preview is None:
+            self._Begin()
+
+    def _Begin(self):
         self.recorder.Begin()
+        self._begun = True
 
     def Origin(self, index):
         return Ts.Spline(self.origin[index])
 
     def Write(self, index, spline):
+        """A live write (no preview), or the move kept as the preview."""
+        if self.preview is not None:
+            self.panel._SetPreview(index, spline)
+            return
         self.panel.WriteSpline(index, spline, self.label)
 
+    def Flush(self):
+        """Author the previewed splines, once, in one change block."""
+        if self.preview is None:
+            return
+        self._Begin()
+        with Sdf.ChangeBlock():
+            for index in sorted(self.preview):
+                self.panel.WriteSpline(index, self.preview[index],
+                                       self.label)
+
     def Commit(self):
+        if not self._begun:
+            return None
         edit = self.recorder.Commit(self.label)
         if edit is not None and self.panel.undoStack is not None:
             self.panel.undoStack.Push(edit)
         return edit
 
     def Abort(self):
-        self.recorder.Abort()
+        if self._begun:
+            self.recorder.Abort()
+            self._begun = False
+
+
+class _NullContext(object):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class GraphEditHook(object):
+    """
+    How an embedder brackets, previews and filters the editor's edits
+    (a host that embeds the panel installs one with
+    GraphEditorPanel.SetEditHook). Without a hook every path is
+    the floating editor's own, unchanged. Hooks may subclass this or
+    provide the same methods; every call is guarded, so a failing hook
+    refuses the edit (or draws the authored curve) rather than raising
+    into a Qt handler.
+
+    EDITS. Every drag (key or tangent) and every command (_Apply: the
+    tangent buttons, Insert / Delete, the Time / Value fields, infinity,
+    curve type, dual values) runs as
+        token = BeginEdit(panel, label, indices, drag)
+            falsy refuses: nothing is authored, the panel does nothing
+            (the hook reports why);
+        every authoring step (the recorder's Begin, the writes, its
+            Commit, which pushes onto panel.undoStack) runs inside
+            EditContext(panel);
+        FinishEdit(panel, token, changed)
+            None keeps the edit; a refusal text means the hook rolled it
+            back (the panel re-reads its curves and shows the text);
+    and AbortEdit(panel, token) when the edit is abandoned (Escape, a
+    raising operation, a new stage, SetEditHook). `label` is the edit's
+    undo label ("Move Keys", "Edit Tangent", "Insert Key", "Tangent
+    Flat", ...); `indices` the curves it touches.
+
+    PREVIEW. While PREVIEW is true a drag authors NOTHING until it is
+    released: each move recomputes the edited curves from their origin
+    and keeps them in the panel, which draws them; EndGesture writes
+    them once, in one change block, and AbortGesture discards them.
+    (Without a hook the floating editor writes on every move, inside its
+    one undo step, so the viewport follows the drag.)
+
+    KNOT FILTER. KeySpline(panel, index, authored) is the spline whose
+    knots are the curve's KEYS: drawn as squares, hit, selected, framed,
+    dragged, deleted and keyed around. A hook may return a copy without
+    the knots it derives from the keys; it then rebuilds them in
+    FinishEdit, because what the panel writes is the edited KEY spline.
+    CurveSpline(panel, index, authored, edited) is the spline the canvas
+    strokes as the curve: `edited` is the live gesture's key spline while
+    a preview runs, else None. A value the panel reads OFF the curve (a
+    new key's value) still comes from `authored`, what the stage shows.
+
+    SelectionChanged(panel, additive) follows a key selection made in the
+    panel (a click, a toggle, a marquee, SelectKeys).
+    """
+
+    PREVIEW = True
+    METHODS = ("BeginEdit", "EditContext", "FinishEdit", "AbortEdit",
+               "KeySpline", "CurveSpline", "SelectionChanged")
+
+    def BeginEdit(self, panel, label, indices, drag):
+        del panel, label, indices, drag
+        return True
+
+    def EditContext(self, panel):
+        del panel
+        return _NullContext()
+
+    def FinishEdit(self, panel, token, changed):
+        del panel, token, changed
+        return None
+
+    def AbortEdit(self, panel, token):
+        del panel, token
+
+    def KeySpline(self, panel, index, authored):
+        del panel, index
+        return authored
+
+    def CurveSpline(self, panel, index, authored, edited):
+        del panel, index
+        return edited if edited is not None else authored
+
+    def SelectionChanged(self, panel, additive):
+        del panel, additive
 
 
 # Hotkeys
@@ -1046,7 +1167,12 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.undoStack = undoStack
 
         self._curves = []
-        self._splines = []
+        self._splines = []            # what each attribute resolves to
+        self._keySplines = []         # its keys (GraphEditHook.KeySpline)
+        self._curveSplines = []       # what is drawn (CurveSpline)
+        self._hook = None             # GraphEditHook, or None
+        self._hookWarned = set()
+        self._refused = False         # the last _Apply was the hook's no
         self._hidden = set()          # curve labels unticked
         self._isolated = set()        # curve labels selected in the list
         self._selection = set()       # (curveIndex, time)
@@ -1069,12 +1195,18 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.setMinimumWidth(1080)
         self.resize(1180, 640)
 
+        # Decided before the UI: _InstallUndoActions reads it.
+        self._yieldsInput = editorExtension.OwnsInput(usdviewApi)
         self._BuildUI()
         self._InstallUndoActions()
-        self._hotkeys = GraphHotkeyFilter(self)
-        application = QtWidgets.QApplication.instance()
-        if application is not None:
-            application.installEventFilter(self._hotkeys)
+        if self._yieldsInput:
+            # The host routes this window's keys to HandleKey.
+            self._hotkeys = None
+        else:
+            self._hotkeys = GraphHotkeyFilter(self)
+            application = QtWidgets.QApplication.instance()
+            if application is not None:
+                application.installEventFilter(self._hotkeys)
 
         model = usdviewApi.dataModel
         model.selection.signalPrimSelectionChanged.connect(
@@ -1088,6 +1220,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self._ObserveStage(model.stage)
 
         self.RefreshCurves()
+        if self._yieldsInput:
+            editorExtension.EditorAdded(
+                usdviewApi, editorExtension.GRAPH_EDITOR, self)
 
     # -- construction ---------------------------------------------------
 
@@ -1302,18 +1437,23 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """
         actions = self._GizmoUndoActions()
         self._ownsUndoActions = actions is None
+        # An input owner's application-wide Undo / Redo reach this window; a
+        # window-local Cmd-Z would be an ambiguous overload.
+        managed = getattr(self, "_yieldsInput", False)
         if actions is None:
             self.undoAction = QtActionWidgets.QAction("Undo", self)
-            self.undoAction.setShortcut(QtGui.QKeySequence("Ctrl+Z"))
-            self.undoAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+            if not managed:
+                self.undoAction.setShortcut(QtGui.QKeySequence("Ctrl+Z"))
+                self.undoAction.setShortcutContext(QtCore.Qt.WindowShortcut)
             self.undoAction.triggered.connect(
                 lambda checked=False: self.Undo())
             self.redoAction = QtActionWidgets.QAction("Redo", self)
-            self.redoAction.setShortcuts([
-                QtGui.QKeySequence("Ctrl+Shift+Z"),
-                QtGui.QKeySequence("Shift+Z"),
-                QtGui.QKeySequence("Ctrl+Y")])
-            self.redoAction.setShortcutContext(QtCore.Qt.WindowShortcut)
+            if not managed:
+                self.redoAction.setShortcuts([
+                    QtGui.QKeySequence("Ctrl+Shift+Z"),
+                    QtGui.QKeySequence("Shift+Z"),
+                    QtGui.QKeySequence("Ctrl+Y")])
+                self.redoAction.setShortcutContext(QtCore.Qt.WindowShortcut)
             self.redoAction.triggered.connect(
                 lambda checked=False: self.Redo())
             actions = [self.undoAction, self.redoAction]
@@ -1367,13 +1507,17 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def SplineCopy(self, index):
         """
-        A private copy of curve `index`'s spline, always TYPED.
+        A private copy of curve `index`'s KEY spline, always TYPED: what
+        an edit starts from. That is the resolved spline itself unless an
+        edit hook filters knots out (GraphEditHook.KeySpline), and the
+        live preview while a previewing drag runs.
 
         graphModel.SplineFor is what makes an unanimated channel
         keyable: Usd hands back an untyped spline for an attribute that
         has none, and Ts.Knot(typeName="") raises.
         """
-        spline = self._splines[index] if index < len(self._splines) else None
+        spline = (self._keySplines[index]
+                  if index < len(self._keySplines) else None)
         if spline is None:
             attr = self._Attribute(index)
             spline = (graphModel.SplineFor(attr) if attr is not None
@@ -1416,21 +1560,155 @@ class GraphEditorPanel(QtWidgets.QWidget):
             return False
         attr = self._Attribute(index)
         if attr is None or not attr:
-
-
-
             return False
         try:
-            graphModel.ApplySpline(self.Stage(), self._curves[index].attrPath,
-                                   spline, None, label)
+            with self._EditContext():
+                graphModel.ApplySpline(self.Stage(),
+                                       self._curves[index].attrPath,
+                                       spline, None, label)
         except Exception as error:
             Tf.Warn("rigExecUsdview: graph editor could not author %s: %s"
                     % (self._curves[index].attrPath, error))
             return False
         self._splines[index] = graphModel.SplineFor(attr)
+        self._RefreshDerived([index])
         self.canvas.update()
         self.usdviewApi.UpdateViewport()
         return True
+
+    # -- edit hook (GraphEditHook) -----------------
+
+    def SetEditHook(self, hook):
+        """
+        Install `hook` (a GraphEditHook, or any object with its METHODS),
+        or None for the editor's own behaviour. An open gesture is
+        aborted first; the curves are re-read through the new hook.
+        """
+        if hook is not None:
+            missing = [name for name in GraphEditHook.METHODS
+                       if not callable(getattr(hook, name, None))]
+            if missing:
+                raise TypeError("an edit hook needs %s"
+                                % ", ".join(missing))
+        if self._gesture is not None:
+            self.AbortGesture()
+        self._hook = hook
+        self._hookWarned = set()
+        self._ReadSplines()
+        self._PruneSelection()
+        self.canvas.update()
+        self._Sync()
+
+    def EditHook(self):
+        return self._hook
+
+    def IsPreviewing(self):
+        """Whether drags preview (author once, on release)."""
+        return self._hook is not None and bool(
+            getattr(self._hook, "PREVIEW", True))
+
+    def KeySplines(self):
+        """The KEY spline per curve (squares, hit tests, selection), None
+        where the curve is not drawn."""
+        return [self._keySplines[i] if self.IsVisibleCurve(i) else None
+                for i in range(len(self._curves))]
+
+    def AuthoredSpline(self, index):
+        """What curve `index`'s attribute resolves to (knots the hook
+        filters out included), or None."""
+        return self._splines[index] if index < len(self._splines) else None
+
+    def _HookCall(self, name, fallback, *args):
+        """hook.name(self, *args); `fallback()` when there is no hook or
+        the hook raises (warned once per method)."""
+        hook = self._hook
+        if hook is None:
+            return fallback()
+        try:
+            return getattr(hook, name)(self, *args)
+        except Exception as error:      # never into a Qt handler
+            if name not in self._hookWarned:
+                self._hookWarned.add(name)
+                Tf.Warn("rigExecUsdview: graph editor hook %s failed: %s"
+                        % (name, error))
+            return fallback()
+
+    def _EditContext(self):
+        if self._hook is None:
+            return _NullContext()
+        return self._HookCall("EditContext", _NullContext)
+
+    def _BeginEdit(self, label, indices, drag):
+        """The hook's token for a new edit; True without a hook; None
+        when the hook refuses (it says why)."""
+        if self._hook is None:
+            return True
+        token = self._HookCall("BeginEdit", lambda: None, label,
+                               list(indices), bool(drag))
+        return token if token else None
+
+    def _FinishEdit(self, token, changed):
+        """The hook's refusal text (it rolled the edit back) or None."""
+        if self._hook is None:
+            return None
+        refusal = self._HookCall(
+            "FinishEdit", lambda: "the edit could not be completed",
+            token, bool(changed))
+        return refusal or None
+
+    def _AbortEdit(self, token):
+        if self._hook is not None:
+            self._HookCall("AbortEdit", lambda: None, token)
+
+    def _AfterHook(self):
+        """The hook may have rewritten (or rolled back) the curves."""
+        if self._hook is None:
+            return
+        self._ReadSplines()
+        self._PruneSelection()
+
+    def _DerivedFor(self, index):
+        """(key spline, curve spline) of curve `index`."""
+        authored = self._splines[index] if index < len(self._splines) \
+            else None
+        gesture = self._gesture
+        edited = None
+        if gesture is not None and gesture.preview is not None:
+            edited = gesture.preview.get(index)
+        if self._hook is None or authored is None:
+            key = edited if edited is not None else authored
+            return key, key
+        if edited is not None:
+            key = edited
+        else:
+            key = self._HookCall("KeySpline", lambda: authored, index,
+                                 authored)
+        curve = self._HookCall(
+            "CurveSpline",
+            lambda: edited if edited is not None else authored,
+            index, authored, edited)
+        return key, curve
+
+    def _RefreshDerived(self, indices=None):
+        count = len(self._splines)
+        while len(self._keySplines) < count:
+            self._keySplines.append(None)
+            self._curveSplines.append(None)
+        del self._keySplines[count:]
+        del self._curveSplines[count:]
+        for index in (range(count) if indices is None else indices):
+            if index < count:
+                self._keySplines[index], self._curveSplines[index] = \
+                    self._DerivedFor(index)
+
+    def _SetPreview(self, index, spline):
+        """A previewing gesture's move: drawn, nothing authored."""
+        gesture = self._gesture
+        if gesture is None or gesture.preview is None:
+            return
+        gesture.preview[index] = spline
+        self._RefreshDerived([index])
+        self.canvas.update()
 
     def RefreshCurves(self):
         """
@@ -1479,6 +1757,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
                 self._splines.append(graphModel.SplineFor(attr))
             except Exception:
                 self._splines.append(None)
+        self._RefreshDerived()
 
     def _RemapSelection(self, previous):
         """
@@ -1498,7 +1777,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
             target = labels.get(previous[index].Label())
             if target is None:
                 continue
-            spline = self._splines[target]
+            spline = self._keySplines[target]
             if spline is not None and spline.GetKnot(time) is not None:
                 remapped.add((target, time))
         self._selection = remapped
@@ -1600,8 +1879,10 @@ class GraphEditorPanel(QtWidgets.QWidget):
                 if self.IsVisibleCurve(i)]
 
     def DrawSplines(self):
-        """The spline per curve, None where the curve is not drawn."""
-        return [self._splines[i] if self.IsVisibleCurve(i) else None
+        """The spline the canvas strokes per curve (GraphEditHook
+        .CurveSpline; the resolved spline without a hook), None where the
+        curve is not drawn."""
+        return [self._curveSplines[i] if self.IsVisibleCurve(i) else None
                 for i in range(len(self._curves))]
 
     def SetVisibleCurves(self, labels):
@@ -1634,7 +1915,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
             index = labels.get(label)
             if index is None:
                 continue
-            spline = self._splines[index]
+            spline = self._keySplines[index]
             if spline is None:
                 continue
             knot = spline.GetKnot(float(time))
@@ -1643,11 +1924,13 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self._selection = selection
         self.canvas.update()
         self._Sync()
+        self._SelectionChanged(False)
 
     def SetSelection(self, pairs):
         self._selection = set(pairs)
         self.canvas.update()
         self._Sync()
+        self._SelectionChanged(False)
 
     def ToggleKey(self, index, time):
         pair = (index, time)
@@ -1657,12 +1940,18 @@ class GraphEditorPanel(QtWidgets.QWidget):
             self._selection.add(pair)
         self.canvas.update()
         self._Sync()
+        self._SelectionChanged(True)
 
     def SelectGlyphs(self, glyphs, add=False):
         pairs = set((g.curveIndex, g.time) for g in glyphs)
         self._selection = (self._selection | pairs) if add else pairs
         self.canvas.update()
         self._Sync()
+        self._SelectionChanged(bool(add))
+
+    def _SelectionChanged(self, additive):
+        if self._hook is not None:
+            self._HookCall("SelectionChanged", lambda: None, additive)
 
     def SelectedTimes(self):
         """{curve index: [time, ...]} for the selected keys."""
@@ -1676,10 +1965,13 @@ class GraphEditorPanel(QtWidgets.QWidget):
         (tMin, tMax, vMin, vMax) over the keys, or None when there are
         none. Values come from the knots, not from the sampled curve: a
         Bezier can overshoot its keys and the editor frames the keys.
+        When an edit hook draws a curve with knots of its own (derived
+        knots it filtered out of the keys), framing everything takes
+        their values too: those are values the attribute really takes.
         """
         times, values = [], []
         for index in self.VisibleIndices():
-            spline = self._splines[index]
+            spline = self._keySplines[index]
             if spline is None or spline.IsEmpty():
                 continue
             for knot in spline.GetKnots().values():
@@ -1690,6 +1982,10 @@ class GraphEditorPanel(QtWidgets.QWidget):
                 values.append(float(knot.GetValue()))
                 if knot.IsDualValued():
                     values.append(float(knot.GetPreValue()))
+            curve = self._curveSplines[index]
+            if not selectedOnly and curve is not None and curve is not spline:
+                for knot in curve.GetKnots().values():
+                    values.append(float(knot.GetValue()))
         if not times:
             return None
         return (min(times), max(times), min(values), max(values))
@@ -1698,7 +1994,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
     def BeginKeyDrag(self, press, preOnly=False):
         """
-        Start moving the selected keys; False when none are.
+        Start moving the selected keys; False when none are, or when the
+        edit hook refuses (GraphEditHook.BeginEdit).
 
         `preOnly` shapes arrivals: the drag moves whole keys in time
         but adjusts only preValues in value, so grabbing a dual knot's
@@ -1707,13 +2004,33 @@ class GraphEditorPanel(QtWidgets.QWidget):
         times = self.SelectedTimes()
         if not times or self._gesture is not None or not self.Stage():
             return False
-        gesture = _Gesture(self, sorted(times),
-                           "Move Pre Values" if preOnly else "Move Keys")
+        label = "Move Pre Values" if preOnly else "Move Keys"
+        gesture = self._StartGesture(sorted(times), label)
+        if gesture is None:
+            return False
         gesture.press = press
         gesture.times = times
         gesture.preOnly = bool(preOnly)
-        self._gesture = gesture
         return True
+
+    def _StartGesture(self, indices, label):
+        """A new drag gesture, bracketed by the edit hook; None when the
+        hook refuses or the gesture cannot start."""
+        token = self._BeginEdit(label, indices, True)
+        if token is None:
+            return None
+        try:
+            with self._EditContext():
+                gesture = _Gesture(self, indices, label,
+                                   preview=self.IsPreviewing())
+        except Exception as error:
+            Tf.Warn("rigExecUsdview: graph editor could not start %s: %s"
+                    % (label, error))
+            self._AbortEdit(token)
+            return None
+        gesture.token = token
+        self._gesture = gesture
+        return gesture
 
     def UpdateKeyDrag(self, current, shift=False):
         gesture = self._gesture
@@ -1726,9 +2043,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
         # One change block for the whole live update (bug #1): without
         # this, a drag over N curves emits N ObjectsChanged notices and
         # observers recompose a half-written state (curve 0 cleared,
-        # curve 1 not yet written).
+        # curve 1 not yet written). A previewing drag writes nothing.
         selection = set()
-        with Sdf.ChangeBlock():
+        with self._EditContext(), Sdf.ChangeBlock():
             for index in gesture.indices:
                 spline = gesture.Origin(index)
                 if getattr(gesture, "preOnly", False):
@@ -1757,11 +2074,12 @@ class GraphEditorPanel(QtWidgets.QWidget):
     def BeginTangentDrag(self, glyph, anchor):
         if self._gesture is not None or not self.Stage():
             return False
-        gesture = _Gesture(self, [glyph.curveIndex], "Edit Tangent")
+        gesture = self._StartGesture([glyph.curveIndex], "Edit Tangent")
+        if gesture is None:
+            return False
         gesture.tangent = glyph
         gesture.anchor = anchor
         gesture.width = glyph.width
-        self._gesture = gesture
         return True
 
     def UpdateTangentDrag(self, current):
@@ -1793,7 +2111,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
             # Slope only: unified tangents share an angle, not a
             # length, so the far handle keeps the weight it had.
             graphModel.SetTangent(spline, glyph.time, other, slope)
-        with Sdf.ChangeBlock():
+        with self._EditContext(), Sdf.ChangeBlock():
             gesture.Write(glyph.curveIndex, spline)
         self._Sync()
 
@@ -1801,21 +2119,49 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """
         Close the live gesture; True when it changed the edit target.
 
+        A previewing gesture (GraphEditHook.PREVIEW) authors its moves
+        here, once, in one change block; the edit hook then finishes the
+        edit (and may roll it back: False, the curves re-read).
+
         A drag that ends where it started, or on a curve a weaker layer
         owns, commits nothing -- the recorder compares the spec before
         and after -- and there is then no undo entry to offer.
         """
         gesture = self._gesture
-        self._gesture = None
         if gesture is None:
             return False
         changed = False
+        failed = False
         try:
-            changed = gesture.Commit() is not None
+            with self._EditContext():
+                gesture.Flush()
+                self._gesture = None
+                changed = gesture.Commit() is not None
         except Exception as error:
+            failed = True
             Tf.Warn("rigExecUsdview: graph editor could not record the "
                     "edit: %s" % error)
+        finally:
+            self._gesture = None
+        if failed:
+            try:
+                with self._EditContext():
+                    gesture.Abort()
+            except Exception:
+                pass
+            self._AbortEdit(gesture.token)
+            self._ReadSplines()
+            self._PruneSelection()
+            changed = False
+            refusal = None
+        else:
+            refusal = self._FinishEdit(gesture.token, changed)
+            self._RefreshDerived()
+            self._AfterHook()
         self._Sync()
+        if refusal:
+            self._Notify(refusal)
+            changed = False
         self.canvas.update()
         return changed
 
@@ -1825,11 +2171,14 @@ class GraphEditorPanel(QtWidgets.QWidget):
         if gesture is None:
             return False
         try:
-            gesture.Abort()
+            with self._EditContext():
+                gesture.Abort()
         except Exception as error:
             Tf.Warn("rigExecUsdview: graph editor could not abort the "
                     "edit: %s" % error)
+        self._AbortEdit(gesture.token)
         self._ReadSplines()
+        self._PruneSelection()
         self._Sync()
         self.canvas.update()
         self.usdviewApi.UpdateViewport()
@@ -1842,7 +2191,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
 
         This is the non-drag half of the same bracket _Gesture gives a
         drag: a tangent button pressed with three curves selected is one
-        step, not three.
+        step, not three. The edit hook brackets it the same way (it may
+        refuse it up front, or roll it back afterwards: False).
 
         An operation that RAISES aborts the whole command: the recorder
         puts every curve back, so a command that cannot be applied to
@@ -1857,32 +2207,49 @@ class GraphEditorPanel(QtWidgets.QWidget):
         never held. Reporting that as success would clear the selection
         and offer a Ctrl+Z for an edit that is not there.
         """
+        self._refused = False
         indices = [i for i in indices if i < len(self._curves)]
         if not indices or not self.Stage() or self._gesture is not None:
             return False
-        gesture = _Gesture(self, indices, label)
-        # Held while the writes land so the ObjectsChanged handler does
-        # not re-read the very splines this call is authoring.
-        self._gesture = gesture
+        token = self._BeginEdit(label, indices, False)
+        if token is None:
+            self._refused = True
+            return False
         try:
-            with Sdf.ChangeBlock():
-                for index in indices:
-                    spline = gesture.Origin(index)
-                    if operation(index, spline) is False:
-                        continue
-                    gesture.Write(index, spline)
-            changed = gesture.Commit() is not None
+            with self._EditContext():
+                gesture = _Gesture(self, indices, label)
+                # Held while the writes land so the ObjectsChanged
+                # handler does not re-read the very splines this call
+                # is authoring.
+                self._gesture = gesture
+                try:
+                    with Sdf.ChangeBlock():
+                        for index in indices:
+                            spline = gesture.Origin(index)
+                            if operation(index, spline) is False:
+                                continue
+                            gesture.Write(index, spline)
+                    changed = gesture.Commit() is not None
+                except Exception:
+                    gesture.Abort()
+                    raise
+                finally:
+                    self._gesture = None
         except Exception:
-            gesture.Abort()
+            self._AbortEdit(token)
             # The layer is back but the panel's cached splines are the
             # half-applied ones it wrote on the way to the failure.
             self._ReadSplines()
             self._PruneSelection()
             raise
-        finally:
-            self._gesture = None
+        refusal = self._FinishEdit(token, changed)
+        self._AfterHook()
         self._Sync()
         self.canvas.update()
+        if refusal:
+            self._refused = True
+            self._Notify(refusal)
+            return False
         return changed
 
     # -- edit commands --------------------------------------------------
@@ -1953,6 +2320,21 @@ class GraphEditorPanel(QtWidgets.QWidget):
         return applied
 
     def _InsertOne(self, index, spline, frame):
+        authored = self.AuthoredSpline(index)
+        if (self._hook is not None and authored is not None
+                and not authored.IsEmpty()
+                and spline.GetKnot(float(frame)) is None):
+            # `spline` is the KEY spline: with knots filtered out (a
+            # baked segment held between its keys there) it no longer
+            # evaluates to what the stage shows. The new key takes the
+            # value the curve has on the stage, as without a hook.
+            if not math.isfinite(float(frame)):
+                raise ValueError("InsertKey requires a finite time: %r"
+                                 % (frame,))
+            value = authored.Eval(float(frame))
+            if value is not None:
+                graphModel.AuthorKnot(spline, float(frame), value)
+                return True
         if graphModel.InsertKey(spline, frame) is not None:
             return True
         attr = self._Attribute(index)
@@ -2011,8 +2393,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
                                                         times[index]))
         survivors = self._SurvivingKeys(times)
         if not applied:
-            self._Notify("Nothing deleted: those keys come from a weaker "
-                         "layer, not the edit target.")
+            if not self._refused:       # the edit hook said why already
+                self._Notify("Nothing deleted: those keys come from a "
+                             "weaker layer, not the edit target.")
             return False
         self._selection = set()
         self._Sync()
@@ -2029,8 +2412,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """
         survivors = []
         for index, group in times.items():
-            spline = (self._splines[index] if index < len(self._splines)
-                      else None)
+            spline = (self._keySplines[index]
+                      if index < len(self._keySplines) else None)
             if spline is None:
                 continue
             if any(spline.GetKnot(time) is not None for time in group):
@@ -2181,7 +2564,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """
         selection = set()
         for index, group in times.items():
-            spline = self._splines[index]
+            spline = self._keySplines[index]
             if spline is None:
                 continue
             for time in group:
@@ -2417,6 +2800,7 @@ class GraphEditorPanel(QtWidgets.QWidget):
         self.AbortGesture()
         self._curves = []
         self._splines = []
+        self._RefreshDerived()
         self._selection = set()
         self._hidden = set()
         self._isolated = set()
@@ -2484,9 +2868,9 @@ class GraphEditorPanel(QtWidgets.QWidget):
         """Drop selected keys that no longer exist on the stage."""
         kept = set()
         for index, time in self._selection:
-            if index >= len(self._splines):
+            if index >= len(self._keySplines):
                 continue
-            spline = self._splines[index]
+            spline = self._keySplines[index]
             if spline is not None and spline.GetKnot(time) is not None:
                 kept.add((index, time))
         self._selection = kept
@@ -2552,8 +2936,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
         times, values, pres = [], [], []
         for index, time in self._selection:
             times.append(time)
-            spline = self._splines[index] if index < len(self._splines) \
-                else None
+            spline = self._keySplines[index] \
+                if index < len(self._keySplines) else None
             knot = spline.GetKnot(time) if spline is not None else None
             if knot is not None:
                 values.append(float(knot.GetValue()))
@@ -2572,8 +2956,8 @@ class GraphEditorPanel(QtWidgets.QWidget):
         # typing into a blank Pre makes the selection dual.
         selectedCount = 0
         for index, time in self._selection:
-            spline = (self._splines[index]
-                      if index < len(self._splines) else None)
+            spline = (self._keySplines[index]
+                      if index < len(self._keySplines) else None)
             knot = spline.GetKnot(time) if spline is not None else None
             if knot is not None:
                 selectedCount += 1

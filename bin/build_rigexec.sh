@@ -27,24 +27,24 @@ if command -v ccache >/dev/null 2>&1; then
     CMAKE_LAUNCHER+=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
 if [ -n "${RIGEXEC_MOVER_PLUGIN_DIRS:-}" ]; then
-    cmake -S "$RIG" -B "$RIG/build" -G Ninja \
+    cmake -S "$RIG" -B "$_RIGEXEC_BUILD" -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DUSD_INSTALL_DIR="$USD" \
           -DCMAKE_PREFIX_PATH="$USD" \
           "${CMAKE_LAUNCHER[@]}" \
           "-DRIGEXEC_MOVER_PLUGIN_DIRS=$RIGEXEC_MOVER_PLUGIN_DIRS"
 else
-    cmake -S "$RIG" -B "$RIG/build" -G Ninja \
+    cmake -S "$RIG" -B "$_RIGEXEC_BUILD" -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DUSD_INSTALL_DIR="$USD" \
           -DCMAKE_PREFIX_PATH="$USD" \
           "${CMAKE_LAUNCHER[@]}"
 fi
-cmake --build "$RIG/build" -j "$JOBS"
+cmake --build "$_RIGEXEC_BUILD" -j "$JOBS"
 
 if [ "${1:-}" = "--no-test" ]; then
     exit 0
 fi
 # Bound concurrent test processes independently of compile jobs.
 export CTEST_PARALLEL_LEVEL="${CTEST_PARALLEL_LEVEL:-4}"
-ctest --test-dir "$RIG/build" --output-on-failure
+ctest --test-dir "$_RIGEXEC_BUILD" --output-on-failure

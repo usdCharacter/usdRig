@@ -75,6 +75,7 @@ if __name__ != "__main__":
 # is on the module search path wherever TouchPose runs (it is a RigExec
 # plugin: bin/_env.bat and the pipeline launchers put it there), which is
 # also how the gizmo helpers below reach gizmoUI.
+import editorExtension
 import sessionRegistry
 import touchPoseModel
 
@@ -919,13 +920,60 @@ class TouchPoseController(QtCore.QObject,
             changed = highlight.Clear() or changed
         return changed
 
+    # -- input from an owner (editorExtension) ---------------------------
+
+    def IsInteractive(self):
+        return (bool(self._active) and self._model is not None
+                and self._view is not None)
+
+    def GizmoOwnsAt(self, x, y):
+        """True when the manipulator owns physical pixel (x, y)."""
+        return GizmoOwns(x, y, self._Ratio(), self._api)
+
+    def HandleViewEvent(self, event):
+        """The stage-view filter for one event; True when consumed."""
+        return bool(self._view is not None
+                    and self.eventFilter(self._view, event))
+
+    def IsPressPending(self):
+        """A press is waiting to become a click or a marquee."""
+        return self._pressAt is not None
+
+    def CancelGesture(self):
+        """Abort a live stroke, a pending press and the marquee."""
+        if self._painting is not None:
+            self._painting = None
+            try:
+                self._EndStroke()
+            except Exception as error:
+                Tf.Warn("touchPose: cancel failed: %s" % error)
+        self._pressAt = None
+        self._band = None
+        self._consumedPress = False
+        try:
+            self._HideBand()
+        except Exception:
+            pass
+
+    def LeaveView(self):
+        """Tell the filter the pointer left the view."""
+        if self._view is not None:
+            self.eventFilter(self._view,
+                             QtCore.QEvent(QtCore.QEvent.Type.Leave))
+
     # -- installation ----------------------------------------------------
 
     def _Install(self):
         view = self._view
         if view is None or self._installed:
             return
-        view.installEventFilter(self)
+        self._yielded = editorExtension.OwnsInput(self._api)
+        if self._yielded:
+            # The owner forwards view events to HandleViewEvent.
+            editorExtension.EditorAdded(
+                self._api, editorExtension.TOUCH_POSE, self)
+        else:
+            view.installEventFilter(self)
         # See the module docstring: WA_Hover, never setMouseTracking.
         view.setAttribute(QtCore.Qt.WA_Hover, True)
         self._installed = True
@@ -934,7 +982,12 @@ class TouchPoseController(QtCore.QObject,
         view = self._view
         if view is None or not self._installed:
             return
-        view.removeEventFilter(self)
+        if getattr(self, "_yielded", False):
+            editorExtension.EditorRemoved(
+                self._api, editorExtension.TOUCH_POSE, self)
+            self._yielded = False
+        else:
+            view.removeEventFilter(self)
         # WA_Hover is deliberately LEFT ON. gizmoUI sets it too and may
         # still be running; clearing it here would silently kill the
         # manipulator's pre-selection highlight. It costs nothing on its

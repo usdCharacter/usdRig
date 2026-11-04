@@ -2129,7 +2129,7 @@ RigExecRevisionBinding::operator==(const RigExecRevisionBinding &o) const
            meshWorldInverse == o.meshWorldInverse &&
            blendInputs == o.blendInputs && blendSamples == o.blendSamples &&
            phases == o.phases && transformPhase == o.transformPhase &&
-           externalSchema == o.externalSchema && externalCompileData == o.externalCompileData && externalStructure == o.externalStructure && externalInputs == o.externalInputs;
+           externalSchema == o.externalSchema && externalCompileData == o.externalCompileData && externalStructure == o.externalStructure && externalCompileSources == o.externalCompileSources && externalInputs == o.externalInputs;
 }
 
 std::optional<RigExecRevisionOp>
