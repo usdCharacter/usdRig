@@ -1,4 +1,4 @@
-// RigExec rigging API (spec section 4 authoring surface).
+// RigExec authoring API.
 // A programmatic, fluent way to create and wire the prims a RigExec rig is
 // made of -- controls, joints, solvers, constraints, weight objects, and
 // mover chains -- directly on a UsdStage. The engine itself authors nothing;
@@ -17,8 +17,8 @@
 //                            (bottom-to-top stack walk) -- so ADD ORDER IS
 //                            REVERSE APPLICATION ORDER: the last added runs
 //                            first. Add outermost passes first.
-#ifndef RIGEXEC_RIGGING_BUILDER_H
-#define RIGEXEC_RIGGING_BUILDER_H
+#ifndef RIGEXEC_AUTHORING_BUILDER_H
+#define RIGEXEC_AUTHORING_BUILDER_H
 
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
@@ -1406,4 +1406,4 @@ private:
 
 }  // namespace rigExec
 
-#endif  // RIGEXEC_RIGGING_BUILDER_H
+#endif  // RIGEXEC_AUTHORING_BUILDER_H

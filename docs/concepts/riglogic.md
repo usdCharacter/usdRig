@@ -129,7 +129,7 @@ matrices; live evaluation does.
 
 ## Authoring
 
-The C++ builder (`libs/rigExecRigging/rigBuilder.h`) and the Python module
+The C++ builder (`libs/rigExecAuthoring/rigBuilder.h`) and the Python module
 expose the same calls:
 
 ```python

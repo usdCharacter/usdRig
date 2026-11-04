@@ -1,7 +1,7 @@
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/movers/moverRegistry.h"
 #include "rigExecMath/geometryKernels.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/usd/usdGeom/nurbsPatch.h"

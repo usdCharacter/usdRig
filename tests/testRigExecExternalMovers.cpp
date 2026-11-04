@@ -5,7 +5,7 @@
 #include "rigExec/frozenContext.h"
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecRuntime/inputs.h"
 #include "rigExecRuntime/store.h"

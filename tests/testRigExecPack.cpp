@@ -2,7 +2,7 @@
 #include "rigExecStandalone/system.h"
 #include "rigExec/inputReplayValues.h"
 #include "rigExec/types.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include <cstring>
 #include <cstdint>
 #include "pxr/base/gf/matrix4d.h"

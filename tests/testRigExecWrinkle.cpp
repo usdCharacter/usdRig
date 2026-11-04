@@ -1,6 +1,6 @@
 #include "rigExecMath/geometryKernels.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"
 #include "pxr/base/plug/registry.h"

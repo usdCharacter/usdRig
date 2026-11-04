@@ -16,7 +16,7 @@
 #include "rigExecBinary/format.h"
 #include "rigExecBinary/generated/rigexec_generated.h"
 #include "rigExecMath/latticeKernel.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecExampleFixtures.h"
 
 #include "pxr/base/arch/env.h"

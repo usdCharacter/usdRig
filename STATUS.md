@@ -14,7 +14,7 @@ Readiness levels used here:
 | Layer | Covers | Readiness | Notes |
 |---|---|---|---|
 | Math kernels | `libs/rigExecMath`: solvers, deformation, interpolation, weight math | Prototype | Conventions are pinned by regression suites; coverage keeps growing. |
-| Schema and authoring | `libs/rigExecSchema`, `libs/rigExecRigging`, `python`: scene description and authoring APIs | Prototype | Schema and authoring surface may change. |
+| Schema and authoring | `libs/rigExecSchema`, `libs/rigExecAuthoring`, `python`: scene description and authoring APIs | Prototype | Schema and authoring surface may change. |
 | Dynamic evaluator | `libs/rigExec`: evaluator, mover graph, scheduling, invalidation, frame cache | Prototype | Being revisited; expect active revision and churn here first. |
 | Baked program | `libs/rigExec`: baked program and parity with the dynamic path | Prototype | Must keep matching dynamic results; see [evaluation modes](docs/concepts/baked-vs-dynamic.md). |
 | Display | `libs/rigExecImaging`: Hydra scene indices and viewport publication | Prototype | Display state stays separate from authoring state. |

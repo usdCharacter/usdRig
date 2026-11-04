@@ -15,7 +15,7 @@
 #include "rigExecMath/affineFrameKernel.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/propertyMath.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/plug/registry.h"

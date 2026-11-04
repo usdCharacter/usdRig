@@ -3,8 +3,8 @@
 // property or accepts a caller-declared Sdf type. Every operation resolves its
 // contract from OpenUSD's registered/composed UsdPrimDefinition and fails
 // before authoring when that contract is unavailable.
-#ifndef RIGEXEC_RIGGING_SCHEMA_AUTHORING_H
-#define RIGEXEC_RIGGING_SCHEMA_AUTHORING_H
+#ifndef RIGEXEC_AUTHORING_SCHEMA_AUTHORING_H
+#define RIGEXEC_AUTHORING_SCHEMA_AUTHORING_H
 
 #include "pxr/pxr.h"
 #include "pxr/base/tf/token.h"
@@ -96,4 +96,4 @@ private:
 
 }  // namespace rigExec
 
-#endif  // RIGEXEC_RIGGING_SCHEMA_AUTHORING_H
+#endif  // RIGEXEC_AUTHORING_SCHEMA_AUTHORING_H

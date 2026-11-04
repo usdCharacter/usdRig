@@ -397,7 +397,7 @@ jobs:
             "$P/lib/librigExecOracle.so" \
             "$P/lib/librigExecImaging.so" \
             "$P/lib/librigExecStandalone.so" \
-            "$P/lib/librigExecRigging.so" \
+            "$P/lib/librigExecAuthoring.so" \
             "$P/lib/usd/rigExecSchema/resources/plugInfo.json" \
             "$P/lib/usd/rigExecSchema/resources/generatedSchema.usda" \
             "$P/lib/usd/rigExecImaging/resources/plugInfo.json" \

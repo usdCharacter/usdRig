@@ -25,8 +25,8 @@
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/geometryKernels.h"
-#include "rigExecRigging/rigBuilder.h"
-#include "rigExecRigging/schemaAuthoring.h"
+#include "rigExecAuthoring/rigBuilder.h"
+#include "rigExecAuthoring/schemaAuthoring.h"
 
 #include <array>
 #include <map>

@@ -1,7 +1,7 @@
 """RigExec Python API -- programmatic rig authoring and evaluation.
 
 This package wraps the native ``_rigexec`` module (built from
-libs/rigExecRigging and libs/rigExec) so a Python tool can create and wire an
+libs/rigExecAuthoring and libs/rigExec) so a Python tool can create and wire an
 entire RigExec rig on a ``pxr.Usd.Stage`` and evaluate it in-process, the way
 other OpenUSD python bindings are used:
 

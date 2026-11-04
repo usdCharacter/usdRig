@@ -10,7 +10,7 @@
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/mlpKernel.h"
 #include "rigExecMath/rbfMethodKernel.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/gf/rotation.h"

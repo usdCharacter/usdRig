@@ -523,7 +523,7 @@ def ctest_regex(names: list[str]) -> str:
 PROJECT_LIBS = {
     "rigExec", "rigExecScene", "rigExecOracle", "rigExecRuntime", "rigExecMath",
     "rigExecGraph", "rigExecBinary", "rigExecBake", "rigExecImaging",
-    "rigExecRigging", "rigExecStandalone", "rigExecSampler", "rigExecLzma",
+    "rigExecAuthoring", "rigExecStandalone", "rigExecSampler", "rigExecLzma",
 }
 
 

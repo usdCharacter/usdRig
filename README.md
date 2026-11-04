@@ -136,7 +136,7 @@ The documentation is published at **[usdcharacter.github.io/usdRig](https://usdc
 | `libs/rigExecScene` | USD scene translation into the shared operation graph |
 | `libs/rigExecGraph` | Shared operation compiler, typed values, and executor |
 | `libs/rigExecOracle` | Optional independent reference checks and golden capture |
-| `libs/rigExecRigging` | C++ authoring API |
+| `libs/rigExecAuthoring` | C++ authoring API |
 | `libs/rigExecImaging` | Hydra scene indices and viewport publication |
 | `libs/rigExecGpu` | OpenGL compute path for per-vertex deformation and cloth |
 | `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime` | Binary export, format, and playback |

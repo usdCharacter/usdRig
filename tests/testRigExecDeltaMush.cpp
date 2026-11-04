@@ -2,7 +2,7 @@
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/moverGraph.h"
 #include "rigExec/parallel.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"
 #include <cstring>

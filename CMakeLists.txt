@@ -293,15 +293,15 @@ target_include_directories(rigExecStandalone PUBLIC
 target_link_libraries(rigExecStandalone PUBLIC rigExec exec esf usd sdf)
 target_link_libraries(rigExecStandalone PRIVATE rigExecScene)
 
-add_library(rigExecRigging SHARED
-    libs/rigExecRigging/rigBuilder.cpp
-    libs/rigExecRigging/schemaAuthoring.cpp)
-target_include_directories(rigExecRigging PUBLIC
+add_library(rigExecAuthoring SHARED
+    libs/rigExecAuthoring/rigBuilder.cpp
+    libs/rigExecAuthoring/schemaAuthoring.cpp)
+target_include_directories(rigExecAuthoring PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
-target_link_libraries(rigExecRigging PUBLIC
+target_link_libraries(rigExecAuthoring PUBLIC
     sdf tf gf vt usd)
-target_link_libraries(rigExecRigging PRIVATE rigExecMath)
+target_link_libraries(rigExecAuthoring PRIVATE rigExecMath)
 
 # rigExecGpu: the per-vertex deform program on the GPU as an OpenGL 4.5
 # compute shader, on a worker thread that owns its own hidden context, and
@@ -542,7 +542,7 @@ add_test(NAME testRigExecOracleGoldenSuiteMissing COMMAND "${CMAKE_COMMAND}"
 add_subdirectory(tests/externalMovers)
 add_executable(testRigExecExternalMovers tests/testRigExecExternalMovers.cpp)
 target_link_libraries(testRigExecExternalMovers PRIVATE
-    rigExec rigExecRigging rigExecBake rigExecRuntime usd usdGeom plug)
+    rigExec rigExecAuthoring rigExecBake rigExecRuntime usd usdGeom plug)
 add_dependencies(testRigExecExternalMovers testExternalMover)
 add_test(NAME testRigExecExternalMovers COMMAND testRigExecExternalMovers
     "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources"
@@ -573,7 +573,7 @@ add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
 add_test(NAME testRigExecWrinkleMath COMMAND testRigExecWrinkleMath)
 add_executable(testRigExecWrinkle tests/testRigExecWrinkle.cpp)
-target_link_libraries(testRigExecWrinkle PRIVATE rigExec rigExecRigging rigExecBake rigExecRuntime rigExecSampler)
+target_link_libraries(testRigExecWrinkle PRIVATE rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 add_test(NAME testRigExecWrinkle COMMAND testRigExecWrinkle
     "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources"
     "${CMAKE_CURRENT_BINARY_DIR}/wrinkle_test.rigexec")
@@ -594,7 +594,7 @@ add_executable(testRigExecSharedBuffers tests/testRigExecSharedBuffers.cpp)
 target_link_libraries(testRigExecSharedBuffers PRIVATE rigExecRuntime)
 add_test(NAME testRigExecSharedBuffers COMMAND testRigExecSharedBuffers)
 add_executable(testRigExecDeltaMush tests/testRigExecDeltaMush.cpp)
-target_link_libraries(testRigExecDeltaMush PRIVATE rigExec rigExecRigging rigExecBake rigExecRuntime rigExecSampler)
+target_link_libraries(testRigExecDeltaMush PRIVATE rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 add_test(NAME testRigExecDeltaMush COMMAND testRigExecDeltaMush "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
 add_executable(testRigExecDeltaMushRuntime tests/testRigExecDeltaMushRuntime.cpp)
 target_link_libraries(testRigExecDeltaMushRuntime PRIVATE rigExecRuntime)
@@ -652,7 +652,7 @@ add_test(NAME testRigExecClothKernel COMMAND testRigExecClothKernel)
 
 # RigLogic's behaviours in a rig: live, frame cache and .rigexec parity.
 add_executable(testRigExecRigLogic tests/testRigExecRigLogic.cpp)
-target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecRigging
+target_link_libraries(testRigExecRigLogic PRIVATE rigExec rigExecAuthoring
     rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecRigLogic PRIVATE
     ${_rigexec_schema_resource_define})
@@ -904,7 +904,7 @@ rigexec_add_graph_test(testRigExecSurfaceBinding CONE_VERIFY)
 
 add_executable(testRigExecPatchMover tests/testRigExecPatchMover.cpp)
 target_link_libraries(testRigExecPatchMover PRIVATE
-    rigExec rigExecRigging rigExecBake rigExecRuntime rigExecSampler)
+    rigExec rigExecAuthoring rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecPatchMover PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecPatchMover COMMAND testRigExecPatchMover)
 rigexec_add_graph_test(testRigExecPatchMover CONE_VERIFY)
@@ -1049,7 +1049,7 @@ target_link_libraries(testRigExecOracleInputs PRIVATE rigExec)
 add_test(NAME testRigExecOracleInputs COMMAND testRigExecOracleInputs)
 
 add_executable(testRigExecStandalone tests/testRigExecStandalone.cpp)
-target_link_libraries(testRigExecStandalone PRIVATE rigExecStandalone rigExecRigging)
+target_link_libraries(testRigExecStandalone PRIVATE rigExecStandalone rigExecAuthoring)
 target_compile_definitions(testRigExecStandalone PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecStandalone COMMAND testRigExecStandalone)
 
@@ -1156,7 +1156,7 @@ target_link_libraries(testRigExecFormat PRIVATE rigExecBinary)
 add_test(NAME testRigExecFormat COMMAND testRigExecFormat)
 
 add_executable(testRigExecBinary tests/testRigExecBinary.cpp)
-target_link_libraries(testRigExecBinary PRIVATE rigExecBake rigExecRigging)
+target_link_libraries(testRigExecBinary PRIVATE rigExecBake rigExecAuthoring)
 target_include_directories(testRigExecBinary PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/tests")
 target_compile_definitions(testRigExecBinary PRIVATE
@@ -1433,7 +1433,7 @@ rigexec_add_verify_binary_test(NAME docs_cloth_mover
     DRAGS "/ClothAsset/Rig/Controls/Bar.avars:tx")
 
 add_executable(testRigExecPack tests/testRigExecPack.cpp)
-target_link_libraries(testRigExecPack PRIVATE rigExecStandalone rigExecRigging)
+target_link_libraries(testRigExecPack PRIVATE rigExecStandalone rigExecAuthoring)
 target_compile_definitions(testRigExecPack PRIVATE ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecPack COMMAND testRigExecPack)
 
@@ -1756,7 +1756,7 @@ target_link_libraries(testRigExecFrameCache PRIVATE rigExec)
 add_test(NAME testRigExecFrameCache COMMAND testRigExecFrameCache)
 
 add_executable(testRigExecFrozenContext tests/testRigExecFrozenContext.cpp)
-target_link_libraries(testRigExecFrozenContext PRIVATE rigExec rigExecRigging rigExecBake rigExecSampler)
+target_link_libraries(testRigExecFrozenContext PRIVATE rigExec rigExecAuthoring rigExecBake rigExecSampler)
 add_test(NAME testRigExecFrozenContext COMMAND testRigExecFrozenContext "${CMAKE_CURRENT_SOURCE_DIR}/examples")
 
 add_executable(testRigExecBackgroundScheduler tests/testRigExecBackgroundScheduler.cpp)
@@ -1850,7 +1850,7 @@ rigexec_add_graph_test(testRigExecValueEdits CONE_VERIFY
 # before the region, equal to the read it replaced, re-read exactly when
 # that read can have moved; and no step body reads the stage.
 add_executable(testRigExecLeaves tests/testRigExecLeaves.cpp)
-target_link_libraries(testRigExecLeaves PRIVATE rigExecBake rigExecRigging)
+target_link_libraries(testRigExecLeaves PRIVATE rigExecBake rigExecAuthoring)
 target_include_directories(testRigExecLeaves PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/tests")
 target_compile_definitions(testRigExecLeaves PRIVATE
@@ -1917,7 +1917,7 @@ add_test(NAME testRigExecDefaultSpaces COMMAND testRigExecDefaultSpaces)
 
 add_executable(testRigExecSchemaAuthoring
     tests/testRigExecSchemaAuthoring.cpp)
-target_link_libraries(testRigExecSchemaAuthoring PRIVATE rigExecRigging)
+target_link_libraries(testRigExecSchemaAuthoring PRIVATE rigExecAuthoring)
 target_compile_definitions(testRigExecSchemaAuthoring PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSchemaAuthoring COMMAND testRigExecSchemaAuthoring)
@@ -1927,7 +1927,7 @@ set_tests_properties(testRigExecSchemaAuthoringMissing PROPERTIES
     ENVIRONMENT "PXR_PLUGINPATH_NAME=")
 
 add_executable(testRigExecRigBuilder tests/testRigExecRigBuilder.cpp)
-target_link_libraries(testRigExecRigBuilder PRIVATE rigExecRigging)
+target_link_libraries(testRigExecRigBuilder PRIVATE rigExecAuthoring)
 target_compile_definitions(testRigExecRigBuilder PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecRigBuilder COMMAND testRigExecRigBuilder)
@@ -2559,7 +2559,7 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         get_target_property(_links ${_target} LINK_LIBRARIES)
         if (_type STREQUAL "EXECUTABLE" AND _links AND
             _target MATCHES "^(test|bench|probe)")
-            foreach(_lib rigExec rigExecBake rigExecImaging rigExecRigging
+            foreach(_lib rigExec rigExecBake rigExecImaging rigExecAuthoring
                     rigExecSampler rigExecStandalone)
                 if (_lib IN_LIST _links)
                     list(APPEND _rigexec_pch_users ${_target})
@@ -2623,7 +2623,7 @@ endforeach()
 # Install
 include(CMakePackageConfigHelpers)
 
-install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecRigging rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
+install(TARGETS rigExecLzma rigExecGraph rigExecMath rigExec rigExecScene rigExecOracle rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecFlatBuffers rigExecBinary rigExecBake rigExecRuntime rigExecSampler
     EXPORT rigExecTargets
     RUNTIME DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${RIGEXEC_INSTALL_LIBDIR}"
@@ -2635,7 +2635,7 @@ install(FILES libs/rigExecOracle/registerOracle.h
     DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/rigExecOracle")
 
 # FILES_MATCHING still walks -- and recreates -- every subdirectory it passes
-foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecRigging rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
+foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rigExecAuthoring rigExecImaging rigExecGpu rigExecBinary rigExecBake rigExecRuntime rigExecSampler)
     install(DIRECTORY "libs/${_lib}/"
         DESTINATION "${RIGEXEC_INSTALL_INCLUDEDIR}/${_lib}"
         FILES_MATCHING

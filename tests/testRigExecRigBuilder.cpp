@@ -1,5 +1,5 @@
 // Native contract tests for the coarse, schema-backed RigExec builder.
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 
 #include "rigExecMath/avarScale.h"
 

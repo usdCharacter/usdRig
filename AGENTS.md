@@ -22,7 +22,7 @@ starting its workflow, and keep this list current when adding or changing skills
 
 - `libs/rigExecMath`: numerical kernels. Keep math independent of stage access.
   The archive links `arch`, `tf`, `gf`, and `vt`; it does not read a stage.
-  `rigExec`, the scene library, rigging, and the oracle library link it
+  `rigExec`, the scene library, authoring, and the oracle library link it
   privately. The header-only `*Kernel.h` files here (pose, provider, and
   blend-layout arithmetic among them) also compile into the USD-free
   runtime; keep them free of `pxr/` and `rigExecGraph` includes.
@@ -66,7 +66,7 @@ starting its workflow, and keep this list current when adding or changing skills
   `Evaluate` runs that baked program, or returns an invalid pose and the
   `IsBakeable` reasons. It does not evaluate through OpenExec. The tap set
   remains for cross-check and tests.
-- `libs/rigExecRigging` and `python`: authoring APIs and Python bindings.
+- `libs/rigExecAuthoring` and `python`: authoring APIs and Python bindings.
 - When adding or changing a registered mover module, read
   [external movers](docs/concepts/external-movers.md#build-a-mover-repository).
   Use `rigexec_add_mover` in [rigExecMover.cmake](cmake/rigExecMover.cmake)
@@ -149,7 +149,7 @@ cycle handling, and native/frozen/runtime parity. See
   opinions, no derived relationship targets or defaults, no cached results.
   A value derived from the scene is resolved at compile into the compiled rig
   as a declared input, the same way in every evaluator; display-only results
-  go to Hydra as primvars. Only the authoring APIs (`rigExecRigging`, the
+  go to Hydra as primvars. Only the authoring APIs (`rigExecAuthoring`, the
   `usdview` editors, explicit tools on their own stages) write to a stage.
 
 ## No-mutex zones and thread ownership

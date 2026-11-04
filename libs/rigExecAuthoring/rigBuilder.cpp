@@ -1,4 +1,4 @@
-// RigExec rigging API implementation. See rigBuilder.h for the contract.
+// RigExec authoring API implementation. See rigBuilder.h for the contract.
 #include "rigBuilder.h"
 #include "schemaAuthoring.h"
 

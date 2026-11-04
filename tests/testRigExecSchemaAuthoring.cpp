@@ -1,5 +1,5 @@
 // Strict codeless-schema authoring: declarations are the only authority.
-#include "rigExecRigging/schemaAuthoring.h"
+#include "rigExecAuthoring/schemaAuthoring.h"
 
 #include "rigExecMath/avarScale.h"
 

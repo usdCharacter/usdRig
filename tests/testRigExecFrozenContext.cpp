@@ -30,7 +30,7 @@
 #include "rigExec/generation.h"
 #include "rigExec/parallel.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExecRigging/rigBuilder.h"
+#include "rigExecAuthoring/rigBuilder.h"
 #include "rigExecBake/bake.h"
 #include "rigExecRuntime/runtime.h"
 #include "rigExecSampler/inputSampler.h"

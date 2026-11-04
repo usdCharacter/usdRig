@@ -29,14 +29,14 @@ find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(_rigexec _rigexec.cpp)
 target_link_libraries(_rigexec PRIVATE
-    rigExecRigging
+    rigExecAuthoring
     rigExec
     rigExecScene
     rigExecOracle
     rigExecGpu
     usd sdf tf gf vt python)
 
-# The installed extension lands in lib/python while rigExec/rigExecRigging land
+# The installed extension lands in lib/python while rigExec/rigExecAuthoring land
 # in lib, so the loader-relative rpath inherited from CMAKE_INSTALL_RPATH
 # ($ORIGIN / @loader_path) needs one extra hop up to find its siblings.
 if (APPLE)
