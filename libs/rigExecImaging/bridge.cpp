@@ -5,7 +5,6 @@
 
 #include "rigExecMath/pointFrame.h"
 #include "rigExec/bakedProgramImpl.h"
-#include "rigExec/capsuleSegment.h"
 #include "rigExec/frameCacheSparsity.h"
 #include "rigExec/parallel.h"
 #include "rigExecBinary/clothPlayback.h"
@@ -43,7 +42,6 @@ namespace {
 const TfToken _tControlType("RigExecControl");
 const TfToken _tJointType("RigExecJoint");
 const TfToken _tSphereWeightType("RigExecSphereWeight");
-const TfToken _tCapsuleWeightType("RigExecCapsuleWeight");
 const TfToken _tPlaneWeightType("RigExecPlaneWeight");
 const TfToken _tCurveWeightType("RigExecCurveWeight");
 const TfToken _tY("Y");
@@ -982,158 +980,6 @@ _AppendCurveVolumeGuide(
     elements->push_back(std::move(element));
 }
 
-// The posed origin of a capsule's end provider in \p pose, from whichever
-// frame map publishes it: the final frames the placement is drawn from.
-bool
-_CapsuleEndPoint(const RigExecRigPose &pose, const SdfPath &end,
-                 GfVec3d *point)
-{
-    if (const auto it = pose.jointFramesFinal.find(end);
-        it != pose.jointFramesFinal.end()) {
-        *point = it->second.Origin();
-        return true;
-    }
-    if (const auto it = pose.controlFrames.find(end);
-        it != pose.controlFrames.end()) {
-        *point = it->second.Origin();
-        return true;
-    }
-    if (const auto it = pose.weightFrames.find(end);
-        it != pose.weightFrames.end()) {
-        *point = it->second.ExtractTranslation();
-        return true;
-    }
-    return false;
-}
-
-// One capsule iso-surface: the points at local distance \p radius from the
-// segment [0, \p localEnd], which is already in the DIVIDED local space
-// (the per-axis divisors ride in \p toAsset, as for the curve tube).
-// Wire mode draws a ring at each end, four rails between them and the two
-// hemispherical caps as half great circles; geometry mode a closed mesh of
-// two hemispheres joined by the cylinder. A zero-length segment is the
-// sphere about the origin.
-void
-_AppendCapsuleVolumeGuide(
-    double radius, const GfVec3f &localEnd, const GfMatrix4d &toAsset,
-    bool wire, double wireWidth,
-    std::vector<RigExecVolumeGuideElement> *elements, bool clean = false)
-{
-    if (!std::isfinite(radius) || radius <= 0.0 ||
-        !std::isfinite(localEnd[0]) || !std::isfinite(localEnd[1]) ||
-        !std::isfinite(localEnd[2])) {
-        return;
-    }
-    const float length = localEnd.GetLength();
-    if (length <= 1e-6f) {
-        // No segment: the sphere guide, the divisors in the transform.
-        _AppendSphereVolumeGuide(radius, GfVec3d(1.0), GfVec3d(1.0),
-                                 GfVec3d(1.0), wire, toAsset, wireWidth,
-                                 -1.0f, elements, clean);
-        return;
-    }
-    const GfVec3f axis = localEnd / length;
-    GfVec3f u = _PerpendicularTo(axis);
-    u.Normalize();
-    GfVec3f v = GfCross(axis, u);
-    v.Normalize();
-    const float r = float(radius);
-    const int segments = clean ? 32 : 24;
-
-    RigExecVolumeGuideElement element;
-    element.xform = toAsset;
-    if (wire) {
-        element.primType = HdPrimTypeTokens->basisCurves;
-        element.wireWidth = wireWidth;
-        for (const GfVec3f &center : {GfVec3f(0.0f), localEnd}) {
-            _AppendVolumeRing(center, r * u, r * v, segments, &element.points);
-            element.counts.push_back(segments + 1);
-        }
-        for (int quarter = 0; quarter < 4; ++quarter) {
-            const double theta = _kTwoPi * double(quarter) / 4.0;
-            const GfVec3f radial = float(std::cos(theta)) * u +
-                                   float(std::sin(theta)) * v;
-            element.points.push_back(r * radial);
-            element.points.push_back(localEnd + r * radial);
-            element.counts.push_back(2);
-        }
-        // The caps: half great circles bulging away from the segment.
-        for (const GfVec3f &side : {u, v}) {
-            for (int cap = 0; cap < 2; ++cap) {
-                const GfVec3f center = cap == 0 ? GfVec3f(0.0f) : localEnd;
-                const GfVec3f out = cap == 0 ? -axis : axis;
-                const int half = segments / 2;
-                for (int i = 0; i <= half; ++i) {
-                    const double theta = 0.5 * _kTwoPi * double(i) / double(half);
-                    element.points.push_back(center +
-                        r * (float(std::cos(theta)) * side +
-                             float(std::sin(theta)) * out));
-                }
-                element.counts.push_back(half + 1);
-            }
-        }
-        elements->push_back(std::move(element));
-        return;
-    }
-
-    // Latitude rings from the start pole to the end pole: a hemisphere
-    // about the origin, the cylinder, and a hemisphere about the end.
-    element.primType = HdPrimTypeTokens->mesh;
-    element.normalsInterpolation = _tVertex;
-    const int bands = 8;  // per hemisphere
-    std::vector<std::pair<GfVec3f, float>> rings;  // center, radius
-    std::vector<float> ringAxial;                  // normal axial part
-    for (int b = 1; b <= bands; ++b) {
-        const double phi = 0.25 * _kTwoPi * (1.0 - double(b) / bands);
-        rings.emplace_back(-axis * (r * float(std::sin(phi))),
-                           r * float(std::cos(phi)));
-        ringAxial.push_back(-float(std::sin(phi)));
-    }
-    for (int b = 0; b < bands; ++b) {
-        const double phi = 0.25 * _kTwoPi * double(b) / bands;
-        rings.emplace_back(localEnd + axis * (r * float(std::sin(phi))),
-                           r * float(std::cos(phi)));
-        ringAxial.push_back(float(std::sin(phi)));
-    }
-    const int bottom = 0;
-    element.points.push_back(-axis * r);
-    element.normals.push_back(-axis);
-    for (size_t k = 0; k < rings.size(); ++k) {
-        const float axial = ringAxial[k];
-        const float radial = std::sqrt(std::max(0.0f, 1.0f - axial * axial));
-        for (int j = 0; j < segments; ++j) {
-            const double theta = _kTwoPi * double(j) / double(segments);
-            const GfVec3f dir = float(std::cos(theta)) * u +
-                                float(std::sin(theta)) * v;
-            element.points.push_back(rings[k].first + rings[k].second * dir);
-            GfVec3f normal = radial * dir + axial * axis;
-            normal.Normalize();
-            element.normals.push_back(normal);
-        }
-    }
-    const int top = int(element.points.size());
-    element.points.push_back(localEnd + axis * r);
-    element.normals.push_back(axis);
-    auto face = [&element](std::initializer_list<int> corners) {
-        element.counts.push_back(int(corners.size()));
-        element.indices.insert(element.indices.end(), corners.begin(),
-                               corners.end());
-    };
-    // Wound outward: with v = axis x u, advancing the ring index and then
-    // along the axis turns counter-clockwise seen from outside.
-    for (int j = 0; j < segments; ++j) {
-        const int next = (j + 1) % segments;
-        face({bottom, 1 + next, 1 + j});
-        for (size_t k = 0; k + 1 < rings.size(); ++k) {
-            const int row = 1 + int(k) * segments;
-            face({row + j, row + next, row + segments + next, row + segments + j});
-        }
-        const int row = 1 + int(rings.size() - 1) * segments;
-        face({row + j, row + next, top});
-    }
-    elements->push_back(std::move(element));
-}
-
 }  // namespace
 
 RigExecImagingBridge::RigExecImagingBridge(
@@ -1197,8 +1043,7 @@ RigExecImagingBridge::AppendAuthoredGuides(
         const TfToken type = prim.GetTypeName();
         const bool provider = type == _tControlType || type == _tJointType;
         const bool volume = type == _tSphereWeightType ||
-            type == _tPlaneWeightType || type == _tCurveWeightType ||
-            type == _tCapsuleWeightType;
+            type == _tPlaneWeightType || type == _tCurveWeightType;
         if (!provider && !volume) continue;
         bool rigid = false;
         const GfMatrix4d rest = RigExecAuthoredGuideRestSpace(prim, time, &rigid);
@@ -2184,7 +2029,7 @@ RigExecImagingBridge::_FillVolumeGuides(
                 finishBoundary(first, distance == falloffMax);
             }
         } else {
-            // Sphere, capsule and curve share the per-axis divisors, and reject the
+            // Sphere and curve share the per-axis divisors, and reject the
             // same values the kernel rejects -- a volume whose packet is
             // invalid must not draw a shape suggesting it is fine.
             const GfVec3d axisScale(readFloat(_volumeInputsScaleX, 1.0f),
@@ -2243,46 +2088,6 @@ RigExecImagingBridge::_FillVolumeGuides(
                             &elements, clean);
                     }
                     finishBoundary(first, surface == 1);
-                }
-            } else if (typeName == _tCapsuleWeightType) {
-                // The segment end from the pose's final frames, carried into
-                // the DIVIDED local space the kernel measures in.
-                GfMatrix4d divide(1.0);
-                divide.SetScale(GfVec3d(1.0 / axisScale[0],
-                                        1.0 / axisScale[1],
-                                        1.0 / axisScale[2]));
-                const GfMatrix4d toLocal = rigid.GetInverse() * divide;
-                GfVec3f localEnd(0.0f);
-                const SdfPath endPath = RigExecCapsuleSegmentEnd(prim);
-                GfVec3d end;
-                if (!endPath.IsEmpty() &&
-                    _CapsuleEndPoint(pose, endPath, &end)) {
-                    localEnd = GfVec3f(toLocal.Transform(end));
-                }
-                GfMatrix4d scale(1.0);
-                scale.SetScale(axisScale);
-                const GfMatrix4d toAsset = scale * rigid;
-                for (const double radius : {falloffMin, falloffMax}) {
-                    const size_t first = elements.size();
-                    if ((shell && radius == falloffMax) ||
-                        (falloff && radius == falloffMin))
-                        _AppendCapsuleVolumeGuide(radius, localEnd, toAsset,
-                            false, wireWidth, &elements, clean);
-                    _AppendCapsuleVolumeGuide(radius, localEnd, toAsset,
-                                              wire, wireWidth, &elements,
-                                              clean);
-                    finishBoundary(first, radius == falloffMax);
-                }
-                // The segment itself, a plain line through the tube.
-                if (wire && localEnd.GetLength() > 1e-6f) {
-                    RigExecVolumeGuideElement line;
-                    line.xform = toAsset;
-                    line.primType = HdPrimTypeTokens->basisCurves;
-                    line.wireWidth = clean ? wireWidth * 0.3 : wireWidth;
-                    line.points = VtVec3fArray{GfVec3f(0.0f), localEnd};
-                    line.counts = VtIntArray{2};
-                    line.opacity = guideOpacity;
-                    elements.push_back(std::move(line));
                 }
             } else if (typeName == "RigExecCurveWeight") {
                 VtVec3fArray curvePoints;
@@ -3514,7 +3319,7 @@ RigExecImagingBridge::_BuildPoseSnapshot(
         published.shaderFloats[TfToken(name.substr(primvarsPrefix.size()))] =
             found->second.UncheckedGet<float>();
     }
-    // Property chains' float or double primvars (a driven action's opacity
+    // Property chains' float or double primvars (a step table's opacity
     // or switch index on a group): again only the compiled list, so a
     // float dial never mints a published prim. A double publishes as the
     // float the chain computed.

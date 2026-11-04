@@ -10,8 +10,7 @@
 #include <vector>
 namespace rigExec {
 /// Immutable numerical record. Indices name records in the same program;
-/// composition preserves the authored relationship order. kind: 0 static,
-/// 1 dynamic, 2 combine, 3 sphere, 4 plane, 5 curve, 6 capsule.
+/// composition preserves the authored relationship order.
 struct RigExecWeightRecord {
     std::string name, staticError, phaseError;
     int kind=-1, representation=-1, combineMode=-1, base=-1;
@@ -39,10 +38,6 @@ struct RigExecWeightFieldInputs {
     const int *paintedIndices=nullptr;
     size_t paintedIndexCount=0;
     GfMatrix4d placement=GfMatrix4d(1.0);
-    /// A capsule's segment end in the placement's space; absent is a
-    /// zero-length segment (kind 6).
-    GfVec3d segmentEnd=GfVec3d(0.0);
-    bool hasSegmentEnd=false;
     std::string axis="x", bounds="unbounded";
 };
 /// Exclusive scratch for one field producer. Dense child storage grows with

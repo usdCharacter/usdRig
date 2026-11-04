@@ -120,10 +120,6 @@ TF_DEFINE_PRIVATE_TOKENS(
 
     // Volumetric weight objects.
     (computeFalloffLut)
-    (computeSegmentEnd)
-    (segmentEnd)
-    (segmentEndFrames)
-    ((segmentEndRel, "rigExec:segmentEnd"))
     (falloffLut)
     (weightTargetPoints)
     (sampleSourcePoints)
@@ -160,7 +156,6 @@ const TfToken _workerStrict("strict");
 const TfToken _workerDense("dense");
 const TfToken _workerClamp("clamp");
 const TfToken _workerSphereType("RigExecSphereWeight");
-const TfToken _workerCapsuleType("RigExecCapsuleWeight");
 const TfToken _workerPlaneType("RigExecPlaneWeight");
 const TfToken _workerYAxis("y");
 const TfToken _workerUnbounded("unbounded");
@@ -341,42 +336,6 @@ _BuildSphereWeightPacket(const VdfContext &ctx)
         _ReadVolumeWeightPoints(ctx, &inputs);
     }
     return rigExec::RigExecBuildVolumeWeightPacket(sphereType, inputs);
-}
-
-// The capsule's end arrives as computeSegmentEnd: the evaluator supplies
-// the compiled end provider's frame (including the default, the parent
-// joint's first joint child, which exec cannot traverse to); unsupplied, it
-// is the authored rigExec:segmentEnd target's frame. An invalid frame is no
-// end, a zero-length segment.
-RigExecPointFrame
-_ComputeSegmentEnd(const VdfContext &ctx)
-{
-    VdfReadIterator<RigExecPointFrame> it(ctx, _tokens->segmentEndFrames);
-    if (!it.IsAtEnd()) {
-        return *it;
-    }
-    RigExecPointFrame none;
-    none.flags = 0;
-    return none;
-}
-
-RigExecWeightPacket
-_BuildCapsuleWeightPacket(const VdfContext &ctx)
-{
-    const TfToken &capsuleType = _workerCapsuleType;
-    rigExec::RigExecVolumeWeightInputs inputs = _ReadVolumeWeightInputs(ctx);
-    _ReadAxisScales(ctx, &inputs.scales);
-    if (const RigExecPointFrame *end =
-            ctx.GetInputValuePtr<RigExecPointFrame>(_tokens->segmentEnd)) {
-        if (end->IsValid()) {
-            inputs.capsuleEnd = end->Origin();
-            inputs.hasCapsuleEnd = true;
-        }
-    }
-    if (rigExec::RigExecVolumeWeightCanBuild(capsuleType, inputs)) {
-        _ReadVolumeWeightPoints(ctx, &inputs);
-    }
-    return rigExec::RigExecBuildVolumeWeightPacket(capsuleType, inputs);
 }
 
 RigExecWeightPacket
@@ -790,27 +749,6 @@ EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecSphereWeight)
             AttributeValue<float>(_tokens->inputsScaleXNeg),
             AttributeValue<float>(_tokens->inputsScaleYNeg),
             AttributeValue<float>(_tokens->inputsScaleZNeg));
-}
-
-EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecCapsuleWeight)
-{
-    RIGEXEC_REGISTER_FALLOFF_LUT_STUB;
-
-    self.PrimComputation(_tokens->computeSegmentEnd)
-        .Callback<RigExecPointFrame>(&_ComputeSegmentEnd)
-        .Inputs(
-            Relationship(_tokens->segmentEndRel)
-                .TargetedObjects<RigExecPointFrame>(
-                    _tokens->computePointFrame)
-                .InputName(_tokens->segmentEndFrames));
-
-    self.PrimComputation(_tokens->computeWeightPacket)
-        .Callback<RigExecWeightPacket>(&_BuildCapsuleWeightPacket)
-        .Inputs(
-            RIGEXEC_VOLUME_WEIGHT_COMMON_INPUTS,
-            RIGEXEC_VOLUME_WEIGHT_AXIS_SCALES,
-            Computation<RigExecPointFrame>(_tokens->computeSegmentEnd)
-                .InputName(_tokens->segmentEnd));
 }
 
 EXEC_REGISTER_COMPUTATIONS_FOR_SCHEMA(RigExecPlaneWeight)

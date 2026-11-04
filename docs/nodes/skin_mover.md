@@ -34,14 +34,17 @@ one.
 
 Flat cut-out artwork binds to a [2D skeleton](skeleton_2d.md) the same
 way: the skeleton's bones are the influences and the weights are
-authored arrays like any other skin's. A [capsule weight](capsule_weight.md)
-placed inside each bone describes the region it owns, and
+authored arrays like any other skin's. A [sphere weight](sphere_weight.md)
+placed inside each bone, at the midpoint of its segment and stretched along
+it with `inputs:scaleX`, describes the region it owns, and
 `rigexec.binding.generate_skin_weights(stage, skin_mover)` writes the
-arrays from those capsules: per point, each influence's capsule field at
-the setup pose, normalised over `rigExec:influences`. The rows are
+arrays from those spheres, or from any other volume weight placed inside an
+influence: per point, each influence's volume field at the setup pose,
+normalised over `rigExec:influences`. The rows are
 authored data, generated once rather than evaluated per frame, so
-regenerate them after moving a rest or resizing a capsule; an optional
-`point_indices` list regenerates only those rows.
+re-place the spheres and regenerate the rows after moving a rest or
+changing a bone's strength; an optional `point_indices` list regenerates
+only those rows.
 
 Multi-influence skinning of an exact native point3f[] points
 property in ONE pass: every influence's matrix is gathered per point and
@@ -211,7 +214,7 @@ python docs/render_media.py --page skin_mover
 - [FK Chain](fk_chain.md)
 - [Joint](joint.md)
 - [Skeleton 2D](skeleton_2d.md)
-- [Capsule Weight](capsule_weight.md)
+- [Sphere Weight](sphere_weight.md)
 
 ---
 

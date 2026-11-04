@@ -100,13 +100,6 @@ bool Volume(const std::vector<RigExecWeightRecord> &records, const std::vector<R
         }
         RigExecSphereWeightField(samples,worldToLocal,params,out,positive,negative,workspace.ranges); return true;
     }
-    if (object.kind == 6) {
-        GfVec3f localEnd(0.0f);
-        if (input.hasSegmentEnd && !RigExecCapsuleLocalEnd(worldToLocal,input.segmentEnd,&localEnd)) {
-            *error = who + ": capsule segment end is not finite"; return false;
-        }
-        RigExecCapsuleWeightField(samples,worldToLocal,localEnd,params,out,workspace.ranges); return true;
-    }
     const auto curveInput = input.phasedPoints[2];
     const auto *curve = curveInput.declared ? nullptr : &input.rawPoints[2];
     const auto &curvePoints = curveInput.declared ? curveInput : *curve;
@@ -228,7 +221,7 @@ RigExecWeightPacket RigExecRunWeightPacket(const RigExecWeightRecord &record,
     if (record.kind == 2) return RigExecBuildCombineWeightPacket(record.representationToken,
         record.rangePolicy,record.combineToken,input.borrowedInputs?*input.borrowedInputs:input.inputs,
         input.targetCount,input.strength,input.invert,input.workspace);
-    if (record.kind >= 3 && record.kind <= 6) return RigExecBuildVolumeWeightPacket(record.type,input.volume);
+    if (record.kind >= 3 && record.kind <= 5) return RigExecBuildVolumeWeightPacket(record.type,input.volume);
     return RigExecWeightPacket();
 }
 std::vector<float> RigExecBakeWeightFalloff(const TfToken &profile,const TsSpline *spline) {

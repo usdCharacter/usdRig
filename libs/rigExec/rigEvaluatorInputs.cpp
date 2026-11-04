@@ -199,7 +199,6 @@ namespace {
 // they are asked per weight object per frame, and token comparison is a
 // pointer comparison while literal comparison is not.
 const TfToken _kSphereWeightType("RigExecSphereWeight");
-const TfToken _kCapsuleWeightType("RigExecCapsuleWeight");
 const TfToken _kPlaneWeightType("RigExecPlaneWeight");
 const TfToken _kCurveWeightType("RigExecCurveWeight");
 const TfToken _kJointType("RigExecJoint");
@@ -216,7 +215,7 @@ bool
 _IsVolumeWeightType(const TfToken &typeName)
 {
     return typeName == _kSphereWeightType || typeName == _kPlaneWeightType ||
-           typeName == _kCurveWeightType || typeName == _kCapsuleWeightType;
+           typeName == _kCurveWeightType;
 }
 
 // Types whose frames participate in namespace-based pose dependencies.

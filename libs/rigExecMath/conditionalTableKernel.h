@@ -6,9 +6,9 @@
 // docs/concepts/riglogic.md.
 //
 // The conditional table behind RigExecAnimatedMap: piecewise-linear segments
-// of input values summed into one output clamped to [0, 1]. Header-only and
-// USD-free: every evaluator, the zero-USD runtime included, instantiates
-// this one definition.
+// of input values summed into one output, clamped to [0, 1] unless the map's
+// rigExec:clampOutput is false. Header-only and USD-free: every evaluator,
+// the zero-USD runtime included, instantiates this one definition.
 #ifndef RIGEXEC_MATH_CONDITIONAL_TABLE_KERNEL_H
 #define RIGEXEC_MATH_CONDITIONAL_TABLE_KERNEL_H
 
@@ -61,11 +61,12 @@ RigExecConditionalTablePrepare(std::vector<RigExecConditionalRow> *rows,
 /// One map's value. Rows run in order; within a group of consecutive rows on
 /// the same input only the first whose interval holds the input contributes,
 /// so intervals that share an endpoint do not count it twice. The sum is
-/// clamped to [0, 1]; a NaN input matches no interval.
+/// clamped to [0, 1] when \p clamp is true (RigLogic's rule) and returned as
+/// is otherwise; a NaN input matches no interval.
 inline double
 RigExecConditionalTableEvaluate(const RigExecConditionalRow *rows,
                                 const size_t *groupEnd, size_t count,
-                                const double *inputs)
+                                const double *inputs, bool clamp = true)
 {
     double sum = 0.0;
     for (size_t r = 0; r < count;) {
@@ -78,7 +79,7 @@ RigExecConditionalTableEvaluate(const RigExecConditionalRow *rows,
             ++r;
         }
     }
-    return std::max(0.0, std::min(sum, 1.0));
+    return clamp ? std::max(0.0, std::min(sum, 1.0)) : sum;
 }
 
 /// A RigExecAnimatedMaps node's tables: every map's prepared rows, map
@@ -89,12 +90,19 @@ struct RigExecAnimatedMapsTable {
     std::vector<size_t> groupEnd;
     /// MapCount() + 1 offsets into rows.
     std::vector<size_t> mapBegin{0};
+    /// One entry per map, nonzero where its sum is clamped to [0, 1]
+    /// (rigExec:clampOutput). A map past the end is clamped.
+    std::vector<unsigned char> clamp;
 
     size_t MapCount() const { return mapBegin.empty() ? 0 : mapBegin.size() - 1; }
 
+    /// Whether map \p m clamps its sum to [0, 1].
+    bool Clamps(size_t m) const { return m >= clamp.size() || clamp[m] != 0; }
+
     /// Appends one map's authored rows; false when a row names an input
     /// outside [0, inputCount).
-    bool AddMap(std::vector<RigExecConditionalRow> mapRows)
+    bool AddMap(std::vector<RigExecConditionalRow> mapRows,
+                bool clampOutput = true)
     {
         std::vector<size_t> ends;
         if (!RigExecConditionalTablePrepare(&mapRows, &ends, inputCount)) {
@@ -102,6 +110,8 @@ struct RigExecAnimatedMapsTable {
         }
         rows.insert(rows.end(), mapRows.begin(), mapRows.end());
         groupEnd.insert(groupEnd.end(), ends.begin(), ends.end());
+        clamp.resize(MapCount(), 1);
+        clamp.push_back(clampOutput ? 1 : 0);
         mapBegin.push_back(rows.size());
         return true;
     }
@@ -111,6 +121,11 @@ struct RigExecAnimatedMapsTable {
         if (inputCount != o.inputCount || rows.size() != o.rows.size() ||
             groupEnd != o.groupEnd || mapBegin != o.mapBegin) {
             return false;
+        }
+        for (size_t m = 0; m < MapCount(); ++m) {
+            if (Clamps(m) != o.Clamps(m)) {
+                return false;
+            }
         }
         for (size_t r = 0; r < rows.size(); ++r) {
             const RigExecConditionalRow &a = rows[r], &b = o.rows[r];
@@ -133,7 +148,7 @@ RigExecAnimatedMapsEvaluate(const RigExecAnimatedMapsTable &table,
         const size_t begin = table.mapBegin[m];
         values[m] = RigExecConditionalTableEvaluate(
             table.rows.data() + begin, table.groupEnd.data() + begin,
-            table.mapBegin[m + 1] - begin, inputs);
+            table.mapBegin[m + 1] - begin, inputs, table.Clamps(m));
     }
 }
 

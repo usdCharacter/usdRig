@@ -20,15 +20,18 @@ On this page:
 ## Overview
 
 One map of its parent `RigExecAnimatedMaps`: parallel arrays of
-rows (`rigExec:rowInputs`, `rowFrom`, `rowTo`, `rowSlope`, `rowCut`) and the
-primvar name its value is published under.
+rows (`rigExec:rowInputs`, `rowFrom`, `rowTo`, `rowSlope`, `rowCut`), the
+primvar name its value is published under, and `rigExec:clampOutput`, whether
+the sum is clamped to [0, 1] (true, RigLogic's rule) or published as is
+(false).
 
 One map of its parent RigExecAnimatedMaps, a conditional table.
 Each row reads input x = rigExec:driverAttributes[rowInputs[r]] and adds
 rowSlope[r] * x + rowCut[r] when rowFrom[r] <= x <= rowTo[r] (a reversed
 interval is swapped). Among consecutive rows on the same input only the
 first whose interval holds x contributes, so intervals sharing an
-endpoint count it once. The sum is clamped to [0, 1].
+endpoint count it once. The sum is clamped to [0, 1] unless
+rigExec:clampOutput is false.
 
 ## How it works
 
@@ -43,6 +46,14 @@ Evaluated by its parent; see Animated Maps.
 ## Parameters
 
 ### Node parameters
+
+#### `rigExec:clampOutput`
+
+*Type:* `uniform bool`. *Default:* `true`.
+
+Whether the map's sum is clamped to [0, 1], RigLogic's rule.
+False publishes the sum as is, so a table of slope-0 rows (a step
+function) can carry any value to a property mover or blend input.
 
 #### `rigExec:rowInputs`
 
@@ -102,6 +113,7 @@ bin\launch_usdview.bat docs\examples\animated_maps.usda
 ## Tips
 
 - An empty `rigExec:primvarName` publishes under the map's prim name.
+- For a step table set `rigExec:clampOutput` false and author slope-0 rows: the first matching row of a same-input run wins a shared bound, and a shared bound is rounded to float toward the losing cell, so the winner's row holds the exact tie (see Animated Maps).
 - [RigLogic behaviours](../concepts/riglogic.md) covers the tables and their provenance.
 
 ## See also

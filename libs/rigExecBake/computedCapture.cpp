@@ -856,7 +856,6 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                       &wire.combineTargetPoints, &wire.combineTargetValid);
         wire.costElements = uint64_t(object.costElements);
         wire.providerSlot = int32_t(object.providerSlot);
-        wire.segmentEndSlot = int32_t(object.segmentEndSlot);
         wire.planeAxis = token(object.planeAxis);
         wire.planeBounds = token(object.planeBounds);
         _ToAttributes(object.targetPoints, interner, &wire.targetPoints,
@@ -1086,7 +1085,6 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         out.part = field.part;
         out.placementPhase = fb::WeightFieldPlacementPhase(field.placementPhase);
         out.volumes.assign(field.volumes.begin(), field.volumes.end());
-        out.segmentEnds.assign(field.segmentEnds.begin(), field.segmentEnds.end());
         out.availableChains.assign(field.availableChains.begin(), field.availableChains.end());
         out.scalarObjects.assign(field.scalarObjects.begin(), field.scalarObjects.end());
         for (int member : field.scalarMembers)
@@ -1727,7 +1725,6 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
         object.samplesInFlight = oracleFacts[i].samplesInFlight;
         if (object.oracle && !object.samplesInFlight &&
             (object.type == TfToken("RigExecSphereWeight") ||
-             object.type == TfToken("RigExecCapsuleWeight") ||
              object.type == TfToken("RigExecPlaneWeight") ||
              object.type == TfToken("RigExecCurveWeight"))) {
             // Preserve full raw relationship cardinality. Prim targets are

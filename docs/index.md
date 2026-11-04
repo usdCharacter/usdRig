@@ -22,7 +22,7 @@ Storm viewport with the rig guides on.
 | ![External mover plugins](../icons/concept.png) | [External mover plugins](concepts/external-movers.md) | Build and register point movers from a separate repository for native, frozen and .rigexec playback. |
 | ![Live evaluator inspection](../icons/concept.png) | [Live evaluator inspection](concepts/live-evaluator-inspection.md) | Attach the optional rigExec_viz tool to usdview and read a session's operation graph and per-operation thread timings. |
 | ![Paths and walking](../icons/concept.png) | [Paths and walking](concepts/paths.md) | Drive a rig along a BasisCurves path by arc length, author and edit the path, and steer a baked program with a moving window. |
-| ![2D skeletons, binding and driven actions](../icons/concept.png) | [2D skeletons, binding and driven actions](concepts/skeletons-2d.md) | Flat cut-out rigs: bones, the skeleton solve, binding artwork to bones, and dials that drive whole action frames. |
+| ![2D skeletons, binding and smart-bone step tables](../icons/concept.png) | [2D skeletons, binding and smart-bone step tables](concepts/skeletons-2d.md) | Flat cut-out rigs: bones, the skeleton solve, binding artwork to bones, and dials whose step tables drive whole action frames. |
 | ![Weight display in usdview](../icons/concept.png) | [Weight display in usdview](concepts/weight-display.md) | Choose volume guides and surface color mappings for resolved weight fields. |
 
 ## Rig
@@ -112,10 +112,8 @@ Storm viewport with the rig guides on.
 |---|---|---|
 | ![Pose Interpolator](../icons/pose_interpolator.png) | [Pose Interpolator](nodes/pose_interpolator.md) | Turns a driver's rotation into one float per authored pose. |
 | ![Pose](../icons/pose.png) | [Pose](nodes/pose.md) | One place the driver can be, and the float it publishes when the driver gets there. |
-| ![Animated Maps](../icons/concept.png) | [Animated Maps](nodes/animated_maps.md) | RigLogic's animated maps: [0, 1] mask values from control values, for shaders. |
+| ![Animated Maps](../icons/concept.png) | [Animated Maps](nodes/animated_maps.md) | RigLogic's animated maps: [0, 1] mask values from control values, for shaders, or unclamped step tables. |
 | ![Animated Map](../icons/concept.png) | [Animated Map](nodes/animated_map.md) | One conditional table of an Animated Maps node, and its value. |
-| ![Driven Action](../icons/concept.png) | [Driven Action](nodes/driven_action.md) | Maps a dial angle to a whole action frame and publishes driven channel values. |
-| ![Action Channel](../icons/concept.png) | [Action Channel](nodes/action_channel.md) | One driven channel of a driven action: its value at each whole action frame. |
 
 ## Weights
 
@@ -124,7 +122,6 @@ Storm viewport with the rig guides on.
 | ![Static Weight](../icons/static_weight.png) | [Static Weight](nodes/static_weight.md) | A painted, time-invariant weight field over moved points. |
 | ![Dynamic Weight](../icons/dynamic_weight.png) | [Dynamic Weight](nodes/dynamic_weight.md) | The joint is frozen; only the painted field is animated. |
 | ![Sphere Weight](../icons/sphere_weight.png) | [Sphere Weight](nodes/sphere_weight.md) | A ball of influence: radial falloff generated from a placed volume. |
-| ![Capsule Weight](../icons/capsule_weight.png) | [Capsule Weight](nodes/capsule_weight.md) | A tube of influence along a bone: falloff about the segment to a child joint. |
 | ![Plane Weight](../icons/plane_weight.png) | [Plane Weight](nodes/plane_weight.md) | A half-space gradient: everything past the placed plane is weighted in. |
 | ![Curve Weight](../icons/curve_weight.png) | [Curve Weight](nodes/curve_weight.md) | A tube of influence around a curve's control polygon. |
 | ![Combine Weight](../icons/combine_weight.png) | [Combine Weight](nodes/combine_weight.md) | Folds several weight fields into one under a single mode. |

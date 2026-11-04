@@ -2967,238 +2967,6 @@ class RigExecSphereWeight "RigExecSphereWeight" (
     )
 }
 
-class RigExecCapsuleWeight "RigExecCapsuleWeight" (
-    customData = {
-        string userDocBrief = """Falloff about a segment: d is the distance from a point to the
-    nearest point of the segment from the volume's placed origin to its
-    segment end, measured in rigid volume-local space after
-    inputs:scaleX/Y/Z."""
-    }
-)
-{
-    matrix4d avars:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = """Zero pose supplied to avar evaluation; falls back to the
-        computed default:space."""
-        }
-    )
-    token avars:rotationOrder = "XYZ" (
-        allowedTokens = ["XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"]
-    )
-    double3 avars:rotationSign = (1, 1, 1) (
-        customData = {
-            string userDocBrief = """Per-axis sign applied to rx, ry and rz -- and to rspin,
-        which is an X rotation -- before they are composed."""
-        }
-    )
-    double avars:rspin = 0
-    double avars:rx = 0
-    double avars:ry = 0
-    double avars:rz = 0
-    double avars:tx = 0
-    double avars:ty = 0
-    double avars:tz = 0
-    double avars:unitScaleFactor = 1 (
-        customData = {
-            string userDocBrief = "Multiplier converting translation avars into local distance units before the selected default and parent transforms."
-        }
-    )
-    double default:rx = 0
-    double default:ry = 0
-    double default:rz = 0
-    matrix4d default:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Local-to-world zero position for posing."
-        }
-    )
-    double default:tx = 0
-    double default:ty = 0
-    double default:tz = 0
-    float3[] extent (
-        customData = {
-            string userDocBrief = """Extent is a three dimensional range measuring the geometric
-        extent of the authored gprim in its own local space (i.e."""
-        }
-    )
-    color3f guide:displayColor = (1, 0.2, 0.2) (
-        customData = {
-            string userDocBrief = """Red by convention, matching the influence overlay the
-        results scene index paints onto the weighted geometry so the
-        volume and the region it grabs read as one object."""
-        }
-    )
-    float guide:displayOpacity = 0.35
-    uniform token guide:drawMode = "falloff" (
-        allowedTokens = ["falloff", "cage", "brackets", "shell", "wire", "geometry", "none"]
-        customData = {
-            string userDocBrief = """falloff draws a soft inner shell at falloffMin with
-        continuous inner rings and a dashed exterior cage at falloffMax."""
-        }
-    )
-    uniform token guide:weightDisplay = "tint" (
-        allowedTokens = ["tint", "heatmap", "bands"]
-        customData = {
-            string userDocBrief = """Selected influence overlay: tint blends gray to red;
-        heatmap interpolates dark blue, blue, teal, yellow and red at weights
-        0, .25, .5, .75 and 1."""
-        }
-    )
-    double guide:wireWidth = 0.05 (
-        customData = {
-            string userDocBrief = "Width of the drawn wire guide curves; see RigExecControl."
-        }
-    )
-    float inputs:falloffMax = 1 (
-        customData = {
-            string userDocBrief = """Distance from the segment at which the field is fully OFF:
-        the outer radius of the capsule."""
-        }
-    )
-    float inputs:falloffMin = 0 (
-        customData = {
-            string userDocBrief = """Distance from the segment at which the field is fully ON,
-        in the capsule's local units after inputs:scaleX/Y/Z: the inner
-        radius of the capsule."""
-        }
-    )
-    float[] inputs:falloffSamples = [] (
-        customData = {
-            string userDocBrief = """Optional uniformly spaced samples of the normalized falloff
-        profile, from the outer boundary (0) to the inner boundary (1)."""
-        }
-    )
-    float inputs:invert = 0 (
-        customData = {
-            string userDocBrief = "Exchanges the two ends of the band."
-        }
-    )
-    float inputs:scaleX = 1 (
-        customData = {
-            string userDocBrief = """Per-axis divisor applied to the local coordinate, and to the
-        segment end, before the distance, making the tube elliptical; see
-        RigExecSphereWeight."""
-        }
-    )
-    float inputs:scaleY = 1
-    float inputs:scaleZ = 1
-    float inputs:strength = 1 (
-        customData = {
-            string userDocBrief = "Final multiplier on the remapped weight."
-        }
-    )
-    matrix4d parent:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Selected parent's default local-to-world space."
-        }
-    )
-    matrix4d parent:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Selected parent's posed local-to-world space."
-        }
-    )
-    matrix4d posed:defaultSpace = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Controller-adjusted zero pose; falls back to avars:defaultSpace."
-        }
-    )
-    matrix4d posed:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Final local-to-world transform."
-        }
-    )
-    rel proxyPrim (
-        customData = {
-            string userDocBrief = '''The proxyPrim relationship allows us to link a
-        prim whose purpose is "render" to its (single target)
-        purpose="proxy" prim.'''
-        }
-    )
-    uniform token purpose = "guide" (
-        allowedTokens = ["default", "render", "proxy", "guide"]
-        customData = {
-            string userDocBrief = """Render purpose, overriding UsdGeomImageable's `default`
-        fallback for the same reason RigExecJoint does: an influence
-        volume is a DIAGNOSTIC, drawn when a viewer asks for guides, and
-        the stock attribute keeps the drawing and the bounds from
-        disagreeing."""
-        }
-    )
-    double rest:rx = 0
-    double rest:ry = 0
-    double rest:rz = 0
-    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ) (
-        customData = {
-            string userDocBrief = "Bind transform relative to the namespace frame provider's rest frame, applied after the rest:tx/ty/tz/rx/ry/rz offsets; always orthonormalized."
-        }
-    )
-    double rest:tx = 0
-    double rest:ty = 0
-    double rest:tz = 0
-    float rigExec:falloffCurve = 0 (
-        customData = {
-            string userDocBrief = """Falloff shape as an authored Ts spline over x in [0, 1],
-        read when rigExec:falloffProfile is `curve`."""
-        }
-    )
-    uniform token rigExec:falloffProfile = "smooth" (
-        allowedTokens = ["linear", "smooth", "easeIn", "easeOut", "constant", "curve"]
-        customData = {
-            string userDocBrief = """Named analytic remap of the normalized band parameter, or
-        `curve` to use the spline authored on rigExec:falloffCurve."""
-        }
-    )
-    uniform token rigExec:rangePolicy = "clamp" (
-        allowedTokens = ["strict", "clamp"]
-        customData = {
-            string userDocBrief = """Defaults to clamp rather than the strict used by the
-        authored weight objects: inputs:strength and inputs:invert are
-        animatable, and an artist scrubbing strength past one should see
-        the field saturate, not have the packet invalidated and its mover
-        pass through mid-drag."""
-        }
-    )
-    uniform token rigExec:representation = "dense" (
-        allowedTokens = ["dense"]
-        customData = {
-            string userDocBrief = """A generated field has a value at every element, so dense
-        is the only representation it can honestly publish."""
-        }
-    )
-    rel rigExec:sampleSource (
-        customData = {
-            string userDocBrief = """Optional explicit points source to measure against,
-        overriding rigExec:weightTarget for SAMPLING only."""
-        }
-    )
-    rel rigExec:segmentEnd (
-        customData = {
-            string userDocBrief = """Optional single RigExecXformable whose posed origin is the
-        far end of the segment."""
-        }
-    )
-    rel rigExec:weightTarget (
-        customData = {
-            string userDocBrief = """Canonical prim or exact property carrying the weighted
-        domain."""
-        }
-    )
-    token visibility = "inherited" (
-        allowedTokens = ["inherited", "invisible"]
-        customData = {
-            string userDocBrief = '''Visibility is meant to be the simplest form of "pruning"
-        visibility that is supported by most applications.'''
-        }
-    )
-    uniform token[] xformOpOrder (
-        customData = {
-            string userDocBrief = """Encodes the sequence of transformation operations in the
-        order in which they should be pushed onto a transform stack while
-        visiting a UsdStage's prims in a graph traversal that will effect
-        the desired positioning for this prim and its descendant prims."""
-        }
-    )
-}
-
 class RigExecPlaneWeight "RigExecPlaneWeight" (
     customData = {
         string userDocBrief = """Gradient across a plane: d is the SIGNED local coordinate
@@ -4150,9 +3918,9 @@ class RigExecMlOutput "RigExecMlOutput" (
 class RigExecAnimatedMaps "RigExecAnimatedMaps" (
     customData = {
         string userDocBrief = """RigLogic's animated maps (Epic Games OpenRigLogic, see
-    docs/references.md): one value in [0, 1] per RigExecAnimatedMap child,
-    each a sum of piecewise-linear segments of the input properties, made
-    for driving texture masks such as wrinkle maps."""
+    docs/references.md): one value per RigExecAnimatedMap child, each a sum
+    of piecewise-linear segments of the input properties, clamped to [0, 1]
+    unless the child's rigExec:clampOutput is false."""
     }
 )
 {
@@ -4184,6 +3952,11 @@ class RigExecAnimatedMap "RigExecAnimatedMap" (
     float outputs:value = 0 (
         customData = {
             string userDocBrief = "The map's value for the current pose."
+        }
+    )
+    uniform bool rigExec:clampOutput = 1 (
+        customData = {
+            string userDocBrief = "Whether the map's sum is clamped to [0, 1], RigLogic's rule."
         }
     )
     uniform token rigExec:primvarName = "" (
@@ -6012,78 +5785,5 @@ class "RigExecBone2dGroupAPI" (
             string userDocBrief = "A disabled group keeps every member active."
         }
     )
-}
-
-class RigExecDrivenAction "RigExecDrivenAction" (
-    customData = {
-        string userDocBrief = """Maps a dial angle to a whole action frame and publishes values
-    at that frame."""
-    }
-)
-{
-    bool inputs:enabled = 1 (
-        customData = {
-            string userDocBrief = "A disabled action publishes frame 0."
-        }
-    )
-    float outputs:active = 0 (
-        customData = {
-            string userDocBrief = "1 when outputs:frame > 0, else 0."
-        }
-    )
-    float outputs:frame = 0 (
-        customData = {
-            string userDocBrief = "The whole action frame."
-        }
-    )
-    float outputs:weight = 0 (
-        customData = {
-            string userDocBrief = "outputs:frame / N, for blend inputs whose samples sit at k / N."
-        }
-    )
-    rel rigExec:driverAttributes (
-        customData = {
-            string userDocBrief = """Exactly one float or double property, normally a bone's
-        avars:rz, read at this relationship's rigExecReadPhase."""
-        }
-    )
-    uniform double[] rigExec:driverSamples = [] (
-        customData = {
-            string userDocBrief = """Driver value at each whole action frame, in the driver
-        property's own units; at least two."""
-        }
-    )
-    uniform token rigExec:frameTies = "earlier" (
-        allowedTokens = ["earlier", "later"]
-        customData = {
-            string userDocBrief = "Which frame wins when two samples are equally close."
-        }
-    )
-    uniform token rigExec:side = "fromSamples" (
-        allowedTokens = ["fromSamples", "positive", "negative"]
-        customData = {
-            string userDocBrief = "The side of sample 0 this action serves."
-        }
-    )
-}
-
-class RigExecActionChannel "RigExecActionChannel" (
-    customData = {
-        string userDocBrief = """One driven channel of its parent RigExecDrivenAction:
-    rigExec:samples holds the channel's value at whole action frames
-    0, 1, ...; past the last sample the last value holds."""
-    }
-)
-{
-    float outputs:value = 0
-    uniform token rigExec:channelMode = "offset" (
-        allowedTokens = ["offset", "value"]
-        customData = {
-            string userDocBrief = """offset publishes samples[f] - samples[0], for an additive
-        mover; value publishes samples[f], for a blend mover whose envelope
-        is the action's outputs:active."""
-        }
-    )
-    uniform double[] rigExec:samples = []
 }
 

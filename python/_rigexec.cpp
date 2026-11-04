@@ -25,7 +25,6 @@
 #include "rigExecMath/pointFrame.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/skeleton2dKernel.h"
-#include "rigExecMath/drivenActionKernel.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecAuthoring/generateSkinWeights.h"
 #include "rigExecAuthoring/rigBuilder.h"
@@ -1799,15 +1798,6 @@ PYBIND11_MODULE(_rigexec, m) {
         .def("set_scales", &rigExec::RigExecSphereWeightHandle::SetScales,
              py::arg("sx"), py::arg("sy"), py::arg("sz"));
 
-    py::class_<rigExec::RigExecCapsuleWeightHandle, rigExec::RigExecVolumeWeightHandle>(m, "CapsuleWeight")
-        .def("set_scales", &rigExec::RigExecCapsuleWeightHandle::SetScales,
-             py::arg("sx"), py::arg("sy"), py::arg("sz"))
-        .def("set_segment_end", [](rigExec::RigExecCapsuleWeightHandle &h, py::object p) {
-            h.SetSegmentEnd(_PythonToDependencyPath(p, h.GetStage()));
-        }, py::arg("path"),
-           "The provider whose posed origin ends the segment; None restores "
-           "the default (the parent joint's first joint child).");
-
     py::class_<rigExec::RigExecPlaneWeightHandle, rigExec::RigExecVolumeWeightHandle>(m, "PlaneWeight")
         .def("set_axis", [](rigExec::RigExecPlaneWeightHandle &h, std::string v) { h.SetAxis(TfToken(v)); }, py::arg("axis"))
         .def("set_bounds", [](rigExec::RigExecPlaneWeightHandle &h, std::string v) { h.SetBounds(TfToken(v)); }, py::arg("bounds"))
@@ -2018,13 +2008,17 @@ PYBIND11_MODULE(_rigexec, m) {
                            std::string name, std::vector<int> inputs,
                            std::vector<float> from, std::vector<float> to,
                            std::vector<float> slope, std::vector<float> cut,
-                           std::string primvar) {
-            return h.AddMap(name, inputs, from, to, slope, cut, primvar)
+                           std::string primvar, bool clampOutput) {
+            return h.AddMap(name, inputs, from, to, slope, cut, primvar,
+                            clampOutput)
                 .GetString();
         }, py::arg("name"), py::arg("inputs"), py::arg("from_values"),
            py::arg("to_values"), py::arg("slopes"), py::arg("cuts"),
            py::arg("primvar_name") = std::string(),
-           "A map's rows (parallel arrays); its outputs:value path.");
+           py::arg("clamp_output") = true,
+           "A map's rows (parallel arrays); its outputs:value path. "
+           "clamp_output=False authors rigExec:clampOutput false, so the "
+           "map publishes its sum unclamped.");
 
     // Mover handles.
     py::class_<rigExec::RigExecMatrixMoverHandle, rigExec::RigExecMoverHandle>(m, "MatrixMover")
@@ -2795,18 +2789,6 @@ PYBIND11_MODULE(_rigexec, m) {
                 falloffMin, falloffMax);
         }, py::arg("name"), py::arg("target"),
            py::arg("falloff_min") = 0.0f, py::arg("falloff_max") = 1.0f)
-        .def("add_capsule_weight", [](rigExec::RigExecRigBuilder &b,
-                                       std::string name, py::object target,
-                                       py::object segmentEnd, float falloffMin,
-                                       float falloffMax) {
-            return b.AddCapsuleWeight(
-                name, _PythonToDependencyPath(
-                    target, b.GetStage(), TfToken(), false),
-                _PythonToDependencyPath(segmentEnd, b.GetStage()),
-                falloffMin, falloffMax);
-        }, py::arg("name"), py::arg("target"),
-           py::arg("segment_end") = py::none(),
-           py::arg("falloff_min") = 0.0f, py::arg("falloff_max") = 1.0f)
         .def("add_plane_weight", [](rigExec::RigExecRigBuilder &b,
                                      std::string name, py::object target,
                                      float falloffMin, float falloffMax) {
@@ -2837,19 +2819,6 @@ PYBIND11_MODULE(_rigexec, m) {
                     target, b.GetStage(), TfToken(), false),
                 falloffMin, falloffMax);
         }, py::arg("path"), py::arg("target"),
-           py::arg("falloff_min") = 0.0f, py::arg("falloff_max") = 1.0f)
-        .def("define_capsule_weight", [](rigExec::RigExecRigBuilder &b,
-                                          py::object path, py::object target,
-                                          py::object segmentEnd,
-                                          float falloffMin, float falloffMax) {
-            return b.DefineCapsuleWeight(
-                _PythonToPath(path, false),
-                _PythonToDependencyPath(
-                    target, b.GetStage(), TfToken(), false),
-                _PythonToDependencyPath(segmentEnd, b.GetStage()),
-                falloffMin, falloffMax);
-        }, py::arg("path"), py::arg("target"),
-           py::arg("segment_end") = py::none(),
            py::arg("falloff_min") = 0.0f, py::arg("falloff_max") = 1.0f)
         .def("define_plane_weight", [](rigExec::RigExecRigBuilder &b,
                                         py::object path, py::object target,
@@ -2957,7 +2926,7 @@ PYBIND11_MODULE(_rigexec, m) {
           "Wire bind coordinates for RigExecCurveMover mode \"wire\": per "
           "point, (u, d) with u the parameter of the closest point on the "
           "rest NURBS curve and d the distance to it.");
-    // Skin weights from capsule weights (rigExecAuthoring/generateSkinWeights.h).
+    // Skin weights from volume weights (rigExecAuthoring/generateSkinWeights.h).
     // Re-exported with its contract by rigexec.binding.
     m.def("generate_skin_weights",
           [](py::object stageObj, py::object skinMover, py::object pointIndices) {
@@ -2984,22 +2953,22 @@ PYBIND11_MODULE(_rigexec, m) {
                   rigExec::RigExecGenerateSkinWeights(
                       stage, path, partial ? &rows : nullptr);
               py::list without;
-              for (const SdfPath &influence : generated.influencesWithoutCapsules) {
+              for (const SdfPath &influence : generated.influencesWithoutVolumes) {
                   without.append(_PathStr(influence));
               }
               py::dict out;
               out["rows_written"] = generated.rowsWritten;
               out["element_size"] = generated.elementSize;
-              out["influences_without_capsules"] = without;
+              out["influences_without_volumes"] = without;
               return out;
           },
           py::arg("stage"), py::arg("skin_mover"),
           py::arg("point_indices") = py::none(),
           "Author a RigExecSkinMover's rigExec:jointIndices, jointWeights and\n"
-          "elementSize from the RigExecCapsuleWeight children of its\n"
-          "influences, measured at Default. Returns {'rows_written',\n"
-          "'element_size', 'influences_without_capsules'}. See\n"
-          "rigexec.binding.generate_skin_weights.");
+          "elementSize from the RigExecVolumeWeight children (sphere, plane,\n"
+          "curve) of its influences, measured at Default. Returns\n"
+          "{'rows_written', 'element_size', 'influences_without_volumes'}.\n"
+          "See rigexec.binding.generate_skin_weights.");
     m.def("rbf_fit_width", [](py::object poses, py::object translations,
                               std::string kernel, py::object pose_types,
                               py::object twist_axis, double regularization,
@@ -3080,33 +3049,6 @@ PYBIND11_MODULE(_rigexec, m) {
        "The scale across a 2D bone for along-bone scale sx under\n"
        "bone2d:scalingMode (normal 1, uniform sx, squashStretch\n"
        "|sx|^-squash_factor).");
-
-    // Driven actions (rigExecMath/drivenActionKernel.h): the one definition of
-    // the side test, the frame search and the weight, for the authoring
-    // tools that write rigExec:side and corrective activations. Evaluation
-    // reads only the compiled table.
-    m.def("driven_action_side", [](const std::vector<double> &driver) {
-        return rigExec::RigExecDrivenActionSide(driver.data(), driver.size(),
-                                               nullptr);
-    }, py::arg("driver"),
-       "The side (+1, -1, or 0 for none) a driven action with these driver\n"
-       "samples serves when its rigExec:side is fromSamples.");
-    m.def("driven_action_frame", [](const std::vector<double> &driver,
-                                   double angle, int side,
-                                   py::object fullTurn, bool tiesLater) {
-        const bool turn = fullTurn.is_none()
-            ? rigExec::RigExecDrivenActionFullTurn(driver.data(), driver.size())
-            : fullTurn.cast<bool>();
-        return rigExec::RigExecDrivenActionFrame(driver.data(), driver.size(),
-                                                side, turn, tiesLater, angle);
-    }, py::arg("driver"), py::arg("angle"), py::arg("side"),
-       py::arg("full_turn") = py::none(), py::arg("ties_later") = false,
-       "The whole action frame a driver value selects (full_turn None: judged\n"
-       "from the samples, as the compiler does).");
-    m.def("driven_action_weight", &rigExec::RigExecDrivenActionWeight,
-       py::arg("frame"), py::arg("count"),
-       "outputs:weight of a driven action at frame of count driver samples\n"
-       "(float division: corrective activations match it bit for bit).");
 
     // The gate every interpolator is held to:
     // the kernels must still sum to at least RigExecRbfCoverageFloor

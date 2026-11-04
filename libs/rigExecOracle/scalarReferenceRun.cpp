@@ -192,12 +192,6 @@ bool RigExecOracleRunBody(RigExecBakedProgramImpl *program,UsdTimeCode time,RigE
                 for(size_t slot=0;slot<B.paths.size() && slot<versions.size();++slot)
                     if(slot<B.placedVolumes.size() && B.placedVolumes[slot] && size_t(versions[slot])<frames.size())
                         inputs.placements.emplace(B.paths[slot],RigExecVolumePlacement(frames[size_t(versions[slot])]));
-                inputs.segmentEnds.clear();
-                for(const auto &object:B.weightObjects) {
-                    const int end=object.segmentEndSlot;
-                    if(end>=0 && size_t(end)<versions.size() && size_t(versions[size_t(end)])<frames.size())
-                        inputs.segmentEnds.emplace(object.path,frames[size_t(versions[size_t(end)])].Origin());
-                }
                 RigExecProfileScope referenceProfile(B.profiler && B.profiler->IsEnabled() ? B.profiler : nullptr,
                     B.profiler && B.profiler->IsEnabled() ? "Reference.ResolveWeight" : "",
                     B.profiler && B.profiler->IsEnabled() ? "reference" : "");

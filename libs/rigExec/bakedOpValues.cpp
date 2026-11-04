@@ -1041,7 +1041,6 @@ static bool InputKey(const RigExecBakedProgramImpl &B,
                 if(record.kind==3)for(int i=11;i<=16;++i)scalar(i);
                 if(record.kind==4){Put(out,input.axis);Put(out,input.bounds);if(input.bounds=="bounded"){scalar(17);scalar(18);}}
                 if(record.kind==5)points(input.phasedPoints[2].declared?input.phasedPoints[2]:input.rawPoints[2]);
-                if(record.kind==6){Put(out,input.hasSegmentEnd);if(input.hasSegmentEnd)Put(out,input.segmentEnd);}
             }
         }
         if(covered) {

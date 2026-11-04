@@ -19,7 +19,6 @@
 TF_DEFINE_PRIVATE_TOKENS(
     _weightTokens,
     ((sphere, "RigExecSphereWeight"))
-    ((capsule, "RigExecCapsuleWeight"))
     ((plane, "RigExecPlaneWeight"))
     ((curve, "RigExecCurveWeight"))
     ((unbounded, "unbounded"))
@@ -302,7 +301,6 @@ bool
 _UsesAxisScales(const TfToken &typeName)
 {
     return typeName == _weightTokens->sphere ||
-           typeName == _weightTokens->capsule ||
            typeName == _weightTokens->curve;
 }
 
@@ -420,35 +418,6 @@ _BuildSphereWeightPacket(const RigExecVolumeWeightInputs &inputs)
     return packet;
 }
 
-// The segment from the placed origin to the end provider's origin, both
-// carried into the scaled local frame, so the tube is elliptical exactly as
-// a curve weight's is.
-RigExecWeightPacket
-_BuildCapsuleWeightPacket(const RigExecVolumeWeightInputs &inputs)
-{
-    RigExecWeightPacket packet;
-    GfMatrix4d worldToLocal;
-    RigExecWeightPointView points;
-    if (!_BeginVolumeWeight(
-            /* usesScales = */ true, inputs, &packet, &worldToLocal,
-            &points)) {
-        return packet;
-    }
-    const GfMatrix4d scaled = _ApplyAxisScales(worldToLocal, inputs.scales);
-    GfVec3f localEnd(0.0f);
-    if (inputs.hasCapsuleEnd &&
-        !RigExecCapsuleLocalEnd(scaled, inputs.capsuleEnd, &localEnd)) {
-        return packet;  // a non-finite end is no segment
-    }
-    std::vector<float> weights;
-    RigExecCapsuleWeightField(points, scaled, localEnd, inputs.params,
-                              &weights, RigExecGeometryRanges());
-    if (!_FinishVolumeWeight(&packet, &weights)) {
-        return RigExecWeightPacket();
-    }
-    return packet;
-}
-
 RigExecWeightPacket
 _BuildPlaneWeightPacket(const RigExecVolumeWeightInputs &inputs)
 {
@@ -550,9 +519,6 @@ RigExecBuildVolumeWeightPacket(
 {
     if (typeName == _weightTokens->sphere) {
         return _BuildSphereWeightPacket(inputs);
-    }
-    if (typeName == _weightTokens->capsule) {
-        return _BuildCapsuleWeightPacket(inputs);
     }
     if (typeName == _weightTokens->plane) {
         return _BuildPlaneWeightPacket(inputs);

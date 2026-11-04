@@ -139,7 +139,6 @@ StaticWeight = _native.StaticWeight
 DynamicWeight = _native.DynamicWeight
 VolumeWeight = _native.VolumeWeight
 SphereWeight = _native.SphereWeight
-CapsuleWeight = _native.CapsuleWeight
 PlaneWeight = _native.PlaneWeight
 CurveWeight = _native.CurveWeight
 CombineWeight = _native.CombineWeight
@@ -173,11 +172,6 @@ MoverChain = _native.MoverChain
 bone2d_clamp_local_angle = _native.bone2d_clamp_local_angle
 bone2d_cross_scale = _native.bone2d_cross_scale
 
-# Driven actions: the kernel's side test, frame search and weight (tools).
-driven_action_side = _native.driven_action_side
-driven_action_frame = _native.driven_action_frame
-driven_action_weight = _native.driven_action_weight
-
 __all__ = [
     "Builder", "SchemaPrim", "schema", "ControlAPI", "MoverAPI",
     "Rig", "Pose", "PointFrame",
@@ -187,7 +181,7 @@ __all__ = [
     "RotationConstraint", "ScaleConstraint", "ParentConstraint",
     "SingleChainIkConstraint", "HarmonicsConstraint",
     "Weight", "StaticWeight", "DynamicWeight", "VolumeWeight", "SphereWeight",
-    "CapsuleWeight", "PlaneWeight", "CurveWeight", "CombineWeight",
+    "PlaneWeight", "CurveWeight", "CombineWeight",
     "BlendInput", "BlendSample",
     "MatrixMover", "SkinMover", "LatticeMover", "BlendShapeMover", "MlMover",
     "CurveMover",
@@ -197,7 +191,6 @@ __all__ = [
     "FloatMathMover", "Vec3fMathMover", "MatrixMathMover",
     "MoverChain",
     "bone2d_clamp_local_angle", "bone2d_cross_scale",
-    "driven_action_side", "driven_action_frame", "driven_action_weight",
     "load_schema_plugin", "identity",
     "export_baked", "InverseResult", "solve_parameters",
     "binding", "generate_skin_weights",
@@ -304,7 +297,6 @@ _CONCRETE_SCHEMA_NAMES = (
     "BlendPointFrames",
     "BlendSample",
     "BlendShapeMover",
-    "CapsuleWeight",
     "ClothMover",
     "ClothBinding",
     "ClothMap",

@@ -29,7 +29,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
     ((rigExecMlMover, "RigExecMlMover"))
     ((rigExecAnimatedMaps, "RigExecAnimatedMaps"))
-    ((rigExecDrivenAction, "RigExecDrivenAction"))
     ((rigExecFkChain, "RigExecFkChain"))
     ((rigExecTwoBoneIk, "RigExecTwoBoneIk"))
     ((rigExecBlendPointFrames, "RigExecBlendPointFrames"))
@@ -226,8 +225,7 @@ _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
         const TfToken &type = prim.GetTypeName();
         return type == _tokens->rigExecPoseInterpolator ||
                type == _tokens->rigExecMlMover ||
-               type == _tokens->rigExecAnimatedMaps ||
-               type == _tokens->rigExecDrivenAction;
+               type == _tokens->rigExecAnimatedMaps;
     });
 }
 

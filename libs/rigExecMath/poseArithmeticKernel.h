@@ -3,7 +3,6 @@
 #include "conditionalTableKernel.h"
 #include "mlpKernel.h"
 #include "rbfMethodKernel.h"
-#include "drivenActionKernel.h"
 #include <algorithm>
 #include <memory>
 #include <array>
@@ -199,8 +198,7 @@ RigExecPosePropagateOutcome RigExecPropagatePoseArithmetic(const Frame &current,
 }
 template<class Solver,class Method=RigExecRbfMethodTable,
          class Network=std::shared_ptr<const RigExecMlNetwork>,
-         class Maps=std::shared_ptr<const RigExecAnimatedMapsTable>,
-         class Driven=std::shared_ptr<const RigExecDrivenActionTable>>
+         class Maps=std::shared_ptr<const RigExecAnimatedMapsTable>>
 struct RigExecPoseInterpolatorRecordT {
     Solver solver;
     bool enableTranslation=false,allowNegativeWeights=true;
@@ -217,11 +215,6 @@ struct RigExecPoseInterpolatorRecordT {
     /// inputs to one value per map.
     bool mapsSolve=false;
     Maps maps{};
-    /// A RigExecDrivenAction: its one numeric driver maps to a whole action
-    /// frame, and the outputs are frame, weight, active, then one value per
-    /// RigExecActionChannel (RigExecDrivenActionEvaluate).
-    bool drivenSolve=false;
-    Driven driven{};
 };
 /// One frame driver after the first, read only by a RigLogic solve.
 template<class Frame> struct RigExecPoseDriverFramesT {
@@ -265,15 +258,6 @@ RigExecPoseInterpolatorStatus RigExecRunPoseInterpolatorArithmetic(
         const auto &v=q.GetImaginary();const double s=q.GetReal()<0.0?-1.0:1.0;
         row->push_back(s*v[0]);row->push_back(s*v[1]);row->push_back(s*v[2]);row->push_back(s*q.GetReal());
     };
-    if(record.drivenSolve) {
-        if(!record.driven || input.numeric.size()!=1) {
-            weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;
-        }
-        weights->assign(record.driven->OutputCount(),0.0);
-        RigExecDrivenActionEvaluate(*record.driven,input.numeric[0],weights->data());
-        return weights->size()==record.poseCount?RigExecPoseInterpolatorStatus::Success:
-            RigExecPoseInterpolatorStatus::CountMismatch;
-    }
     if(record.mapsSolve) {
         if(!record.maps || input.numeric.size()!=record.maps->inputCount) {
             weights->clear();return RigExecPoseInterpolatorStatus::CountMismatch;

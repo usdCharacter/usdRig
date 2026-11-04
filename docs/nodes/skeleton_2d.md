@@ -156,12 +156,14 @@ A leg nested Hip / Thigh / Shin, with an `End` joint under the shin,
 and a pin bone Foot beside it with no joint child. The bones key
 `avars:rz`; the thigh also keys `avars:sx`, which stretches it along its
 length and carries the shin with it, and the foot keys `avars:tx`. Each
-bone holds a capsule weight with no `rigExec:segmentEnd`, so each spans
-its bone to its first joint child and the foot's is a sphere. One skin
-mover binds the leg mesh with rows written by
-`rigexec.binding.generate_skin_weights` from those capsules; the small tab
-quad beside the leg lies outside every capsule, keeps zero rows and holds
-still.
+bone holds a sphere weight stretched along its segment to its first joint
+child: at the midpoint (`rest:tx` = L/2), `inputs:scaleX` = 1 + L/(2S),
+`inputs:falloffMin` = max(S/4, (L/2) S/(L/2 + S)) and `inputs:falloffMax`
+= S for a segment of length L and strength S; the foot's is an unscaled
+sphere about its origin. One skin mover binds the leg mesh with rows
+written by `rigexec.binding.generate_skin_weights` from those spheres; the
+small tab quad beside the leg lies outside every sphere, keeps zero rows
+and holds still.
 
 Open it live with:
 
@@ -175,8 +177,8 @@ bin\launch_usdview.bat docs\examples\skeleton_2d.usda
 - A lock chain is capped at 32 bones, and a bone with `bone2d:ignoredByIk`, or a pin, is not counted among its parent's children; a lock that the descent leaves short retries from the other bend and keeps the closer result.
 - Reparent a bone by moving it in the namespace (re-expressing its rest); animate a parent with a Space Switch on the bone whose first source is its namespace parent.
 - The namespace parents and every switch source must be acyclic, an outside source may not sit under a bone of the skeleton, and a switch on a bone may not author `rigExec:space`, `rigExec:rotationFilters` or a cleared axis mask.
-- Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Capsule Weight inside each bone and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.
-- See [2D skeletons, binding and driven actions](../concepts/skeletons-2d.md) for the whole workflow.
+- Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Sphere Weight inside each bone, stretched along its segment, and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.
+- See [2D skeletons, binding and smart-bone step tables](../concepts/skeletons-2d.md) for the whole workflow.
 
 ## See also
 
@@ -185,7 +187,7 @@ bin\launch_usdview.bat docs\examples\skeleton_2d.usda
 - [Space Switch](space_switch.md)
 - [FK Chain](fk_chain.md)
 - [Skin Mover](skin_mover.md)
-- [Driven Action](driven_action.md)
+- [Animated Maps](animated_maps.md)
 
 ---
 

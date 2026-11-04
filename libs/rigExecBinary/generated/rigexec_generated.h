@@ -178,10 +178,6 @@ struct PoseInterpolator;
 struct PoseInterpolatorBuilder;
 struct RigExecWirePoseInterpolator;
 
-struct DrivenAction;
-struct DrivenActionBuilder;
-struct RigExecWireDrivenAction;
-
 struct Skeleton2d;
 struct Skeleton2dBuilder;
 struct RigExecWireSkeleton2d;
@@ -517,8 +513,6 @@ inline const ::flatbuffers::TypeTable *MlNetworkTypeTable();
 inline const ::flatbuffers::TypeTable *AnimatedMapsTypeTable();
 
 inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable();
-
-inline const ::flatbuffers::TypeTable *DrivenActionTypeTable();
 
 inline const ::flatbuffers::TypeTable *Skeleton2dTypeTable();
 
@@ -7432,6 +7426,7 @@ struct RigExecWireAnimatedMaps : public ::flatbuffers::NativeTable {
   std::vector<double> rowSlope{};
   std::vector<double> rowCut{};
   std::vector<uint32_t> mapBegin{};
+  std::vector<uint8_t> mapUnclamped{};
 };
 
 /// A RigExecAnimatedMaps node's conditional tables
@@ -7451,7 +7446,8 @@ struct AnimatedMaps FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ROWTO = 10,
     VT_ROWSLOPE = 12,
     VT_ROWCUT = 14,
-    VT_MAPBEGIN = 16
+    VT_MAPBEGIN = 16,
+    VT_MAPUNCLAMPED = 18
   };
   uint32_t inputCount() const {
     return GetField<uint32_t>(VT_INPUTCOUNT, 0);
@@ -7475,6 +7471,11 @@ struct AnimatedMaps FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *mapBegin() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_MAPBEGIN);
   }
+  /// Format 28: one byte per map, 1 where rigExec:clampOutput is false;
+  /// absent: every map clamped.
+  const ::flatbuffers::Vector<uint8_t> *mapUnclamped() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_MAPUNCLAMPED);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7491,6 +7492,8 @@ struct AnimatedMaps FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(rowCut()) &&
            VerifyOffset(verifier, VT_MAPBEGIN) &&
            verifier.VerifyVector(mapBegin()) &&
+           VerifyOffset(verifier, VT_MAPUNCLAMPED) &&
+           verifier.VerifyVector(mapUnclamped()) &&
            verifier.EndTable();
   }
   RigExecWireAnimatedMaps *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -7523,6 +7526,9 @@ struct AnimatedMapsBuilder {
   void add_mapBegin(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> mapBegin) {
     fbb_.AddOffset(AnimatedMaps::VT_MAPBEGIN, mapBegin);
   }
+  void add_mapUnclamped(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> mapUnclamped) {
+    fbb_.AddOffset(AnimatedMaps::VT_MAPUNCLAMPED, mapUnclamped);
+  }
   explicit AnimatedMapsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -7542,8 +7548,10 @@ inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(
     ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowTo = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowSlope = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<double>> rowCut = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> mapBegin = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> mapBegin = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> mapUnclamped = 0) {
   AnimatedMapsBuilder builder_(_fbb);
+  builder_.add_mapUnclamped(mapUnclamped);
   builder_.add_mapBegin(mapBegin);
   builder_.add_rowCut(rowCut);
   builder_.add_rowSlope(rowSlope);
@@ -7567,13 +7575,15 @@ inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMapsDirect(
     const std::vector<double> *rowTo = nullptr,
     const std::vector<double> *rowSlope = nullptr,
     const std::vector<double> *rowCut = nullptr,
-    const std::vector<uint32_t> *mapBegin = nullptr) {
+    const std::vector<uint32_t> *mapBegin = nullptr,
+    const std::vector<uint8_t> *mapUnclamped = nullptr) {
   auto rowInputs__ = rowInputs ? _fbb.CreateVector<int32_t>(*rowInputs) : 0;
   auto rowFrom__ = rowFrom ? _fbb.CreateVector<double>(*rowFrom) : 0;
   auto rowTo__ = rowTo ? _fbb.CreateVector<double>(*rowTo) : 0;
   auto rowSlope__ = rowSlope ? _fbb.CreateVector<double>(*rowSlope) : 0;
   auto rowCut__ = rowCut ? _fbb.CreateVector<double>(*rowCut) : 0;
   auto mapBegin__ = mapBegin ? _fbb.CreateVector<uint32_t>(*mapBegin) : 0;
+  auto mapUnclamped__ = mapUnclamped ? _fbb.CreateVector<uint8_t>(*mapUnclamped) : 0;
   return rigExec::fb::CreateAnimatedMaps(
       _fbb,
       inputCount,
@@ -7582,7 +7592,8 @@ inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMapsDirect(
       rowTo__,
       rowSlope__,
       rowCut__,
-      mapBegin__);
+      mapBegin__,
+      mapUnclamped__);
 }
 
 ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -7609,7 +7620,6 @@ struct RigExecWirePoseInterpolator : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps> maps{};
   std::vector<int32_t> primvarSlots{};
   std::vector<int32_t> primvarSources{};
-  std::unique_ptr<rigExec::fb::RigExecWireDrivenAction> drivenAction{};
   RigExecWirePoseInterpolator() = default;
   RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o);
   RigExecWirePoseInterpolator(RigExecWirePoseInterpolator&&) FLATBUFFERS_NOEXCEPT = default;
@@ -7643,8 +7653,7 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_MASK = 36,
     VT_MAPS = 38,
     VT_PRIMVARSLOTS = 40,
-    VT_PRIMVARSOURCES = 42,
-    VT_DRIVENACTION = 44
+    VT_PRIMVARSOURCES = 42
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -7719,11 +7728,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<int32_t> *primvarSources() const {
     return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_PRIMVARSOURCES);
   }
-  /// Format 27: present for a RigExecDrivenAction, whose action-frame search
-  /// replaces every solve; its one value input is the driver.
-  const rigExec::fb::DrivenAction *drivenAction() const {
-    return GetPointer<const rigExec::fb::DrivenAction *>(VT_DRIVENACTION);
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -7761,8 +7765,6 @@ struct PoseInterpolator FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(primvarSlots()) &&
            VerifyOffset(verifier, VT_PRIMVARSOURCES) &&
            verifier.VerifyVector(primvarSources()) &&
-           VerifyOffset(verifier, VT_DRIVENACTION) &&
-           verifier.VerifyTable(drivenAction()) &&
            verifier.EndTable();
   }
   RigExecWirePoseInterpolator *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -7834,9 +7836,6 @@ struct PoseInterpolatorBuilder {
   void add_primvarSources(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources) {
     fbb_.AddOffset(PoseInterpolator::VT_PRIMVARSOURCES, primvarSources);
   }
-  void add_drivenAction(::flatbuffers::Offset<rigExec::fb::DrivenAction> drivenAction) {
-    fbb_.AddOffset(PoseInterpolator::VT_DRIVENACTION, drivenAction);
-  }
   explicit PoseInterpolatorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -7871,10 +7870,8 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
     ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSlots = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0,
-    ::flatbuffers::Offset<rigExec::fb::DrivenAction> drivenAction = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> primvarSources = 0) {
   PoseInterpolatorBuilder builder_(_fbb);
-  builder_.add_drivenAction(drivenAction);
   builder_.add_primvarSources(primvarSources);
   builder_.add_primvarSlots(primvarSlots);
   builder_.add_maps(maps);
@@ -7924,8 +7921,7 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
     ::flatbuffers::Offset<rigExec::fb::Input> mask = 0,
     ::flatbuffers::Offset<rigExec::fb::AnimatedMaps> maps = 0,
     const std::vector<int32_t> *primvarSlots = nullptr,
-    const std::vector<int32_t> *primvarSources = nullptr,
-    ::flatbuffers::Offset<rigExec::fb::DrivenAction> drivenAction = 0) {
+    const std::vector<int32_t> *primvarSources = nullptr) {
   auto poseSlots__ = poseSlots ? _fbb.CreateVector<int32_t>(*poseSlots) : 0;
   auto disabledSlots__ = disabledSlots ? _fbb.CreateVector<int32_t>(*disabledSlots) : 0;
   auto valueInputs__ = valueInputs ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*valueInputs) : 0;
@@ -7954,174 +7950,10 @@ inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolatorDirect(
       mask,
       maps,
       primvarSlots__,
-      primvarSources__,
-      drivenAction);
+      primvarSources__);
 }
 
 ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-
-struct RigExecWireDrivenAction : public ::flatbuffers::NativeTable {
-  typedef DrivenAction TableType;
-  std::vector<double> driver{};
-  int8_t side = 0;
-  bool fullTurn = false;
-  bool tiesLater = false;
-  std::vector<uint32_t> channelBegin{};
-  std::vector<double> channelSamples{};
-  std::vector<uint8_t> channelOffset{};
-};
-
-/// Format 27. RigExecDrivenAction: driver samples, side, wrap, tie rule and
-/// each output's samples. Outputs are frame, weight, active, then one value
-/// per channel.
-struct DrivenAction FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef RigExecWireDrivenAction NativeTableType;
-  typedef DrivenActionBuilder Builder;
-  struct Traits;
-  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
-    return DrivenActionTypeTable();
-  }
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_DRIVER = 4,
-    VT_SIDE = 6,
-    VT_FULLTURN = 8,
-    VT_TIESLATER = 10,
-    VT_CHANNELBEGIN = 12,
-    VT_CHANNELSAMPLES = 14,
-    VT_CHANNELOFFSET = 16
-  };
-  const ::flatbuffers::Vector<double> *driver() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_DRIVER);
-  }
-  /// -1, 0, +1 (authored rigExec:side, else from the samples).
-  int8_t side() const {
-    return GetField<int8_t>(VT_SIDE, 0);
-  }
-  bool fullTurn() const {
-    return GetField<uint8_t>(VT_FULLTURN, 0) != 0;
-  }
-  /// rigExec:frameTies == later.
-  bool tiesLater() const {
-    return GetField<uint8_t>(VT_TIESLATER, 0) != 0;
-  }
-  /// The channel count plus one offsets into channel_samples.
-  const ::flatbuffers::Vector<uint32_t> *channelBegin() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_CHANNELBEGIN);
-  }
-  const ::flatbuffers::Vector<double> *channelSamples() const {
-    return GetPointer<const ::flatbuffers::Vector<double> *>(VT_CHANNELSAMPLES);
-  }
-  /// 1 offset, 0 value.
-  const ::flatbuffers::Vector<uint8_t> *channelOffset() const {
-    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CHANNELOFFSET);
-  }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_DRIVER) &&
-           verifier.VerifyVector(driver()) &&
-           VerifyField<int8_t>(verifier, VT_SIDE, 1) &&
-           VerifyField<uint8_t>(verifier, VT_FULLTURN, 1) &&
-           VerifyField<uint8_t>(verifier, VT_TIESLATER, 1) &&
-           VerifyOffset(verifier, VT_CHANNELBEGIN) &&
-           verifier.VerifyVector(channelBegin()) &&
-           VerifyOffset(verifier, VT_CHANNELSAMPLES) &&
-           verifier.VerifyVector(channelSamples()) &&
-           VerifyOffset(verifier, VT_CHANNELOFFSET) &&
-           verifier.VerifyVector(channelOffset()) &&
-           verifier.EndTable();
-  }
-  RigExecWireDrivenAction *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  void UnPackTo(RigExecWireDrivenAction *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
-  static ::flatbuffers::Offset<DrivenAction> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireDrivenAction* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
-};
-
-struct DrivenActionBuilder {
-  typedef DrivenAction Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_driver(::flatbuffers::Offset<::flatbuffers::Vector<double>> driver) {
-    fbb_.AddOffset(DrivenAction::VT_DRIVER, driver);
-  }
-  void add_side(int8_t side) {
-    fbb_.AddElement<int8_t>(DrivenAction::VT_SIDE, side, 0);
-  }
-  void add_fullTurn(bool fullTurn) {
-    fbb_.AddElement<uint8_t>(DrivenAction::VT_FULLTURN, static_cast<uint8_t>(fullTurn), 0);
-  }
-  void add_tiesLater(bool tiesLater) {
-    fbb_.AddElement<uint8_t>(DrivenAction::VT_TIESLATER, static_cast<uint8_t>(tiesLater), 0);
-  }
-  void add_channelBegin(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> channelBegin) {
-    fbb_.AddOffset(DrivenAction::VT_CHANNELBEGIN, channelBegin);
-  }
-  void add_channelSamples(::flatbuffers::Offset<::flatbuffers::Vector<double>> channelSamples) {
-    fbb_.AddOffset(DrivenAction::VT_CHANNELSAMPLES, channelSamples);
-  }
-  void add_channelOffset(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> channelOffset) {
-    fbb_.AddOffset(DrivenAction::VT_CHANNELOFFSET, channelOffset);
-  }
-  explicit DrivenActionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<DrivenAction> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<DrivenAction>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<DrivenAction> CreateDrivenAction(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> driver = 0,
-    int8_t side = 0,
-    bool fullTurn = false,
-    bool tiesLater = false,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> channelBegin = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> channelSamples = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> channelOffset = 0) {
-  DrivenActionBuilder builder_(_fbb);
-  builder_.add_channelOffset(channelOffset);
-  builder_.add_channelSamples(channelSamples);
-  builder_.add_channelBegin(channelBegin);
-  builder_.add_driver(driver);
-  builder_.add_tiesLater(tiesLater);
-  builder_.add_fullTurn(fullTurn);
-  builder_.add_side(side);
-  return builder_.Finish();
-}
-
-struct DrivenAction::Traits {
-  using type = DrivenAction;
-  static auto constexpr Create = CreateDrivenAction;
-};
-
-inline ::flatbuffers::Offset<DrivenAction> CreateDrivenActionDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<double> *driver = nullptr,
-    int8_t side = 0,
-    bool fullTurn = false,
-    bool tiesLater = false,
-    const std::vector<uint32_t> *channelBegin = nullptr,
-    const std::vector<double> *channelSamples = nullptr,
-    const std::vector<uint8_t> *channelOffset = nullptr) {
-  auto driver__ = driver ? _fbb.CreateVector<double>(*driver) : 0;
-  auto channelBegin__ = channelBegin ? _fbb.CreateVector<uint32_t>(*channelBegin) : 0;
-  auto channelSamples__ = channelSamples ? _fbb.CreateVector<double>(*channelSamples) : 0;
-  auto channelOffset__ = channelOffset ? _fbb.CreateVector<uint8_t>(*channelOffset) : 0;
-  return rigExec::fb::CreateDrivenAction(
-      _fbb,
-      driver__,
-      side,
-      fullTurn,
-      tiesLater,
-      channelBegin__,
-      channelSamples__,
-      channelOffset__);
-}
-
-::flatbuffers::Offset<DrivenAction> CreateDrivenAction(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireDrivenAction *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct RigExecWireSkeleton2d : public ::flatbuffers::NativeTable {
   typedef Skeleton2d TableType;
@@ -8153,7 +7985,7 @@ struct RigExecWireSkeleton2d : public ::flatbuffers::NativeTable {
   std::vector<uint8_t> groupEnabled{};
 };
 
-/// Format 27. RigExecSkeleton2d: structural setup per bone in solve order
+/// Format 28. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests
 /// (the solver rest route).
 struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -9272,7 +9104,7 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Input *limbTwist() const {
     return GetPointer<const rigExec::fb::Input *>(VT_LIMBTWIST);
   }
-  /// Format 27: present for a RigExecSkeleton2d.
+  /// Format 28: present for a RigExecSkeleton2d.
   const rigExec::fb::Skeleton2d *skeleton2d() const {
     return GetPointer<const rigExec::fb::Skeleton2d *>(VT_SKELETON2D);
   }
@@ -17078,7 +16910,6 @@ struct RigExecWireWeightObject : public ::flatbuffers::NativeTable {
   int32_t oracleCurveSlot = -1;
   int32_t oraclePlaneAxisSlot = -1;
   int32_t oraclePlaneBoundsSlot = -1;
-  int32_t segmentEndSlot = -1;
   RigExecWireWeightObject() = default;
   RigExecWireWeightObject(const RigExecWireWeightObject &o);
   RigExecWireWeightObject(RigExecWireWeightObject&&) FLATBUFFERS_NOEXCEPT = default;
@@ -17146,8 +16977,7 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ORACLESAMPLESSLOT = 106,
     VT_ORACLECURVESLOT = 108,
     VT_ORACLEPLANEAXISSLOT = 110,
-    VT_ORACLEPLANEBOUNDSSLOT = 112,
-    VT_SEGMENTENDSLOT = 114
+    VT_ORACLEPLANEBOUNDSSLOT = 112
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -17331,13 +17161,6 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   int32_t oraclePlaneBoundsSlot() const {
     return GetField<int32_t>(VT_ORACLEPLANEBOUNDSSLOT, -1);
   }
-  /// A RigExecCapsuleWeight's segment end: the provider slot whose frame
-  /// origin ends the segment, read in the same phase as provider_slot (a
-  /// runtime frame read, so the segment follows an animated end); -1 for a
-  /// zero-length segment and for every other type.
-  int32_t segmentEndSlot() const {
-    return GetField<int32_t>(VT_SEGMENTENDSLOT, -1);
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -17423,7 +17246,6 @@ struct WeightObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<int32_t>(verifier, VT_ORACLECURVESLOT, 4) &&
            VerifyField<int32_t>(verifier, VT_ORACLEPLANEAXISSLOT, 4) &&
            VerifyField<int32_t>(verifier, VT_ORACLEPLANEBOUNDSSLOT, 4) &&
-           VerifyField<int32_t>(verifier, VT_SEGMENTENDSLOT, 4) &&
            verifier.EndTable();
   }
   RigExecWireWeightObject *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -17588,9 +17410,6 @@ struct WeightObjectBuilder {
   void add_oraclePlaneBoundsSlot(int32_t oraclePlaneBoundsSlot) {
     fbb_.AddElement<int32_t>(WeightObject::VT_ORACLEPLANEBOUNDSSLOT, oraclePlaneBoundsSlot, -1);
   }
-  void add_segmentEndSlot(int32_t segmentEndSlot) {
-    fbb_.AddElement<int32_t>(WeightObject::VT_SEGMENTENDSLOT, segmentEndSlot, -1);
-  }
   explicit WeightObjectBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -17673,11 +17492,9 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(
     int32_t oracleSamplesSlot = -1,
     int32_t oracleCurveSlot = -1,
     int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1,
-    int32_t segmentEndSlot = -1) {
+    int32_t oraclePlaneBoundsSlot = -1) {
   WeightObjectBuilder builder_(_fbb);
   builder_.add_costElements(costElements);
-  builder_.add_segmentEndSlot(segmentEndSlot);
   builder_.add_oraclePlaneBoundsSlot(oraclePlaneBoundsSlot);
   builder_.add_oraclePlaneAxisSlot(oraclePlaneAxisSlot);
   builder_.add_oracleCurveSlot(oracleCurveSlot);
@@ -17788,8 +17605,7 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
     int32_t oracleSamplesSlot = -1,
     int32_t oracleCurveSlot = -1,
     int32_t oraclePlaneAxisSlot = -1,
-    int32_t oraclePlaneBoundsSlot = -1,
-    int32_t segmentEndSlot = -1) {
+    int32_t oraclePlaneBoundsSlot = -1) {
   auto inputs__ = inputs ? _fbb.CreateVector<int32_t>(*inputs) : 0;
   auto combineTargetPoints__ = combineTargetPoints ? _fbb.CreateVector<uint32_t>(*combineTargetPoints) : 0;
   auto combineTargetValid__ = combineTargetValid ? _fbb.CreateVector<uint8_t>(*combineTargetValid) : 0;
@@ -17854,8 +17670,7 @@ inline ::flatbuffers::Offset<WeightObject> CreateWeightObjectDirect(
       oracleSamplesSlot,
       oracleCurveSlot,
       oraclePlaneAxisSlot,
-      oraclePlaneBoundsSlot,
-      segmentEndSlot);
+      oraclePlaneBoundsSlot);
 }
 
 ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -17964,7 +17779,6 @@ struct RigExecWireWeightField : public ::flatbuffers::NativeTable {
   std::vector<int32_t> scalarObjects{};
   std::vector<rigExec::fb::WeightFieldScalarMember> scalarMembers{};
   std::vector<rigExec::fb::RigExecWireWeightFieldPointRead> pointReads{};
-  std::vector<int32_t> segmentEnds{};
 };
 
 struct WeightField FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -17985,8 +17799,7 @@ struct WeightField FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_AVAILABLECHAINS = 18,
     VT_SCALAROBJECTS = 20,
     VT_SCALARMEMBERS = 22,
-    VT_POINTREADS = 24,
-    VT_SEGMENTENDS = 26
+    VT_POINTREADS = 24
   };
   rigExec::fb::WeightFieldForm form() const {
     return static_cast<rigExec::fb::WeightFieldForm>(GetField<uint8_t>(VT_FORM, 0));
@@ -18021,12 +17834,6 @@ struct WeightField FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>> *pointReads() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>> *>(VT_POINTREADS);
   }
-  /// The closure's capsule segment-end provider slots, sorted: each read as
-  /// its frame in placement_phase (PoseBase or PoseFin of the slot's last
-  /// version), beside the volumes' WeightFrames.
-  const ::flatbuffers::Vector<int32_t> *segmentEnds() const {
-    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_SEGMENTENDS);
-  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -18049,8 +17856,6 @@ struct WeightField FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_POINTREADS) &&
            verifier.VerifyVector(pointReads()) &&
            verifier.VerifyVectorOfTables(pointReads()) &&
-           VerifyOffset(verifier, VT_SEGMENTENDS) &&
-           verifier.VerifyVector(segmentEnds()) &&
            verifier.EndTable();
   }
   RigExecWireWeightField *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -18095,9 +17900,6 @@ struct WeightFieldBuilder {
   void add_pointReads(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>>> pointReads) {
     fbb_.AddOffset(WeightField::VT_POINTREADS, pointReads);
   }
-  void add_segmentEnds(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> segmentEnds) {
-    fbb_.AddOffset(WeightField::VT_SEGMENTENDS, segmentEnds);
-  }
   explicit WeightFieldBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -18121,10 +17923,8 @@ inline ::flatbuffers::Offset<WeightField> CreateWeightField(
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> availableChains = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> scalarObjects = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<rigExec::fb::WeightFieldScalarMember>> scalarMembers = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>>> pointReads = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> segmentEnds = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>>> pointReads = 0) {
   WeightFieldBuilder builder_(_fbb);
-  builder_.add_segmentEnds(segmentEnds);
   builder_.add_pointReads(pointReads);
   builder_.add_scalarMembers(scalarMembers);
   builder_.add_scalarObjects(scalarObjects);
@@ -18156,15 +17956,13 @@ inline ::flatbuffers::Offset<WeightField> CreateWeightFieldDirect(
     const std::vector<int32_t> *availableChains = nullptr,
     const std::vector<int32_t> *scalarObjects = nullptr,
     const std::vector<rigExec::fb::WeightFieldScalarMember> *scalarMembers = nullptr,
-    const std::vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>> *pointReads = nullptr,
-    const std::vector<int32_t> *segmentEnds = nullptr) {
+    const std::vector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>> *pointReads = nullptr) {
   auto volumes__ = volumes ? _fbb.CreateVector<int32_t>(*volumes) : 0;
   auto scalarReads__ = scalarReads ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*scalarReads) : 0;
   auto availableChains__ = availableChains ? _fbb.CreateVector<int32_t>(*availableChains) : 0;
   auto scalarObjects__ = scalarObjects ? _fbb.CreateVector<int32_t>(*scalarObjects) : 0;
   auto scalarMembers__ = scalarMembers ? _fbb.CreateVector<rigExec::fb::WeightFieldScalarMember>(*scalarMembers) : 0;
   auto pointReads__ = pointReads ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>>(*pointReads) : 0;
-  auto segmentEnds__ = segmentEnds ? _fbb.CreateVector<int32_t>(*segmentEnds) : 0;
   return rigExec::fb::CreateWeightField(
       _fbb,
       form,
@@ -18177,8 +17975,7 @@ inline ::flatbuffers::Offset<WeightField> CreateWeightFieldDirect(
       availableChains__,
       scalarObjects__,
       scalarMembers__,
-      pointReads__,
-      segmentEnds__);
+      pointReads__);
 }
 
 ::flatbuffers::Offset<WeightField> CreateWeightField(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightField *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -21843,7 +21640,7 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *>(VT_WINDOWEDOPS);
   }
-  /// Format 27: the property chains (indices into property_chains) whose
+  /// Format 28: the property chains (indices into property_chains) whose
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   const ::flatbuffers::Vector<uint32_t> *scalarPrimvarChains() const {
@@ -23494,6 +23291,7 @@ inline void AnimatedMaps::UnPackTo(RigExecWireAnimatedMaps *_o, const ::flatbuff
   { auto _e = rowSlope(); if (_e) { _o->rowSlope.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowSlope[_i] = _e->Get(_i); } } else { _o->rowSlope.resize(0); } }
   { auto _e = rowCut(); if (_e) { _o->rowCut.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->rowCut[_i] = _e->Get(_i); } } else { _o->rowCut.resize(0); } }
   { auto _e = mapBegin(); if (_e) { _o->mapBegin.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->mapBegin[_i] = _e->Get(_i); } } else { _o->mapBegin.resize(0); } }
+  { auto _e = mapUnclamped(); if (_e) { _o->mapUnclamped.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->mapUnclamped.begin()); } }
 }
 
 inline ::flatbuffers::Offset<AnimatedMaps> CreateAnimatedMaps(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireAnimatedMaps *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23511,6 +23309,7 @@ inline ::flatbuffers::Offset<AnimatedMaps> AnimatedMaps::Pack(::flatbuffers::Fla
   auto _rowSlope = _o->rowSlope.size() ? _fbb.CreateVector(_o->rowSlope) : 0;
   auto _rowCut = _o->rowCut.size() ? _fbb.CreateVector(_o->rowCut) : 0;
   auto _mapBegin = _o->mapBegin.size() ? _fbb.CreateVector(_o->mapBegin) : 0;
+  auto _mapUnclamped = _o->mapUnclamped.size() ? _fbb.CreateVector(_o->mapUnclamped) : 0;
   return rigExec::fb::CreateAnimatedMaps(
       _fbb,
       _inputCount,
@@ -23519,7 +23318,8 @@ inline ::flatbuffers::Offset<AnimatedMaps> AnimatedMaps::Pack(::flatbuffers::Fla
       _rowTo,
       _rowSlope,
       _rowCut,
-      _mapBegin);
+      _mapBegin,
+      _mapUnclamped);
 }
 
 inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWirePoseInterpolator &o)
@@ -23542,8 +23342,7 @@ inline RigExecWirePoseInterpolator::RigExecWirePoseInterpolator(const RigExecWir
         mask((o.mask) ? new rigExec::fb::RigExecWireInput(*o.mask) : nullptr),
         maps((o.maps) ? new rigExec::fb::RigExecWireAnimatedMaps(*o.maps) : nullptr),
         primvarSlots(o.primvarSlots),
-        primvarSources(o.primvarSources),
-        drivenAction((o.drivenAction) ? new rigExec::fb::RigExecWireDrivenAction(*o.drivenAction) : nullptr) {
+        primvarSources(o.primvarSources) {
 }
 
 inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigExecWirePoseInterpolator o) FLATBUFFERS_NOEXCEPT {
@@ -23567,7 +23366,6 @@ inline RigExecWirePoseInterpolator &RigExecWirePoseInterpolator::operator=(RigEx
   std::swap(maps, o.maps);
   std::swap(primvarSlots, o.primvarSlots);
   std::swap(primvarSources, o.primvarSources);
-  std::swap(drivenAction, o.drivenAction);
   return *this;
 }
 
@@ -23600,7 +23398,6 @@ inline void PoseInterpolator::UnPackTo(RigExecWirePoseInterpolator *_o, const ::
   { auto _e = maps(); if (_e) { if(_o->maps) { _e->UnPackTo(_o->maps.get(), _resolver); } else { _o->maps = std::unique_ptr<rigExec::fb::RigExecWireAnimatedMaps>(_e->UnPack(_resolver)); } } else if (_o->maps) { _o->maps.reset(); } }
   { auto _e = primvarSlots(); if (_e) { _o->primvarSlots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSlots[_i] = _e->Get(_i); } } else { _o->primvarSlots.resize(0); } }
   { auto _e = primvarSources(); if (_e) { _o->primvarSources.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->primvarSources[_i] = _e->Get(_i); } } else { _o->primvarSources.resize(0); } }
-  { auto _e = drivenAction(); if (_e) { if(_o->drivenAction) { _e->UnPackTo(_o->drivenAction.get(), _resolver); } else { _o->drivenAction = std::unique_ptr<rigExec::fb::RigExecWireDrivenAction>(_e->UnPack(_resolver)); } } else if (_o->drivenAction) { _o->drivenAction.reset(); } }
 }
 
 inline ::flatbuffers::Offset<PoseInterpolator> CreatePoseInterpolator(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWirePoseInterpolator *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23631,7 +23428,6 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
   auto _maps = _o->maps ? CreateAnimatedMaps(_fbb, _o->maps.get(), _rehasher) : 0;
   auto _primvarSlots = _o->primvarSlots.size() ? _fbb.CreateVector(_o->primvarSlots) : 0;
   auto _primvarSources = _o->primvarSources.size() ? _fbb.CreateVector(_o->primvarSources) : 0;
-  auto _drivenAction = _o->drivenAction ? CreateDrivenAction(_fbb, _o->drivenAction.get(), _rehasher) : 0;
   return rigExec::fb::CreatePoseInterpolator(
       _fbb,
       _path,
@@ -23653,52 +23449,7 @@ inline ::flatbuffers::Offset<PoseInterpolator> PoseInterpolator::Pack(::flatbuff
       _mask,
       _maps,
       _primvarSlots,
-      _primvarSources,
-      _drivenAction);
-}
-
-inline RigExecWireDrivenAction *DrivenAction::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
-  auto _o = std::make_unique<RigExecWireDrivenAction>();
-  UnPackTo(_o.get(), _resolver);
-  return _o.release();
-}
-
-inline void DrivenAction::UnPackTo(RigExecWireDrivenAction *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
-  (void)_o;
-  (void)_resolver;
-  { auto _e = driver(); if (_e) { _o->driver.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->driver[_i] = _e->Get(_i); } } else { _o->driver.resize(0); } }
-  { auto _e = side(); _o->side = _e; }
-  { auto _e = fullTurn(); _o->fullTurn = _e; }
-  { auto _e = tiesLater(); _o->tiesLater = _e; }
-  { auto _e = channelBegin(); if (_e) { _o->channelBegin.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->channelBegin[_i] = _e->Get(_i); } } else { _o->channelBegin.resize(0); } }
-  { auto _e = channelSamples(); if (_e) { _o->channelSamples.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->channelSamples[_i] = _e->Get(_i); } } else { _o->channelSamples.resize(0); } }
-  { auto _e = channelOffset(); if (_e) { _o->channelOffset.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->channelOffset.begin()); } }
-}
-
-inline ::flatbuffers::Offset<DrivenAction> CreateDrivenAction(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireDrivenAction *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  return DrivenAction::Pack(_fbb, _o, _rehasher);
-}
-
-inline ::flatbuffers::Offset<DrivenAction> DrivenAction::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireDrivenAction* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
-  (void)_rehasher;
-  (void)_o;
-  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireDrivenAction* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _driver = _o->driver.size() ? _fbb.CreateVector(_o->driver) : 0;
-  auto _side = _o->side;
-  auto _fullTurn = _o->fullTurn;
-  auto _tiesLater = _o->tiesLater;
-  auto _channelBegin = _o->channelBegin.size() ? _fbb.CreateVector(_o->channelBegin) : 0;
-  auto _channelSamples = _o->channelSamples.size() ? _fbb.CreateVector(_o->channelSamples) : 0;
-  auto _channelOffset = _o->channelOffset.size() ? _fbb.CreateVector(_o->channelOffset) : 0;
-  return rigExec::fb::CreateDrivenAction(
-      _fbb,
-      _driver,
-      _side,
-      _fullTurn,
-      _tiesLater,
-      _channelBegin,
-      _channelSamples,
-      _channelOffset);
+      _primvarSources);
 }
 
 inline RigExecWireSkeleton2d *Skeleton2d::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -26639,8 +26390,7 @@ inline RigExecWireWeightObject::RigExecWireWeightObject(const RigExecWireWeightO
         oracleSamplesSlot(o.oracleSamplesSlot),
         oracleCurveSlot(o.oracleCurveSlot),
         oraclePlaneAxisSlot(o.oraclePlaneAxisSlot),
-        oraclePlaneBoundsSlot(o.oraclePlaneBoundsSlot),
-        segmentEndSlot(o.segmentEndSlot) {
+        oraclePlaneBoundsSlot(o.oraclePlaneBoundsSlot) {
 }
 
 inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWeightObject o) FLATBUFFERS_NOEXCEPT {
@@ -26695,7 +26445,6 @@ inline RigExecWireWeightObject &RigExecWireWeightObject::operator=(RigExecWireWe
   std::swap(oracleCurveSlot, o.oracleCurveSlot);
   std::swap(oraclePlaneAxisSlot, o.oraclePlaneAxisSlot);
   std::swap(oraclePlaneBoundsSlot, o.oraclePlaneBoundsSlot);
-  std::swap(segmentEndSlot, o.segmentEndSlot);
   return *this;
 }
 
@@ -26759,7 +26508,6 @@ inline void WeightObject::UnPackTo(RigExecWireWeightObject *_o, const ::flatbuff
   { auto _e = oracleCurveSlot(); _o->oracleCurveSlot = _e; }
   { auto _e = oraclePlaneAxisSlot(); _o->oraclePlaneAxisSlot = _e; }
   { auto _e = oraclePlaneBoundsSlot(); _o->oraclePlaneBoundsSlot = _e; }
-  { auto _e = segmentEndSlot(); _o->segmentEndSlot = _e; }
 }
 
 inline ::flatbuffers::Offset<WeightObject> CreateWeightObject(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightObject *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -26821,7 +26569,6 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
   auto _oracleCurveSlot = _o->oracleCurveSlot;
   auto _oraclePlaneAxisSlot = _o->oraclePlaneAxisSlot;
   auto _oraclePlaneBoundsSlot = _o->oraclePlaneBoundsSlot;
-  auto _segmentEndSlot = _o->segmentEndSlot;
   return rigExec::fb::CreateWeightObject(
       _fbb,
       _path,
@@ -26874,8 +26621,7 @@ inline ::flatbuffers::Offset<WeightObject> WeightObject::Pack(::flatbuffers::Fla
       _oracleSamplesSlot,
       _oracleCurveSlot,
       _oraclePlaneAxisSlot,
-      _oraclePlaneBoundsSlot,
-      _segmentEndSlot);
+      _oraclePlaneBoundsSlot);
 }
 
 inline RigExecWireWeightFieldPointRead::RigExecWireWeightFieldPointRead(const RigExecWireWeightFieldPointRead &o)
@@ -26943,7 +26689,6 @@ inline void WeightField::UnPackTo(RigExecWireWeightField *_o, const ::flatbuffer
   { auto _e = scalarObjects(); if (_e) { _o->scalarObjects.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scalarObjects[_i] = _e->Get(_i); } } else { _o->scalarObjects.resize(0); } }
   { auto _e = scalarMembers(); if (_e) { _o->scalarMembers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scalarMembers[_i] = static_cast<rigExec::fb::WeightFieldScalarMember>(_e->Get(_i)); } } else { _o->scalarMembers.resize(0); } }
   { auto _e = pointReads(); if (_e) { _o->pointReads.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->pointReads[_i] = *std::unique_ptr<rigExec::fb::RigExecWireWeightFieldPointRead>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->pointReads.resize(0); } }
-  { auto _e = segmentEnds(); if (_e) { _o->segmentEnds.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->segmentEnds[_i] = _e->Get(_i); } } else { _o->segmentEnds.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<WeightField> CreateWeightField(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireWeightField *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -26965,7 +26710,6 @@ inline ::flatbuffers::Offset<WeightField> WeightField::Pack(::flatbuffers::FlatB
   auto _scalarObjects = _o->scalarObjects.size() ? _fbb.CreateVector(_o->scalarObjects) : 0;
   auto _scalarMembers = _o->scalarMembers.size() ? _fbb.CreateVector(_o->scalarMembers) : 0;
   auto _pointReads = _o->pointReads.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::WeightFieldPointRead>> (_o->pointReads.size(), [](size_t i, _VectorArgs *__va) { return CreateWeightFieldPointRead(*__va->__fbb, &(__va->__o->pointReads[i]), __va->__rehasher); }, &_va ) : 0;
-  auto _segmentEnds = _o->segmentEnds.size() ? _fbb.CreateVector(_o->segmentEnds) : 0;
   return rigExec::fb::CreateWeightField(
       _fbb,
       _form,
@@ -26978,8 +26722,7 @@ inline ::flatbuffers::Offset<WeightField> WeightField::Pack(::flatbuffers::FlatB
       _availableChains,
       _scalarObjects,
       _scalarMembers,
-      _pointReads,
-      _segmentEnds);
+      _pointReads);
 }
 
 inline RigExecWireDomainGeometry *DomainGeometry::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -29781,10 +29524,11 @@ inline const ::flatbuffers::TypeTable *AnimatedMapsTypeTable() {
     { ::flatbuffers::ET_DOUBLE, 1, -1 },
     { ::flatbuffers::ET_DOUBLE, 1, -1 },
     { ::flatbuffers::ET_DOUBLE, 1, -1 },
-    { ::flatbuffers::ET_UINT, 1, -1 }
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_UCHAR, 1, -1 }
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 7, type_codes, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 8, type_codes, nullptr, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -29810,35 +29554,17 @@ inline const ::flatbuffers::TypeTable *PoseInterpolatorTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_SEQUENCE, 0, 4 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 5 }
+    { ::flatbuffers::ET_INT, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable,
     rigExec::fb::RbfTypeTable,
     rigExec::fb::RbfMethodTypeTable,
     rigExec::fb::MlNetworkTypeTable,
-    rigExec::fb::AnimatedMapsTypeTable,
-    rigExec::fb::DrivenActionTypeTable
+    rigExec::fb::AnimatedMapsTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 21, type_codes, type_refs, nullptr, nullptr, nullptr
-  };
-  return &tt;
-}
-
-inline const ::flatbuffers::TypeTable *DrivenActionTypeTable() {
-  static const ::flatbuffers::TypeCode type_codes[] = {
-    { ::flatbuffers::ET_DOUBLE, 1, -1 },
-    { ::flatbuffers::ET_CHAR, 0, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_UINT, 1, -1 },
-    { ::flatbuffers::ET_DOUBLE, 1, -1 },
-    { ::flatbuffers::ET_UCHAR, 1, -1 }
-  };
-  static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 7, type_codes, nullptr, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 20, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -30843,14 +30569,13 @@ inline const ::flatbuffers::TypeTable *WeightObjectTypeTable() {
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 },
-    { ::flatbuffers::ET_INT, 0, -1 },
     { ::flatbuffers::ET_INT, 0, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 56, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 55, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -30882,8 +30607,7 @@ inline const ::flatbuffers::TypeTable *WeightFieldTypeTable() {
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_UCHAR, 1, 3 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 4 },
-    { ::flatbuffers::ET_INT, 1, -1 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 4 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::WeightFieldFormTypeTable,
@@ -30893,7 +30617,7 @@ inline const ::flatbuffers::TypeTable *WeightFieldTypeTable() {
     rigExec::fb::WeightFieldPointReadTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 12, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 11, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

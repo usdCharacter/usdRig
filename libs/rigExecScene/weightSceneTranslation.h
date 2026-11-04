@@ -26,9 +26,6 @@ struct RigExecSceneWeightObject {
     bool axisAttribute=false,boundsAttribute=false;
     SdfPathVector baseTargets,inputTargets;
     std::vector<char> baseExists,inputExists;
-    /// A capsule's segment end provider (rigExec:segmentEnd, else the
-    /// parent joint's first joint child); empty for a zero-length segment.
-    SdfPath segmentEnd;
 };
 struct RigExecSceneWeightProgram {
     int root=-1;

@@ -1,5 +1,4 @@
 #include "poseSceneTranslation.h"
-#include "drivenActionTranslation.h"
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/base/tf/staticTokens.h"
@@ -29,6 +28,7 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecRowInputs,"rigExec:rowInputs")) ((rigExecRowFrom,"rigExec:rowFrom")) ((rigExecRowTo,"rigExec:rowTo"))
     ((rigExecRowSlope,"rigExec:rowSlope")) ((rigExecRowCut,"rigExec:rowCut"))
     ((rigExecPrimvarName,"rigExec:primvarName")) ((rigExecDriverAttributes,"rigExec:driverAttributes"))
+    ((rigExecClampOutput,"rigExec:clampOutput"))
     ((rigExecSolver,"rigExec:solver")) ((rigExecAllowNegativeWeights,"rigExec:allowNegativeWeights"))
     ((rigExecKernel,"rigExec:kernel")) ((rigExecDistanceMethod,"rigExec:distanceMethod"))
     ((rigExecNormalizeMethod,"rigExec:normalizeMethod")) ((rigExecAutomaticRadius,"rigExec:automaticRadius"))
@@ -46,7 +46,7 @@ bool Provider(const RigExecSceneCompileInputs &source,const SdfPath &path) {
     const auto *node=source.Node(path);if(!node || !node->fact.active)return false;
     const auto type=node->fact.type;
     return type=="RigExecJoint" || type=="RigExecControl" || type=="RigExecSphereWeight" ||
-        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight" || type=="RigExecCapsuleWeight";
+        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";
 }
 bool Driver(const RigExecSceneCompileInputs &source,const SdfPath &path) {
     const auto *node=source.Node(path);return node && node->fact.active &&
@@ -214,13 +214,14 @@ static bool RigExecTranslateSceneAnimatedMaps(const RigExecSceneDescriptors &sce
         const auto *child=source.Node(childPath);
         if(!child || !child->fact.active || child->fact.type!="RigExecAnimatedMap")continue;
         const auto at=[&](const TfToken &name){return childPath.AppendProperty(name);};
-        VtIntArray inputs;VtFloatArray from,to,slope,cut;TfToken name;
+        VtIntArray inputs;VtFloatArray from,to,slope,cut;TfToken name;bool clamp=true;
         if(!Raw(source,at(_tokens->rigExecRowInputs),VtIntArray{},&inputs,error) ||
            !Raw(source,at(_tokens->rigExecRowFrom),VtFloatArray{},&from,error) ||
            !Raw(source,at(_tokens->rigExecRowTo),VtFloatArray{},&to,error) ||
            !Raw(source,at(_tokens->rigExecRowSlope),VtFloatArray{},&slope,error) ||
            !Raw(source,at(_tokens->rigExecRowCut),VtFloatArray{},&cut,error) ||
-           !Raw(source,at(_tokens->rigExecPrimvarName),TfToken(),&name,error))return false;
+           !Raw(source,at(_tokens->rigExecPrimvarName),TfToken(),&name,error) ||
+           !Raw(source,at(_tokens->rigExecClampOutput),true,&clamp,error))return false;
         if(from.size()!=inputs.size() || to.size()!=inputs.size() || slope.size()!=inputs.size() ||
            cut.size()!=inputs.size())
             return Fail(error,"animated map rows must be parallel: "+childPath.GetString());
@@ -230,7 +231,7 @@ static bool RigExecTranslateSceneAnimatedMaps(const RigExecSceneDescriptors &sce
                 return Fail(error,"animated map row is not finite: "+childPath.GetString());
             rows.push_back({inputs[r],from[r],to[r],slope[r],cut[r]});
         }
-        if(!table->AddMap(std::move(rows)))
+        if(!table->AddMap(std::move(rows),clamp))
             return Fail(error,"animated map row names no input: "+childPath.GetString());
         const auto value=childPath.AppendProperty(_tokens->outputsValue);
         if(const auto *attribute=source.Attribute(value))if(attribute->fact.hasAuthoredConnections)
@@ -254,35 +255,15 @@ static bool RigExecTranslateSceneAnimatedMaps(const RigExecSceneDescriptors &sce
     result->record.mapsSolve=true;result->record.maps=std::move(table);
     *output=std::move(*result);return true;
 }
-// A RigExecDrivenAction: its one numeric driver in; frame, weight, active
-// and one value per RigExecActionChannel out (drivenActionTranslation.cpp).
-static bool RigExecTranslateSceneDrivenActionSolve(const RigExecSceneDescriptors &scene,
-    RigExecScenePoseInterpolatorDescriptor *result,RigExecScenePoseInterpolatorDescriptor *output,
-    std::string *error) {
-    RigExecSceneDrivenActionDescriptor action;
-    if(!RigExecTranslateSceneDrivenAction(scene,result->path,&action,error))return false;
-    result->driven=true;
-    result->driverAttributes={action.driverAttribute};
-    result->numericReads.push_back(std::move(action.driver));
-    result->numericIsFloat.push_back(action.driverIsFloat?1:0);
-    result->enabled=std::move(action.enabled);
-    result->poseWeights=std::move(action.outputs);
-    result->notes=std::move(action.notes);
-    result->record.poseCount=result->poseWeights.size();
-    result->record.drivenSolve=true;result->record.driven=std::move(action.table);
-    *output=std::move(*result);return true;
-}
 bool RigExecTranslateScenePoseInterpolator(const RigExecSceneDescriptors &scene,const SdfPath &path,
     RigExecScenePoseInterpolatorDescriptor *output,std::string *error) {
     if(!output)return Fail(error,"null pose interpolator descriptor");
     const RigExecSceneCompileInputs source(scene);const auto *node=source.Node(path);
     if(!node || !node->fact.active ||
        (node->fact.type!="RigExecPoseInterpolator" && node->fact.type!="RigExecMlMover" &&
-        node->fact.type!="RigExecAnimatedMaps" && node->fact.type!="RigExecDrivenAction"))
+        node->fact.type!="RigExecAnimatedMaps"))
         return Fail(error,"missing active pose interpolator: "+path.GetString());
     RigExecScenePoseInterpolatorDescriptor result;result.path=path;
-    if(node->fact.type=="RigExecDrivenAction")
-        return RigExecTranslateSceneDrivenActionSolve(scene,&result,output,error);
     result.ml=node->fact.type=="RigExecMlMover";
     result.maps=node->fact.type=="RigExecAnimatedMaps";
     const bool typedInputs=result.ml || result.maps;

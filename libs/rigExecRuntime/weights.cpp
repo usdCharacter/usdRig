@@ -53,7 +53,7 @@ namespace rigExec {
 // them, classified once at Open so no call compares text.
 struct RrWeightOracleKind {
     enum class Type : uint8_t {
-        Static, Dynamic, Combine, Sphere, Plane, Curve, Capsule, Unknown };
+        Static, Dynamic, Combine, Sphere, Plane, Curve, Unknown };
     enum class Representation : uint8_t { Constant, Dense, Sparse, Other };
     Type type = Type::Unknown;
     Representation representation = Representation::Other;
@@ -238,7 +238,6 @@ RrWeightSizeScratch(RrProgram *program, std::string *error)
                     : type == "RigExecSphereWeight"  ? Kind::Type::Sphere
                     : type == "RigExecPlaneWeight"   ? Kind::Type::Plane
                     : type == "RigExecCurveWeight"   ? Kind::Type::Curve
-                    : type == "RigExecCapsuleWeight" ? Kind::Type::Capsule
                                                      : Kind::Type::Unknown;
         kind.representation =
             representation == "constant" ? Kind::Representation::Constant
@@ -622,40 +621,6 @@ _RrCurveWeightField(const std::vector<RrVec3f> &points,
         const float d = _RrCurveDistance(
             _RrToLocal(worldToLocal, points[i]), localCurve.data(),
             localCurve.size());
-        (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax,
-                                           invert, strength, curve);
-    }
-}
-
-// RigExecCapsuleLocalEnd: the end carried through the scaled map and
-// narrowed to float like a point; false when not finite.
-bool
-_RrCapsuleLocalEnd(const RrMat4d &scaledWorldToLocal, const RrVec3d &end,
-                   RrVec3f *localEnd)
-{
-    const RrVec3d local = scaledWorldToLocal.TransformAffine(end);
-    const RrVec3f narrow{float(local[0]), float(local[1]), float(local[2])};
-    if (!std::isfinite(narrow[0]) || !std::isfinite(narrow[1]) ||
-        !std::isfinite(narrow[2])) {
-        return false;
-    }
-    *localEnd = narrow;
-    return true;
-}
-
-// RigExecCapsuleWeightField: distance to the segment [0, localEnd].
-void
-_RrCapsuleWeightField(const std::vector<RrVec3f> &points,
-                      const RrMat4d &worldToLocal, const RrVec3f &localEnd,
-                      float falloffMin, float falloffMax, float invert,
-                      float strength, const std::vector<float> &curve,
-                      std::vector<float> *weights)
-{
-    weights->resize(points.size());
-    const RrVec3f origin(0.0f);
-    for (size_t i = 0; i < points.size(); ++i) {
-        const float d = _RrSegmentDistance(
-            _RrToLocal(worldToLocal, points[i]), origin, localEnd);
         (*weights)[i] = _RrEvaluateFalloff(d, falloffMin, falloffMax,
                                            invert, strength, curve);
     }
@@ -1430,40 +1395,6 @@ _RrBuildCurvePacket(const RrProgram *program,
     return out;
 }
 
-RrWeightPacket
-_RrBuildCapsulePacket(const RrProgram *program,
-                      const RigExecWireWeightObject &wire,
-                      const RrPointFrame *placement, bool hasPlacement,
-                      const RrVec3d *end, float falloffMin,
-                      float falloffMax, float invert, float strength,
-                      const RrVec3f &scales,
-                      const std::vector<RrVec3f> &targetPoints,
-                      const std::vector<RrVec3f> &samplePoints)
-{
-    RrWeightPacket packet;
-    RrMat4d worldToLocal;
-    const std::vector<RrVec3f> *points = nullptr;
-    if (!_RrBeginVolumeWeight(program, wire, /* usesScales = */ true,
-                              placement, hasPlacement, scales,
-                              targetPoints, samplePoints, &packet,
-                              &worldToLocal, &points)) {
-        return packet;
-    }
-    const RrMat4d scaled = _RrApplyAxisScales(worldToLocal, scales);
-    RrVec3f localEnd(0.0f);
-    if (end && !_RrCapsuleLocalEnd(scaled, *end, &localEnd)) {
-        return packet;
-    }
-    std::vector<float> weights;
-    _RrCapsuleWeightField(*points, scaled, localEnd, falloffMin, falloffMax,
-                          invert, strength, wire.falloffCurve, &weights);
-    RrWeightPacket out;
-    if (!_RrFinishVolumeWeight(program, &packet, &weights, &out)) {
-        return out;
-    }
-    return out;
-}
-
 // One WeightPacket step: rebuilds the object's packet from its bound
 // inputs and its (already built) composed inputs. No packet is carried
 // over: the step assigns unconditionally, exactly as the baked one
@@ -1532,9 +1463,7 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
         program->TokenEquals(wire.type, "RigExecPlaneWeight");
     const bool isCurve =
         program->TokenEquals(wire.type, "RigExecCurveWeight");
-    const bool isCapsule =
-        program->TokenEquals(wire.type, "RigExecCapsuleWeight");
-    if (isSphere || isPlane || isCurve || isCapsule) {
+    if (isSphere || isPlane || isCurve) {
         // The volume's BASE frame: the last base version of the
         // provider slot, which is what the authoritative snapshot
         // carries for every seeded provider.
@@ -1553,22 +1482,6 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
             }
             placement = &store.base[size_t(store.baseLast[slot])];
             hasPlacement = true;
-        }
-        // A capsule's end: its end provider's base frame origin, the
-        // placement's phase.
-        const RrVec3d *capsuleEnd = nullptr;
-        if (isCapsule && wire.segmentEndSlot >= 0) {
-            const size_t slot = size_t(wire.segmentEndSlot);
-            if (slot >= store.baseLast.size() ||
-                size_t(store.baseLast[slot]) >= store.base.size()) {
-                if (error) {
-                    *error = "weight step " +
-                             _RrStepLabel(program, step) +
-                             " ends its segment at no provider slot";
-                }
-                return false;
-            }
-            capsuleEnd = &store.base[size_t(store.baseLast[slot])].points[0];
         }
         const float falloffMin = _RrReadWeightFloat(
             program, index, RrWeightFalloffMin);
@@ -1621,11 +1534,6 @@ _RrRunWeightPacket(RrProgram *program, size_t step, std::string *error)
                 program, wire, placement, hasPlacement, falloffMin,
                 falloffMax, invert, strength, scales, positiveScales,
                 negativeScales, targetPoints, samplePoints);
-        } else if (isCapsule) {
-            store.weightPackets[index] = _RrBuildCapsulePacket(
-                program, wire, placement, hasPlacement, capsuleEnd,
-                falloffMin, falloffMax, invert, strength, scales,
-                targetPoints, samplePoints);
         } else if (isPlane) {
             store.weightPackets[index] = _RrBuildPlanePacket(
                 program, wire, placement, hasPlacement, falloffMin,
@@ -1721,8 +1629,6 @@ struct _RrOracleFieldContext {
     const RrOracleReadContext *reads;
     const std::vector<RrMat4d> *placements;
     const std::vector<char> *placed;
-    /// The placement phase: a capsule's end frame is read in it.
-    bool base = false;
 };
 
 const std::vector<RrVec3f> *_RrFieldPoints(const RrProgram *program,
@@ -1947,30 +1853,6 @@ _RrOracleVolume(const RrProgram *program, const RrWeightScratch &scratch,
                              negativeScales);
         return true;
     }
-    if (kind.type == Kind::Type::Capsule) {
-        // The end provider's frame origin in the placement's phase: the
-        // field's, else final, as the placement without a context is.
-        RrVec3f localEnd(0.0f);
-        if (wire.segmentEndSlot >= 0) {
-            const bool base = context && context->base;
-            const auto &frames = base ? store.base : store.fin;
-            const auto &last = base ? store.baseLast : store.finLast;
-            const size_t end = size_t(wire.segmentEndSlot);
-            if (end >= last.size() || size_t(last[end]) >= frames.size()) {
-                *error = who() + ": capsule segment end has no resolved frame";
-                return false;
-            }
-            if (!_RrCapsuleLocalEnd(worldToLocal,
-                                    frames[size_t(last[end])].points[0],
-                                    &localEnd)) {
-                *error = who() + ": capsule segment end is not finite";
-                return false;
-            }
-        }
-        _RrCapsuleWeightField(*samples, worldToLocal, localEnd, falloffMin,
-                              falloffMax, invert, strength, curve, weights);
-        return true;
-    }
     if (kind.type == Kind::Type::Curve) {
         // An empty curve reads as none.
         bool curveDeclared=false;
@@ -2027,8 +1909,7 @@ _RrOracle(const RrProgram *program, const RrWeightScratch &scratch,
     }
 
     if (kind.type == Kind::Type::Combine || kind.type == Kind::Type::Sphere ||
-        kind.type == Kind::Type::Plane || kind.type == Kind::Type::Curve ||
-        kind.type == Kind::Type::Capsule) {
+        kind.type == Kind::Type::Plane || kind.type == Kind::Type::Curve) {
         // Resolved in place: the oracle's separate vector only keeps a
         // failure out of *weights, which no caller reads after one.
         if (!_RrOracleVolume(program, scratch, object, count, current,
@@ -2223,8 +2104,7 @@ RrResolveDeclaredWeightField(RrProgram *program, size_t fieldIndex,
         base ? &program->store.volumePlacementBase
              : &program->store.volumePlacement,
         base ? &program->store.volumePlacedBase
-             : &program->store.volumePlaced,
-        base};
+             : &program->store.volumePlaced};
     auto &result = program->store.weightFieldResults[fieldIndex];
     auto &work=_RrScratch(program)->fields[fieldIndex];auto &values=work.result;
     std::string error;
@@ -2259,14 +2139,6 @@ bool RrWeightFieldEffectiveInputMemo(const RrProgram *program,uint32_t fieldInde
     for(int32_t slot:field.volumes) {
         append(bool(placed[size_t(slot)]));
         if(placed[size_t(slot)]) key->append(reinterpret_cast<const char *>(placements[size_t(slot)]._mtx),sizeof(double)*16);
-    }
-    // Capsule segment ends, as their frame origins in the placement phase.
-    const auto &endFrames=base?program->store.base:program->store.fin;
-    const auto &endLast=base?program->store.baseLast:program->store.finLast;
-    for(int32_t slot:field.segmentEnds) {
-        const bool present=slot>=0 && size_t(slot)<endLast.size() && size_t(endLast[size_t(slot)])<endFrames.size();
-        append(present);
-        if(present) key->append(reinterpret_cast<const char *>(endFrames[size_t(endLast[size_t(slot)])].points[0]._data),sizeof(double)*3);
     }
     static constexpr float defaults[19]={0,1,1,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1};
     for(size_t i=0;i<field.scalarReads.size();++i) {
@@ -2306,7 +2178,7 @@ bool RrWeightFieldEffectiveInputMemo(const RrProgram *program,uint32_t fieldInde
         append(bool(scratch->oracleBlocked[size_t(object)]));
         const auto &kind=scratch->oracleKinds[size_t(object)];
         if(kind.type!=Kind::Type::Plane && kind.type!=Kind::Type::Sphere &&
-           kind.type!=Kind::Type::Curve && kind.type!=Kind::Type::Capsule) continue;
+           kind.type!=Kind::Type::Curve) continue;
         bool declared=false;
         const _RrOracleFieldContext context{&field,&reads,nullptr,nullptr};
         const auto *selected=_RrFieldPoints(program,size_t(object),1,&context,&declared);

@@ -367,7 +367,6 @@ struct _Lister {
         }
         const bool curve = object.type == "RigExecCurveWeight";
         const bool volume = curve || object.type == "RigExecSphereWeight" ||
-                            object.type == "RigExecCapsuleWeight" ||
                             object.type == "RigExecPlaneWeight";
         if (!object.oracle || !volume) {
             return;

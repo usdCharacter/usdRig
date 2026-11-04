@@ -335,13 +335,13 @@ struct BindState {
             hop.record = record->second;
         }
         // A property revision's Float input connected to a pose
-        // interpolator's publication (a driven action's channel value,
-        // weight or active flag; an AnimatedMaps column) at a declared
-        // `final` phase reads that same-generation value; undeclared, it
-        // reads the authored base like any other connection. The revision
-        // step declares the PoseWeight read (RigExecBakedBuildPropertySteps),
-        // so the shared graph orders it after the interpolator, and a
-        // two-way wiring is a cycle there.
+        // interpolator's publication (a pose weight; an AnimatedMaps
+        // column, such as a step table's channel value, weight or active
+        // flag) at a declared `final` phase reads that same-generation
+        // value; undeclared, it reads the authored base like any other
+        // connection. The revision step declares the PoseWeight read
+        // (RigExecBakedBuildPropertySteps), so the shared graph orders it
+        // after the interpolator, and a two-way wiring is a cycle there.
         if (consumer && hop.path != consumer.GetPath() &&
             consumerType == HeadType::Float && hop.crossDomain < 0 &&
             consumerPhase.kind == RigExecReadPhaseKind::Final &&

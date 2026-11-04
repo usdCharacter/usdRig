@@ -1105,29 +1105,21 @@ _FileFill::_Pose(fb::RigExecWireDomainPose *pose)
             for (size_t begin : table.mapBegin) {
                 maps->mapBegin.push_back(uint32_t(begin));
             }
+            // One byte per map only when some map is unclamped
+            // (rigExec:clampOutput false), so an all-clamped node writes
+            // the bytes it wrote before the field existed.
+            bool anyUnclamped = false;
+            for (size_t m = 0; m < table.MapCount(); ++m) {
+                anyUnclamped = anyUnclamped || !table.Clamps(m);
+            }
+            if (anyUnclamped) {
+                for (size_t m = 0; m < table.MapCount(); ++m) {
+                    maps->mapUnclamped.push_back(table.Clamps(m) ? 0 : 1);
+                }
+            }
             out.maps = std::move(maps);
             out.primvarSlots = _ToI32s(interp.primvarSlots);
             out.primvarSources = _ToI32s(interp.primvarSources);
-        }
-        if (interp.drivenSolve && interp.driven) {
-            // The search table; the one value input is the driver.
-            const RigExecDrivenActionTable &table = *interp.driven;
-            auto driven = std::make_unique<fb::RigExecWireDrivenAction>();
-            driven->driver = table.driver;
-            driven->side = int8_t(table.side);
-            driven->fullTurn = table.fullTurn;
-            driven->tiesLater = table.tiesLater;
-            driven->channelBegin.push_back(0);
-            for (const std::vector<double> &samples : table.channelSamples) {
-                driven->channelSamples.insert(driven->channelSamples.end(),
-                                             samples.begin(), samples.end());
-                driven->channelBegin.push_back(
-                    uint32_t(driven->channelSamples.size()));
-            }
-            for (const char offset : table.channelOffset) {
-                driven->channelOffset.push_back(offset ? 1 : 0);
-            }
-            out.drivenAction = std::move(driven);
         }
     }
     pose->poseWeightPaths.reserve(program.poseWeightPaths.size());

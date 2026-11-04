@@ -1348,8 +1348,8 @@ class RigExecUsdviewContainer(PluginContainer):
         """
         outputTypes = {
             "RigExecControl", "RigExecJoint",
-            "RigExecSphereWeight", "RigExecCapsuleWeight",
-            "RigExecPlaneWeight", "RigExecCurveWeight",
+            "RigExecSphereWeight", "RigExecPlaneWeight",
+            "RigExecCurveWeight",
         }
         for rigPath in rigPaths:
             root = stage.GetPrimAtPath(rigPath)

@@ -1,17 +1,21 @@
 #usda 1.0
 (
     defaultPrim = "Char"
-    doc = """A nested 2D chain bound by skin rows generated from capsule weights.
+    doc = """A nested 2D chain bound by skin rows generated from sphere weights.
     Hip (a root at (0, 2.5), turned -90 so it points down) holds Thigh at its
     tip, half a unit along it; Thigh holds Shin one unit on, and Shin's End
     joint is its tip one unit further. Foot is a pin bone (no joint child).
-    Every bone owns one RigExecCapsuleWeight with no rigExec:segmentEnd, so
-    each capsule spans its bone to the first joint child and Foot's is a
-    sphere. The RigExecSkinMover's rigExec:jointIndices / rigExec:jointWeights
-    are rigexec.binding.generate_skin_weights output: per point the capsule
-    fields at the setup pose, normalised over rigExec:influences. The tab quad
-    at (1.1, 1.1) lies outside every capsule, so its rows are zero and it
-    holds its rest. The bones key rz, Thigh sx and Foot tx; the golden checks
+    Every bone owns one RigExecSphereWeight stretched along its segment to
+    its first joint child: rest:tx = L/2, inputs:scaleX = 1 + L/(2S),
+    inputs:falloffMin = max(S/4, (L/2) S/(L/2 + S)) and inputs:falloffMax =
+    S for a segment of length L and strength S, so the off surface sits S
+    beyond each joint on the axis and the segment is fully on; Foot's is an
+    unscaled sphere about its origin. The RigExecSkinMover's
+    rigExec:jointIndices / rigExec:jointWeights are
+    rigexec.binding.generate_skin_weights output: per point the sphere fields
+    at the setup pose, normalised over rigExec:influences. The tab quad at
+    (1.1, 1.1) lies outside every sphere, so its rows are zero and it holds
+    its rest. The bones key rz, Thigh sx and Foot tx; the golden checks
     native, frozen and .rigexec evaluation against the same bits."""
     endTimeCode = 4
     startTimeCode = 0
@@ -74,24 +78,30 @@ def Xform "Char"
                             matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1) )
                         }
 
-                        def RigExecCapsuleWeight "Influence"
+                        def RigExecSphereWeight "Influence"
                         {
                             float inputs:falloffMax = 0.45
-                            float inputs:falloffMin = 0.1
+                            float inputs:falloffMin = 0.23684211
+                            float inputs:scaleX = 2.1111112
+                            double rest:tx = 0.5
                         }
                     }
 
-                    def RigExecCapsuleWeight "Influence"
+                    def RigExecSphereWeight "Influence"
                     {
                         float inputs:falloffMax = 0.45
-                        float inputs:falloffMin = 0.1
+                        float inputs:falloffMin = 0.23684211
+                        float inputs:scaleX = 2.1111112
+                        double rest:tx = 0.5
                     }
                 }
 
-                def RigExecCapsuleWeight "Influence"
+                def RigExecSphereWeight "Influence"
                 {
                     float inputs:falloffMax = 0.35
-                    float inputs:falloffMin = 0.05
+                    float inputs:falloffMin = 0.14583333
+                    float inputs:scaleX = 1.7142857
+                    double rest:tx = 0.25
                 }
             }
 
@@ -108,10 +118,10 @@ def Xform "Char"
                 }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.35, 0, 0, 1) )
 
-                def RigExecCapsuleWeight "Influence"
+                def RigExecSphereWeight "Influence"
                 {
                     float inputs:falloffMax = 0.3
-                    float inputs:falloffMin = 0.05
+                    float inputs:falloffMin = 0.075
                 }
             }
         }
@@ -142,7 +152,7 @@ def Xform "Char"
                     rigExecReadPhase = "final"
                 )
                 int[] rigExec:jointIndices = [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 3, 2, 3, 3, 0, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-                float[] rigExec:jointWeights = [1, 0, 1, 0, 0.6383371, 0.36166292, 0.6383371, 0.36166292, 0.4807674, 0.51923263, 0.4807674, 0.51923263, 0.15133332, 0.84866667, 0.15133332, 0.84866667, 1, 0, 1, 0, 0.65591043, 0.34408957, 0.65591043, 0.34408957, 0.5, 0.5, 0.5, 0.5, 0.34408957, 0.65591043, 0.34408957, 0.65591043, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.9057935, 0.09420648, 0.56487566, 0.4351243, 1, 0, 0.6312467, 0.36875334, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                float[] rigExec:jointWeights = [1, 0, 1, 0, 0.75585777, 0.24414226, 0.75585777, 0.24414226, 0.4903845, 0.50961554, 0.4903845, 0.50961554, 0.09743479, 0.90256524, 0.09743479, 0.90256524, 1, 0, 1, 0, 0.75585777, 0.24414226, 0.75585777, 0.24414226, 0.5, 0.5, 0.5, 0.5, 0.24414226, 0.75585777, 0.24414226, 0.75585777, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.8853582, 0.11464181, 0.46654245, 0.5334575, 1, 0, 0.62494326, 0.37505674, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
                 rel rigExec:moves = </Char/Art/Leg.points>
                 uniform token rigExec:skinningMethod = "classicLinear"
             }

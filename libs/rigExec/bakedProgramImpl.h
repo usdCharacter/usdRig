@@ -3919,10 +3919,6 @@ struct RigExecBakedProgramImpl {
         /// computePointFrame with its base frame before the authoritative
         /// snapshot, and a mover's packet is what that snapshot carries.
         int providerSlot = -1;
-        /// A RigExecCapsuleWeight's segment end: the provider slot whose
-        /// frame origin ends the segment (same phase as the placement), or
-        /// -1 for a zero-length segment (RigExecCapsuleSegmentEnd).
-        int segmentEndSlot = -1;
         RigExecBakedInput<float> falloffMin, falloffMax;
         RigExecBakedInput<float> scaleX, scaleY, scaleZ;
         RigExecBakedInput<float> scaleXPos, scaleYPos, scaleZPos, scaleXNeg, scaleYNeg, scaleZNeg;
@@ -3977,9 +3973,6 @@ struct RigExecBakedProgramImpl {
         int consumer = -1;
         int part = 0;
         std::vector<int> volumes;
-        /// The capsule segment-end provider slots of the closure, sorted,
-        /// read in the placement phase (base or final frame origin).
-        std::vector<int> segmentEnds;
         std::vector<int> availableChains;
         bool changed = false;
         std::vector<RigExecBakedReaderWalk> scalarReads;

@@ -102,7 +102,6 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/autoClavicleGraph.cpp
     libs/rigExecScene/constraintGraphBinding.cpp
     libs/rigExecScene/constraintSceneTranslation.cpp
-    libs/rigExecScene/drivenActionTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
@@ -152,7 +151,6 @@ add_library(rigExec SHARED
     libs/rigExec/moverKernels.cpp
     libs/rigExec/solverKernels.cpp
     libs/rigExec/weightPackets.cpp
-    libs/rigExec/capsuleSegment.cpp
     libs/rigExec/inputReplay.cpp
     libs/rigExec/scalarReferenceAdapter.cpp
     libs/rigExec/oracleDispatch.cpp
@@ -306,7 +304,7 @@ target_include_directories(rigExecAuthoring PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecAuthoring PUBLIC
     sdf tf gf vt usd)
-# The skin-weight generator places capsules with the scene library's
+# The skin-weight generator places volume weights with the scene library's
 # pose-free rest composer and setup transform, and measures them with the
 # evaluator's packet builder; rigExecScene brings rigExec with it.
 target_link_libraries(rigExecAuthoring PRIVATE rigExecMath rigExecScene)
@@ -731,16 +729,12 @@ function(rigexec_add_graph_test name)
 endfunction()
 rigexec_add_graph_test(testRigExecConstraints CONE_VERIFY)
 
-# 2D skeletons and driven actions. The kernels alone are USD-free;
-# the labeller sees tf/gf/vt through rigExecMath, so the label is explicit.
+# 2D skeletons. The kernel alone is USD-free; the labeller sees tf/gf/vt
+# through rigExecMath, so the label is explicit.
 add_executable(testRigExecSkeleton2dKernel tests/testRigExecSkeleton2dKernel.cpp)
 target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecGraph)
 add_test(NAME testRigExecSkeleton2dKernel COMMAND testRigExecSkeleton2dKernel)
 set_tests_properties(testRigExecSkeleton2dKernel PROPERTIES LABELS "rigExecGraph;usd-free;fast")
-add_executable(testRigExecDrivenActionKernel tests/testRigExecDrivenActionKernel.cpp)
-target_link_libraries(testRigExecDrivenActionKernel PRIVATE rigExecGraph)
-add_test(NAME testRigExecDrivenActionKernel COMMAND testRigExecDrivenActionKernel)
-set_tests_properties(testRigExecDrivenActionKernel PROPERTIES LABELS "rigExecGraph;usd-free;fast")
 
 # A 2D skeleton in a rig: native, frozen and .rigexec parity.
 add_executable(testRigExecSkeleton2d tests/testRigExecSkeleton2d.cpp)
@@ -814,58 +808,60 @@ foreach(_fixture layer_bind)
         FIXTURES_REQUIRED layerBindProgram_${_fixture})
 endforeach()
 
-# Skin rows generated from capsule weights: a nested 2D chain (chain_2d), a
-# 3D FkChain arm skinning a stroke (arm_3d) and that arm after a capsule
-# edit with rigid, fixed and released rows (arm_3d_regenerated).
-# testRigExecGenerateSkinWeights re-derives every authored row from the
-# capsules; these goldens hold the pose protocol (first, held, forward,
-# reverse and cold visits) in native, frozen and .rigexec evaluation, one
-# checked-in golden for all three. After an intended change, regenerate it
-# with
-#   rigExecPose tests/fixtures/capsuleSkin/<fixture>.usda --rig <rig>
-#       --frames 0,1,2,3,4 --golden-out tests/fixtures/capsuleSkin/<fixture>.golden
+# Skin rows generated from volume weights (one sphere stretched along each
+# bone): a nested 2D chain (chain_2d), a 3D FkChain arm skinning a stroke
+# (arm_3d) and that arm after a sphere edit with rigid, fixed and released
+# rows (arm_3d_regenerated). testRigExecGenerateSkinWeights re-derives every
+# authored row from the spheres; these goldens hold the pose protocol
+# (first, held, forward, reverse and cold visits) in native, frozen and
+# .rigexec evaluation, one checked-in golden for all three. After an
+# intended change, regenerate it with
+#   rigExecPose tests/fixtures/volumeSkin/<fixture>.usda --rig <rig>
+#       --frames 0,1,2,3,4 --golden-out tests/fixtures/volumeSkin/<fixture>.golden
 foreach(_fixture chain_2d arm_3d arm_3d_regenerated)
     set(_rig /Arm/Rig)
     if (_fixture STREQUAL "chain_2d")
         set(_rig /Char/Rig)
     endif()
-    add_test(NAME testRigExecCapsuleSkinBake_${_fixture} COMMAND rigExecBakeTool
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+    add_test(NAME testRigExecVolumeSkinBake_${_fixture} COMMAND rigExecBakeTool
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
         --rig ${_rig} --time 1
-        -o "${CMAKE_CURRENT_BINARY_DIR}/capsuleSkin_${_fixture}.rigexec")
-    set_tests_properties(testRigExecCapsuleSkinBake_${_fixture} PROPERTIES
-        FIXTURES_SETUP capsuleSkinProgram_${_fixture})
+        -o "${CMAKE_CURRENT_BINARY_DIR}/volumeSkin_${_fixture}.rigexec")
+    set_tests_properties(testRigExecVolumeSkinBake_${_fixture} PROPERTIES
+        FIXTURES_SETUP volumeSkinProgram_${_fixture})
     foreach(_backend native frozen)
-        add_test(NAME testRigExecCapsuleSkinGolden_${_fixture}_${_backend} COMMAND rigExecPose
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+        add_test(NAME testRigExecVolumeSkinGolden_${_fixture}_${_backend} COMMAND rigExecPose
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
             --rig ${_rig} --frames 0,1,2,3,4 --golden-backend ${_backend}
-            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.golden")
+            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.golden")
     endforeach()
-    add_test(NAME testRigExecCapsuleSkinGolden_${_fixture}_runtime COMMAND rigExecPose
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.usda"
+    add_test(NAME testRigExecVolumeSkinGolden_${_fixture}_runtime COMMAND rigExecPose
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
         --rig ${_rig} --frames 0,1,2,3,4 --golden-backend runtime
-        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/capsuleSkin_${_fixture}.rigexec"
-        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/capsuleSkin/${_fixture}.golden")
-    set_tests_properties(testRigExecCapsuleSkinGolden_${_fixture}_runtime PROPERTIES
-        FIXTURES_REQUIRED capsuleSkinProgram_${_fixture})
+        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/volumeSkin_${_fixture}.rigexec"
+        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.golden")
+    set_tests_properties(testRigExecVolumeSkinGolden_${_fixture}_runtime PROPERTIES
+        FIXTURES_REQUIRED volumeSkinProgram_${_fixture})
 endforeach()
 
-# Driven actions in a rig: outputs, corrective order and Hydra publication;
-# then property movers reading action outputs at rigExecReadPhase "final"
-# (bone, switch and opacity channels, action-to-action chaining, the
-# two-action cycle refusal) in native, frozen and .rigexec evaluation,
-# frozen under both baked schedules.
-add_executable(testRigExecDrivenAction tests/testRigExecDrivenAction.cpp)
-target_link_libraries(testRigExecDrivenAction PRIVATE rigExec rigExecScene
+# Smart-bone step tables: RigExecAnimatedMaps of slope-0 rows on dial
+# angles (whole frames, ties by row order, the side gate, the hold, a full
+# turn's folded angle and its seam row), corrective order and Hydra
+# publication; then property movers reading the maps at rigExecReadPhase
+# "final" (bone, switch and opacity channels, chained dials, the two-way
+# cycle refusal) in native, frozen and .rigexec evaluation, frozen under
+# both baked schedules.
+add_executable(testRigExecStepMaps tests/testRigExecStepMaps.cpp)
+target_link_libraries(testRigExecStepMaps PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler rigExecImaging)
-target_compile_definitions(testRigExecDrivenAction PRIVATE
+target_compile_definitions(testRigExecStepMaps PRIVATE
     ${_rigexec_schema_resource_define})
-add_test(NAME testRigExecDrivenAction COMMAND testRigExecDrivenAction)
-add_test(NAME testRigExecDrivenActionChannels COMMAND testRigExecDrivenAction channels)
+add_test(NAME testRigExecStepMaps COMMAND testRigExecStepMaps)
+add_test(NAME testRigExecStepMapsChannels COMMAND testRigExecStepMaps channels)
 foreach(_schedule serial parallel)
-    add_test(NAME testRigExecDrivenActionChannels_${_schedule}
-        COMMAND testRigExecDrivenAction channels)
-    set_tests_properties(testRigExecDrivenActionChannels_${_schedule} PROPERTIES
+    add_test(NAME testRigExecStepMapsChannels_${_schedule}
+        COMMAND testRigExecStepMaps channels)
+    set_tests_properties(testRigExecStepMapsChannels_${_schedule} PROPERTIES
         ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=${_schedule};RIGEXEC_ENABLE_PARALLEL_EVAL=1")
 endforeach()
 
@@ -1143,12 +1139,6 @@ endforeach()
 add_test(NAME exec_crosscheck_computed_ik_space COMMAND testRigExecExecCrossCheckRows
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/computed_ik_space.usda" 1)
 set_tests_properties(exec_crosscheck_computed_ik_space PROPERTIES LABELS "exec")
-# A capsule weight whose default segment end (the parent joint's child, which
-# exec cannot traverse to) reaches exec through computeSegmentEnd; frame 1012
-# is the stretched end.
-add_test(NAME exec_crosscheck_capsule_weight COMMAND testRigExecExecCrossCheckRows
-    "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/capsule_weight.usda" 1012)
-set_tests_properties(exec_crosscheck_capsule_weight PROPERTIES LABELS "exec")
 
 add_executable(testRigExecInputActions tests/testRigExecInputActions.cpp)
 target_link_libraries(testRigExecInputActions PRIVATE rigExec)
@@ -1806,7 +1796,7 @@ target_link_libraries(testRigExecTouchPose PRIVATE rigExecImaging)
 add_test(NAME testRigExecTouchPose COMMAND testRigExecTouchPose)
 
 add_executable(testRigExecVolumeWeights tests/testRigExecVolumeWeights.cpp)
-# The capsule cases compare native, frozen and .rigexec evaluation.
+# The sphere-under-bone case compares native, frozen and .rigexec evaluation.
 target_link_libraries(testRigExecVolumeWeights PRIVATE rigExec rigExecBake
     rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecVolumeWeights PRIVATE ${_rigexec_schema_resource_define})
@@ -2270,7 +2260,7 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_schema_authoring.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     # rigexec.binding.generate_skin_weights against hand-computed rows, and
-    # the capsuleSkin fixtures' rows against the generator.
+    # the volumeSkin fixtures' rows against the generator.
     add_test(NAME testRigExecGenerateSkinWeights
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_generate_skin_weights.py"
@@ -2364,6 +2354,11 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecPsdNumeric COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_psd_numeric.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
+    # AnimatedMaps step tables through rigexec.Rig: weight, active, offset
+    # and unclamped value maps, the disable switch, and an undeclared read.
+    add_test(NAME testRigExecStepMapsPython COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_step_maps.py"
         "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
     add_test(NAME testRigExecSpaceSwitch COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_space_switch.py"
@@ -2567,7 +2562,8 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testRigExecSplineIkPython testRigExecPatchMouthPython
                          testRigExecFkControlSpacePython
                          testRigExecBake testRigExecInverse
-                         testRigExecPsdNumeric testRigExecSpaceSwitch
+                         testRigExecPsdNumeric testRigExecStepMapsPython
+                         testRigExecSpaceSwitch
                          testRigExecLiveOperationGraph
                          testRigExecSpaceSwitchVersions
                          testRigExecSpaceSwitchVersionsCones
@@ -2848,8 +2844,7 @@ foreach(_rigexec_boundable
         RigExecXformable RigExecControl RigExecJoint RigExecFkChain
         RigExecTwoBoneIk RigExecBlendPointFrames RigExecTwistDistribution
         RigExecRibbon RigExecSplineIk RigExecVolumeWeight RigExecSphereWeight
-        RigExecCapsuleWeight RigExecPlaneWeight RigExecCurveWeight
-        RigExecClothConstraintSet)
+        RigExecPlaneWeight RigExecCurveWeight RigExecClothConstraintSet)
     string(REPLACE
         "\"schemaIdentifier\": \"${_rigexec_boundable}\""
         "\"implementsComputeExtent\": true, \"schemaIdentifier\": \"${_rigexec_boundable}\""

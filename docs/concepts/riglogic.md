@@ -116,7 +116,10 @@ child is a RigLogic conditional table:
   `[from, to]`. A reversed interval is swapped.
 - Among consecutive rows on the same input, only the first matching interval
   counts, so neighbouring segments that share an endpoint count it once.
-- The sum is clamped to [0, 1] and published on `outputs:value`.
+- The sum is clamped to [0, 1] and published on `outputs:value`. A map with
+  `rigExec:clampOutput = false` (an addition to RigLogic) publishes the sum
+  as is, which makes unclamped step tables possible; see
+  [Animated Maps](../nodes/animated_maps.md).
 
 Each value is also published as a constant float primvar,
 `primvars:<rigExec:primvarName>`, on every `rigExec:meshes` target.

@@ -1487,7 +1487,7 @@ TestOpenRefusals()
                   "27 volume falloff sample inputs, format 28 Range "
                   "Smooth revisions, format 29 sparse blend channel keys, "
                   "format 30 Range DQ and independent summaries and the 2D skeleton, "
-                  "driven action and scalar primvar records; per-group range chains "
+                  "unclamped animated map and scalar primvar records; per-group range chains "
                   "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
@@ -6301,6 +6301,78 @@ void TestSkeleton2dWireShapes()
     reject(std::move(badGroups), "malformed 2D skeleton");
 }
 
+// The rich file's interpolator turned into a RigExecAnimatedMaps node of
+// two maps over its one value input: map 0 two step rows, map 1 one ramp.
+static void _AttachAnimatedMaps(fb::RigExecWirePoseInterpolator *interp)
+{
+    interp->poseSlots = {0, 1};
+    auto maps = std::make_unique<fb::RigExecWireAnimatedMaps>();
+    maps->inputCount = 1;
+    maps->rowInputs = {0, 0, 0};
+    maps->rowFrom = {-1, 1, 0};
+    maps->rowTo = {1, 3, 1};
+    maps->rowSlope = {0, 0, 1};
+    maps->rowCut = {30, -0.5, 0};
+    maps->mapBegin = {0, 2, 3};
+    interp->maps = std::move(maps);
+}
+
+void TestAnimatedMapsWireShapes()
+{
+    _context = "animated maps wire";
+    std::string why;
+    RigExecWireFile file = _RichFile();
+    _AttachAnimatedMaps(&file.pose->poseInterpolators[0]);
+    CHECK(RigExecFormatValidate(file, &why));
+    if (!why.empty()) std::printf("    %s\n", why.c_str());
+    const auto reject = [](RigExecWireFile bad, const char *fragment) {
+        std::string error;
+        CHECK(!RigExecFormatValidate(bad, &error));
+        CHECK(error.find(fragment) != std::string::npos);
+    };
+    // Every map clamped writes no map_unclamped: the field is absent from
+    // the buffer, so a bake without unclamped maps keeps its old bytes.
+    std::vector<uint8_t> clamped;
+    CHECK(_Write(file, &clamped));
+    if (!clamped.empty()) {
+        const fb::File *root = fb::GetFile(clamped.data());
+        const auto *interps = root && root->pose()
+                                  ? root->pose()->poseInterpolators()
+                                  : nullptr;
+        CHECK(interps && interps->size() == 1 && interps->Get(0)->maps() &&
+              interps->Get(0)->maps()->mapUnclamped() == nullptr);
+    }
+    // One byte per map opens and round-trips.
+    RigExecWireFile unclamped = file;
+    unclamped.pose->poseInterpolators[0].maps->mapUnclamped = {1, 0};
+    CHECK(RigExecFormatValidate(unclamped, &why));
+    std::vector<uint8_t> bytes;
+    CHECK(_Write(unclamped, &bytes));
+    const auto opened = _Open(bytes, &why);
+    CHECK(opened && opened->pose->poseInterpolators[0].maps &&
+          opened->pose->poseInterpolators[0].maps->mapUnclamped ==
+              std::vector<uint8_t>({1, 0}));
+    // A size that is neither 0 nor the map count is refused.
+    RigExecWireFile shortFlags = file;
+    shortFlags.pose->poseInterpolators[0].maps->mapUnclamped = {1};
+    reject(std::move(shortFlags), "malformed animated maps");
+    RigExecWireFile longFlags = file;
+    longFlags.pose->poseInterpolators[0].maps->mapUnclamped = {0, 1, 0};
+    reject(std::move(longFlags), "malformed animated maps");
+    // A value above 1 is refused.
+    RigExecWireFile badValue = file;
+    badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
+    reject(std::move(badValue), "malformed animated maps");
+    // A non-empty field in a file older than format 28 is refused; the same
+    // file without it opens.
+    RigExecWireFile older = unclamped;
+    older.formatVersion = 27;
+    reject(std::move(older), "malformed animated maps");
+    RigExecWireFile olderClamped = file;
+    olderClamped.formatVersion = 27;
+    CHECK(RigExecFormatValidate(olderClamped, &why));
+}
+
 void TestPublishedPropertyOverlayCandidates()
 {
     auto file=_RichFile();
@@ -6559,6 +6631,7 @@ main()
     TestSparseBlendShapeFacts();
     TestSolverSemanticMetadataRefusals();
     TestSkeleton2dWireShapes();
+    TestAnimatedMapsWireShapes();
     TestBitExactness();
     TestDeterminism();
     TestOpenRefusals();

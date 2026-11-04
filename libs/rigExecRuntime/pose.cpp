@@ -457,7 +457,6 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
     scratch->interpMasks.assign(poses.poseInterpolators.size(), 1.0);
     scratch->interpNetworks.assign(poses.poseInterpolators.size(), {});
     scratch->interpMaps.assign(poses.poseInterpolators.size(), {});
-    scratch->interpDriven.assign(poses.poseInterpolators.size(), {});
     for (size_t i = 0; i < poses.poseInterpolators.size(); ++i) {
         scratch->interpValues[i].assign(
             poses.poseInterpolators[i].valueInputs.size(), 0.0);
@@ -508,21 +507,10 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
                                     m->rowTo[r], m->rowSlope[r],
                                     m->rowCut[r]});
                 }
-                table.AddMap(std::move(rows));
-            }
-        }
-        if (const auto &a = poses.poseInterpolators[i].drivenAction) {
-            // Open validated the offsets (format.cpp).
-            RigExecDrivenActionTable &table = scratch->interpDriven[i];
-            table.driver = a->driver;
-            table.side = int(a->side);
-            table.fullTurn = a->fullTurn;
-            table.tiesLater = a->tiesLater;
-            for (size_t c = 0; c + 1 < a->channelBegin.size(); ++c) {
-                table.channelSamples.emplace_back(
-                    a->channelSamples.begin() + a->channelBegin[c],
-                    a->channelSamples.begin() + a->channelBegin[c + 1]);
-                table.channelOffset.push_back(a->channelOffset[c] ? 1 : 0);
+                // Absent map_unclamped: every map clamps.
+                table.AddMap(std::move(rows),
+                             !(map < m->mapUnclamped.size() &&
+                               m->mapUnclamped[map] != 0));
             }
         }
         if (const auto &n = poses.poseInterpolators[i].network) {

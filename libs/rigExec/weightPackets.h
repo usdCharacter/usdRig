@@ -166,11 +166,6 @@ struct RigExecVolumeWeightInputs {
     float extentV = 1.0f;   ///< inputs:extentV, bounded plane only
 
     std::vector<GfVec3f> curvePoints;  ///< rigExec:curve points (curve)
-    /// A capsule's segment end: the posed origin of its end provider, in
-    /// the same space as \p placement (not volume-local; the builder maps
-    /// it). \p hasCapsuleEnd false is a zero-length segment, a sphere.
-    GfVec3d capsuleEnd = GfVec3d(0.0);
-    bool hasCapsuleEnd = false;
     /// Optional immutable call-scoped views replace the three owning arrays.
     bool usePointViews = false;
     RigExecWeightPointView targetView, sampleView, curveView;
@@ -192,9 +187,8 @@ bool RigExecVolumeWeightCanBuild(
     const TfToken &typeName, const RigExecVolumeWeightInputs &inputs);
 
 /// Builds the dense field a volumetric weight publishes. \p typeName is
-/// the concrete schema type ("RigExecSphereWeight", "RigExecCapsuleWeight",
-/// "RigExecPlaneWeight", "RigExecCurveWeight"); anything else yields an
-/// invalid packet
+/// the concrete schema type ("RigExecSphereWeight", "RigExecPlaneWeight",
+/// "RigExecCurveWeight"); anything else yields an invalid packet
 /// carrying the caller's representation and range policy, exactly as a
 /// rejected one does.
 ///

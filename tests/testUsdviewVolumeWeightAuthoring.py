@@ -46,10 +46,15 @@ def _ImportUI():
 
 
 def _RegisterSchema():
-    plugins = Plug.Registry().RegisterPlugins(_SCHEMA_RESOURCES)
-    if not plugins:
-        raise AssertionError(
-            "no plugin registered from %s" % _SCHEMA_RESOURCES)
+    # bin/_env.sh already puts a build's rigExecSchema plugin on
+    # PXR_PLUGINPATH_NAME; registering the source resources on top of it
+    # would declare every schema type twice (PlugPlugin::_DeclareType).
+    plugins = Plug.Registry().GetPluginWithName("rigExecSchema")
+    if plugins is None:
+        plugins = Plug.Registry().RegisterPlugins(_SCHEMA_RESOURCES)
+        if not plugins:
+            raise AssertionError(
+                "no plugin registered from %s" % _SCHEMA_RESOURCES)
     if not Usd.SchemaRegistry().IsConcrete("RigExecSphereWeight"):
         raise AssertionError(
             "RigExecSphereWeight is not a registered concrete schema")
@@ -201,86 +206,6 @@ def TestPrimCreation(ui):
     print("  RigExecCombineWeight correctly has no placement or falloff")
 
     return stage, created
-
-
-def TestCapsuleAuthoring(ui):
-    stage, meshPrim = _MakeStage()
-    shoulder = stage.GetPrimAtPath("/Asset/Rig/Joints/Shoulder")
-    elbow = stage.DefinePrim("/Asset/Rig/Joints/Shoulder/Elbow",
-                             "RigExecJoint")
-    hand = stage.DefinePrim("/Asset/Rig/Joints/Hand", "RigExecJoint")
-
-    # Created with a joint selected, the capsule lives under it and keeps
-    # its identity placement: it spans the joint's segment from the joint's
-    # own origin, only its radius follows the target's size.
-    capsule = ui.CreateVolumeWeightPrim(
-        stage, "RigExecCapsuleWeight", [shoulder, meshPrim],
-        Usd.TimeCode.Default())
-    _Check(capsule.GetTypeName() == "RigExecCapsuleWeight",
-           "capsule came back as %s" % capsule.GetTypeName())
-    _Check(capsule.GetPath().GetParentPath() == shoulder.GetPath(),
-           "capsule landed at %s" % capsule.GetPath())
-    _Check(ui.IsVolumeWeightPrim(capsule),
-           "a capsule is not a volume weight prim to the panel")
-    for axis in "xyz":
-        attr = capsule.GetAttribute("avars:t%s" % axis)
-        _Check(not attr.HasAuthoredValue(),
-               "a joint-parented capsule authored avars:t%s" % axis)
-    _Check(_Close(capsule.GetAttribute("inputs:falloffMax").Get(), 2.0),
-           "capsule falloffMax seeded to %s, expected 2.0"
-           % capsule.GetAttribute("inputs:falloffMax").Get())
-    _Check(capsule.GetRelationship("rigExec:weightTarget").GetTargets() ==
-           [Sdf.Path("/Asset/Geom/Body.points")],
-           "capsule weightTarget not bound")
-    print("  created %s under the selected joint, unplaced, radius 2"
-          % capsule.GetPath())
-
-    # The default end is the parent joint's first joint child.
-    _Check(ui.GetCapsuleSegmentEndPath(capsule) == elbow.GetPath(),
-           "default segment end is %s"
-           % ui.GetCapsuleSegmentEndPath(capsule))
-    # An explicit end wins; clearing it restores the default.
-    _Check(ui.SetCapsuleSegmentEnd(capsule, hand.GetPath()),
-           "could not author rigExec:segmentEnd")
-    _Check(ui.GetCapsuleSegmentEndPath(capsule) == hand.GetPath(),
-           "explicit segment end is %s"
-           % ui.GetCapsuleSegmentEndPath(capsule))
-    _Check(ui.SetCapsuleSegmentEnd(capsule, None),
-           "could not clear rigExec:segmentEnd")
-    _Check(ui.GetCapsuleSegmentEndPath(capsule) == elbow.GetPath(),
-           "cleared segment end is %s"
-           % ui.GetCapsuleSegmentEndPath(capsule))
-    # Reordering the joint's children picks the new first joint child.
-    wrist = stage.DefinePrim("/Asset/Rig/Joints/Shoulder/Wrist",
-                             "RigExecJoint")
-    shoulder.SetChildrenReorder(["Wrist", "Elbow"])
-    _Check(ui.GetCapsuleSegmentEndPath(capsule) == wrist.GetPath(),
-           "reordered segment end is %s"
-           % ui.GetCapsuleSegmentEndPath(capsule))
-    print("  segment end: default child, explicit, cleared, reordered")
-
-    # Edits go through the panel's authoring path.
-    ui.SetAtTime(capsule.GetAttribute("inputs:falloffMax"), 1.5,
-                 Usd.TimeCode.Default())
-    ui.SetAtTime(capsule.GetAttribute("inputs:scaleY"), 0.5,
-                 Usd.TimeCode.Default())
-    _Check(_Close(capsule.GetAttribute("inputs:falloffMax").Get(), 1.5),
-           "capsule falloffMax edit did not land")
-    _Check(_Close(capsule.GetAttribute("inputs:scaleY").Get(), 0.5),
-           "capsule scaleY edit did not land")
-
-    # Without a joint selected it is placed like any volume, and with no
-    # parent joint and no end it is a zero-length segment.
-    loose = ui.CreateVolumeWeightPrim(
-        stage, "RigExecCapsuleWeight", [meshPrim], Usd.TimeCode.Default())
-    _Check(str(loose.GetPath()).startswith("/Asset/Rig/Weights/"),
-           "loose capsule landed at %s" % loose.GetPath())
-    _Check(ui.GetCapsuleSegmentEndPath(loose) is None,
-           "a capsule under a scope has end %s"
-           % ui.GetCapsuleSegmentEndPath(loose))
-    _Check(not ui.SetCapsuleSegmentEnd(meshPrim, hand.GetPath()),
-           "SetCapsuleSegmentEnd accepted a mesh")
-    print("  edits land; a loose capsule has no end")
 
 
 def TestWeightTargetAuthoring(ui):
@@ -762,7 +687,6 @@ def main():
 
     tests = [
         ("prim creation", TestPrimCreation),
-        ("capsule authoring", TestCapsuleAuthoring),
         ("weightTarget authoring", TestWeightTargetAuthoring),
         ("default splines", TestDefaultSplines),
         ("knot insert/move/delete round trip", TestKnotRoundTrip),

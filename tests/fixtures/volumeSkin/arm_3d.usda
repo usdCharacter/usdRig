@@ -1,15 +1,16 @@
 #usda 1.0
 (
     defaultPrim = "Arm"
-    doc = """A three-joint 3D FkChain arm with a capsule weight inside each joint
+    doc = """A three-joint 3D FkChain arm with a sphere weight inside each joint
     and a skin on a stroke (F4). Root, Mid and Tip sit two units apart on X;
-    Tip's End joint is its tip 1.5 units on. Each capsule has no
-    rigExec:segmentEnd, so it spans its joint to the first joint child; Tip's
-    tube is elliptical (inputs:scaleY 1.5). The stroke is a 29-point helix
-    along the arm; its last points lie past every capsule and keep zero rows.
-    The skin's rows are rigexec.binding.generate_skin_weights output. The
-    golden checks native, frozen and .rigexec evaluation against the same
-    bits."""
+    Tip's End joint is its tip 1.5 units on. Each sphere is stretched along
+    its joint's segment to the first joint child (rest:tx = L/2,
+    inputs:scaleX = 1 + L/(2S), inputs:falloffMin = max(S/4, (L/2) S/(L/2 +
+    S)) for strength S = inputs:falloffMax); Tip's is also wider across
+    (inputs:scaleY 1.5). The stroke is a 29-point helix along the arm; its
+    last points lie past every sphere and keep zero rows. The skin's rows
+    are rigexec.binding.generate_skin_weights output. The golden checks
+    native, frozen and .rigexec evaluation against the same bits."""
     endTimeCode = 4
     startTimeCode = 0
 )
@@ -92,25 +93,31 @@ def Xform "Arm"
                             matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1.5, 0, 0, 1) )
                         }
 
-                        def RigExecCapsuleWeight "Influence"
+                        def RigExecSphereWeight "Influence"
                         {
                             float inputs:falloffMax = 0.7
-                            float inputs:falloffMin = 0.15
+                            float inputs:falloffMin = 0.36206895
+                            float inputs:scaleX = 2.0714285
                             float inputs:scaleY = 1.5
+                            double rest:tx = 0.75
                         }
                     }
 
-                    def RigExecCapsuleWeight "Influence"
+                    def RigExecSphereWeight "Influence"
                     {
                         float inputs:falloffMax = 0.9
-                        float inputs:falloffMin = 0.2
+                        float inputs:falloffMin = 0.47368422
+                        float inputs:scaleX = 2.1111112
+                        double rest:tx = 1
                     }
                 }
 
-                def RigExecCapsuleWeight "Influence"
+                def RigExecSphereWeight "Influence"
                 {
                     float inputs:falloffMax = 0.9
-                    float inputs:falloffMin = 0.2
+                    float inputs:falloffMin = 0.47368422
+                    float inputs:scaleX = 2.1111112
+                    double rest:tx = 1
                 }
             }
         }
@@ -148,7 +155,7 @@ def Xform "Arm"
                     rigExecReadPhase = "final"
                 )
                 int[] rigExec:jointIndices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0, 0, 0]
-                float[] rigExec:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.93751615, 0.062483825, 0.6721347, 0.3278653, 0.5291773, 0.4708227, 0.5, 0.5, 0.4708227, 0.5291773, 0.3278653, 0.6721347, 0.062483825, 0.93751615, 1, 0, 1, 0, 0.8091351, 0.19086494, 0.54789275, 0.45210725, 0.4997938, 0.5002062, 0.47687745, 0.52312255, 0.34021598, 0.659784, 0.067028046, 0.93297195, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0]
+                float[] rigExec:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.98206997, 0.017930023, 0.7849393, 0.21506073, 0.60495126, 0.39504874, 0.5, 0.5, 0.39504874, 0.60495126, 0.21506073, 0.7849393, 0.017930098, 0.9820699, 1, 0, 1, 0, 0.89242274, 0.10757728, 0.6305788, 0.36942118, 0.4982317, 0.5017683, 0.39504874, 0.60495126, 0.21506073, 0.7849393, 0.017930023, 0.98206997, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0]
                 rel rigExec:moves = </Arm/Art/Stroke.points>
                 uniform token rigExec:skinningMethod = "classicLinear"
             }

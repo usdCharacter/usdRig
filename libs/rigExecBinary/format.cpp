@@ -10,7 +10,6 @@
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/mlpKernel.h"
-#include "rigExecMath/drivenActionKernel.h"
 #include "rigExecMath/skeleton2dKernel.h"
 
 #include <algorithm>
@@ -1057,9 +1056,8 @@ private:
             if (op.frames == 0 || op.frames > RigExecHarmonicsMaxWindowFrames)
                 return _Bad(_At("windowed_ops", "frames", long(w)) + ": out of range");
         }
-        // Format 28 adds driven action and primvar records. Published scalar
-        // primvars name distinct float or double property chains; older formats
-        // hold none.
+        // Format 28 adds published scalar primvars: they name distinct float
+        // or double property chains; older formats hold none.
         if (_f.formatVersion < 28 && !_f.scalarPrimvarChains.empty())
             return _Bad("scalar_primvar_chains in a format older than 28");
         {
@@ -2344,9 +2342,6 @@ private:
             for (int32_t slot : field.volumes)
                 if (slot < 0 || size_t(slot) >= _f.slotMeta->paths.size())
                     return _Bad(who + ": placement slot out of range");
-            for (int32_t slot : field.segmentEnds)
-                if (slot < 0 || size_t(slot) >= _f.slotMeta->paths.size())
-                    return _Bad(who + ": segment end slot out of range");
             if(producers[f]>=0) for(int32_t slot:field.volumes)
                 if(!_BodyRead(size_t(producers[f]),field.placementPhase==fb::WeightFieldPlacementPhase::Base?
                     fb::SlotDomain::WeightFramesBase:fb::SlotDomain::WeightFrames,uint32_t(slot)))
@@ -2924,8 +2919,6 @@ private:
                 for(int32_t input:weight.inputs)read(D::WeightPacket,uint32_t(input));
                 if(weight.providerSlot>=0 && size_t(weight.providerSlot)<_bodyBaseLast.size())
                     read(D::PoseBase,_bodyBaseLast[size_t(weight.providerSlot)]);
-                if(weight.segmentEndSlot>=0 && size_t(weight.segmentEndSlot)<_bodyBaseLast.size())
-                    read(D::PoseBase,_bodyBaseLast[size_t(weight.segmentEndSlot)]);
                 continue;
             }
             if(step.kind==K::WeightField && _Has(g.weightFields,step.object)) {
@@ -2941,11 +2934,6 @@ private:
                 }
                 for(int32_t slot:field.volumes)
                     read(field.placementPhase==fb::WeightFieldPlacementPhase::Base?D::WeightFramesBase:D::WeightFrames,uint32_t(slot));
-                const bool baseEnds=field.placementPhase==fb::WeightFieldPlacementPhase::Base;
-                const auto &endLast=baseEnds?_bodyBaseLast:_bodyFinLast;
-                for(int32_t slot:field.segmentEnds)
-                    if(slot>=0 && size_t(slot)<endLast.size())
-                        read(baseEnds?D::PoseBase:D::PoseFin,endLast[size_t(slot)]);
                 continue;
             }
             if(step.kind==K::VolumePlacements && step.object>=0) {
@@ -4052,6 +4040,14 @@ private:
                       m.mapBegin.size() == interp.poseSlots.size() + 1 &&
                       !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
                       m.mapBegin.back() == rows;
+            // Format 28: map_unclamped is absent (every map clamped) or one
+            // 0/1 byte per map.
+            ok = ok && (m.mapUnclamped.empty() ||
+                        (_f.formatVersion >= 28 &&
+                         m.mapUnclamped.size() + 1 == m.mapBegin.size()));
+            for (size_t map = 0; ok && map < m.mapUnclamped.size(); ++map) {
+                ok = m.mapUnclamped[map] <= 1;
+            }
             RigExecAnimatedMapsTable table;
             table.inputCount = m.inputCount;
             for (size_t map = 0; ok && map + 1 < m.mapBegin.size(); ++map) {
@@ -4062,33 +4058,12 @@ private:
                     mapRows.push_back({m.rowInputs[r], m.rowFrom[r], m.rowTo[r],
                                        m.rowSlope[r], m.rowCut[r]});
                 }
-                ok = ok && table.AddMap(std::move(mapRows));
+                const bool clamp = !(map < m.mapUnclamped.size() &&
+                                     m.mapUnclamped[map] != 0);
+                ok = ok && table.AddMap(std::move(mapRows), clamp);
             }
             if (!ok) {
                 return _Bad(row + ".maps: malformed animated maps");
-            }
-        }
-        if (interp.drivenAction) {
-            // Format 28: a driven action's search replaces every solve. Its
-            // one value input is the driver; its outputs are frame, weight,
-            // active and one value per channel.
-            const fb::RigExecWireDrivenAction &a = *interp.drivenAction;
-            const size_t channels = a.channelOffset.size();
-            bool ok = _f.formatVersion >= 28 && !interp.network &&
-                      !interp.method && !interp.maps &&
-                      interp.driverSlot < 0 && interp.valueInputs.size() == 1 &&
-                      a.driver.size() >= 2 && a.side >= -1 && a.side <= 1 &&
-                      a.channelBegin.size() == channels + 1 &&
-                      a.channelBegin.front() == 0 &&
-                      a.channelBegin.back() == a.channelSamples.size() &&
-                      interp.poseSlots.size() ==
-                          kRigExecDrivenActionFixedOutputs + channels;
-            for (size_t c = 0; ok && c < channels; ++c) {
-                ok = a.channelBegin[c] < a.channelBegin[c + 1] &&
-                     a.channelOffset[c] <= 1;
-            }
-            if (!ok) {
-                return _Bad(row + ".driven_action: malformed driven action");
             }
         }
         if (interp.network) {
@@ -6120,8 +6095,7 @@ private:
                 !_Bools(w.targetValid, row, "target_valid") ||
                 !_Bools(w.sampleValid, row, "sample_valid") ||
                 !_Bools(w.curveValid, row, "curve_valid") ||
-                !_Index(w.providerSlot, _slots, true, row, "provider_slot") ||
-                !_Index(w.segmentEndSlot, _slots, true, row, "segment_end_slot")) {
+                !_Index(w.providerSlot, _slots, true, row, "provider_slot")) {
                 return false;
             }
             // The painted arrays and the oracle's points, as input slots:

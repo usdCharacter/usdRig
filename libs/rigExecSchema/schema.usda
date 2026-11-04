@@ -2372,60 +2372,6 @@ class RigExecSphereWeight "RigExecSphereWeight" (
     )
 }
 
-class RigExecCapsuleWeight "RigExecCapsuleWeight" (
-    inherits = </RigExecVolumeWeight>
-    customData = {
-        dictionary extraPlugInfo = {
-            string nodeGraphIcon = "icons/capsule_weight.png"
-        }
-        string className = "CapsuleWeight"
-    }
-    doc = """Falloff about a segment: d is the distance from a point to the
-    nearest point of the segment from the volume's placed origin to its
-    segment end, measured in rigid volume-local space after
-    inputs:scaleX/Y/Z. The field
-    is 1 within inputs:falloffMin of the segment and falls to 0 at
-    inputs:falloffMax, so the iso-surfaces are capsules: two hemispherical
-    caps joined by a tube, elliptical when the scales differ.
-
-    The segment end is a FRAME, not a stored offset: it is the posed origin
-    of the provider rigExec:segmentEnd names, or, when that relationship
-    names nothing, of the first RigExecJoint child (in namespace order) of
-    the volume's namespace-parent joint. Authored under a joint, the capsule
-    therefore spans that joint's segment to its child and follows the
-    child's live frame, so scaling the parent joint along its length
-    stretches the capsule with it. With no end at all the segment has zero
-    length and the field is a sphere about the origin."""
-)
-{
-    float inputs:falloffMin = 0 (
-        doc = """Distance from the segment at which the field is fully ON,
-        in the capsule's local units after inputs:scaleX/Y/Z: the inner
-        radius of the capsule."""
-    )
-    float inputs:falloffMax = 1 (
-        doc = """Distance from the segment at which the field is fully OFF:
-        the outer radius of the capsule. See RigExecVolumeWeight for a
-        reversed or degenerate band."""
-    )
-    float inputs:scaleX = 1 (
-        doc = """Per-axis divisor applied to the local coordinate, and to the
-        segment end, before the distance, making the tube elliptical; see
-        RigExecSphereWeight."""
-    )
-    float inputs:scaleY = 1
-    float inputs:scaleZ = 1
-    rel rigExec:segmentEnd (
-        doc = """Optional single RigExecXformable whose posed origin is the
-        far end of the segment. When it names nothing the end is the first
-        RigExecJoint child, in namespace order, of the volume's
-        namespace-parent joint; a parent that is no joint, or a joint with
-        no joint child, leaves a zero-length segment (a sphere). The end is
-        read as a frame every evaluation, so an animated end moves the
-        segment; naming more than one target is a compile error."""
-    )
-}
-
 class RigExecPlaneWeight "RigExecPlaneWeight" (
     inherits = </RigExecVolumeWeight>
     customData = {
@@ -3340,9 +3286,11 @@ class RigExecAnimatedMaps "RigExecAnimatedMaps" (
         string className = "AnimatedMaps"
     }
     doc = """RigLogic's animated maps (Epic Games OpenRigLogic, see
-    docs/references.md): one value in [0, 1] per RigExecAnimatedMap child,
-    each a sum of piecewise-linear segments of the input properties, made
-    for driving texture masks such as wrinkle maps.
+    docs/references.md): one value per RigExecAnimatedMap child, each a sum
+    of piecewise-linear segments of the input properties, clamped to [0, 1]
+    unless the child's rigExec:clampOutput is false. Made for driving
+    texture masks such as wrinkle maps; unclamped slope-0 rows make a step
+    table that can carry any value.
 
     Like a pose interpolator it is not a mover: it publishes a float per
     child on outputs:value, which a RigExecBlendInput's inputs:weight or any
@@ -3378,9 +3326,15 @@ class RigExecAnimatedMap "RigExecAnimatedMap" (
     rowSlope[r] * x + rowCut[r] when rowFrom[r] <= x <= rowTo[r] (a reversed
     interval is swapped). Among consecutive rows on the same input only the
     first whose interval holds x contributes, so intervals sharing an
-    endpoint count it once. The sum is clamped to [0, 1]."""
+    endpoint count it once. The sum is clamped to [0, 1] unless
+    rigExec:clampOutput is false."""
 )
 {
+    uniform bool rigExec:clampOutput = true (
+        doc = """Whether the map's sum is clamped to [0, 1], RigLogic's rule.
+        False publishes the sum as is, so a table of slope-0 rows (a step
+        function) can carry any value to a property mover or blend input."""
+    )
     uniform int[] rigExec:rowInputs = [] (
         doc = "Each row's input, an index into the parent's inputs."
     )
@@ -4901,8 +4855,8 @@ class RigExecBoneFrame "RigExecBoneFrame" (
 # for a leaf), its avars are its animated channels, and an animated parent
 # is a RigExecSpaceSwitch on the bone. Bound geometry is deformed by a
 # RigExecSkinMover with authored rigExec:jointIndices and
-# rigExec:jointWeights; RigExecDrivenAction maps a dial's angle to a whole
-# action frame and publishes the driven channels' values.
+# rigExec:jointWeights. A smart-bone action is a RigExecAnimatedMaps step
+# table read by property movers (see RigExecAnimatedMap).
 ################################################################
 
 class "RigExecBone2dAPI" (
@@ -4933,9 +4887,9 @@ class "RigExecBone2dAPI" (
     Channels: avars:tx and avars:ty move the bone in its parent's frame,
     avars:rz turns it (degrees, as a delta from the setup angle) and
     avars:sx scales it along the bone, carrying the tip with it. A channel
-    that property movers revise (driven actions) is read as that chain's
-    result. The flip, lock, offset and target-index channels below are
-    animated; the index channel and the lock references are held.
+    that property movers revise is read as that chain's result. The flip,
+    lock, offset and target-index channels below are animated; the index
+    channel and the lock references are held.
 
     Evaluation never clamps keyed or driven angles to the limits; limits
     bound the lock solve, and authoring tools clamp the values they
@@ -5165,74 +5119,4 @@ class "RigExecBone2dGroupAPI" (
         nearest member). Authored with held knots, so the active member
         steps at its keys."""
     )
-}
-
-class RigExecDrivenAction "RigExecDrivenAction" (
-    inherits = </Typed>
-    customData = {
-        string className = "DrivenAction"
-    }
-    doc = """Maps a dial angle to a whole action frame and publishes values
-    at that frame. Not a mover: readers connect to its outputs and to its
-    RigExecActionChannel children's outputs:value.
-
-    rigExec:driverSamples holds the driver property's value (a dial's
-    avars:rz: degrees from its setup angle) at action frames 0, 1, ..., N.
-    The action serves one side of sample 0 (rigExec:side); on the other
-    side, and at sample 0, the frame is 0. On its side the frame is the one
-    whose sample is closest to the dial angle, clamped to [0, N]. A driver
-    turning one full revolution wraps an angle outside its range onto the
-    action's side first."""
-)
-{
-    rel rigExec:driverAttributes (
-        doc = """Exactly one float or double property, normally a bone's
-        avars:rz, read at this relationship's rigExecReadPhase."""
-    )
-    uniform double[] rigExec:driverSamples = [] (
-        doc = """Driver value at each whole action frame, in the driver
-        property's own units; at least two."""
-    )
-    uniform token rigExec:side = "fromSamples" (
-        allowedTokens = ["fromSamples", "positive", "negative"]
-        doc = """The side of sample 0 this action serves. Tools author it
-        from the pair rule of a dial's two actions; fromSamples judges it
-        from this action's samples alone."""
-    )
-    uniform token rigExec:frameTies = "earlier" (
-        allowedTokens = ["earlier", "later"]
-        doc = "Which frame wins when two samples are equally close."
-    )
-    bool inputs:enabled = true (
-        doc = "A disabled action publishes frame 0."
-    )
-    float outputs:frame = 0 (
-        doc = "The whole action frame."
-    )
-    float outputs:weight = 0 (
-        doc = "outputs:frame / N, for blend inputs whose samples sit at k / N."
-    )
-    float outputs:active = 0 (
-        doc = "1 when outputs:frame > 0, else 0."
-    )
-}
-
-class RigExecActionChannel "RigExecActionChannel" (
-    inherits = </Typed>
-    customData = {
-        string className = "ActionChannel"
-    }
-    doc = """One driven channel of its parent RigExecDrivenAction:
-    rigExec:samples holds the channel's value at whole action frames
-    0, 1, ...; past the last sample the last value holds."""
-)
-{
-    uniform double[] rigExec:samples = []
-    uniform token rigExec:channelMode = "offset" (
-        allowedTokens = ["offset", "value"]
-        doc = """offset publishes samples[f] - samples[0], for an additive
-        mover; value publishes samples[f], for a blend mover whose envelope
-        is the action's outputs:active."""
-    )
-    float outputs:value = 0
 }

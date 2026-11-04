@@ -120,8 +120,7 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
         const std::string type = object.type.GetText();
         object.oracleKind = type == "RigExecStaticWeight" ? 0 : type == "RigExecDynamicWeight" ? 1 :
             type == "RigExecCombineWeight" ? 2 : type == "RigExecSphereWeight" ? 3 :
-            type == "RigExecPlaneWeight" ? 4 : type == "RigExecCurveWeight" ? 5 :
-            type == "RigExecCapsuleWeight" ? 6 : -1;
+            type == "RigExecPlaneWeight" ? 4 : type == "RigExecCurveWeight" ? 5 : -1;
         object.oracleRepresentation = object.representation == _weightFieldTokens->constant ? 0 :
             object.representation == _weightFieldTokens->dense ? 1 :
             object.representation == _weightFieldTokens->sparse ? 2 : -1;
@@ -216,7 +215,6 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
             self(self,weight.base);
             for (int input : weight.inputs) self(self,input);
             if (weight.providerSlot >= 0) field.volumes.push_back(weight.providerSlot);
-            if (weight.segmentEndSlot >= 0) field.segmentEnds.push_back(weight.segmentEndSlot);
             const auto prim = B.stage->GetPrimAtPath(weight.path);
             for (int member=0;member<19;++member) {
                 const bool used = member == 0 ||
@@ -224,7 +222,7 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
                     (weight.oracleKind == 2 && (member == 4 || member == 5)) ||
                     (weight.oracleKind == 3 && member >= 4 && member <= 16) ||
                     (weight.oracleKind == 4 && ((member >= 4 && member <= 7) || member >= 17)) ||
-                    ((weight.oracleKind == 5 || weight.oracleKind == 6) && member >= 4 && member <= 10);
+                    (weight.oracleKind == 5 && member >= 4 && member <= 10);
                 if (!used) continue;
                 field.scalarReadIndex[size_t(object) * 19 + size_t(member)] = int(field.scalarReads.size());
                 field.scalarObjects.push_back(object); field.scalarMembers.push_back(member);
@@ -242,8 +240,6 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
             }
         std::sort(field.volumes.begin(),field.volumes.end());
         field.volumes.erase(std::unique(field.volumes.begin(),field.volumes.end()),field.volumes.end());
-        std::sort(field.segmentEnds.begin(),field.segmentEnds.end());
-        field.segmentEnds.erase(std::unique(field.segmentEnds.begin(),field.segmentEnds.end()),field.segmentEnds.end());
         B.weightFields.push_back(std::move(field));
         return int(B.weightFields.size())-1;
     };
@@ -348,16 +344,6 @@ void RigExecBakedDeclareWeightField(Baked *program, RigExecBakedStep *step)
     for (int slot : field.volumes)
         step->reads.push_back(RigExecBakedOne(field.placementPhase == Field::PlacementPhase::Base
             ? RigExecBakedSlotDomain::WeightFramesBase : RigExecBakedSlotDomain::WeightFrames,slot));
-    // A capsule's segment end is its provider's frame in the same phase. The
-    // pose versions are numbered after the first declaration; the repeat
-    // after input numbering adds these reads.
-    for (int slot : field.segmentEnds) {
-        const bool base = field.placementPhase == Field::PlacementPhase::Base;
-        const auto &last = base ? program->baseLast : program->finLast;
-        if (slot < 0 || size_t(slot) >= last.size()) continue;
-        step->reads.push_back(RigExecBakedOne(base ? RigExecBakedSlotDomain::PoseBase
-            : RigExecBakedSlotDomain::PoseFin,int(last[size_t(slot)])));
-    }
     // Declaration is repeated after input numbering; keep producer ranges unique.
     std::sort(step->reads.begin(),step->reads.end());
     step->reads.erase(std::unique(step->reads.begin(),step->reads.end()),step->reads.end());
@@ -435,14 +421,6 @@ bool RigExecBakedCaptureWeightFieldInputs(const Baked &B,int index,
         input.hasPlacement=slot>=0 && size_t(slot)<B.placedVolumes.size() &&
             B.placedVolumes[size_t(slot)] && size_t(slot)<placements.size();
         if(input.hasPlacement)input.placement=placements[size_t(slot)];
-        const int end=object.segmentEndSlot;
-        const bool baseEnd=field.placementPhase==Field::PlacementPhase::Base;
-        const auto &endFrames=baseEnd?B.base:B.fin;
-        const auto &endLast=baseEnd?B.baseLast:B.finLast;
-        if(end>=0 && size_t(end)<endLast.size() && size_t(endLast[size_t(end)])<endFrames.size()) {
-            input.hasSegmentEnd=true;
-            input.segmentEnd=endFrames[size_t(endLast[size_t(end)])].Origin();
-        }
     }
     return haveContext;
 }

@@ -21,7 +21,7 @@ affiliation, endorsement, or ownership of the underlying techniques.
 | Barycentric coordinates | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 3.4 | `libs/rigExec/movers/clothInputs.h` (`Samples`, UV and barycentric cloth bindings), `libs/rigExecMath/clothModel.h` (`RigExecClothSampleMap`) |
 | Warp and weft axes from UV coordinates | Baraff and Witkin, *Large Steps in Cloth Simulation*, SIGGRAPH (1998), [DOI](https://doi.org/10.1145/280814.280821) | `libs/rigExecMath/clothKernel.h` (`RigExecClothMaterialFrame`) |
 | Closest point on a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.5 | `libs/rigExecMath/clothKernel.h` (`ClosestBarycentric`), `libs/rigExecGpu/clothShader.cpp` |
-| Closest point on a segment | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.2 | `libs/rigExecMath/weightFields.cpp` (`RigExecSegmentDistance`: RigExecCapsuleWeight and RigExecCurveWeight fields), `libs/rigExecRuntime/weights.cpp` (`_RrSegmentDistance`) |
+| Closest point on a segment | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.2 | `libs/rigExecMath/weightFields.cpp` (`RigExecSegmentDistance`: RigExecCurveWeight fields), `libs/rigExecRuntime/weights.cpp` (`_RrSegmentDistance`) |
 | Closest points between segments | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.1.9 | `libs/rigExecMath/clothKernel.h` (`ClosestSegments`, edge/edge self-contact) |
 | Segment crossing a triangle | Ericson, *Real-Time Collision Detection*, Morgan Kaufmann (2005), section 5.3.6 | `libs/rigExecMath/clothKernel.h` (`RigExecClothClearOfColliders`, where a cloth window starts) |
 | Wrinkle reference lengths and bounded offsets | Müller and Chentanez, *Wrinkle Meshes* (2010), [author-hosted paper](https://matthias-research.github.io/pages/publications/wrinkleMeshes.pdf), [DOI](https://doi.org/10.2312/SCA/SCA10/085-091) | `libs/rigExecMath/wrinkleKernel.h`; [method and limitations](concepts/wrinkle-deformation.md) |
@@ -38,16 +38,19 @@ affiliation, endorsement, or ownership of the underlying techniques.
 
 ## 2D skeleton rules without a public source
 
-The rules and constants of `skeleton2dKernel.h` and `drivenActionKernel.h`
-that the sources above do not cover have no public source; they come from an
-unpublished internal specification. They include the 2D lock and IK solve
-rules: the lock and target rules of the coordinate descent
-(chain stops, pins left out of a parent's children, the 32-bone chain cap,
-the retry from the other bend, out-of-reach stretch, limit handling),
-delta-form control bones and alternative-chain bone groups. And they include the driven-action frame rules:
-the side rule, the full-turn wrap, the tie rule, and the offset and value
-channels. [2D skeletons, binding and driven actions](concepts/skeletons-2d.md)
-describes the behavior.
+The rules and constants of `skeleton2dKernel.h` that the sources above do
+not cover have no public source; they come from an unpublished internal
+specification. They include the 2D lock and IK solve rules: the lock and
+target rules of the coordinate descent (chain stops, pins left out of a
+parent's children, the 32-bone chain cap, the retry from the other bend,
+out-of-reach stretch, limit handling), delta-form control bones and
+alternative-chain bone groups.
+[2D skeletons, binding and smart-bone step tables](concepts/skeletons-2d.md)
+describes the behavior. A smart bone's frame rules (which side it serves,
+the full-turn wrap, ties, offset and value channels) are written into
+animated-map step tables by the authoring tool; RigExec evaluates them as
+RigLogic's conditional tables, with `rigExec:clampOutput` as its one
+addition.
 
 Implementation details and limitations are documented with each operator.
 The cloth mover combines the sources above in one solver of its own: a

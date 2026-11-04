@@ -1,6 +1,6 @@
 # ![Animated Maps](../../icons/concept.png) Animated Maps
 
-*RigLogic's animated maps: [0, 1] mask values from control values, for shaders.*
+*RigLogic's animated maps: [0, 1] mask values from control values, for shaders, or unclamped step tables.*
 
 | | |
 |---|---|
@@ -31,9 +31,11 @@ RigLogic 13.5.0); see [algorithm references](../references.md) and
 [RigLogic behaviours](../concepts/riglogic.md).
 
 RigLogic's animated maps (Epic Games OpenRigLogic, see
-docs/references.md): one value in [0, 1] per RigExecAnimatedMap child,
-each a sum of piecewise-linear segments of the input properties, made
-for driving texture masks such as wrinkle maps.
+docs/references.md): one value per RigExecAnimatedMap child, each a sum
+of piecewise-linear segments of the input properties, clamped to [0, 1]
+unless the child's rigExec:clampOutput is false. Made for driving
+texture masks such as wrinkle maps; unclamped slope-0 rows make a step
+table that can carry any value.
 
 Like a pose interpolator it is not a mover: it publishes a float per
 child on outputs:value, which a RigExecBlendInput's inputs:weight or any
@@ -49,11 +51,34 @@ row of a map reads one input x and adds `slope * x + cut` when x lies in its
 `[from, to]` interval (a reversed interval is swapped); among consecutive rows
 on the same input only the first matching interval contributes, so
 neighbouring segments that share an endpoint count it once. The sum is clamped
-to [0, 1] (`libs/rigExecMath/conditionalTableKernel.h`). Each map's value is
-published on its `outputs:value` and copied to
+to [0, 1] (`libs/rigExecMath/conditionalTableKernel.h`), RigLogic's rule,
+unless the map's `rigExec:clampOutput` is false: then the sum is published as
+is. Each map's value is published on its `outputs:value` and copied to
 `<mesh>.primvars:<rigExec:primvarName>`, which imaging hands to Hydra as a
 constant float primvar and never writes to the stage. A glslfx shader sees it
 only if its attributes block names it.
+
+**Step tables.** A map whose rows all have slope 0 is a step function of its
+input: each row is one cell `[from, to]` and its `rowCut` is the cell's value.
+With `rigExec:clampOutput` false the value can be anything, so the map can
+drive a property mover's `inputs:value` or a blend input with an angle, an
+offset or a frame number, not only a [0, 1] weight. Two rules make such a
+table exact:
+
+- Ties go by row order. Cells that share a bound both hold it, and within a
+  group of consecutive rows on the same input only the first matching row
+  counts, so list the row that should win the shared bound first.
+- Bounds are floats (`float[]`), while the input is read in its own precision
+  (a double stays a double). Round a shared bound that is not a float toward
+  the losing cell (up when the winner is the lower cell, down when it is the
+  upper one): the winner's row then holds the exact bound, so an input exactly
+  at the tie still goes to the winner. Only inputs between the exact bound and
+  its float, less than one float step wide, change cell.
+
+Outer cells that run to the float limits (`-FLT_MAX`, `FLT_MAX`) hold the end
+values out to those limits; an input beyond them or a NaN matches no row and
+reads 0.
+Disabling the node publishes 0 on every map, step tables included.
 
 ## Wiring
 
@@ -116,8 +141,9 @@ python docs/render_media.py --page animated_maps
 ## Tips
 
 - Rows on the same input should be consecutive and ordered: only the first interval that holds the input counts within such a run.
-- Rows, inputs and meshes are compiled rig identity; the inputs' values are per-frame inputs.
+- Rows, inputs, `rigExec:clampOutput` and meshes are compiled rig identity; the inputs' values are per-frame inputs.
 - Disabling the node publishes zero on every map and primvar.
+- A step table that carries several values per cell is one map per value, each with the same rows and its own cuts.
 
 ## See also
 

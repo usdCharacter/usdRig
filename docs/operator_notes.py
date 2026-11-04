@@ -32,11 +32,9 @@ CATEGORIES = [
                          "volume_correct_mover",
                          "ml_mover", "ml_output"]),
     ("Blend channels", ["blend_input", "blend_sample"]),
-    ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map",
-                    "driven_action", "action_channel"]),
+    ("Pose space", ["pose_interpolator", "pose", "animated_maps", "animated_map"]),
     ("Weights", ["static_weight", "dynamic_weight", "sphere_weight",
-                 "capsule_weight", "plane_weight", "curve_weight",
-                 "combine_weight"]),
+                 "plane_weight", "curve_weight", "combine_weight"]),
     ("Property math", ["float_math_mover", "vec3f_math_mover",
                        "matrix_math_mover"]),
     ("Shading", ["surface_projector"]),
@@ -1603,14 +1601,17 @@ one.
 
 Flat cut-out artwork binds to a [2D skeleton](skeleton_2d.md) the same
 way: the skeleton's bones are the influences and the weights are
-authored arrays like any other skin's. A [capsule weight](capsule_weight.md)
-placed inside each bone describes the region it owns, and
+authored arrays like any other skin's. A [sphere weight](sphere_weight.md)
+placed inside each bone, at the midpoint of its segment and stretched along
+it with `inputs:scaleX`, describes the region it owns, and
 `rigexec.binding.generate_skin_weights(stage, skin_mover)` writes the
-arrays from those capsules: per point, each influence's capsule field at
-the setup pose, normalised over `rigExec:influences`. The rows are
+arrays from those spheres, or from any other volume weight placed inside an
+influence: per point, each influence's volume field at the setup pose,
+normalised over `rigExec:influences`. The rows are
 authored data, generated once rather than evaluated per frame, so
-regenerate them after moving a rest or resizing a capsule; an optional
-`point_indices` list regenerates only those rows.""",
+re-place the spheres and regenerate the rows after moving a rest or
+changing a bone's strength; an optional `point_indices` list regenerates
+only those rows.""",
         "how_it_works": """The mover is one revision in its target's point chain, so it runs in
 the mover-application walk after solving: it reads
 every influence's `computeMatrix` (the rest-to-posed map) at the
@@ -1678,7 +1679,7 @@ holds 1.500 at every column.""",
             ("fk_chain", "FK Chain"),
             ("joint", "Joint"),
             ("skeleton_2d", "Skeleton 2D"),
-            ("capsule_weight", "Capsule Weight"),
+            ("sphere_weight", "Sphere Weight"),
         ],
     },
     "blendshape_mover": {
@@ -2896,92 +2897,8 @@ rather than a plateau with an edge.""",
         "see_also": [
             ("static_weight", "Static Weight"),
             ("dynamic_weight", "Dynamic Weight"),
-            ("capsule_weight", "Capsule Weight"),
-            ("matrix_mover", "Matrix Mover"),
-        ],
-    },
-    "capsule_weight": {
-        "title": "Capsule Weight",
-        "schema": "RigExecCapsuleWeight",
-        "summary": "A tube of influence along a bone: falloff about the segment to a child joint.",
-        "description": """A placed volume whose field is the distance to a SEGMENT: from the
-volume's own origin to the posed origin of its end provider. Authored
-inside a joint with nothing wired, the segment runs to that joint's
-first `RigExecJoint` child in namespace order — the same rule a bone's
-tip follows — so one capsule per bone covers exactly that bone, and
-`rel rigExec:segmentEnd` names any other `RigExecXformable` when the end
-should be explicit. The field is fully on within `inputs:falloffMin` of
-the segment and off at `inputs:falloffMax`: the iso-surfaces are
-capsules, two hemispherical caps joined by a tube, and per-axis
-`inputs:scaleX/Y/Z` make the tube elliptical. With no end at all the
-segment has zero length and the capsule is a sphere.""",
-        "how_it_works": """The prim publishes a weight packet that the bound mover consumes as
-its envelope during the geometry (point-chain) phase, like every volume
-weight. Each evaluation it takes its own posed frame, strips scale and
-shear so the field matches the rigid guide that is drawn, and reads the
-END PROVIDER'S frame in the same phase: the end is a second provider
-slot the compiled rig binds (the default child resolved once at
-compile), not a stored offset, so when the parent joint stretches
-along its length with `avars:sx` the child's origin moves and the
-segment follows it. Both the points and the end are carried into the
-capsule's local frame and divided by `inputs:scaleX/Y/Z`; `d` is then
-the distance from each point of `rigExec:weightTarget` (or of
-`rigExec:sampleSource`) to the nearest point of the segment, remapped
-across the band, exchanged by `inputs:invert`, run through the
-falloff lookup table, multiplied by `inputs:strength`, and bounded by
-`rigExec:rangePolicy`. The `rigExecReadPhase` metadata on
-`rigExec:weightTarget` chooses the measured points exactly as for a
-sphere: `base` (the default) measures the static bind points,
-`preceding` the points as they stand in the mover stack.""",
-        "wiring": [
-            ("`rigExec:weightTarget`", "Exact points property this generated field "
-             "covers; must be the same target the bound mover moves.", "yes"),
-            ("`rigExec:segmentEnd`", "Optional single provider whose posed origin "
-             "ends the segment; absent, the first `RigExecJoint` child of the "
-             "namespace-parent joint. More than one target is a compile error.",
-             "no"),
-            ("`rigExec:sampleSource`", "Static points to measure against instead of "
-             "the target. The weighted domain stays the target.", "no"),
-            ("(placement)", "No wiring: the volume follows its namespace-parent "
-             "xformable when unwired, as every volume weight does.", "-"),
-            ("(bound by)", "A mover's `rigExec:weightObject` applies this field.", "-"),
-        ],
-        "param_groups": [
-            ("Volume weight", "RigExecVolumeWeight"),
-            ("Transform provider", "RigExecXformable"),
-        ],
-        "example": """A 9 x 3 quad plank is lifted by one matrix mover whose joint holds a
-static one-unit rise. The field gating it is a capsule authored inside
-the UpperArm joint with no `rigExec:segmentEnd`, so it spans UpperArm to
-its child Forearm, three units along the plank. The only spline in the
-file is UpperArm's `avars:sx`: the stretch carries Forearm out to 4.5
-and back, the capsule's end follows Forearm's live frame, and the raised
-band grows and shrinks with round ends that stay round — the capsule's
-own placement drops the stretch, so the tube does not fatten. The inner
-capsule is `inputs:falloffMin` 0.4, where the plank is lifted the whole
-unit, and the outer one `inputs:falloffMax` 1.2, where it is not lifted
-at all; `linear` between them.""",
-        "tips": [
-            "Author one capsule inside each bone that should own a region: with "
-            "no relationship it ends at the bone's first joint child, so adding, "
-            "removing or reordering that child moves the segment and recompiles "
-            "the rig.",
-            "Size the tube with `inputs:falloffMin`/`inputs:falloffMax` and "
-            "`inputs:scaleX/Y/Z`; a scale in the transform is removed before the "
-            "field is built. The segment's LENGTH comes from the end provider "
-            "alone.",
-            "A leaf joint with no joint child has no segment: its capsule is a "
-            "sphere about the joint. Give a drawn leaf bone an `End` joint child "
-            "when its capsule should reach its tip.",
-            "Inside the influences of a Skin Mover, capsules are the source of "
-            "its authored rows: `rigexec.binding.generate_skin_weights` measures "
-            "them at the setup pose and normalises per point.",
-        ],
-        "see_also": [
-            ("sphere_weight", "Sphere Weight"),
-            ("curve_weight", "Curve Weight"),
             ("skin_mover", "Skin Mover"),
-            ("joint", "Joint"),
+            ("matrix_mover", "Matrix Mover"),
         ],
     },
     "plane_weight": {
@@ -3159,7 +3076,6 @@ geometry it weights.""",
         ],
         "see_also": [
             ("sphere_weight", "Sphere Weight"),
-            ("capsule_weight", "Capsule Weight"),
             ("matrix_mover", "Matrix Mover"),
             ("static_weight", "Static Weight"),
         ],
@@ -3340,9 +3256,8 @@ and it drives nothing, the blendshape does all the work.""",
             # declares the interpolator's PoseWeight slot, so the graph
             # orders it after the interpolator.
             "A float input connected to a pose interpolator's output (a pose "
-            "weight, an animated map, a driven action's `outputs:value` or "
-            "`outputs:active`) reads the output's authored value when "
-            "undeclared. Declare `rigExecReadPhase = \"final\"` to read what "
+            "weight or an animated map's `outputs:value`) reads the output's "
+            "authored value when undeclared. Declare `rigExecReadPhase = \"final\"` to read what "
             "the interpolator computed in the same evaluation; the mover then "
             "runs after it, and two interpolators that drive each other's "
             "inputs this way form a cycle, which every evaluator sets aside.",
@@ -4097,7 +4012,7 @@ that order; the blend inputs `bicepMorph` and `creaseMorph` connect to them.""",
     "animated_maps": {
         "title": "Animated Maps",
         "schema": "RigExecAnimatedMaps",
-        "summary": "RigLogic's animated maps: [0, 1] mask values from control values, for shaders.",
+        "summary": "RigLogic's animated maps: [0, 1] mask values from control values, for shaders, or unclamped step tables.",
         "description": """Animated maps turn control values into texture-mask intensities --
 the wrinkle maps a face shader blends in as a brow raises. Each
 `RigExecAnimatedMap` child is a conditional table over the input properties;
@@ -4111,11 +4026,34 @@ row of a map reads one input x and adds `slope * x + cut` when x lies in its
 `[from, to]` interval (a reversed interval is swapped); among consecutive rows
 on the same input only the first matching interval contributes, so
 neighbouring segments that share an endpoint count it once. The sum is clamped
-to [0, 1] (`libs/rigExecMath/conditionalTableKernel.h`). Each map's value is
-published on its `outputs:value` and copied to
+to [0, 1] (`libs/rigExecMath/conditionalTableKernel.h`), RigLogic's rule,
+unless the map's `rigExec:clampOutput` is false: then the sum is published as
+is. Each map's value is published on its `outputs:value` and copied to
 `<mesh>.primvars:<rigExec:primvarName>`, which imaging hands to Hydra as a
 constant float primvar and never writes to the stage. A glslfx shader sees it
-only if its attributes block names it.""",
+only if its attributes block names it.
+
+**Step tables.** A map whose rows all have slope 0 is a step function of its
+input: each row is one cell `[from, to]` and its `rowCut` is the cell's value.
+With `rigExec:clampOutput` false the value can be anything, so the map can
+drive a property mover's `inputs:value` or a blend input with an angle, an
+offset or a frame number, not only a [0, 1] weight. Two rules make such a
+table exact:
+
+- Ties go by row order. Cells that share a bound both hold it, and within a
+  group of consecutive rows on the same input only the first matching row
+  counts, so list the row that should win the shared bound first.
+- Bounds are floats (`float[]`), while the input is read in its own precision
+  (a double stays a double). Round a shared bound that is not a float toward
+  the losing cell (up when the winner is the lower cell, down when it is the
+  upper one): the winner's row then holds the exact bound, so an input exactly
+  at the tie still goes to the winner. Only inputs between the exact bound and
+  its float, less than one float step wide, change cell.
+
+Outer cells that run to the float limits (`-FLT_MAX`, `FLT_MAX`) hold the end
+values out to those limits; an input beyond them or a NaN matches no row and
+reads 0.
+Disabling the node publishes 0 on every map, step tables included.""",
         "wiring": [
             ("`rigExec:driverAttributes`", "The float or double input properties rows index.", "yes"),
             ("`rigExec:meshes`", "Meshes that receive every map as a primvar.", "no"),
@@ -4135,9 +4073,11 @@ stage.""",
         "tips": [
             "Rows on the same input should be consecutive and ordered: only the "
             "first interval that holds the input counts within such a run.",
-            "Rows, inputs and meshes are compiled rig identity; the inputs' values are "
-            "per-frame inputs.",
+            "Rows, inputs, `rigExec:clampOutput` and meshes are compiled rig "
+            "identity; the inputs' values are per-frame inputs.",
             "Disabling the node publishes zero on every map and primvar.",
+            "A step table that carries several values per cell is one map per "
+            "value, each with the same rows and its own cuts.",
         ],
         "see_also": [("animated_map", "Animated Map"),
                      ("pose_interpolator", "Pose Interpolator"),
@@ -4150,14 +4090,21 @@ stage.""",
         "example_key": "animated_maps",
         "summary": "One conditional table of an Animated Maps node, and its value.",
         "description": """One map of its parent `RigExecAnimatedMaps`: parallel arrays of
-rows (`rigExec:rowInputs`, `rowFrom`, `rowTo`, `rowSlope`, `rowCut`) and the
-primvar name its value is published under.""",
+rows (`rigExec:rowInputs`, `rowFrom`, `rowTo`, `rowSlope`, `rowCut`), the
+primvar name its value is published under, and `rigExec:clampOutput`, whether
+the sum is clamped to [0, 1] (true, RigLogic's rule) or published as is
+(false).""",
         "how_it_works": "Evaluated by its parent; see Animated Maps.",
         "wiring": [("`outputs:value`", "The map's value; connectable like a pose weight.", "-")],
         "example": """In the Animated Maps example `frown` has two rows on different
 inputs, so both count and their sum is clamped; `foreheadL` and `foreheadR`
 have one row each.""",
         "tips": ["An empty `rigExec:primvarName` publishes under the map's prim name.",
+                 "For a step table set `rigExec:clampOutput` false and author "
+                 "slope-0 rows: the first matching row of a same-input run wins "
+                 "a shared bound, and a shared bound is rounded to float toward "
+                 "the losing cell, so the winner's row holds the exact tie "
+                 "(see Animated Maps).",
                  "[RigLogic behaviours](../concepts/riglogic.md) covers the "
                  "tables and their provenance."],
         "see_also": [("animated_maps", "Animated Maps")],
@@ -4347,23 +4294,25 @@ in [References](../references.md#2d-skeleton-rules-without-a-public-source).""",
 and a pin bone Foot beside it with no joint child. The bones key
 `avars:rz`; the thigh also keys `avars:sx`, which stretches it along its
 length and carries the shin with it, and the foot keys `avars:tx`. Each
-bone holds a capsule weight with no `rigExec:segmentEnd`, so each spans
-its bone to its first joint child and the foot's is a sphere. One skin
-mover binds the leg mesh with rows written by
-`rigexec.binding.generate_skin_weights` from those capsules; the small tab
-quad beside the leg lies outside every capsule, keeps zero rows and holds
-still.""",
+bone holds a sphere weight stretched along its segment to its first joint
+child: at the midpoint (`rest:tx` = L/2), `inputs:scaleX` = 1 + L/(2S),
+`inputs:falloffMin` = max(S/4, (L/2) S/(L/2 + S)) and `inputs:falloffMax`
+= S for a segment of length L and strength S; the foot's is an unscaled
+sphere about its origin. One skin mover binds the leg mesh with rows
+written by `rigexec.binding.generate_skin_weights` from those spheres; the
+small tab quad beside the leg lies outside every sphere, keeps zero rows
+and holds still.""",
         "tips": [
             "Angle limits bound the lock solve only; keyed or driven angles are never clamped.",
             "A lock chain is capped at 32 bones, and a bone with `bone2d:ignoredByIk`, or a pin, is not counted among its parent's children; a lock that the descent leaves short retries from the other bend and keeps the closer result.",
             "Reparent a bone by moving it in the namespace (re-expressing its rest); animate a parent with a Space Switch on the bone whose first source is its namespace parent.",
             "The namespace parents and every switch source must be acyclic, an outside source may not sit under a bone of the skeleton, and a switch on a bone may not author `rigExec:space`, `rigExec:rotationFilters` or a cleared axis mask.",
-            "Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Capsule Weight inside each bone and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.",
-            "See [2D skeletons, binding and driven actions](../concepts/skeletons-2d.md) for the whole workflow.",
+            "Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Sphere Weight inside each bone, stretched along its segment, and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.",
+            "See [2D skeletons, binding and smart-bone step tables](../concepts/skeletons-2d.md) for the whole workflow.",
         ],
         "see_also": [("bone_2d", "Bone 2D"), ("bone_2d_group", "Bone 2D Group"),
                      ("space_switch", "Space Switch"), ("fk_chain", "FK Chain"),
-                     ("skin_mover", "Skin Mover"), ("driven_action", "Driven Action")],
+                     ("skin_mover", "Skin Mover"), ("animated_maps", "Animated Maps")],
     },
     "bone_2d": {
         "title": "Bone 2D",
@@ -4386,10 +4335,10 @@ child bone's rest is a value, so editing it re-solves without recompiling; an
 
 Animation lives on the joint's `avars`: `avars:tx` and `avars:ty` move the
 bone in its parent's frame, `avars:rz` turns it (degrees, as a delta from the
-setup angle) and `avars:sx` scales it along the bone. A channel that a property
-mover or a driven action revises is read as that chain's result. The flip, lock,
-offset and target-index channels are animated too; the index channel and the
-lock references are held (stepped) between keys. An animated parent is a
+setup angle) and `avars:sx` scales it along the bone. A channel that property
+movers revise is read as that chain's result. The flip, lock, offset and
+target-index channels are animated too; the index channel and the lock
+references are held (stepped) between keys. An animated parent is a
 [Space Switch](space_switch.md) on the bone, read by the skeleton.
 
 `bone2d:colorTag`, `bone2d:showLabel` and `bone2d:shy` are display hints for
@@ -4449,66 +4398,5 @@ while the other chain sits at its rest.""",
             "A member's chain is the bones under it: nest each alternative drawing's bones under its member.",
         ],
         "see_also": [("skeleton_2d", "Skeleton 2D"), ("bone_2d", "Bone 2D")],
-    },
-    "driven_action": {
-        "title": "Driven Action",
-        "schema": "RigExecDrivenAction",
-        "no_gif": True,
-        "summary": "Maps a dial angle to a whole action frame and publishes driven channel values.",
-        "description": """A driven action reads a driver property, normally a dial bone's
-`avars:rz`, and finds the whole action frame whose recorded driver sample is
-closest. It publishes the frame, a normalised weight, an activity flag, and
-the values of its `RigExecActionChannel` children at that frame. It is not a
-mover: readers connect to its outputs.""",
-        "how_it_works": """`rigExec:driverSamples` holds the driver value at action frames 0 to N. The
-action serves one side of sample 0 (`rigExec:side`); on the other side, and at
-sample 0, the frame is 0. A driver that turns one full revolution wraps an angle
-outside its range onto the action's side first. Equal distances take the earlier
-or the later frame by `rigExec:frameTies`. A disabled action publishes frame 0.
-
-A reader that connects to `outputs:value`, `outputs:weight` or `outputs:active`
-and wants the value computed in the same evaluation declares
-`rigExecReadPhase = "final"` on the connected input; the reader then runs after
-the action. Undeclared, the connection reads the authored value. Two
-interpolators that drive each other's inputs this way form a cycle, and every
-evaluator sets it aside. The driver sample table is structural: an edit
-recompiles.""",
-        "wiring": [
-            ("`rigExec:driverAttributes`", "Exactly one float or double property, normally a bone's `avars:rz`.", "yes"),
-        ],
-        "example": """A wrist dial's `avars:rz` drives a hand-pose action with driver samples
-[0, 20, 45, 90]. At 50 degrees the closest sample is 45, so the action frame is 2.
-A channel in `offset` mode connected to a float math mover's input adds the
-channel's change since frame 0, and a channel in `value` mode with
-`outputs:active` as a blend envelope switches a drawing on.""",
-        "tips": [
-            "`rigExec:side` is normally authored from a dial's pair of actions; `fromSamples` judges it from the action's own samples.",
-            "`outputs:weight` is the frame divided by N, for blend inputs whose samples sit at k / N.",
-            "See [2D skeletons, binding and driven actions](../concepts/skeletons-2d.md#driven-actions).",
-        ],
-        "see_also": [("action_channel", "Action Channel"), ("pose_interpolator", "Pose Interpolator"),
-                     ("float_math_mover", "Float Math Mover")],
-    },
-    "action_channel": {
-        "title": "Action Channel",
-        "schema": "RigExecActionChannel",
-        "no_gif": True,
-        "summary": "One driven channel of a driven action: its value at each whole action frame.",
-        "description": """A child of a [Driven Action](driven_action.md). `rigExec:samples`
-holds the channel's value at whole action frames 0, 1, ...; past the last sample
-the last value holds. `outputs:value` is what readers connect to.""",
-        "how_it_works": """In `offset` mode the channel publishes `samples[f] - samples[0]`, for an
-additive mover. In `value` mode it publishes `samples[f]`, for a blend mover
-whose envelope is the action's `outputs:active`. The channels are compiled in
-child order, so adding or reordering a channel recompiles.""",
-        "wiring": [("`outputs:value`", "The channel's value; connectable like a pose weight.", "-")],
-        "example": """A channel with samples [0, 5, 12] in `offset` mode publishes 0, 5, 12 at
-frames 0, 1, 2 and 12 beyond; in `value` mode with samples [1, 0.5, 0] it
-publishes the samples themselves.""",
-        "tips": [
-            "Connect with `rigExecReadPhase = \"final\"` to read the value computed in the same evaluation.",
-            "An action with no channels still publishes frame, weight and active.",
-        ],
-        "see_also": [("driven_action", "Driven Action")],
     },
 })

@@ -121,7 +121,6 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
 // a guarded static.
 const TfToken _mlMoverType("RigExecMlMover");
 const TfToken _animatedMapsType("RigExecAnimatedMaps");
-const TfToken _drivenActionType("RigExecDrivenAction");
 
 // The types whose prims the digest writes the path of for the type alone,
 // wherever under the rig they sit: the discovered joints, controls, volume
@@ -134,7 +133,6 @@ _IsDigestDiscoveredType(const TfToken &type)
     const TfToken &kInterpolator = _tokens->RigExecPoseInterpolator;
     return type == kJoint || type == kControl || type == kInterpolator ||
            type == _mlMoverType || type == _animatedMapsType ||
-           type == _drivenActionType ||
            _IsVolumeWeightType(type) || _IsAggregateSolverType(type);
 }
 

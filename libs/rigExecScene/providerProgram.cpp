@@ -38,7 +38,7 @@ namespace {
 bool Fail(std::string *error,const std::string &message) { if(error)*error=message; return false; }
 bool Provider(const TfToken &type) {
     return type=="RigExecControl" || type=="RigExecJoint" || type=="RigExecSphereWeight" ||
-        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight" || type=="RigExecCapsuleWeight";
+        type=="RigExecPlaneWeight" || type=="RigExecCurveWeight";
 }
 const char *const computations[]={"computeRestFrame","computedDefaultSpace","computeDefaultFrame",
     "computedParentDefaultSpace","computedParentSpace","computePointFrame","computeMatrix","interveningSpace","computeAvarMatrix"};

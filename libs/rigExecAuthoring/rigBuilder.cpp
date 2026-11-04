@@ -1374,21 +1374,6 @@ RigExecSphereWeightHandle::SetDirectionalScales(
 }
 
 void
-RigExecCapsuleWeightHandle::SetScales(float sx, float sy, float sz)
-{
-    _AuthorAttr(GetPrim(), "inputs:scaleX", SdfValueTypeNames->Float, VtValue(sx));
-    _AuthorAttr(GetPrim(), "inputs:scaleY", SdfValueTypeNames->Float, VtValue(sy));
-    _AuthorAttr(GetPrim(), "inputs:scaleZ", SdfValueTypeNames->Float, VtValue(sz));
-}
-
-void
-RigExecCapsuleWeightHandle::SetSegmentEnd(const SdfPath &path)
-{
-    SetRel("rigExec:segmentEnd", path.IsEmpty() ? std::vector<SdfPath>()
-                                                : std::vector<SdfPath>{ path });
-}
-
-void
 RigExecPlaneWeightHandle::SetAxis(const TfToken &axis)
 {
     _AuthorAttr(
@@ -3766,19 +3751,6 @@ RigExecRigBuilder::AddSphereWeight(
         scope.AppendChild(TfToken(name)), target, falloffMin, falloffMax);
 }
 
-RigExecCapsuleWeightHandle
-RigExecRigBuilder::AddCapsuleWeight(
-    const std::string &name, const SdfPath &target, const SdfPath &segmentEnd,
-    float falloffMin, float falloffMax)
-{
-    _RequireName(name, "capsule weight name");
-    _RequireTargetPath(target, "capsule weight target");
-    const SdfPath scope = _EnsureScope("Weights");
-    return DefineCapsuleWeight(
-        scope.AppendChild(TfToken(name)), target, segmentEnd, falloffMin,
-        falloffMax);
-}
-
 RigExecPlaneWeightHandle
 RigExecRigBuilder::AddPlaneWeight(
     const std::string &name, const SdfPath &target, float falloffMin,
@@ -3816,23 +3788,6 @@ RigExecRigBuilder::DefineSphereWeight(
     RigExecSphereWeightHandle handle(_stage, path);
     handle.SetTarget(target);
     handle.SetFalloff(falloffMin, falloffMax);
-    return handle;
-}
-
-RigExecCapsuleWeightHandle
-RigExecRigBuilder::DefineCapsuleWeight(
-    const SdfPath &path, const SdfPath &target, const SdfPath &segmentEnd,
-    float falloffMin, float falloffMax)
-{
-    _RequireTargetPath(target, "capsule weight target");
-    UsdPrim prim = _DefineTypedAt(path, "RigExecCapsuleWeight");
-    _ApplyApiRequired(prim, _kNodeGraphApi);
-    RigExecCapsuleWeightHandle handle(_stage, path);
-    handle.SetTarget(target);
-    handle.SetFalloff(falloffMin, falloffMax);
-    if (!segmentEnd.IsEmpty()) {
-        handle.SetSegmentEnd(segmentEnd);
-    }
     return handle;
 }
 
@@ -3947,7 +3902,8 @@ RigExecAnimatedMapsHandle::AddMap(const std::string &name,
                                   const std::vector<float> &to,
                                   const std::vector<float> &slope,
                                   const std::vector<float> &cut,
-                                  const std::string &primvarName)
+                                  const std::string &primvarName,
+                                  bool clampOutput)
 {
     if (name.empty() || !SdfPath::IsValidIdentifier(name)) {
         throw std::invalid_argument(
@@ -3979,6 +3935,10 @@ RigExecAnimatedMapsHandle::AddMap(const std::string &name,
     if (!primvarName.empty()) {
         _AuthorAttr(prim, "rigExec:primvarName", SdfValueTypeNames->Token,
                     VtValue(TfToken(primvarName)));
+    }
+    if (!clampOutput) {
+        _AuthorAttr(prim, "rigExec:clampOutput", SdfValueTypeNames->Bool,
+                    VtValue(false));
     }
     _AuthorAttr(prim, "outputs:value", SdfValueTypeNames->Float, VtValue(0.f));
     return mapPath.AppendProperty(TfToken("outputs:value"));

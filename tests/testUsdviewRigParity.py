@@ -286,6 +286,40 @@ def _RestMatrix(x, y, angle):
     return Gf.Matrix4d(c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, x, y, 0, 1)
 
 
+def _PlaceInfluence(stage, bone, strength):
+    """A RigExecSphereWeight "Influence" inside \p bone, stretched along its
+    segment to its first joint child at t (bone frame), L = |t|, strength S:
+    at the midpoint (rest:tx = L/2 for a segment along +x, else rest:space =
+    RotZ(atan2(ty, tx)) T(t/2)), inputs:scaleX = 1 + L/(2S),
+    inputs:falloffMin = max(S/4, (L/2) S/(L/2 + S)), inputs:falloffMax = S.
+    A pin (no joint child) is an unscaled sphere about the bone's origin."""
+    sphere = stage.DefinePrim(bone.GetPath().AppendChild("Influence"),
+                              "RigExecSphereWeight")
+    tip = next((c for c in bone.GetChildren()
+                if c.GetTypeName() == "RigExecJoint"), None)
+    t = (tip.GetAttribute("rest:space").Get().ExtractTranslation()
+         if tip else Gf.Vec3d(0, 0, 0))
+    length = math.hypot(t[0], t[1])
+    half = length / 2.0
+    _SetAttr(sphere, "inputs:falloffMax", strength, Sdf.ValueTypeNames.Float)
+    _SetAttr(sphere, "inputs:falloffMin",
+             max(0.25 * strength, half * strength / (half + strength)),
+             Sdf.ValueTypeNames.Float)
+    if length == 0.0:
+        return sphere
+    _SetAttr(sphere, "inputs:scaleX", 1.0 + length / (2.0 * strength),
+             Sdf.ValueTypeNames.Float)
+    if abs(t[1]) < 1e-9 * length and t[0] > 0.0:
+        _SetAttr(sphere, "rest:tx", half, Sdf.ValueTypeNames.Double)
+    else:
+        rest = Gf.Matrix4d(1.0)
+        rest.SetRotate(Gf.Rotation(Gf.Vec3d(0, 0, 1),
+                                   math.degrees(math.atan2(t[1], t[0]))))
+        rest.SetTranslateOnly(Gf.Vec3d(t[0] / 2.0, t[1] / 2.0, 0.0))
+        _SetAttr(sphere, "rest:space", rest, Sdf.ValueTypeNames.Matrix4d)
+    return sphere
+
+
 def _LocalRest(row, parentRow):
     """The parent-relative rest:space of a bone given absolute frames."""
     _name, _parent, x, y, angle, _length = row
@@ -329,13 +363,12 @@ def _Steps(s):
             stage.GetPrimAtPath(SKEL).CreateRelationship(
                 "rigExec:joints").SetTargets(joints)
         with s.Txn("Bind Art"):
-            # A capsule inside every bone owns its region; the skin's rows
-            # are generated from the capsules, as the binding tools do.
+            # A sphere stretched along every bone owns its region; the
+            # skin's rows are generated from the spheres, as the binding
+            # tools do.
             for row in BONE_TABLE:
-                capsule = stage.DefinePrim(
-                    s.BonePath(row[0]) + "/Influence", "RigExecCapsuleWeight")
-                _SetAttr(capsule, "inputs:falloffMax", 0.15,
-                         Sdf.ValueTypeNames.Float)
+                _PlaceInfluence(stage, stage.GetPrimAtPath(s.BonePath(row[0])),
+                                0.15)
             mover = stage.DefinePrim(RIG + "/BindArt", "RigExecSkinMover")
             mover.AddAppliedSchema("RigExecMoverAPI")
             mover.CreateRelationship("rigExec:influences").SetTargets(joints)

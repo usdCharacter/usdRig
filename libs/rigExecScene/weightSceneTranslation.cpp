@@ -14,7 +14,6 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecPlaneBounds,"rigExec:planeBounds")) ((rigExecFalloffProfile,"rigExec:falloffProfile"))
     ((rigExecOperation,"rigExec:operation")) ((rigExecBaseWeight,"rigExec:baseWeight"))
     ((rigExecInputWeights,"rigExec:inputWeights"))
-    ((rigExecSegmentEnd,"rigExec:segmentEnd")) ((rigExecJoint,"RigExecJoint"))
 );
 // allTokens order is the scalar member index.
 TF_DEFINE_PRIVATE_TOKENS(_scalarTokens,
@@ -38,7 +37,7 @@ bool Fail(std::string *error,const std::string &text){if(error)*error=text;retur
 bool Used(int kind,int member) {
     return member==0 || (kind==1 && member>=1 && member<=3) ||
         (kind==2 && (member==4 || member==5)) || (kind==3 && member>=4 && member<=16) ||
-        (kind==4 && ((member>=4 && member<=7) || member>=17)) || ((kind==5 || kind==6) && member>=4 && member<=10);
+        (kind==4 && ((member>=4 && member<=7) || member>=17)) || (kind==5 && member>=4 && member<=10);
 }
 SdfPath Canonical(const RigExecSceneCompileInputs &source,const SdfPath &target) {
     const auto *node=target.IsPrimPath()?source.Node(target):nullptr;
@@ -62,8 +61,7 @@ bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,const SdfP
         record.type=node->fact.type;
         record.kind=record.type=="RigExecStaticWeight"?0:record.type=="RigExecDynamicWeight"?1:
             record.type=="RigExecCombineWeight"?2:record.type=="RigExecSphereWeight"?3:
-            record.type=="RigExecPlaneWeight"?4:record.type=="RigExecCurveWeight"?5:
-            record.type=="RigExecCapsuleWeight"?6:-1;
+            record.type=="RigExecPlaneWeight"?4:record.type=="RigExecCurveWeight"?5:-1;
         if(record.kind<0){Fail(error,"unknown weight object type "+record.type.GetString()+" on "+record.name);return -1;}
         const int index=int(result.records.size());result.indices[who]=index;
         result.records.emplace_back();result.objects.emplace_back();
@@ -156,21 +154,6 @@ bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,const SdfP
             object.hasFalloffSamples = source.Attribute(samples) != nullptr;
             if (object.hasFalloffSamples && !RigExecBindSceneTypedRead(
                 scene, samples, SdfValueTypeNames->FloatArray, &object.falloffSamples, error)) return -1;
-        }
-        if(record.kind==6) {
-            // RigExecCapsuleSegmentEnd over the captured namespace.
-            const auto *r=source.Relationship(who.AppendProperty(_tokens->rigExecSegmentEnd));
-            const SdfPathVector targets=r?r->fact.targets:SdfPathVector();
-            if(targets.size()>1 || (targets.size()==1 && !targets[0].IsPrimPath()))
-                record.staticError=record.name+": rigExec:segmentEnd must name at most one prim";
-            else if(targets.size()==1) object.segmentEnd=targets[0];
-            else if(const auto *parent=source.Node(who.GetParentPath());
-                    parent && parent->fact.type==_tokens->rigExecJoint) {
-                for(const auto &child:parent->fact.children) {
-                    const auto *node=source.Node(child);
-                    if(node && node->fact.active && node->fact.type==_tokens->rigExecJoint){object.segmentEnd=child;break;}
-                }
-            }
         }
         if(record.kind==2 && record.combineMode<0)
             record.staticError=record.name+": unknown rigExec:combineMode "+record.combineToken.GetString();
@@ -294,10 +277,6 @@ bool RigExecResolveSceneWeight(const RigExecSceneDescriptors &scene,const RigExe
         input.axis=token(object.axis,object.axisAttribute,"x");input.bounds=token(object.bounds,object.boundsAttribute,"unbounded");
         const auto placement=placements.find(object.path);input.hasPlacement=placement!=placements.end();
         if(input.hasPlacement)input.placement=placement->second;
-        if(!object.segmentEnd.IsEmpty()) {
-            const auto end=placements.find(object.segmentEnd);
-            if(end!=placements.end()){input.hasSegmentEnd=true;input.segmentEnd=end->second.ExtractTranslation();}
-        }
     }
     *output=std::move(result);return true;
 }
@@ -327,11 +306,6 @@ bool RigExecMakeSceneWeightPacketInputs(const RigExecSceneWeightProgram &program
     auto &volume=result.volume;volume.representation=record.representationToken;volume.rangePolicy=record.rangePolicy;
     const auto frame=baseFrames.find(program.objects[size_t(object)].path);
     if(frame!=baseFrames.end()){volume.hasPlacement=true;volume.placement=frame->second;}
-    const auto &endPath=program.objects[size_t(object)].segmentEnd;
-    if(!endPath.IsEmpty()) {
-        const auto end=baseFrames.find(endPath);
-        if(end!=baseFrames.end()){volume.hasCapsuleEnd=true;volume.capsuleEnd=end->second.Origin();}
-    }
     volume.params.falloffMin=input.scalars[6];volume.params.falloffMax=input.scalars[7];
     volume.params.invert=result.invert;volume.params.strength=result.strength;volume.params.curveData=record.falloffCurve.data();volume.params.curveCount=record.falloffCurve.size();
     if (input.falloffSampleCount) {

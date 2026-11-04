@@ -126,7 +126,7 @@ _RrCandidateOverlay(const RrProgram &program,
     const size_t slot = candidate.slot;
     // An interpolator publication stands where it is met: a weight field's
     // scalar read (oracle or published-only), or a property revision's Float
-    // input connected at `final` to a driven action or AnimatedMaps output,
+    // input connected at `final` to a pose weight or AnimatedMaps output,
     // reads the same-generation interpolator publication in place of the
     // overlay (its step declares the PoseWeight read).
     if (candidate.poseWeight >= 0 && tag == RigExecWireInputTag::Float &&

@@ -273,62 +273,6 @@ TestSphereField()
     }
 }
 
-// Distances to the segment [0, (4,0,0)], computed by hand: a point
-// beside the middle is its perpendicular distance, a point beyond a cap
-// its distance to that end, a point on the axis zero.
-static void
-TestCapsuleField()
-{
-    const GfVec3f end(4, 0, 0);
-    const std::vector<GfVec3f> points = {
-        GfVec3f(2, 0.5f, 0),   // beside the middle: d = 0.5
-        GfVec3f(2, 0, -2),     // beside the middle, farther: d = 2
-        GfVec3f(5, 0, 0),      // beyond the far cap: d = 1
-        GfVec3f(4, 0.6f, 0.8f),// over the far end: d = 1
-        GfVec3f(-0.3f, 0.4f, 0), // beyond the near cap: d = 0.5
-        GfVec3f(1, 0, 0),      // on the axis: d = 0
-        GfVec3f(3, 0, 0)};     // on the axis: d = 0
-    const RigExecFalloffParams p = LinearBand(0.0f, 2.0f);
-    std::vector<float> w;
-    RigExecCapsuleWeightField(points, GfMatrix4d(1.0), end, p, &w);
-    CHECK(w.size() == points.size());
-    CHECK(Near(w[0], 0.75f));
-    CHECK(Near(w[1], 0.0f));
-    CHECK(Near(w[2], 0.5f));
-    CHECK(Near(w[3], 0.5f));
-    CHECK(Near(w[4], 0.75f));
-    CHECK(Near(w[5], 1.0f));
-    CHECK(Near(w[6], 1.0f));
-
-    // A zero-length segment is the sphere about the origin, bit for bit.
-    std::vector<float> sphere;
-    RigExecCapsuleWeightField(points, GfMatrix4d(1.0), GfVec3f(0.0f), p, &w);
-    RigExecSphereWeightField(points, GfMatrix4d(1.0), p, &sphere);
-    CHECK(w == sphere);
-
-    // Placed: the points and the end map into the same local frame. A
-    // capsule at (10,0,0) turned 90 degrees about Z runs along world +Y;
-    // its end, expressed locally, is (4,0,0) again.
-    GfMatrix4d placement(0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1);
-    const GfMatrix4d worldToLocal = placement.GetInverse();
-    GfVec3f localEnd(0.0f);
-    CHECK(RigExecCapsuleLocalEnd(worldToLocal,
-        placement.TransformAffine(GfVec3d(4, 0, 0)), &localEnd));
-    CHECK(Near(localEnd[0], 4.0f) && Near(localEnd[1], 0.0f) &&
-          Near(localEnd[2], 0.0f));
-    const std::vector<GfVec3f> world = {
-        GfVec3f(10.5f, 2, 0),  // beside the middle: d = 0.5
-        GfVec3f(10, 5, 0)};    // beyond the far cap: d = 1
-    RigExecCapsuleWeightField(world, worldToLocal, localEnd, p, &w);
-    CHECK(Near(w[0], 0.75f));
-    CHECK(Near(w[1], 0.5f));
-
-    // A non-finite end is refused rather than measured.
-    const double inf = std::numeric_limits<double>::infinity();
-    CHECK(!RigExecCapsuleLocalEnd(GfMatrix4d(1.0), GfVec3d(inf, 0, 0),
-                                  &localEnd));
-}
-
 static void
 TestPlaneField()
 {
@@ -717,7 +661,6 @@ main()
     TestFalloffWithCurve();
     TestDistanceFunctions();
     TestSphereField();
-    TestCapsuleField();
     TestPlaneField();
     TestPlaneBounds();
     TestCurveField();

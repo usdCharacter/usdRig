@@ -2,7 +2,6 @@
 #ifndef RIGEXEC_WEIGHT_REFERENCE_H
 #define RIGEXEC_WEIGHT_REFERENCE_H
 #include "moverGraphTypes.h"
-#include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usd/common.h"
@@ -63,10 +62,6 @@ struct RigExecWeightReferenceContext {
     std::map<SdfPath, VtVec3fArray> points;
     std::map<SdfPath, SdfPath> canonicalPoints;
     std::map<SdfPath, GfMatrix4d> placements;
-    /// A capsule's segment end, keyed by the capsule: its end provider's
-    /// frame origin in the placement phase, taken from the pose like the
-    /// placement. Absent is a zero-length segment.
-    std::map<SdfPath, GfVec3d> segmentEnds;
     /// Per relationship exact phased answer; an empty box means declared but unavailable.
     std::map<std::pair<SdfPath,TfToken>,VtValue> phasedPoints;
     RigExecWeightReferencePrim GetPrimAtPath(const SdfPath &path) const {

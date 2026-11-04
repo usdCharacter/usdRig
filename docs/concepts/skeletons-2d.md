@@ -1,6 +1,6 @@
 ---
-title: 2D skeletons, binding and driven actions
-summary: Flat cut-out rigs: bones, the skeleton solve, binding artwork to bones, and dials that drive whole action frames.
+title: 2D skeletons, binding and smart-bone step tables
+summary: Flat cut-out rigs: bones, the skeleton solve, binding artwork to bones, and dials whose step tables drive whole action frames.
 order: 72
 ---
 
@@ -122,29 +122,49 @@ rigidly to one bone carries a single weight of 1; a point whose weights sum to
 less than one holds toward its rest position in proportion, so a row of zeros
 keeps the point where it is.
 
-The region a bone owns is a [Capsule Weight](../nodes/capsule_weight.md)
-authored inside it: with no `rigExec:segmentEnd`, its segment runs from the
-bone's origin to the bone's first `RigExecJoint` child (its next bone, or its
-`End` joint), the same rule that places the bone's tip, and its
-`inputs:falloffMin`/`inputs:falloffMax` are the inner and outer radii of the
-tube about that segment. A pin bone, with no joint child, has a zero-length
-segment and its capsule is a sphere about the joint. The capsule's end is read
-as the child's live frame, so it follows a stretched bone in every evaluator.
+The region a bone owns is a [Sphere Weight](../nodes/sphere_weight.md)
+authored inside it and stretched along its segment. For a bone whose first
+`RigExecJoint` child (its next bone, or its `End` joint, the same rule that
+places the bone's tip) sits at `t` in the bone's frame, with length `L = |t|`
+and strength `S`:
 
-The skin's rows are generated from those capsules rather than evaluated live.
+- the sphere sits at the segment's midpoint, its local x along the segment:
+  `rest:tx = L/2` for a bone along +X, or `rest:space` = a rotation about +Z
+  by `atan2(ty, tx)` times a translation by `t/2`;
+- `inputs:scaleX = 1 + L/(2S)` (the scales are divisors), so the off surface
+  sits `S` beyond each joint on the axis and `S` across at the midpoint;
+- `inputs:falloffMin = max(S/4, (L/2) S/(L/2 + S))`, so the fully-on inner
+  ellipse passes through both joints and every point of the segment has
+  weight 1;
+- `inputs:falloffMax = S`.
+
+A pin bone, with no joint child, has an unscaled sphere about the joint with
+`inputs:falloffMin = S/4`. An ellipsoid does not keep a constant distance
+from the segment: beside a joint the off surface sits only
+`S * sqrt(1 - (L/2)^2 / (L/2 + S)^2)` across (0.745 S at `L = 4S`), so wide
+art next to a joint can fall outside both neighbouring spheres; widen
+`inputs:scaleY` or raise the strength where that matters. The sphere's
+placement and shape are values, not a live end frame: whoever edits a bone's
+segment or strength re-places its sphere and regenerates the rows.
+
+The skin's rows are generated from those spheres rather than evaluated live.
 `rigexec.binding.generate_skin_weights(stage, skin_mover, point_indices=None)`
 writes them:
 
 - **Points.** The mover's `rigExec:moves` target is read at Default and
   carried into the rig's asset space by its setup transform.
-- **Fields.** For each influence in `rigExec:influences`, every
-  `RigExecCapsuleWeight` child is measured at its rest placement (no pose is
-  evaluated), with the segment end, `inputs:scaleX/Y/Z`, falloff band and
-  range policy the evaluator uses. Several capsules in one bone sum, clamped
-  to 1; an influence with no capsule contributes 0 and is reported.
+- **Fields.** For each influence in `rigExec:influences`, every direct
+  volume weight child (`RigExecSphereWeight`, `RigExecPlaneWeight` or
+  `RigExecCurveWeight`) is measured at its rest placement (no pose is
+  evaluated) through the evaluator's packet builder, with the
+  `inputs:scaleX/Y/Z`, falloff band, range policy and shape settings the
+  evaluator uses (a sphere's half-axis scales, a plane's axis and bounds, a
+  curve's points read at Default). Several volumes in one bone sum, clamped
+  to 1; an influence with none contributes 0 and is reported
+  (`influences_without_volumes`).
 - **Rows.** Each point's fields are normalised over the influences, and
   `rigExec:jointIndices` index that list, so the influences need not be the
-  skeleton's bones. A point outside every capsule keeps a zero row and holds
+  skeleton's bones. A point outside every volume keeps a zero row and holds
   its rest. A row lists its non-zero influences in influence order, padded
   with index 0 and weight 0; `rigExec:elementSize` is the widest row, at
   least 1.
@@ -155,40 +175,76 @@ writes them:
 
 Only `rigExec:jointIndices`, `rigExec:jointWeights` and `rigExec:elementSize`
 are authored, at the stage's edit target. The rows go stale when a rest or a
-capsule changes, so the authoring tool regenerates them after such an edit. A
-capsule bound as an ordinary mover's `rigExec:weightObject` works as an
-envelope too, in 2D and 3D rigs alike.
+bone's sphere changes, so the authoring tool re-places the sphere and
+regenerates them after such an edit. A sphere bound as an ordinary mover's
+`rigExec:weightObject` works as an envelope too, in 2D and 3D rigs alike.
 
 [skeleton_2d.usda](../examples/skeleton_2d.usda) is a leg bound this way.
 
-## Driven actions
+## Smart-bone step tables
 
-A [Driven Action](../nodes/driven_action.md) maps a dial's angle to a whole
-action frame and publishes values at that frame.
+A smart bone is a dial: its `avars:rz` picks a whole frame of an action whose
+frames 0 to N were recorded at dial angles s_0 to s_N, and each frame carries
+values for other properties (a bone's angle, an opacity, a switch index, a
+corrective shape). RigExec has no node of its own for this. One
+[Animated Maps](../nodes/animated_maps.md) node per action is a step table
+over the dial, and property movers read it.
 
-- **Driver samples.** `rigExec:driverSamples` holds the driver value at
-  frames 0 to N. The frame is the one whose sample is closest to the angle,
-  clamped to [0, N].
-- **Side.** The action serves one side of sample 0 (`rigExec:side`); on the
-  other side, and at sample 0, the frame is 0.
-- **Wrap.** A driver that turns one full revolution wraps an angle outside its
-  range onto the action's side first.
-- **Ties.** Equal distances take the earlier or later frame
-  (`rigExec:frameTies`).
-- **Channels.** Each [Action Channel](../nodes/action_channel.md) child
-  publishes `outputs:value`: in `offset` mode `samples[f] - samples[0]`, for
-  an additive mover; in `value` mode `samples[f]`, for a blend mover whose
-  envelope is the action's `outputs:active`.
-- **Reading outputs.** A reader connects to an output and declares
-  `rigExecReadPhase "final"` to read what the action computed in the same
-  evaluation; see
-  [Connected inputs](how-operators-fire.md#connected-inputs). Undeclared, it
-  reads the authored value. Two interpolators that drive each other form a
-  cycle, which every evaluator sets aside.
+- **The node.** `rigExec:driverAttributes` targets the dial's `avars:rz` at
+  `rigExecReadPhase "final"`, so the table reads the dial after every math
+  mover on it. It has no `rigExec:meshes`: the values are read through
+  connections, not published as primvars.
+- **The rows.** Every [Animated Map](../nodes/animated_map.md) child carries
+  the same slope-0 rows, one per cell of the dial, so each map publishes its
+  `rowCut` for the action frame of the dial angle. A cell holds the angles
+  closest to one sample value; outer cells run to `-FLT_MAX` and `FLT_MAX`,
+  so the end frames hold past the recorded range. Two cells that share a
+  bound both hold it, and the row listed first wins (see
+  [Animated Maps](../nodes/animated_maps.md) for how the bound is rounded so
+  an exact tie keeps its winner).
+- **The side.** An action serves one side of s_0. A gate row first in the
+  table, `[-FLT_MAX, s_0]` with cut 0 for the positive side or `[s_0,
+  FLT_MAX]` for the negative one, keeps the other side and s_0 itself at
+  frame 0.
+- **`weight`.** A map whose cut at frame k is k / N in float: the
+  activations of the [Blend Samples](../nodes/blend_sample.md) of a
+  corrective, whose [Blend Input](../nodes/blend_input.md) connects
+  `inputs:weight` to `weight.outputs:value`.
+- **`active`.** A map that is 0 at frame 0 and 1 on every other frame: the
+  envelope (`inputs:defaultWeight`) of a value channel's blend mover.
+- **Channels.** One map per driven property, with `rigExec:clampOutput`
+  false so that its value can leave [0, 1]. An offset channel's cut is the
+  property's change since frame 0, read by an `add`
+  [Float Math Mover](../nodes/float_math_mover.md) on the property; a value
+  channel's cut is the value itself, read by a `blend` mover whose envelope
+  is `active`. Past the last value the channel holds it.
+- **A full turn.** A dial that turns one revolution reads its angle folded
+  into the action's window, s_0 + posmod(angle - s_0, 360) for the positive
+  side: float math movers (`blend`, `quantize`, `multiply`, `add`) on custom
+  float attributes of the node fold it, and the maps' first input reads the
+  folded attribute at `final`. A second input reads the raw dial and carries
+  one point row at s_0 + 360 (s_0 - 360 for the negative side) whose cut is
+  the difference between the last frame's value and frame 0's, so the dial's
+  own end gives the last frame.
+- **Reading outputs.** A reader declares `rigExecReadPhase "final"` on the
+  connected input to read what the table computed in the same evaluation;
+  see [Connected inputs](how-operators-fire.md#connected-inputs).
+  Undeclared, it reads the map's authored 0. A dial that another action
+  drives is chained through the dial's own property (that action's `add`
+  mover revises it, and this table reads it at `final`), and it settles in
+  one evaluation. Two actions that drive each other's dials form a cycle,
+  which every evaluator sets aside.
+- **Edits.** Rows and `rigExec:clampOutput` are compiled rig identity, so
+  re-recording an action recompiles; turning the dial only re-evaluates.
+  `inputs:enabled` false publishes 0 on every map: offset movers then add
+  nothing and value channels' blends pass the property through.
+
+The authoring tool writes the rows from the recorded samples; RigExec only
+evaluates them, like any other animated map.
 
 ## Evaluation
 
-The skeleton, the skin and the driven action are operations in the one
+The skeleton, the skin and the step tables are operations in the one
 graph that [native, frozen and runtime evaluation share](baked-vs-dynamic.md).
 Their kernels are USD-free headers in `libs/rigExecMath`, the same ones the
 runtime compiles. Topology (point counts, bone order, channel order) is fixed

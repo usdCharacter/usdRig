@@ -183,8 +183,8 @@ float inputs:defaultWeight.connect = </Asset/Rig/Channels/Dial.rigExec:amount>
   at or beneath that prim left it.
 
 A pose interpolator's float output — a pose's `outputs:weight`, an animated
-map's or a driven action's `outputs:value`, a driven action's `outputs:active`
-— follows the same rule for a math mover's float inputs. Undeclared, the
+map's `outputs:value` (a step table's channel value, say) — follows the same
+rule for a math mover's float inputs. Undeclared, the
 connection reads the output's authored value. At `final` it reads what the
 interpolator computed in the same evaluation, and the mover runs after the
 interpolator; two interpolators that drive each other's inputs this way are

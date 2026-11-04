@@ -13,7 +13,6 @@
 #include "parallel.h"
 #include "movers/moverRegistry.h"
 #include "frameExtraction.h"
-#include "capsuleSegment.h"
 #include "solverKernels.h"
 #include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
@@ -1119,7 +1118,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         // position is its element, never a remap.
                         knownCount = static_cast<int>(jointTargets.size());
                         if (!jointElements.empty()) {
-                            return fail(who + ": rigExec:jointElements is not "
+                            return fail(who() + ": rigExec:jointElements is not "
                                               "read by a 2D skeleton; a bone's "
                                               "list position is its element",
                                         {solver.GetPath()});
@@ -1256,12 +1255,8 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     }
 
     compileBlocks.Next("DiscoverValidate.SolverDag");
-    // A RigExecSpaceSwitch whose target is a bone of a RigExecSkeleton2d is
-    // read by that skeleton's translation and never becomes a pose step of
-    // its own. Its sources outside the skeleton are frame inputs of the
-    // skeleton's solve, declared below exactly like its relationship
-    // targets; sources that are bones of the skeleton are read inside the
-    // solve.
+    // A switch on a 2D skeleton's bone is read by that skeleton, not stepped;
+    // its sources outside the skeleton become the solve's frame inputs.
     std::set<SdfPath> skeleton2dBones;
     std::map<SdfPath, SdfPathVector> skeleton2dSwitchSources;
     {
@@ -1483,9 +1478,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     std::vector<RigExecValueOverride> newFalloffLutOverrides;
     std::set<SdfPath> newCurrentPhaseWeights;
     std::set<SdfPath> newVolumeWeightProviders;
-    // The providers capsule weights read their segment end from; seeded so
-    // a capsule ending at a prim nothing else poses still has its frame.
-    std::set<SdfPath> newCapsuleEndProviders;
 
     // Walks a weight object and everything it composes, gathering what
     // the volumetric types need beyond their computeWeightPacket tap.
@@ -1552,24 +1544,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             // curve weight.
             requireTargets(_tokens->rigExecSampleSource, 1,
                            "at most one points source");
-            if (w.GetTypeName() == RigExecCapsuleWeightType()) {
-                std::string why;
-                const SdfPath end = RigExecCapsuleSegmentEnd(w, &why);
-                if (!why.empty()) {
-                    volumeWeightError = why;
-                } else if (!end.IsEmpty()) {
-                    const UsdPrim endPrim = _stage->GetPrimAtPath(end);
-                    if (!endPrim || !_IsFrameProvider(endPrim)) {
-                        volumeWeightError =
-                            weightPath.GetString() + ": rigExec:segmentEnd " +
-                            end.GetString() +
-                            " must name a RigExecJoint, RigExecControl or "
-                            "volume weight";
-                    } else {
-                        newCapsuleEndProviders.insert(end);
-                    }
-                }
-            }
             if (w.GetTypeName() == "RigExecCurveWeight") {
                 SdfPathVector curves;
                 if (const UsdRelationship rel = w.GetRelationship(
@@ -3436,7 +3410,6 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
     for (const SdfPath &path : newJointPaths) seedProvider(path);
     for (const SdfPath &path : newControlPaths) seedProvider(path);
     for (const SdfPath &path : newVolumeWeightProviders) seedProvider(path);
-    for (const SdfPath &path : newCapsuleEndProviders) seedProvider(path);
     const auto seedGeometryProviders = [&](const auto &chains) {
         for (const auto &[target, revisions] : chains)
             for (const _GraphRevision &revision : revisions) {

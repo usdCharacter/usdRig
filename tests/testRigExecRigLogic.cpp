@@ -7,6 +7,7 @@
 // shared kernel driven directly, against the frame-cache worker, and against
 // the .rigexec runtime played over the same timeline, bit for bit.
 #include "rigExec/rigEvaluator.h"
+#include "rigExecBinary/format.h"
 #include "rigExecMath/conditionalTableKernel.h"
 #include "rigExecMath/mlpKernel.h"
 #include "rigExecMath/rbfMethodKernel.h"
@@ -21,6 +22,7 @@
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
 
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -555,8 +557,32 @@ TestMlMover()
 
 const SdfPath kMapsMesh("/Asset/Geom/Brow");
 
-// Two maps over the dial's tx and ty (double) and a float blink, published
-// on the brow mesh; map 0 also drives a sparse morph through a blend input.
+// The map_unclamped bytes of the first animated maps node \p evaluator
+// bakes at frame 1; false when it does not bake or holds no such node.
+bool
+BakedMapUnclamped(RigExecRigEvaluator &evaluator, std::vector<uint8_t> *flags)
+{
+    std::vector<uint8_t> bytes;
+    std::string error;
+    std::unique_ptr<fb::RigExecWireFile> file;
+    if (!RigExecTestBakeAt(evaluator, 1.0, &bytes, &error) ||
+        !RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error) ||
+        !file->pose) {
+        std::printf("    bake: %s\n", error.c_str());
+        return false;
+    }
+    for (const auto &interp : file->pose->poseInterpolators) {
+        if (interp.maps) {
+            *flags = interp.maps->mapUnclamped;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Three maps over the dial's tx and ty (double) and a float blink,
+// published on the brow mesh; map 0 also drives a sparse morph through a
+// blend input. Map 2 is an unclamped step table.
 void
 TestAnimatedMaps()
 {
@@ -588,6 +614,27 @@ TestAnimatedMaps()
                                       "wrinkleBrowRaise");
     // Map 1: the blink alone, steep, clamped to [0, 1].
     const SdfPath squint = maps.AddMap("squint", {2}, {0.2f}, {1}, {2.5f}, {-0.5f});
+    // A clamped-only node bakes no map_unclamped, so its bytes are those
+    // of a bake from before the field existed.
+    {
+        RigExecRigEvaluator clampedOnly(stage, kRig);
+        std::vector<std::string> clampedErrors;
+        std::vector<uint8_t> flags{9};
+        CHECK(clampedOnly.Compile(&clampedErrors) &&
+              BakedMapUnclamped(clampedOnly, &flags) && flags.empty());
+    }
+    // Map 2: a step table, unclamped (rigExec:clampOutput false), slope-0
+    // rows over tx: 30 up to 1 (the first row owns the shared bound), -0.5
+    // beyond, both out to the float limits.
+    const SdfPath step = maps.AddMap("step", {0, 0}, {-FLT_MAX, 1}, {1, FLT_MAX},
+                                     {0, 0}, {30, -0.5f}, "", false);
+    const UsdAttribute stepClamp = stage->GetPrimAtPath(step.GetPrimPath())
+                                       .GetAttribute(TfToken("rigExec:clampOutput"));
+    CHECK(stepClamp && stepClamp.HasAuthoredValue());
+    // The default, clampOutput true, authors nothing.
+    CHECK(!stage->GetPrimAtPath(raise.GetPrimPath())
+               .GetAttribute(TfToken("rigExec:clampOutput"))
+               .HasAuthoredValue());
     RigExecBlendShapeMoverHandle morph =
         builder.NewMoverChain("Brow", kMapsMesh.AppendProperty(TfToken("points")))
             .AddBlendShapeMover("Morph");
@@ -599,6 +646,13 @@ TestAnimatedMaps()
     table.inputCount = 3;
     CHECK(table.AddMap({{0, 0, 1, 1, 0}, {0, 1, 3, -0.5, 1.5}, {1, 2, 0, 0.25, 0}}));
     CHECK(table.AddMap({{2, 0.2f, 1, 2.5f, -0.5f}}));
+    CHECK(table.AddMap({{0, -FLT_MAX, 1, 0, 30}, {0, 1, FLT_MAX, 0, -0.5}},
+                       false));
+    CHECK(table.Clamps(0) && table.Clamps(1) && !table.Clamps(2));
+    // The same rows clamped are a different table, and evaluate in [0, 1].
+    RigExecAnimatedMapsTable clampedTable = table;
+    clampedTable.clamp[2] = 1;
+    CHECK(!(clampedTable == table));
 
     RigExecRigEvaluator evaluator(stage, kRig);
     std::vector<std::string> errors;
@@ -609,23 +663,32 @@ TestAnimatedMaps()
     }
     CHECK(evaluator.GetSkippedOperations().empty());
     const std::vector<SdfPath> primvars = evaluator.GetAnimatedMapPrimvars();
-    CHECK(primvars.size() == 2);
+    CHECK(primvars.size() == 3);
     const SdfPath raisePrimvar = kMapsMesh.AppendProperty(TfToken("primvars:wrinkleBrowRaise"));
     const SdfPath squintPrimvar = kMapsMesh.AppendProperty(TfToken("primvars:squint"));
-    CHECK(primvars.size() == 2 && primvars[0] == squintPrimvar &&
-          primvars[1] == raisePrimvar);
-    bool sawClamp = false, sawGroup = false;
+    const SdfPath stepPrimvar = kMapsMesh.AppendProperty(TfToken("primvars:step"));
+    CHECK(primvars.size() == 3 && primvars[0] == squintPrimvar &&
+          primvars[1] == stepPrimvar && primvars[2] == raisePrimvar);
+    bool sawClamp = false, sawGroup = false, sawHigh = false, sawLow = false;
     for (size_t f = 0; f < 4; ++f) {
         const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode(double(f + 1)));
         CHECK(pose.valid);
         const double inputs[3] = {kKeys[f].dialX, kKeys[f].dialY, double(blinks[f])};
-        double values[2];
+        double values[3], clampedValues[3];
         RigExecAnimatedMapsEvaluate(table, inputs, values);
+        RigExecAnimatedMapsEvaluate(clampedTable, inputs, clampedValues);
         sawClamp = sawClamp || values[1] == 1.0;
         sawGroup = sawGroup || (inputs[0] > 1.0 && inputs[0] <= 3.0);
-        const SdfPath outputs[2] = {raise, squint};
-        const SdfPath meshPrimvars[2] = {raisePrimvar, squintPrimvar};
-        for (int m = 0; m < 2; ++m) {
+        // The step map publishes its cut as is; clamped it would not.
+        const double expectedStep = inputs[0] <= 1.0 ? 30.0 : -0.5;
+        CHECK(values[2] == expectedStep);
+        CHECK(clampedValues[2] == std::max(0.0, std::min(expectedStep, 1.0)));
+        CHECK(values[0] == clampedValues[0] && values[1] == clampedValues[1]);
+        sawHigh = sawHigh || values[2] == 30.0;
+        sawLow = sawLow || values[2] == -0.5;
+        const SdfPath outputs[3] = {raise, squint, step};
+        const SdfPath meshPrimvars[3] = {raisePrimvar, squintPrimvar, stepPrimvar};
+        for (int m = 0; m < 3; ++m) {
             const double got = Published(pose, outputs[m]);
             if (!(std::abs(got - values[m]) <= 1e-6)) {
                 ++failures;
@@ -644,8 +707,34 @@ TestAnimatedMaps()
                   moved[0] == base[0] && moved[1] == base[1]);
         }
     }
-    CHECK(sawClamp && sawGroup);
+    CHECK(sawClamp && sawGroup && sawHigh && sawLow);
     CheckEvaluators(evaluator, stage, "maps");
+    // The bake carries one flag per map, 1 on the unclamped step map.
+    {
+        std::vector<uint8_t> flags;
+        CHECK(BakedMapUnclamped(evaluator, &flags) &&
+              flags == std::vector<uint8_t>({0, 0, 1}));
+    }
+
+    // rigExec:clampOutput is compiled rig identity: a flip recompiles and
+    // the step map clamps (30 -> 1 at frame 1, -0.5 -> 0 at frame 2), and
+    // flipping it back restores the unclamped values.
+    {
+        const RigExecRigPose before = evaluator.Evaluate(UsdTimeCode(1.0));
+        const size_t signature = evaluator.GetCompiledRigSignature();
+        CHECK(Published(before, step) == 30.0);
+        stepClamp.Set(true);
+        const RigExecRigPose high = evaluator.Evaluate(UsdTimeCode(1.0));
+        CHECK(evaluator.GetCompiledRigSignature() != signature);
+        CHECK(Published(high, step) == 1.0 && Published(high, stepPrimvar) == 1.0);
+        const RigExecRigPose low = evaluator.Evaluate(UsdTimeCode(2.0));
+        CHECK(Published(low, step) == 0.0);
+        CheckEvaluators(evaluator, stage, "maps clamped");
+        stepClamp.Set(false);
+        const RigExecRigPose back = evaluator.Evaluate(UsdTimeCode(2.0));
+        CHECK(evaluator.GetCompiledRigSignature() == signature);
+        CHECK(Published(back, step) == -0.5);
+    }
 
     // A row edit is compiled rig identity; a disabled node publishes zeros.
     stage->GetPrimAtPath(raise.GetPrimPath()).GetAttribute(TfToken("rigExec:rowCut"))
@@ -655,6 +744,10 @@ TestAnimatedMaps()
     maps.SetEnabled(false);
     const RigExecRigPose off = evaluator.Evaluate(UsdTimeCode(2.0));
     CHECK(Published(off, raise) == 0.0 && Published(off, raisePrimvar) == 0.0);
+    // Unclamped maps publish zero too, at either step.
+    CHECK(Published(off, step) == 0.0 && Published(off, stepPrimvar) == 0.0);
+    const RigExecRigPose offHigh = evaluator.Evaluate(UsdTimeCode(1.0));
+    CHECK(Published(offHigh, step) == 0.0);
 
     // A row naming an input that does not exist sets the node aside alone.
     maps.SetEnabled(true);

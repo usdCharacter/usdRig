@@ -564,19 +564,16 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// carry channel keys on chunks and read those weights at each chunk.
 /// Format 30 admits Range DQ skins and independent Range status summaries.
 ///
-/// Format 28 adds 2D skeletons, driven actions, bone groups and capsule
-/// weights: Solver.skeleton2d (a RigExecSkeleton2d over nested RigExecJoint
+/// Format 28 adds 2D skeletons, unclamped animated maps and scalar primvar
+/// chains: Solver.skeleton2d (a RigExecSkeleton2d over nested RigExecJoint
 /// bones with RigExecBone2dAPI: the per-bone setup in solve order, child-joint
 /// tips, space-switch parent spaces, target candidates, control bones and
-/// factors, bone groups, and its channel and selector inputs; its start frame
-/// is the row's start and its outside parent spaces are the row's controls),
-/// PoseInterpolator.driven_action (a RigExecDrivenAction's driver samples,
-/// side, tie rule and channel samples), File.scalar_primvar_chains (the
-/// property chains published as constant primvars), and the capsule weight's
-/// segment end: WeightObject.segment_end_slot (the provider whose frame origin
-/// ends a RigExecCapsuleWeight's segment, read per run) and
-/// WeightField.segment_ends (those slots, read in the field's placement
-/// phase). Older files hold none of them.
+/// factors, bone groups (RigExecBone2dGroupAPI), and its channel and selector
+/// inputs; its start frame is the row's start and its outside parent spaces
+/// are the row's controls), AnimatedMaps.map_unclamped (one byte per map, 1
+/// where rigExec:clampOutput is false; absent when every map clamps) and
+/// File.scalar_primvar_chains (the property chains published as constant
+/// primvars). Older files hold none of them.
 inline constexpr uint32_t RigExecFormatVersion = 30;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.

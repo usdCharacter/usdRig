@@ -26,9 +26,8 @@ starting its workflow, and keep this list current when adding or changing skills
   privately. The header-only `*Kernel.h` files here (pose, provider, and
   blend-layout arithmetic among them) also compile into the USD-free
   runtime; keep them free of `pxr/` and `rigExecGraph` includes.
-  `skeleton2dKernel.h` and `drivenActionKernel.h` are the 2D skeleton solve
-  and the driven-action frame search; their rules without a public source
-  are listed in `docs/references.md`.
+  `skeleton2dKernel.h` is the 2D skeleton solve; its rules without a public
+  source are listed in `docs/references.md`.
 - `libs/rigExecGraph`: the USD-free op scheduler. The archive is
   `opGraph.cpp` only; the other headers here (typed op values, provider op
   records and their interpreter, window history) are header-only and also
@@ -112,8 +111,8 @@ starting its workflow, and keep this list current when adding or changing skills
   `python/rigexec/imaging.py` reads what the displayed generation published
   (set the time first). 2D artwork binds through a `RigExecSkinMover` with
   authored `rigExec:jointIndices`/`rigExec:jointWeights`, like 3D skins;
-  `skeleton2dTranslation` and `drivenActionTranslation` in
-  `libs/rigExecScene` translate the 2D skeleton and driven action.
+  `skeleton2dTranslation` in `libs/rigExecScene` translates the 2D
+  skeleton.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
   `rigExecRuntime` links `rigExecBinary` and `rigExecGraph` and no OpenUSD

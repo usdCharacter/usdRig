@@ -20,7 +20,7 @@ using Input = RigExecExecCheckInput;
 const std::map<std::string,TfToken,std::less<>> _tokens = [] {
     std::map<std::string,TfToken,std::less<>> result;
     const char *names[] = {
-        "computeBasePointFrame","computePointFrame","computeRestFrame","computePointFrameArray","computeWeightPacket","computeFalloffLut","computeSegmentEnd",
+        "computeBasePointFrame","computePointFrame","computeRestFrame","computePointFrameArray","computeWeightPacket","computeFalloffLut",
         "posed:space","posed:defaultSpace","parent:defaultSpace","parent:space",
         "avars:tx","avars:ty","avars:tz","avars:sx","avars:sy","avars:sz","avars:rx","avars:ry","avars:rz","avars:rspin","avars:unitScaleFactor","avars:rotationSign","avars:rotationOrder",
         "rest:space","rest:tx","rest:ty","rest:tz","rest:rx","rest:ry","rest:rz",
@@ -360,16 +360,8 @@ Input WeightInputs(const B &b, int index)
         Attr(in,path,"rigExec:combineMode",VtValue(w.combineMode));
         Leaf(in,b,path,"inputs:strength",w.strength); Leaf(in,b,path,"inputs:invert",w.invert);
         for (const int input : w.inputs) Put(in,b.weightObjects[size_t(input)].path,"computeWeightPacket",VtValue(b.weightPackets[size_t(input)]));
-    } else if (w.type == "RigExecSphereWeight" || w.type == "RigExecPlaneWeight" || w.type == "RigExecCurveWeight" ||
-               w.type == "RigExecCapsuleWeight") {
+    } else if (w.type == "RigExecSphereWeight" || w.type == "RigExecPlaneWeight" || w.type == "RigExecCurveWeight") {
         if (w.providerSlot >= 0) Put(in,path,"computePointFrame",VtValue(b.base[b.baseLast[size_t(w.providerSlot)]]));
-        if (w.type == "RigExecCapsuleWeight") {
-            // The compiled end, in the placement's (base) phase; none is an
-            // invalid frame, a zero-length segment.
-            RigExecPointFrame end; end.flags = 0;
-            if (w.segmentEndSlot >= 0) end = b.base[b.baseLast[size_t(w.segmentEndSlot)]];
-            Put(in,path,"computeSegmentEnd",VtValue(end));
-        }
         RigExecFalloffLut lut; lut.samples = w.falloffCurve;
         if (w.falloffSamplesLeaf >= 0) {
             const VtFloatArray samples = w.pointLeaves.Value<VtFloatArray>(

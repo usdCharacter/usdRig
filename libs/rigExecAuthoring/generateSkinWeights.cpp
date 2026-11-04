@@ -1,9 +1,9 @@
 #include "generateSkinWeights.h"
 #include "rigBuilder.h"
 
-#include "rigExec/capsuleSegment.h"
 // _BakeFalloffLut: the falloff table compile bakes, so a generated field
-// remaps distances exactly as the evaluated capsule does.
+// remaps distances exactly as the evaluated volume does; _IsVolumeWeightType:
+// the volume weight types compile places.
 #include "rigExec/rigEvaluatorInternal.h"
 #include "rigExec/weightPackets.h"
 #include "rigExecMath/pointFrame.h"
@@ -47,8 +47,25 @@ const TfToken _tStrength("inputs:strength");
 const TfToken _tScaleX("inputs:scaleX");
 const TfToken _tScaleY("inputs:scaleY");
 const TfToken _tScaleZ("inputs:scaleZ");
+const TfToken _tScaleXPos("inputs:scaleXPos");
+const TfToken _tScaleYPos("inputs:scaleYPos");
+const TfToken _tScaleZPos("inputs:scaleZPos");
+const TfToken _tScaleXNeg("inputs:scaleXNeg");
+const TfToken _tScaleYNeg("inputs:scaleYNeg");
+const TfToken _tScaleZNeg("inputs:scaleZNeg");
+const TfToken _tPlaneAxis("rigExec:planeAxis");
+const TfToken _tPlaneBounds("rigExec:planeBounds");
+const TfToken _tExtentU("inputs:extentU");
+const TfToken _tExtentV("inputs:extentV");
+const TfToken _tCurve("rigExec:curve");
+const TfToken _tSphereType("RigExecSphereWeight");
+const TfToken _tPlaneType("RigExecPlaneWeight");
+const TfToken _tCurveType("RigExecCurveWeight");
 const TfToken _tDense("dense");
 const TfToken _tClamp("clamp");
+const TfToken _tY("y");
+const TfToken _tUnbounded("unbounded");
+const TfToken _tBounded("bounded");
 
 using _Row = std::vector<std::pair<int, float>>;
 
@@ -98,57 +115,102 @@ _RigidRest(const UsdPrim &prim, const char *what)
     return rest;
 }
 
-// One capsule's field over \p points (asset space), as the evaluator's
-// packet builder measures it: the capsule placed at its rest frame, its
-// segment end at the end provider's rest origin, scales and falloff read
-// at Default, the range policy applied.
-std::vector<float>
-_CapsuleField(const UsdStagePtr &stage, const UsdPrim &capsule,
-              const std::vector<GfVec3f> &points)
+// A curve weight's one rigExec:curve points source at Default, carried into
+// asset space by its own setup transform, as the skin's points are: the
+// schema reads both in the same space.
+std::vector<GfVec3f>
+_CurvePoints(const UsdStagePtr &stage, const UsdPrim &volume,
+             const SdfPath &assetPath)
 {
-    const std::string who = capsule.GetPath().GetString();
+    const std::string who = volume.GetPath().GetString();
+    const SdfPathVector curves = _Targets(volume, _tCurve);
+    if (curves.size() != 1) {
+        throw std::invalid_argument(
+            who + ": rigExec:curve must name exactly one points source");
+    }
+    const SdfPath pointsPath = curves[0].IsPropertyPath()
+                                   ? curves[0]
+                                   : curves[0].AppendProperty(_tPoints);
+    VtVec3fArray raw;
+    const UsdAttribute attr = stage->GetAttributeAtPath(pointsPath);
+    if (!attr || attr.GetTypeName() != SdfValueTypeNames->Point3fArray ||
+        !attr.Get(&raw, UsdTimeCode::Default())) {
+        throw std::invalid_argument(
+            who + ": rigExec:curve target " + curves[0].GetString() +
+            " has no point3f[] value at Default");
+    }
+    GfMatrix4d toAsset(1.0), fromAsset(1.0);
+    SdfPathVector structure;
+    std::string why;
+    if (!RigExecSetupTransform(RigExecStageXformReader{get_pointer(stage)},
+                               pointsPath.GetPrimPath(), assetPath, &toAsset,
+                               &fromAsset, &structure, &why)) {
+        throw std::runtime_error(who + ": rigExec:curve: " + why);
+    }
+    std::vector<GfVec3f> points(raw.size());
+    for (size_t p = 0; p < raw.size(); ++p) {
+        points[p] = GfVec3f(toAsset.Transform(GfVec3d(raw[p])));
+    }
+    return points;
+}
+
+// One volume weight's field over \p points (asset space), as the
+// evaluator's packet builder measures it: the volume placed at its rest
+// frame, its falloff, scales and shape settings read at Default, the range
+// policy applied. Every RigExecVolumeWeight type goes through the one
+// builder, RigExecBuildVolumeWeightPacket, by its type name.
+std::vector<float>
+_VolumeField(const UsdStagePtr &stage, const UsdPrim &volume,
+             const SdfPath &assetPath, const std::vector<GfVec3f> &points)
+{
+    const std::string who = volume.GetPath().GetString();
+    const TfToken type = volume.GetTypeName();
     RigExecVolumeWeightInputs inputs;
-    inputs.representation = _Token(capsule, _tRepresentation, _tDense);
-    inputs.rangePolicy = _Token(capsule, _tRangePolicy, _tClamp);
-    const GfMatrix4d rest = _RigidRest(capsule, "capsule");
+    inputs.representation = _Token(volume, _tRepresentation, _tDense);
+    inputs.rangePolicy = _Token(volume, _tRangePolicy, _tClamp);
+    const GfMatrix4d rest = _RigidRest(volume, "volume weight");
     const RigExecPointFrame identity;
     for (size_t i = 0; i < identity.points.size(); ++i) {
         inputs.placement.points[i] = rest.Transform(identity.points[i]);
     }
     inputs.hasPlacement = true;
-    inputs.params.falloffMin = _Float(capsule, _tFalloffMin, 0.0f);
-    inputs.params.falloffMax = _Float(capsule, _tFalloffMax, 1.0f);
-    inputs.params.invert = _Float(capsule, _tInvert, 0.0f);
-    inputs.params.strength = _Float(capsule, _tStrength, 1.0f);
-    inputs.params.curve = evaluatorDetail::_BakeFalloffLut(capsule);
-    inputs.scales = GfVec3f(_Float(capsule, _tScaleX, 1.0f),
-                            _Float(capsule, _tScaleY, 1.0f),
-                            _Float(capsule, _tScaleZ, 1.0f));
-    std::string endError;
-    const SdfPath end = RigExecCapsuleSegmentEnd(capsule, &endError);
-    if (!endError.empty()) {
-        throw std::invalid_argument(endError);
-    }
-    if (!end.IsEmpty()) {
-        const UsdPrim endPrim = stage->GetPrimAtPath(end);
-        if (!endPrim) {
-            throw std::invalid_argument(
-                who + ": rigExec:segmentEnd target " + end.GetString() +
-                " does not exist");
+    inputs.params.falloffMin = _Float(volume, _tFalloffMin, 0.0f);
+    inputs.params.falloffMax = _Float(volume, _tFalloffMax, 1.0f);
+    inputs.params.invert = _Float(volume, _tInvert, 0.0f);
+    inputs.params.strength = _Float(volume, _tStrength, 1.0f);
+    inputs.params.curve = evaluatorDetail::_BakeFalloffLut(volume);
+    inputs.scales = GfVec3f(_Float(volume, _tScaleX, 1.0f),
+                            _Float(volume, _tScaleY, 1.0f),
+                            _Float(volume, _tScaleZ, 1.0f));
+    std::vector<GfVec3f> curve;
+    if (type == _tSphereType) {
+        inputs.positiveScales = GfVec3f(_Float(volume, _tScaleXPos, 1.0f),
+                                        _Float(volume, _tScaleYPos, 1.0f),
+                                        _Float(volume, _tScaleZPos, 1.0f));
+        inputs.negativeScales = GfVec3f(_Float(volume, _tScaleXNeg, 1.0f),
+                                        _Float(volume, _tScaleYNeg, 1.0f),
+                                        _Float(volume, _tScaleZNeg, 1.0f));
+    } else if (type == _tPlaneType) {
+        inputs.planeAxis = _Token(volume, _tPlaneAxis, _tY);
+        inputs.planeBounds = _Token(volume, _tPlaneBounds, _tUnbounded);
+        if (inputs.planeBounds == _tBounded) {
+            inputs.extentU = _Float(volume, _tExtentU, 1.0f);
+            inputs.extentV = _Float(volume, _tExtentV, 1.0f);
         }
-        inputs.capsuleEnd = _RigidRest(endPrim, "segment end").ExtractTranslation();
-        inputs.hasCapsuleEnd = true;
+    } else if (type == _tCurveType) {
+        curve = _CurvePoints(stage, volume, assetPath);
     }
-    // The skin's own points are the sampled domain, whatever the capsule's
+    // The skin's own points are the sampled domain, whatever the volume's
     // rigExec:weightTarget or rigExec:sampleSource name for an envelope.
     inputs.usePointViews = true;
     inputs.targetView = RigExecWeightPointView{points.data(), points.size()};
-    RigExecWeightPacket packet =
-        RigExecBuildVolumeWeightPacket(RigExecCapsuleWeightType(), inputs);
+    inputs.curveView = RigExecWeightPointView{curve.data(), curve.size()};
+    RigExecWeightPacket packet = RigExecBuildVolumeWeightPacket(type, inputs);
     if (!packet.valid || packet.values.size() != points.size()) {
         throw std::runtime_error(
-            who + ": the capsule produces no field (check its falloff band, "
-            "scales, representation and range policy)");
+            who + ": the volume weight produces no field (check its falloff "
+            "band, scales, representation, range policy and shape "
+            "settings)");
     }
     return std::move(packet.values);
 }
@@ -228,7 +290,7 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         result.rowsWritten = count;
     }
 
-    // Each influence's summed capsule field, point-major.
+    // Each influence's summed volume field, point-major.
     const SdfPathVector influences = _Targets(mover, _tInfluences);
     if (influences.empty()) {
         throw std::invalid_argument(
@@ -236,7 +298,7 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
     }
     const size_t width = influences.size();
     std::vector<double> fields(count * width, 0.0);
-    const TfToken &capsuleType = RigExecCapsuleWeightType();
+    const SdfPath assetPath = root.GetPath().GetParentPath();
     for (size_t j = 0; j < width; ++j) {
         const UsdPrim influence = stage->GetPrimAtPath(influences[j]);
         if (!influence) {
@@ -246,16 +308,19 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         }
         bool owns = false;
         for (const UsdPrim &child : influence.GetChildren()) {
-            if (child.GetTypeName() != capsuleType) continue;
+            if (!evaluatorDetail::_IsVolumeWeightType(child.GetTypeName())) {
+                continue;
+            }
             owns = true;
             if (count == 0) continue;  // no point to measure
-            const std::vector<float> field = _CapsuleField(stage, child, points);
+            const std::vector<float> field =
+                _VolumeField(stage, child, assetPath, points);
             for (size_t p = 0; p < count; ++p) {
                 fields[p * width + j] += double(field[p]);
             }
         }
         if (!owns) {
-            result.influencesWithoutCapsules.push_back(influences[j]);
+            result.influencesWithoutVolumes.push_back(influences[j]);
         }
     }
 

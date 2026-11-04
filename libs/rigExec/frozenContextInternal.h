@@ -236,7 +236,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((dynamicWeight, "RigExecDynamicWeight"))
     ((combineWeight, "RigExecCombineWeight"))
     ((sphereWeight, "RigExecSphereWeight"))
-    ((capsuleWeight, "RigExecCapsuleWeight"))
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
     ((targetPointsKey, "frozenWeight:targetPoints"))

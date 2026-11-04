@@ -63,7 +63,6 @@ const TfToken _kGeoSparse("sparse");
 const TfToken _kGeoCombineWeight("RigExecCombineWeight");
 const TfToken _kGeoPlaneWeight("RigExecPlaneWeight");
 const TfToken _kGeoSphereWeight("RigExecSphereWeight");
-const TfToken _kGeoCapsuleWeight("RigExecCapsuleWeight");
 const TfToken _kGeoCurveWeight("RigExecCurveWeight");
 const TfToken _kGeoDynamicWeight("RigExecDynamicWeight");
 const TfToken _kGeoWeightObject("rigExec:weightObject");
@@ -76,7 +75,7 @@ const TfToken _kGeoInputsDefaultWeight("inputs:defaultWeight");
 const TfToken _kGeoSmoothProfile("smooth");
 
 
-bool IsVolume(const TfToken &t) { return t == _kGeoPlaneWeight || t == _kGeoSphereWeight || t == _kGeoCurveWeight || t == _kGeoCapsuleWeight; }
+bool IsVolume(const TfToken &t) { return t == _kGeoPlaneWeight || t == _kGeoSphereWeight || t == _kGeoCurveWeight; }
 const TfToken _kGeoStaticWeight("RigExecStaticWeight");
 bool IsWeightObject(const TfToken &t) { return IsVolume(t) || t == _kGeoCombineWeight || t == _kGeoDynamicWeight || t == _kGeoStaticWeight; }
 float ReadResolved(const RigExecWeightReferencePrim &p, const TfToken &name, float fallback, UsdTimeCode) {
@@ -290,8 +289,8 @@ ResolveVolume(
         return true;
     }
 
-    // Sphere, capsule and curve take the per-axis divisors, folded into
-    // the matrix so the hot loop stays one transform.
+    // Sphere and curve both take the per-axis divisors, folded into the
+    // matrix so the hot loop stays one transform.
     const float sx = readFloat(_kGeoScaleX, 1.0f);
     const float sy = readFloat(_kGeoScaleY, 1.0f);
     const float sz = readFloat(_kGeoScaleZ, 1.0f);
@@ -318,20 +317,6 @@ ResolveVolume(
         }
         RigExecSphereWeightField(samplePoints, worldToLocal, params, weights,
                                  positiveScales, negativeScales);
-        return true;
-    }
-    if (typeName == _kGeoCapsuleWeight) {
-        // The end is taken from the pose, as the placement is: the oracle
-        // checks the field, not the frame chain.
-        GfVec3f localEnd(0.0f);
-        const auto end = context.segmentEnds.find(prim.GetPath());
-        if (end != context.segmentEnds.end() &&
-            !RigExecCapsuleLocalEnd(worldToLocal, end->second, &localEnd)) {
-            *error = who() + ": capsule segment end is not finite";
-            return false;
-        }
-        RigExecCapsuleWeightField(samplePoints, worldToLocal, localEnd,
-                                  params, weights);
         return true;
     }
     if (typeName == _kGeoCurveWeight) {

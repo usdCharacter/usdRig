@@ -1765,13 +1765,15 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
         d::LocalPosition(effSetup, eff, i, ws);
         d::Compose(effSetup, eff, i, ws);
     }
-    // Locks solve after keys and action offsets compose, so a lock holds.
+    // Locks solve after keys and property-mover offsets compose, so a lock
+    // holds.
     for (size_t k = 0; k < count; ++k) {
         if (eff[k].lock && ws.active[k]) {
             d::SolveLock(effSetup, eff, count, k, ws);
         }
     }
-    // Targets solve after locks, so a target tracks through driven actions.
+    // Targets solve after locks, so a target tracks through mover-driven
+    // channels.
     for (size_t k = 0; k < count; ++k) {
         d::SolveTarget(effSetup, eff, count, k, extra, ws);
     }

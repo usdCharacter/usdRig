@@ -595,6 +595,9 @@ table AnimatedMaps {
   row_cut: [double];
   /// The map count plus one offsets into the rows.
   map_begin: [uint];
+  /// Format 28: one byte per map, 1 where rigExec:clampOutput is false;
+  /// absent: every map clamped.
+  map_unclamped: [ubyte];
 }
 table PoseInterpolator {
   path: uint;
@@ -630,27 +633,8 @@ table PoseInterpolator {
   /// primvar, and the map (an index into pose_slots) each one copies.
   primvar_slots: [int];
   primvar_sources: [int];
-  /// Format 27: present for a RigExecDrivenAction, whose action-frame search
-  /// replaces every solve; its one value input is the driver.
-  driven_action: DrivenAction;
 }
-/// Format 27. RigExecDrivenAction: driver samples, side, wrap, tie rule and
-/// each output's samples. Outputs are frame, weight, active, then one value
-/// per channel.
-table DrivenAction {
-  driver: [double];
-  /// -1, 0, +1 (authored rigExec:side, else from the samples).
-  side: byte;
-  full_turn: bool;
-  /// rigExec:frameTies == later.
-  ties_later: bool;
-  /// The channel count plus one offsets into channel_samples.
-  channel_begin: [uint];
-  channel_samples: [double];
-  /// 1 offset, 0 value.
-  channel_offset: [ubyte];
-}
-/// Format 27. RigExecSkeleton2d: structural setup per bone in solve order
+/// Format 28. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests
 /// (the solver rest route).
 table Skeleton2d {
@@ -820,7 +804,7 @@ table Solver {
   lower_scale: Input;
   soft_distance: Input;
   limb_twist: Input;
-  /// Format 27: present for a RigExecSkeleton2d.
+  /// Format 28: present for a RigExecSkeleton2d.
   skeleton2d: Skeleton2d;
 }
 table Constraint {
@@ -1539,11 +1523,6 @@ table WeightObject {
   /// from an existing attribute whose sampled Get fails.
   oracle_plane_axis_slot: int = -1;
   oracle_plane_bounds_slot: int = -1;
-  /// A RigExecCapsuleWeight's segment end: the provider slot whose frame
-  /// origin ends the segment, read in the same phase as provider_slot (a
-  /// runtime frame read, so the segment follows an animated end); -1 for a
-  /// zero-length segment and for every other type.
-  segment_end_slot: int = -1;
 }
 enum WeightFieldScalarMember : ubyte {
   DefaultWeight = 0, Driver, Scale, Bias, Strength, Invert, FalloffMin, FalloffMax,
@@ -1566,10 +1545,6 @@ table WeightField {
   scalar_objects: [int];
   scalar_members: [WeightFieldScalarMember];
   point_reads: [WeightFieldPointRead] (native_inline);
-  /// The closure's capsule segment-end provider slots, sorted: each read as
-  /// its frame in placement_phase (PoseBase or PoseFin of the slot's last
-  /// version), beside the volumes' WeightFrames.
-  segment_ends: [int];
 }
 
 table DomainGeometry {
@@ -1867,7 +1842,7 @@ table File {
   bool_arrays: [BoolArray] (native_inline);
   /// Format 25: the windowed operations, in program order.
   windowed_ops: [WindowedOp] (native_inline);
-  /// Format 27: the property chains (indices into property_chains) whose
+  /// Format 28: the property chains (indices into property_chains) whose
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   scalar_primvar_chains: [uint];

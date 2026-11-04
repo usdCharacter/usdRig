@@ -48,9 +48,9 @@ its tip is its base.
 Channels: avars:tx and avars:ty move the bone in its parent's frame,
 avars:rz turns it (degrees, as a delta from the setup angle) and
 avars:sx scales it along the bone, carrying the tip with it. A channel
-that property movers revise (driven actions) is read as that chain's
-result. The flip, lock, offset and target-index channels below are
-animated; the index channel and the lock references are held.
+that property movers revise is read as that chain's result. The flip,
+lock, offset and target-index channels below are animated; the index
+channel and the lock references are held.
 
 Evaluation never clamps keyed or driven angles to the limits; limits
 bound the lock solve, and authoring tools clamp the values they
@@ -67,10 +67,10 @@ child bone's rest is a value, so editing it re-solves without recompiling; an
 
 Animation lives on the joint's `avars`: `avars:tx` and `avars:ty` move the
 bone in its parent's frame, `avars:rz` turns it (degrees, as a delta from the
-setup angle) and `avars:sx` scales it along the bone. A channel that a property
-mover or a driven action revises is read as that chain's result. The flip, lock,
-offset and target-index channels are animated too; the index channel and the
-lock references are held (stepped) between keys. An animated parent is a
+setup angle) and `avars:sx` scales it along the bone. A channel that property
+movers revise is read as that chain's result. The flip, lock, offset and
+target-index channels are animated too; the index channel and the lock
+references are held (stepped) between keys. An animated parent is a
 [Space Switch](space_switch.md) on the bone, read by the skeleton.
 
 `bone2d:colorTag`, `bone2d:showLabel` and `bone2d:shy` are display hints for

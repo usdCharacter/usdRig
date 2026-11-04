@@ -7,15 +7,18 @@
     Three nested bones -- Hip, Thigh and Shin, each the first joint child of
     the one before, Shin ending at its End joint -- and a pin bone Foot with
     no joint child. One RigExecSkeleton2d solves them in the asset space's
-    XY plane. Each bone holds a RigExecCapsuleWeight with no
-    rigExec:segmentEnd, so its segment runs from the bone to its first
-    joint child (Foot's capsule is a sphere). The leg mesh is bound by one
-    RigExecSkinMover whose rigExec:jointIndices / rigExec:jointWeights were
-    written by rigexec.binding.generate_skin_weights from those capsules:
-    regenerate them after moving a bone's rest or a capsule's radius. The
-    small tab quad off to the side lies outside every capsule, so its rows
-    are zero and it holds still. Turn on Display -> Display Purposes ->
-    Guide to see the capsules.
+    XY plane. Each bone holds a RigExecSphereWeight stretched along its
+    segment to its first joint child: at the midpoint (rest:tx = L/2),
+    inputs:scaleX = 1 + L/(2S), inputs:falloffMin = max(S/4, (L/2) S/(L/2 +
+    S)) and inputs:falloffMax = S for a segment of length L and strength S
+    (Foot's is an unscaled sphere about its origin). The leg mesh is bound
+    by one RigExecSkinMover whose rigExec:jointIndices /
+    rigExec:jointWeights were written by
+    rigexec.binding.generate_skin_weights from those spheres: re-place a
+    sphere and regenerate them after moving a bone's rest or changing its
+    strength. The small tab quad off to the side lies outside every
+    sphere, so its rows are zero and it holds still. Turn on Display ->
+    Display Purposes -> Guide to see the spheres.
     """
     endTimeCode = 1024
     metersPerUnit = 0.01
@@ -83,24 +86,30 @@ def Xform "Skeleton2dAsset"
                             matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1) )
                         }
 
-                        def RigExecCapsuleWeight "Influence"
+                        def RigExecSphereWeight "Influence"
                         {
                             float inputs:falloffMax = 0.45
-                            float inputs:falloffMin = 0.1
+                            float inputs:falloffMin = 0.23684211
+                            float inputs:scaleX = 2.1111112
+                            double rest:tx = 0.5
                         }
                     }
 
-                    def RigExecCapsuleWeight "Influence"
+                    def RigExecSphereWeight "Influence"
                     {
                         float inputs:falloffMax = 0.45
-                        float inputs:falloffMin = 0.1
+                        float inputs:falloffMin = 0.23684211
+                        float inputs:scaleX = 2.1111112
+                        double rest:tx = 0.5
                     }
                 }
 
-                def RigExecCapsuleWeight "Influence"
+                def RigExecSphereWeight "Influence"
                 {
                     float inputs:falloffMax = 0.35
-                    float inputs:falloffMin = 0.05
+                    float inputs:falloffMin = 0.14583333
+                    float inputs:scaleX = 1.7142857
+                    double rest:tx = 0.25
                 }
             }
 
@@ -117,10 +126,10 @@ def Xform "Skeleton2dAsset"
                 }
                 matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.35, 0, 0, 1) )
 
-                def RigExecCapsuleWeight "Influence"
+                def RigExecSphereWeight "Influence"
                 {
                     float inputs:falloffMax = 0.3
-                    float inputs:falloffMin = 0.05
+                    float inputs:falloffMin = 0.075
                 }
             }
         }
@@ -151,7 +160,7 @@ def Xform "Skeleton2dAsset"
                     rigExecReadPhase = "final"
                 )
                 int[] rigExec:jointIndices = [0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 3, 2, 3, 3, 0, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-                float[] rigExec:jointWeights = [1, 0, 1, 0, 0.6383371, 0.36166292, 0.6383371, 0.36166292, 0.4807674, 0.51923263, 0.4807674, 0.51923263, 0.15133332, 0.84866667, 0.15133332, 0.84866667, 1, 0, 1, 0, 0.65591043, 0.34408957, 0.65591043, 0.34408957, 0.5, 0.5, 0.5, 0.5, 0.34408957, 0.65591043, 0.34408957, 0.65591043, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.9057935, 0.09420648, 0.56487566, 0.4351243, 1, 0, 0.6312467, 0.36875334, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                float[] rigExec:jointWeights = [1, 0, 1, 0, 0.75585777, 0.24414226, 0.75585777, 0.24414226, 0.4903845, 0.50961554, 0.4903845, 0.50961554, 0.09743479, 0.90256524, 0.09743479, 0.90256524, 1, 0, 1, 0, 0.75585777, 0.24414226, 0.75585777, 0.24414226, 0.5, 0.5, 0.5, 0.5, 0.24414226, 0.75585777, 0.24414226, 0.75585777, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.8853582, 0.11464181, 0.46654245, 0.5334575, 1, 0, 0.62494326, 0.37505674, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
                 rel rigExec:moves = </Skeleton2dAsset/Art/Leg.points>
                 uniform token rigExec:skinningMethod = "classicLinear"
             }

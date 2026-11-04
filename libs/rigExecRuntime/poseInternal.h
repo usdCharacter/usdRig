@@ -331,9 +331,6 @@ struct RrPoseScratch {
     std::vector<RigExecMlNetwork> interpNetworks;
     /// Animated maps' tables, reconstituted from the wire; empty otherwise.
     std::vector<RigExecAnimatedMapsTable> interpMaps;
-    /// Driven actions' search tables, reconstituted from the wire; empty
-    /// otherwise.
-    std::vector<RigExecDrivenActionTable> interpDriven;
     std::vector<std::vector<double>> interpScratch;
     // Solver live rests and per-run elements.
     std::vector<RrPoseSolverState> solvers;

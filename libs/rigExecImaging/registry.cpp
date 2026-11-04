@@ -3,7 +3,6 @@
 #include "registry.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 #include "rigExec/bakedProgramImpl.h"
-#include "rigExec/capsuleSegment.h"
 #include "rigExec/frameCacheSparsity.h"
 #include "rigExec/parallel.h"
 #include "rigExecScene/authoredRestSpace.h"
@@ -5267,7 +5266,6 @@ _AccumulateRestGuideBounds(
         return true;
     }
     if (type == "RigExecSphereWeight" ||
-        type == "RigExecCapsuleWeight" ||
         type == "RigExecPlaneWeight" ||
         type == "RigExecCurveWeight") {
         const PXR_NS::TfToken drawMode = token("guide:drawMode", "falloff");
@@ -5374,50 +5372,6 @@ _AccumulateRestGuideBounds(
                     PXR_NS::GfBBox3d(PXR_NS::GfRange3d(-negativeScales - padding, positiveScales + padding),
                                      scale * rest)
                         .ComputeAlignedRange());
-                found = true;
-            }
-            return found;
-        }
-
-        if (type == "RigExecCapsuleWeight") {
-            // _AppendCapsuleVolumeGuide's range: both segment ends padded
-            // by the radius in the divided local space, the end at its
-            // authored rest like the volume.
-            PXR_NS::GfMatrix4d divide(1.0);
-            divide.SetScale(PXR_NS::GfVec3d(
-                1.0 / axisScale[0], 1.0 / axisScale[1],
-                1.0 / axisScale[2]));
-            const PXR_NS::GfMatrix4d toLocal = rest.GetInverse() * divide;
-            PXR_NS::GfRange3d localCenters(PXR_NS::GfVec3d(0.0),
-                                           PXR_NS::GfVec3d(0.0));
-            const PXR_NS::SdfPath endPath =
-                rigExec::RigExecCapsuleSegmentEnd(prim);
-            if (const PXR_NS::UsdPrim end = endPath.IsEmpty()
-                    ? PXR_NS::UsdPrim()
-                    : prim.GetStage()->GetPrimAtPath(endPath)) {
-                bool endRigid = false;
-                const PXR_NS::GfMatrix4d endRest =
-                    rigExec::RigExecAuthoredGuideRestSpace(end, time, &endRigid);
-                const PXR_NS::GfVec3f localEnd(
-                    toLocal.Transform(endRest.ExtractTranslation()));
-                if (endRigid && std::isfinite(localEnd[0]) &&
-                    std::isfinite(localEnd[1]) && std::isfinite(localEnd[2])) {
-                    localCenters.UnionWith(PXR_NS::GfVec3d(localEnd));
-                }
-            }
-            PXR_NS::GfMatrix4d scale(1.0);
-            scale.SetScale(axisScale);
-            const PXR_NS::GfMatrix4d toAsset = scale * rest;
-            bool found = false;
-            for (const double radius : {falloffMin, falloffMax}) {
-                if (!std::isfinite(radius) || radius <= 0.0) {
-                    continue;
-                }
-                const PXR_NS::GfVec3d pad(radius + halfWidth);
-                const PXR_NS::GfRange3d local(
-                    localCenters.GetMin() - pad, localCenters.GetMax() + pad);
-                range->UnionWith(
-                    PXR_NS::GfBBox3d(local, toAsset).ComputeAlignedRange());
                 found = true;
             }
             return found;

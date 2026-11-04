@@ -5,7 +5,6 @@
 #include "rigEvaluatorConstraints.h"
 #include "parallel.h"
 #include "pathText.h"
-#include "capsuleSegment.h"
 #include "crossDomainInputs.h"
 #include "moverGraph.h"
 #include "movers/moverRegistry.h"
@@ -155,7 +154,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecSampleCount, "rigExec:sampleCount"))
     ((rigExecSampleSource, "rigExec:sampleSource"))
     ((rigExecSamples, "rigExec:samples"))
-    ((rigExecSegmentEnd, "rigExec:segmentEnd"))
     ((rigExecSkinningMethod, "rigExec:skinningMethod"))
     ((rigExecSolverMode, "rigExec:solverMode"))
     ((rigExecSources, "rigExec:sources"))
@@ -194,12 +192,10 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecBasis, "rigExec:basis"))
     ((rigExecBiases, "rigExec:biases"))
     ((rigExecBlendShear, "rigExec:blendShear"))
-    ((rigExecChannelMode, "rigExec:channelMode"))
+    ((rigExecClampOutput, "rigExec:clampOutput"))
     ((rigExecDistanceMethod, "rigExec:distanceMethod"))
-    ((rigExecDriverSamples, "rigExec:driverSamples"))
     ((rigExecEnableRotation, "rigExec:enableRotation"))
     ((rigExecEnableTranslation, "rigExec:enableTranslation"))
-    ((rigExecFrameTies, "rigExec:frameTies"))
     ((rigExecIkValue, "rigExec:ikValue"))
     ((rigExecInputMean, "rigExec:inputMean"))
     ((rigExecInputScale, "rigExec:inputScale"))
@@ -227,7 +223,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((rigExecRowSlope, "rigExec:rowSlope"))
     ((rigExecRowTo, "rigExec:rowTo"))
     ((rigExecScale, "rigExec:scale"))
-    ((rigExecSide, "rigExec:side"))
     ((rigExecSolver, "rigExec:solver"))
     ((rigExecSpaceLabels, "rigExec:spaceLabels"))
     ((rigExecTranslation, "rigExec:translation"))
@@ -682,19 +677,6 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += '|';
         }
         appendRelTargets(w, _tokens->rigExecSampleSource, true);
-        // A capsule's segment end is a provider binding resolved at compile,
-        // by default from the parent joint's children in namespace order, so
-        // the resolution (not only the relationship) is compiled rig identity.
-        if (w.GetTypeName() == RigExecCapsuleWeightType()) {
-            appendRelTargets(w, _tokens->rigExecSegmentEnd, true);
-            std::string why;
-            const SdfPath end = RigExecCapsuleSegmentEnd(w, &why);
-            noteRead(w.GetPath().GetParentPath());
-            if (!end.IsEmpty()) noteRead(end);
-            digest += "rigExec:segmentEnd=";
-            digest += end.IsEmpty() ? why : pathText(end);
-            digest += '|';
-        }
         // The falloff curve is structural: it is resampled to a table
         // once per rig compilation, so an edit to it has to begin a new one.
         // What gets hashed is the BAKED TABLE, not the knots. Hashing
@@ -840,11 +822,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                   _scalarTokens->rigExecBiases,
                   _scalarTokens->rigExecInputMean,
                   _scalarTokens->rigExecInputScale,
-                  _scalarTokens->rigExecOutputDefaults,
-                  // A driven action's search table.
-                  _scalarTokens->rigExecDriverSamples,
-                  _scalarTokens->rigExecSide,
-                  _scalarTokens->rigExecFrameTies}) {
+                  _scalarTokens->rigExecOutputDefaults}) {
                 appendScalar(interpolator, name);
             }
             appendRelTargets(interpolator, _tokens->rigExecMeshes, false);
@@ -868,9 +846,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                       _scalarTokens->rigExecRowSlope,
                       _scalarTokens->rigExecRowCut,
                       _scalarTokens->rigExecPrimvarName,
-                      // A driven action's channels.
-                      _tokens->rigExecSamples,
-                      _scalarTokens->rigExecChannelMode,
+                      // An animated map's clamp: a flip
+                      // changes the compiled table.
+                      _scalarTokens->rigExecClampOutput,
                       _scalarTokens->inputsEnabled}) {
                     appendScalar(pose, name);
                 }
@@ -1337,10 +1315,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     continue;
                 }
                 const _DigestHop &hop = hopFor(provider);
-                // Each token folds in its own input seeds, the exact sources
-                // they name, and the providers reached one hop away. A source
-                // need not be a seed of its owner: custom terminal properties
-                // and missing sources still contribute their type/presence.
+                // Own input seeds, the sources they name, and providers one
+                // hop away; a non-seed or missing source still hashes presence.
                 const std::set<SdfPath> &depends = hop.depends;
                 if (!expanded) {
                     if (state[path] == 1) {
@@ -1858,18 +1834,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                           std::to_string(wa ? wa.GetNumTimeSamples() : 0) +
                           ",";
             } else if (stype == "RigExecSkeleton2d") {
-                // Every bone's hierarchy and uniform RigExecBone2dAPI
-                // settings are compiled into the solver record, so an edit
-                // to one recompiles: hashed by value, with the sample counts
-                // the compile refuses, and with what the compile validates
-                // about the bone (its API, its rest attributes). The
-                // hierarchy is the bones' paths (the joints list above)
-                // and the RigExecJoint ancestors between them; the tip is
-                // the first RigExecJoint child, whose rest is compiled when
-                // it is not a bone. The start-frame policy is hashed as for
-                // an FK chain.
-                // Value hashing: an in-process identity, never compared to
-                // a stored literal.
+                // Bone hierarchy, tips and uniform RigExecBone2dAPI settings
+                // compile into the record; value hashes are in-process only.
                 const auto appendValueNamed = [&](const UsdPrim &prim,
                                                   const TfToken &name) {
                     noteValueNamed(prim, name);
@@ -1905,8 +1871,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         }
                     }
                     digest += '>';
-                    // The tip: the first RigExecJoint child; an End joint's
-                    // rest is compiled, so it is hashed by value.
+                    // The tip; a non-bone tip's rest is compiled.
                     for (const UsdPrim &child : bone.GetChildren()) {
                         if (child.GetTypeName() != _bone2dDigestMisc->joint) {
                             continue;
@@ -1926,7 +1891,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     }
                     digest += hasApi ? "api|" : "noapi|";
                     for (const TfToken &name : _bone2dDigestRels->allTokens) {
-                        appendRelTargetsNamed(bone, name, false);
+                        appendRelTargets(bone, name, false);
                     }
                     for (const TfToken &name : _bone2dDigestSettings->allTokens) {
                         appendSamples(appendValueNamed(bone, name));
@@ -1940,10 +1905,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         digest += ',';
                     }
                 }
-                // Bone groups: order, the API the compile checks, the
-                // members collection (includes in order, excludes, the
-                // explicit-only rule) and enabled flags are compiled.
-                const std::vector<SdfPath> groupPaths = appendRelTargetsNamed(
+                // Group order, API, membership and enabled flags compile.
+                const std::vector<SdfPath> groupPaths = appendRelTargets(
                     solver, _bone2dDigestMisc->boneGroups, false);
                 for (const SdfPath &groupPath : groupPaths) {
                     const UsdPrim group = _stage->GetPrimAtPath(groupPath);
@@ -1955,8 +1918,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         hasGroupApi = hasGroupApi || api == _bone2dDigestMisc->groupApi;
                     }
                     digest += hasGroupApi ? "api|" : "noapi|";
-                    appendRelTargetsNamed(group, _bone2dDigestMisc->includes, false);
-                    appendRelTargetsNamed(group, _bone2dDigestMisc->excludes, true);
+                    appendRelTargets(group, _bone2dDigestMisc->includes, false);
+                    appendRelTargets(group, _bone2dDigestMisc->excludes, true);
                     appendSamples(appendValueNamed(group, _bone2dDigestMisc->expansionRule));
                     appendSamples(appendValueNamed(group, _bone2dDigestMisc->membershipExpression));
                     appendSamples(appendValueNamed(group, _bone2dDigestMisc->enabled));
@@ -2089,18 +2052,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                                 digest += ":variability="+std::to_string(int(attribute.GetVariability()));
                                 digest += ":samples="+std::to_string(attribute.GetNumTimeSamples());
                                 noteSamples(path,attribute.GetTypeName().GetAsToken());
-                                // Every attribute a binding names as
-                                // structure is watched: its type, sample
-                                // count and connections are digested. A
-                                // uniform one is compiled layout (a point-code
-                                // array, a mode token): its Default value is
-                                // rig identity, so it is hashed here and an
-                                // edit recompiles. A varying one is read per
-                                // frame through declared inputs: only its
-                                // samples are noted, so a value edit stays
-                                // neutral. A varying attribute whose Default
-                                // feeds the compiled data is listed in
-                                // externalCompileSources instead.
+                                // A uniform structure attribute is compiled
+                                // layout, so its Default value is rig identity.
                                 if(attribute.GetVariability()==SdfVariabilityUniform) {
                                     noteValue(path);
                                     VtValue value;
@@ -2142,10 +2095,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         digest += ',';
                     }
                     digest += '|';
-                    // The compiled data is a function of the stage that the
-                    // structure paths above may not cover on their own; a
-                    // change of it recompiles. A dictionary hashes by value;
-                    // another payload type contributes its type only.
+                    // A dictionary hashes by value; another payload type
+                    // contributes its type only.
                     digest += "compiledData=";
                     if(binding.externalCompileData.IsHolding<VtDictionary>())
                         digest += std::to_string(binding.externalCompileData.GetHash());
