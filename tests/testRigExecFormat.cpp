@@ -1478,7 +1478,7 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 30 &&
+    static_assert(RigExecFormatVersion == 31 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
@@ -1486,9 +1486,10 @@ TestOpenRefusals()
                   "format 26 the cloth's material model (RCL3) and format "
                   "27 volume falloff sample inputs, format 28 Range "
                   "Smooth revisions, format 29 sparse blend channel keys, "
-                  "format 30 Range DQ and independent summaries and the 2D skeleton, "
-                  "unclamped animated map and scalar primvar records; per-group range chains "
-                  "pin the oldest readable format at 20");
+                  "format 30 Range DQ and independent summaries and format 31 "
+                  "the 2D skeleton, unclamped animated map and scalar primvar "
+                  "records; per-group range chains pin the oldest readable "
+                  "format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
     // Range skins, private constants) mean something else to an older
@@ -6254,10 +6255,10 @@ void TestSkeleton2dWireShapes()
         CHECK(!RigExecFormatValidate(bad, &error));
         CHECK(error.find(fragment) != std::string::npos);
     };
-    // A skeleton2d is refused in a file older than format 28.
+    // A skeleton2d is refused in a file older than format 31.
     RigExecWireFile older = file;
-    older.formatVersion = 27;
-    reject(std::move(older), "skeleton2d: in a format older than 28");
+    older.formatVersion = 30;
+    reject(std::move(older), "skeleton2d: in a format older than 31");
     // A bad range, space, tip, selector, candidate, member, enabled flag or
     // channel tag is refused.
     RigExecWireFile badBegin = file;
@@ -6360,13 +6361,13 @@ void TestAnimatedMapsWireShapes()
     RigExecWireFile badValue = file;
     badValue.pose->poseInterpolators[0].maps->mapUnclamped = {0, 2};
     reject(std::move(badValue), "malformed animated maps");
-    // A non-empty field in a file older than format 28 is refused; the same
+    // A non-empty field in a file older than format 31 is refused; the same
     // file without it opens.
     RigExecWireFile older = unclamped;
-    older.formatVersion = 27;
+    older.formatVersion = 30;
     reject(std::move(older), "malformed animated maps");
     RigExecWireFile olderClamped = file;
-    olderClamped.formatVersion = 27;
+    olderClamped.formatVersion = 30;
     CHECK(RigExecFormatValidate(olderClamped, &why));
 }
 

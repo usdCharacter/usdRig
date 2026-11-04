@@ -595,7 +595,7 @@ table AnimatedMaps {
   row_cut: [double];
   /// The map count plus one offsets into the rows.
   map_begin: [uint];
-  /// Format 28: one byte per map, 1 where rigExec:clampOutput is false;
+  /// Format 31: one byte per map, 1 where rigExec:clampOutput is false;
   /// absent: every map clamped.
   map_unclamped: [ubyte];
 }
@@ -634,7 +634,7 @@ table PoseInterpolator {
   primvar_slots: [int];
   primvar_sources: [int];
 }
-/// Format 28. RigExecSkeleton2d: structural setup per bone in solve order
+/// Format 31. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests
 /// (the solver rest route).
 table Skeleton2d {
@@ -804,7 +804,7 @@ table Solver {
   lower_scale: Input;
   soft_distance: Input;
   limb_twist: Input;
-  /// Format 28: present for a RigExecSkeleton2d.
+  /// Format 31: present for a RigExecSkeleton2d.
   skeleton2d: Skeleton2d;
 }
 table Constraint {
@@ -1842,7 +1842,7 @@ table File {
   bool_arrays: [BoolArray] (native_inline);
   /// Format 25: the windowed operations, in program order.
   windowed_ops: [WindowedOp] (native_inline);
-  /// Format 28: the property chains (indices into property_chains) whose
+  /// Format 31: the property chains (indices into property_chains) whose
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   scalar_primvar_chains: [uint];

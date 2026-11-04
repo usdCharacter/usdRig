@@ -7471,7 +7471,7 @@ struct AnimatedMaps FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *mapBegin() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_MAPBEGIN);
   }
-  /// Format 28: one byte per map, 1 where rigExec:clampOutput is false;
+  /// Format 31: one byte per map, 1 where rigExec:clampOutput is false;
   /// absent: every map clamped.
   const ::flatbuffers::Vector<uint8_t> *mapUnclamped() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_MAPUNCLAMPED);
@@ -7985,7 +7985,7 @@ struct RigExecWireSkeleton2d : public ::flatbuffers::NativeTable {
   std::vector<uint8_t> groupEnabled{};
 };
 
-/// Format 28. RigExecSkeleton2d: structural setup per bone in solve order
+/// Format 31. RigExecSkeleton2d: structural setup per bone in solve order
 /// (parents first). Rests come from the Solver's rest_slots / joint_rests
 /// (the solver rest route).
 struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -9104,7 +9104,7 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Input *limbTwist() const {
     return GetPointer<const rigExec::fb::Input *>(VT_LIMBTWIST);
   }
-  /// Format 28: present for a RigExecSkeleton2d.
+  /// Format 31: present for a RigExecSkeleton2d.
   const rigExec::fb::Skeleton2d *skeleton2d() const {
     return GetPointer<const rigExec::fb::Skeleton2d *>(VT_SKELETON2D);
   }
@@ -21640,7 +21640,7 @@ struct File FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *windowedOps() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::WindowedOp>> *>(VT_WINDOWEDOPS);
   }
-  /// Format 28: the property chains (indices into property_chains) whose
+  /// Format 31: the property chains (indices into property_chains) whose
   /// float or double primvars:* result is published as a constant primvar,
   /// sorted by target path.
   const ::flatbuffers::Vector<uint32_t> *scalarPrimvarChains() const {

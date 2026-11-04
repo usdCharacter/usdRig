@@ -1056,10 +1056,10 @@ private:
             if (op.frames == 0 || op.frames > RigExecHarmonicsMaxWindowFrames)
                 return _Bad(_At("windowed_ops", "frames", long(w)) + ": out of range");
         }
-        // Format 28 adds published scalar primvars: they name distinct float
+        // Format 31 adds published scalar primvars: they name distinct float
         // or double property chains; older formats hold none.
-        if (_f.formatVersion < 28 && !_f.scalarPrimvarChains.empty())
-            return _Bad("scalar_primvar_chains in a format older than 28");
+        if (_f.formatVersion < 31 && !_f.scalarPrimvarChains.empty())
+            return _Bad("scalar_primvar_chains in a format older than 31");
         {
             std::vector<char> seen(_f.propertyChains.size(), 0);
             for (size_t k = 0; k < _f.scalarPrimvarChains.size(); ++k) {
@@ -4040,10 +4040,10 @@ private:
                       m.mapBegin.size() == interp.poseSlots.size() + 1 &&
                       !m.mapBegin.empty() && m.mapBegin.front() == 0 &&
                       m.mapBegin.back() == rows;
-            // Format 28: map_unclamped is absent (every map clamped) or one
+            // Format 31: map_unclamped is absent (every map clamped) or one
             // 0/1 byte per map.
             ok = ok && (m.mapUnclamped.empty() ||
-                        (_f.formatVersion >= 28 &&
+                        (_f.formatVersion >= 31 &&
                          m.mapUnclamped.size() + 1 == m.mapBegin.size()));
             for (size_t map = 0; ok && map < m.mapUnclamped.size(); ++map) {
                 ok = m.mapUnclamped[map] <= 1;
@@ -4105,8 +4105,8 @@ private:
     bool _Skeleton2d(const fb::RigExecWireSolver &s, const std::string &row)
     {
         const fb::RigExecWireSkeleton2d &k = *s.skeleton2d;
-        if (_f.formatVersion < 28) {
-            return _Bad(row + ".skeleton2d: in a format older than 28");
+        if (_f.formatVersion < 31) {
+            return _Bad(row + ".skeleton2d: in a format older than 31");
         }
         const size_t perBone = kRigExecBone2dChannelCount;
         const size_t n = k.solveOrder.size();

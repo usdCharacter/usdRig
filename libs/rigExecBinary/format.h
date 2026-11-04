@@ -564,7 +564,7 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// carry channel keys on chunks and read those weights at each chunk.
 /// Format 30 admits Range DQ skins and independent Range status summaries.
 ///
-/// Format 28 adds 2D skeletons, unclamped animated maps and scalar primvar
+/// Format 31 adds 2D skeletons, unclamped animated maps and scalar primvar
 /// chains: Solver.skeleton2d (a RigExecSkeleton2d over nested RigExecJoint
 /// bones with RigExecBone2dAPI: the per-bone setup in solve order, child-joint
 /// tips, space-switch parent spaces, target candidates, control bones and
@@ -574,7 +574,7 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// where rigExec:clampOutput is false; absent when every map clamps) and
 /// File.scalar_primvar_chains (the property chains published as constant
 /// primvars). Older files hold none of them.
-inline constexpr uint32_t RigExecFormatVersion = 30;
+inline constexpr uint32_t RigExecFormatVersion = 31;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.
 inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
