@@ -1,4 +1,4 @@
-#include "rigExecGraph/blendLayout.h"
+#include "rigExecMath/blendLayoutKernel.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
 // A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp

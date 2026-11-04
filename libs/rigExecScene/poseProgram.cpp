@@ -1,6 +1,6 @@
 #include "poseProgram.h"
 #include "constraintProgram.h"
-#include "rigExecGraph/providerArithmetic.h"
+#include "rigExecMath/providerArithmeticKernel.h"
 #include "pxr/base/gf/rotation.h"
 #include <cmath>
 #include <limits>

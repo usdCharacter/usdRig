@@ -1,4 +1,4 @@
-#include "rigExecGraph/blendLayout.h"
+#include "rigExecMath/blendLayoutKernel.h"
 // Compiled revision bindings, typed leaves and pure revision kernels.
 #ifndef RIGEXEC_MOVER_GRAPH_H
 #define RIGEXEC_MOVER_GRAPH_H

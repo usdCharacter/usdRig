@@ -23,14 +23,15 @@ starting its workflow, and keep this list current when adding or changing skills
 - `libs/rigExecMath`: numerical kernels. Keep math independent of stage access.
   The archive links `arch`, `tf`, `gf`, and `vt`; it does not read a stage.
   `rigExec`, the scene library, rigging, and the oracle library link it
-  privately. The header-only `*Kernel.h` files here also compile into the
-  USD-free runtime.
+  privately. The header-only `*Kernel.h` files here (pose, provider, and
+  blend-layout arithmetic among them) also compile into the USD-free
+  runtime; keep them free of `pxr/` and `rigExecGraph` includes.
 - `libs/rigExecGraph`: the USD-free op scheduler. The archive is
-  `opGraph.cpp` only; the other headers here (typed op values, pose and
-  provider arithmetic, window history) are header-only and also compile
-  into the runtime. Runtime links the archive publicly. `rigExec` and the
-  scene library link it privately, so an edit here does not select every
-  evaluator test. Do not add a stage or `pxr/` include here.
+  `opGraph.cpp` only; the other headers here (typed op values, provider op
+  records and their interpreter, window history) are header-only and also
+  compile into the runtime. Runtime links the archive publicly. `rigExec`
+  and the scene library link it privately, so an edit here does not select
+  every evaluator test. Do not add a stage or `pxr/` include here.
 - `libs/rigExecScene`: USD scene translation, built as `librigExecScene.so`.
   It links `tf`, `gf`, `vt`, `sdf`, `ts`, `usd`, `usdGeom`, and `rigExec`
   publicly; graph and math are private. `librigExec.so` does not link it.

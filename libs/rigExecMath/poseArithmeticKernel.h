@@ -1,8 +1,8 @@
-#ifndef RIGEXEC_GRAPH_POSE_ARITHMETIC_H
-#define RIGEXEC_GRAPH_POSE_ARITHMETIC_H
-#include "rigExecMath/conditionalTableKernel.h"
-#include "rigExecMath/mlpKernel.h"
-#include "rigExecMath/rbfMethodKernel.h"
+#ifndef RIGEXEC_MATH_POSE_ARITHMETIC_KERNEL_H
+#define RIGEXEC_MATH_POSE_ARITHMETIC_KERNEL_H
+#include "conditionalTableKernel.h"
+#include "mlpKernel.h"
+#include "rbfMethodKernel.h"
 #include <algorithm>
 #include <memory>
 #include <array>

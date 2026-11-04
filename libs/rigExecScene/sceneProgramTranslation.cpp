@@ -1,7 +1,7 @@
 #include "sceneProgramTranslation.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "providerContextBinding.h"
-#include "rigExecGraph/poseArithmetic.h"
+#include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExec/movers/moverRegistry.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include <set>

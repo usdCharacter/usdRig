@@ -1,5 +1,5 @@
-#ifndef RIGEXEC_GRAPH_PROVIDER_REFRESH_H
-#define RIGEXEC_GRAPH_PROVIDER_REFRESH_H
+#ifndef RIGEXEC_MATH_PROVIDER_REFRESH_KERNEL_H
+#define RIGEXEC_MATH_PROVIDER_REFRESH_KERNEL_H
 #include <cstddef>
 #include <cstdint>
 namespace rigExec {

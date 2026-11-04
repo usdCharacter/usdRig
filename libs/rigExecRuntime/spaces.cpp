@@ -4,7 +4,7 @@
 #include "rigExecRuntime/affineMath.h"
 #include <algorithm>
 #include "rigExecGraph/providerArithmetic.h"
-#include "rigExecGraph/providerRefresh.h"
+#include "rigExecMath/providerRefreshKernel.h"
 #include <cstring>
 #include <type_traits>
 namespace rigExec {

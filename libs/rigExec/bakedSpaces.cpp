@@ -4,7 +4,7 @@
 #include "crossDomainInputs.h"
 #include "sceneDispatch.h"
 #include "rigExecScene/providerContextBinding.h"
-#include "rigExecGraph/providerRefresh.h"
+#include "rigExecMath/providerRefreshKernel.h"
 #include "parallel.h"
 #include "frameExtraction.h"
 #include "rigExecMath/spaceMatchKernel.h"

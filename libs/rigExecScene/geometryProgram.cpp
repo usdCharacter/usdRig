@@ -1,5 +1,5 @@
 #include "geometryProgram.h"
-#include "rigExecGraph/blendLayout.h"
+#include "rigExecMath/blendLayoutKernel.h"
 #include "rigExec/moverGraph.h"
 #include <cmath>
 namespace rigExec {

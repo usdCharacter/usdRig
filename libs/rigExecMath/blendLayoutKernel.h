@@ -1,10 +1,11 @@
-#ifndef RIGEXEC_GRAPH_BLEND_LAYOUT_H
-#define RIGEXEC_GRAPH_BLEND_LAYOUT_H
+#ifndef RIGEXEC_MATH_BLEND_LAYOUT_KERNEL_H
+#define RIGEXEC_MATH_BLEND_LAYOUT_KERNEL_H
 #include <cmath>
 #include <cstddef>
 #include <cstring>
 namespace rigExec {
-// Original sparse layout validation/order, shared by native and USD-free runtime.
+// Sparse blend-shape layout validation and exact comparison, shared by the
+// native evaluator and the USD-free runtime.
 template<class Offsets,class Indices,class Layout>
 bool RigExecBuildBlendLayout(const Offsets &offsets,const Indices &indices,
                             size_t pointCount,Layout *layout) {

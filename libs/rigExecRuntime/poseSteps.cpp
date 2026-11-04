@@ -2,7 +2,7 @@
 
 #include "poseInternal.h"
 #include "spaces.h"
-#include "rigExecGraph/poseArithmetic.h"
+#include "rigExecMath/poseArithmeticKernel.h"
 #include <algorithm>
 #include <limits>
 #include <utility>

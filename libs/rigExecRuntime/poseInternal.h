@@ -8,7 +8,7 @@
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
-#include "rigExecGraph/poseArithmetic.h"
+#include "rigExecMath/poseArithmeticKernel.h"
 #include <array>
 #include <cmath>
 #include <string>
