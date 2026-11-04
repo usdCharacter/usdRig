@@ -30,6 +30,7 @@
 #include "rigExecRuntimeDrive.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -750,6 +751,105 @@ TestSparseBlendChunks()
     std::printf("  sparse blend weights wake only their vertex groups\n");
 }
 
+void
+TestDualQuatChunks()
+{
+    const auto stage = MakeGatedStage(0.5f, 0.25f, 1.0);
+    const auto skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Dual"),
+                                        TfToken("RigExecSkinMover"));
+    CHECK(skin.ApplyAPI(TfToken("RigExecMoverAPI")));
+    skin.CreateRelationship(TfToken("rigExec:moves"))
+        .SetTargets({SdfPath("/Asset/Shape.points")});
+    skin.CreateAttribute(TfToken("inputs:defaultWeight"), SdfValueTypeNames->Float).Set(1.0f);
+    skin.CreateAttribute(TfToken("rigExec:skinningMethod"), SdfValueTypeNames->Token)
+        .Set(TfToken("dualQuaternion"));
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int).Set(2);
+    VtIntArray indices(kPoints * 2);
+    for (size_t i = 0; i < kPoints; ++i) {
+        indices[2 * i] = 0;
+        indices[2 * i + 1] = 1;
+    }
+    skin.CreateAttribute(TfToken("rigExec:jointIndices"), SdfValueTypeNames->IntArray).Set(indices);
+    const auto weights = skin.CreateAttribute(TfToken("rigExec:jointWeights"), SdfValueTypeNames->FloatArray);
+    VtFloatArray overdriven(kPoints * 2, 0.5f);
+    overdriven[2 * (kPoints - 1)] = overdriven[2 * (kPoints - 1) + 1] = 2.0f;
+    weights.Set(overdriven);
+    const auto a = stage->DefinePrim(SdfPath("/Asset/Rig/J0"), TfToken("RigExecControl"));
+    const auto b = stage->DefinePrim(SdfPath("/Asset/Rig/J1"), TfToken("RigExecControl"));
+    const auto ar = a.CreateAttribute(TfToken("avars:rx"), SdfValueTypeNames->Double);
+    const auto br = b.CreateAttribute(TfToken("avars:rx"), SdfValueTypeNames->Double);
+    skin.CreateRelationship(TfToken("rigExec:influences")).SetTargets({a.GetPath(), b.GetPath()});
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/Movers"))
+        .SetChildrenReorder({TfToken("Gated"), TfToken("Dual"), TfToken("Blend")});
+    const double theta = 2.0 * std::acos(0.75) * 180.0 / std::acos(-1.0);
+    for (int t = 1; t <= 5; ++t) {
+        const double angle = t == 1 ? 0.0 : t == 5 ? 40.0 : theta;
+        ar.Set(angle, UsdTimeCode(t));
+        br.Set(-angle, UsdTimeCode(t));
+        stage->GetAttributeAtPath(SdfPath(std::string(kRaise) + ".inputs:weight"))
+            .Set(0.1f * t, UsdTimeCode(t));
+    }
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+    CHECK(compiled);
+    if (!compiled) return;
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const int c = FindChain(B, SdfPath("/Asset/Shape.points"));
+    CHECK(c >= 0);
+    if (c < 0) return;
+    const auto &chain = B.chains[size_t(c)];
+    const int r = FindRevision(chain, "Dual");
+    CHECK(r == 1);
+    if (r < 0) return;
+    const auto &revision = chain.revisions[size_t(r)];
+    CHECK(revision.role == RigExecBakedRevisionRole::Range);
+    const int id = B.chainRevisionBegin[size_t(c)] + r;
+    for (const auto &step : B.steps) {
+        if (step.object < id || step.object > id + 1 ||
+            (step.kind != RigExecBakedStepKind::RevisionChunk &&
+             step.kind != RigExecBakedStepKind::RevisionFuse)) continue;
+        for (const auto &read : step.reads) {
+            CHECK(read.domain != RigExecBakedSlotDomain::RevisionDone);
+            CHECK(read.domain != RigExecBakedSlotDomain::ChainDirty);
+        }
+    }
+    RigExecRigEvaluator bakeEvaluator(stage, SdfPath(kRig));
+    RigExecTestPlayer player;
+    std::vector<uint8_t> bytes;
+    std::string error;
+    const bool baked = RigExecTestBakeAt(bakeEvaluator, 1, &bytes, &error) &&
+                       player.Open(bytes, stage, &error);
+    if (!baked) std::printf("  DQ bake: %s\n", error.c_str());
+    CHECK(baked);
+    for (int t : {1, 2, 3, 4, 5, 2, 1}) {
+        const VtValue ws(t == 3 ? VtFloatArray(kPoints * 2, 0.5f) : overdriven);
+        evaluator.SetInteractiveOverrides({Override("/Asset/Rig/Movers/Dual",
+            "rigExec:jointWeights", ws)});
+        const auto pose = evaluator.Evaluate(UsdTimeCode(t));
+        CHECK(pose.valid);
+        CHECK(revision.influencesValid == (t != 2 && t != 4));
+        CHECK(revision.dqWeightsSafe == (t == 3));
+        CHECK(revision.rangeRefusals == 0 && B.rangeVerifyMismatches == 0);
+        if (baked) {
+            CHECK(player->SetInputArray("/Asset/Rig/Movers/Dual.rigExec:jointWeights",
+                                       RigExecTestArrayView(ws), &error));
+            CHECK(player.Play(t, &error));
+            std::vector<std::string> diffs;
+            CHECK(RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs));
+            for (const auto &diff : diffs) std::printf("  DQ runtime: %s\n", diff.c_str());
+        }
+    }
+    evaluator.ClearInteractiveOverrides();
+    for (int t : {1, 2, 3}) {
+        CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), UsdTimeCode(t), &error));
+    }
+    std::printf("  DQ Range chunks preserve whole-revision refusal and recovery\n");
+}
+
 // --- The biped ---------------------------------------------------------------
 
 const char *const kBipedRig = "/Biped/Rig";
@@ -821,6 +921,22 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
     }
     const Chain &chain = B.chains[size_t(c)];
     const std::string focus = "cheekPuff_l_cluster";
+    const int bodySkin = FindRevision(chain, "body_geo_skin");
+    CHECK(bodySkin >= 0);
+    if (bodySkin >= 0) {
+        const auto &skin = chain.revisions[size_t(bodySkin)];
+        CHECK(skin.role == RigExecBakedRevisionRole::Range && skin.dqWeightsSafe);
+        CHECK(skin.chunks.size() + 1 == chain.groupBounds.size());
+    }
+    for (const auto &step : B.steps) {
+        if (step.kind != RigExecBakedStepKind::RevisionFuse || step.object < 0) continue;
+        const auto [ci, ri] = B.revisionIndex[size_t(step.object)];
+        if (ci != c || chain.revisions[size_t(ri)].role != RigExecBakedRevisionRole::Range) continue;
+        for (const auto &read : step.reads) {
+            CHECK(read.domain != RigExecBakedSlotDomain::RevisionDone);
+            CHECK(read.domain != RigExecBakedSlotDomain::ChainDirty);
+        }
+    }
     const int bodyBlend = FindRevision(chain, "body_geo_shapes");
     CHECK(bodyBlend >= 0);
     if (bodyBlend >= 0) {
@@ -942,6 +1058,7 @@ main(int argc, char **argv)
     }
     TestAGatedChainForwards();
     TestSparseBlendChunks();
+    TestDualQuatChunks();
     TestTheBipedArmEditForwards(argv[1]);
     if (failures) {
         std::printf("testRigExecGroupForwarding: %d failure(s)\n", failures);

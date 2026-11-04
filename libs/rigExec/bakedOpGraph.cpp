@@ -1504,11 +1504,23 @@ void AppendBlock(RigExecBakedStepLines block,const Visit &visit,std::vector<std:
             if(step.kind==K::PoseInterpolator) append(step.diagnostics);
         });
         return;
-    case RigExecBakedStepLines::Geometry:
+    case RigExecBakedStepLines::Geometry: {
+        // Independent revision summaries still report in chain order.
+        std::vector<const RigExecBakedStep *> summaries;
         visit([&](const RigExecBakedStep &step) {
-            if(RigExecBakedIsGeometryStep(step.kind)) append(step.diagnostics);
+            if(step.kind==K::RevisionFuse && !step.diagnostics.empty()) summaries.push_back(&step);
+        });
+        std::sort(summaries.begin(), summaries.end(), [](const auto *a, const auto *b) {
+            return a->object < b->object;
+        });
+        size_t next = 0;
+        visit([&](const RigExecBakedStep &step) {
+            if(step.kind==K::RevisionFuse && !step.diagnostics.empty())
+                append(summaries[next++]->diagnostics);
+            else if(RigExecBakedIsGeometryStep(step.kind)) append(step.diagnostics);
         });
         return;
+    }
     }
 }
 }

@@ -131,11 +131,23 @@ _RrAppendBlock(const RrProgram &program, RrStepLines block,
                 diagnostics(i);
         });
         return;
-    case RrStepLines::Geometry:
+    case RrStepLines::Geometry: {
+        std::vector<size_t> summaries;
         visit([&](size_t i) {
-            if (_RrPublishedGeometryKind(steps[i].kind)) diagnostics(i);
+            if (steps[i].kind == RigExecWireStepKind::RevisionFuse &&
+                !store.stepOutputs[i].diagnostics.empty()) summaries.push_back(i);
+        });
+        std::sort(summaries.begin(), summaries.end(), [&](size_t a, size_t b) {
+            return steps[a].object < steps[b].object;
+        });
+        size_t next = 0;
+        visit([&](size_t i) {
+            if (steps[i].kind == RigExecWireStepKind::RevisionFuse &&
+                !store.stepOutputs[i].diagnostics.empty()) diagnostics(summaries[next++]);
+            else if (_RrPublishedGeometryKind(steps[i].kind)) diagnostics(i);
         });
         return;
+    }
     }
 }
 

@@ -2605,17 +2605,16 @@ TestRangeChainBake()
             }
             if (step.kind == fb::StepKind::RevisionFuse &&
                 step.object == id) {
-                // A join declares its own groups and the version entering
-                // it, as a fuse does.
+                // Summaries depend on groups, never the preceding summary.
                 for (size_t k = 0; k < ranges; ++k) {
                     CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut,
                                         uint32_t(revision.chunkBase + k)));
                 }
                 if (r > 0) {
-                    CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionDone,
-                                        uint32_t(id) - 1) &&
-                          _DeclaresRead(step, fb::SlotDomain::ChainDirty,
-                                        uint32_t(id) - 1));
+                    CHECK(!_DeclaresRead(step, fb::SlotDomain::RevisionDone,
+                                         uint32_t(id) - 1) &&
+                          !_DeclaresRead(step, fb::SlotDomain::ChainDirty,
+                                         uint32_t(id) - 1));
                 }
             }
         }
@@ -2737,24 +2736,17 @@ TestRangeChainBake()
         return true;
     }, " does not declare RevisionOut[" +
            std::to_string(firstBase + ranges - 1) + "]");
-    refuse("a join missing the version entering it",
-           [&](fb::RigExecWireFile &f) {
-               fb::RigExecWireStep *join =
-                   stepOf(f, fb::StepKind::RevisionFuse, second, -1);
-               if (!join ||
-                   !_DeclaresRead(*join, fb::SlotDomain::RevisionDone,
-                                  firstRange)) {
-                   return false;
-               }
-               _DropRead(join, fb::SlotDomain::RevisionDone, firstRange);
-               return true;
-           },
-           " does not declare RevisionDone[" + std::to_string(firstRange) +
-               "]");
+    {
+        fb::RigExecWireFile legacy(*file);
+        legacy.formatVersion = 29;
+        std::string why;
+        CHECK(!RigExecFormatValidate(legacy, &why));
+        CHECK(_Contains(why, "does not declare RevisionDone["));
+    }
     std::printf("range chain bake: %zu Range revisions of %zu groups "
                 "accepted; %d group rule violations refused\n",
                 chain.revisions.size(), ranges, refused);
-    CHECK(refused == 9);
+    CHECK(refused == 8);
 }
 
 // A connection-following read whose walk reaches a property chain's target
@@ -3391,20 +3383,8 @@ _ListSlot(fb::RigExecWireFile *file, const std::string &name)
     return true;
 }
 
-// The group-roles fixture baked at frame 1 (format 20, D2 b), from the
-// export program the bake built. The file holds its roles: the blend shape
-// and the matrix mover Range with no keys; the classicLinear skin a Range
-// Skin, unchunked with its G groups keyed by their influences; the
-// dualQuaternion skin Whole, chunked with G keyed groups and G published
-// groups more; the matrix mover gated, with group steps only for the groups
-// its weight names, so the groups it leaves are entered from the revision
-// before it. The reads the Range skin and the gate rest on -- the skin's
-// skinningMethod, elementSize and jointIndices and the weight's
-// defaultWeight -- are constants: private slots holding their bake-time
-// values. The skin's jointWeights and the Whole skin's same reads stay
-// listed. Edited copies are refused by the validator: a Whole revision
-// counting only its chunks, a Range skin group's key changed, and either
-// constant moved into the listed inputs.
+// Both skins export keyed Range groups. Sparse matrix groups alias their
+// entering writer, including the summary's metadata reads.
 static void
 TestGroupRolesBake()
 {
@@ -3485,15 +3465,14 @@ TestGroupRolesBake()
     CHECK(_RevisionChunkCount(*file, c, at.linear) == groups);
     CHECK(_ChunkParts(*file, c, at.linear) == every);
 
-    // The Whole skin: chunked, G keyed chunks, and its fuse's G groups.
+    // DQ publishes the same keyed Range groups as linear skinning.
     const fb::RigExecWireRevision &dual = chain.revisions[size_t(at.dual)];
-    CHECK(native[size_t(at.dual)].role == RigExecBakedRevisionRole::Whole);
+    CHECK(native[size_t(at.dual)].role == RigExecBakedRevisionRole::Range);
     CHECK(dual.op == uint8_t(fb::RevisionOp::Skin));
-    CHECK(dual.chunked && !RigExecFormatIsRangeRevision(dual));
+    CHECK(!dual.chunked && RigExecFormatIsRangeRevision(dual));
     CHECK(RigExecFormatIsKeyedRevision(dual));
     CHECK(onBounds(dual));
-    CHECK(_RevisionChunkCount(*file, c, at.dual) ==
-          dual.chunks.size() + groups);
+    CHECK(_RevisionChunkCount(*file, c, at.dual) == groups);
     CHECK(_ChunkParts(*file, c, at.dual) == every);
 
     // Both skins' keys are their groups' influences: J0 (0) below N/2, J1
@@ -3557,6 +3536,8 @@ TestGroupRolesBake()
     for (const std::string &name :
          {linearAt + "rigExec:skinningMethod",
           linearAt + "rigExec:elementSize", linearAt + "rigExec:jointIndices",
+          dualAt + "rigExec:skinningMethod", dualAt + "rigExec:elementSize",
+          dualAt + "rigExec:jointIndices",
           defaultWeight}) {
         const bool constant = _HoldsConstant(*file, name);
         if (!constant) {
@@ -3570,8 +3551,7 @@ TestGroupRolesBake()
         CHECK(!_ListsInput(*file, path.GetString()));
     }
     for (const std::string &name :
-         {linearAt + "rigExec:jointWeights", dualAt + "rigExec:skinningMethod",
-          dualAt + "rigExec:elementSize", dualAt + "rigExec:jointIndices"}) {
+         {linearAt + "rigExec:jointWeights", dualAt + "rigExec:jointWeights"}) {
         const bool listed = _ListsInput(*file, name);
         if (!listed) {
             std::printf("  group roles bake: %s is not listed\n",
@@ -3612,7 +3592,7 @@ TestGroupRolesBake()
             refused += rejected ? 1 : 0;
             return why;
         };
-    refuse("a Whole revision counting only its chunks",
+    refuse("a Range revision allocating Whole publication slots",
            [&](fb::RigExecWireFile &f) {
                const size_t id =
                    size_t(f.geometry->chainRevisionBegin[c]) + size_t(at.dual);
@@ -3620,7 +3600,7 @@ TestGroupRolesBake()
                    return false;
                }
                f.geometry->revisionChunkCount[id] =
-                   int32_t(dual.chunks.size());
+                   int32_t(dual.chunks.size() + groups);
                return true;
            });
     refuse("a Range skin group's key changed", [&](fb::RigExecWireFile &f) {
@@ -3633,8 +3613,24 @@ TestGroupRolesBake()
         chunks[0].key = {1};
         return true;
     });
+    refuse("a summary missing an aliased group", [&](fb::RigExecWireFile &f) {
+        const size_t r = size_t(at.gated);
+        const int id = f.geometry->chainRevisionBegin[c] + int(r);
+        for (size_t k = 0; k < groups; ++k) {
+            if (written.count(int(k))) continue;
+            const uint32_t slot = uint32_t(chain.revisions[size_t(entering[r][k])].chunkBase + k);
+            for (auto &step : f.steps) {
+                if (step.kind == fb::StepKind::RevisionFuse && step.object == id) {
+                    CHECK(_DeclaresRead(step, fb::SlotDomain::RevisionOut, slot));
+                    _DropRead(&step, fb::SlotDomain::RevisionOut, slot);
+                    return true;
+                }
+            }
+        }
+        return false;
+    });
     for (const std::string &name :
-         {linearAt + "rigExec:skinningMethod", defaultWeight}) {
+         {linearAt + "rigExec:skinningMethod", dualAt + "rigExec:skinningMethod", defaultWeight}) {
         const std::string why =
             refuse("listing " + name, [&](fb::RigExecWireFile &f) {
                 return _ListSlot(&f, name);
@@ -3646,7 +3642,7 @@ TestGroupRolesBake()
     std::printf("group roles bake: %zu groups; gated mover writes %zu; %zu "
                 "constants; %d edits refused\n",
                 groups, written.size(), pinned.size(), refused);
-    CHECK(refused == 4);
+    CHECK(refused == 6);
 }
 
 // The bake's keep-set (D2 b): an admitted upstream input and a presentation

@@ -2262,6 +2262,11 @@ _GroupChainStage(const _GroupChainOptions &options)
     }
     skin("Dual", "dualQuaternion", {root.GetPath()},
          [](size_t) { return 0; });
+    // Keep the mixed-role fixture's DQ method changeable.
+    const auto method = stage->GetAttributeAtPath(
+        SdfPath("/Asset/Rig/Movers/Dual.rigExec:skinningMethod"));
+    method.Set(TfToken("dualQuaternion"), UsdTimeCode(1));
+    method.Set(TfToken("dualQuaternion"), UsdTimeCode(3));
     return stage;
 }
 
@@ -4142,13 +4147,16 @@ TestLayoutSetOnChunkedRevision()
         }
     }
 
-    // dualQuaternion: a Whole keyed skin whose layout stays inputs.
+    // A changeable DQ method keeps the Whole layout-input path.
     {
         const UsdStageRefPtr stage = _TwoKeySkinStage();
         stage->GetPrimAtPath(SdfPath(skin))
             .CreateAttribute(TfToken("rigExec:skinningMethod"),
                              SdfValueTypeNames->Token)
             .Set(TfToken("dualQuaternion"));
+        const auto method = stage->GetAttributeAtPath(SdfPath(skin + ".rigExec:skinningMethod"));
+        method.Set(TfToken("dualQuaternion"), UsdTimeCode(1));
+        method.Set(TfToken("dualQuaternion"), UsdTimeCode(2));
         const UsdPrim lift = stage->DefinePrim(
             SdfPath("/Asset/Rig/Movers/Lift"), TfToken("RigExecMatrixMover"));
         lift.ApplyAPI(TfToken("RigExecMoverAPI"));

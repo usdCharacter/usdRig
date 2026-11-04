@@ -24,6 +24,7 @@
 #include "types.h"
 
 #include "rigExecMath/dualQuat.h"
+#include "rigExecMath/skinAcceptance.h"
 #include "rigExecMath/envelope.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecMath/latticeKernel.h"
@@ -1451,7 +1452,7 @@ ClassifyRevision(const RoleReads &reads,
         }
         const TfToken value = reads.Token(leaves, method);
         pinToken(method, value);
-        if (value != _tokens->classicLinear) {
+        if (value != _tokens->classicLinear && value != _tokens->dualQuaternion) {
             return GeomRole::Whole;
         }
         for (const int k : {jointIndices, size}) {
@@ -2271,14 +2272,8 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                         RigExecBakedSlotDomain::WeightPacket,
                         revision.weightObject));
                 }
-                // Its own chunks' ranges -- a join, its written groups'.
-                // The entering points, which the whole-revision fallback and
-                // a pass-through read, are a version like a chunk's. A join
-                // reads no points, but it declares the entering version too:
-                // that keeps the joins in chain order, so their lines keep
-                // the unsplit chain's order in the canonical step order the
-                // epilogue reports in, and hands it the predecessor's group
-                // ids.
+                // Range summaries read group metadata directly; no previous
+                // summary lies on the path to this revision's consumers.
                 if (role == GeomRole::Range) {
                     DeclareWrittenGroupReads(revision, &fuse.reads);
                 } else {
@@ -2287,7 +2282,15 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                         revision.chunkBase,
                         revision.chunkBase + int(revision.chunks.size())));
                 }
-                DeclarePointVersionRead(B, entering, &fuse.reads);
+                if (role == GeomRole::Range) {
+                    for (size_t g = 0; g < groups; ++g) {
+                        if (!revision.groupWritten[g]) {
+                            RigExecBakedDeclareGroupRead(B, int(c), r, g, &fuse.reads);
+                        }
+                    }
+                } else {
+                    DeclarePointVersionRead(B, entering, &fuse.reads);
+                }
                 if (role == GeomRole::Whole) {
                     // A Whole fuse publishes every group: an applied group
                     // from its chunks, a refused one passed from the
@@ -2847,8 +2850,8 @@ SkinPacketIsUsable(const RigExecBakedProgramImpl::GeomRevision &revision)
 }
 
 /// A skin revision's apply-or-fail answer from that half: past it a linear
-/// blend cannot fail, while a dual-quaternion blend can still be degenerate
-/// at a vertex, which only its chunks see.
+/// blend cannot fail. Range DQ checks blends in InfluenceFold; Whole DQ
+/// defers that decision until its speculative chunks finish.
 RigExecRevisionAcceptance
 SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
 {
@@ -2859,7 +2862,9 @@ SkinAcceptance(const RigExecBakedProgramImpl::GeomRevision &revision)
     case RigExecSkinMethod::ClassicLinear:
         return RigExecRevisionAcceptance::Applies;
     case RigExecSkinMethod::DualQuaternion:
-        return RigExecRevisionAcceptance::Deferred;
+        return revision.role == RigExecBakedRevisionRole::Range
+                   ? RigExecRevisionAcceptance::Applies
+                   : RigExecRevisionAcceptance::Deferred;
     case RigExecSkinMethod::Unknown:
         break;
     }
@@ -5196,15 +5201,28 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
         revision.influencesValid =
             !skin || RigExecSkinTransformsAreUsable(revision.influences.data(),
                                                     revision.influences.size());
-        // Both forms of the table, whether or not the revision is chunked:
-        // a chunked one's chunks keep their own, but the fuse's whole-array
-        // fallback reads these and cannot write them. O(influences) of pure
-        // per-matrix arithmetic, which is the size of this step anyway. A
-        // Range skin has no whole-array fallback (its RevisionTransforms
-        // value is the validity alone), so it folds no forms.
+        const bool rangeDq = skin &&
+            revision.role == RigExecBakedRevisionRole::Range &&
+            revision.parameters.skinningMethod == _tokens->dualQuaternion;
         if (skin && revision.influencesValid &&
-            revision.role != RigExecBakedRevisionRole::Range) {
+            (rangeDq || revision.role != RigExecBakedRevisionRole::Range)) {
             FoldTransformForms(&revision, B.useSimd);
+        }
+        if (rangeDq && revision.influencesValid && SkinPacketIsUsable(revision)) {
+            const auto &palette = revision.palette;
+            const auto layout = RigExecSkinLayoutForPacket(
+                revision.parameters, WholeTransformsView(&revision),
+                revision.precedingCount);
+            // DQ refusal depends on weights and poses, never entering points.
+            revision.influencesValid =
+                (revision.dqWeightsSafe &&
+                 RigExecDualQuatPaletteSafe(palette.data(), palette.size())) ||
+                RigExecDualQuatBlendsAccept(layout,
+                    [&](const int *indices, const double *weights, size_t count) {
+                        RigExecScaledDualQuat blend;
+                        return RigExecBlendScaledDualQuats(palette.data(),
+                            palette.size(), indices, weights, count, &blend);
+                    });
         }
         return;
     }
@@ -5375,6 +5393,10 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             if (skin) {
                 revision.layoutUsable =
                     RigExecSkinLayoutIsUsable(revision.parameters, count);
+                revision.dqWeightsSafe = revision.layoutUsable &&
+                    revision.parameters.skinningMethod == _tokens->dualQuaternion &&
+                    RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
+                        revision.parameters, RigExecSkinTransformsOf(revision.parameters), count));
                 revision.fullStrength =
                     RigExecEnvelopeIsFullStrength(revision.parameters.weights);
                 if (!revision.fullStrength) ResolveEnvelope(&revision, count);
@@ -5477,8 +5499,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             return;
         }
         // Every skin, Legacy, Whole or Range: a Range skin's group steps
-        // share this decision, which never defers for its classicLinear
-        // method.
+        // share this decision, with DQ blend validity supplied by InfluenceFold.
         revision.layoutUsable =
             RigExecSkinLayoutIsUsable(revision.parameters, count);
         revision.fullStrength =
@@ -5487,6 +5508,10 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
             ResolveEnvelope(&revision, count);
         }
         revision.acceptance = SkinAcceptance(revision);
+        revision.dqWeightsSafe = revision.layoutUsable &&
+            revision.parameters.skinningMethod == _tokens->dualQuaternion &&
+            RigExecDualQuatWeightsSafe(RigExecSkinLayoutForPacket(
+                revision.parameters, RigExecSkinTransformsOf(revision.parameters), count));
         if (revision.chunked) {
             // Whether the keys still describe the vertices. The handle is
             // the identity the SkinTopology op preserves for a binding that

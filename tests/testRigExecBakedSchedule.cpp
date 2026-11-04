@@ -1038,9 +1038,9 @@ TestTheVertexPartitionCoversEveryVertexOnce(const std::string &stagePath,
             // The frame agreed that the keys still describe the vertices,
             // and every chunk produced its range.
             CHECK(!revision.partitionStale);
-            for (const RigExecBakedProgramImpl::GeomChunk &chunk :
-                     revision.chunks) {
-                CHECK(chunk.ok);
+            for (size_t g = 0; g < revision.chunks.size(); ++g) {
+                CHECK(revision.role == RigExecBakedRevisionRole::Range
+                          ? revision.groups[g].ok : revision.chunks[g].ok);
             }
             // (1) The ranges are contiguous, ascending and cover exactly
             // [0, pointCount).
@@ -1668,7 +1668,18 @@ TestADualQuaternionSkinChunksLikeTheDynamicPath(const std::string &stagePath)
 void
 TestAStalePartitionRunsTheRevisionWhole(const std::string &stagePath)
 {
-    const BuiltProgram built = Build(stagePath);
+    const auto stage = UsdStage::Open(stagePath);
+    CHECK(stage);
+    if (!stage) return;
+    const auto method = stage->GetAttributeAtPath(
+        FindSkinMover(stage).AppendProperty(TfToken("rigExec:skinningMethod")));
+    TfToken value;
+    CHECK(method && method.Get(&value));
+    if (!method) return;
+    // A changeable method retains the Whole revision's stale-layout fallback.
+    method.Set(value, UsdTimeCode(1));
+    method.Set(value, UsdTimeCode(2));
+    const BuiltProgram built = BuildStage(stage);
     CHECK(built.program != nullptr);
     if (!built.program) {
         return;
@@ -1684,7 +1695,8 @@ TestAStalePartitionRunsTheRevisionWhole(const std::string &stagePath)
     for (RigExecBakedProgramImpl::GeomChain &chain : B.chains) {
         for (RigExecBakedProgramImpl::GeomRevision &revision :
                  chain.revisions) {
-            if (revision.chunked && !stale) {
+            if (revision.chunked &&
+                revision.role != RigExecBakedRevisionRole::Range && !stale) {
                 stale = &revision;
             }
         }
@@ -4442,8 +4454,8 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built,
         // In a range chain a group step (a Range revision's, or a Whole
         // keyed skin's speculative chunk) reads group `part` of the entering
         // version from its last writer's slot (ChainBase for the base) and
-        // no version; a join reads its written groups and, as a fuse does,
-        // the entering version; a Whole fuse its chunks, every entering
+        // no version; a join reads written and aliased groups;
+        // a Whole fuse its chunks, every entering
         // group and the version.
         const bool grouped =
             !fieldReader &&
@@ -4468,6 +4480,8 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built,
                 for (size_t g = 0; g < revision.groupWritten.size(); ++g) {
                     if (revision.groupWritten[g]) {
                         ownChunks.push_back(base + int(g));
+                    } else if (groupSlot(g) >= 0) {
+                        ownChunks.push_back(groupSlot(g));
                     }
                 }
             } else {
@@ -4498,7 +4512,9 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built,
             ++stacked;
             if (B.revisionChunkCount[size_t(id)] > 1) ++stackedChunked;
         }
-        if ((r == 0 && !fieldReader) || groupReader) {
+        if ((r == 0 && !fieldReader) || groupReader ||
+            (grouped && step.kind == RigExecBakedStepKind::RevisionFuse &&
+             revision.role == RigExecBakedRevisionRole::Range)) {
             CHECK(done.empty() && dirty.empty());
             const int slot = groupReader ? groupSlot(size_t(step.part)) : -1;
             if (slot >= 0) {
@@ -4589,8 +4605,7 @@ TestEachChainReaderBindsOneVersion(const BuiltProgram &built,
 /// whole, g >= 0 group g only. Group g of a Range revision reads group g of
 /// the version entering it, and a gated revision that does not write g is
 /// no part of it; a Whole revision's published group comes from its fuse,
-/// which, like every join, reads its own slots and the version before,
-/// whole.
+/// which reads its own slots and the entering version whole.
 void
 AddVersionAncestry(const RigExecBakedProgramImpl &B, int c, int r, int mode,
                    std::vector<RigExecBakedSlotRange> *reads)
@@ -4616,8 +4631,12 @@ AddVersionAncestry(const RigExecBakedProgramImpl &B, int c, int r, int mode,
             RigExecBakedOne(RigExecBakedSlotDomain::ChainDirty, q));
         reads->push_back(RigExecBakedRange(RigExecBakedSlotDomain::RevisionOut,
                                            base, base + count));
-        // A join, like a fuse, reads its own ranges and the version before
-        // its own, whole.
+        if (revision.role == RigExecBakedRevisionRole::Range) {
+            for (size_t g = 0; g < revision.groupWritten.size(); ++g) {
+                AddVersionAncestry(B, c, r - 1, int(g), reads);
+            }
+            return;
+        }
         mode = -2;
     }
 }
@@ -4680,6 +4699,13 @@ OverApproximateChainReads(const RigExecBakedProgramImpl &B,
                 B.revisionChunkBase[size_t(id)],
                 B.revisionChunkBase[size_t(id)] +
                     B.revisionChunkCount[size_t(id)]));
+        }
+        if (step.kind == RigExecBakedStepKind::RevisionFuse &&
+            own.role == RigExecBakedRevisionRole::Range) {
+            for (size_t g = 0; g < own.groupWritten.size(); ++g) {
+                AddVersionAncestry(B, c, r, int(g), &reads);
+            }
+            return reads;
         }
         const int mode = range ? step.part : -2;
         AddVersionAncestry(B, c, r, mode, &reads);
@@ -6082,15 +6108,10 @@ TestARangeChainIsCutIntoRanges(const BuiltProgram &built, const char *name)
                 for (int g = 0; g < int(groups); ++g) {
                     CHECK(DeclaresSlot(step.reads, D::RevisionOut, base + g));
                 }
-                CHECK(DeclaredSlots(step.reads, D::RevisionDone) ==
-                          (r > 0 ? 1u : 0u) &&
-                      DeclaredSlots(step.reads, D::ChainDirty) ==
-                          (r > 0 ? 1u : 0u));
+                CHECK(DeclaredSlots(step.reads, D::RevisionDone) == 0 &&
+                      DeclaredSlots(step.reads, D::ChainDirty) == 0);
                 if (r > 0) {
-                    CHECK(DeclaresSlot(step.reads, D::RevisionDone, id - 1) &&
-                          DeclaresSlot(step.reads, D::ChainDirty, id - 1));
-                    // Ordered after the predecessor's join.
-                    CHECK(std::binary_search(
+                    CHECK(!std::binary_search(
                         step.preds.begin(), step.preds.end(),
                         B.revisionFuseStep[size_t(id) - 1]));
                 }
@@ -6228,8 +6249,7 @@ TestTheValidatorRejectsABrokenRangeChain()
         passes(what);
     }
     {
-        // The join keeps the joins in chain order through the version it
-        // declares; without it, the version rule objects.
+        // Summary operations have no dependency on the preceding summary.
         RigExecBakedStep &reader = B.steps[size_t(join)];
         const std::vector<RigExecBakedSlotRange> reads = reader.reads;
         std::vector<RigExecBakedSlotRange> kept;
@@ -6238,12 +6258,8 @@ TestTheValidatorRejectsABrokenRangeChain()
                 kept.push_back(read);
             }
         }
-        CHECK(kept.size() + 1 == reads.size());
+        CHECK(kept.size() == reads.size());
         reader.reads = kept;
-        ExpectRejected(B, "a join without the version entering it",
-                       {"(" + reader.label + ")",
-                        "reads point version 1 of chain 0 without declaring it"});
-        reader.reads = reads;
         passes("a join without the version entering it");
     }
     {
@@ -6859,7 +6875,11 @@ MakeGroupChainStage()
     // Authored last to first: discovery runs siblings bottom to top.
     matrix("Last", still)
         .GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
-    skin("Dual", "dualQuaternion");
+    const auto dualMethod = skin("Dual", "dualQuaternion")
+        .GetAttribute(TfToken("rigExec:skinningMethod"));
+    // Keep a Whole skin in this mixed-role fixture.
+    dualMethod.Set(TfToken("dualQuaternion"), UsdTimeCode(1));
+    dualMethod.Set(TfToken("dualQuaternion"), UsdTimeCode(kFrames));
     UsdAttribute middleWeight = matrix("Middle", still)
         .GetAttribute(TfToken("inputs:defaultWeight"));
     for (int frame = 1; frame <= kFrames; ++frame) {
@@ -8583,13 +8603,12 @@ GroupStepParts(const RigExecBakedProgramImpl &B, int id)
 }
 
 /// The Live roles, gates, keys and steps of MakeGroupBuildStage: every
-/// Matrix revision, both linear skins and the target blend are Range, the
-/// dual-quaternion skin Whole; G0 writes group 0 alone and so has one group
+/// Matrix revision, all skins and the target blend are Range;
+/// G0 writes group 0 alone and so has one group
 /// step, and G1's group 5 reads the slot of F, the revision before G0; each
 /// linear skin's key g is the union of its group's joint indices, cut at
-/// the group bounds with no merge and no degenerate fallback; the Whole skin
-/// runs ten speculative keyed chunks and its fuse publishes the ten groups
-/// past them. The pins are the ones each role rests on, the methods and the
+/// the group bounds with no merge or geometry publication by a fuse.
+/// The pins are the ones each role rests on, the methods and the
 /// space are compiled rig keys, and the validator accepts the program.
 void
 TestARangeChainGetsItsRolesAndGates()
@@ -8622,13 +8641,11 @@ TestARangeChainGetsItsRolesAndGates()
         return;
     }
     const auto &revisions = chain->revisions;
-    for (const int r : {f, g0, g1, l1, l2, bt}) {
+    for (const int r : {f, g0, g1, l1, l2, dq, bt}) {
         CHECK(revisions[size_t(r)].role == Role::Range &&
               revisions[size_t(r)].rangeRole);
         CHECK(B.revisionChunkCount[size_t(first + r)] == 10);
     }
-    CHECK(revisions[size_t(dq)].role == Role::Whole &&
-          !revisions[size_t(dq)].rangeRole);
     const std::vector<int> all = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
     // The gate: group 0 alone, one group step, a join reading that group.
@@ -8646,7 +8663,7 @@ TestARangeChainGetsItsRolesAndGates()
     {
         const RigExecBakedStep &join =
             B.steps[size_t(B.revisionFuseStep[size_t(first + g0)])];
-        CHECK(DeclaredSlots(join.reads, D::RevisionOut) == 1 &&
+        CHECK(DeclaredSlots(join.reads, D::RevisionOut) == 10 &&
               DeclaresSlot(join.reads, D::RevisionOut,
                            B.revisionChunkBase[size_t(first + g0)]));
     }
@@ -8719,34 +8736,27 @@ TestARangeChainGetsItsRolesAndGates()
             }
         }
     }
-    // The dual-quaternion skin: Whole, ten speculative keyed chunks, and a
-    // fuse publishing RevisionOut[chunkBase + 10, + 10).
+    // The DQ summary reads group results and publishes no geometry.
     {
         const auto &skin = revisions[size_t(dq)];
         const int id = first + dq;
         const int base = B.revisionChunkBase[size_t(id)];
         CHECK(skin.chunked && skin.chunks.size() == 10);
-        CHECK(B.revisionChunkCount[size_t(id)] == 20);
+        CHECK(B.revisionChunkCount[size_t(id)] == 10);
         CHECK(HasPin(skin, Pin::LeafToken, "dualQuaternion") &&
-              skin.pins.size() == 1);
+              skin.pins.size() == 3);
         CHECK(GroupStepParts(B, id) == all);
         for (size_t g = 0; g < 10 && skin.chunks.size() == 10; ++g) {
             CHECK(skin.chunks[g].key == std::vector<int>({int(g)}));
-            CHECK(RigExecBakedGroupSlot(B, id, g) == base + 10 + int(g));
+            CHECK(RigExecBakedGroupSlot(B, id, g) == base + int(g));
         }
         const RigExecBakedStep &fuse =
             B.steps[size_t(B.revisionFuseStep[size_t(id)])];
         for (int g = 0; g < 10 && skin.enteringWriter.size() == 10; ++g) {
-            CHECK(DeclaresSlot(fuse.writes, D::RevisionOut, base + 10 + g));
             CHECK(DeclaresSlot(fuse.reads, D::RevisionOut, base + g));
-            // Every entering group, in its last writer's slot.
-            const int writer = skin.enteringWriter[size_t(g)];
-            CHECK(writer >= 0 &&
-                  DeclaresSlot(fuse.reads, D::RevisionOut,
-                               RigExecBakedGroupSlot(B, first + writer,
-                                                     size_t(g))));
         }
-        CHECK(DeclaredSlots(fuse.writes, D::RevisionOut) == 10);
+        CHECK(DeclaredSlots(fuse.writes, D::RevisionOut) == 0);
+        CHECK(DeclaredSlots(fuse.reads, D::RevisionDone) == 0);
     }
     CHECK(HasPin(revisions[size_t(bt)], Pin::LeafToken, "target") &&
           !revisions[size_t(bt)].chunked);
@@ -8774,7 +8784,7 @@ TestARangeChainGetsItsRolesAndGates()
 /// the skin Whole with no pin; an override standing on the method at Build
 /// classifies by the override and pins it; one standing on the joint
 /// indices makes the skin Whole; and an admitted upstream value on the
-/// method, which Build places in B.upstream before classifying, does too.
+/// method is pinned to the value Build reads in Live mode.
 void
 TestARoleFollowsTheValueBuildReads()
 {
@@ -8823,9 +8833,9 @@ TestARoleFollowsTheValueBuildReads()
             {GroupOverride(l1, "rigExec:skinningMethod",
                            VtValue(TfToken("dualQuaternion")))});
         const auto *skin = revision(built, "L1");
-        CHECK(skin && skin->role == Role::Whole &&
+        CHECK(skin && skin->role == Role::Range &&
               HasPin(*skin, Pin::LeafToken, "dualQuaternion") &&
-              !HasPin(*skin, Pin::NoLayoutOverride));
+              HasPin(*skin, Pin::NoLayoutOverride));
         // The other linear skin is untouched.
         const auto *other = revision(built, "L2");
         CHECK(other && other->role == Role::Range);
@@ -8853,7 +8863,7 @@ TestARoleFollowsTheValueBuildReads()
         built.program =
             RigExecBakedProgram::Build(built.evaluator.get(), &reasons);
         const auto *skin = revision(built, "L1");
-        CHECK(skin && skin->role == Role::Whole &&
+        CHECK(skin && skin->role == Role::Range &&
               HasPin(*skin, Pin::LeafToken, "dualQuaternion"));
         CHECK(built.program &&
               built.program->GetStepGraph().upstream.count(
@@ -8864,7 +8874,7 @@ TestARoleFollowsTheValueBuildReads()
 }
 
 /// A chain whose only Range candidate is a skin an override makes
-/// dual-quaternion at Build stays Legacy but pins the method: the run with
+/// unsupported at Build stays Legacy but pins the method: the run with
 /// the override stands, and once it is cleared the roles no longer do.
 void
 TestALegacyChainPinsItsWholeSkin()
@@ -8872,10 +8882,10 @@ TestALegacyChainPinsItsWholeSkin()
     using Pin = RigExecBakedRolePin::Kind;
     GroupStageOptions options;
     options.skinOnly = true;
-    const RigExecValueOverride dual =
+    const RigExecValueOverride unknown =
         GroupOverride("/Asset/Rig/Movers/L1", "rigExec:skinningMethod",
-                      VtValue(TfToken("dualQuaternion")));
-    const BuiltProgram built = BuildGroupStage(options, {dual});
+                      VtValue(TfToken("unsupported")));
+    const BuiltProgram built = BuildGroupStage(options, {unknown});
     CHECK(built.program != nullptr);
     if (!built.program) {
         return;
@@ -8889,9 +8899,9 @@ TestALegacyChainPinsItsWholeSkin()
     const auto &skin = chain->revisions[0];
     CHECK(chain->groupBounds.empty() && chain->groupPointCount == 0);
     CHECK(skin.role == RigExecBakedRevisionRole::Legacy && skin.groups.empty());
-    CHECK(HasPin(skin, Pin::LeafToken, "dualQuaternion") && skin.pins.size() == 1);
+    CHECK(HasPin(skin, Pin::LeafToken, "unsupported") && skin.pins.size() == 1);
     RigExecRigPose pose;
-    CHECK(built.program->SetOverrides({dual}));
+    CHECK(built.program->SetOverrides({unknown}));
     built.program->Run(UsdTimeCode(1.0), &pose);
     CHECK(RigExecBakedRolesStand(B));
     built.evaluator->ClearInteractiveOverrides();
@@ -8985,7 +8995,7 @@ TestExportModeBakesOnlyConstants()
     }
     const std::string movers = "/Asset/Rig/Movers/";
     std::set<SdfPath> expected;
-    for (const char *skin : {"L1", "L2"}) {
+    for (const char *skin : {"L1", "L2", "D"}) {
         for (const char *read : {"rigExec:skinningMethod", "rigExec:elementSize",
                                  "rigExec:jointIndices"}) {
             expected.insert(SdfPath(movers + skin).AppendProperty(TfToken(read)));

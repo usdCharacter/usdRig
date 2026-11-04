@@ -7,6 +7,7 @@
 #include "rigExecMath/dualQuat.h"
 #include "rigExecMath/simdKernels.h"
 #include "rigExecMath/solvers.h"
+#include "rigExecMath/skinAcceptance.h"
 
 #include "pxr/base/gf/rotation.h"
 
@@ -1083,6 +1084,45 @@ SameBits(const GfVec3f &a, const GfVec3f &b)
 }
 
 static void
+TestSkinAcceptance()
+{
+    const double theta = 2.0 * std::acos(0.75) * 180.0 / kPi;
+    const std::vector<GfMatrix4d> transforms = {
+        Rigid(GfVec3d(1, 0, 0), theta, GfVec3d(1, 2, 3)),
+        Rigid(GfVec3d(1, 0, 0), -theta, GfVec3d(0)),
+        Scaled(Diag(2, 1, 0.5), GfVec3d(0, 1, 0), 120, GfVec3d(2, 0, 1))};
+    const std::vector<int> indices = {0, 1, 2};
+    const GfVec3f in(1, 2, 3);
+    GfVec3f out;
+    for (const std::vector<float> weights : {
+             std::vector<float>{0, 0, 0}, {0.1f, 0.2f, 0.7f},
+             {0.3f, 0.3f, 0}, {0.5f, 0.5f, 0}, {2, 2, 0}, {3, 1, 0}}) {
+        const auto layout = Layout(transforms, indices, weights, 3);
+        const auto palette = RigExecSkinDualQuatPalette(layout);
+        const bool exact = RigExecDualQuatBlendsAccept(layout,
+            [&](const int *ids, const double *ws, size_t n) {
+                RigExecScaledDualQuat blend;
+                return RigExecBlendScaledDualQuats(palette.data(), palette.size(),
+                                                   ids, ws, n, &blend);
+            });
+        CHECK(exact == RigExecApplyDualQuatSkin(&in, &out, layout));
+        const bool safe = RigExecDualQuatWeightsSafe(layout);
+        CHECK(RigExecDualQuatPaletteSafe(palette.data(), palette.size()));
+        CHECK(!safe || exact);
+        if (weights[0] <= 0.5f) CHECK(safe);
+        if (weights[0] == 2) CHECK(!safe && !exact);
+        if (weights[0] == 3) CHECK(!safe && exact);
+    }
+    const std::vector<float> normalized{0.1f, 0.2f, 0.7f};
+    auto palette = RigExecSkinDualQuatPalette(Layout(transforms, indices, normalized, 3));
+    palette[0].rigid.real *= 2.0;
+    CHECK(!RigExecDualQuatPaletteSafe(palette.data(), palette.size()));
+    palette[0].rigid.real *= 0.5;
+    palette[0].rigid.dual = GfQuatd(std::numeric_limits<double>::infinity());
+    CHECK(!RigExecDualQuatPaletteSafe(palette.data(), palette.size()));
+}
+
+static void
 TestSkinKernelRules()
 {
     // The kernel's documented rules, checked at the kernel rather than
@@ -1313,6 +1353,7 @@ main()
     TestScaledDegenerates();
     TestPaletteBlendMatchesArrayBlend();
     TestSkinKernelRules();
+    TestSkinAcceptance();
     MeasureTransformCost();
     MeasureSkinningCost();
 

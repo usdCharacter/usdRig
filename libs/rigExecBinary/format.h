@@ -560,7 +560,8 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// smoothing region), declared as their RevisionOut slots. Older files hold
 /// neither as a Range revision. Format 29 lets sparse target-space blends
 /// carry channel keys on chunks and read those weights at each chunk.
-inline constexpr uint32_t RigExecFormatVersion = 29;
+/// Format 30 admits Range DQ skins and independent Range status summaries.
+inline constexpr uint32_t RigExecFormatVersion = 30;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.
 inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
@@ -615,7 +616,7 @@ inline bool RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
 }
 
 /// The ops a Range revision may have in format 20: Matrix, Wire, Lattice,
-/// BlendShape and Skin (a Skin only with a private classicLinear method);
+/// BlendShape and Skin (a private classicLinear or, since format 30, DQ method);
 /// from format 28 also Smooth and DeltaMush.
 inline bool
 RigExecFormatIsRangeOp(uint8_t op)

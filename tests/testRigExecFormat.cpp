@@ -1477,14 +1477,15 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 29 &&
+    static_assert(RigExecFormatVersion == 30 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
                   "RigLogic's solves, format 25 windowed operations, "
                   "format 26 the cloth's material model (RCL3) and format "
                   "27 volume falloff sample inputs, format 28 Range "
-                  "Smooth revisions, format 29 sparse blend channel keys; per-group range chains "
+                  "Smooth revisions, format 29 sparse blend channel keys, "
+                  "format 30 Range DQ and independent summaries; per-group range chains "
                   "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
@@ -5016,13 +5017,13 @@ TestRangeChunkTables()
            }),
            text(row + ": a Range Skin's rigExec:skinningMethod is not one "
                       "private, unanimated slot"));
-    refuse("a dual-quaternion method", rangeSkin([](F &f, R &) {
+    refuse("a legacy Range dual-quaternion method", rangeSkin([](F &f, R &) {
+               f.formatVersion = 29;
                f.inputs[_sgMethod] = fb::InputSlot(
                    _pgMethod, _vgDual, -1, -1, InputTag::Token,
                    uint8_t(fb::InputSlotFlags::HasValue));
            }),
-           text(row + ": a Range Skin's rigExec:skinningMethod holds "
-                      "'dualQuaternion', not classicLinear"));
+           text(row + ": unsupported Range Skin method 'dualQuaternion'"));
     std::printf("group tables: %d chains with groups accepted; %d group "
                 "table, step and constant violations refused\n",
                 accepted, refused);

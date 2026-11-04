@@ -1,5 +1,6 @@
 // RigExec solver kernels.
 #include "solvers.h"
+#include "skinAcceptance.h"
 #include "envelope.h"
 
 #include "pxr/base/gf/matrix3d.h"
@@ -640,37 +641,7 @@ _GatherDualQuatInfluences(
     const RigExecSkinLayout &layout, size_t i,
     std::vector<int> *indices, std::vector<double> *weights)
 {
-    indices->clear();
-    weights->clear();
-    size_t pivot = 0;
-    float pivotWeight = -1.0f;
-    double total = 0.0;
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        const float w = layout.Weight(i, k);
-        if (pivotWeight < w) {
-            pivotWeight = w;
-            pivot = k;
-        }
-        total += w;
-    }
-    auto push = [&](size_t k) {
-        const double w = layout.Weight(i, k);
-        if (w != 0.0) {
-            indices->push_back(layout.indices[i * layout.elementSize + k]);
-            weights->push_back(w);
-        }
-    };
-    push(pivot);
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        if (k != pivot) {
-            push(k);
-        }
-    }
-    const double complement = 1.0 - total;
-    if (complement != 0.0) {
-        indices->push_back(static_cast<int>(layout.transformCount));
-        weights->push_back(complement);
-    }
+    RigExecGatherDualQuatInfluences(layout, i, indices, weights);
 }
 
 }  // namespace

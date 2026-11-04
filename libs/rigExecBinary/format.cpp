@@ -4803,13 +4803,18 @@ private:
             if (!need(D::RevisionTransforms, id) ||
                 (revision.weightObject >= 0 &&
                  !need(D::WeightPacket, uint64_t(revision.weightObject))) ||
-                !needVersion()) {
+                ((!range || _f.formatVersion < 30) && !needVersion())) {
                 return false;
             }
             const uint64_t base = uint64_t(int64_t(revision.chunkBase));
             if (range) {
                 for (size_t k = 0; k < groups; ++k) {
                     if (written[r][k] && !need(D::RevisionOut, base + k)) {
+                        return false;
+                    }
+                    uint64_t aliased = 0;
+                    if (!written[r][k] && _f.formatVersion >= 30 &&
+                        enteringSlot(k, &aliased) && !need(D::RevisionOut, aliased)) {
                         return false;
                     }
                     if (!written[r][k] &&
@@ -5048,10 +5053,9 @@ private:
                                      _f, uint32_t(read.value->bits))
                                : std::string();
                 }
-                if (method && text != "classicLinear") {
-                    return _Bad(row + ": a Range Skin's "
-                                      "rigExec:skinningMethod holds '" +
-                                text + "', not classicLinear");
+                if (method && text != "classicLinear" &&
+                    !(_f.formatVersion >= 30 && text == "dualQuaternion")) {
+                    return _Bad(row + ": unsupported Range Skin method '" + text + "'");
                 }
             }
         }

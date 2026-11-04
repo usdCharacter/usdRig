@@ -1685,8 +1685,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                 continue;
             }
             if (fuse && range) {
-                // A join: its written groups, and below, like a fuse, the
-                // entering version, which keeps the joins in chain order.
+                // A summary reads its written groups and any aliased groups.
                 for (size_t g = 0; g < groups; ++g) {
                     if (own.groupWritten[g] &&
                         !covers(step.reads, RigExecBakedSlotDomain::RevisionOut,
@@ -1695,6 +1694,12 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                                  std::to_string(id) + " without declaring "
                                  "RevisionOut[" + std::to_string(base + int(g)) +
                                  "]");
+                    }
+                }
+                for (size_t g = 0; g < groups; ++g) {
+                    if (!own.groupWritten[g] && !readsGroup(g)) {
+                        out->Add(NameStep(B, index) + " omits aliased group " +
+                                 std::to_string(g));
                     }
                 }
                 for (const RigExecBakedSlotRange &write : step.writes) {
@@ -1706,6 +1711,7 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                                  "]");
                     }
                 }
+                continue;
             } else if (fuse) {
                 // A Whole fuse publishes every group and reads every
                 // entering group it may pass through.

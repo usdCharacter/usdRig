@@ -61,6 +61,16 @@ computed and how many it reused; read it on the owner thread after a run. `testR
 chain through the evaluator, a frame-cache worker and the runtime, and on the
 biped, where an arm edit reaches the face clusters this way.
 
+Matrix, wire, and fixed-layout DQ skin movers pass groups directly to the next
+Range mover. Their `RevisionFuse` operations collect status and content versions
+from group metadata; they do not merge geometry or feed downstream chunks.
+An explicit whole-version consumer still waits for the corresponding summary.
+DQ skin checks acceptance in `InfluenceFold`, using weights and joint transforms
+without reading entering points. A conservative weight certificate handles ordinary
+normalized weights; other weights use the kernel's exact blend predicates. A
+refused blend passes through every group. Native, frozen, and format-30 binary
+runtime evaluation share this behavior; older binary formats remain readable.
+
 Verification: `testRigExecLiveDebug_serial` and `_parallel` exercise active-session
 routing, incremental snapshots, timestamps and phases, recording shutdown,
 unchanged source layers, and evaluation/profiler counters.

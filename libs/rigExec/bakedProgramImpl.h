@@ -3467,6 +3467,7 @@ struct RigExecBakedProgramImpl {
         /// The layout half of the skin kernel's validation (the matrix half
         /// is `influencesValid` below).
         bool layoutUsable = false;
+        bool dqWeightsSafe = false;
         /// The envelope, resolved ONCE at the full point count because it
         /// resolves atomically, and the predicate that says the blend is the
         /// identity and the resolution therefore dead. A skin's, and a dense

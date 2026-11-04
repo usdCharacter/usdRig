@@ -20,6 +20,7 @@
 #include "rigExecMath/deltaMushSettings.h"
 #include "rigExecMath/latticeKernel.h"
 #include "rigExecMath/pointBlocks.h"
+#include "rigExecMath/skinAcceptance.h"
 #include "rigExecMath/pointRanges.h"
 #include "rigExecMath/surfaceKernelCache.h"
 #include "rigExecMath/wireKernelCache.h"
@@ -1752,37 +1753,7 @@ RrGeoGatherDualQuatInfluences(const RrGeoSkinLayout &layout, size_t i,
                              std::vector<int> *indices,
                              std::vector<double> *weights)
 {
-    indices->clear();
-    weights->clear();
-    size_t pivot = 0;
-    float pivotWeight = -1.0f;
-    double total = 0.0;
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        const float w = layout.Weight(i, k);
-        if (pivotWeight < w) {
-            pivotWeight = w;
-            pivot = k;
-        }
-        total += w;
-    }
-    auto push = [&](size_t k) {
-        const double w = layout.Weight(i, k);
-        if (w != 0.0) {
-            indices->push_back(layout.indices[i * layout.elementSize + k]);
-            weights->push_back(w);
-        }
-    };
-    push(pivot);
-    for (size_t k = 0; k < layout.elementSize; ++k) {
-        if (k != pivot) {
-            push(k);
-        }
-    }
-    const double complement = 1.0 - total;
-    if (complement != 0.0) {
-        indices->push_back(static_cast<int>(layout.transformCount));
-        weights->push_back(complement);
-    }
+    RigExecGatherDualQuatInfluences(layout, i, indices, weights);
 }
 
 }  // namespace
@@ -4160,6 +4131,7 @@ struct RrGeometryScratch {
         bool envelopeOk = false;
         bool fullStrength = false;
         bool layoutUsable = false;
+        bool dqWeightsSafe = false;
         // RevisionStatic's apply-or-fail decision (GeomRevision::acceptance).
         RrGeoAcceptance acceptance = RrGeoAcceptance::Refuses;
         float defaultWeight = 0.0f;
@@ -7334,7 +7306,8 @@ RrGeoSkinAcceptance(const RrGeometryScratch::Revision &rev)
     case RrGeoSkinMethod::ClassicLinear:
         return RrGeoAcceptance::Applies;
     case RrGeoSkinMethod::DualQuaternion:
-        return RrGeoAcceptance::Deferred;
+        return rev.rangeRole ? RrGeoAcceptance::Applies
+                             : RrGeoAcceptance::Deferred;
     case RrGeoSkinMethod::Unknown:
         break;
     }
@@ -8119,10 +8092,24 @@ RrGeoRunInfluenceFoldStep(RrProgram *program, RrGeometryScratch *scratch,
     rev.influencesValid =
         !skin || RrGeoSkinTransformsAreUsable(rev.influences.data(),
                                              rev.influences.size());
-    // A Range skin's group steps skin from their chunks' tables: the fold
-    // gives it validity only.
-    if (skin && rev.influencesValid && rev.role != RrGeoRole::Range) {
+    const bool rangeDq = skin && rev.rangeRole &&
+        rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion;
+    if (skin && rev.influencesValid && (rangeDq || rev.role != RrGeoRole::Range)) {
         RrGeoFoldTransformForms(&rev, program->geoSettings.useSimd);
+    }
+    if (rangeDq && rev.influencesValid && RrGeoSkinPacketIsUsable(rev)) {
+        const auto &palette = rev.palette;
+        const auto layout = RrGeoSkinLayoutForPacket(
+            rev.parameters, RrGeoWholeTransformsView(&rev), rev.precedingCount);
+        rev.influencesValid =
+            (rev.dqWeightsSafe &&
+             RigExecDualQuatPaletteSafe(palette.data(), palette.size())) ||
+            RigExecDualQuatBlendsAccept(layout,
+                [&](const int *indices, const double *weights, size_t count) {
+                    RrGeoScaledDualQuat blend;
+                    return RrGeoBlendScaledDualQuats(palette.data(), palette.size(),
+                        indices, weights, count, &blend);
+                });
     }
     return true;
 }
@@ -8332,6 +8319,10 @@ RrGeoRunRevisionStaticStep(RrProgram *program, RrGeometryScratch *scratch,
         RrGeoResolveEnvelope(&rev, count);
     }
     rev.acceptance = RrGeoSkinAcceptance(rev);
+    rev.dqWeightsSafe = rev.layoutUsable &&
+        rev.parameters.skinMethod == RrGeoSkinMethod::DualQuaternion &&
+        RigExecDualQuatWeightsSafe(RrGeoSkinLayoutForPacket(
+            rev.parameters, RrGeoSkinTransformsOf(rev.parameters), count));
     if (rev.chunked) {
         const RrGeoSkinTopology *const topology =
             rev.parameters.skinTopology.get();
