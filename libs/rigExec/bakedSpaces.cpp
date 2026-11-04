@@ -6,7 +6,6 @@
 #include "rigExecScene/providerContextBinding.h"
 #include "rigExecMath/providerRefreshKernel.h"
 #include "parallel.h"
-#include "pathText.h"
 #include "frameExtraction.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecScene/poseProgram.h"
@@ -546,7 +545,6 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
             RigExecParallelEvaluationEnabled() && !RigExecFrozenSerialActive(),*B.profiler,&poseInfos);
     }
     const evaluatorDetail::_PoseInputInfo noPoseInputs;
-    RigExecPathText pathText;
     for(size_t slot=0;slot<B.paths.size();++slot) {
         const auto computed=poseInfos.find(B.paths[slot]);
         const auto &info=computed!=poseInfos.end()?computed->second:noPoseInputs;
@@ -559,7 +557,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         B.connectedPoseProviders[slot]=1;
         auto &p=B.providerProgram;
         const auto output=RigExecValueId(p.valueKeys.size());
-        const std::string key="refreshTemplate:"+pathText(B.paths[slot]);
+        const std::string key="refreshTemplate:"+B.paths[slot].GetString();
         p.valueKeys.push_back(key);p.valueIds.emplace(key,output);
         RigExecProviderOp op{RigExecProviderOpKind::PosedFrame,B.paths[slot],output,{}};
         for(const auto &name:poseInputs)
@@ -653,7 +651,6 @@ void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program)
     B.providerRefreshBefore.assign(B.walkSteps.size()+1,{});
     if(std::find(B.connectedPoseProviders.begin(),B.connectedPoseProviders.end(),char(1))==B.connectedPoseProviders.end())return;
     std::vector<std::vector<std::pair<uint32_t,uint32_t>>> constrained(B.paths.size());
-    RigExecPathText pathText;
     for(size_t checkpoint=0;checkpoint<=B.walkSteps.size();++checkpoint) {
         std::vector<int> requested;
         SdfPath reader=B.evaluator->GetRigPath();
@@ -693,7 +690,7 @@ void RigExecBakedPlanProviderRefreshes(RigExecBakedProgramImpl *program)
             if(!B.connectedPoseProviders[size_t(slot)])return;
             RigExecBakedProgramImpl::ProviderRefresh refresh;
             refresh.slot=slot;refresh.checkpoint=checkpoint;refresh.reader=reader;
-            refresh.key="providerRefresh:"+pathText(reader)+":"+std::to_string(checkpoint)+":"+pathText(B.paths[size_t(slot)]);
+            refresh.key="providerRefresh:"+reader.GetString()+":"+std::to_string(checkpoint)+":"+B.paths[size_t(slot)].GetString();
             refresh.priorConstraints=constrained[size_t(slot)];
             for(size_t descendant=size_t(slot)+1;descendant<B.paths.size() &&
                 B.paths[descendant].HasPrefix(B.paths[size_t(slot)]);++descendant) {
@@ -729,7 +726,6 @@ bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t i
     const std::vector<std::vector<size_t>> &externalInputsBySlot)
 {
     auto &B=*program;auto &refresh=B.providerRefreshes[index];auto &p=B.providerProgram;
-    RigExecPathText pathText;
     std::vector<size_t> externalRows;
     for(int slot:B.poseProviderInputs[size_t(refresh.slot)]) {
         const auto &rows=externalInputsBySlot[size_t(slot)];
@@ -744,7 +740,7 @@ bool RigExecBakedBindProviderRefresh(RigExecBakedProgramImpl *program,uint32_t i
             const auto &input=p.externalInputs[k];
             const auto found=B.index.find(input.owner);
             const auto value=RigExecValueId(p.valueKeys.size());
-            const std::string key=refresh.key+(basePhase?":base:":":current:")+pathText(input.owner);
+            const std::string key=refresh.key+(basePhase?":base:":":current:")+input.owner.GetString();
             p.valueKeys.push_back(key);p.valueIds.emplace(key,value);
             B.providerFrameInputs.push_back({value,found->second,basePhase,
                 basePhase?(*base)[size_t(found->second)]:(*fin)[size_t(found->second)],refresh.reader});
@@ -826,7 +822,6 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
     std::string *error)
 {
     auto &B=*program;
-    RigExecPathText pathText;
     const TfToken names[]={_tokens->restSpace,_tokens->defaultSpace,_tokens->posedSpace,_tokens->parentSpace,
         _tokens->parentDefaultSpace,_tokens->avarsDefaultSpace,_tokens->posedDefaultSpace};
     for(size_t slot=0;slot<B.ladders.size();++slot) {
@@ -842,7 +837,7 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
                 if(error) *error="own property space has no captured expression: "+consumer.GetString();
                 return false;
             }
-            const std::string key="provider:ownPropertyFinal:"+pathText(consumer);
+            const std::string key="provider:ownPropertyFinal:"+consumer.GetString();
             if(B.providerProgram.valueIds.count(key)) {
                 if(error) *error="duplicate own property space delivery: "+consumer.GetString();
                 return false;
@@ -869,7 +864,7 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
                 [&](const auto &item){return item.target==consumer && !item.revisions.empty();});
             if (chain==B.propertyChains.end()) continue;
             const auto prior=op.inputs[3+channel];
-            const std::string key="provider:ownDefaultFinal:"+pathText(consumer);
+            const std::string key="provider:ownDefaultFinal:"+consumer.GetString();
             const auto existing=B.providerProgram.valueIds.find(key);
             if (existing!=B.providerProgram.valueIds.end()) {
                 op.inputs[3+channel]=existing->second;
@@ -986,13 +981,12 @@ bool RigExecBakedPruneProviderProgram(RigExecBakedProgramImpl *program,std::stri
 void RigExecBakedBuildSpaceSteps(RigExecBakedProgramImpl *program)
 {
     auto &B=*program;
-    RigExecPathText pathText;
     B.providerLeafChains.assign(B.providerProgram.sampled.size(),-1);
     for(size_t k=0;k<B.providerProgram.sampled.size();++k) {
         const auto &input=B.providerProgram.sampled[k];
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::SpaceExpression;
         step.object=int(k); step.part=2;
-        step.label="SpaceRaw "+pathText(input.attribute);
+        step.label="SpaceRaw "+input.attribute.GetString();
         step.reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceLeaf,int(k)));
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::SpaceValue,int(input.value)));
         B.steps.push_back(std::move(step));
