@@ -15,6 +15,7 @@
 #include "rigExecMath/singleChainIk.h"
 #include "rigExecMath/solvers.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
@@ -27,6 +28,25 @@
 #include <set>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecAimConstraint, "RigExecAimConstraint"))
+    ((rigExecPositionConstraint, "RigExecPositionConstraint"))
+    ((rigExecRotationConstraint, "RigExecRotationConstraint"))
+    ((rigExecScaleConstraint, "RigExecScaleConstraint"))
+    ((rigExecParentConstraint, "RigExecParentConstraint"))
+    ((rigExecSingleChainIkConstraint, "RigExecSingleChainIkConstraint"))
+    ((rigExecIkFkMatchConstraint, "RigExecIkFkMatchConstraint"))
+    ((rigExecHarmonicsConstraint, "RigExecHarmonicsConstraint"))
+    ((posedSpace, "posed:space"))
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+);
 
 using namespace evaluatorDetail;
 
@@ -41,34 +61,46 @@ RigExecPointFrame _SolveScaleConstraint(const _ConstraintSolveContext &);
 
 RigExecPointFrame _SolveParentConstraint(const _ConstraintSolveContext &);
 
+const std::vector<_ConstraintHandler> _kConstraintHandlers = {
+    {_tokens->rigExecAimConstraint, true, true, true, true,
+     _ChannelGroup::Rotation, _ChannelGroup::Rotation, nullptr},
+    {_tokens->rigExecPositionConstraint, true, true, false, false,
+     _ChannelGroup::Translation, _ChannelGroup::Translation,
+     _SolvePositionConstraint},
+    {_tokens->rigExecRotationConstraint, true, true, true, false,
+     _ChannelGroup::Rotation, _ChannelGroup::Rotation,
+     _SolveRotationConstraint},
+    {_tokens->rigExecScaleConstraint, true, true, false, false,
+     _ChannelGroup::Scale, _ChannelGroup::Scale,
+     _SolveScaleConstraint},
+    {_tokens->rigExecParentConstraint, true, true, true, false,
+     _ChannelGroup::All, _ChannelGroup::None,
+     _SolveParentConstraint},
+    {_tokens->rigExecSingleChainIkConstraint, false, true, false, true,
+     _ChannelGroup::None, _ChannelGroup::None, nullptr},
+    {_tokens->rigExecIkFkMatchConstraint, false, true, false, true,
+     _ChannelGroup::None, _ChannelGroup::None, nullptr},
+    // Secondary motion: one target, no sources, its own history window.
+    {_tokens->rigExecHarmonicsConstraint, false, true, false, true,
+     _ChannelGroup::None, _ChannelGroup::None, nullptr},
+};
+
 const std::vector<_ConstraintHandler> &
 _ConstraintHandlers()
 {
-    static const std::vector<_ConstraintHandler> handlers = {
-        {TfToken("RigExecAimConstraint"), true, true, true, true,
-         _ChannelGroup::Rotation, _ChannelGroup::Rotation, nullptr},
-        {TfToken("RigExecPositionConstraint"), true, true, false, false,
-         _ChannelGroup::Translation, _ChannelGroup::Translation,
-         _SolvePositionConstraint},
-        {TfToken("RigExecRotationConstraint"), true, true, true, false,
-         _ChannelGroup::Rotation, _ChannelGroup::Rotation,
-         _SolveRotationConstraint},
-        {TfToken("RigExecScaleConstraint"), true, true, false, false,
-         _ChannelGroup::Scale, _ChannelGroup::Scale,
-         _SolveScaleConstraint},
-        {TfToken("RigExecParentConstraint"), true, true, true, false,
-         _ChannelGroup::All, _ChannelGroup::None,
-         _SolveParentConstraint},
-        {TfToken("RigExecSingleChainIkConstraint"), false, true, false, true,
-         _ChannelGroup::None, _ChannelGroup::None, nullptr},
-        {TfToken("RigExecIkFkMatchConstraint"), false, true, false, true,
-         _ChannelGroup::None, _ChannelGroup::None, nullptr},
-        // Secondary motion: one target, no sources, its own history window.
-        {TfToken("RigExecHarmonicsConstraint"), false, true, false, true,
-         _ChannelGroup::None, _ChannelGroup::None, nullptr},
-    };
-    return handlers;
+    return _kConstraintHandlers;
 }
+
+// Built from the table itself rather than written out again, so an
+// operator added there is named here without anyone remembering to.
+const std::vector<TfToken> _kConstraintOperatorTypeNames = [] {
+    std::vector<TfToken> types;
+    types.reserve(_kConstraintHandlers.size());
+    for (const _ConstraintHandler &handler : _kConstraintHandlers) {
+        types.push_back(handler.schemaType);
+    }
+    return types;
+}();
 
 // Attribute names read per constraint per frame, interned once. Each is
 // spelled here rather than at its call site because the parent solve and the
@@ -493,10 +525,11 @@ RigExecRigEvaluator::_IkUsesAnimatedTs(const std::vector<SdfPath> &chain) const
             return true;
         }
         const UsdPrim joint = _stage->GetPrimAtPath(path);
-        for (const char *name : {
-                 "posed:space", "avars:tx", "avars:ty", "avars:tz",
-                 "avars:sx", "avars:sy", "avars:sz"}) {
-            const UsdAttribute attr = joint.GetAttribute(TfToken(name));
+        for (const TfToken &name : {
+                 _tokens->posedSpace, _tokens->avarsTx, _tokens->avarsTy,
+                 _tokens->avarsTz, _tokens->avarsSx, _tokens->avarsSy,
+                 _tokens->avarsSz}) {
+            const UsdAttribute attr = joint.GetAttribute(name);
             SdfPathVector connections;
             // HasAuthoredConnections first: see _AuthoredConnections.
             if (attr &&
@@ -514,17 +547,7 @@ RigExecRigEvaluator::_IkUsesAnimatedTs(const std::vector<SdfPath> &chain) const
 const std::vector<TfToken> &
 RigExecRigEvaluator::GetConstraintOperatorTypeNames()
 {
-    // Built from the table itself rather than written out again, so an
-    // operator added there is named here without anyone remembering to.
-    static const std::vector<TfToken> names = [] {
-        std::vector<TfToken> types;
-        types.reserve(_ConstraintHandlers().size());
-        for (const _ConstraintHandler &handler : _ConstraintHandlers()) {
-            types.push_back(handler.schemaType);
-        }
-        return types;
-    }();
-    return names;
+    return _kConstraintOperatorTypeNames;
 }
 
 bool

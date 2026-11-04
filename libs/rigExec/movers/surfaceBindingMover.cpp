@@ -39,7 +39,20 @@ TF_DEFINE_PRIVATE_TOKENS(_bindingTokens,
     ((surfaceRestMatrix, "rigExec:surfaceRestMatrix"))
     ((targetRestMatrix, "rigExec:targetRestMatrix"))
     ((surfaceToBinding, "rigExec:surfaceToBinding"))
-    ((frames, "rigExec:frames")));
+    ((frames, "rigExec:frames"))
+    ((rigExecVertices, "rigExec:vertices"))
+    ((rigExecVertexOffsets, "rigExec:vertexOffsets"))
+    ((rigExecPolygonOffsets, "rigExec:polygonOffsets"))
+    ((rigExecPointIndices, "rigExec:pointIndices"))
+    ((rigExecLimitOffsets, "rigExec:limitOffsets"))
+    ((rigExecLimitIndices, "rigExec:limitIndices"))
+    ((rigExecBarycentricWeights, "rigExec:barycentricWeights"))
+    ((rigExecBindingWeights, "rigExec:bindingWeights"))
+    ((rigExecMask, "rigExec:mask"))
+    ((rigExecDeltaMultipliers, "rigExec:deltaMultipliers"))
+    ((rigExecLimitWeights, "rigExec:limitWeights"))
+    ((rigExecLimitDuWeights, "rigExec:limitDuWeights"))
+    ((rigExecLimitDvWeights, "rigExec:limitDvWeights")));
 
 namespace {
 // The binding's own arrays and settings, then the bound surface's points and
@@ -51,13 +64,14 @@ const char *const _floatArrays[]={"barycentricWeights","bindingWeights","mask","
 constexpr size_t _intCount = sizeof(_intArrays)/sizeof(_intArrays[0]);
 constexpr size_t _floatCount = sizeof(_floatArrays)/sizeof(_floatArrays[0]);
 // The arrays' attribute names, interned once at load in the same order.
-template<size_t N> std::array<TfToken,N> _OwnNames(const char *const (&names)[N]) {
-    std::array<TfToken,N> out;
-    for (size_t i = 0; i < N; ++i) out[i] = TfToken(std::string("rigExec:") + names[i]);
-    return out;
-}
-const std::array<TfToken,_intCount> _intArrayNames = _OwnNames(_intArrays);
-const std::array<TfToken,_floatCount> _floatArrayNames = _OwnNames(_floatArrays);
+const std::array<TfToken,_intCount> _intArrayNames = {_bindingTokens->rigExecVertices,
+    _bindingTokens->rigExecVertexOffsets,_bindingTokens->rigExecPolygonOffsets,
+    _bindingTokens->rigExecPointIndices,_bindingTokens->rigExecLimitOffsets,
+    _bindingTokens->rigExecLimitIndices};
+const std::array<TfToken,_floatCount> _floatArrayNames = {_bindingTokens->rigExecBarycentricWeights,
+    _bindingTokens->rigExecBindingWeights,_bindingTokens->rigExecMask,
+    _bindingTokens->rigExecDeltaMultipliers,_bindingTokens->rigExecLimitWeights,
+    _bindingTokens->rigExecLimitDuWeights,_bindingTokens->rigExecLimitDvWeights};
 enum Input : size_t {
     FirstInt = 0,
     FirstFloat = FirstInt + _intCount,

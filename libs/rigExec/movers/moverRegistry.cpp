@@ -7,6 +7,7 @@
 #include "pxr/base/plug/plugin.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usdGeom/pointBased.h"
 #include "pxr/usd/usdSkel/blendShape.h"
 
@@ -20,6 +21,10 @@ PXR_NAMESPACE_USING_DIRECTIVE
 namespace rigExec {
 
 TF_DEFINE_PUBLIC_TOKENS(RigExecMoverExecTokens, RIGEXEC_MOVER_EXEC_TOKENS);
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (offsets)
+    (pointIndices));
 
 namespace {
 
@@ -354,7 +359,7 @@ RigExecPointsTargetHint(
         return std::string();
     }
     return ". Did you mean " +
-           target.AppendProperty(TfToken("points")).GetString() + "?";
+           target.AppendProperty(_pointsToken).GetString() + "?";
 }
 
 bool
@@ -463,8 +468,8 @@ RigExecResolveBlendSampleLayout(const RigExecOracleScene &scene, const SdfPath &
     layout->valid = false;
     if (!scene.BlendShapes().count(path.GetPrimPath())) return true;
     const auto shape = scene.GetPrimAtPath(path.GetPrimPath());
-    const TfToken offsetsToken("offsets");
-    const TfToken indicesToken("pointIndices");
+    const TfToken &offsetsToken = _tokens->offsets;
+    const TfToken &indicesToken = _tokens->pointIndices;
     const auto offsetsAttr = shape.GetAttribute(offsetsToken);
     const auto indicesAttr = shape.GetAttribute(indicesToken);
     const bool cacheable = !offsetsAttr.connected && !indicesAttr.connected;

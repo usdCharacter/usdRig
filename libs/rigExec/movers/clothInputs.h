@@ -11,6 +11,7 @@
 #include "moverRegistry.h"
 #include "../moverGraph.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/usd/stage.h"
@@ -18,11 +19,57 @@
 
 namespace cloth_inputs {
 using namespace rigExec;
-using Relationships = std::function<SdfPathVector(const SdfPath &, const char *)>;
+
+TF_DEFINE_PRIVATE_TOKENS(_clothInputsTokens,
+    (points)
+    (faceVertexCounts)
+    (faceVertexIndices)
+    (orientation)
+    (rightHanded)
+    (vertex)
+    (interpolation)
+    (stretch)
+    (soft)
+    ((primvarsSt, "primvars:st"))
+    ((inputsValues, "inputs:values"))
+    ((rigExecMode, "rigExec:mode"))
+    ((rigExecIndices, "rigExec:indices"))
+    ((rigExecCoordinates, "rigExec:coordinates"))
+    ((rigExecUvSet, "rigExec:uvSet"))
+    ((rigExecValues, "rigExec:values"))
+    ((rigExecSourceMesh, "rigExec:sourceMesh"))
+    ((rigExecBinding, "rigExec:binding"))
+    ((rigExecRestShape, "rigExec:restShape"))
+    ((rigExecConstraints, "rigExec:constraints"))
+    ((rigExecKind, "rigExec:kind"))
+    ((rigExecTwoSided, "rigExec:twoSided"))
+    ((rigExecForceCurve, "rigExec:forceCurve"))
+    ((rigExecTargetMesh, "rigExec:targetMesh"))
+    ((rigExecSourceBinding, "rigExec:sourceBinding"))
+    ((rigExecTargetBinding, "rigExec:targetBinding"))
+    ((inputsMinStrength, "inputs:minStrength"))
+    ((inputsMaxStrength, "inputs:maxStrength"))
+    ((inputsCompliance, "inputs:compliance"))
+    ((inputsWarp, "inputs:warp"))
+    ((inputsWeft, "inputs:weft"))
+    ((inputsNormal, "inputs:normal"))
+    ((inputsThickness, "inputs:thickness"))
+    ((inputsFriction, "inputs:friction"))
+    ((inputsRestLength, "inputs:restLength"))
+    ((rigExecMaskMap, "rigExec:maskMap"))
+    ((rigExecMinStrengthMap, "rigExec:minStrengthMap"))
+    ((rigExecMaxStrengthMap, "rigExec:maxStrengthMap"))
+    ((rigExecWarpMap, "rigExec:warpMap"))
+    ((rigExecWeftMap, "rigExec:weftMap"))
+    ((rigExecNormalMap, "rigExec:normalMap"))
+    ((rigExecThicknessMap, "rigExec:thicknessMap"))
+    ((rigExecFrictionMap, "rigExec:frictionMap")));
+
+using Relationships = std::function<SdfPathVector(const SdfPath &, const TfToken &)>;
 using Interpolation = std::function<TfToken(const SdfPath &)>;
 using Dictionary = VtDictionary;
 
-inline SdfPath One(const Relationships &relationships, const SdfPath &prim, const char *name)
+inline SdfPath One(const Relationships &relationships, const SdfPath &prim, const TfToken &name)
 {
     const auto paths = relationships(prim, name);
     return paths.size() == 1 ? paths[0] : SdfPath();
@@ -57,17 +104,18 @@ struct Declaration {
     std::function<TfToken(const SdfPath &)> type;
     bool valid = true;
 
-    SdfPathVector Targets(const SdfPath &prim, const char *name)
+    SdfPathVector Targets(const SdfPath &prim, const TfToken &name)
     {
-        binding->externalStructure.push_back(prim.AppendProperty(TfToken(name)));
+        binding->externalStructure.push_back(prim.AppendProperty(name));
         return relationships(prim, name);
     }
-    SdfPath Target(const SdfPath &prim, const char *name)
+    SdfPath Target(const SdfPath &prim, const TfToken &name)
     {
         const auto paths = Targets(prim, name);
         if (paths.size() > 1) valid = false;
         return paths.size() == 1 ? paths[0] : SdfPath();
     }
+    SdfPath Target(const SdfPath &prim, const char *name) { return Target(prim, TfToken(name)); }
     void Field(Dictionary *d, const char *key, const SdfPath &path,
                RigExecRevisionLeafType type, VtValue fallback)
     {
@@ -75,9 +123,12 @@ struct Declaration {
         inputs->push_back({path, type, RigExecRevisionLeafTime::AtDefault,
                           RigExecRevisionLeafFlavour::Raw, std::move(fallback)});
     }
+    void Attribute(Dictionary *d, const char *key, const SdfPath &prim, const TfToken &name,
+                   RigExecRevisionLeafType type, VtValue fallback)
+    { Field(d, key, prim.AppendProperty(name), type, std::move(fallback)); }
     void Attribute(Dictionary *d, const char *key, const SdfPath &prim, const char *name,
                    RigExecRevisionLeafType type, VtValue fallback)
-    { Field(d, key, prim.AppendProperty(TfToken(name)), type, std::move(fallback)); }
+    { Attribute(d, key, prim, TfToken(name), type, std::move(fallback)); }
     Dictionary UV(SdfPath path)
     {
         Dictionary d;
@@ -95,11 +146,11 @@ struct Declaration {
     Dictionary Geometry(const SdfPath &mesh, SdfPath uv)
     {
         Dictionary d;
-        Attribute(&d, "points", mesh, "points", RigExecRevisionLeafType::Vec3fArray, VtValue(VtVec3fArray()));
-        Attribute(&d, "counts", mesh, "faceVertexCounts", RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
-        Attribute(&d, "indices", mesh, "faceVertexIndices", RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
-        Attribute(&d, "orientation", mesh, "orientation", RigExecRevisionLeafType::Token, VtValue(TfToken("rightHanded")));
-        if (uv.IsEmpty()) uv = mesh.AppendProperty(TfToken("primvars:st"));
+        Attribute(&d, "points", mesh, _clothInputsTokens->points, RigExecRevisionLeafType::Vec3fArray, VtValue(VtVec3fArray()));
+        Attribute(&d, "counts", mesh, _clothInputsTokens->faceVertexCounts, RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
+        Attribute(&d, "indices", mesh, _clothInputsTokens->faceVertexIndices, RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
+        Attribute(&d, "orientation", mesh, _clothInputsTokens->orientation, RigExecRevisionLeafType::Token, VtValue(_clothInputsTokens->rightHanded));
+        if (uv.IsEmpty()) uv = mesh.AppendProperty(_clothInputsTokens->primvarsSt);
         d["uv"] = VtValue(UV(uv));
         return d;
     }
@@ -108,10 +159,10 @@ struct Declaration {
         Dictionary d;
         if (prim.IsEmpty()) return d;
         if (type(prim) != "RigExecClothBinding") valid = false;
-        Attribute(&d, "mode", prim, "rigExec:mode", RigExecRevisionLeafType::Token, VtValue(TfToken("vertex")));
-        Attribute(&d, "indices", prim, "rigExec:indices", RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
-        Attribute(&d, "coordinates", prim, "rigExec:coordinates", RigExecRevisionLeafType::Vec3fArray, VtValue(VtVec3fArray()));
-        d["geometry"] = VtValue(Geometry(mesh, Target(prim, "rigExec:uvSet")));
+        Attribute(&d, "mode", prim, _clothInputsTokens->rigExecMode, RigExecRevisionLeafType::Token, VtValue(_clothInputsTokens->vertex));
+        Attribute(&d, "indices", prim, _clothInputsTokens->rigExecIndices, RigExecRevisionLeafType::IntArray, VtValue(VtIntArray()));
+        Attribute(&d, "coordinates", prim, _clothInputsTokens->rigExecCoordinates, RigExecRevisionLeafType::Vec3fArray, VtValue(VtVec3fArray()));
+        d["geometry"] = VtValue(Geometry(mesh, Target(prim, _clothInputsTokens->rigExecUvSet)));
         return d;
     }
     Dictionary Map(const SdfPath &path, const SdfPath &cloth)
@@ -123,12 +174,12 @@ struct Declaration {
             return d;
         }
         if (type(path) != "RigExecClothMap") valid = false;
-        SdfPath values = Target(path, "rigExec:values");
-        if (values.IsEmpty()) values = path.AppendProperty(TfToken("inputs:values"));
+        SdfPath values = Target(path, _clothInputsTokens->rigExecValues);
+        if (values.IsEmpty()) values = path.AppendProperty(_clothInputsTokens->inputsValues);
         Field(&d, "values", values, RigExecRevisionLeafType::FloatArray, VtValue(VtFloatArray()));
-        SdfPath mesh = Target(path, "rigExec:sourceMesh");
+        SdfPath mesh = Target(path, _clothInputsTokens->rigExecSourceMesh);
         if (mesh.IsEmpty()) mesh = cloth;
-        d["binding"] = VtValue(Binding(Target(path, "rigExec:binding"), mesh.GetPrimPath()));
+        d["binding"] = VtValue(Binding(Target(path, _clothInputsTokens->rigExecBinding), mesh.GetPrimPath()));
         return d;
     }
 };
@@ -143,13 +194,13 @@ inline Declaration StageDeclaration(const UsdStagePtr &stage,
     std::vector<RigExecRevisionLeafKey> *inputs, RigExecRevisionBinding *binding)
 {
     return Declaration{inputs, binding,
-        [stage](const SdfPath &path, const char *name) {
+        [stage](const SdfPath &path, const TfToken &name) {
             const UsdPrim prim = stage->GetPrimAtPath(path);
             return prim ? RigExecRelationshipTargets(prim, name) : SdfPathVector();
         },
         [stage](const SdfPath &path) {
-            TfToken result("vertex");
-            if (const auto a = stage->GetAttributeAtPath(path)) a.GetMetadata(TfToken("interpolation"), &result);
+            TfToken result(_clothInputsTokens->vertex);
+            if (const auto a = stage->GetAttributeAtPath(path)) a.GetMetadata(_clothInputsTokens->interpolation, &result);
             return result;
         },
         [stage](const SdfPath &path) {
@@ -171,54 +222,54 @@ inline std::vector<VtValue> SampleLeaves(const UsdStagePtr &stage,
     return values;
 }
 
-inline const char *const *MapNames()
-{
-    static const char *const names[] = {"rigExec:maskMap", "rigExec:minStrengthMap",
-        "rigExec:maxStrengthMap", "rigExec:warpMap", "rigExec:weftMap",
-        "rigExec:normalMap", "rigExec:thicknessMap", "rigExec:frictionMap"};
-    return names;
-}
-
 inline Dictionary Declare(const SdfPath &mover, const SdfPath &cloth,
     const SdfPathVector &colliders, Declaration *declaration)
 {
     auto &d = *declaration;
     Dictionary layout;
     layout["colliderCount"] = VtValue(int(colliders.size()));
-    SdfPath rest = d.Target(mover, "rigExec:restShape");
+    SdfPath rest = d.Target(mover, _clothInputsTokens->rigExecRestShape);
     if (!rest.IsEmpty()) {
-        if (rest.IsPrimPath()) rest = rest.AppendProperty(TfToken("points"));
+        if (rest.IsPrimPath()) rest = rest.AppendProperty(_clothInputsTokens->points);
         (*d.inputs)[RigExecClothRest].path = rest;
     }
-    layout["uv"] = VtValue(d.UV(d.Target(mover, "rigExec:uvSet")));
+    layout["uv"] = VtValue(d.UV(d.Target(mover, _clothInputsTokens->rigExecUvSet)));
     std::vector<VtValue> profiles;
-    for (const auto &prim : d.Targets(mover, "rigExec:constraints")) {
+    for (const auto &prim : d.Targets(mover, _clothInputsTokens->rigExecConstraints)) {
         if (!prim.IsPrimPath() || d.type(prim) != "RigExecClothConstraintSet") d.valid = false;
         Dictionary p;
-        d.Attribute(&p, "kind", prim, "rigExec:kind", RigExecRevisionLeafType::Token, VtValue(TfToken("stretch")));
-        d.Attribute(&p, "mode", prim, "rigExec:mode", RigExecRevisionLeafType::Token, VtValue(TfToken("soft")));
-        d.Attribute(&p, "twoSided", prim, "rigExec:twoSided", RigExecRevisionLeafType::Bool, VtValue(true));
+        d.Attribute(&p, "kind", prim, _clothInputsTokens->rigExecKind, RigExecRevisionLeafType::Token, VtValue(_clothInputsTokens->stretch));
+        d.Attribute(&p, "mode", prim, _clothInputsTokens->rigExecMode, RigExecRevisionLeafType::Token, VtValue(_clothInputsTokens->soft));
+        d.Attribute(&p, "twoSided", prim, _clothInputsTokens->rigExecTwoSided, RigExecRevisionLeafType::Bool, VtValue(true));
         const char *keys[] = {"minStrength", "maxStrength", "compliance", "warp", "weft",
             "normal", "thickness", "friction", "restLength"};
+        const TfToken names[] = {_clothInputsTokens->inputsMinStrength, _clothInputsTokens->inputsMaxStrength,
+            _clothInputsTokens->inputsCompliance, _clothInputsTokens->inputsWarp, _clothInputsTokens->inputsWeft,
+            _clothInputsTokens->inputsNormal, _clothInputsTokens->inputsThickness,
+            _clothInputsTokens->inputsFriction, _clothInputsTokens->inputsRestLength};
         const float defaults[] = {1, 1, 1e-4f, 1, 1, 1, .5f, .3f, -1};
         for (size_t k = 0; k < 9; ++k)
-            d.Attribute(&p, keys[k], prim, (std::string("inputs:") + keys[k]).c_str(),
+            d.Attribute(&p, keys[k], prim, names[k],
                         RigExecRevisionLeafType::Float, VtValue(defaults[k]));
-        d.Attribute(&p, "curve", prim, "rigExec:forceCurve", RigExecRevisionLeafType::Vec2fArray,
+        d.Attribute(&p, "curve", prim, _clothInputsTokens->rigExecForceCurve, RigExecRevisionLeafType::Vec2fArray,
                     VtValue(VtVec2fArray()));
-        const SdfPath target = d.Target(prim, "rigExec:targetMesh").GetPrimPath();
+        const SdfPath target = d.Target(prim, _clothInputsTokens->rigExecTargetMesh).GetPrimPath();
         int collider = -1;
         if (!target.IsEmpty() && target != cloth) {
             const auto found = std::find(colliders.begin(), colliders.end(), target);
             collider = found == colliders.end() ? -2 : int(found - colliders.begin());
         }
         p["targetCollider"] = VtValue(collider);
-        p["source"] = VtValue(d.Binding(d.Target(prim, "rigExec:sourceBinding"), cloth));
-        p["target"] = VtValue(d.Binding(d.Target(prim, "rigExec:targetBinding"),
+        p["source"] = VtValue(d.Binding(d.Target(prim, _clothInputsTokens->rigExecSourceBinding), cloth));
+        p["target"] = VtValue(d.Binding(d.Target(prim, _clothInputsTokens->rigExecTargetBinding),
                                         target.IsEmpty() ? cloth : target));
+        const TfToken mapNames[] = {_clothInputsTokens->rigExecMaskMap, _clothInputsTokens->rigExecMinStrengthMap,
+            _clothInputsTokens->rigExecMaxStrengthMap, _clothInputsTokens->rigExecWarpMap,
+            _clothInputsTokens->rigExecWeftMap, _clothInputsTokens->rigExecNormalMap,
+            _clothInputsTokens->rigExecThicknessMap, _clothInputsTokens->rigExecFrictionMap};
         std::vector<VtValue> maps;
         for (size_t k = 0; k < ClothMapChannelCount; ++k)
-            maps.emplace_back(d.Map(d.Target(prim, MapNames()[k]), cloth));
+            maps.emplace_back(d.Map(d.Target(prim, mapNames[k]), cloth));
         p["maps"] = VtValue(maps);
         profiles.emplace_back(p);
     }

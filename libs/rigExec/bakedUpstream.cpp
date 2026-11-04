@@ -14,6 +14,7 @@
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
@@ -32,6 +33,41 @@ namespace rigExec {
 
 namespace {
 const TfToken _falloffSamplesInput("inputs:falloffSamples");
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecOperation, "rigExec:operation"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecSampleSource, "rigExec:sampleSource"))
+    ((rigExecCurve, "rigExec:curve"))
+    ((rigExecCombineWeight, "RigExecCombineWeight"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((rigExecElementSize, "rigExec:elementSize"))
+    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+    ((inputsOnlySmooth, "inputs:onlySmooth"))
+    ((inputsComputationToTarget, "inputs:computationToTarget"))
+    ((rigExecEvaluation, "rigExec:evaluation"))
+    ((rigExecInterpolationU, "rigExec:interpolationU"))
+    ((rigExecInterpolationV, "rigExec:interpolationV"))
+    ((rigExecInterpolationW, "rigExec:interpolationW"))
+    ((rigExecOrigin, "rigExec:origin"))
+    ((rigExecSpacing, "rigExec:spacing"))
+    ((rigExecStrength, "rigExec:strength"))
+    ((rigExecCageMatrix, "rigExec:cageMatrix"))
+    ((rigExecTargetMatrix, "rigExec:targetMatrix"))
+    ((rigExecPointSpace, "rigExec:pointSpace"))
+    ((rigExecSnapMode, "rigExec:snapMode"))
+    ((rigExecOffset, "rigExec:offset"))
+    ((rigExecSurfaceMatrix, "rigExec:surfaceMatrix"))
+    ((rigExecRayOrigin, "rigExec:rayOrigin"))
+    ((rigExecRayDirection, "rigExec:rayDirection"))
+    ((rigExecRayUp, "rigExec:rayUp"))
+    ((rigExecShaderOffset, "rigExec:shaderOffset"))
+);
 }
 
 bool
@@ -247,7 +283,7 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
         }
     }
     // A path operation's curve points: the input a moving window rewrites.
-    const TfToken operationName("rigExec:operation");
+    const TfToken &operationName = _tokens->rigExecOperation;
     for (const auto &[target, revisions] : E._propertyChains) {
         for (const auto &revision : revisions) {
             const UsdPrim mover = stage->GetPrimAtPath(revision.moverPath);
@@ -271,7 +307,7 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
 
     // Every weight object a mover or a constraint binds, and what each
     // composes.
-    const TfToken weightObjectRel("rigExec:weightObject");
+    const TfToken &weightObjectRel = _tokens->rigExecWeightObject;
     for (const RigExecMoverRecord &mover : E._movers) {
         if (const UsdPrim prim = stage->GetPrimAtPath(mover.moverPath)) {
             SdfPathVector targets;
@@ -287,12 +323,12 @@ RigExecBakedProgram::DescribeUpstreamArrays(const RigExecRigEvaluator &E)
             weightObjects.insert(constraint.weightObject);
         }
     }
-    const TfToken baseWeightRel("rigExec:baseWeight");
-    const TfToken inputWeightsRel("rigExec:inputWeights");
-    const TfToken weightTargetRel("rigExec:weightTarget");
-    const TfToken sampleSourceRel("rigExec:sampleSource");
-    const TfToken curveRel("rigExec:curve");
-    const TfToken combineType("RigExecCombineWeight");
+    const TfToken &baseWeightRel = _tokens->rigExecBaseWeight;
+    const TfToken &inputWeightsRel = _tokens->rigExecInputWeights;
+    const TfToken &weightTargetRel = _tokens->rigExecWeightTarget;
+    const TfToken &sampleSourceRel = _tokens->rigExecSampleSource;
+    const TfToken &curveRel = _tokens->rigExecCurve;
+    const TfToken &combineType = _tokens->rigExecCombineWeight;
     // Visits every object \p seeds reach through composition and hands
     // \p point each array its packet gathers (authored property targets)
     // and, as `true`, the one target the oracle reads, canonicalized.
@@ -485,7 +521,7 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
     // a revision's inputs:defaultWeight, and the connection-following mover
     // inputs (enable, skin layout scalars, iterative scalars, shader dials,
     // projector ray settings).
-    const TfToken defaultWeightName("inputs:defaultWeight");
+    const TfToken &defaultWeightName = _tokens->inputsDefaultWeight;
     const auto moverReads =
         [&](const RigExecBakedProgramImpl::GeomRevision &revision) {
             for (const auto &channel : revision.blendChannels) {
@@ -499,13 +535,13 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                 return;
             }
             const RigExecRevisionOp op = revision.op;
-            const auto attr = [&prim](const char *name) {
-                return prim.GetAttribute(TfToken(name));
+            const auto attr = [&prim](const TfToken &name) {
+                return prim.GetAttribute(name);
             };
             if (op != RigExecRevisionOp::RecomputeNormals &&
                 op != RigExecRevisionOp::RecomputeExtent &&
                 !RigExecIsDerivedMatrixOp(op)) {
-                _AddWalk(B, attr("inputs:enabled"), &paths);
+                _AddWalk(B, attr(_tokens->inputsEnabled), &paths);
             }
             if (op == RigExecRevisionOp::External) {
                 const auto numeric = [](RigExecRevisionLeafType type) {
@@ -550,38 +586,38 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                 }
             }
             if (op == RigExecRevisionOp::Skin) {
-                _AddWalk(B, attr("rigExec:elementSize"), &paths);
-                _AddWalk(B, attr("rigExec:skinningMethod"), &paths);
+                _AddWalk(B, attr(_tokens->rigExecElementSize), &paths);
+                _AddWalk(B, attr(_tokens->rigExecSkinningMethod), &paths);
             }
             if (op == RigExecRevisionOp::DeltaMush ||
                 op == RigExecRevisionOp::Wrinkle) {
                 RigExecMoverParameters parameters;
                 frozenDetail::_VisitIterativeMoverScalars(
                     op, parameters, [&](const char *name, auto, auto &) {
-                        _AddWalk(B, attr(name), &paths);
+                        _AddWalk(B, attr(TfToken(name)), &paths);
                     });
             }
             // The extended deformer settings read at the time (the
             // exporter's connection-following path reads).
             if (op == RigExecRevisionOp::DeltaMush) {
-                for (const char *name :
-                     {"inputs:onlySmooth", "inputs:computationToTarget"}) {
+                for (const TfToken &name :
+                     {_tokens->inputsOnlySmooth, _tokens->inputsComputationToTarget}) {
                     _AddWalk(B, attr(name), &paths);
                 }
             } else if (op == RigExecRevisionOp::Lattice) {
-                for (const char *name :
-                     {"rigExec:evaluation", "rigExec:interpolationU",
-                      "rigExec:interpolationV", "rigExec:interpolationW",
-                      "rigExec:origin", "rigExec:spacing", "rigExec:strength",
-                      "rigExec:cageMatrix", "rigExec:targetMatrix",
-                      "rigExec:pointSpace"}) {
+                for (const TfToken &name :
+                     {_tokens->rigExecEvaluation, _tokens->rigExecInterpolationU,
+                      _tokens->rigExecInterpolationV, _tokens->rigExecInterpolationW,
+                      _tokens->rigExecOrigin, _tokens->rigExecSpacing, _tokens->rigExecStrength,
+                      _tokens->rigExecCageMatrix, _tokens->rigExecTargetMatrix,
+                      _tokens->rigExecPointSpace}) {
                     _AddWalk(B, attr(name), &paths);
                 }
             } else if (op == RigExecRevisionOp::SurfaceProject) {
-                for (const char *name :
-                     {"rigExec:snapMode", "rigExec:offset",
-                      "rigExec:surfaceMatrix", "rigExec:targetMatrix",
-                      "rigExec:pointSpace"}) {
+                for (const TfToken &name :
+                     {_tokens->rigExecSnapMode, _tokens->rigExecOffset,
+                      _tokens->rigExecSurfaceMatrix, _tokens->rigExecTargetMatrix,
+                      _tokens->rigExecPointSpace}) {
                     _AddWalk(B, attr(name), &paths);
                 }
             }
@@ -590,10 +626,10 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                     _AddWalk(B, B.stage->GetAttributeAtPath(dial), &paths);
                 }
             } else if (RigExecIsDerivedMatrixOp(op)) {
-                for (const char *name : {"rigExec:rayOrigin",
-                                         "rigExec:rayDirection",
-                                         "rigExec:rayUp",
-                                         "rigExec:shaderOffset"}) {
+                for (const TfToken &name : {_tokens->rigExecRayOrigin,
+                                            _tokens->rigExecRayDirection,
+                                            _tokens->rigExecRayUp,
+                                            _tokens->rigExecShaderOffset}) {
                     _AddWalk(B, attr(name), &paths);
                 }
             }

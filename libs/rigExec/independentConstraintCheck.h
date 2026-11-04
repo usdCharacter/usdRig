@@ -12,11 +12,49 @@
 #include "pxr/usd/usdGeom/metrics.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/base/gf/rotation.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/array.h"
 #include <algorithm>
 
 namespace rigExec {
 namespace independentConstraintCheck {
+
+TF_DEFINE_PRIVATE_TOKENS(_constraintCheckTokens,
+    (computePointFrame)
+    (computeBasePointFrame)
+    ((rigExecSources, "rigExec:sources"))
+    ((rigExecAimTarget, "rigExec:aimTarget"))
+    ((rigExecMoves, "rigExec:moves"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((rigExecRotationOrder, "rigExec:rotationOrder"))
+    ((rigExecBlendShear, "rigExec:blendShear"))
+    ((rigExecAimAxis, "rigExec:aimAxis"))
+    ((rigExecWorldUpType, "rigExec:worldUpType"))
+    ((rigExecWorldUpRotationOnly, "rigExec:worldUpRotationOnly"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsSourceWeights, "inputs:sourceWeights"))
+    ((inputsTranslationOffsets, "inputs:translationOffsets"))
+    ((inputsRotationOffsets, "inputs:rotationOffsets"))
+    ((inputsAffectTranslationX, "inputs:affectTranslationX"))
+    ((inputsAffectTranslationY, "inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ, "inputs:affectTranslationZ"))
+    ((inputsAffectRotationX, "inputs:affectRotationX"))
+    ((inputsAffectRotationY, "inputs:affectRotationY"))
+    ((inputsAffectRotationZ, "inputs:affectRotationZ"))
+    ((inputsAffectScaleX, "inputs:affectScaleX"))
+    ((inputsAffectScaleY, "inputs:affectScaleY"))
+    ((inputsAffectScaleZ, "inputs:affectScaleZ"))
+    ((inputsRotationOffset, "inputs:rotationOffset"))
+    ((inputsAimVector, "inputs:aimVector"))
+    ((inputsUpVector, "inputs:upVector"))
+    ((inputsWorldUpVector, "inputs:worldUpVector"))
+    ((posedDefaultSpace, "posed:defaultSpace"))
+    ((posedSpace, "posed:space"))
+    ((xyz, "XYZ"))
+    (x)
+    (none)
+);
 
 struct Source {
     SdfPath path;
@@ -32,16 +70,15 @@ struct Binding {
 };
 
 inline const VtValue *Find(const std::vector<RigExecValueOverride> &inputs,
-    const SdfPath &path, const char *computation)
+    const SdfPath &path, const TfToken &computation)
 {
-    const TfToken name(computation);
     for (const auto &input : inputs)
-        if (input.prim == path && input.attribute.IsEmpty() && input.computation == name)
+        if (input.prim == path && input.attribute.IsEmpty() && input.computation == computation)
             return &input.value;
     return nullptr;
 }
 template<class T> inline bool Bound(const std::vector<RigExecValueOverride> &inputs,
-    const SdfPath &path, const char *computation, T *out)
+    const SdfPath &path, const TfToken &computation, T *out)
 {
     const auto *value = Find(inputs,path,computation);
     if (!value || !value->IsHolding<T>()) return false;
@@ -49,17 +86,17 @@ template<class T> inline bool Bound(const std::vector<RigExecValueOverride> &inp
     return true;
 }
 template<class T> inline T Read(const RigExecResolvedInputs &resolved,
-    const UsdPrim &prim, const char *name, T fallback, UsdTimeCode time)
+    const UsdPrim &prim, const TfToken &name, T fallback, UsdTimeCode time)
 {
     T value = fallback;
-    resolved.GetAttribute(prim.GetAttribute(TfToken(name)),time,&value);
+    resolved.GetAttribute(prim.GetAttribute(name),time,&value);
     return value;
 }
-template<class T> inline T Raw(const UsdPrim &prim, const char *name,
+template<class T> inline T Raw(const UsdPrim &prim, const TfToken &name,
     T fallback, UsdTimeCode time = UsdTimeCode::Default())
 {
     T value = fallback;
-    const auto attr = prim.GetAttribute(TfToken(name));
+    const auto attr = prim.GetAttribute(name);
     if (attr) attr.Get(&value,time);
     return value;
 }
@@ -87,15 +124,15 @@ inline bool ResolveSource(const Binding &binding, const Source &source,
     const std::vector<RigExecValueOverride> &inputs, RigExecPointFrame *frame)
 {
     if (source.boundFrame)
-        return Bound(inputs,source.path,"computePointFrame",frame) && frame->IsValid();
+        return Bound(inputs,source.path,_constraintCheckTokens->computePointFrame,frame) && frame->IsValid();
     if (!StageFrame(stage,stage->GetPrimAtPath(binding.assetRoot),cache,source.path,frame))
         return false;
     bool complete = true;
     const auto enumerate = [&](const RigExecPoseFrameVisitor &visit) {
         for (const auto &path : source.ancestors) {
             RigExecPointFrame base,current;
-            if (!Bound(inputs,path,"computeBasePointFrame",&base) ||
-                !Bound(inputs,path,"computePointFrame",&current)) { complete=false; continue; }
+            if (!Bound(inputs,path,_constraintCheckTokens->computeBasePointFrame,&base) ||
+                !Bound(inputs,path,_constraintCheckTokens->computePointFrame,&current)) { complete=false; continue; }
             visit(path,base,current);
         }
     };
@@ -113,13 +150,13 @@ inline RigExecEulerOrder Order(const TfToken &token)
     return RigExecEulerOrder::XYZ;
 }
 inline RigExecConstraintAxisMask Mask(const RigExecResolvedInputs &resolved,
-    const UsdPrim &prim, const char *group, bool fallback, UsdTimeCode time)
+    const UsdPrim &prim, const TfToken &x, const TfToken &y, const TfToken &z,
+    bool fallback, UsdTimeCode time)
 {
-    const std::string prefix = std::string("inputs:affect")+group;
     RigExecConstraintAxisMask mask;
-    mask.x=Read(resolved,prim,(prefix+"X").c_str(),fallback,time);
-    mask.y=Read(resolved,prim,(prefix+"Y").c_str(),fallback,time);
-    mask.z=Read(resolved,prim,(prefix+"Z").c_str(),fallback,time);
+    mask.x=Read(resolved,prim,x,fallback,time);
+    mask.y=Read(resolved,prim,y,fallback,time);
+    mask.z=Read(resolved,prim,z,fallback,time);
     return mask;
 }
 inline bool Encode(bool present, bool abandoned, bool geometry, bool deltaPresent,
@@ -161,10 +198,10 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
     if (!prim || prim.GetTypeName()!=binding.type)
         return fail("independent constraint owner/type changed");
     SdfPathVector sources,targets;
-    if(const auto rel=prim.GetRelationship(TfToken("rigExec:sources"))) rel.GetForwardedTargets(&sources);
+    if(const auto rel=prim.GetRelationship(_constraintCheckTokens->rigExecSources)) rel.GetForwardedTargets(&sources);
     if(sources.empty() && binding.type=="RigExecAimConstraint")
-        if(const auto rel=prim.GetRelationship(TfToken("rigExec:aimTarget"))) rel.GetForwardedTargets(&sources);
-    if(const auto rel=prim.GetRelationship(TfToken("rigExec:moves"))) rel.GetForwardedTargets(&targets);
+        if(const auto rel=prim.GetRelationship(_constraintCheckTokens->rigExecAimTarget)) rel.GetForwardedTargets(&sources);
+    if(const auto rel=prim.GetRelationship(_constraintCheckTokens->rigExecMoves)) rel.GetForwardedTargets(&targets);
     if(targets.size()!=1 || targets[0].GetPrimPath()!=binding.target ||
         (targets[0].IsPropertyPath()&&targets[0].GetNameToken()=="points")!=binding.geometry ||
         sources.size()!=binding.sources.size()) return fail("independent constraint relationship context changed");
@@ -175,22 +212,22 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
     for (const auto &input:inputs) if (!input.attribute.IsEmpty())
         resolved.SetProperty(input.prim.AppendProperty(input.attribute),input.value);
     RigExecPointFrame entering;
-    if (!Bound(inputs,binding.target,"computePointFrame",&entering))
+    if (!Bound(inputs,binding.target,_constraintCheckTokens->computePointFrame,&entering))
         return fail("missing independent entering frame");
     *out=Prepared();
     out->entering=entering;out->geometry=binding.geometry;
     const auto finish=[&] { return true; };
-    if (!Read(resolved,prim,"inputs:enabled",true,time)) return finish();
+    if (!Read(resolved,prim,_constraintCheckTokens->inputsEnabled,true,time)) return finish();
     const SdfPathVector weightTargets = [&] {
         SdfPathVector targets;
-        if (const auto rel=prim.GetRelationship(TfToken("rigExec:weightObject"))) rel.GetForwardedTargets(&targets);
+        if (const auto rel=prim.GetRelationship(_constraintCheckTokens->rigExecWeightObject)) rel.GetForwardedTargets(&targets);
         return targets;
     }();
     if (!weightTargets.empty() && !binding.geometry)
         return fail("independent scalar weight-object witness is unavailable");
     double weight=1.0;
     if (weightTargets.empty()) {
-        weight=Read(resolved,prim,"inputs:defaultWeight",1.0f,time);
+        weight=Read(resolved,prim,_constraintCheckTokens->inputsDefaultWeight,1.0f,time);
         if (!std::isfinite(weight)||weight<0||weight>1) return finish();
     }
     if (weight<=0 && (!binding.geometry || weightTargets.empty())) {
@@ -198,12 +235,12 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
         return finish();
     }
     UsdGeomXformCache cache(time);
-    VtFloatArray weights=Raw(prim,"inputs:sourceWeights",VtFloatArray(),time);
+    VtFloatArray weights=Raw(prim,_constraintCheckTokens->inputsSourceWeights,VtFloatArray(),time);
     if (!weights.empty() && weights.size()!=binding.sources.size()) return finish();
     VtVec3dArray translations,rotations;
     if (binding.type=="RigExecParentConstraint") {
-        translations=Raw(prim,"inputs:translationOffsets",VtVec3dArray(),time);
-        rotations=Raw(prim,"inputs:rotationOffsets",VtVec3dArray(),time);
+        translations=Raw(prim,_constraintCheckTokens->inputsTranslationOffsets,VtVec3dArray(),time);
+        rotations=Raw(prim,_constraintCheckTokens->inputsRotationOffsets,VtVec3dArray(),time);
         if ((!translations.empty()&&translations.size()!=binding.sources.size()) ||
             (!rotations.empty()&&rotations.size()!=binding.sources.size())) return finish();
     }
@@ -217,15 +254,16 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
         source.rotationOffsetDegrees=rotations.empty()?GfVec3d(0):rotations[i];
         packet.sources.push_back(source);
     }
-    const auto order=Order(Raw(prim,"rigExec:rotationOrder",TfToken("XYZ")));
-    const auto affect=Mask(resolved,prim,"Rotation",true,time);
+    const auto order=Order(Raw(prim,_constraintCheckTokens->rigExecRotationOrder,_constraintCheckTokens->xyz));
+    const auto affect=Mask(resolved,prim,_constraintCheckTokens->inputsAffectRotationX,
+        _constraintCheckTokens->inputsAffectRotationY,_constraintCheckTokens->inputsAffectRotationZ,true,time);
     const double solveWeight=binding.geometry?1.0:weight;
     auto &carry=out->carry;
     out->hasCarry=!binding.carry.IsEmpty();
     if (out->hasCarry) {
         GfMatrix4d d(1.0),p(1.0);
-        if (!resolved.Get(binding.carry.AppendProperty(TfToken("posed:defaultSpace")),&d) ||
-            !resolved.Get(binding.carry.AppendProperty(TfToken("posed:space")),&p))
+        if (!resolved.Get(binding.carry.AppendProperty(_constraintCheckTokens->posedDefaultSpace),&d) ||
+            !resolved.Get(binding.carry.AppendProperty(_constraintCheckTokens->posedSpace),&p))
             out->hasCarry=false;
         else {
             GfMatrix4d check(1.0);
@@ -238,38 +276,41 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
     }
     if (binding.type=="RigExecRotationConstraint") {
         packet.kind=RigExecIndependentConstraintInputs::Kind::Rotation;
-        packet.rotation.offsetDegrees=Read(resolved,prim,"inputs:rotationOffset",GfVec3d(0),time);
+        packet.rotation.offsetDegrees=Read(resolved,prim,_constraintCheckTokens->inputsRotationOffset,GfVec3d(0),time);
         packet.rotation.affect=affect;packet.rotation.rotationOrder=order;packet.rotation.weight=solveWeight;
         packet.rotation.carry=nullptr;
     } else if (binding.type=="RigExecParentConstraint") {
         packet.kind=RigExecIndependentConstraintInputs::Kind::Parent;
-        packet.parent.translationAxes=Mask(resolved,prim,"Translation",true,time);
-        packet.parent.rotationAxes=affect;packet.parent.scaleAxes=Mask(resolved,prim,"Scale",false,time);
+        packet.parent.translationAxes=Mask(resolved,prim,_constraintCheckTokens->inputsAffectTranslationX,
+            _constraintCheckTokens->inputsAffectTranslationY,_constraintCheckTokens->inputsAffectTranslationZ,true,time);
+        packet.parent.rotationAxes=affect;packet.parent.scaleAxes=Mask(resolved,prim,_constraintCheckTokens->inputsAffectScaleX,
+            _constraintCheckTokens->inputsAffectScaleY,_constraintCheckTokens->inputsAffectScaleZ,false,time);
         packet.parent.rotationOrder=order;packet.parent.weight=solveWeight;
         packet.parent.carry=nullptr;
-        packet.parent.blendShear=Raw(prim,"rigExec:blendShear",false);
+        packet.parent.blendShear=Raw(prim,_constraintCheckTokens->rigExecBlendShear,false);
     } else if (binding.type=="RigExecAimConstraint") {
         packet.kind=RigExecIndependentConstraintInputs::Kind::Aim;
         auto &aim=packet.aim;
-        aim.localAimVector=Read(resolved,prim,"inputs:aimVector",GfVec3d(1,0,0),time);
-        const auto aimAttr=prim.GetAttribute(TfToken("inputs:aimVector"));
+        aim.localAimVector=Read(resolved,prim,_constraintCheckTokens->inputsAimVector,GfVec3d(1,0,0),time);
+        const auto aimAttr=prim.GetAttribute(_constraintCheckTokens->inputsAimVector);
         if (!aimAttr || !aimAttr.HasAuthoredValueOpinion()) {
-            const auto axis=Raw(prim,"rigExec:aimAxis",TfToken("x"));
+            const auto axis=Raw(prim,_constraintCheckTokens->rigExecAimAxis,_constraintCheckTokens->x);
             aim.localAimVector=axis=="y"?GfVec3d(0,1,0):axis=="z"?GfVec3d(0,0,1):GfVec3d(1,0,0);
         }
-        aim.localUpVector=Read(resolved,prim,"inputs:upVector",GfVec3d(0,1,0),time);
-        aim.rotationOffsetDegrees=Read(resolved,prim,"inputs:rotationOffset",GfVec3d(0),time);
+        aim.localUpVector=Read(resolved,prim,_constraintCheckTokens->inputsUpVector,GfVec3d(0,1,0),time);
+        aim.rotationOffsetDegrees=Read(resolved,prim,_constraintCheckTokens->inputsRotationOffset,GfVec3d(0),time);
         aim.affectRotation=affect;aim.rotationOrder=order;aim.weight=solveWeight;
         SdfPathVector authoredSources;
-        if (const auto rel=prim.GetRelationship(TfToken("rigExec:sources"))) rel.GetTargets(&authoredSources);
+        if (const auto rel=prim.GetRelationship(_constraintCheckTokens->rigExecSources)) rel.GetTargets(&authoredSources);
         aim.preserveInputUp=authoredSources.empty();
         double total=0;
         for(const auto &source:packet.sources) {
             if(!std::isfinite(source.normalizedWeight)||source.normalizedWeight<0) return finish();
             total+=source.normalizedWeight;
         }
-        const auto mode=total>0?Raw(prim,"rigExec:worldUpType",TfToken("none")):TfToken("none");
-        const auto up=Read(resolved,prim,"inputs:worldUpVector",GfVec3d(0,1,0),time);
+        const TfToken mode=total>0?Raw(prim,_constraintCheckTokens->rigExecWorldUpType,_constraintCheckTokens->none):
+            _constraintCheckTokens->none;
+        const auto up=Read(resolved,prim,_constraintCheckTokens->inputsWorldUpVector,GfVec3d(0,1,0),time);
         if (mode=="sceneUp") {
             const auto axis=UsdGeomGetStageUpAxis(stage).GetString();
             aim.worldUpDirection=axis=="Z"||axis=="z"?GfVec3d(0,0,1):GfVec3d(0,1,0);
@@ -283,7 +324,7 @@ inline bool Prepare(const Binding &binding, const UsdStageRefPtr &stage,
             else {
                 GfMatrix4d matrix(1.0);
                 if (!RigExecPointsToMatrix(RigExecIdentityLandmarks(),object.points,&matrix)) return finish();
-                aim.worldUpDirection=(Raw(prim,"rigExec:worldUpRotationOnly",false)?
+                aim.worldUpDirection=(Raw(prim,_constraintCheckTokens->rigExecWorldUpRotationOnly,false)?
                     matrix.GetOrthonormalized(false):matrix).ExtractRotation().TransformDir(up);
             }
         }

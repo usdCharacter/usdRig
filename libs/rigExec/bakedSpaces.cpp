@@ -11,6 +11,7 @@
 #include "rigExecScene/poseProgram.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/resolveInfo.h"
 #include <algorithm>
@@ -20,6 +21,38 @@
 
 namespace rigExec {
 namespace {
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((restSpace, "rest:space"))
+    ((defaultSpace, "default:space"))
+    ((posedSpace, "posed:space"))
+    ((parentSpace, "parent:space"))
+    ((parentDefaultSpace, "parent:defaultSpace"))
+    ((avarsDefaultSpace, "avars:defaultSpace"))
+    ((posedDefaultSpace, "posed:defaultSpace"))
+    ((avarsUnitScaleFactor, "avars:unitScaleFactor"))
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+    ((avarsRx, "avars:rx"))
+    ((avarsRy, "avars:ry"))
+    ((avarsRz, "avars:rz"))
+    ((avarsRspin, "avars:rspin"))
+    ((avarsRotationOrder, "avars:rotationOrder"))
+    ((avarsRotationSign, "avars:rotationSign"))
+    (final)
+    ((defaultTx, "default:tx"))
+    ((defaultTy, "default:ty"))
+    ((defaultTz, "default:tz"))
+    ((defaultRx, "default:rx"))
+    ((defaultRy, "default:ry"))
+    ((defaultRz, "default:rz"))
+    ((spacesMatchValues, "spaces:matchValues"))
+);
+
 RigExecRevisionLeafType _Type(const SdfValueTypeName &type)
 {
     using T=RigExecRevisionLeafType;
@@ -433,8 +466,8 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         B.named.insert(input.attribute); B.prims.insert(input.attribute.GetPrimPath());
     }
     RigExecBakedBindPathLeaves(B.stage,&B.providerLeaves);
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
+    const TfToken names[]={_tokens->restSpace,_tokens->defaultSpace,_tokens->posedSpace,_tokens->parentSpace,
+        _tokens->parentDefaultSpace,_tokens->avarsDefaultSpace,_tokens->posedDefaultSpace};
     // Connected consumers refresh an expression closure against native base
     // versions. Unconnected namespace expressions keep their initial context.
     // These binding calls append ops without changing existing output IDs.
@@ -450,7 +483,7 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     for(size_t slot=0;slot<B.paths.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(names[channel]);
             const auto found=B.providerProgram.attributeValues.find(consumer);
             if(found==B.providerProgram.attributeValues.end()) continue;
             RigExecValueId value=found->second;
@@ -494,9 +527,9 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
     }
     B.connectedPoseProviders.assign(B.paths.size(),0);
     B.providerRefreshTemplates.assign(B.paths.size(),RigExecNoProviderValue);
-    const char *poseInputs[]={"posed:space","posed:defaultSpace","parent:defaultSpace","parent:space",
-        "avars:unitScaleFactor","avars:tx","avars:ty","avars:tz","avars:sx","avars:sy","avars:sz",
-        "avars:rx","avars:ry","avars:rz","avars:rspin","avars:rotationOrder","avars:rotationSign"};
+    const TfToken poseInputs[]={_tokens->posedSpace,_tokens->posedDefaultSpace,_tokens->parentDefaultSpace,_tokens->parentSpace,
+        _tokens->avarsUnitScaleFactor,_tokens->avarsTx,_tokens->avarsTy,_tokens->avarsTz,_tokens->avarsSx,_tokens->avarsSy,_tokens->avarsSz,
+        _tokens->avarsRx,_tokens->avarsRy,_tokens->avarsRz,_tokens->avarsRspin,_tokens->avarsRotationOrder,_tokens->avarsRotationSign};
     // Every slot's pose-input closure from one _PoseInputGraph batch, as the
     // compile computes its own: an attribute many closures reach is read
     // once. Providers and connectedPose equal _CollectPoseInputInfo's for
@@ -527,8 +560,8 @@ bool RigExecBakedBuildSpaces(RigExecBakedProgramImpl *program,UsdTimeCode captur
         const std::string key="refreshTemplate:"+B.paths[slot].GetString();
         p.valueKeys.push_back(key);p.valueIds.emplace(key,output);
         RigExecProviderOp op{RigExecProviderOpKind::PosedFrame,B.paths[slot],output,{}};
-        for(const auto *name:poseInputs)
-            op.inputs.push_back(p.FindValue(RigExecProviderAttributeKey(B.paths[slot].AppendProperty(TfToken(name)))));
+        for(const auto &name:poseInputs)
+            op.inputs.push_back(p.FindValue(RigExecProviderAttributeKey(B.paths[slot].AppendProperty(name))));
         const auto type=scene.nodes.at(B.paths[slot]).fact.type;
         op.scaleAvars=type=="RigExecControl" || type=="RigExecJoint";
         RigExecOpDescriptor descriptor;descriptor.key=key;descriptor.writes={output};
@@ -789,12 +822,12 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
     std::string *error)
 {
     auto &B=*program;
-    const char *names[]={"rest:space","default:space","posed:space","parent:space",
-        "parent:defaultSpace","avars:defaultSpace","posed:defaultSpace"};
+    const TfToken names[]={_tokens->restSpace,_tokens->defaultSpace,_tokens->posedSpace,_tokens->parentSpace,
+        _tokens->parentDefaultSpace,_tokens->avarsDefaultSpace,_tokens->posedDefaultSpace};
     for(size_t slot=0;slot<B.ladders.size();++slot) {
         if(B.slotKind[slot]!=RigExecBakedSlotKind::FirstFramePose) continue;
         for(size_t channel=0;channel<7;++channel) {
-            const SdfPath consumer=B.paths[slot].AppendProperty(TfToken(names[channel]));
+            const SdfPath consumer=B.paths[slot].AppendProperty(names[channel]);
             const auto chain=std::find_if(B.propertyChains.begin(),B.propertyChains.end(),
                 [&](const auto &item){return item.target==consumer &&
                     item.arm==RigExecBakedPropertyChain::Arm::Matrix4d && !item.revisions.empty();});
@@ -814,19 +847,19 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
             B.providerProgram.valueIds.emplace(key,value);
             const auto seed=B.providerValues.values[size_t(prior)];
             B.providerValues.values.push_back(seed);
-            B.providerProgram.routedInputs.push_back({value,consumer,consumer,TfToken("final")});
+            B.providerProgram.routedInputs.push_back({value,consumer,consumer,_tokens->final});
             B.ladders[slot].spaceValues[channel]=int(value);
         }
     }
     // A provider consumes the final revisions of its own default channels.
     // Keep each property's raw value available to the mover that produces it.
-    const char *defaults[]={"default:tx","default:ty","default:tz",
-        "default:rx","default:ry","default:rz"};
+    const TfToken defaults[]={_tokens->defaultTx,_tokens->defaultTy,_tokens->defaultTz,
+        _tokens->defaultRx,_tokens->defaultRy,_tokens->defaultRz};
     for (size_t index=0; index<B.providerProgram.ops.size(); ++index) {
         auto &op=B.providerProgram.ops[index];
         if (op.kind != RigExecProviderOpKind::DefaultSpace) continue;
         for (size_t channel=0; channel<6; ++channel) {
-            const SdfPath consumer=op.owner.AppendProperty(TfToken(defaults[channel]));
+            const SdfPath consumer=op.owner.AppendProperty(defaults[channel]);
             const auto chain=std::find_if(B.propertyChains.begin(),B.propertyChains.end(),
                 [&](const auto &item){return item.target==consumer && !item.revisions.empty();});
             if (chain==B.propertyChains.end()) continue;
@@ -842,7 +875,7 @@ bool RigExecBakedBindOwnPropertySpaces(RigExecBakedProgramImpl *program,
             B.providerProgram.valueIds.emplace(key,value);
             const auto seed=B.providerValues.values[size_t(prior)];
             B.providerValues.values.push_back(seed);
-            B.providerProgram.routedInputs.push_back({value,consumer,consumer,TfToken("final")});
+            B.providerProgram.routedInputs.push_back({value,consumer,consumer,_tokens->final});
             op.inputs[3+channel]=value;
         }
         auto &reads=B.providerProgram.descriptors[index].reads;
@@ -1092,7 +1125,7 @@ void
 RigExecBakedPresentSpaceMatches(const RigExecBakedProgramImpl &B,
                                 RigExecRigPose *pose)
 {
-    static const TfToken kMatchValues("spaces:matchValues");
+    const TfToken &kMatchValues = _tokens->spacesMatchValues;
     for (const auto &sw : B.spaceSwitches) {
         if (!sw.matchValid || sw.slot < 0) continue;
         pose->movedProperties[B.paths[size_t(sw.slot)].AppendProperty(

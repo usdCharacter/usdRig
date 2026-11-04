@@ -76,6 +76,13 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((targetSpace, "target"))
     ((operationCycle, "operation cycle"))
     ((legacyLattice, "legacy"))
+    ((rigExecJointWeights, "rigExec:jointWeights"))
+    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+    ((inputsWeight, "inputs:weight"))
+    ((rigExecActivation, "rigExec:activation"))
+    (offsets)
+    (pointIndices)
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
 );
 
 namespace rigExec {
@@ -229,10 +236,10 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             B.prims.insert(structural.GetPrimPath());
         }
         B.resolvedRoutedPrims.insert(r.moverPath);
-        for (const char *name : {"rigExec:jointIndices", "rigExec:jointWeights",
-                                 "rigExec:elementSize",
-                                 "rigExec:skinningMethod"}) {
-            B.named.insert(r.moverPath.AppendProperty(TfToken(name)));
+        for (const TfToken &name : {_tokens->jointIndices, _tokens->rigExecJointWeights,
+                                    _tokens->elementSize,
+                                    _tokens->rigExecSkinningMethod}) {
+            B.named.insert(r.moverPath.AppendProperty(name));
         }
         // Every path an operation's per-frame assembler reads, whatever the
         // operation is: the cage a lattice deforms through, the surface a
@@ -283,7 +290,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             B.prims.insert(input);
             B.resolvedRoutedPrims.insert(input);
             const SdfPath weightPath =
-                input.AppendProperty(TfToken("inputs:weight"));
+                input.AppendProperty(_tokens->inputsWeight);
             B.named.insert(weightPath);
             channel.weight = B.stage->GetAttributeAtPath(weightPath);
             channel.weightPath = weightPath;
@@ -321,7 +328,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                     B.resolvedRoutedPrims.insert(binding.sample);
                     const SdfPath activationPath =
                         binding.sample.AppendProperty(
-                            TfToken("rigExec:activation"));
+                            _tokens->rigExecActivation);
                     B.named.insert(activationPath);
                     sample.activation =
                         B.stage->GetAttributeAtPath(activationPath);
@@ -415,7 +422,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
             const UsdPrim weightPrim =
                 B.stage->GetPrimAtPath(r.binding.weightObject);
             const SdfPathVector declared =
-                ctx->Targets(weightPrim, "rigExec:weightTarget");
+                ctx->Targets(weightPrim, _tokens->rigExecWeightTarget);
             out.weightOperationDomain =
                 declared.size() == 1 && declared[0] == r.moverPath;
             out.weightFieldTarget =
@@ -458,10 +465,10 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
                         // Sparse layouts are sampled at Default in the prologue;
                         // their exact source arrays must also reach readiness.
                         const SdfPath shape = sample.blendShape.GetPrimPath();
-                        sample.offsetsLeaf = decl.Add({shape.AppendProperty(TfToken("offsets")),
+                        sample.offsetsLeaf = decl.Add({shape.AppendProperty(_tokens->offsets),
                                   Type::Vec3fArray, RigExecRevisionLeafTime::AtDefault,
                                   Flavour::Raw, VtValue(VtVec3fArray())});
-                        sample.indicesLeaf = decl.Add({shape.AppendProperty(TfToken("pointIndices")),
+                        sample.indicesLeaf = decl.Add({shape.AppendProperty(_tokens->pointIndices),
                                   Type::IntArray, RigExecRevisionLeafTime::AtDefault,
                                   Flavour::Raw, VtValue(VtIntArray())});
                     }

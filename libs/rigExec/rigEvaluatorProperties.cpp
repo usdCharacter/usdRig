@@ -8,6 +8,7 @@
 #include "movers/moverRegistry.h"
 #include "rigExecMath/propertyMath.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/attributeQuery.h"
@@ -22,6 +23,15 @@
 #include <unordered_set>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecReadPhase, RigExecReadPhaseMetadataName))
+    ((rigExecInputElement, RigExecInputElementMetadataName))
+    ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
+    ((rigExecPose, "RigExecPose"))
+    ((posedSpace, "posed:space"))
+);
 
 using namespace evaluatorDetail;
 
@@ -77,13 +87,13 @@ _PhasedTypesAgree(const SdfValueTypeName &consumer,
 /// Binds one input of \p prim, or leaves the binding empty when there is
 /// none -- the equivalent of `prim.GetAttribute(...)` returning invalid.
 RigExecPropertyChainBindings::Input
-_BindInput(const UsdPrim &prim, const char *name, UsdTimeCode time)
+_BindInput(const UsdPrim &prim, const TfToken &name, UsdTimeCode time)
 {
     RigExecPropertyChainBindings::Input input;
     if (!prim) {
         return input;
     }
-    if (const UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+    if (const UsdAttribute a = prim.GetAttribute(name)) {
         input.attribute = a;
         input.path = a.GetPath();
         input.connected = a.HasAuthoredConnections();
@@ -237,9 +247,9 @@ RigExecRigEvaluator::_CompilePropertyChains(
     // never fails here: one that math movers revise themselves reads its
     // own chain's result, and one of another value type never read the
     // chain, so both keep reading as they did.
-    const TfToken phaseField(RigExecReadPhaseMetadataName);
-    const TfToken interpolatorType("RigExecPoseInterpolator");
-    const TfToken poseType("RigExecPose");
+    const TfToken &phaseField = _tokens->rigExecReadPhase;
+    const TfToken &interpolatorType = _tokens->rigExecPoseInterpolator;
+    const TfToken &poseType = _tokens->rigExecPose;
     const auto targetsOf = [](const UsdPrim &prim, const TfToken &name) {
         SdfPathVector targets;
         if (const UsdRelationship rel = prim.GetRelationship(name)) {
@@ -408,7 +418,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
                 return refuse(phaseError);
             }
             if (phase.kind == RigExecReadPhaseKind::Preceding &&
-                !input.HasAuthoredMetadata(TfToken(RigExecInputElementMetadataName)) &&
+                !input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
                 input.GetTypeName() != SdfValueTypeNames->Matrix4d) {
                 return refuse(who + " 'preceding' names no position for a "
                                     "connection; use base, final or a prim "
@@ -438,11 +448,11 @@ RigExecRigEvaluator::_CompilePropertyChains(
                 break;
             }
             crossDomain = crossDomain ||
-                (input.HasAuthoredMetadata(TfToken(RigExecInputElementMetadataName)) &&
+                (input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
                  next.GetTypeName().GetType() == TfType::Find<VtVec3fArray>()) ||
                 (input.GetTypeName() == SdfValueTypeNames->Matrix4d &&
                  next.GetTypeName() == SdfValueTypeNames->Matrix4d &&
-                 next.GetName() == TfToken("posed:space"));
+                 next.GetName() == _tokens->posedSpace);
             hops.push_back(hop[0]);
             hop = _AuthoredConnections(next);
         }

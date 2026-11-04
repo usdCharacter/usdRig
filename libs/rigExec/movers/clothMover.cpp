@@ -494,8 +494,8 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                   std::string *error)
 {
     if (!binding) return false;
-    const auto targets = [&scene](const SdfPath &prim, const char *name) {
-        const auto found = scene.relationships.find(prim.AppendProperty(TfToken(name)));
+    const auto targets = [&scene](const SdfPath &prim, const TfToken &name) {
+        const auto found = scene.relationships.find(prim.AppendProperty(name));
         return found == scene.relationships.end() ? SdfPathVector() : found->second.fact.targets;
     };
     SdfPathVector colliders;
@@ -510,8 +510,8 @@ bool CompileScene(const RigExecSceneDescriptors &scene, const SdfPath &mover,
                 binding->phases[collider.AppendProperty(_points)] = phase;
         }
     }
-    for (const auto &profile : targets(mover, "rigExec:constraints"))
-        for (const auto &path : targets(profile, "rigExec:targetMesh")) {
+    for (const auto &profile : targets(mover, _relTokens->constraints))
+        for (const auto &path : targets(profile, _relTokens->targetMesh)) {
             const SdfPath mesh = MeshOf(path);
             if (mesh != MeshOf(target) && std::find(colliders.begin(), colliders.end(), mesh) == colliders.end())
                 colliders.push_back(mesh);

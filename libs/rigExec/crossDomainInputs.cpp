@@ -2,11 +2,19 @@
 #include "bakedProgramImpl.h"
 #include "rigEvaluatorInternal.h"
 #include "rigExecMath/pointFrame.h"
+#include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 #include <limits>
 #include <set>
 
 namespace rigExec {
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecReadPhase, RigExecReadPhaseMetadataName))
+    ((rigExecSampleSource, "rigExec:sampleSource"))
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecCurve, "rigExec:curve"))
+);
 namespace {
 int Ordinal(const RigExecBakedProgramImpl &B, const SdfPath &path)
 {
@@ -347,8 +355,8 @@ bool RigExecBakedReadCrossDomain(const RigExecBakedProgramImpl &B, int index,
 bool RigExecBakedBindWeightPointInputs(RigExecBakedProgramImpl *program,std::string *error)
 {
     auto &B = *program;
-    constexpr const char *names[] = {"rigExec:sampleSource","rigExec:weightTarget","rigExec:curve"};
-    const TfToken phaseName("rigExecReadPhase");
+    const TfToken names[] = {_tokens->rigExecSampleSource,_tokens->rigExecWeightTarget,_tokens->rigExecCurve};
+    const TfToken &phaseName = _tokens->rigExecReadPhase;
     for (auto &field : B.weightFields) {
         field.pointReads.clear();
         SdfPath reader;
@@ -374,7 +382,7 @@ bool RigExecBakedBindWeightPointInputs(RigExecBakedProgramImpl *program,std::str
             for (const int input : weight.inputs) if (!self(self,input)) return false;
             const auto prim = B.stage->GetPrimAtPath(weight.path);
             for (int leaf = 0; leaf < 3; ++leaf) {
-                const auto relation = prim.GetRelationship(TfToken(names[leaf]));
+                const auto relation = prim.GetRelationship(names[leaf]);
                 if (!relation || !relation.HasAuthoredMetadata(phaseName)) continue;
                 RigExecReadPhase phase;
                 if (!RigExecResolveReadPhase(relation,&phase,error)) return false;

@@ -23,12 +23,15 @@
 
 namespace rigExec {
 
+namespace {
+const bool _kVerifyConesRequested =
+    TfGetenvBool("RIGEXEC_BAKED_VERIFY_CONES", false);
+}
+
 bool
 RigExecBakedVerifyConesRequested()
 {
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_BAKED_VERIFY_CONES", false);
-    return requested;
+    return _kVerifyConesRequested;
 }
 
 namespace {

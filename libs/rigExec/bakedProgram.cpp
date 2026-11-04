@@ -41,6 +41,7 @@
 
 #include "pxr/base/gf/math.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/work/dispatcher.h"
 #include "pxr/base/work/loops.h"
@@ -74,6 +75,61 @@ namespace rigExec {
 
 namespace {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    (xformOpOrder)
+    ((default_, "default"))
+    (timeSamples)
+    (spline)
+    (typeName)
+    (custom)
+    (variability)
+    (visibility)
+    ((xyz, "XYZ"))
+    ((rigExecIkValue, "rigExec:ikValue"))
+    ((inputsGain, "inputs:gain"))
+    ((rigExecBasis, "rigExec:basis"))
+    ((rigExecPoseRotations, "rigExec:poseRotations"))
+    ((rigExecPoseFalloffs, "rigExec:poseFalloffs"))
+    ((rigExecPoseGains, "rigExec:poseGains"))
+    ((rigExecKernel, "rigExec:kernel"))
+    ((rigExecRegularization, "rigExec:regularization"))
+    ((rigExecTarget, "rigExec:target"))
+    ((inputsActiveSpace, "inputs:activeSpace"))
+    ((rigExecOperation, "rigExec:operation"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((rigExecCombineWeight, "RigExecCombineWeight"))
+    ((rigExecCurveWeight, "RigExecCurveWeight"))
+    ((rigExecPlaneWeight, "RigExecPlaneWeight"))
+    ((rigExecDynamicWeight, "RigExecDynamicWeight"))
+    ((rigExecCombineMode, "rigExec:combineMode"))
+    (multiply)
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecSampleSource, "rigExec:sampleSource"))
+    ((rigExecCurve, "rigExec:curve"))
+    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    (y)
+    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    (unbounded)
+    ((rigExecRepresentation, "rigExec:representation"))
+    (constant)
+    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    (strict)
+    ((rigExecIndices, "rigExec:indices"))
+    ((rigExecValues, "rigExec:values"))
+    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsMask, "inputs:mask"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsValue, "inputs:value"))
+    ((inputsMin, "inputs:min"))
+    ((inputsMax, "inputs:max"))
+    ((inputsKeys, "inputs:keys"))
+    ((inputsTangents, "inputs:tangents"))
+);
+
 // The channels Build's parallel resolve lanes bind, interned at load:
 // TfToken from text takes the token registry's lock on every construction.
 const TfToken kPosedSpace("posed:space");
@@ -106,11 +162,11 @@ const TfToken kAvarTokens[11] = {
 // uniform tokens the dynamic path reads exactly this way
 // (rigExec:rotationOrder, rigExec:worldUpType, rigExec:aimAxis, ...).
 TfToken
-_ReadToken(const UsdPrim &prim, const char *name, const char *fallback)
+_ReadToken(const UsdPrim &prim, const TfToken &name, const TfToken &fallback)
 {
-    TfToken value(fallback);
+    TfToken value = fallback;
     if (prim) {
-        if (const UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+        if (const UsdAttribute a = prim.GetAttribute(name)) {
             TfToken read;
             if (a.Get(&read) && !read.IsEmpty()) {
                 value = read;
@@ -121,11 +177,11 @@ _ReadToken(const UsdPrim &prim, const char *name, const char *fallback)
 }
 
 SdfPathVector
-_Targets(const UsdPrim &prim, const char *name)
+_Targets(const UsdPrim &prim, const TfToken &name)
 {
     SdfPathVector targets;
     if (prim) {
-        if (const UsdRelationship rel = prim.GetRelationship(TfToken(name))) {
+        if (const UsdRelationship rel = prim.GetRelationship(name)) {
             rel.GetTargets(&targets);
         }
     }
@@ -268,9 +324,9 @@ _ProbeTime(const UsdStageRefPtr &stage)
 }
 
 bool
-_AttributeIsIdentity(const UsdPrim &prim, const char *name, bool *connected)
+_AttributeIsIdentity(const UsdPrim &prim, const TfToken &name, bool *connected)
 {
-    const UsdAttribute a = prim.GetAttribute(TfToken(name));
+    const UsdAttribute a = prim.GetAttribute(name);
     if (!a) {
         return true;
     }
@@ -447,7 +503,6 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             }
         }
     }
-    const TfToken rotationSignName("avars:rotationSign");
     for (const SdfPath &path : E._nativeProviderPaths) {
         const UsdPrim prim = E._stage->GetPrimAtPath(path);
         if (!prim) {
@@ -531,8 +586,8 @@ RigExecBakedProgram::IsBakeable(const RigExecRigEvaluator &evaluator,
             if (!prim || !visit(prim)) {
                 return;
             }
-            for (const char *name : {"rigExec:baseWeight",
-                                     "rigExec:inputWeights"}) {
+            for (const TfToken &name : {_tokens->rigExecBaseWeight,
+                                        _tokens->rigExecInputWeights}) {
                 for (const SdfPath &input : _Targets(prim, name)) {
                     walk(input);
                 }
@@ -1024,7 +1079,7 @@ bool _ComposesJudgedXform(const RigExecBakedProgramImpl &B, const SdfPath &path)
 {
     if (!path.IsPropertyPath() || !B.xformPrims.count(path.GetPrimPath()))
         return false;
-    static const TfToken kOpOrder("xformOpOrder");
+    const TfToken &kOpOrder = _tokens->xformOpOrder;
     const TfToken &name = path.GetNameToken();
     return name == kOpOrder || TfStringStartsWith(name.GetString(), "xformOp:");
 }
@@ -1063,9 +1118,10 @@ bool _ValueSpecResync(const RigExecBakedProgramImpl &B,
 {
     if (!B.stage || !path.IsPropertyPath() || B.rebuild.count(path) ||
         _ComposesJudgedXform(B, path)) return false;
-    static const TfToken kDefault("default"), kTimeSamples("timeSamples"),
-        kSpline("spline"), kTypeName("typeName"), kCustom("custom"),
-        kVariability("variability");
+    const TfToken &kDefault = _tokens->default_,
+        &kTimeSamples = _tokens->timeSamples, &kSpline = _tokens->spline,
+        &kTypeName = _tokens->typeName, &kCustom = _tokens->custom,
+        &kVariability = _tokens->variability;
     for (const TfToken &field : notice.GetChangedFields(path))
         if (field != kDefault && field != kTimeSamples && field != kSpline &&
             field != kTypeName && field != kCustom && field != kVariability)
@@ -1100,7 +1156,7 @@ RigExecNoticeIsDisplayOnly(const UsdNotice::ObjectsChanged &notice)
     if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
     }
-    static const TfToken kVisibility("visibility");
+    const TfToken &kVisibility = _tokens->visibility;
     bool saw = false;
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         if (!path.IsPropertyPath() || path.GetNameToken() != kVisibility) {
@@ -1152,9 +1208,9 @@ _IsInvalidatedBy(const RigExecBakedProgramImpl &B,
     // not one named attribute that was judged. The prim-level info that
     // arrives for every ancestor of an edit (an `over` being created above
     // it) is not that, and is exactly what must not rebuild.
-    static const TfToken kDefault("default");
-    static const TfToken kTimeSamples("timeSamples");
-    static const TfToken kSpline("spline");
+    const TfToken &kDefault = _tokens->default_;
+    const TfToken &kTimeSamples = _tokens->timeSamples;
+    const TfToken &kSpline = _tokens->spline;
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
         if (skipped(path)) continue;
         if (path.IsPrimPath() && B.prims.count(path)) {
@@ -1480,9 +1536,9 @@ _RouteValueEdits(const RigExecBakedProgramImpl &B,
             !_RoutableResync(B,notice,path) &&
             !_UnrelatedPrimResync(B,path) &&
             !_UnrelatedAttributeResync(B,notice,path)) return false;
-    static const TfToken kDefault("default");
-    static const TfToken kTimeSamples("timeSamples");
-    static const TfToken kSpline("spline");
+    const TfToken &kDefault = _tokens->default_;
+    const TfToken &kTimeSamples = _tokens->timeSamples;
+    const TfToken &kSpline = _tokens->spline;
     // A prim some source of the program reads as a whole rather than by
     // property name: the Xforms accepted for composing to the identity, a
     // prim whose reads all go through the resolved inputs (a property-chain
@@ -1789,10 +1845,10 @@ _DryRunAvarPatches(const RigExecBakedProgramImpl &B,
     if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
     }
-    static const TfToken kDefault("default");
-    static const TfToken kTypeName("typeName");
-    static const TfToken kSpline("spline");
-    static const TfToken kTimeSamples("timeSamples");
+    const TfToken &kDefault = _tokens->default_;
+    const TfToken &kTypeName = _tokens->typeName;
+    const TfToken &kSpline = _tokens->spline;
+    const TfToken &kTimeSamples = _tokens->timeSamples;
 
     std::vector<_AvarPatch> decided;
     // A property resync is a spec appearing or going away under a value:
@@ -2106,12 +2162,13 @@ namespace {
 // must print the same lines. One line per table rather than one hash, so a
 // mismatch names the table it is in.
 
+const bool _kProgramDigestRequested =
+    TfGetenvBool("RIGEXEC_BAKED_PROGRAM_DIGEST", false);
+
 bool
 _ProgramDigestRequested()
 {
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_BAKED_PROGRAM_DIGEST", false);
-    return requested;
+    return _kProgramDigestRequested;
 }
 
 // FNV-1a over the serialized bytes, plus a count of what was hashed.
@@ -2560,13 +2617,6 @@ RigExecBakedBuildContext::Refuse(const std::string &what, const SdfPath &where)
 }
 
 void
-RigExecBakedBuildContext::Fold(const UsdPrim &prim, const char *name)
-{
-    RigExecBakedProgramSink sink{program};
-    RigExecBakedRecordFold(&sink, prim, name);
-}
-
-void
 RigExecBakedBuildContext::Fold(const UsdPrim &prim, const TfToken &name)
 {
     RigExecBakedProgramSink sink{program};
@@ -2637,28 +2687,16 @@ RigExecBakedMergeCommitShards(RigExecBakedProgramImpl *program,
     return first;
 }
 
-void
-RigExecBakedBuildContext::FoldShape(const UsdPrim &prim, const char *name)
-{
-    if (prim) {
-        const SdfPath path = prim.GetPath().AppendProperty(TfToken(name));
-        program->rebuild.insert(path);
-        program->shapeFolded.insert(path);
-        program->named.insert(path);
-        program->prims.insert(prim.GetPath());
-    }
-}
-
 TfToken
-RigExecBakedBuildContext::ReadToken(const UsdPrim &prim, const char *name,
-                                    const char *fallback)
+RigExecBakedBuildContext::ReadToken(const UsdPrim &prim, const TfToken &name,
+                                    const TfToken &fallback)
 {
     Fold(prim, name);
     return _ReadToken(prim, name, fallback);
 }
 
 SdfPathVector
-RigExecBakedBuildContext::Targets(const UsdPrim &prim, const char *name)
+RigExecBakedBuildContext::Targets(const UsdPrim &prim, const TfToken &name)
 {
     Fold(prim, name);
     return _Targets(prim, name);
@@ -3042,7 +3080,6 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // accepts is seeded); FirstFramePose wins a collision, because that is the kind
     // the compose can actually write.
     {
-        const TfToken rotationSignName("avars:rotationSign");
         std::map<SdfPath, RigExecBakedSlotKind> ordered;
         for (const SdfPath &path : E._nativeProviderPaths) {
             ordered.emplace(path, RigExecBakedSlotKind::FirstFramePose);
@@ -3105,7 +3142,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // RigExecBakedComposeRestRange and RigExecBakedComposeLadderRange,
     // called once below over every slot and per compose group by the rest
     // and ladder head ops -- so the two cannot drift.
-    B.xyzToken = TfToken("XYZ");
+    B.xyzToken = _tokens->xyz;
     B.posedAuthored.assign(size_t(N), 0);
     B.posedAuthoredM.assign(size_t(N), GfMatrix4d(1.0));
     B.restM.assign(N, GfMatrix4d(1.0));
@@ -3338,19 +3375,19 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         renumber(&out.rotationSign, first);
         ladder.rotationSign = std::move(out.rotationSign);
         const UsdPrim provider = B.stage->GetPrimAtPath(B.paths[size_t(i)]);
-        const auto connected = [&provider](const char *name) {
-            const UsdAttribute attribute = provider.GetAttribute(TfToken(name));
+        const auto connected = [&provider](const TfToken &name) {
+            const UsdAttribute attribute = provider.GetAttribute(name);
             SdfPathVector sources;
             return attribute && attribute.GetConnections(&sources) &&
                    sources.size() == 1 && attribute.GetStage()->GetAttributeAtPath(sources[0]) &&
                    attribute.GetStage()->GetAttributeAtPath(sources[0]).GetTypeName() == attribute.GetTypeName();
         };
-        ladder.posedSpaceConnected = connected("posed:space");
-        ladder.defaultSpaceConnected = connected("default:space");
-        ladder.parentSpaceConnected = connected("parent:space");
-        ladder.parentDefaultSpaceConnected = connected("parent:defaultSpace");
-        ladder.avarDefaultSpaceConnected = connected("avars:defaultSpace");
-        ladder.posedDefaultSpaceConnected = connected("posed:defaultSpace");
+        ladder.posedSpaceConnected = connected(kPosedSpace);
+        ladder.defaultSpaceConnected = connected(kDefaultSpace);
+        ladder.parentSpaceConnected = connected(kParentSpace);
+        ladder.parentDefaultSpaceConnected = connected(kParentDefaultSpace);
+        ladder.avarDefaultSpaceConnected = connected(kAvarDefaultSpace);
+        ladder.posedDefaultSpaceConnected = connected(kPosedDefaultSpace);
         renumber(&out.rotationOrder, first);
         ladder.rotationOrder = std::move(out.rotationOrder);
         for (int c = 0; c < 6; ++c) {
@@ -3815,9 +3852,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         // rebuild.
         B.prims.insert(record.prim);
         B.resolvedRoutedPrims.insert(record.prim);
-        out.enabled = ctx.Bind<bool>(prim, "inputs:enabled", true);
+        out.enabled = ctx.Bind<bool>(prim, _tokens->inputsEnabled, true);
         if (captured.ml) {
-            out.mask = ctx.Bind<float>(prim, "inputs:mask", 1.0f);
+            out.mask = ctx.Bind<float>(prim, _tokens->inputsMask, 1.0f);
         }
         for (size_t k = 0; k < captured.driverAttributes.size(); ++k) {
             const SdfPath &value = captured.driverAttributes[k];
@@ -3829,15 +3866,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             // nowhere -- the bound input below is what reads it, and it is
             // reached through its own override index.
             B.prims.insert(value.GetPrimPath());
-            const std::string valueName = value.GetName();
+            const TfToken &valueName = value.GetNameToken();
             const bool isFloat = k < captured.numericIsFloat.size() &&
                                  captured.numericIsFloat[k];
             out.valueIsFloat.push_back(isFloat ? 1 : 0);
             out.valueInputs.push_back(
                 isFloat ? RigExecBakedInput<double>()
-                        : ctx.Bind<double>(owner, valueName.c_str(), 0.0));
+                        : ctx.Bind<double>(owner, valueName, 0.0));
             out.floatValueInputs.push_back(
-                isFloat ? ctx.Bind<float>(owner, valueName.c_str(), 0.0f)
+                isFloat ? ctx.Bind<float>(owner, valueName, 0.0f)
                         : RigExecBakedInput<float>());
         }
         out.values.assign(out.valueInputs.size(), 0.0);
@@ -3895,15 +3932,15 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         out.labels=captured.labels;
         const UsdPrim switchPrim = B.stage->GetPrimAtPath(sw.switchPath);
         const UsdAttribute active = captured.activeAttribute.IsEmpty()
-            ? switchPrim.GetAttribute(TfToken("inputs:activeSpace"))
+            ? switchPrim.GetAttribute(_tokens->inputsActiveSpace)
             : B.stage->GetAttributeAtPath(captured.activeAttribute);
         if (active && active.GetTypeName() == SdfValueTypeNames->Token) {
             out.tokenIndex = true;
             out.activeTokenInput = ctx.Bind<TfToken>(active.GetPrim(),
-                active.GetName().GetText(), TfToken());
+                active.GetName(), TfToken());
         } else if (active) {
             out.activeInput = ctx.Bind<double>(active.GetPrim(),
-                active.GetName().GetText(), captured.activeFallback);
+                active.GetName(), captured.activeFallback);
         }
         out.kernelInputs.sources.resize(out.sourceSlots.size());
         B.spaceSwitchBySlot[size_t(out.slot)] = int(B.spaceSwitches.size());
@@ -3935,10 +3972,10 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         if(node.domain!=RigExecSceneDomain::AutoClavicle || !node.fact.active || !path.HasPrefix(E._rigPath))continue;
         RigExecSceneCompileInputs source(*B.sceneDescriptors);
         const auto prim=B.stage->GetPrimAtPath(path);
-        for (const char *name : {"rigExec:ikValue", "inputs:gain", "rigExec:basis",
-                 "rigExec:poseRotations", "rigExec:poseFalloffs", "rigExec:poseGains",
-                 "rigExec:kernel", "rigExec:regularization"}) ctx.Fold(prim,name);
-        const auto targets=source.Targets(path.AppendProperty(TfToken("rigExec:target")));
+        for (const TfToken &name : {_tokens->rigExecIkValue, _tokens->inputsGain, _tokens->rigExecBasis,
+                 _tokens->rigExecPoseRotations, _tokens->rigExecPoseFalloffs, _tokens->rigExecPoseGains,
+                 _tokens->rigExecKernel, _tokens->rigExecRegularization}) ctx.Fold(prim,name);
+        const auto targets=source.Targets(path.AppendProperty(_tokens->rigExecTarget));
         if(targets.size()!=1 || slotOf(targets.front())<0){refuse("auto clavicle requires one provider target",path);return nullptr;}
         RigExecBakedProgramImpl::AutoClavicle ac;ac.slot=slotOf(targets.front());
         if(B.autoClavicleBySlot[size_t(ac.slot)]>=0){refuse("multiple auto clavicles target the same provider",path);return nullptr;}
@@ -3965,8 +4002,8 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             if(!attribute)return false;
             RigExecBakedProgramImpl::AutoClavicle::ScalarRead read;read.value=*id;
             read.isFloat=attribute.GetTypeName()==SdfValueTypeNames->Float;
-            if(read.isFloat)read.narrow=ctx.Bind<float>(attribute.GetPrim(),attribute.GetName().GetText(),0.0f);
-            else read.wide=ctx.Bind<double>(attribute.GetPrim(),attribute.GetName().GetText(),0.0);
+            if(read.isFloat)read.narrow=ctx.Bind<float>(attribute.GetPrim(),attribute.GetName(),0.0f);
+            else read.wide=ctx.Bind<double>(attribute.GetPrim(),attribute.GetName(),0.0);
             ac.scalars.push_back(std::move(read));return true;
         };
         std::string invalid;
@@ -4047,7 +4084,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
             const UsdPrim mover = E._stage->GetPrimAtPath(revision.moverPath);
             TfToken operation;
             if (const UsdAttribute a =
-                    mover ? mover.GetAttribute(TfToken("rigExec:operation"))
+                    mover ? mover.GetAttribute(_tokens->rigExecOperation)
                           : UsdAttribute()) {
                 a.Get(&operation, UsdTimeCode::Default());
             }
@@ -4073,7 +4110,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     for (const auto &[target,revisions] : E._propertyChains)
         for (const auto &revision : revisions) {
             const auto prim = B.stage->GetPrimAtPath(revision.moverPath);
-            const auto rel = prim.GetRelationship(TfToken("rigExec:weightObject"));
+            const auto rel = prim.GetRelationship(_tokens->rigExecWeightObject);
             SdfPathVector targets;
             if (rel && rel.GetTargets(&targets) && !targets.empty())
                 RigExecBakedBakeWeightObject(&ctx,targets[0]);
@@ -4996,16 +5033,16 @@ RigExecBakedProgram::DescribeWeightOracle(
                              path.GetString();
         return;
     }
-    const auto readToken = [&](const char *name, const char *fallback) {
-        TfToken value(fallback);
-        if (const UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+    const auto readToken = [&](const TfToken &name, const TfToken &fallback) {
+        TfToken value = fallback;
+        if (const UsdAttribute a = prim.GetAttribute(name)) {
             a.Get(&value, time);
         }
         return value;
     };
     const std::string who = prim.GetPath().GetAsString();
-    if (typeName == TfToken("RigExecCombineWeight")) {
-        const TfToken mode = readToken("rigExec:combineMode", "multiply");
+    if (typeName == _tokens->rigExecCombineWeight) {
+        const TfToken mode = readToken(_tokens->rigExecCombineMode, _tokens->multiply);
         if (mode != "multiply" && mode != "add" && mode != "subtract" &&
             mode != "max" && mode != "min" && mode != "average" &&
             mode != "overlay") {
@@ -5024,7 +5061,7 @@ RigExecBakedProgram::DescribeWeightOracle(
         }
         RigExecReadPhase targetPhase;
         std::string targetPhaseError;
-        if (!RigExecResolveReadPhase(prim.GetRelationship(TfToken("rigExec:weightTarget")),
+        if (!RigExecResolveReadPhase(prim.GetRelationship(_tokens->rigExecWeightTarget),
                                     &targetPhase,&targetPhaseError)) {
             facts->phaseError = who + ": " + targetPhaseError;
             return;
@@ -5039,10 +5076,10 @@ RigExecBakedProgram::DescribeWeightOracle(
             }
         };
         // The attribute _ReadTargetPoints reads through a relationship.
-        const auto pointsSource = [&](const char *relationship) {
+        const auto pointsSource = [&](const TfToken &relationship) {
             SdfPathVector targets;
             if (const UsdRelationship rel =
-                    prim.GetRelationship(TfToken(relationship))) {
+                    prim.GetRelationship(relationship)) {
                 rel.GetTargets(&targets);
             }
             return targets.size() == 1
@@ -5053,55 +5090,55 @@ RigExecBakedProgram::DescribeWeightOracle(
         };
         if (!inFlight) {
             const bool fromSampleSource =
-                E._ReadTargetPoints(prim, TfToken("rigExec:sampleSource"),
+                E._ReadTargetPoints(prim, _tokens->rigExecSampleSource,
                                     time, &facts->samples);
             facts->haveSamples =
                 fromSampleSource ||
-                E._ReadTargetPoints(prim, TfToken("rigExec:weightTarget"),
+                E._ReadTargetPoints(prim, _tokens->rigExecWeightTarget,
                                     time, &facts->samples);
             if (!facts->haveSamples) {
                 facts->samples.clear();
             }
-            noteAnimated(pointsSource("rigExec:sampleSource"));
+            noteAnimated(pointsSource(_tokens->rigExecSampleSource));
             if (!fromSampleSource) {
-                noteAnimated(pointsSource("rigExec:weightTarget"));
+                noteAnimated(pointsSource(_tokens->rigExecWeightTarget));
             }
         }
-        if (typeName == TfToken("RigExecCurveWeight")) {
+        if (typeName == _tokens->rigExecCurveWeight) {
             facts->haveCurve =
-                E._ReadTargetPoints(prim, TfToken("rigExec:curve"), time,
+                E._ReadTargetPoints(prim, _tokens->rigExecCurve, time,
                                     &facts->curve) &&
                 !facts->curve.empty();
             if (!facts->haveCurve) {
                 facts->curve.clear();
             }
-            noteAnimated(pointsSource("rigExec:curve"));
+            noteAnimated(pointsSource(_tokens->rigExecCurve));
         }
-        if (typeName == TfToken("RigExecPlaneWeight")) {
-            facts->planeAxis = readToken("rigExec:planeAxis", "y");
-            facts->planeBounds = readToken("rigExec:planeBounds", "unbounded");
-            noteAnimated(prim.GetAttribute(TfToken("rigExec:planeAxis")));
-            noteAnimated(prim.GetAttribute(TfToken("rigExec:planeBounds")));
+        if (typeName == _tokens->rigExecPlaneWeight) {
+            facts->planeAxis = readToken(_tokens->rigExecPlaneAxis, _tokens->y);
+            facts->planeBounds = readToken(_tokens->rigExecPlaneBounds, _tokens->unbounded);
+            noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneAxis));
+            noteAnimated(prim.GetAttribute(_tokens->rigExecPlaneBounds));
         }
         return;
     }
 
     const TfToken representation =
-        readToken("rigExec:representation", "constant");
-    const TfToken rangePolicy = readToken("rigExec:rangePolicy", "strict");
+        readToken(_tokens->rigExecRepresentation, _tokens->constant);
+    const TfToken rangePolicy = readToken(_tokens->rigExecRangePolicy, _tokens->strict);
     if (rangePolicy != "strict" && rangePolicy != "clamp") {
         facts->staticError = "unknown rangePolicy on " + path.GetString();
         return;
     }
-    if (typeName == TfToken("RigExecDynamicWeight")) {
-        if (readToken("rigExec:operation", "multiply") != "multiply") {
+    if (typeName == _tokens->rigExecDynamicWeight) {
+        if (readToken(_tokens->rigExecOperation, _tokens->multiply) != "multiply") {
             facts->staticError =
                 "unknown dynamic-weight operation on " + path.GetString();
             return;
         }
         SdfPathVector baseTargets;
         if (const UsdRelationship rel =
-                prim.GetRelationship(TfToken("rigExec:baseWeight"))) {
+                prim.GetRelationship(_tokens->rigExecBaseWeight)) {
             rel.GetTargets(&baseTargets);
         }
         if (baseTargets.size() > 1) {
@@ -5127,7 +5164,7 @@ RigExecBakedProgram::DescribeWeightOracle(
         const auto canonicalWeightTarget = [&](const UsdPrim &p) {
             SdfPathVector t;
             if (const UsdRelationship rel =
-                    p.GetRelationship(TfToken("rigExec:weightTarget"))) {
+                    p.GetRelationship(_tokens->rigExecWeightTarget)) {
                 rel.GetTargets(&t);
             }
             return t.size() == 1
@@ -5141,9 +5178,9 @@ RigExecBakedProgram::DescribeWeightOracle(
                 "dynamic/base weight target mismatch on " + path.GetString();
             return;
         }
-        TfToken baseRepresentation("constant");
+        TfToken baseRepresentation = _tokens->constant;
         if (const UsdAttribute a =
-                basePrim.GetAttribute(TfToken("rigExec:representation"))) {
+                basePrim.GetAttribute(_tokens->rigExecRepresentation)) {
             a.Get(&baseRepresentation, time);
         }
         if (baseRepresentation != representation) {
@@ -5154,13 +5191,13 @@ RigExecBakedProgram::DescribeWeightOracle(
         if (representation == "sparse") {
             VtIntArray mine;
             if (const UsdAttribute a =
-                    prim.GetAttribute(TfToken("rigExec:indices"))) {
+                    prim.GetAttribute(_tokens->rigExecIndices)) {
                 a.Get(&mine, time);
             }
             if (!mine.empty()) {
                 VtIntArray theirs;
                 if (const UsdAttribute a =
-                        basePrim.GetAttribute(TfToken("rigExec:indices"))) {
+                        basePrim.GetAttribute(_tokens->rigExecIndices)) {
                     a.Get(&theirs, time);
                 }
                 const std::set<int> mySupport(mine.begin(), mine.end());
@@ -5175,12 +5212,12 @@ RigExecBakedProgram::DescribeWeightOracle(
         }
         return;
     }
-    for (const char *field :
-         {"rigExec:values", "rigExec:indices", "rigExec:defaultWeight",
-          "rigExec:representation", "rigExec:rangePolicy"}) {
-        const UsdAttribute a = prim.GetAttribute(TfToken(field));
+    for (const TfToken &field :
+         {_tokens->rigExecValues, _tokens->rigExecIndices, _tokens->rigExecDefaultWeight,
+          _tokens->rigExecRepresentation, _tokens->rigExecRangePolicy}) {
+        const UsdAttribute a = prim.GetAttribute(field);
         if (a && (a.GetNumTimeSamples() > 0 || a.HasAuthoredConnections())) {
-            facts->staticError = std::string("static weight field ") + field +
+            facts->staticError = std::string("static weight field ") + field.GetString() +
                                  " has time samples or connections on " +
                                  path.GetString();
             return;
@@ -5236,14 +5273,14 @@ RigExecBakedProgram::DescribePropertyChains(
                : type == SdfValueTypeNames->Matrix4d ? Desc::ValueType::Matrix4d
                                                      : Desc::ValueType::Vec3f;
     };
-    const TfToken enabledName("inputs:enabled");
-    const TfToken defaultWeightName("inputs:defaultWeight");
-    const TfToken operationName("rigExec:operation");
-    const TfToken valueName("inputs:value");
-    const TfToken minName("inputs:min");
-    const TfToken maxName("inputs:max");
-    const TfToken keysName("inputs:keys");
-    const TfToken tangentsName("inputs:tangents");
+    const TfToken &enabledName = _tokens->inputsEnabled;
+    const TfToken &defaultWeightName = _tokens->inputsDefaultWeight;
+    const TfToken &operationName = _tokens->rigExecOperation;
+    const TfToken &valueName = _tokens->inputsValue;
+    const TfToken &minName = _tokens->inputsMin;
+    const TfToken &maxName = _tokens->inputsMax;
+    const TfToken &keysName = _tokens->inputsKeys;
+    const TfToken &tangentsName = _tokens->inputsTangents;
     for (const SdfPath &orderedTarget : E._propertyChainOrder) {
         const auto found = E._propertyChains.find(orderedTarget);
         if (found == E._propertyChains.end()) {
@@ -5269,7 +5306,7 @@ RigExecBakedProgram::DescribePropertyChains(
                             " is missing");
             }
             const SdfPathVector weightObjects =
-                _Targets(mover, "rigExec:weightObject");
+                _Targets(mover, _tokens->rigExecWeightObject);
             if (!weightObjects.empty()) {
                 r.weightObject = weightObjects[0];
             }

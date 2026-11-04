@@ -29,18 +29,48 @@ TF_DEFINE_PRIVATE_TOKENS(_weightFieldTokens,
     ((weightTarget, "rigExec:weightTarget"))
     ((curve, "rigExec:curve"))
     ((falloffSamples, "inputs:falloffSamples"))
-    ((weightObject, "rigExec:weightObject")));
+    ((weightObject, "rigExec:weightObject"))
+    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
+    ((inputsDriver, "inputs:driver"))
+    ((inputsScale, "inputs:scale"))
+    ((inputsBias, "inputs:bias"))
+    ((inputsStrength, "inputs:strength"))
+    ((inputsInvert, "inputs:invert"))
+    ((inputsFalloffMin, "inputs:falloffMin"))
+    ((inputsFalloffMax, "inputs:falloffMax"))
+    ((inputsScaleX, "inputs:scaleX"))
+    ((inputsScaleY, "inputs:scaleY"))
+    ((inputsScaleZ, "inputs:scaleZ"))
+    ((inputsScaleXPos, "inputs:scaleXPos"))
+    ((inputsScaleYPos, "inputs:scaleYPos"))
+    ((inputsScaleZPos, "inputs:scaleZPos"))
+    ((inputsScaleXNeg, "inputs:scaleXNeg"))
+    ((inputsScaleYNeg, "inputs:scaleYNeg"))
+    ((inputsScaleZNeg, "inputs:scaleZNeg"))
+    ((inputsExtentU, "inputs:extentU"))
+    ((inputsExtentV, "inputs:extentV"))
+    ((rigExecFrozenOracleLeaf0, "rigExecFrozen:oracle:leaf0"))
+    ((rigExecFrozenOracleLeaf1, "rigExecFrozen:oracle:leaf1"))
+    ((rigExecFrozenOracleLeaf2, "rigExecFrozen:oracle:leaf2"))
+    ((rigExecFrozenOracleLeaf3, "rigExecFrozen:oracle:leaf3"))
+    ((rigExecFrozenOracleLeaf4, "rigExecFrozen:oracle:leaf4"))
+    ((rigExecFrozenOracleLeaf5, "rigExecFrozen:oracle:leaf5")));
 
 namespace rigExec {
 namespace {
 using Baked = RigExecBakedProgramImpl;
 using Field = Baked::WeightField;
-constexpr const char *ScalarNames[] = {
-    "rigExec:defaultWeight", "inputs:driver", "inputs:scale", "inputs:bias",
-    "inputs:strength", "inputs:invert", "inputs:falloffMin", "inputs:falloffMax",
-    "inputs:scaleX", "inputs:scaleY", "inputs:scaleZ", "inputs:scaleXPos",
-    "inputs:scaleYPos", "inputs:scaleZPos", "inputs:scaleXNeg", "inputs:scaleYNeg",
-    "inputs:scaleZNeg", "inputs:extentU", "inputs:extentV"
+const TfToken ScalarNames[] = {
+    _weightFieldTokens->rigExecDefaultWeight, _weightFieldTokens->inputsDriver,
+    _weightFieldTokens->inputsScale, _weightFieldTokens->inputsBias,
+    _weightFieldTokens->inputsStrength, _weightFieldTokens->inputsInvert,
+    _weightFieldTokens->inputsFalloffMin, _weightFieldTokens->inputsFalloffMax,
+    _weightFieldTokens->inputsScaleX, _weightFieldTokens->inputsScaleY,
+    _weightFieldTokens->inputsScaleZ, _weightFieldTokens->inputsScaleXPos,
+    _weightFieldTokens->inputsScaleYPos, _weightFieldTokens->inputsScaleZPos,
+    _weightFieldTokens->inputsScaleXNeg, _weightFieldTokens->inputsScaleYNeg,
+    _weightFieldTokens->inputsScaleZNeg, _weightFieldTokens->inputsExtentU,
+    _weightFieldTokens->inputsExtentV
 };
 SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const TfToken &name)
 {
@@ -56,9 +86,9 @@ SdfPath PointsPath(const UsdStageRefPtr &stage, const UsdPrim &prim, const TfTok
 // The frozen run's per-leaf sample keys, interned once at load. A weight
 // Volumes also declare the sampled falloff input beside the point sets and tokens.
 const std::array<TfToken, 6> _oracleLeafKeys = {
-    TfToken("rigExecFrozen:oracle:leaf0"), TfToken("rigExecFrozen:oracle:leaf1"),
-    TfToken("rigExecFrozen:oracle:leaf2"), TfToken("rigExecFrozen:oracle:leaf3"),
-    TfToken("rigExecFrozen:oracle:leaf4"), TfToken("rigExecFrozen:oracle:leaf5")};
+    _weightFieldTokens->rigExecFrozenOracleLeaf0, _weightFieldTokens->rigExecFrozenOracleLeaf1,
+    _weightFieldTokens->rigExecFrozenOracleLeaf2, _weightFieldTokens->rigExecFrozenOracleLeaf3,
+    _weightFieldTokens->rigExecFrozenOracleLeaf4, _weightFieldTokens->rigExecFrozenOracleLeaf5};
 TfToken OracleLeafKey(size_t k)
 {
     return k < _oracleLeafKeys.size()
@@ -197,7 +227,7 @@ bool RigExecBakedBuildWeightFields(const RigExecRigEvaluator &evaluator, Baked *
                 field.scalarReadIndex[size_t(object) * 19 + size_t(member)] = int(field.scalarReads.size());
                 field.scalarObjects.push_back(object); field.scalarMembers.push_back(member);
                 field.scalarReads.push_back(RigExecBakedBuildOracleRead(&B,
-                    prim.GetAttribute(TfToken(ScalarNames[member])),field.availableChains,
+                    prim.GetAttribute(ScalarNames[member]),field.availableChains,
                     &oracleIndex));
             }
         };

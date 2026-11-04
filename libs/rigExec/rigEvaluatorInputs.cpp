@@ -5,6 +5,7 @@
 #include "inputReplay.h"
 #include "movers/moverRegistry.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
@@ -13,6 +14,19 @@
 #include <set>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    (offsets)
+    (pointIndices)
+    ((restSpace, "rest:space"))
+    ((restTx, "rest:tx"))
+    ((restTy, "rest:ty"))
+    ((restTz, "rest:tz"))
+    ((restRx, "rest:rx"))
+    ((restRy, "rest:ry"))
+    ((restRz, "rest:rz"))
+);
 
 using namespace evaluatorDetail;
 
@@ -32,7 +46,8 @@ const TfToken _restPointsAttr("rigExec:restPoints");
 bool
 _OverridesReachBlendShapes(const std::vector<RigExecValueOverride> &overrides)
 {
-    static const TfToken offsets("offsets"), pointIndices("pointIndices");
+    const TfToken &offsets = _tokens->offsets;
+    const TfToken &pointIndices = _tokens->pointIndices;
     for (const RigExecValueOverride &o : overrides) {
         if (o.attribute.IsEmpty() || o.attribute == offsets ||
             o.attribute == pointIndices) {
@@ -231,9 +246,9 @@ _IsWeightObjectType(const TfToken &typeName)
 std::vector<TfToken>
 _MakeRestInputNames()
 {
-    return {TfToken("rest:space"), TfToken("rest:tx"), TfToken("rest:ty"),
-            TfToken("rest:tz"),    TfToken("rest:rx"), TfToken("rest:ry"),
-            TfToken("rest:rz")};
+    return {_tokens->restSpace, _tokens->restTx, _tokens->restTy,
+            _tokens->restTz,    _tokens->restRx, _tokens->restRy,
+            _tokens->restRz};
 }
 
 bool

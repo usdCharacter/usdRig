@@ -53,6 +53,7 @@
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/array.h"
@@ -92,6 +93,24 @@ class RigExecRigEvaluator;
 struct RigExecRigPose;
 struct RigExecHeadLeafConstants;
 struct RigExecFrozenSamplerMemo;
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _bakedImplTokens,
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+    ((avarsRx, "avars:rx"))
+    ((avarsRy, "avars:ry"))
+    ((avarsRz, "avars:rz"))
+    ((avarsRspin, "avars:rspin"))
+    ((avarsUnitScaleFactor, "avars:unitScaleFactor"))
+    ((avarsRotationOrder, "avars:rotationOrder"))
+    ((avarsRotationSign, "avars:rotationSign"))
+    ((avarsDefaultSpace, "avars:defaultSpace"))
+);
 
 // Shared helpers.
 
@@ -5056,15 +5075,6 @@ RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const TfToken &name,
     }
 }
 
-/// The serial commit's spelling; the parallel lanes pass interned tokens.
-template <class Sink, class T>
-void
-RigExecBakedRecordBind(Sink *sink, const UsdPrim &prim, const char *name,
-                       RigExecBakedInput<T> *input, const SdfPathVector &walk)
-{
-    RigExecBakedRecordBind(sink, prim, TfToken(name), input, walk);
-}
-
 /// Records \p name on \p prim as read for its VALUE into \p sink; see
 /// RigExecBakedBuildContext::Fold, which is this into the program.
 template <class Sink>
@@ -5079,16 +5089,6 @@ RigExecBakedRecordFold(Sink *sink, const UsdPrim &prim, const TfToken &name)
     sink->Folded(path);
     sink->Named(path);
     sink->Prim(prim.GetPath());
-}
-
-template <class Sink>
-void
-RigExecBakedRecordFold(Sink *sink, const UsdPrim &prim, const char *name)
-{
-    if (!prim) {
-        return;
-    }
-    RigExecBakedRecordFold(sink, prim, TfToken(name));
 }
 
 // The compiled rig, in terms the program can name.
@@ -5223,16 +5223,15 @@ struct RigExecBakedBuildContext {
     void Refuse(const std::string &what, const SdfPath &where);
     /// Records \p name as read for its VALUE: an edit rebuilds the program
     /// and an interactive override on it cannot be placed.
-    void Fold(const UsdPrim &prim, const char *name);
     void Fold(const UsdPrim &prim, const TfToken &name);
     /// Records \p name as read for its SHAPE -- whether it is authored at
     /// all. An edit rebuilds; an override, which authors nothing, places.
-    void FoldShape(const UsdPrim &prim, const char *name);
+    void FoldShape(const UsdPrim &prim, const TfToken &name);
     /// Fold plus the plain uniform-token read the dynamic path performs.
-    TfToken ReadToken(const UsdPrim &prim, const char *name,
-                      const char *fallback);
+    TfToken ReadToken(const UsdPrim &prim, const TfToken &name,
+                      const TfToken &fallback);
     /// Fold plus the relationship's targets.
-    SdfPathVector Targets(const UsdPrim &prim, const char *name);
+    SdfPathVector Targets(const UsdPrim &prim, const TfToken &name);
     /// The provider slot of \p path, or -1.
     ///
     /// EITHER kind: the table is the ordered union of the exec-seeded
@@ -5261,20 +5260,10 @@ struct RigExecBakedBuildContext {
     /// merged by RigExecBakedMergeCommitShards. Skipping that leaves the
     /// input unregistered -- no override index, nothing in the invalidation
     /// index -- which is a silently wrong program rather than a failure.
-    ///
-    /// Concurrent callers pass \p name as an interned token: TfToken(const
-    /// char *) takes the token registry's lock on every construction.
     template <class T>
     RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const TfToken &name,
                                      T fallback, SdfPathVector *walk,
                                      bool sourceValue = false) const;
-    template <class T>
-    RigExecBakedInput<T> ResolveBind(const UsdPrim &prim, const char *name,
-                                     T fallback, SdfPathVector *walk,
-                                     bool sourceValue = false) const
-    {
-        return ResolveBind(prim, TfToken(name), fallback, walk, sourceValue);
-    }
 
     /// The RECORDING half: the counters, the invalidation index and the
     /// override index.
@@ -5289,20 +5278,32 @@ struct RigExecBakedBuildContext {
     /// commits through shards instead, which keeps the numbering by a prefix
     /// sum rather than by order (see RigExecBakedRecordBind).
     template <class T>
-    void CommitBind(const UsdPrim &prim, const char *name,
+    void CommitBind(const UsdPrim &prim, const TfToken &name,
                     RigExecBakedInput<T> *input, const SdfPathVector &walk);
 
     /// Binds \p name as a per-frame input, registering it for overrides and
     /// for invalidation. Resolve and commit together, for the call sites
     /// that have no reason to separate them.
     template <class T>
-    RigExecBakedInput<T> Bind(const UsdPrim &prim, const char *name,
+    RigExecBakedInput<T> Bind(const UsdPrim &prim, const TfToken &name,
                               T fallback, bool sourceValue = false);
 };
 
+inline void
+RigExecBakedBuildContext::FoldShape(const UsdPrim &prim, const TfToken &name)
+{
+    if (prim) {
+        const SdfPath path = prim.GetPath().AppendProperty(name);
+        program->rebuild.insert(path);
+        program->shapeFolded.insert(path);
+        program->named.insert(path);
+        program->prims.insert(prim.GetPath());
+    }
+}
+
 template <class T>
 RigExecBakedInput<T>
-RigExecBakedBuildContext::Bind(const UsdPrim &prim, const char *name,
+RigExecBakedBuildContext::Bind(const UsdPrim &prim, const TfToken &name,
                                T fallback, bool sourceValue)
 {
     SdfPathVector walk;
@@ -5319,19 +5320,23 @@ RigExecBakedBuildContext::Bind(const UsdPrim &prim, const char *name,
 inline bool
 RigExecBakedIsLiveChannel(const TfToken &name)
 {
-    static const std::string kAvars("avars:");
+    constexpr char kAvars[] = "avars:";
     const std::string &text = name.GetString();
-    if (text.compare(0, kAvars.size(), kAvars) != 0) {
+    if (text.compare(0, sizeof(kAvars) - 1, kAvars) != 0) {
         return false;
     }
-    static const std::set<TfToken> kNotLive = {
-        TfToken("avars:tx"), TfToken("avars:ty"), TfToken("avars:tz"),
-        TfToken("avars:sx"), TfToken("avars:sy"), TfToken("avars:sz"),
-        TfToken("avars:rx"), TfToken("avars:ry"), TfToken("avars:rz"),
-        TfToken("avars:rspin"), TfToken("avars:unitScaleFactor"),
-        TfToken("avars:rotationOrder"), TfToken("avars:rotationSign"),
-        TfToken("avars:defaultSpace")};
-    return kNotLive.count(name) == 0;
+    const auto &T = *_bakedImplTokens;
+    const TfToken *const notLive[] = {
+        &T.avarsTx, &T.avarsTy, &T.avarsTz, &T.avarsSx, &T.avarsSy,
+        &T.avarsSz, &T.avarsRx, &T.avarsRy, &T.avarsRz, &T.avarsRspin,
+        &T.avarsUnitScaleFactor, &T.avarsRotationOrder,
+        &T.avarsRotationSign, &T.avarsDefaultSpace};
+    for (const TfToken *channel : notLive) {
+        if (name == *channel) {
+            return false;
+        }
+    }
+    return true;
 }
 
 template <class T>
@@ -5422,7 +5427,7 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
 
 template <class T>
 void
-RigExecBakedBuildContext::CommitBind(const UsdPrim &prim, const char *name,
+RigExecBakedBuildContext::CommitBind(const UsdPrim &prim, const TfToken &name,
                                      RigExecBakedInput<T> *input,
                                      const SdfPathVector &walk)
 {

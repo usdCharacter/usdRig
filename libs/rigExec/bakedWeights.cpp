@@ -33,6 +33,43 @@ TF_DEFINE_PRIVATE_TOKENS(
     ((planeWeight, "RigExecPlaneWeight"))
     ((curveWeight, "RigExecCurveWeight"))
     ((falloffSamples, "inputs:falloffSamples"))
+    ((rigExecValues, "rigExec:values"))
+    ((rigExecIndices, "rigExec:indices"))
+    ((rigExecFalloffProfile, "rigExec:falloffProfile"))
+    ((rigExecFalloffCurve, "rigExec:falloffCurve"))
+    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
+    ((inputsDriver, "inputs:driver"))
+    ((inputsScale, "inputs:scale"))
+    ((inputsBias, "inputs:bias"))
+    ((inputsStrength, "inputs:strength"))
+    ((inputsInvert, "inputs:invert"))
+    ((inputsFalloffMin, "inputs:falloffMin"))
+    ((inputsFalloffMax, "inputs:falloffMax"))
+    ((inputsScaleXPos, "inputs:scaleXPos"))
+    ((inputsScaleYPos, "inputs:scaleYPos"))
+    ((inputsScaleZPos, "inputs:scaleZPos"))
+    ((inputsScaleXNeg, "inputs:scaleXNeg"))
+    ((inputsScaleYNeg, "inputs:scaleYNeg"))
+    ((inputsScaleZNeg, "inputs:scaleZNeg"))
+    ((inputsScaleX, "inputs:scaleX"))
+    ((inputsScaleY, "inputs:scaleY"))
+    ((inputsScaleZ, "inputs:scaleZ"))
+    ((inputsExtentU, "inputs:extentU"))
+    ((inputsExtentV, "inputs:extentV"))
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecRepresentation, "rigExec:representation"))
+    (constant)
+    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    (strict)
+    ((rigExecCombineMode, "rigExec:combineMode"))
+    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    (y)
+    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    (unbounded)
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecSampleSource, "rigExec:sampleSource"))
+    ((rigExecCurve, "rigExec:curve"))
 );
 
 namespace rigExec {
@@ -78,10 +115,10 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     object.base =
         RigExecBakedBakeWeightObject(ctx, [&]() {
             const SdfPathVector targets =
-                ctx->Targets(prim, "rigExec:baseWeight");
+                ctx->Targets(prim, _tokens->rigExecBaseWeight);
             return targets.empty() ? SdfPath() : targets[0];
         }());
-    for (const SdfPath &input : ctx->Targets(prim, "rigExec:inputWeights")) {
+    for (const SdfPath &input : ctx->Targets(prim, _tokens->rigExecInputWeights)) {
         const int index = RigExecBakedBakeWeightObject(ctx, input);
         if (index >= 0) {
             object.inputs.push_back(index);
@@ -91,21 +128,21 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // The structural tokens are read the way the dynamic path reads them --
     // plainly, with no time and no resolution walk -- and land in `folded`,
     // so an edit to one rebuilds the program rather than being missed.
-    object.representation = ctx->ReadToken(prim, "rigExec:representation",
-                                           "constant");
-    object.rangePolicy = ctx->ReadToken(prim, "rigExec:rangePolicy", "strict");
-    object.combineMode = ctx->ReadToken(prim, "rigExec:combineMode", "");
+    object.representation = ctx->ReadToken(prim, _tokens->rigExecRepresentation,
+                                           _tokens->constant);
+    object.rangePolicy = ctx->ReadToken(prim, _tokens->rigExecRangePolicy, _tokens->strict);
+    object.combineMode = ctx->ReadToken(prim, _tokens->rigExecCombineMode, TfToken());
 
     // The painted arrays. Uniform by schema, so they fold; still named, so a
     // resync that authors one is seen.
-    ctx->Fold(prim, "rigExec:values");
-    if (const UsdAttribute a = prim.GetAttribute(TfToken("rigExec:values"))) {
+    ctx->Fold(prim, _tokens->rigExecValues);
+    if (const UsdAttribute a = prim.GetAttribute(_tokens->rigExecValues)) {
         VtFloatArray values;
         a.Get(&values);
         object.values.assign(values.begin(), values.end());
     }
-    ctx->Fold(prim, "rigExec:indices");
-    if (const UsdAttribute a = prim.GetAttribute(TfToken("rigExec:indices"))) {
+    ctx->Fold(prim, _tokens->rigExecIndices);
+    if (const UsdAttribute a = prim.GetAttribute(_tokens->rigExecIndices)) {
         VtIntArray indices;
         a.Get(&indices);
         object.indices.assign(indices.begin(), indices.end());
@@ -115,12 +152,12 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // for interactive-override placement and records what a notice would
     // have to touch -- that is what makes IsInvalidatedBy and SetOverrides
     // correct here with no code of their own.
-    object.defaultWeight = ctx->Bind(prim, "rigExec:defaultWeight", 0.0f);
-    object.driver = ctx->Bind(prim, "inputs:driver", 1.0f);
-    object.scale = ctx->Bind(prim, "inputs:scale", 1.0f);
-    object.bias = ctx->Bind(prim, "inputs:bias", 0.0f);
-    object.strength = ctx->Bind(prim, "inputs:strength", 1.0f);
-    object.invert = ctx->Bind(prim, "inputs:invert", 0.0f);
+    object.defaultWeight = ctx->Bind(prim, _tokens->rigExecDefaultWeight, 0.0f);
+    object.driver = ctx->Bind(prim, _tokens->inputsDriver, 1.0f);
+    object.scale = ctx->Bind(prim, _tokens->inputsScale, 1.0f);
+    object.bias = ctx->Bind(prim, _tokens->inputsBias, 0.0f);
+    object.strength = ctx->Bind(prim, _tokens->inputsStrength, 1.0f);
+    object.invert = ctx->Bind(prim, _tokens->inputsInvert, 0.0f);
 
     // The volumetric three, which are the only weight objects with a
     // PLACEMENT: they are RigExecXformables, so the pose walk composes them
@@ -129,7 +166,7 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
     // The array-bearing relationships, as the properties exec would have
     // reached: authored target order, nothing inferred. See
     // WeightObject::targetPoints for why authored and not canonicalized.
-    const auto attributesOf = [&](const char *name) {
+    const auto attributesOf = [&](const TfToken &name) {
         std::vector<UsdAttribute> out;
         for (const SdfPath &target : ctx->Targets(prim, name)) {
             if (!target.IsPropertyPath()) {
@@ -160,39 +197,39 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
         if (object.providerSlot < 0) {
             ctx->Refuse("volume weight is not a pose provider", path);
         }
-        object.falloffMin = ctx->Bind(prim, "inputs:falloffMin", 0.0f);
-        object.falloffMax = ctx->Bind(prim, "inputs:falloffMax", 1.0f);
-        object.scaleXPos = ctx->Bind(prim, "inputs:scaleXPos", 1.0f);
-        object.scaleYPos = ctx->Bind(prim, "inputs:scaleYPos", 1.0f);
-        object.scaleZPos = ctx->Bind(prim, "inputs:scaleZPos", 1.0f);
-        object.scaleXNeg = ctx->Bind(prim, "inputs:scaleXNeg", 1.0f);
-        object.scaleYNeg = ctx->Bind(prim, "inputs:scaleYNeg", 1.0f);
-        object.scaleZNeg = ctx->Bind(prim, "inputs:scaleZNeg", 1.0f);
-        object.scaleX = ctx->Bind(prim, "inputs:scaleX", 1.0f);
-        object.scaleY = ctx->Bind(prim, "inputs:scaleY", 1.0f);
-        object.scaleZ = ctx->Bind(prim, "inputs:scaleZ", 1.0f);
-        object.extentU = ctx->Bind(prim, "inputs:extentU", 1.0f);
-        object.extentV = ctx->Bind(prim, "inputs:extentV", 1.0f);
-        object.planeAxis = ctx->ReadToken(prim, "rigExec:planeAxis", "y");
+        object.falloffMin = ctx->Bind(prim, _tokens->inputsFalloffMin, 0.0f);
+        object.falloffMax = ctx->Bind(prim, _tokens->inputsFalloffMax, 1.0f);
+        object.scaleXPos = ctx->Bind(prim, _tokens->inputsScaleXPos, 1.0f);
+        object.scaleYPos = ctx->Bind(prim, _tokens->inputsScaleYPos, 1.0f);
+        object.scaleZPos = ctx->Bind(prim, _tokens->inputsScaleZPos, 1.0f);
+        object.scaleXNeg = ctx->Bind(prim, _tokens->inputsScaleXNeg, 1.0f);
+        object.scaleYNeg = ctx->Bind(prim, _tokens->inputsScaleYNeg, 1.0f);
+        object.scaleZNeg = ctx->Bind(prim, _tokens->inputsScaleZNeg, 1.0f);
+        object.scaleX = ctx->Bind(prim, _tokens->inputsScaleX, 1.0f);
+        object.scaleY = ctx->Bind(prim, _tokens->inputsScaleY, 1.0f);
+        object.scaleZ = ctx->Bind(prim, _tokens->inputsScaleZ, 1.0f);
+        object.extentU = ctx->Bind(prim, _tokens->inputsExtentU, 1.0f);
+        object.extentV = ctx->Bind(prim, _tokens->inputsExtentV, 1.0f);
+        object.planeAxis = ctx->ReadToken(prim, _tokens->rigExecPlaneAxis, _tokens->y);
         object.planeBounds =
-            ctx->ReadToken(prim, "rigExec:planeBounds", "unbounded");
+            ctx->ReadToken(prim, _tokens->rigExecPlaneBounds, _tokens->unbounded);
         // The authored profile supplies the default table. A declared sample
         // array can replace it without recompiling the profile during a drag.
-        ctx->Fold(prim, "rigExec:falloffProfile");
-        ctx->Fold(prim, "rigExec:falloffCurve");
+        ctx->Fold(prim, _tokens->rigExecFalloffProfile);
+        ctx->Fold(prim, _tokens->rigExecFalloffCurve);
         const auto lut = B.falloffLuts.find(path);
         if (lut != B.falloffLuts.end()) {
             object.falloffCurve = lut->second;
         }
-        object.targetPoints = attributesOf("rigExec:weightTarget");
-        object.samplePoints = attributesOf("rigExec:sampleSource");
-        object.curvePoints = attributesOf("rigExec:curve");
+        object.targetPoints = attributesOf(_tokens->rigExecWeightTarget);
+        object.samplePoints = attributesOf(_tokens->rigExecSampleSource);
+        object.curvePoints = attributesOf(_tokens->rigExecCurve);
     } else if (object.type == _tokens->combineWeight) {
         // Read for its SIZE and never for its points: the combine consults
         // its own weight target only when no input is dense enough to carry
         // the cardinality itself.
         for (const SdfPath &target :
-                 ctx->Targets(prim, "rigExec:weightTarget")) {
+                 ctx->Targets(prim, _tokens->rigExecWeightTarget)) {
             if (!target.IsPropertyPath()) {
                 continue;
             }

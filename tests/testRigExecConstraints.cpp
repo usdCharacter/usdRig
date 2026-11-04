@@ -4641,7 +4641,7 @@ static void TestDirectNumericSourceReadBoundary()
     auto scalar=prim.CreateAttribute(TfToken("rest:tx"),SdfValueTypeNames->Double);
     scalar.Set(17.0);
     RigExecBakedBuildContext context;SdfPathVector walk;
-    auto input=context.ResolveBind(prim,"rest:tx",4.0,&walk,true);
+    auto input=context.ResolveBind(prim,TfToken("rest:tx"),4.0,&walk,true);
     CHECK(input.sourceBacked && !input.varying);
     RigExecResolvedInputs resolved;
     CHECK(RigExecBakedRead(input,resolved,UsdTimeCode(1))==17.0);
@@ -4655,9 +4655,9 @@ static void TestDirectNumericSourceReadBoundary()
     const auto bad=stage->DefinePrim(SdfPath("/WrongType"),TfToken("Xform"));
     bad.CreateAttribute(TfToken("rest:tx"),SdfValueTypeNames->Token).Set(TfToken("wrong"));
     bad.CreateAttribute(TfToken("inputs:translationOffset"),SdfValueTypeNames->Token).Set(TfToken("wrong"));
-    walk.clear();const auto wrongScalar=context.ResolveBind(bad,"rest:tx",4.0,&walk,true);
+    walk.clear();const auto wrongScalar=context.ResolveBind(bad,TfToken("rest:tx"),4.0,&walk,true);
     CHECK(!wrongScalar.sourceBacked && wrongScalar.constant==4.0);
-    walk.clear();const auto wrongVector=context.ResolveBind(bad,"inputs:translationOffset",GfVec3d(2),&walk,true);
+    walk.clear();const auto wrongVector=context.ResolveBind(bad,TfToken("inputs:translationOffset"),GfVec3d(2),&walk,true);
     CHECK(!wrongVector.sourceBacked && wrongVector.constant==GfVec3d(2));
 }
 

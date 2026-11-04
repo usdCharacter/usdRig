@@ -6,6 +6,7 @@
 #include "moverGraph.h"
 #include "rigExecMath/harmonicsKernel.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/relationship.h"
@@ -17,6 +18,93 @@
 #include <set>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((rigExecRepresentation, "rigExec:representation"))
+    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    ((rigExecValues, "rigExec:values"))
+    ((rigExecIndices, "rigExec:indices"))
+    ((rigExecDefaultWeight, "rigExec:defaultWeight"))
+    ((rigExecOperation, "rigExec:operation"))
+    ((inputsDriver, "inputs:driver"))
+    ((inputsScale, "inputs:scale"))
+    ((inputsBias, "inputs:bias"))
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((rigExecCombineMode, "rigExec:combineMode"))
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    (dense)
+    (constant)
+    (clamp)
+    (strict)
+    (multiply)
+    (add)
+    (subtract)
+    (max)
+    (min)
+    (average)
+    (overlay)
+    ((rigExecTransformReadPhase, "rigExec:transformReadPhase"))
+    ((rigExecCageReadPhase, "rigExec:cageReadPhase"))
+    ((rigExecSurfaceReadPhase, "rigExec:surfaceReadPhase"))
+    ((rigExecDriverCurveReadPhase, "rigExec:driverCurveReadPhase"))
+    ((rigExecPointsReadPhase, "rigExec:pointsReadPhase"))
+    ((rigExecTransform, "rigExec:transform"))
+    ((rigExecInfluences, "rigExec:influences"))
+    ((rigExecDriverTransforms, "rigExec:driverTransforms"))
+    ((rigExecCage, "rigExec:cage"))
+    ((rigExecSurface, "rigExec:surface"))
+    ((rigExecBindCoordinates, "rigExec:bindCoordinates"))
+    ((rigExecDriverCurve, "rigExec:driverCurve"))
+    (faceVertexCounts)
+    (faceVertexIndices)
+    (holeIndices)
+    (curveVertexCounts)
+    (cornerIndices)
+    (cornerSharpnesses)
+    (creaseIndices)
+    (creaseLengths)
+    (creaseSharpnesses)
+    (subdivisionScheme)
+    (type)
+    (basis)
+    (wrap)
+    (orientation)
+    (doubleSided)
+    ((rigExecWaves, "rigExec:waves"))
+    ((rigExecWaveLength, "rigExec:waveLength"))
+    ((rigExecFrequency, "rigExec:frequency"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((inputsWeight, "inputs:weight"))
+    ((inputsAffectX, "inputs:affectX"))
+    ((inputsAffectY, "inputs:affectY"))
+    ((inputsAffectZ, "inputs:affectZ"))
+    ((inputsAffectTranslationX, "inputs:affectTranslationX"))
+    ((inputsAffectTranslationY, "inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ, "inputs:affectTranslationZ"))
+    ((inputsAffectRotationX, "inputs:affectRotationX"))
+    ((inputsAffectRotationY, "inputs:affectRotationY"))
+    ((inputsAffectRotationZ, "inputs:affectRotationZ"))
+    ((inputsAffectScaleX, "inputs:affectScaleX"))
+    ((inputsAffectScaleY, "inputs:affectScaleY"))
+    ((inputsAffectScaleZ, "inputs:affectScaleZ"))
+    ((inputsTranslationOffset, "inputs:translationOffset"))
+    ((inputsRotationOffset, "inputs:rotationOffset"))
+    ((inputsScaleOffset, "inputs:scaleOffset"))
+    ((rigExecRotationOrder, "rigExec:rotationOrder"))
+    ((rigExecPreserve, "rigExec:preserve"))
+    (origin)
+    (scale)
+    ((rigExecMode, "rigExec:mode"))
+    ((rigExecWorldUpType, "rigExec:worldUpType"))
+    ((rigExecAimAxis, "rigExec:aimAxis"))
+    ((rigExecUpPolicy, "rigExec:upPolicy"))
+    ((rigExecSolverMode, "rigExec:solverMode"))
+    ((rigExecPoleVectorMode, "rigExec:poleVectorMode"))
+    ((rigExecEvaluationMode, "rigExec:evaluationMode"))
+    ((rigExecOrientationMode, "rigExec:orientationMode")));
 
 using namespace evaluatorDetail;
 
@@ -114,22 +202,22 @@ _ValidateWeightObjectDomain(
 
     const TfToken typeName = weightPrim.GetTypeName();
     const bool volumeEnvelope = !pointDomain && _IsVolumeWeightType(typeName);
-    auto readToken = [&weightPrim](const char *name, const char *fallback) {
+    auto readToken = [&weightPrim](const TfToken &name, const TfToken &fallback) {
         TfToken value(fallback);
         if (const UsdAttribute attr =
-                weightPrim.GetAttribute(TfToken(name))) {
+                weightPrim.GetAttribute(name)) {
             attr.Get(&value, UsdTimeCode::Default());
         }
         return value;
     };
     const TfToken representation = readToken(
-        "rigExec:representation",
+        _tokens->rigExecRepresentation,
         (typeName == "RigExecCombineWeight" ||
-         _IsVolumeWeightType(typeName)) ? "dense" : "constant");
+         _IsVolumeWeightType(typeName)) ? _tokens->dense : _tokens->constant);
     const TfToken rangePolicy = readToken(
-        "rigExec:rangePolicy",
+        _tokens->rigExecRangePolicy,
         (typeName == "RigExecCombineWeight" ||
-         _IsVolumeWeightType(typeName)) ? "clamp" : "strict");
+         _IsVolumeWeightType(typeName)) ? _tokens->clamp : _tokens->strict);
     if (rangePolicy != "strict" && rangePolicy != "clamp") {
         *error = weightPath.GetString() +
                  ": unknown rigExec:rangePolicy '" +
@@ -157,11 +245,11 @@ _ValidateWeightObjectDomain(
         // A time sample or value-producing connection would make Exec consume
         // a changing packet while the CPU oracle and compiled rig treated it
         // as frozen.
-        static const TfToken staticFields[] = {
-            TfToken("rigExec:values"), TfToken("rigExec:indices"),
-            TfToken("rigExec:defaultWeight"),
-            TfToken("rigExec:representation"),
-            TfToken("rigExec:rangePolicy")};
+        const TfToken staticFields[] = {
+            _tokens->rigExecValues, _tokens->rigExecIndices,
+            _tokens->rigExecDefaultWeight,
+            _tokens->rigExecRepresentation,
+            _tokens->rigExecRangePolicy};
         for (const TfToken &field : staticFields) {
             const UsdAttribute attr = weightPrim.GetAttribute(field);
             if (attr && (attr.GetNumTimeSamples() > 0 ||
@@ -177,15 +265,15 @@ _ValidateWeightObjectDomain(
         VtIntArray indices;
         float defaultWeight = 0.0f;
         if (const UsdAttribute attr = weightPrim.GetAttribute(
-                TfToken("rigExec:values"))) {
+                _tokens->rigExecValues)) {
             attr.Get(&values, UsdTimeCode::Default());
         }
         if (const UsdAttribute attr = weightPrim.GetAttribute(
-                TfToken("rigExec:indices"))) {
+                _tokens->rigExecIndices)) {
             attr.Get(&indices, UsdTimeCode::Default());
         }
         if (const UsdAttribute attr = weightPrim.GetAttribute(
-                TfToken("rigExec:defaultWeight"))) {
+                _tokens->rigExecDefaultWeight)) {
             attr.Get(&defaultWeight, UsdTimeCode::Default());
         }
         // Values and the sparse/constant fallback are value-generation state,
@@ -230,17 +318,17 @@ _ValidateWeightObjectDomain(
 
     if (typeName == "RigExecDynamicWeight") {
         const TfToken operation =
-            readToken("rigExec:operation", "multiply");
+            readToken(_tokens->rigExecOperation, _tokens->multiply);
         if (operation != "multiply") {
             *error = weightPath.GetString() +
                      ": unknown rigExec:operation '" +
                      operation.GetString() + "'";
             return false;
         }
-        for (const char *name :
-             {"inputs:driver", "inputs:scale", "inputs:bias"}) {
+        for (const TfToken &name :
+             {_tokens->inputsDriver, _tokens->inputsScale, _tokens->inputsBias}) {
             const UsdAttribute input =
-                weightPrim.GetAttribute(TfToken(name));
+                weightPrim.GetAttribute(name);
             std::set<SdfPath> visitingConnections;
             if (!_ValidateScalarConnection(
                     stage, input, SdfValueTypeNames->Float,
@@ -250,7 +338,7 @@ _ValidateWeightObjectDomain(
         }
         SdfPathVector bases;
         if (const UsdRelationship rel = weightPrim.GetRelationship(
-                TfToken("rigExec:baseWeight"))) {
+                _tokens->rigExecBaseWeight)) {
             rel.GetTargets(&bases);
         }
         if (bases.size() > 1) {
@@ -265,18 +353,18 @@ _ValidateWeightObjectDomain(
         }
         if (bases.size() == 1) {
             const UsdPrim base = stage->GetPrimAtPath(bases[0]);
-            TfToken actualBaseRepresentation("constant");
+            TfToken actualBaseRepresentation(_tokens->constant);
             if (base) {
                 if (const UsdAttribute attr = base.GetAttribute(
-                        TfToken("rigExec:representation"))) {
+                        _tokens->rigExecRepresentation)) {
                     attr.Get(&actualBaseRepresentation,
                              UsdTimeCode::Default());
                 }
                 if (base.GetTypeName() == "RigExecCombineWeight" ||
                     _IsVolumeWeightType(base.GetTypeName())) {
                     if (!base.GetAttribute(
-                            TfToken("rigExec:representation"))) {
-                        actualBaseRepresentation = TfToken("dense");
+                            _tokens->rigExecRepresentation)) {
+                        actualBaseRepresentation = _tokens->dense;
                     }
                 }
             }
@@ -288,11 +376,11 @@ _ValidateWeightObjectDomain(
             if (representation == "sparse") {
                 VtIntArray mine, theirs;
                 if (const UsdAttribute attr = weightPrim.GetAttribute(
-                        TfToken("rigExec:indices"))) {
+                        _tokens->rigExecIndices)) {
                     attr.Get(&mine, UsdTimeCode::Default());
                 }
                 if (const UsdAttribute attr = base.GetAttribute(
-                        TfToken("rigExec:indices"))) {
+                        _tokens->rigExecIndices)) {
                     attr.Get(&theirs, UsdTimeCode::Default());
                 }
                 if (!mine.empty() &&
@@ -307,12 +395,13 @@ _ValidateWeightObjectDomain(
     }
 
     if (typeName == "RigExecCombineWeight") {
-        const TfToken mode = readToken("rigExec:combineMode", "multiply");
-        static const std::set<TfToken> modes = {
-            TfToken("multiply"), TfToken("add"), TfToken("subtract"),
-            TfToken("max"), TfToken("min"), TfToken("average"),
-            TfToken("overlay")};
-        if (!modes.count(mode)) {
+        const TfToken mode = readToken(_tokens->rigExecCombineMode, _tokens->multiply);
+        const TfToken modes[] = {
+            _tokens->multiply, _tokens->add, _tokens->subtract,
+            _tokens->max, _tokens->min, _tokens->average,
+            _tokens->overlay};
+        if (std::find(std::begin(modes), std::end(modes), mode) ==
+            std::end(modes)) {
             *error = weightPath.GetString() +
                      ": unknown rigExec:combineMode '" +
                      mode.GetString() + "'";
@@ -330,7 +419,7 @@ _ValidateWeightObjectDomain(
 
     SdfPathVector declaredTargets;
     if (const UsdRelationship rel =
-            weightPrim.GetRelationship(TfToken("rigExec:weightTarget"))) {
+            weightPrim.GetRelationship(_tokens->rigExecWeightTarget)) {
         rel.GetTargets(&declaredTargets);
     }
     if (declaredTargets.size() != 1) {
@@ -348,11 +437,11 @@ _ValidateWeightObjectDomain(
         return false;
     }
 
-    for (const char *relName : {"rigExec:inputWeights",
-                                "rigExec:baseWeight"}) {
+    for (const TfToken &relName : {_tokens->rigExecInputWeights,
+                                   _tokens->rigExecBaseWeight}) {
         SdfPathVector inputs;
         if (const UsdRelationship rel =
-                weightPrim.GetRelationship(TfToken(relName))) {
+                weightPrim.GetRelationship(relName)) {
             rel.GetTargets(&inputs);
         }
         for (const SdfPath &input : inputs) {
@@ -380,19 +469,19 @@ struct _RemovedPhase {
 };
 
 const _RemovedPhase _removedPhases[] = {
-    {TfToken("rigExec:transformReadPhase"),
+    {_tokens->rigExecTransformReadPhase,
      "rigExec:transform, rigExec:influences or rigExec:driverTransforms"},
-    {TfToken("rigExec:cageReadPhase"), "rigExec:cage"},
-    {TfToken("rigExec:surfaceReadPhase"), "rigExec:surface"},
-    {TfToken("rigExec:driverCurveReadPhase"), "rigExec:driverCurve"},
-    {TfToken("rigExec:pointsReadPhase"), "rigExec:targetPoints"},
+    {_tokens->rigExecCageReadPhase, "rigExec:cage"},
+    {_tokens->rigExecSurfaceReadPhase, "rigExec:surface"},
+    {_tokens->rigExecDriverCurveReadPhase, "rigExec:driverCurve"},
+    {_tokens->rigExecPointsReadPhase, "rigExec:targetPoints"},
 };
 
 const TfToken _phasedInputs[] = {
-    TfToken("rigExec:transform"),   TfToken("rigExec:influences"),
-    TfToken("rigExec:driverTransforms"), TfToken("rigExec:cage"),
-    TfToken("rigExec:surface"),     TfToken("rigExec:bindCoordinates"),
-    TfToken("rigExec:driverCurve")};
+    _tokens->rigExecTransform,   _tokens->rigExecInfluences,
+    _tokens->rigExecDriverTransforms, _tokens->rigExecCage,
+    _tokens->rigExecSurface,     _tokens->rigExecBindCoordinates,
+    _tokens->rigExecDriverCurve};
 
 } // namespace
 
@@ -497,14 +586,14 @@ RigExecRigEvaluator::_DiscoverMovers(
 
             // Structural/topology properties are never writable move
             // targets.
-            static const std::set<TfToken> structuralProperties = {
-                TfToken("faceVertexCounts"), TfToken("faceVertexIndices"),
-                TfToken("holeIndices"), TfToken("curveVertexCounts"),
-                TfToken("cornerIndices"), TfToken("cornerSharpnesses"),
-                TfToken("creaseIndices"), TfToken("creaseLengths"),
-                TfToken("creaseSharpnesses"), TfToken("subdivisionScheme"),
-                TfToken("type"), TfToken("basis"), TfToken("wrap"),
-                TfToken("orientation"), TfToken("doubleSided")};
+            const TfToken structuralProperties[] = {
+                _tokens->faceVertexCounts, _tokens->faceVertexIndices,
+                _tokens->holeIndices, _tokens->curveVertexCounts,
+                _tokens->cornerIndices, _tokens->cornerSharpnesses,
+                _tokens->creaseIndices, _tokens->creaseLengths,
+                _tokens->creaseSharpnesses, _tokens->subdivisionScheme,
+                _tokens->type, _tokens->basis, _tokens->wrap,
+                _tokens->orientation, _tokens->doubleSided};
             const SdfPath assetRoot = _rigPath.GetParentPath();
 
             for (const SdfPath &t : targets) {
@@ -523,7 +612,10 @@ RigExecRigEvaluator::_DiscoverMovers(
                                 canonical.GetString(), {prim.GetPath()});
                 }
                 if (canonical.IsPropertyPath()) {
-                    if (structuralProperties.count(canonical.GetNameToken())) {
+                    if (std::find(std::begin(structuralProperties),
+                                  std::end(structuralProperties),
+                                  canonical.GetNameToken()) !=
+                        std::end(structuralProperties)) {
                         return fail(
                             "Mover " + prim.GetPath().GetString() +
                             " targets structural property " +
@@ -644,13 +736,13 @@ RigExecRigEvaluator::_DiscoverMovers(
                         "RigExecControl", {prim.GetPath()});
                 }
                 RigExecHarmonicsSettings settings;
-                const auto readUniform = [&prim](const char *name, auto *value) {
-                    if (const UsdAttribute a = prim.GetAttribute(TfToken(name)))
+                const auto readUniform = [&prim](const TfToken &name, auto *value) {
+                    if (const UsdAttribute a = prim.GetAttribute(name))
                         a.Get(value);
                 };
-                readUniform("rigExec:waves", &settings.waves);
-                readUniform("rigExec:waveLength", &settings.waveLength);
-                readUniform("rigExec:frequency", &settings.frequency);
+                readUniform(_tokens->rigExecWaves, &settings.waves);
+                readUniform(_tokens->rigExecWaveLength, &settings.waveLength);
+                readUniform(_tokens->rigExecFrequency, &settings.frequency);
                 if (!RigExecHarmonicsSettingsValid(settings)) {
                     return fail(
                         "RigExecHarmonicsConstraint " +
@@ -719,15 +811,15 @@ RigExecRigEvaluator::_DiscoverMovers(
             // weight field; the relationship never multiplies the scalar.
             {
                 for (const auto &commonInput : {
-                         std::make_pair("inputs:defaultWeight",
+                         std::make_pair(_tokens->inputsDefaultWeight,
                                         SdfValueTypeNames->Float),
-                         std::make_pair("inputs:enabled",
+                         std::make_pair(_tokens->inputsEnabled,
                                         SdfValueTypeNames->Bool)}) {
                     std::set<SdfPath> visitingConnections;
                     std::string connectionError;
                     if (!_ValidateScalarConnection(
                             _stage,
-                            prim.GetAttribute(TfToken(commonInput.first)),
+                            prim.GetAttribute(commonInput.first),
                             commonInput.second, &visitingConnections,
                             &connectionError)) {
                         return fail(
@@ -738,7 +830,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
                 SdfPathVector weightObjects;
                 if (const UsdRelationship rel = prim.GetRelationship(
-                        TfToken("rigExec:weightObject"))) {
+                        _tokens->rigExecWeightObject)) {
                     rel.GetTargets(&weightObjects);
                 }
                 if (weightObjects.size() > 1) {
@@ -911,8 +1003,8 @@ RigExecRigEvaluator::_DiscoverMovers(
             // the compiled rig digest, so reject samples here rather than
             // resolving them at evaluation time. The same rule
             // the aggregate cardinality attributes already follow.
-            std::vector<const char *> structuralTokens = {
-                "rigExec:mode", "rigExec:operation"};
+            std::vector<TfToken> structuralTokens = {
+                _tokens->rigExecMode, _tokens->rigExecOperation};
             // Which operators carry a rotation order is a table column, not
             // a list of type names repeated at each site that asks.
             const _ConstraintHandler *orderHandler =
@@ -931,8 +1023,8 @@ RigExecRigEvaluator::_DiscoverMovers(
                     return record.schemaType.GetString() + " " +
                            prim.GetPath().GetAsString();
                 };
-                const auto authored = [&prim](const char *name) {
-                    const UsdAttribute a = prim.GetAttribute(TfToken(name));
+                const auto authored = [&prim](const TfToken &name) {
+                    const UsdAttribute a = prim.GetAttribute(name);
                     return a && a.HasAuthoredValue();
                 };
 
@@ -940,7 +1032,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                 // collapsed into one concept. The old name is no longer part
                 // of the schema, so an authored opinion would compose as a
                 // custom property and be ignored.
-                if (authored("inputs:weight")) {
+                if (authored(_tokens->inputsWeight)) {
                     return fail(who() +
                                 " authors inputs:weight, which a constraint no"
                                 " longer has; the envelope is now"
@@ -949,11 +1041,12 @@ RigExecRigEvaluator::_DiscoverMovers(
 
                 // Replaced by the group-qualified spelling, because it named
                 // a different channel on every operator that had it.
-                for (const char *legacyMask :
-                     {"inputs:affectX", "inputs:affectY", "inputs:affectZ"}) {
+                for (const TfToken &legacyMask :
+                     {_tokens->inputsAffectX, _tokens->inputsAffectY,
+                      _tokens->inputsAffectZ}) {
                     if (authored(legacyMask)) {
                         return fail(
-                            who() + " authors " + legacyMask +
+                            who() + " authors " + legacyMask.GetString() +
                             ", which named a different channel on every"
                             " operator; use the group-qualified spelling"
                             " (inputs:affectTranslation*, affectRotation* or"
@@ -962,23 +1055,23 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
 
                 struct _ChannelProperty {
-                    const char *name;
+                    TfToken name;
                     _ChannelGroup group;
                     bool isMask;
                 };
-                static const _ChannelProperty kChannelProperties[] = {
-                    {"inputs:affectTranslationX", _ChannelGroup::Translation, true},
-                    {"inputs:affectTranslationY", _ChannelGroup::Translation, true},
-                    {"inputs:affectTranslationZ", _ChannelGroup::Translation, true},
-                    {"inputs:affectRotationX", _ChannelGroup::Rotation, true},
-                    {"inputs:affectRotationY", _ChannelGroup::Rotation, true},
-                    {"inputs:affectRotationZ", _ChannelGroup::Rotation, true},
-                    {"inputs:affectScaleX", _ChannelGroup::Scale, true},
-                    {"inputs:affectScaleY", _ChannelGroup::Scale, true},
-                    {"inputs:affectScaleZ", _ChannelGroup::Scale, true},
-                    {"inputs:translationOffset", _ChannelGroup::Translation, false},
-                    {"inputs:rotationOffset", _ChannelGroup::Rotation, false},
-                    {"inputs:scaleOffset", _ChannelGroup::Scale, false},
+                const _ChannelProperty kChannelProperties[] = {
+                    {_tokens->inputsAffectTranslationX, _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectTranslationY, _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectTranslationZ, _ChannelGroup::Translation, true},
+                    {_tokens->inputsAffectRotationX, _ChannelGroup::Rotation, true},
+                    {_tokens->inputsAffectRotationY, _ChannelGroup::Rotation, true},
+                    {_tokens->inputsAffectRotationZ, _ChannelGroup::Rotation, true},
+                    {_tokens->inputsAffectScaleX, _ChannelGroup::Scale, true},
+                    {_tokens->inputsAffectScaleY, _ChannelGroup::Scale, true},
+                    {_tokens->inputsAffectScaleZ, _ChannelGroup::Scale, true},
+                    {_tokens->inputsTranslationOffset, _ChannelGroup::Translation, false},
+                    {_tokens->inputsRotationOffset, _ChannelGroup::Rotation, false},
+                    {_tokens->inputsScaleOffset, _ChannelGroup::Scale, false},
                 };
                 for (const _ChannelProperty &channel : kChannelProperties) {
                     if (!authored(channel.name)) {
@@ -992,7 +1085,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                         continue;
                     }
                     return fail(
-                        who() + " authors " + channel.name + ", which it does "
+                        who() + " authors " + channel.name.GetString() + ", which it does "
                         "not honor; the operator writes a different channel "
                         "group" +
                         (orderHandler->offsetGroup == _ChannelGroup::None &&
@@ -1001,7 +1094,7 @@ RigExecRigEvaluator::_DiscoverMovers(
                              : ""), {prim.GetPath()});
                 }
 
-                if (authored("rigExec:rotationOrder") &&
+                if (authored(_tokens->rigExecRotationOrder) &&
                     !orderHandler->usesRotationOrder) {
                     return fail(who() +
                                 " authors rigExec:rotationOrder, which it does"
@@ -1022,11 +1115,11 @@ RigExecRigEvaluator::_DiscoverMovers(
                 // translation group that Aim does not write. That is the
                 // dangerous case today: accepted and silently ignored.
                 if (const UsdAttribute preserve =
-                        prim.GetAttribute(TfToken("rigExec:preserve"))) {
+                        prim.GetAttribute(_tokens->rigExecPreserve)) {
                     VtTokenArray value;
                     if (preserve.HasAuthoredValue() && preserve.Get(&value)) {
-                        const VtTokenArray expected{TfToken("origin"),
-                                                    TfToken("scale")};
+                        const VtTokenArray expected{_tokens->origin,
+                                                    _tokens->scale};
                         if (value != expected) {
                             return fail(
                                 who() +
@@ -1041,70 +1134,70 @@ RigExecRigEvaluator::_DiscoverMovers(
                 }
             }
             if (orderHandler && orderHandler->usesRotationOrder) {
-                structuralTokens.push_back("rigExec:rotationOrder");
+                structuralTokens.push_back(_tokens->rigExecRotationOrder);
             }
             if (record.schemaType == "RigExecAimConstraint") {
                 structuralTokens.insert(
                     structuralTokens.end(),
-                    {"rigExec:worldUpType",
-                     "rigExec:aimAxis", "rigExec:upPolicy"});
+                    {_tokens->rigExecWorldUpType,
+                     _tokens->rigExecAimAxis, _tokens->rigExecUpPolicy});
             } else if (record.schemaType ==
                        "RigExecSingleChainIkConstraint") {
                 structuralTokens.insert(
                     structuralTokens.end(),
-                    {"rigExec:solverMode", "rigExec:poleVectorMode",
-                     "rigExec:evaluationMode", "rigExec:orientationMode"});
+                    {_tokens->rigExecSolverMode, _tokens->rigExecPoleVectorMode,
+                     _tokens->rigExecEvaluationMode, _tokens->rigExecOrientationMode});
             }
-            for (const char *name : structuralTokens) {
-                const UsdAttribute a = prim.GetAttribute(TfToken(name));
+            for (const TfToken &name : structuralTokens) {
+                const UsdAttribute a = prim.GetAttribute(name);
                 if (a && a.GetNumTimeSamples() > 0) {
                     return fail(record.schemaType.GetString() + " " +
-                                prim.GetPath().GetString() + ": " + name +
+                                prim.GetPath().GetString() + ": " + name.GetString() +
                                 " must not be time-sampled (it selects the "
                                 "compiled operation/read phase)", {prim.GetPath()});
                 }
             }
 
-            auto validateToken = [&](const char *name,
+            auto validateToken = [&](const TfToken &name,
                                      std::initializer_list<const char *> allowed) {
-                const UsdAttribute attr = prim.GetAttribute(TfToken(name));
+                const UsdAttribute attr = prim.GetAttribute(name);
                 if (!attr) {
                     return true;
                 }
                 TfToken value;
                 if (!attr.Get(&value) || !_TokenIsOneOf(value, allowed)) {
                     return fail(record.schemaType.GetString() + " " +
-                                prim.GetPath().GetString() + ": " + name +
+                                prim.GetPath().GetString() + ": " + name.GetString() +
                                 " has unsupported value '" +
                                 value.GetString() + "'", {prim.GetPath()});
                 }
                 return true;
             };
-            static const std::initializer_list<const char *> eulerOrders = {
+            const std::initializer_list<const char *> eulerOrders = {
                 "XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"};
             if (orderHandler && orderHandler->usesRotationOrder &&
-                !validateToken("rigExec:rotationOrder", eulerOrders)) {
+                !validateToken(_tokens->rigExecRotationOrder, eulerOrders)) {
                 return false;
             }
             if (record.schemaType == "RigExecAimConstraint" &&
                 (!validateToken(
-                     "rigExec:worldUpType",
+                     _tokens->rigExecWorldUpType,
                      {"sceneUp", "objectUp", "objectRotationUp", "vector",
                       "none"}) ||
-                 !validateToken("rigExec:aimAxis", {"x", "y", "z"}) ||
+                 !validateToken(_tokens->rigExecAimAxis, {"x", "y", "z"}) ||
                  !validateToken(
-                     "rigExec:upPolicy", {"preserveInputUp"}))) {
+                     _tokens->rigExecUpPolicy, {"preserveInputUp"}))) {
                 return false;
             }
             if (record.schemaType == "RigExecSingleChainIkConstraint" &&
                 (!validateToken(
-                     "rigExec:solverMode", {"rotatePlane", "singleChain"}) ||
+                     _tokens->rigExecSolverMode, {"rotatePlane", "singleChain"}) ||
                  !validateToken(
-                     "rigExec:poleVectorMode", {"vector", "object"}) ||
+                     _tokens->rigExecPoleVectorMode, {"vector", "object"}) ||
                  !validateToken(
-                     "rigExec:evaluationMode",
+                     _tokens->rigExecEvaluationMode,
                      {"neverTS", "autoDetect", "alwaysTS"}) ||
-                 !validateToken("rigExec:orientationMode", {"aimX", "preserve"}))) {
+                 !validateToken(_tokens->rigExecOrientationMode, {"aimX", "preserve"}))) {
                 return false;
             }
             newMovers.push_back(std::move(record));

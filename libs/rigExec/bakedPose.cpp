@@ -33,6 +33,7 @@
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/stage.h"
@@ -53,6 +54,114 @@
 
 namespace rigExec {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecJoints, "rigExec:joints"))
+    ((rigExecJointElements, "rigExec:jointElements"))
+    ((rigExecControlSpace, "rigExec:controlSpace"))
+    ((rigExecControls, "rigExec:controls"))
+    ((rigExecStartFrame, "rigExec:startFrame"))
+    ((rigExecRootControl, "rigExec:rootControl"))
+    ((rigExecEffectorControl, "rigExec:effectorControl"))
+    ((rigExecPoleControl, "rigExec:poleControl"))
+    ((rigExecMidControl, "rigExec:midControl"))
+    ((rigExecEndControl, "rigExec:endControl"))
+    ((rigExecSpaceMatrix, "rigExec:spaceMatrix"))
+    ((rigExecSpace, "rigExec:space"))
+    ((rigExecPreferredBendRadians, "rigExec:preferredBendRadians"))
+    ((rigExecUpperLengthOffset, "rigExec:upperLengthOffset"))
+    ((rigExecLowerLengthOffset, "rigExec:lowerLengthOffset"))
+    ((rigExecStretchPolicy, "rigExec:stretchPolicy"))
+    ((rigExecSegmentScale, "rigExec:segmentScale"))
+    ((rigExecScaleCalibration, "rigExec:scaleCalibration"))
+    ((rigExecInputA, "rigExec:inputA"))
+    ((rigExecInputB, "rigExec:inputB"))
+    ((rigExecScaleBlend, "rigExec:scaleBlend"))
+    ((rigExecRotationBlend, "rigExec:rotationBlend"))
+    ((rigExecVolumeWeights, "rigExec:volumeWeights"))
+    ((rigExecRestLength, "rigExec:restLength"))
+    ((rigExecRootTangent, "rigExec:rootTangent"))
+    ((rigExecStart, "rigExec:start"))
+    ((rigExecEnd, "rigExec:end"))
+    ((rigExecWeights, "rigExec:weights"))
+    ((rigExecCount, "rigExec:count"))
+    ((rigExecDriverCurve, "rigExec:driverCurve"))
+    ((rigExecEndFrame, "rigExec:endFrame"))
+    ((rigExecTwistFrames, "rigExec:twistFrames"))
+    ((rigExecSampleCount, "rigExec:sampleCount"))
+    ((rigExecOrientationMode, "rigExec:orientationMode"))
+    ((rigExecSolverMode, "rigExec:solverMode"))
+    ((rigExecPoleVectorMode, "rigExec:poleVectorMode"))
+    ((rigExecEvaluationMode, "rigExec:evaluationMode"))
+    ((rigExecRotationOrder, "rigExec:rotationOrder"))
+    ((rigExecIkValue, "rigExec:ikValue"))
+    ((rigExecWaves, "rigExec:waves"))
+    ((rigExecWaveLength, "rigExec:waveLength"))
+    ((rigExecFrequency, "rigExec:frequency"))
+    ((rigExecIgnoreFirstFrame, "rigExec:ignoreFirstFrame"))
+    ((rigExecMatchVelocity, "rigExec:matchVelocity"))
+    ((rigExecAimAxis, "rigExec:aimAxis"))
+    ((rigExecWorldUpType, "rigExec:worldUpType"))
+    ((rigExecSources, "rigExec:sources"))
+    ((inputsStretch, "inputs:stretch"))
+    ((inputsSoftness, "inputs:softness"))
+    ((inputsPin, "inputs:pin"))
+    ((inputsSoftDistance, "inputs:softDistance"))
+    ((inputsTwist, "inputs:twist"))
+    ((inputsUpperScale, "inputs:upperScale"))
+    ((inputsLowerScale, "inputs:lowerScale"))
+    ((inputsSwitch, "inputs:switch"))
+    ((inputsWeight, "inputs:weight"))
+    ((inputsPreserveVolume, "inputs:preserveVolume"))
+    ((inputsMidFollowWeight, "inputs:midFollowWeight"))
+    ((inputsRoll, "inputs:roll"))
+    ((inputsMinLengthRatio, "inputs:minLengthRatio"))
+    ((inputsTwistTurns, "inputs:twistTurns"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((inputsSourceWeights, "inputs:sourceWeights"))
+    ((inputsTranslationOffsets, "inputs:translationOffsets"))
+    ((inputsRotationOffsets, "inputs:rotationOffsets"))
+    ((inputsPoleVector, "inputs:poleVector"))
+    ((inputsTwistDegrees, "inputs:twistDegrees"))
+    ((inputsPoleVectorWeights, "inputs:poleVectorWeights"))
+    ((inputsAmplitude, "inputs:amplitude"))
+    ((inputsDecay, "inputs:decay"))
+    ((inputsTermination, "inputs:termination"))
+    ((inputsAxisAmplitude, "inputs:axisAmplitude"))
+    ((inputsAffectTranslationX, "inputs:affectTranslationX"))
+    ((inputsAffectTranslationY, "inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ, "inputs:affectTranslationZ"))
+    ((inputsAffectRotationX, "inputs:affectRotationX"))
+    ((inputsAffectRotationY, "inputs:affectRotationY"))
+    ((inputsAffectRotationZ, "inputs:affectRotationZ"))
+    ((inputsAffectScaleX, "inputs:affectScaleX"))
+    ((inputsAffectScaleY, "inputs:affectScaleY"))
+    ((inputsAffectScaleZ, "inputs:affectScaleZ"))
+    ((inputsTranslationOffset, "inputs:translationOffset"))
+    ((inputsRotationOffset, "inputs:rotationOffset"))
+    ((inputsScaleOffset, "inputs:scaleOffset"))
+    ((inputsAimVector, "inputs:aimVector"))
+    ((inputsUpVector, "inputs:upVector"))
+    ((inputsWorldUpVector, "inputs:worldUpVector"))
+    ((posedSpace, "posed:space"))
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+    (shortestArc)
+    (aimX)
+    (rotatePlane)
+    (vector)
+    (neverTS)
+    ((xyz, "XYZ"))
+    (softDistance)
+    (x)
+    (none)
+);
+
 // Bake.
 
 void
@@ -67,10 +176,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
     auto refuse = [&](const std::string &what, const SdfPath &where) {
         ctx->Refuse(what, where);
     };
-    auto fold = [&](const UsdPrim &prim, const char *name) {
+    auto fold = [&](const UsdPrim &prim, const TfToken &name) {
         ctx->Fold(prim, name);
     };
-    auto foldShape = [&](const UsdPrim &prim, const char *name) {
+    auto foldShape = [&](const UsdPrim &prim, const TfToken &name) {
         ctx->FoldShape(prim, name);
     };
     const RigExecSceneCompileInputs compileInputs(*B.sceneDescriptors);
@@ -79,16 +188,16 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         return compileInputs.Bind(path,RigExecSceneReadRoute::Raw,&input) &&
                compileInputs.Read(input,identity,value);
     };
-    auto readToken = [&](const UsdPrim &prim, const char *name,
-                         const char *fallback) {
+    auto readToken = [&](const UsdPrim &prim, const TfToken &name,
+                         const TfToken &fallback) {
         TfToken value(fallback);
-        readFact(prim.GetPath().AppendProperty(TfToken(name)),UsdTimeCode::Default(),&value);
+        readFact(prim.GetPath().AppendProperty(name),UsdTimeCode::Default(),&value);
         return value;
     };
-    auto targets = [&](const UsdPrim &prim, const char *name) {
-        return compileInputs.Targets(prim.GetPath().AppendProperty(TfToken(name)));
+    auto targets = [&](const UsdPrim &prim, const TfToken &name) {
+        return compileInputs.Targets(prim.GetPath().AppendProperty(name));
     };
-    auto bind = [&](const UsdPrim &prim, const char *name, auto fallback) {
+    auto bind = [&](const UsdPrim &prim, const TfToken &name, auto fallback) {
         return ctx->Bind(prim, name, fallback);
     };
     auto slotOf = [&](const SdfPath &path) { return ctx->SlotOf(path); };
@@ -139,10 +248,10 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         // names them for their REST measurements.
         std::vector<std::pair<int, int>> restRefs;
         {
-            const SdfPathVector joints = targets(prim, "rigExec:joints");
+            const SdfPathVector joints = targets(prim, _tokens->rigExecJoints);
             VtIntArray elements;
-            fold(prim, "rigExec:jointElements");
-            readFact(solverPath.AppendProperty(TfToken("rigExec:jointElements")),UsdTimeCode::Default(),&elements);
+            fold(prim, _tokens->rigExecJointElements);
+            readFact(solverPath.AppendProperty(_tokens->rigExecJointElements),UsdTimeCode::Default(),&elements);
             s.execJointElements = elements;
             // exec binds ONE rest input per rigExec:joints target that
             // PUBLISHES computeRestFrame -- a target that publishes none
@@ -231,7 +340,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
 
         if (s.type == "RigExecFkChain") {
             s.parentRelative =
-                readToken(prim, "rigExec:controlSpace", "") ==
+                readToken(prim, _tokens->rigExecControlSpace, TfToken()) ==
                 "parentRelative";
             // The chain is the FILTERED list. The computation reads its
             // controls through a read iterator over the relationship's
@@ -241,7 +350,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // means by a parent. The outputs mapping is not filtered -- its
             // element indices are the compiler's, over the same shortened
             // aggregate.
-            for (const SdfPath &t : targets(prim, "rigExec:controls")) {
+            for (const SdfPath &t : targets(prim, _tokens->rigExecControls)) {
                 const int slot = providerSlot(t);
                 if (slot < 0) {
                     continue;
@@ -259,7 +368,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // a degenerate: no frame input, so the chain solves absolute.
             // With no authored target, rigExec:startFramePolicy names the
             // provider through the rule scene translation applies.
-            auto startTargets = targets(prim, "rigExec:startFrame");
+            auto startTargets = targets(prim, _tokens->rigExecStartFrame);
             SdfPath derivedStart;
             if (startTargets.empty() &&
                 RigExecDeriveSceneStartFrame(*B.sceneDescriptors, solverPath,
@@ -275,9 +384,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 }
             }
         } else if (s.type == "RigExecTwoBoneIk") {
-            const auto r = targets(prim, "rigExec:rootControl");
-            const auto e = targets(prim, "rigExec:effectorControl");
-            const auto p = targets(prim, "rigExec:poleControl");
+            const auto r = targets(prim, _tokens->rigExecRootControl);
+            const auto e = targets(prim, _tokens->rigExecEffectorControl);
+            const auto p = targets(prim, _tokens->rigExecPoleControl);
             s.root = r.empty() ? -1 : providerSlot(r[0]);
             s.end = e.empty() ? -1 : providerSlot(e[0]);
             s.pole = p.empty() ? -1 : providerSlot(p[0]);
@@ -307,24 +416,24 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // The bone lengths exec measures every evaluation, measured once.
             s.upperLengthBase = (s.ikRests[1][0] - s.ikRests[0][0]).GetLength();
             s.lowerLengthBase = (s.ikRests[2][0] - s.ikRests[1][0]).GetLength();
-            s.ikSpace = bind(prim, "rigExec:spaceMatrix", GfMatrix4d(1.0));
-            const auto sp = targets(prim, "rigExec:space");
+            s.ikSpace = bind(prim, _tokens->rigExecSpaceMatrix, GfMatrix4d(1.0));
+            const auto sp = targets(prim, _tokens->rigExecSpace);
             s.spaceSlot = sp.empty() ? -1 : providerSlot(sp[0]);
             if (s.spaceSlot >= 0) {
                 s.spaceRest = B.restPts[foldRest(s.spaceSlot)];
             }
-            s.bend = bind(prim, "rigExec:preferredBendRadians", 0.0);
-            s.upperOffset = bind(prim, "rigExec:upperLengthOffset", 0.0);
-            s.lowerOffset = bind(prim, "rigExec:lowerLengthOffset", 0.0);
-            s.stretch = bind(prim, "inputs:stretch", 1.0f);
-            s.softness = bind(prim, "inputs:softness", 0.0f);
-            s.pin=bind(prim,"inputs:pin",0.0f);s.softDistance=bind(prim,"inputs:softDistance",0.0f);
-            s.limbTwist=bind(prim,"inputs:twist",0.0f);
-            s.upperScale=bind(prim,"inputs:upperScale",1.0);s.lowerScale=bind(prim,"inputs:lowerScale",1.0);
-            s.ikParams.softDistancePolicy=readToken(prim,"rigExec:stretchPolicy","")=="softDistance";
-            s.ikParams.scaleSegments=readToken(prim,"rigExec:segmentScale","")=="toChild";
-            fold(prim,"rigExec:scaleCalibration");
-            readFact(solverPath.AppendProperty(TfToken("rigExec:scaleCalibration")),UsdTimeCode::Default(),&s.ikParams.limb.scaleCalibration);
+            s.bend = bind(prim, _tokens->rigExecPreferredBendRadians, 0.0);
+            s.upperOffset = bind(prim, _tokens->rigExecUpperLengthOffset, 0.0);
+            s.lowerOffset = bind(prim, _tokens->rigExecLowerLengthOffset, 0.0);
+            s.stretch = bind(prim, _tokens->inputsStretch, 1.0f);
+            s.softness = bind(prim, _tokens->inputsSoftness, 0.0f);
+            s.pin=bind(prim,_tokens->inputsPin,0.0f);s.softDistance=bind(prim,_tokens->inputsSoftDistance,0.0f);
+            s.limbTwist=bind(prim,_tokens->inputsTwist,0.0f);
+            s.upperScale=bind(prim,_tokens->inputsUpperScale,1.0);s.lowerScale=bind(prim,_tokens->inputsLowerScale,1.0);
+            s.ikParams.softDistancePolicy=readToken(prim,_tokens->rigExecStretchPolicy,TfToken())=="softDistance";
+            s.ikParams.scaleSegments=readToken(prim,_tokens->rigExecSegmentScale,TfToken())=="toChild";
+            fold(prim,_tokens->rigExecScaleCalibration);
+            readFact(solverPath.AppendProperty(_tokens->rigExecScaleCalibration),UsdTimeCode::Default(),&s.ikParams.limb.scaleCalibration);
             s.ikParams.preferredBendRadians = s.bend.constant;
             s.ikParams.stretch = s.stretch.constant;
             s.ikParams.softness = s.softness.constant;
@@ -342,11 +451,11 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 if (it != B.solverIndex.end()) return it->second;
                 return -1;
             };
-            s.inA = solverSlot(targets(prim, "rigExec:inputA"));
-            s.inB = solverSlot(targets(prim, "rigExec:inputB"));
-            s.blendWeight = bind(prim, "inputs:weight", 0.0f);
+            s.inA = solverSlot(targets(prim, _tokens->rigExecInputA));
+            s.inB = solverSlot(targets(prim, _tokens->rigExecInputB));
+            s.blendWeight = bind(prim, _tokens->inputsWeight, 0.0f);
             s.scaleMode =
-                readToken(prim, "rigExec:scaleBlend", "") == "linear"
+                readToken(prim, _tokens->rigExecScaleBlend, TfToken()) == "linear"
                     ? RigExecScaleBlend::Linear
                     : RigExecScaleBlend::Log;
             // The fallback is the only mode there is, so an unauthored
@@ -356,14 +465,14 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // read, so this cannot be `degenerate`, which would answer the
             // half-wired blend with an empty aggregate the computation never
             // publishes.
-            if (readToken(prim, "rigExec:rotationBlend", "shortestArc") !=
+            if (readToken(prim, _tokens->rigExecRotationBlend, _tokens->shortestArc) !=
                 "shortestArc") {
                 s.blendRotationRejected = true;
             }
         } else if (s.type == "RigExecSplineIk") {
-            const auto r = targets(prim, "rigExec:rootControl");
-            const auto m = targets(prim, "rigExec:midControl");
-            const auto e = targets(prim, "rigExec:endControl");
+            const auto r = targets(prim, _tokens->rigExecRootControl);
+            const auto m = targets(prim, _tokens->rigExecMidControl);
+            const auto e = targets(prim, _tokens->rigExecEndControl);
             s.root = r.empty() ? -1 : providerSlot(r[0]);
             s.mid = m.empty() ? -1 : providerSlot(m[0]);
             s.end = e.empty() ? -1 : providerSlot(e[0]);
@@ -405,14 +514,14 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             }
             std::vector<double> weights;
             VtFloatArray authoredWeights;
-            fold(prim, "rigExec:volumeWeights");
-            readFact(solverPath.AppendProperty(TfToken("rigExec:volumeWeights")),UsdTimeCode::Default(),&authoredWeights);
+            fold(prim, _tokens->rigExecVolumeWeights);
+            readFact(solverPath.AppendProperty(_tokens->rigExecVolumeWeights),UsdTimeCode::Default(),&authoredWeights);
             s.execSplineWeights = authoredWeights;
             for (float w : authoredWeights) weights.push_back(w);
             if (!weights.empty() && weights.size() != count) {
                 s.degenerate = true;
             }
-            const TfToken restTok = readToken(prim, "rigExec:restLength", "");
+            const TfToken restTok = readToken(prim, _tokens->rigExecRestLength, TfToken());
             if (!restTok.IsEmpty() && restTok != "curve" &&
                 restTok != "chain") {
                 s.degenerate = true;
@@ -424,7 +533,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.splineRestMode = restTok == "chain"
                                    ? RigExecSplineIkRestLength::Chain
                                    : RigExecSplineIkRestLength::Curve;
-            const auto splineSpaceTargets = targets(prim, "rigExec:space");
+            const auto splineSpaceTargets = targets(prim, _tokens->rigExecSpace);
             s.spaceSlot = splineSpaceTargets.empty()
                               ? -1
                               : providerSlot(splineSpaceTargets[0]);
@@ -449,11 +558,11 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 weights,
                 restTok == "chain" ? RigExecSplineIkRestLength::Chain
                                    : RigExecSplineIkRestLength::Curve);
-            s.preserveVolume = bind(prim, "inputs:preserveVolume", 1.0);
-            s.midFollowWeight = bind(prim, "inputs:midFollowWeight", 0.5);
-            s.roll = bind(prim, "inputs:roll", 0.0);
-            s.twist = bind(prim, "inputs:twist", 0.0);
-            s.minLengthRatio = bind(prim, "inputs:minLengthRatio", 0.0);
+            s.preserveVolume = bind(prim, _tokens->inputsPreserveVolume, 1.0);
+            s.midFollowWeight = bind(prim, _tokens->inputsMidFollowWeight, 0.5);
+            s.roll = bind(prim, _tokens->inputsRoll, 0.0);
+            s.twist = bind(prim, _tokens->inputsTwist, 0.0);
+            s.minLengthRatio = bind(prim, _tokens->inputsMinLengthRatio, 0.0);
             s.splineParamsVary =
                 s.preserveVolume.varying || s.midFollowWeight.varying ||
                 s.roll.varying || s.twist.varying || s.minLengthRatio.varying;
@@ -462,7 +571,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             s.splineParams.roll = GfDegreesToRadians(s.roll.constant);
             s.splineParams.twist = GfDegreesToRadians(s.twist.constant);
             s.splineParams.minLengthRatio = s.minLengthRatio.constant;
-            const TfToken tangent = readToken(prim, "rigExec:rootTangent", "");
+            const TfToken tangent = readToken(prim, _tokens->rigExecRootTangent, TfToken());
             if (tangent == "aim") {
                 s.splineParams.aimRootTangent = true;
             } else if (!tangent.IsEmpty() && tangent != "rigid") {
@@ -481,8 +590,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             const auto endpoint = [&](const SdfPathVector &v) {
                 return v.empty() ? -1 : providerSlot(v[0]);
             };
-            s.root = endpoint(targets(prim, "rigExec:start"));
-            s.end = endpoint(targets(prim, "rigExec:end"));
+            s.root = endpoint(targets(prim, _tokens->rigExecStart));
+            s.end = endpoint(targets(prim, _tokens->rigExecEnd));
             if (s.root < 0 || s.end < 0) {
                 s.degenerate = true;
             } else {
@@ -499,16 +608,16 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // once and folded. The float -> double widening is element-wise
             // and in array order, as the computation's read iterator does it.
             VtFloatArray authoredWeights;
-            fold(prim, "rigExec:weights");
-            readFact(solverPath.AppendProperty(TfToken("rigExec:weights")),UsdTimeCode::Default(),&authoredWeights);
+            fold(prim, _tokens->rigExecWeights);
+            readFact(solverPath.AppendProperty(_tokens->rigExecWeights),UsdTimeCode::Default(),&authoredWeights);
             s.execTwistWeights = authoredWeights;
             for (float w : authoredWeights) s.twistWeights.push_back(w);
             int count = 1;
-            fold(prim, "rigExec:count");
-            readFact(solverPath.AppendProperty(TfToken("rigExec:count")),UsdTimeCode::Default(),&count);
+            fold(prim, _tokens->rigExecCount);
+            readFact(solverPath.AppendProperty(_tokens->rigExecCount),UsdTimeCode::Default(),&count);
             s.execTwistCount = count;
             RigExecResolveTwistWeights(count, &s.twistWeights);
-            s.twistTurns = bind(prim, "inputs:twistTurns", 0.0);
+            s.twistTurns = bind(prim, _tokens->inputsTwistTurns, 0.0);
         } else if (s.type == "RigExecRibbon") {
             // The driver curve's points, resolved by the compiler to the
             // exact native attribute (a prim target becomes its .points).
@@ -523,7 +632,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.ribbonPointsPath = found->second;
             }
             std::string phaseError;
-            if (!RigExecResolveReadPhase(prim.GetRelationship(TfToken("rigExec:driverCurve")),
+            if (!RigExecResolveReadPhase(prim.GetRelationship(_tokens->rigExecDriverCurve),
                                          &s.ribbonPointsPhase,&phaseError))
                 B.crossDomainErrors.push_back(phaseError);
             if (const UsdAttribute a =
@@ -570,7 +679,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // bind(), not fold(): a sampleCount edit is a value edit exec
             // answers per frame, and the compiled rig signature already forces a
             // recompile when the count changes the frame cardinality.
-            s.ribbonSampleCount = bind(prim, "rigExec:sampleCount", 5);
+            s.ribbonSampleCount = bind(prim, _tokens->rigExecSampleCount, 5);
             // rigExec:parameterization, frameTransport, startFrame,
             // endFrame and twistFrames are
             // deliberately NOT read: the computation does not read them
@@ -732,8 +841,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.sourcePaths.push_back(fc.sources[k]);
             c.sourcePathTexts.push_back(fc.sources[k].GetString());
         }
-        c.enabled = bind(prim, "inputs:enabled", true);
-        c.defaultWeight = bind(prim, "inputs:defaultWeight", 1.0f);
+        c.enabled = bind(prim, _tokens->inputsEnabled, true);
+        c.defaultWeight = bind(prim, _tokens->inputsDefaultWeight, 1.0f);
         // The envelope object, resolved per frame by the oracle and not
         // captured here: what the bake records is only that the constraint
         // HAS one, and enough of the invalidation index to notice the object
@@ -786,15 +895,15 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             arrays.rotationOffsets.assign(arrays.sourceCount, GfVec3d(0));
             arrays.parentOffsets =
                 fc.schemaType == "RigExecParentConstraint";
-            foldShape(prim, "inputs:sourceWeights");
-            if (prim.GetAttribute(TfToken("inputs:sourceWeights"))) {
+            foldShape(prim, _tokens->inputsSourceWeights);
+            if (prim.GetAttribute(_tokens->inputsSourceWeights)) {
                 ++B.boundInputs;
             }
             if (arrays.parentOffsets) {
-                for (const char *name : {"inputs:translationOffsets",
-                                         "inputs:rotationOffsets"}) {
+                for (const TfToken &name : {_tokens->inputsTranslationOffsets,
+                                            _tokens->inputsRotationOffsets}) {
                     foldShape(prim, name);
-                    if (prim.GetAttribute(TfToken(name))) {
+                    if (prim.GetAttribute(name)) {
                         ++B.boundInputs;
                     }
                 }
@@ -822,18 +931,18 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         // inspects are folded for their SHAPE so that authoring one rebuilds
         // the program rather than silently changing the answer.
         if (c.singleChainIk) {
-            c.stretch=bind(prim,"inputs:stretch",0.0f);
+            c.stretch=bind(prim,_tokens->inputsStretch,0.0f);
             c.preserveJointOrientation =
-                readToken(prim, "rigExec:orientationMode", "aimX") == "preserve";
-            c.ikMode = readToken(prim, "rigExec:solverMode", "rotatePlane") ==
+                readToken(prim, _tokens->rigExecOrientationMode, _tokens->aimX) == "preserve";
+            c.ikMode = readToken(prim, _tokens->rigExecSolverMode, _tokens->rotatePlane) ==
                                "singleChain"
                            ? RigExecSingleChainIkMode::SingleChain
                            : RigExecSingleChainIkMode::RotatePlane;
             c.poleModeObject =
-                readToken(prim, "rigExec:poleVectorMode", "vector") ==
+                readToken(prim, _tokens->rigExecPoleVectorMode, _tokens->vector) ==
                 "object";
             const TfToken evaluationMode =
-                readToken(prim, "rigExec:evaluationMode", "neverTS");
+                readToken(prim, _tokens->rigExecEvaluationMode, _tokens->neverTS);
             c.useAnimatedTs =
                 evaluationMode == "alwaysTS" ||
                 (evaluationMode == "autoDetect" &&
@@ -841,9 +950,9 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.ikRestLive = fc.ikRestLive;
             for (const SdfPath &joint : fc.ikChain) {
                 const UsdPrim jointPrim = B.stage->GetPrimAtPath(joint);
-                for (const char *name : {"posed:space", "avars:tx",
-                                         "avars:ty", "avars:tz", "avars:sx",
-                                         "avars:sy", "avars:sz"}) {
+                for (const TfToken &name : {_tokens->posedSpace, _tokens->avarsTx,
+                                            _tokens->avarsTy, _tokens->avarsTz, _tokens->avarsSx,
+                                            _tokens->avarsSy, _tokens->avarsSz}) {
                     foldShape(jointPrim, name);
                 }
             }
@@ -872,8 +981,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // an override on one place itself on a solve that ignores it.
             if (c.ikMode == RigExecSingleChainIkMode::RotatePlane) {
                 c.poleVector =
-                    bind(prim, "inputs:poleVector", GfVec3d(0, 1, 0));
-                c.twistDegrees = bind(prim, "inputs:twistDegrees", 0.0);
+                    bind(prim, _tokens->inputsPoleVector, GfVec3d(0, 1, 0));
+                c.twistDegrees = bind(prim, _tokens->inputsTwistDegrees, 0.0);
             }
             RigExecBakedProgramImpl::ConstraintArrays &arrays =
                 B.constraintArrays[size_t(c.arrays)];
@@ -883,13 +992,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             arrays.poleCount = c.poleObjects.size();
             arrays.poleWeights.assign(arrays.poleCount, 1.0);
             if (arrays.readPole &&
-                prim.GetAttribute(TfToken("inputs:poleVectorWeights"))) {
-                foldShape(prim, "inputs:poleVectorWeights");
+                prim.GetAttribute(_tokens->inputsPoleVectorWeights)) {
+                foldShape(prim, _tokens->inputsPoleVectorWeights);
                 ++B.boundInputs;
             }
         }
         c.order = RigExecBakedParseEulerOrder(
-            readToken(prim, "rigExec:rotationOrder", "XYZ"));
+            readToken(prim, _tokens->rigExecRotationOrder, _tokens->xyz));
         if (fc.schemaType == "RigExecIkFkMatchConstraint") {
             c.ikFkMatch = true;
             if (!c.targetSlots.empty() || c.sources.size() != 10 ||
@@ -920,14 +1029,14 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // on, in that attribute's precision: a float read whose head is a
             // double reads the walk as doubles, which cannot read a float
             // channel. Unconnected, it reads its own value.
-            static const char *const names[7] = {
-                "inputs:switch", "inputs:stretch", "inputs:softDistance",
-                "inputs:upperScale", "inputs:lowerScale", "inputs:pin",
-                "inputs:twist"};
+            const TfToken names[7] = {
+                _tokens->inputsSwitch, _tokens->inputsStretch, _tokens->inputsSoftDistance,
+                _tokens->inputsUpperScale, _tokens->inputsLowerScale, _tokens->inputsPin,
+                _tokens->inputsTwist};
             static const double fallbacks[7] = {0, 1, 0, 1, 1, 0, 0};
             for (size_t k = 0; k < 7; ++k) {
                 auto &scalar = c.matchScalars[k];
-                UsdAttribute end = prim.GetAttribute(TfToken(names[k]));
+                UsdAttribute end = prim.GetAttribute(names[k]);
                 std::set<SdfPath> visited;
                 while (end && visited.insert(end.GetPath()).second) {
                     SdfPathVector connections;
@@ -941,32 +1050,31 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 scalar.isFloat =
                     end && end.GetTypeName() == SdfValueTypeNames->Float;
                 const UsdPrim owner = end ? end.GetPrim() : prim;
-                const std::string name =
-                    end ? end.GetName().GetString() : std::string(names[k]);
+                const TfToken name = end ? end.GetName() : names[k];
                 if (scalar.isFloat) {
                     scalar.narrow =
-                        bind(owner, name.c_str(), float(fallbacks[k]));
+                        bind(owner, name, float(fallbacks[k]));
                 } else {
-                    scalar.wide = bind(owner, name.c_str(), fallbacks[k]);
+                    scalar.wide = bind(owner, name, fallbacks[k]);
                 }
             }
             // Uniform constants: authoring one rebuilds the program.
             for (const auto &[name, value] :
-                 {std::make_pair("rigExec:ikValue", &c.matchIkValue),
-                  std::make_pair("rigExec:scaleCalibration",
+                 {std::make_pair(_tokens->rigExecIkValue, &c.matchIkValue),
+                  std::make_pair(_tokens->rigExecScaleCalibration,
                                  &c.matchScaleCalibration),
-                  std::make_pair("rigExec:upperLengthOffset",
+                  std::make_pair(_tokens->rigExecUpperLengthOffset,
                                  &c.matchUpperOffset),
-                  std::make_pair("rigExec:lowerLengthOffset",
+                  std::make_pair(_tokens->rigExecLowerLengthOffset,
                                  &c.matchLowerOffset)}) {
                 fold(prim, name);
-                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                readFact(prim.GetPath().AppendProperty(name),
                          UsdTimeCode::Default(), value);
             }
             c.matchIkValue = std::isfinite(c.matchIkValue) ? c.matchIkValue : 1.0;
-            fold(prim, "rigExec:stretchPolicy");
-            c.matchStretchLimb = readToken(prim, "rigExec:stretchPolicy",
-                                           "softDistance") == "softDistance";
+            fold(prim, _tokens->rigExecStretchPolicy);
+            c.matchStretchLimb = readToken(prim, _tokens->rigExecStretchPolicy,
+                                           _tokens->softDistance) == "softDistance";
         }
 
         if (fc.schemaType == "RigExecHarmonicsConstraint") {
@@ -978,22 +1086,22 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             // Uniform settings: they fix the window, so authoring one
             // rebuilds the program.
             for (const auto &[name, value] :
-                 {std::make_pair("rigExec:waves", &c.harmonicsSettings.waves),
-                  std::make_pair("rigExec:waveLength",
+                 {std::make_pair(_tokens->rigExecWaves, &c.harmonicsSettings.waves),
+                  std::make_pair(_tokens->rigExecWaveLength,
                                  &c.harmonicsSettings.waveLength),
-                  std::make_pair("rigExec:frequency",
+                  std::make_pair(_tokens->rigExecFrequency,
                                  &c.harmonicsSettings.frequency)}) {
                 fold(prim, name);
-                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                readFact(prim.GetPath().AppendProperty(name),
                          UsdTimeCode::Default(), value);
             }
             for (const auto &[name, value] :
-                 {std::make_pair("rigExec:ignoreFirstFrame",
+                 {std::make_pair(_tokens->rigExecIgnoreFirstFrame,
                                  &c.harmonicsSettings.ignoreFirstFrame),
-                  std::make_pair("rigExec:matchVelocity",
+                  std::make_pair(_tokens->rigExecMatchVelocity,
                                  &c.harmonicsMatchVelocity)}) {
                 fold(prim, name);
-                readFact(prim.GetPath().AppendProperty(TfToken(name)),
+                readFact(prim.GetPath().AppendProperty(name),
                          UsdTimeCode::Default(), value);
             }
             if (!RigExecHarmonicsSettingsValid(c.harmonicsSettings)) {
@@ -1001,12 +1109,12 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             }
             // Each scalar bound in the precision of the attribute its
             // connection walk ends on, as the IK/FK match binds its own.
-            const char *const names[3] = {
-                "inputs:amplitude", "inputs:decay", "inputs:termination"};
+            const TfToken names[3] = {
+                _tokens->inputsAmplitude, _tokens->inputsDecay, _tokens->inputsTermination};
             const double fallbacks[3] = {1.0, 3.0, 0.0};
             for (size_t k = 0; k < 3; ++k) {
                 auto &scalar = c.harmonicsScalars[k];
-                UsdAttribute end = prim.GetAttribute(TfToken(names[k]));
+                UsdAttribute end = prim.GetAttribute(names[k]);
                 std::set<SdfPath> visited;
                 while (end && visited.insert(end.GetPath()).second) {
                     SdfPathVector connections;
@@ -1020,16 +1128,15 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 scalar.isFloat =
                     end && end.GetTypeName() == SdfValueTypeNames->Float;
                 const UsdPrim owner = end ? end.GetPrim() : prim;
-                const std::string name =
-                    end ? end.GetName().GetString() : std::string(names[k]);
+                const TfToken name = end ? end.GetName() : names[k];
                 if (scalar.isFloat) {
                     scalar.narrow =
-                        bind(owner, name.c_str(), float(fallbacks[k]));
+                        bind(owner, name, float(fallbacks[k]));
                 } else {
-                    scalar.wide = bind(owner, name.c_str(), fallbacks[k]);
+                    scalar.wide = bind(owner, name, fallbacks[k]);
                 }
             }
-            c.offset = bind(prim, "inputs:axisAmplitude", GfVec3d(1.0));
+            c.offset = bind(prim, _tokens->inputsAxisAmplitude, GfVec3d(1.0));
             RigExecBakedProgramImpl::WindowedOp window;
             window.frames =
                 uint32_t(RigExecHarmonicsWindowFrames(c.harmonicsSettings));
@@ -1040,63 +1147,63 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         }
 
         if (fc.schemaType == "RigExecPositionConstraint") {
-            c.affectX = bind(prim, "inputs:affectTranslationX", true);
-            c.affectY = bind(prim, "inputs:affectTranslationY", true);
-            c.affectZ = bind(prim, "inputs:affectTranslationZ", true);
-            c.offset = ctx->Bind(prim, "inputs:translationOffset", GfVec3d(0),
+            c.affectX = bind(prim, _tokens->inputsAffectTranslationX, true);
+            c.affectY = bind(prim, _tokens->inputsAffectTranslationY, true);
+            c.affectZ = bind(prim, _tokens->inputsAffectTranslationZ, true);
+            c.offset = ctx->Bind(prim, _tokens->inputsTranslationOffset, GfVec3d(0),
                                  /*sourceValue=*/true);
         } else if (fc.schemaType == "RigExecRotationConstraint") {
-            c.affectX = bind(prim, "inputs:affectRotationX", true);
-            c.affectY = bind(prim, "inputs:affectRotationY", true);
-            c.affectZ = bind(prim, "inputs:affectRotationZ", true);
-            c.offset = bind(prim, "inputs:rotationOffset", GfVec3d(0));
+            c.affectX = bind(prim, _tokens->inputsAffectRotationX, true);
+            c.affectY = bind(prim, _tokens->inputsAffectRotationY, true);
+            c.affectZ = bind(prim, _tokens->inputsAffectRotationZ, true);
+            c.offset = bind(prim, _tokens->inputsRotationOffset, GfVec3d(0));
         } else if (fc.schemaType == "RigExecScaleConstraint") {
-            c.affectX = bind(prim, "inputs:affectScaleX", true);
-            c.affectY = bind(prim, "inputs:affectScaleY", true);
-            c.affectZ = bind(prim, "inputs:affectScaleZ", true);
-            c.offset = bind(prim, "inputs:scaleOffset", GfVec3d(0));
+            c.affectX = bind(prim, _tokens->inputsAffectScaleX, true);
+            c.affectY = bind(prim, _tokens->inputsAffectScaleY, true);
+            c.affectZ = bind(prim, _tokens->inputsAffectScaleZ, true);
+            c.offset = bind(prim, _tokens->inputsScaleOffset, GfVec3d(0));
         } else if (fc.schemaType == "RigExecParentConstraint") {
-            c.tX = bind(prim, "inputs:affectTranslationX", true);
-            c.tY = bind(prim, "inputs:affectTranslationY", true);
-            c.tZ = bind(prim, "inputs:affectTranslationZ", true);
-            c.rX = bind(prim, "inputs:affectRotationX", true);
-            c.rY = bind(prim, "inputs:affectRotationY", true);
-            c.rZ = bind(prim, "inputs:affectRotationZ", true);
+            c.tX = bind(prim, _tokens->inputsAffectTranslationX, true);
+            c.tY = bind(prim, _tokens->inputsAffectTranslationY, true);
+            c.tZ = bind(prim, _tokens->inputsAffectTranslationZ, true);
+            c.rX = bind(prim, _tokens->inputsAffectRotationX, true);
+            c.rY = bind(prim, _tokens->inputsAffectRotationY, true);
+            c.rZ = bind(prim, _tokens->inputsAffectRotationZ, true);
             // FBX disables scale by default; the false fallback is the
             // authored contract (schema.usda), not an oversight.
-            c.sX = bind(prim, "inputs:affectScaleX", false);
-            c.sY = bind(prim, "inputs:affectScaleY", false);
-            c.sZ = bind(prim, "inputs:affectScaleZ", false);
+            c.sX = bind(prim, _tokens->inputsAffectScaleX, false);
+            c.sY = bind(prim, _tokens->inputsAffectScaleY, false);
+            c.sZ = bind(prim, _tokens->inputsAffectScaleZ, false);
         } else if (fc.schemaType == "RigExecAimConstraint") {
-            c.affectX = bind(prim, "inputs:affectRotationX", true);
-            c.affectY = bind(prim, "inputs:affectRotationY", true);
-            c.affectZ = bind(prim, "inputs:affectRotationZ", true);
-            c.aimVector = bind(prim, "inputs:aimVector", GfVec3d(1, 0, 0));
+            c.affectX = bind(prim, _tokens->inputsAffectRotationX, true);
+            c.affectY = bind(prim, _tokens->inputsAffectRotationY, true);
+            c.affectZ = bind(prim, _tokens->inputsAffectRotationZ, true);
+            c.aimVector = bind(prim, _tokens->inputsAimVector, GfVec3d(1, 0, 0));
             const UsdAttribute aimAttr =
-                prim.GetAttribute(TfToken("inputs:aimVector"));
+                prim.GetAttribute(_tokens->inputsAimVector);
             // Whether it is authored, not what it holds: the value stays a
             // per-frame read (and so an override can stand on it), but the
             // choice between aimVector and the legacy aimAxis is baked.
-            foldShape(prim, "inputs:aimVector");
+            foldShape(prim, _tokens->inputsAimVector);
             c.aimVectorAuthored = aimAttr && aimAttr.HasAuthoredValueOpinion();
             // Existing assets author aimAxis but predate aimVector; keep that
             // meaning until they opt into the vector form.
-            const TfToken axis = readToken(prim, "rigExec:aimAxis", "x");
+            const TfToken axis = readToken(prim, _tokens->rigExecAimAxis, _tokens->x);
             c.aimAxisFallback = axis == "y" ? GfVec3d(0, 1, 0)
                               : axis == "z" ? GfVec3d(0, 0, 1)
                                             : GfVec3d(1, 0, 0);
-            c.upVector = bind(prim, "inputs:upVector", GfVec3d(0, 1, 0));
-            c.rotationOffset = bind(prim, "inputs:rotationOffset", GfVec3d(0));
-            c.worldUpVector = bind(prim, "inputs:worldUpVector",
+            c.upVector = bind(prim, _tokens->inputsUpVector, GfVec3d(0, 1, 0));
+            c.rotationOffset = bind(prim, _tokens->inputsRotationOffset, GfVec3d(0));
+            c.worldUpVector = bind(prim, _tokens->inputsWorldUpVector,
                                    GfVec3d(0, 1, 0));
-            c.worldUpType = readToken(prim, "rigExec:worldUpType", "none");
+            c.worldUpType = readToken(prim, _tokens->rigExecWorldUpType, _tokens->none);
             const std::string up = UsdGeomGetStageUpAxis(B.stage).GetString();
             c.sceneUp = (up == "Z" || up == "z") ? GfVec3d(0, 0, 1)
                                                  : GfVec3d(0, 1, 0);
             // The legacy aimTarget/aimAxis contract preserves input up; FBX
             // WorldUpType=None is the distinct minimum-swing mode.
             c.preserveInputUp =
-                targets(prim, "rigExec:sources").empty();
+                targets(prim, _tokens->rigExecSources).empty();
             c.worldUpObjectNamed = !fc.worldUpObject.IsEmpty();
             c.worldUpPath = fc.worldUpObject;
             c.worldUpObject =
@@ -1258,20 +1365,36 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
     // discovery order does not decide whether an upstream solver is visible.
     for(auto &solver:B.solvers) if(solver.type=="RigExecBlendPointFrames") {
         const auto prim=B.stage->GetPrimAtPath(solver.path);
-        const auto source=[&](const char *name) {
+        const auto source=[&](const TfToken &name) {
             SdfPathVector paths;
-            if(const auto rel=prim.GetRelationship(TfToken(name))) rel.GetTargets(&paths);
+            if(const auto rel=prim.GetRelationship(name)) rel.GetTargets(&paths);
             const auto found=paths.empty()?B.solverIndex.end():B.solverIndex.find(paths[0].GetPrimPath());
             return found==B.solverIndex.end()?-1:found->second;
         };
-        solver.inA=source("rigExec:inputA"); solver.inB=source("rigExec:inputB");
+        solver.inA=source(_tokens->rigExecInputA); solver.inB=source(_tokens->rigExecInputB);
     }
     // Retain only supported solver-input relationships as semantic
     // prerequisites. Generic relationships and authored stack order are not
     // imported into this list. All solver identities exist before this census.
+    const TfToken knownPorts[] = {
+        _tokens->rigExecControls, _tokens->rigExecStartFrame,
+        _tokens->rigExecRootControl, _tokens->rigExecEffectorControl,
+        _tokens->rigExecPoleControl, _tokens->rigExecSpace,
+        _tokens->rigExecInputA, _tokens->rigExecInputB, _tokens->rigExecStart,
+        _tokens->rigExecEnd, _tokens->rigExecDriverCurve,
+        _tokens->rigExecEndFrame, _tokens->rigExecTwistFrames,
+        _tokens->rigExecMidControl, _tokens->rigExecEndControl};
+    const auto portToken = [&](const std::string &port) {
+        for (const TfToken &known : knownPorts) {
+            if (known == port) {
+                return known;
+            }
+        }
+        return TfToken(port);
+    };
     for (auto &solver : B.solvers) {
         for (const auto &port : RigExecSolverRelationshipPorts(solver.kind)) {
-            auto targets = compileInputs.Targets(solver.path.AppendProperty(TfToken(port)));
+            auto targets = compileInputs.Targets(solver.path.AppendProperty(portToken(port)));
             // Structural-only Ribbon ports retain every authored target.
             // Numerical input ports select the binder's first target; FK
             // controls retain their ordered list.

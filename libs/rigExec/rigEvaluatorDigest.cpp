@@ -14,6 +14,7 @@
 #include "pxr/base/work/threadLimits.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
@@ -22,11 +23,174 @@
 #include "pxr/usd/usdGeom/xformable.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <set>
 #include <unordered_map>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecReadPhase, RigExecReadPhaseMetadataName))
+    ((rigExecInputElement, RigExecInputElementMetadataName))
+    ((rigExecJoint, "RigExecJoint"))
+    ((rigExecControl, "RigExecControl"))
+    ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
+    ((rigExecSpaceSwitch, "RigExecSpaceSwitch"))
+    ((rigExecAutoClavicle, "RigExecAutoClavicle"))
+    ((rigExecFkChain, "RigExecFkChain"))
+    ((rigExecTwistDistribution, "RigExecTwistDistribution"))
+    ((rigExecRibbon, "RigExecRibbon"))
+    ((rigExecBlendPointFrames, "RigExecBlendPointFrames"))
+    ((rigExecSplineIk, "RigExecSplineIk"))
+    ((parentSpace, "parent:space"))
+    ((parentDefaultSpace, "parent:defaultSpace"))
+    ((defaultSpace, "default:space"))
+    (points)
+    (normals)
+    (extent)
+    (widths)
+    ((rigExecActivation, "rigExec:activation"))
+    ((rigExecActiveSpaceAttribute, "rigExec:activeSpaceAttribute"))
+    ((rigExecAimAxis, "rigExec:aimAxis"))
+    ((rigExecAimTarget, "rigExec:aimTarget"))
+    ((rigExecAmountAttribute, "rigExec:amountAttribute"))
+    ((rigExecAnchor, "rigExec:anchor"))
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+    ((rigExecBindCoordinates, "rigExec:bindCoordinates"))
+    ((rigExecBlendInputs, "rigExec:blendInputs"))
+    ((rigExecBlendShape, "rigExec:blendShape"))
+    ((rigExecCage, "rigExec:cage"))
+    ((rigExecCombineMode, "rigExec:combineMode"))
+    ((rigExecControls, "rigExec:controls"))
+    ((rigExecCount, "rigExec:count"))
+    ((rigExecCurve, "rigExec:curve"))
+    ((rigExecDeltaSpace, "rigExec:deltaSpace"))
+    ((rigExecDriver, "rigExec:driver"))
+    ((rigExecDriverAttributes, "rigExec:driverAttributes"))
+    ((rigExecDriverBaseTransformSpaces, "rigExec:driverBaseTransformSpaces"))
+    ((rigExecDriverBaseTransforms, "rigExec:driverBaseTransforms"))
+    ((rigExecDriverCurve, "rigExec:driverCurve"))
+    ((rigExecDriverFrames, "rigExec:driverFrames"))
+    ((rigExecDriverTransformSpaces, "rigExec:driverTransformSpaces"))
+    ((rigExecDriverTransforms, "rigExec:driverTransforms"))
+    ((rigExecEffector, "rigExec:effector"))
+    ((rigExecEndJoint, "rigExec:endJoint"))
+    ((rigExecEvaluationMode, "rigExec:evaluationMode"))
+    ((rigExecFalloffProfile, "rigExec:falloffProfile"))
+    ((rigExecFirstJoint, "rigExec:firstJoint"))
+    ((rigExecFkControls, "rigExec:fkControls"))
+    ((rigExecIkBlendAttribute, "rigExec:ikBlendAttribute"))
+    ((rigExecIkTarget, "rigExec:ikTarget"))
+    ((rigExecIndices, "rigExec:indices"))
+    ((rigExecInfluences, "rigExec:influences"))
+    ((rigExecInputA, "rigExec:inputA"))
+    ((rigExecInputB, "rigExec:inputB"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecJointElements, "rigExec:jointElements"))
+    ((rigExecJoints, "rigExec:joints"))
+    ((rigExecMeshes, "rigExec:meshes"))
+    ((rigExecMode, "rigExec:mode"))
+    ((rigExecMoves, "rigExec:moves"))
+    ((rigExecOperation, "rigExec:operation"))
+    ((rigExecOrientationMode, "rigExec:orientationMode"))
+    ((rigExecPath, "rigExec:path"))
+    ((rigExecPathComponent, "rigExec:pathComponent"))
+    ((rigExecPathMeasure, "rigExec:pathMeasure"))
+    ((rigExecPivot, "rigExec:pivot"))
+    ((rigExecPlaneAxis, "rigExec:planeAxis"))
+    ((rigExecPlaneBounds, "rigExec:planeBounds"))
+    ((rigExecPointFrame, "rigExec:pointFrame"))
+    ((rigExecPoleControl, "rigExec:poleControl"))
+    ((rigExecPoleVectorMode, "rigExec:poleVectorMode"))
+    ((rigExecPoleVectorObjects, "rigExec:poleVectorObjects"))
+    ((rigExecPoseInputs, "rigExec:poseInputs"))
+    ((rigExecRangePolicy, "rigExec:rangePolicy"))
+    ((rigExecReferenceTransform, "rigExec:referenceTransform"))
+    ((rigExecReferenceTransformSpace, "rigExec:referenceTransformSpace"))
+    ((rigExecRepresentation, "rigExec:representation"))
+    ((rigExecRotationOrder, "rigExec:rotationOrder"))
+    ((rigExecSampleCount, "rigExec:sampleCount"))
+    ((rigExecSampleSource, "rigExec:sampleSource"))
+    ((rigExecSamples, "rigExec:samples"))
+    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+    ((rigExecSolverMode, "rigExec:solverMode"))
+    ((rigExecSources, "rigExec:sources"))
+    ((rigExecSpace, "rigExec:space"))
+    ((rigExecStartFramePolicy, "rigExec:startFramePolicy"))
+    ((rigExecSurface, "rigExec:surface"))
+    ((rigExecTarget, "rigExec:target"))
+    ((rigExecTargetPoints, "rigExec:targetPoints"))
+    ((rigExecTransform, "rigExec:transform"))
+    ((rigExecTransformSpace, "rigExec:transformSpace"))
+    ((rigExecUpPolicy, "rigExec:upPolicy"))
+    ((rigExecValues, "rigExec:values"))
+    ((rigExecVolumeWeights, "rigExec:volumeWeights"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecWorldUpObject, "rigExec:worldUpObject"))
+    ((rigExecWorldUpType, "rigExec:worldUpType"))
+);
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _scalarTokens,
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsAffectTranslationX, "inputs:affectTranslationX"))
+    ((inputsAffectTranslationY, "inputs:affectTranslationY"))
+    ((inputsAffectTranslationZ, "inputs:affectTranslationZ"))
+    ((inputsAffectRotationX, "inputs:affectRotationX"))
+    ((inputsAffectRotationY, "inputs:affectRotationY"))
+    ((inputsAffectRotationZ, "inputs:affectRotationZ"))
+    ((inputsAffectScaleX, "inputs:affectScaleX"))
+    ((inputsAffectScaleY, "inputs:affectScaleY"))
+    ((inputsAffectScaleZ, "inputs:affectScaleZ"))
+    ((inputsSourceWeights, "inputs:sourceWeights"))
+    ((inputsGain, "inputs:gain"))
+    ((rigExecAllowNegativeWeights, "rigExec:allowNegativeWeights"))
+    ((rigExecAutomaticRadius, "rigExec:automaticRadius"))
+    ((rigExecBasis, "rigExec:basis"))
+    ((rigExecBiases, "rigExec:biases"))
+    ((rigExecBlendShear, "rigExec:blendShear"))
+    ((rigExecDistanceMethod, "rigExec:distanceMethod"))
+    ((rigExecEnableRotation, "rigExec:enableRotation"))
+    ((rigExecEnableTranslation, "rigExec:enableTranslation"))
+    ((rigExecIkValue, "rigExec:ikValue"))
+    ((rigExecInputMean, "rigExec:inputMean"))
+    ((rigExecInputScale, "rigExec:inputScale"))
+    ((rigExecKernel, "rigExec:kernel"))
+    ((rigExecLayerActivations, "rigExec:layerActivations"))
+    ((rigExecLayerAlphas, "rigExec:layerAlphas"))
+    ((rigExecLayerSizes, "rigExec:layerSizes"))
+    ((rigExecNormalize, "rigExec:normalize"))
+    ((rigExecNormalizeMethod, "rigExec:normalizeMethod"))
+    ((rigExecOutputDefaults, "rigExec:outputDefaults"))
+    ((rigExecPoseFalloffs, "rigExec:poseFalloffs"))
+    ((rigExecPoseGains, "rigExec:poseGains"))
+    ((rigExecPoseRotations, "rigExec:poseRotations"))
+    ((rigExecPoseType, "rigExec:poseType"))
+    ((rigExecPrimvarName, "rigExec:primvarName"))
+    ((rigExecRadius, "rigExec:radius"))
+    ((rigExecRegularization, "rigExec:regularization"))
+    ((rigExecRotation, "rigExec:rotation"))
+    ((rigExecRotationFilters, "rigExec:rotationFilters"))
+    ((rigExecRotationRadius, "rigExec:rotationRadius"))
+    ((rigExecRotations, "rigExec:rotations"))
+    ((rigExecRowCut, "rigExec:rowCut"))
+    ((rigExecRowFrom, "rigExec:rowFrom"))
+    ((rigExecRowInputs, "rigExec:rowInputs"))
+    ((rigExecRowSlope, "rigExec:rowSlope"))
+    ((rigExecRowTo, "rigExec:rowTo"))
+    ((rigExecScale, "rigExec:scale"))
+    ((rigExecSolver, "rigExec:solver"))
+    ((rigExecSpaceLabels, "rigExec:spaceLabels"))
+    ((rigExecTranslation, "rigExec:translation"))
+    ((rigExecTranslationRadius, "rigExec:translationRadius"))
+    ((rigExecTwistAxis, "rigExec:twistAxis"))
+    ((rigExecWeightThreshold, "rigExec:weightThreshold"))
+    ((rigExecWeights, "rigExec:weights"))
+    ((rigExecWorldUpRotationOnly, "rigExec:worldUpRotationOnly"))
+);
 
 using namespace evaluatorDetail;
 
@@ -35,6 +199,25 @@ namespace {
 // Every path the structure digest writes is spelled through one of these
 // (see pathText.h).
 using _PathText = RigExecPathText;
+
+template <size_t N>
+std::array<TfToken, N>
+_FieldTokens(const char *const (&names)[N])
+{
+    std::array<TfToken, N> tokens;
+    for (size_t i = 0; i < N; ++i) {
+        tokens[i] = TfToken(names[i], TfToken::Immortal);
+    }
+    return tokens;
+}
+
+const auto _kDigestMoverInputTokens = _FieldTokens(kDigestMoverInputs);
+const auto _kDigestWeightObjectFieldTokens =
+    _FieldTokens(kDigestWeightObjectFields);
+const auto _kDigestBlendInputFieldTokens =
+    _FieldTokens(kDigestBlendInputFields);
+
+const std::string _kRootChainToken;
 
 // The Solvers digest's prefetch (see _ComputeStructureDigest) runs on more
 // than one lane only with at least this many prims to read, and gives every
@@ -53,13 +236,8 @@ constexpr size_t _kDigestPrefetchLanesBesideCompile = 4;
 // RIGEXEC_VERIFY_DIGEST_MEMO=1: every join also recomputes the Solvers
 // segment with its read memo off and fails fatally unless the two texts are
 // equal.
-static bool
-_DigestMemoVerifyRequested()
-{
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_VERIFY_DIGEST_MEMO", false);
-    return requested;
-}
+const bool _kVerifyDigestMemo =
+    TfGetenvBool("RIGEXEC_VERIFY_DIGEST_MEMO", false);
 
 // The index of the first byte at which two digest texts differ.
 static size_t
@@ -79,12 +257,13 @@ namespace evaluatorDetail {
 // RIGEXEC_VERIFY_DIGEST_SPLIT=1: every join of the three digest segments
 // also computes the whole digest serially and fails fatally unless the two
 // texts are equal.
+const bool _kVerifyDigestSplit =
+    TfGetenvBool("RIGEXEC_VERIFY_DIGEST_SPLIT", false);
+
 bool
 _DigestSplitVerifyRequested()
 {
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_VERIFY_DIGEST_SPLIT", false);
-    return requested;
+    return _kVerifyDigestSplit;
 }
 
 } // namespace evaluatorDetail
@@ -109,10 +288,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     std::string digest;
     // Every path this call writes is spelled through here (see _PathText).
     _PathText pathText;
-    // Made once here, never per read: constructing a token from text takes
-    // the token registry's lock, and readOf below runs on the prefetch's
-    // parallel lanes.
-    const TfToken phaseField(RigExecReadPhaseMetadataName);
+    const TfToken &phaseField = _tokens->rigExecReadPhase;
 
     const bool profileDigest = _profiler.IsEnabled();
     uint64_t digestRegionStart =
@@ -201,10 +377,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
     };
 
-    // Named by token where the caller already holds one -- the solver loop
-    // walks a prim's relationships and has each one's name -- and by string
-    // literal everywhere else, which interns the token on every call.
-    auto appendRelTargetsNamed =
+    auto appendRelTargets =
         [this, &digest, &noteRead, &noteTargets, &pathText](
             const UsdPrim &prim, const TfToken &nameToken, bool sorted) {
         SdfPathVector targets;
@@ -227,18 +400,13 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         digest += '|';
         return targets;
     };
-    auto appendRelTargets = [&appendRelTargetsNamed](const UsdPrim &prim,
-                                                     const char *name,
-                                                     bool sorted) {
-        return appendRelTargetsNamed(prim, TfToken(name), sorted);
-    };
     // A read phase decides WHICH revision of an input a mover consumes, which
     // is compiled wiring, not a value -- so editing one has to recompile
     // exactly the way retargeting the relationship does. Authored on the
     // property, so it is hashed alongside that property's targets rather than
     // as another prim-level token.
-    auto appendPhaseNamed = [&digest, &phaseField](const UsdPrim &prim,
-                                                   const TfToken &name) {
+    auto appendPhase = [&digest, &phaseField](const UsdPrim &prim,
+                                              const TfToken &name) {
         std::string authored;
         if (const UsdRelationship rel = prim.GetRelationship(name)) {
             rel.GetMetadata(phaseField, &authored);
@@ -250,22 +418,18 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         digest += authored;
         digest += '|';
     };
-    auto appendPhase = [&appendPhaseNamed](const UsdPrim &prim,
-                                           const char *name) {
-        appendPhaseNamed(prim, TfToken(name));
-    };
     auto appendToken = [&digest, &noteValueNamed](const UsdPrim &prim,
-                                                  const char *name) {
-        noteValueNamed(prim, TfToken(name));
+                                                  const TfToken &name) {
+        noteValueNamed(prim, name);
         TfToken value;
-        if (UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+        if (UsdAttribute a = prim.GetAttribute(name)) {
             a.Get(&value);
-            digest += name;
+            digest += name.GetString();
             digest += "#samples=";
             digest += std::to_string(a.GetNumTimeSamples());
             digest += '|';
         }
-        digest += name;
+        digest += name.GetString();
         digest += '=';
         digest += value.GetString();
         digest += '|';
@@ -274,12 +438,12 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // type switch: what the digest needs is that two different authored
     // values produce two different strings, not that the string is pretty.
     auto appendScalar = [&digest, &noteValueNamed](const UsdPrim &prim,
-                                                   const char *name) {
-        noteValueNamed(prim, TfToken(name));
-        digest += name;
+                                                   const TfToken &name) {
+        noteValueNamed(prim, name);
+        digest += name.GetString();
         digest += '=';
         VtValue value;
-        if (const UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+        if (const UsdAttribute a = prim.GetAttribute(name)) {
             a.Get(&value);
         }
         digest += TfStringify(value);
@@ -288,13 +452,13 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     auto appendAttributeBinding =
         [this, &digest, &noteRead, &noteSamples, &pathText,
          &appendRelTargets, &phaseField](const UsdPrim &prim,
-                                         const char *name) {
-        const UsdAttribute attr = prim.GetAttribute(TfToken(name));
+                                         const TfToken &name) {
+        const UsdAttribute attr = prim.GetAttribute(name);
         if (!attr && prim) {
-            noteSamples(prim.GetPath().AppendProperty(TfToken(name)),
+            noteSamples(prim.GetPath().AppendProperty(name),
                         TfToken());
         }
-        digest += name;
+        digest += name.GetString();
         digest += "@sources=";
         std::set<SdfPath> visiting;
         std::function<void(const UsdAttribute &)> append =
@@ -312,7 +476,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += pathText(a.GetPath());
             // Its type and sample count are written below.
             noteSamples(a.GetPath(), a.GetTypeName().GetAsToken());
-            const auto frameInputs = appendRelTargets(a.GetPrim(), "rigExec:poseInputs", false);
+            const auto frameInputs = appendRelTargets(a.GetPrim(), _tokens->rigExecPoseInputs, false);
             for (const SdfPath &input : frameInputs) noteRead(input);
             digest += ":" +
                       a.GetTypeName().GetAsToken().GetString() + ":samples:" +
@@ -345,7 +509,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
         digest += '|';
     };
-    auto appendFrameBindingIdentityNamed =
+    auto appendFrameBindingIdentity =
         [this, &digest, &noteRead, &noteTargets, &pathText](
             const UsdPrim &prim, const TfToken &nameToken) {
         SdfPathVector targets;
@@ -364,7 +528,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += ':';
             digest += type.GetString();
             digest += ':';
-            if (type == "RigExecControl" || type == "RigExecJoint") {
+            if (type == _tokens->rigExecControl ||
+                type == _tokens->rigExecJoint) {
                 digest += "frameTap";
             } else if (provider && UsdGeomXformable(provider)) {
                 digest += "nativeXform";
@@ -374,11 +539,6 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += ',';
         }
         digest += '|';
-    };
-    auto appendFrameBindingIdentity =
-        [&appendFrameBindingIdentityNamed](const UsdPrim &prim,
-                                           const char *name) {
-        appendFrameBindingIdentityNamed(prim, TfToken(name));
     };
 
     // Weight-object descriptor shape is compiled rig identity:
@@ -407,15 +567,15 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         } pop{digestVisiting, weightPath};
         digest += w.GetTypeName().GetString();
         digest += '|';
-        appendRelTargets(w, "rigExec:weightTarget", true);
-        appendRelTargets(w, "rigExec:baseWeight", true);
-        appendToken(w, "rigExec:representation");
-        appendToken(w, "rigExec:rangePolicy");
-        appendToken(w, "rigExec:operation");
+        appendRelTargets(w, _tokens->rigExecWeightTarget, true);
+        appendRelTargets(w, _tokens->rigExecBaseWeight, true);
+        appendToken(w, _tokens->rigExecRepresentation);
+        appendToken(w, _tokens->rigExecRangePolicy);
+        appendToken(w, _tokens->rigExecOperation);
         VtIntArray indices;
-        noteValueNamed(w, TfToken("rigExec:indices"));
-        noteValueNamed(w, TfToken("rigExec:values"));
-        if (UsdAttribute a = w.GetAttribute(TfToken("rigExec:indices"))) {
+        noteValueNamed(w, _tokens->rigExecIndices);
+        noteValueNamed(w, _tokens->rigExecValues);
+        if (UsdAttribute a = w.GetAttribute(_tokens->rigExecIndices)) {
             a.Get(&indices);
         }
         std::vector<int> support(indices.begin(), indices.end());
@@ -426,7 +586,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         }
         digest += '|';
         VtFloatArray values;
-        if (UsdAttribute a = w.GetAttribute(TfToken("rigExec:values"))) {
+        if (UsdAttribute a = w.GetAttribute(_tokens->rigExecValues)) {
             a.Get(&values);
         }
         digest += "rigExec:values#size=" +
@@ -437,7 +597,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // to carry the same value at the current time. Static fields include
         // these markers too so adding an illegal source re-enters Compile and
         // is rejected instead of replaying the old request.
-        for (const char *field : kDigestWeightObjectFields) {
+        for (const TfToken &field : _kDigestWeightObjectFieldTokens) {
             appendAttributeBinding(w, field);
         }
 
@@ -449,13 +609,13 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // frame an artist scrubs one. rigExec:planeBounds IS here
         // because it selects which field function runs, exactly as
         // rigExec:planeAxis selects which coordinate it measures.
-        appendToken(w, "rigExec:falloffProfile");
-        appendPhase(w, "rigExec:weightTarget");
-        appendToken(w, "rigExec:planeAxis");
-        appendToken(w, "rigExec:planeBounds");
-        appendToken(w, "rigExec:combineMode");
+        appendToken(w, _tokens->rigExecFalloffProfile);
+        appendPhase(w, _tokens->rigExecWeightTarget);
+        appendToken(w, _tokens->rigExecPlaneAxis);
+        appendToken(w, _tokens->rigExecPlaneBounds);
+        appendToken(w, _tokens->rigExecCombineMode);
         const SdfPathVector curveTargets =
-            appendRelTargets(w, "rigExec:curve", true);
+            appendRelTargets(w, _tokens->rigExecCurve, true);
         // A CurveWeight's relationship alone is not the complete structural
         // binding: the target must still resolve to a point3f[] attribute.
         // Hash that resolution so removing/retyping the source, or repairing
@@ -464,7 +624,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         for (const SdfPath &target : curveTargets) {
             const SdfPath pointsPath = target.IsPropertyPath()
                 ? target
-                : target.AppendProperty(TfToken("points"));
+                : target.AppendProperty(_tokens->points);
             const UsdAttribute points =
                 _stage->GetAttributeAtPath(pointsPath);
             digest += "rigExec:curveSource=";
@@ -475,7 +635,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 : std::string("missing");
             digest += '|';
         }
-        appendRelTargets(w, "rigExec:sampleSource", true);
+        appendRelTargets(w, _tokens->rigExecSampleSource, true);
         // The falloff curve is structural: it is resampled to a table
         // once per rig compilation, so an edit to it has to begin a new one.
         // What gets hashed is the BAKED TABLE, not the knots. Hashing
@@ -501,7 +661,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // Composition order is semantic for subtract and overlay, so the
         // input list is hashed UNSORTED -- unlike every other
         // relationship here, whose permutation is explicitly not.
-        static const TfToken kInputWeights("rigExec:inputWeights");
+        const TfToken &kInputWeights = _tokens->rigExecInputWeights;
         SdfPathVector inputs;
         if (UsdRelationship rel = w.GetRelationship(kInputWeights)) {
             rel.GetTargets(&inputs);
@@ -520,7 +680,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // A dynamic weight's base is composed the same way.
         SdfPathVector bases;
         if (UsdRelationship rel =
-                w.GetRelationship(TfToken("rigExec:baseWeight"))) {
+                w.GetRelationship(_tokens->rigExecBaseWeight)) {
             rel.GetTargets(&bases);
         }
         for (const SdfPath &t : bases) {
@@ -536,9 +696,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // there is no policy token left to hash: what the compiler synthesizes depends
         // only on which gprims author normals/extent, and that is already compiled rig
         // identity through the points-chain targets below.
-        static const TfToken kJointType("RigExecJoint");
-        static const TfToken kControlType("RigExecControl");
-        static const TfToken kInterpolatorType("RigExecPoseInterpolator");
+        const TfToken &kJointType = _tokens->rigExecJoint;
+        const TfToken &kControlType = _tokens->rigExecControl;
+        const TfToken &kInterpolatorType = _tokens->rigExecPoseInterpolator;
         for (const SdfPath &jointPath : _DiscoverJointOutputs(_stage, _rigPath)) {
             notePrim(jointPath, kJointType);
             digest += pathText(jointPath);
@@ -597,50 +757,55 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                                            : kInterpolatorType);
             digest += pathText(interpolatorPath);
             digest += '|';
-            appendRelTargets(interpolator, "rigExec:driver", false);
-            appendRelTargets(interpolator, "rigExec:driverAttributes", false);
-            for (const char *name : {"rigExec:kernel", "rigExec:twistAxis",
-                                     "rigExec:regularization",
-                                     "rigExec:normalize",
-                                     "rigExec:enableRotation",
-                                     "rigExec:enableTranslation",
-                                     "rigExec:allowNegativeWeights",
-                                     "rigExec:solver",
-                                     "rigExec:distanceMethod",
-                                     "rigExec:normalizeMethod",
-                                     "rigExec:automaticRadius",
-                                     "rigExec:radius",
-                                     "rigExec:weightThreshold",
-                                     "rigExec:layerSizes",
-                                     "rigExec:layerActivations",
-                                     "rigExec:layerAlphas",
-                                     "rigExec:weights",
-                                     "rigExec:biases",
-                                     "rigExec:inputMean",
-                                     "rigExec:inputScale",
-                                     "rigExec:outputDefaults"}) {
+            appendRelTargets(interpolator, _tokens->rigExecDriver, false);
+            appendRelTargets(interpolator, _tokens->rigExecDriverAttributes,
+                             false);
+            for (const TfToken &name :
+                 {_scalarTokens->rigExecKernel,
+                  _scalarTokens->rigExecTwistAxis,
+                  _scalarTokens->rigExecRegularization,
+                  _scalarTokens->rigExecNormalize,
+                  _scalarTokens->rigExecEnableRotation,
+                  _scalarTokens->rigExecEnableTranslation,
+                  _scalarTokens->rigExecAllowNegativeWeights,
+                  _scalarTokens->rigExecSolver,
+                  _scalarTokens->rigExecDistanceMethod,
+                  _scalarTokens->rigExecNormalizeMethod,
+                  _scalarTokens->rigExecAutomaticRadius,
+                  _scalarTokens->rigExecRadius,
+                  _scalarTokens->rigExecWeightThreshold,
+                  _scalarTokens->rigExecLayerSizes,
+                  _scalarTokens->rigExecLayerActivations,
+                  _scalarTokens->rigExecLayerAlphas,
+                  _scalarTokens->rigExecWeights,
+                  _scalarTokens->rigExecBiases,
+                  _scalarTokens->rigExecInputMean,
+                  _scalarTokens->rigExecInputScale,
+                  _scalarTokens->rigExecOutputDefaults}) {
                 appendScalar(interpolator, name);
             }
-            appendRelTargets(interpolator, "rigExec:meshes", false);
+            appendRelTargets(interpolator, _tokens->rigExecMeshes, false);
             for (const UsdPrim &pose : interpolator.GetChildren()) {
                 digest += pose.GetName().GetString();
                 digest += '=';
                 // An ML mover's outputs are its children of that type.
                 digest += pose.GetTypeName().GetString();
                 digest += '/';
-                for (const char *name : {"rigExec:poseType", "rigExec:rotation",
-                                         "rigExec:translation",
-                                         "rigExec:rotationRadius",
-                                         "rigExec:translationRadius",
-                                         "rigExec:rotations",
-                                         "rigExec:scale",
-                                         "rigExec:rowInputs",
-                                         "rigExec:rowFrom",
-                                         "rigExec:rowTo",
-                                         "rigExec:rowSlope",
-                                         "rigExec:rowCut",
-                                         "rigExec:primvarName",
-                                         "inputs:enabled"}) {
+                for (const TfToken &name :
+                     {_scalarTokens->rigExecPoseType,
+                      _scalarTokens->rigExecRotation,
+                      _scalarTokens->rigExecTranslation,
+                      _scalarTokens->rigExecRotationRadius,
+                      _scalarTokens->rigExecTranslationRadius,
+                      _scalarTokens->rigExecRotations,
+                      _scalarTokens->rigExecScale,
+                      _scalarTokens->rigExecRowInputs,
+                      _scalarTokens->rigExecRowFrom,
+                      _scalarTokens->rigExecRowTo,
+                      _scalarTokens->rigExecRowSlope,
+                      _scalarTokens->rigExecRowCut,
+                      _scalarTokens->rigExecPrimvarName,
+                      _scalarTokens->inputsEnabled}) {
                     appendScalar(pose, name);
                 }
                 digest += ';';
@@ -658,28 +823,29 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // must not rebuild the compiled rig.
     for (const UsdPrim &prim :
          UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
-        if (prim.GetTypeName() != "RigExecSpaceSwitch") continue;
+        if (prim.GetTypeName() != _tokens->rigExecSpaceSwitch) continue;
         digest += prim.GetPath().GetString();
         digest += '|';
-        appendRelTargets(prim, "rigExec:target", false);
-        appendRelTargets(prim, "rigExec:sources", false);
-        appendRelTargets(prim, "rigExec:activeSpaceAttribute", false);
+        appendRelTargets(prim, _tokens->rigExecTarget, false);
+        appendRelTargets(prim, _tokens->rigExecSources, false);
+        appendRelTargets(prim, _tokens->rigExecActiveSpaceAttribute, false);
         // The space decides a tap pair and the dependency order between
         // switches, so it is compiled rig identity like the sources it joins.
-        appendRelTargets(prim, "rigExec:space", false);
-        for (const char *name : {"rigExec:spaceLabels",
-                                 "rigExec:rotationFilters",
-                                 "rigExec:twistAxis",
-                                 "inputs:affectTranslationX",
-                                 "inputs:affectTranslationY",
-                                 "inputs:affectTranslationZ",
-                                 "inputs:affectRotationX",
-                                 "inputs:affectRotationY",
-                                 "inputs:affectRotationZ",
-                                 "inputs:affectScaleX",
-                                 "inputs:affectScaleY",
-                                 "inputs:affectScaleZ",
-                                 "inputs:sourceWeights"}) {
+        appendRelTargets(prim, _tokens->rigExecSpace, false);
+        for (const TfToken &name :
+             {_scalarTokens->rigExecSpaceLabels,
+              _scalarTokens->rigExecRotationFilters,
+              _scalarTokens->rigExecTwistAxis,
+              _scalarTokens->inputsAffectTranslationX,
+              _scalarTokens->inputsAffectTranslationY,
+              _scalarTokens->inputsAffectTranslationZ,
+              _scalarTokens->inputsAffectRotationX,
+              _scalarTokens->inputsAffectRotationY,
+              _scalarTokens->inputsAffectRotationZ,
+              _scalarTokens->inputsAffectScaleX,
+              _scalarTokens->inputsAffectScaleY,
+              _scalarTokens->inputsAffectScaleZ,
+              _scalarTokens->inputsSourceWeights}) {
             appendScalar(prim, name);
         }
         digest += '|';
@@ -690,20 +856,24 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     // channels and stay out, as a switch's active index does.
     for (const UsdPrim &prim :
          UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
-        if (prim.GetTypeName() != "RigExecAutoClavicle") continue;
+        if (prim.GetTypeName() != _tokens->rigExecAutoClavicle) continue;
         digest += prim.GetPath().GetString();
         digest += '|';
-        for (const char *rel :
-             {"rigExec:target", "rigExec:pivot", "rigExec:anchor",
-              "rigExec:fkControls", "rigExec:ikTarget", "rigExec:poleControl",
-              "rigExec:ikBlendAttribute", "rigExec:amountAttribute"}) {
+        for (const TfToken &rel :
+             {_tokens->rigExecTarget, _tokens->rigExecPivot,
+              _tokens->rigExecAnchor, _tokens->rigExecFkControls,
+              _tokens->rigExecIkTarget, _tokens->rigExecPoleControl,
+              _tokens->rigExecIkBlendAttribute,
+              _tokens->rigExecAmountAttribute}) {
             appendRelTargets(prim, rel, false);
         }
-        for (const char *name :
-             {"rigExec:ikValue", "inputs:gain", "rigExec:basis",
-              "rigExec:poseRotations", "rigExec:poseFalloffs",
-              "rigExec:poseGains", "rigExec:kernel",
-              "rigExec:regularization"}) {
+        for (const TfToken &name :
+             {_scalarTokens->rigExecIkValue, _scalarTokens->inputsGain,
+              _scalarTokens->rigExecBasis,
+              _scalarTokens->rigExecPoseRotations,
+              _scalarTokens->rigExecPoseFalloffs,
+              _scalarTokens->rigExecPoseGains, _scalarTokens->rigExecKernel,
+              _scalarTokens->rigExecRegularization}) {
             appendScalar(prim, name);
         }
         digest += '|';
@@ -724,7 +894,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += ':';
             digest += input.GetTypeName().GetAsToken().GetString();
             VtValue element;
-            if(input.GetMetadata(TfToken(RigExecInputElementMetadataName),&element)) {
+            if(input.GetMetadata(_tokens->rigExecInputElement,&element)) {
                 digest += "@element=";
                 digest += TfStringify(element);
             }
@@ -1034,9 +1204,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     // reads the namespace frame provider, whose token
                     // carries its own continuation of the chain.
                     const TfToken &name = attribute.GetName();
-                    if (name == "parent:space" ||
-                        name == "parent:defaultSpace" ||
-                        name == "default:space") {
+                    if (name == _tokens->parentSpace ||
+                        name == _tokens->parentDefaultSpace ||
+                        name == _tokens->defaultSpace) {
                         hop.depends.insert(frameParent);
                     }
                 }
@@ -1231,7 +1401,6 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         [this, &digest, &ancestorChainTokens, &appendSolverInputConnections,
          &noteAncestor, &pathText](const SdfPath &start)
             -> const std::string & {
-        static const std::string kRoot;
         // Walk up to the first path already known (or the root), noting the
         // ones that are not; then build them top-down so each finds its
         // parent's token ready.
@@ -1271,7 +1440,8 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     std::to_string(block.size()) + "|");
         }
         const auto found = ancestorChainTokens.find(start);
-        return found != ancestorChainTokens.end() ? found->second : kRoot;
+        return found != ancestorChainTokens.end() ? found->second
+                                                  : _kRootChainToken;
     };
     const UsdPrim rig = (segments & _DigestSolvers)
         ? _stage->GetPrimAtPath(_rigPath) : UsdPrim();
@@ -1362,9 +1532,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     }
                     if (made.isProvider && !made.frameParent.IsEmpty()) {
                         const TfToken &name = attribute.GetName();
-                        if (name == "parent:space" ||
-                            name == "parent:defaultSpace" ||
-                            name == "default:space") {
+                        if (name == _tokens->parentSpace ||
+                            name == _tokens->parentDefaultSpace ||
+                            name == _tokens->defaultSpace) {
                             made.hop.depends.insert(made.frameParent);
                         }
                     }
@@ -1456,12 +1626,12 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // and starts a new compiled rig -- which is the only reason a reordered
         // stack cannot keep a stale schedule. Do not "optimize" this into a
         // sorted set or a path-keyed map.
-        static const TfToken kJointsRel("rigExec:joints");
-        static const TfToken kJointElements("rigExec:jointElements");
-        static const TfToken kCount("rigExec:count");
-        static const TfToken kWeights("rigExec:weights");
-        static const TfToken kSampleCount("rigExec:sampleCount");
-        static const TfToken kVolumeWeights("rigExec:volumeWeights");
+        const TfToken &kJointsRel = _tokens->rigExecJoints;
+        const TfToken &kJointElements = _tokens->rigExecJointElements;
+        const TfToken &kCount = _tokens->rigExecCount;
+        const TfToken &kWeights = _scalarTokens->rigExecWeights;
+        const TfToken &kSampleCount = _tokens->rigExecSampleCount;
+        const TfToken &kVolumeWeights = _tokens->rigExecVolumeWeights;
         for (const UsdPrim &solver : UsdPrimRange(rig)) {
             SdfPathVector joints;
             if (const UsdRelationship rel =
@@ -1500,11 +1670,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 for (const UsdRelationship &rel : solver.GetRelationships()) {
                     const TfToken &name = rel.GetName();
                     const SdfPathVector targets =
-                        appendRelTargetsNamed(solver, name, false);
-                    appendFrameBindingIdentityNamed(solver, name);
+                        appendRelTargets(solver, name, false);
+                    appendFrameBindingIdentity(solver, name);
                     // A read phase on a solver input orders it against the
                     // constraints above it, so it is schedule identity.
-                    appendPhaseNamed(solver, name);
+                    appendPhase(solver, name);
                     for (const SdfPath &target : targets) {
                         digest += ancestorChainToken(target.GetPrimPath());
                     }
@@ -1545,14 +1715,14 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // edits that don't change frame count stay value-only.
             digest += "|card=";
             const TfToken stype = solver.GetTypeName();
-            if (stype == "RigExecFkChain") {
-                appendRelTargets(solver, "rigExec:controls", false);
+            if (stype == _tokens->rigExecFkChain) {
+                appendRelTargets(solver, _tokens->rigExecControls, false);
                 // The start-frame inference switch. Flipping it changes
                 // which provider the compile derives; the rule's other
                 // inputs (authored targets, joints, their ancestor
                 // chains) are hashed by the relationship loop above.
-                appendToken(solver, "rigExec:startFramePolicy");
-            } else if (stype == "RigExecTwistDistribution") {
+                appendToken(solver, _tokens->rigExecStartFramePolicy);
+            } else if (stype == _tokens->rigExecTwistDistribution) {
                 const UsdAttribute ca = solver.GetAttribute(kCount);
                 const UsdAttribute wa = solver.GetAttribute(kWeights);
                 noteValueNamed(solver, kCount);
@@ -1579,7 +1749,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                           "/" +
                           std::to_string(wa ? wa.GetNumTimeSamples() : 0) +
                           ",";
-            } else if (stype == "RigExecRibbon") {
+            } else if (stype == _tokens->rigExecRibbon) {
                 const UsdAttribute a = solver.GetAttribute(kSampleCount);
                 noteValueNamed(solver, kSampleCount);
                 int sc = 5;
@@ -1592,11 +1762,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // resolvedDriverPoints + a bind-time restDriverPoints
                 // capture, so rewiring it (or a layer-mute/variant switch
                 // that retargets it) is structural.
-                appendRelTargets(solver, "rigExec:driverCurve", false);
-            } else if (stype == "RigExecBlendPointFrames") {
-                appendRelTargets(solver, "rigExec:inputA", false);
-                appendRelTargets(solver, "rigExec:inputB", false);
-            } else if (stype == "RigExecSplineIk") {
+                appendRelTargets(solver, _tokens->rigExecDriverCurve, false);
+            } else if (stype == _tokens->rigExecBlendPointFrames) {
+                appendRelTargets(solver, _tokens->rigExecInputA, false);
+                appendRelTargets(solver, _tokens->rigExecInputB, false);
+            } else if (stype == _tokens->rigExecSplineIk) {
                 // Cardinality is the joints list, hashed above. The
                 // per-joint volume weights are a static parallel array
                 // whose length Compile() validates; hash the length and
@@ -1620,9 +1790,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
         // Native expression schemas can read posed frames via Exec
         // relationships. Retargeting those reads changes the pose schedule.
         if (rig) for (const UsdPrim &expression : UsdPrimRange(rig)) {
-            if (!expression.GetRelationship(TfToken("rigExec:poseInputs"))) continue;
+            if (!expression.GetRelationship(_tokens->rigExecPoseInputs)) continue;
             digest += pathText(expression.GetPath());
-            const auto inputs = appendRelTargets(expression, "rigExec:poseInputs", false);
+            const auto inputs = appendRelTargets(expression, _tokens->rigExecPoseInputs, false);
             appendSolverInputConnections(expression);
             for (const SdfPath &input : inputs) {
                 digest += ancestorChainToken(input);
@@ -1663,7 +1833,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // properties decides what the compiler synthesizes, so
                 // authoring or removing them is a structural edit.
                 if (canonical.IsPropertyPath() &&
-                    canonical.GetNameToken() == "points") {
+                    canonical.GetNameToken() == _tokens->points) {
                     const SdfPath owner = canonical.GetPrimPath();
                     // Point-domain cardinality is frozen descriptor shape.
                     // Hash every authored cardinality (not the point values)
@@ -1704,9 +1874,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         digest += ',';
                     }
                     digest += '|';
-                    auto authored = [this, &owner](const char *name) {
+                    auto authored = [this, &owner](const TfToken &name) {
                         const UsdAttribute a = _stage->GetAttributeAtPath(
-                            owner.AppendProperty(TfToken(name)));
+                            owner.AppendProperty(name));
                         return a && a.HasAuthoredValue();
                     };
                     digest += "derived=";
@@ -1715,9 +1885,9 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                             _stage->GetPrimAtPath(owner)) {
                         digest += ownerPrim.GetTypeName().GetString();
                     }
-                    digest += authored("normals") ? 'n' : '-';
-                    digest += authored("extent") ? 'e' : '-';
-                    digest += authored("widths") ? 'w' : '-';
+                    digest += authored(_tokens->normals) ? 'n' : '-';
+                    digest += authored(_tokens->extent) ? 'e' : '-';
+                    digest += authored(_tokens->widths) ? 'w' : '-';
                     digest += ',';
                 }
             }
@@ -1765,61 +1935,66 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             digest += ';';
 
             // Declared dependency wiring and read phases.
-            appendRelTargets(prim, "rigExec:transform", true);
-            appendRelTargets(prim, "rigExec:transformSpace", true);
+            appendRelTargets(prim, _tokens->rigExecTransform, true);
+            appendRelTargets(prim, _tokens->rigExecTransformSpace, true);
             // The carry decides a tap and a slot, so it is compiled rig
             // identity exactly as the measuring space is.
-            appendRelTargets(prim, "rigExec:space", true);
-            appendRelTargets(prim, "rigExec:referenceTransform", true);
-            appendRelTargets(prim, "rigExec:referenceTransformSpace", true);
-            appendRelTargets(prim, "rigExec:driverTransforms", false);
-            appendRelTargets(prim, "rigExec:driverTransformSpaces", false);
-            appendRelTargets(prim, "rigExec:driverBaseTransforms", false);
-            appendRelTargets(prim, "rigExec:driverBaseTransformSpaces", false);
+            appendRelTargets(prim, _tokens->rigExecSpace, true);
+            appendRelTargets(prim, _tokens->rigExecReferenceTransform, true);
+            appendRelTargets(prim, _tokens->rigExecReferenceTransformSpace,
+                             true);
+            appendRelTargets(prim, _tokens->rigExecDriverTransforms, false);
+            appendRelTargets(prim, _tokens->rigExecDriverTransformSpaces,
+                             false);
+            appendRelTargets(prim, _tokens->rigExecDriverBaseTransforms,
+                             false);
+            appendRelTargets(prim, _tokens->rigExecDriverBaseTransformSpaces,
+                             false);
             // Influence order is semantic: jointIndices index into it.
-            appendRelTargets(prim, "rigExec:influences", false);
-            appendToken(prim, "rigExec:skinningMethod");
-            appendToken(prim, "rigExec:operation");
-            appendToken(prim, "rigExec:mode");
-            appendToken(prim, "rigExec:deltaSpace");
+            appendRelTargets(prim, _tokens->rigExecInfluences, false);
+            appendToken(prim, _tokens->rigExecSkinningMethod);
+            appendToken(prim, _tokens->rigExecOperation);
+            appendToken(prim, _tokens->rigExecMode);
+            appendToken(prim, _tokens->rigExecDeltaSpace);
             // Compiled into the revision: it selects the cluster's
             // point-frame correction in the fold.
-            appendToken(prim, "rigExec:pointFrame");
-            for (const char *input : kDigestMoverInputs) {
+            appendToken(prim, _tokens->rigExecPointFrame);
+            for (const TfToken &input : _kDigestMoverInputTokens) {
                 appendAttributeBinding(prim, input);
             }
             // Pose-constraint wiring. Source order is semantic because every
             // source has a parallel weight (and Parent has parallel offsets),
             // so it must never be sorted. aimTarget remains the legacy
             // single-source spelling and is hashed for existing assets.
-            appendRelTargets(prim, "rigExec:aimTarget", false);
-            appendRelTargets(prim, "rigExec:sources", false);
-            appendRelTargets(prim, "rigExec:worldUpObject", false);
-            appendRelTargets(prim, "rigExec:firstJoint", false);
-            appendRelTargets(prim, "rigExec:endJoint", false);
-            appendRelTargets(prim, "rigExec:effector", false);
-            appendRelTargets(prim, "rigExec:poleVectorObjects", false);
+            appendRelTargets(prim, _tokens->rigExecAimTarget, false);
+            appendRelTargets(prim, _tokens->rigExecSources, false);
+            appendRelTargets(prim, _tokens->rigExecWorldUpObject, false);
+            appendRelTargets(prim, _tokens->rigExecFirstJoint, false);
+            appendRelTargets(prim, _tokens->rigExecEndJoint, false);
+            appendRelTargets(prim, _tokens->rigExecEffector, false);
+            appendRelTargets(prim, _tokens->rigExecPoleVectorObjects, false);
             if (_IsFrameConstraintType(prim.GetTypeName())) {
-                appendFrameBindingIdentity(prim, "rigExec:moves");
-                appendFrameBindingIdentity(prim, "rigExec:aimTarget");
-                appendFrameBindingIdentity(prim, "rigExec:sources");
-                appendFrameBindingIdentity(prim, "rigExec:worldUpObject");
-                appendFrameBindingIdentity(prim, "rigExec:firstJoint");
-                appendFrameBindingIdentity(prim, "rigExec:endJoint");
-                appendFrameBindingIdentity(prim, "rigExec:effector");
+                appendFrameBindingIdentity(prim, _tokens->rigExecMoves);
+                appendFrameBindingIdentity(prim, _tokens->rigExecAimTarget);
+                appendFrameBindingIdentity(prim, _tokens->rigExecSources);
+                appendFrameBindingIdentity(prim,
+                                           _tokens->rigExecWorldUpObject);
+                appendFrameBindingIdentity(prim, _tokens->rigExecFirstJoint);
+                appendFrameBindingIdentity(prim, _tokens->rigExecEndJoint);
+                appendFrameBindingIdentity(prim, _tokens->rigExecEffector);
                 appendFrameBindingIdentity(
-                    prim, "rigExec:poleVectorObjects");
-                appendToken(prim, "rigExec:rotationOrder");
-                appendToken(prim, "rigExec:worldUpType");
-                appendToken(prim, "rigExec:aimAxis");
-                appendToken(prim, "rigExec:upPolicy");
-                appendToken(prim, "rigExec:solverMode");
-                appendToken(prim, "rigExec:poleVectorMode");
-                appendToken(prim, "rigExec:evaluationMode");
-                appendToken(prim, "rigExec:orientationMode");
+                    prim, _tokens->rigExecPoleVectorObjects);
+                appendToken(prim, _tokens->rigExecRotationOrder);
+                appendToken(prim, _tokens->rigExecWorldUpType);
+                appendToken(prim, _tokens->rigExecAimAxis);
+                appendToken(prim, _tokens->rigExecUpPolicy);
+                appendToken(prim, _tokens->rigExecSolverMode);
+                appendToken(prim, _tokens->rigExecPoleVectorMode);
+                appendToken(prim, _tokens->rigExecEvaluationMode);
+                appendToken(prim, _tokens->rigExecOrientationMode);
                 // Uniform opt-ins compiled into the constraint record.
-                appendScalar(prim, "rigExec:blendShear");
-                appendScalar(prim, "rigExec:worldUpRotationOnly");
+                appendScalar(prim, _scalarTokens->rigExecBlendShear);
+                appendScalar(prim, _scalarTokens->rigExecWorldUpRotationOnly);
             }
             // Static-input relationships captured at compile into generated
             // resolved*/rest* wiring (lattice cage, surface, curve bind/
@@ -1829,23 +2004,24 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // a reorder that changes the selected input must change the
             // digest. An absent rel appends a constant
             // empty marker (harmless, invariant per mover type).
-            appendRelTargets(prim, "rigExec:cage", false);
-            appendRelTargets(prim, "rigExec:surface", false);
-            appendRelTargets(prim, "rigExec:bindCoordinates", false);
-            for (const char *phased : {"rigExec:transform",
-                                       "rigExec:influences",
-                                       "rigExec:driverTransforms",
-                                       "rigExec:cage", "rigExec:surface",
-                                       "rigExec:bindCoordinates",
-                                       "rigExec:driverCurve"}) {
+            appendRelTargets(prim, _tokens->rigExecCage, false);
+            appendRelTargets(prim, _tokens->rigExecSurface, false);
+            appendRelTargets(prim, _tokens->rigExecBindCoordinates, false);
+            for (const TfToken &phased : {_tokens->rigExecTransform,
+                                          _tokens->rigExecInfluences,
+                                          _tokens->rigExecDriverTransforms,
+                                          _tokens->rigExecCage,
+                                          _tokens->rigExecSurface,
+                                          _tokens->rigExecBindCoordinates,
+                                          _tokens->rigExecDriverCurve}) {
                 appendPhase(prim, phased);
             }
-            appendRelTargets(prim, "rigExec:driverFrames", false);
-            appendRelTargets(prim, "rigExec:driverCurve", false);
+            appendRelTargets(prim, _tokens->rigExecDriverFrames, false);
+            appendRelTargets(prim, _tokens->rigExecDriverCurve, false);
             // A path operation's curve is validated at compile.
-            appendRelTargets(prim, "rigExec:path", false);
-            appendToken(prim, "rigExec:pathComponent");
-            appendToken(prim, "rigExec:pathMeasure");
+            appendRelTargets(prim, _tokens->rigExecPath, false);
+            appendToken(prim, _tokens->rigExecPathComponent);
+            appendToken(prim, _tokens->rigExecPathMeasure);
             if (const RigExecMoverHandler *handler =
                     RigExecFindMoverHandler(prim.GetTypeName());
                 handler && handler->assembleExternal) {
@@ -1853,32 +2029,33 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // Their target order and read phases are compiled wiring.
                 for (const UsdRelationship &rel : prim.GetRelationships()) {
                     if (rel.GetName() == _movesRel) continue;
-                    appendRelTargetsNamed(prim, rel.GetName(), false);
-                    appendPhaseNamed(prim, rel.GetName());
+                    appendRelTargets(prim, rel.GetName(), false);
+                    appendPhase(prim, rel.GetName());
                 }
             }
             for (const SdfPath &w :
-                 appendRelTargets(prim, "rigExec:weightObject", true)) {
+                 appendRelTargets(prim, _tokens->rigExecWeightObject, true)) {
                 appendWeightObject(w);
             }
             for (const SdfPath &inputPath :
-                 appendRelTargets(prim, "rigExec:blendInputs", true)) {
+                 appendRelTargets(prim, _tokens->rigExecBlendInputs, true)) {
                 const UsdPrim input = _stage->GetPrimAtPath(inputPath);
                 if (!input) {
                     continue;
                 }
-                for (const char *field : kDigestBlendInputFields) {
+                for (const TfToken &field : _kDigestBlendInputFieldTokens) {
                     appendAttributeBinding(input, field);
                 }
                 for (const SdfPath &samplePath :
-                     appendRelTargets(input, "rigExec:samples", true)) {
+                     appendRelTargets(input, _tokens->rigExecSamples, true)) {
                     const UsdPrim sample =
                         _stage->GetPrimAtPath(samplePath.GetPrimPath());
                     if (!sample) {
                         continue;
                     }
-                    appendRelTargets(sample, "rigExec:targetPoints", true);
-                    appendPhase(sample, "rigExec:targetPoints");
+                    appendRelTargets(sample, _tokens->rigExecTargetPoints,
+                                     true);
+                    appendPhase(sample, _tokens->rigExecTargetPoints);
                     // WHICH blend shape a sparse sample names is structure,
                     // so it belongs in the compiled rig signature. What the shape
                     // CONTAINS deliberately does not: offsets and
@@ -1887,11 +2064,11 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                     // every notice -- a sculpt edit is caught by the cache's
                     // array compare on the next frame without forcing a
                     // recompile of the whole rig.
-                    appendRelTargets(sample, "rigExec:blendShape", true);
+                    appendRelTargets(sample, _tokens->rigExecBlendShape, true);
                     float activation = 1;
-                    noteValueNamed(sample, TfToken("rigExec:activation"));
+                    noteValueNamed(sample, _tokens->rigExecActivation);
                     if (UsdAttribute a = sample.GetAttribute(
-                            TfToken("rigExec:activation"))) {
+                            _tokens->rigExecActivation)) {
                         a.Get(&activation);
                     }
                     // Activation edits are structural.
@@ -1919,7 +2096,7 @@ RigExecRigEvaluator::_JoinStructureDigest(
     for (const std::string &part : parts) {
         digest += part;
     }
-    if (_DigestMemoVerifyRequested() && _stage) {
+    if (_kVerifyDigestMemo && _stage) {
         const std::string unmemoized =
             _ComputeStructureDigest(_DigestSolvers | _DigestUnmemoizedReads);
         if (unmemoized != parts[1]) {

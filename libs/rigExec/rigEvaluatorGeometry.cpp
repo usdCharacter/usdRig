@@ -12,6 +12,7 @@
 #include "rigExecMath/weightFields.h"
 #include "rigExecScene/weightProgram.h"
 
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/ts/spline.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
@@ -25,6 +26,14 @@
 
 namespace rigExec {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    (curve)
+    (xformOpOrder)
+    ((rigExecWeightTarget, "rigExec:weightTarget"))
+    ((rigExecCurve, "rigExec:curve"))
+);
+
 namespace evaluatorDetail {
 
 bool
@@ -32,9 +41,9 @@ _VolumeWeightSamplesInFlight(const UsdPrim &weight, bool *inFlight,
                              std::string *error)
 {
     *inFlight = false;
-    for (const char *name : {"rigExec:weightTarget", "rigExec:curve"}) {
+    for (const TfToken &name : {_tokens->rigExecWeightTarget, _tokens->rigExecCurve}) {
         RigExecReadPhase phase;std::string why;
-        if (!RigExecResolveReadPhase(weight.GetRelationship(TfToken(name)),&phase,&why)) {
+        if (!RigExecResolveReadPhase(weight.GetRelationship(name),&phase,&why)) {
             *error=why;return false;
         }
         if (!phase.IsBase())*inFlight=true;
@@ -70,7 +79,7 @@ _BakeFalloffLut(const UsdPrim &prim)
         a.Get(&profile);
     }
     const UsdAttribute curve = prim.GetAttribute(_falloffCurveAttr);
-    if (profile != "curve" || !curve || !curve.HasSpline())
+    if (profile != _tokens->curve || !curve || !curve.HasSpline())
         return RigExecBakeWeightFalloff(profile);
     const TsSpline spline=curve.GetSpline();
     return RigExecBakeWeightFalloff(profile,&spline);
@@ -243,7 +252,7 @@ RigExecRigEvaluator::GetCompiledRigRestFrameCount() const
         if (fixed) {
             const auto &scene = *B.sceneDescriptors;
             fixed = scene.nodes.count(path) != 0;
-            const auto orderPath = path.AppendProperty(TfToken("xformOpOrder"));
+            const auto orderPath = path.AppendProperty(_tokens->xformOpOrder);
             const auto order = scene.attributes.find(orderPath);
             if (fixed && order != scene.attributes.end()) {
                 const auto constant = [](const auto &attribute) {
@@ -254,10 +263,11 @@ RigExecRigEvaluator::GetCompiledRigRestFrameCount() const
                 if (fixed && !order->second.inputs.empty() &&
                     order->second.inputs[0].raw.IsHolding<VtTokenArray>()) {
                     for (const auto &token : order->second.inputs[0].raw.UncheckedGet<VtTokenArray>()) {
-                        auto name = token.GetString();
+                        const auto &name = token.GetString();
                         if (name == "!resetXformStack!") break;
-                        if (name.compare(0, 8, "!invert!") == 0) name.erase(0, 8);
-                        const auto op = scene.attributes.find(path.AppendProperty(TfToken(name)));
+                        const bool inverted = name.compare(0, 8, "!invert!") == 0;
+                        const auto op = scene.attributes.find(path.AppendProperty(
+                            inverted ? TfToken(name.substr(8)) : token));
                         if (op == scene.attributes.end() || !constant(op->second)) { fixed = false; break; }
                     }
                 }

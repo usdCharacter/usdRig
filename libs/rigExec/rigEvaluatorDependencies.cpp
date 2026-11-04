@@ -9,6 +9,7 @@
 #include "pxr/base/work/loops.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
@@ -20,6 +21,41 @@
 #include <unordered_map>
 
 namespace rigExec {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((rigExecJoint, "RigExecJoint"))
+    ((rigExecControl, "RigExecControl"))
+    ((rigExecPoseInterpolator, "RigExecPoseInterpolator"))
+    ((rigExecMlMover, "RigExecMlMover"))
+    ((rigExecAnimatedMaps, "RigExecAnimatedMaps"))
+    ((rigExecFkChain, "RigExecFkChain"))
+    ((rigExecTwoBoneIk, "RigExecTwoBoneIk"))
+    ((rigExecBlendPointFrames, "RigExecBlendPointFrames"))
+    ((rigExecTwistDistribution, "RigExecTwistDistribution"))
+    ((rigExecRibbon, "RigExecRibbon"))
+    ((rigExecSplineIk, "RigExecSplineIk"))
+    ((rigExecJoints, "rigExec:joints"))
+    ((rigExecPoseInputs, "rigExec:poseInputs"))
+    ((parentSpace, "parent:space"))
+    ((parentDefaultSpace, "parent:defaultSpace"))
+    ((posedDefaultSpace, "posed:defaultSpace"))
+    ((avarsDefaultSpace, "avars:defaultSpace"))
+    ((defaultSpace, "default:space"))
+    ((defaultTx, "default:tx"))
+    ((defaultTy, "default:ty"))
+    ((defaultTz, "default:tz"))
+    ((defaultRx, "default:rx"))
+    ((defaultRy, "default:ry"))
+    ((defaultRz, "default:rz"))
+    ((restSpace, "rest:space"))
+    ((restTx, "rest:tx"))
+    ((restTy, "rest:ty"))
+    ((restTz, "rest:tz"))
+    ((restRx, "rest:rx"))
+    ((restRy, "rest:ry"))
+    ((restRz, "rest:rz"))
+);
 
 using namespace evaluatorDetail;
 
@@ -52,8 +88,8 @@ _OwningOperation(UsdPrim prim, const SdfPath &rigPath)
     for (; prim && prim.GetPath().HasPrefix(rigPath); prim = prim.GetParent()) {
         if (prim.GetRelationship(_movesRel) ||
             _IsAggregateSolverType(prim.GetTypeName()) ||
-            prim.GetTypeName() == "RigExecPoseInterpolator" ||
-            prim.GetRelationship(TfToken("rigExec:joints"))) {
+            prim.GetTypeName() == _tokens->rigExecPoseInterpolator ||
+            prim.GetRelationship(_tokens->rigExecJoints)) {
             return prim.GetPath();
         }
     }
@@ -136,8 +172,8 @@ std::vector<SdfPath>
 _DiscoverJointOutputs(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                       const std::map<SdfPath, std::string> &skipped)
 {
-    static const TfToken kJointType("RigExecJoint");
-    static const TfToken kJointsRel("rigExec:joints");
+    const TfToken &kJointType = _tokens->rigExecJoint;
+    const TfToken &kJointsRel = _tokens->rigExecJoints;
 
     std::vector<SdfPath> joints;
     std::set<SdfPath> seen;
@@ -190,8 +226,9 @@ _DiscoverPoseInterpolators(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 {
     return _DiscoverPaths(stage, rigPath, [](const UsdPrim &prim) {
         const TfToken &type = prim.GetTypeName();
-        return type == "RigExecPoseInterpolator" || type == "RigExecMlMover" ||
-               type == "RigExecAnimatedMaps";
+        return type == _tokens->rigExecPoseInterpolator ||
+               type == _tokens->rigExecMlMover ||
+               type == _tokens->rigExecAnimatedMaps;
     });
 }
 
@@ -208,7 +245,7 @@ std::vector<SdfPath>
 _DiscoverControls(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 {
     return _DiscoverPaths(stage, rigPath, [](const UsdPrim &prim) {
-        return prim.GetTypeName() == "RigExecControl";
+        return prim.GetTypeName() == _tokens->rigExecControl;
     });
 }
 
@@ -227,15 +264,18 @@ _DiscoverVolumeWeights(const UsdStageRefPtr &stage, const SdfPath &rigPath)
 
 // Every solver type that publishes computePointFrameArray for view-free
 // joint extraction.
+const TfToken _kAggregateSolverTypes[] = {
+    _tokens->rigExecFkChain, _tokens->rigExecTwoBoneIk,
+    _tokens->rigExecBlendPointFrames,
+    _tokens->rigExecTwistDistribution, _tokens->rigExecRibbon,
+    _tokens->rigExecSplineIk};
+
 bool
 _IsAggregateSolverType(const TfToken &typeName)
 {
-    static const std::set<TfToken> kAggregateSolverTypes = {
-        TfToken("RigExecFkChain"), TfToken("RigExecTwoBoneIk"),
-        TfToken("RigExecBlendPointFrames"),
-        TfToken("RigExecTwistDistribution"), TfToken("RigExecRibbon"),
-        TfToken("RigExecSplineIk")};
-    return kAggregateSolverTypes.count(typeName) > 0;
+    return std::find(std::begin(_kAggregateSolverTypes),
+                     std::end(_kAggregateSolverTypes),
+                     typeName) != std::end(_kAggregateSolverTypes);
 }
 
 // Discovers aggregate solvers by TYPE anywhere beneath the rig (no
@@ -296,7 +336,7 @@ _CollectPoseInputInfo(const UsdPrim &prim)
         for (const SdfPath &source : sources) pending.emplace_back(source, true);
         const UsdPrim provider = attribute.GetPrim();
         SdfPathVector frameInputs;
-        if (auto rel = provider.GetRelationship(TfToken("rigExec:poseInputs")))
+        if (auto rel = provider.GetRelationship(_tokens->rigExecPoseInputs))
             rel.GetTargets(&frameInputs);
         for (const SdfPath &input : frameInputs) {
             info.providers.insert(input);
@@ -304,32 +344,35 @@ _CollectPoseInputInfo(const UsdPrim &prim)
         }
         if (!_IsFrameProvider(provider)) continue;
         const TfToken name = attribute.GetName();
-        const auto add = [&](const UsdPrim &owner, const char *input) {
+        const auto add = [&](const UsdPrim &owner, const TfToken &input) {
             if (owner) pending.emplace_back(owner.GetPath().AppendProperty(
-                TfToken(input)), connected);
+                input), connected);
         };
-        if (name == "parent:space") {
+        if (name == _tokens->parentSpace) {
             const UsdPrim parent = _NamespaceFrameProvider(provider);
             if (parent) {
                 info.providers.insert(parent.GetPath());
                 info.connectedPose = info.connectedPose || connected;
             }
-        } else if (name == "parent:defaultSpace") {
-            add(_NamespaceFrameProvider(provider), "default:space");
-        } else if (name == "posed:defaultSpace") {
-            add(provider, "avars:defaultSpace");
-        } else if (name == "avars:defaultSpace") {
-            add(provider, "default:space");
-        } else if (name == "default:space") {
-            add(provider, "parent:defaultSpace");
-            for (const char *input : {"default:tx", "default:ty", "default:tz",
-                 "default:rx", "default:ry", "default:rz", "rest:space",
-                 "rest:tx", "rest:ty", "rest:tz", "rest:rx", "rest:ry", "rest:rz"}) {
+        } else if (name == _tokens->parentDefaultSpace) {
+            add(_NamespaceFrameProvider(provider), _tokens->defaultSpace);
+        } else if (name == _tokens->posedDefaultSpace) {
+            add(provider, _tokens->avarsDefaultSpace);
+        } else if (name == _tokens->avarsDefaultSpace) {
+            add(provider, _tokens->defaultSpace);
+        } else if (name == _tokens->defaultSpace) {
+            add(provider, _tokens->parentDefaultSpace);
+            for (const TfToken &input : {_tokens->defaultTx, _tokens->defaultTy,
+                 _tokens->defaultTz, _tokens->defaultRx, _tokens->defaultRy,
+                 _tokens->defaultRz, _tokens->restSpace, _tokens->restTx,
+                 _tokens->restTy, _tokens->restTz, _tokens->restRx,
+                 _tokens->restRy, _tokens->restRz}) {
                 add(provider, input);
             }
             const UsdPrim parent = _NamespaceFrameProvider(provider);
-            for (const char *input : {"rest:space", "rest:tx", "rest:ty",
-                 "rest:tz", "rest:rx", "rest:ry", "rest:rz"}) add(parent, input);
+            for (const TfToken &input : {_tokens->restSpace, _tokens->restTx,
+                 _tokens->restTy, _tokens->restTz, _tokens->restRx,
+                 _tokens->restRy, _tokens->restRz}) add(parent, input);
         }
     }
     info.attributes.assign(attributes.begin(), attributes.end());
@@ -461,25 +504,29 @@ _PoseInputGraph::_MarkRead(uint32_t attr, bool exists, SdfPathVector &&sources)
     }
 }
 
+const TfToken _kExpandOwnInputs[] = {
+    _tokens->parentDefaultSpace, _tokens->defaultTx,
+    _tokens->defaultTy, _tokens->defaultTz, _tokens->defaultRx,
+    _tokens->defaultRy, _tokens->defaultRz, _tokens->restSpace,
+    _tokens->restTx, _tokens->restTy, _tokens->restTz,
+    _tokens->restRx, _tokens->restRy, _tokens->restRz};
+const TfToken _kExpandRestInputs[] = {
+    _tokens->restSpace, _tokens->restTx, _tokens->restTy,
+    _tokens->restTz, _tokens->restRx, _tokens->restRy,
+    _tokens->restRz};
+
 void
 _PoseInputGraph::_ExpandNode(uint32_t node,
                              const std::function<bool(const SdfPath &)> &skip)
 {
-    static const TfToken parentSpace("parent:space");
-    static const TfToken parentDefaultSpace("parent:defaultSpace");
-    static const TfToken posedDefaultSpace("posed:defaultSpace");
-    static const TfToken avarsDefaultSpace("avars:defaultSpace");
-    static const TfToken defaultSpace("default:space");
-    static const TfToken ownInputs[] = {
-        TfToken("parent:defaultSpace"), TfToken("default:tx"),
-        TfToken("default:ty"), TfToken("default:tz"), TfToken("default:rx"),
-        TfToken("default:ry"), TfToken("default:rz"), TfToken("rest:space"),
-        TfToken("rest:tx"), TfToken("rest:ty"), TfToken("rest:tz"),
-        TfToken("rest:rx"), TfToken("rest:ry"), TfToken("rest:rz")};
-    static const TfToken restInputs[] = {
-        TfToken("rest:space"), TfToken("rest:tx"), TfToken("rest:ty"),
-        TfToken("rest:tz"), TfToken("rest:rx"), TfToken("rest:ry"),
-        TfToken("rest:rz")};
+    const auto &T = *_tokens;
+    const TfToken &parentSpace = T.parentSpace;
+    const TfToken &parentDefaultSpace = T.parentDefaultSpace;
+    const TfToken &posedDefaultSpace = T.posedDefaultSpace;
+    const TfToken &avarsDefaultSpace = T.avarsDefaultSpace;
+    const TfToken &defaultSpace = T.defaultSpace;
+    const auto &ownInputs = _kExpandOwnInputs;
+    const auto &restInputs = _kExpandRestInputs;
 
     const uint32_t attr = node >> 1;
     const uint32_t connected = node & 1u;
@@ -737,7 +784,7 @@ _PoseInputGraph::Extend(
                     const UsdPrim prim =
                         stage->GetPrimAtPath(_prims[task.prim].path);
                     if (prim && !_prims[task.prim].read) {
-                        if (auto rel = prim.GetRelationship(TfToken("rigExec:poseInputs")))
+                        if (auto rel = prim.GetRelationship(_tokens->rigExecPoseInputs))
                             rel.GetTargets(&read.frameInputs);
                         const TfToken type = prim.GetTypeName();
                         read.providerType = _IsFrameProviderType(type);

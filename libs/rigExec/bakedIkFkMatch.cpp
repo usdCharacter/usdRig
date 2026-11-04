@@ -11,6 +11,7 @@
 #include "rigExecScene/poseProgram.h"
 
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/types.h"
 
 #include <algorithm>
@@ -19,6 +20,12 @@
 namespace rigExec {
 
 namespace {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((outputsIkValues, "outputs:ikValues"))
+    ((outputsFkValues, "outputs:fkValues"))
+);
 
 bool
 _MatrixOf(const RigExecPointFrame &frame, GfMatrix4d *out)
@@ -236,8 +243,8 @@ void
 RigExecBakedPresentIkFkMatches(const RigExecBakedProgramImpl &B,
                                RigExecRigPose *pose)
 {
-    static const TfToken ikValues("outputs:ikValues");
-    static const TfToken fkValues("outputs:fkValues");
+    const TfToken &ikValues = _tokens->outputsIkValues;
+    const TfToken &fkValues = _tokens->outputsFkValues;
     for (const auto &c : B.constraints) {
         if (!c.ikFkMatch || c.sources.size() != 10) continue;
         if (c.matchValuesValid) {
