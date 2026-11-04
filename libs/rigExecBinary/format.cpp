@@ -2969,6 +2969,21 @@ private:
                         continue;
                     }
                     group(size_t(step.part));
+                    // A Range Smooth or DeltaMush also reads the other groups
+                    // it declares.
+                    if(range && (revision.op==uint8_t(fb::RevisionOp::Smooth) ||
+                                 revision.op==uint8_t(fb::RevisionOp::DeltaMush)))
+                        for(const fb::SlotRange &declared:step.reads) {
+                            if(declared.domain()!=D::RevisionOut)continue;
+                            for(size_t h=0;h<_groupEntering[c][r].size();++h) {
+                                const int w=_groupEntering[c][r][h];
+                                if(w<0 || h==size_t(step.part))continue;
+                                const auto &writer=chain.revisions[size_t(w)];
+                                const uint64_t slot=uint64_t(writer.chunkBase)+h+
+                                    (RigExecFormatIsRangeRevision(writer)?0:writer.chunks.size());
+                                if(slot>=declared.begin() && slot<declared.end())group(h);
+                            }
+                        }
                     if(range && skin)read(D::RevisionTransforms,id);
                     if(keyed) {
                         const D own=revision.finalPhase?D::FinalMatrix:D::BaseMatrix;
@@ -4704,26 +4719,45 @@ private:
                     continue;
                 }
                 // A group step: group `part` of the entering version, and
-                // no other RevisionOut slot.
+                // no other RevisionOut slot -- except a Range Smooth's or
+                // DeltaMush's, which also reads other groups of that version
+                // (its halo).
                 const size_t k = size_t(step.part);
                 uint64_t want = 0;
                 const bool slotted = enteringSlot(k, &want);
                 if (slotted && !need(D::RevisionOut, want)) {
                     return false;
                 }
+                const bool halo =
+                    range &&
+                    (revision.op == uint8_t(fb::RevisionOp::Smooth) ||
+                     revision.op == uint8_t(fb::RevisionOp::DeltaMush));
+                const auto entering = [&](uint64_t slot) {
+                    for (size_t h = 0; halo && h < groups; ++h) {
+                        uint64_t other = 0;
+                        if (h != k && enteringSlot(h, &other) &&
+                            other == slot) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
                 for (const fb::SlotRange &read : step.reads) {
                     if (read.domain() != D::RevisionOut ||
-                        read.begin() >= read.end() ||
-                        (slotted && read.begin() == want &&
-                         read.end() == want + 1)) {
+                        read.begin() >= read.end()) {
                         continue;
                     }
-                    const uint64_t other =
-                        slotted && read.begin() == want ? want + 1
-                                                        : read.begin();
-                    return _Bad(name + " reads RevisionOut[" + _N(other) +
-                                "], which is not group " + _N(k) +
-                                " of the version entering it");
+                    const uint64_t span = read.end() - read.begin();
+                    for (uint64_t s = read.begin(); s < read.end(); ++s) {
+                        if ((slotted && s == want) ||
+                            (span <= groups && entering(s))) {
+                            continue;
+                        }
+                        return _Bad(name + " reads RevisionOut[" + _N(s) +
+                                    "], which is not group " + _N(k) +
+                                    (halo ? " or another group" : "") +
+                                    " of the version entering it");
+                    }
                 }
                 if (range && skin && !need(D::RevisionTransforms, id)) {
                     return false;
@@ -5428,7 +5462,11 @@ private:
         }
         const bool ranges = RigExecFormatIsRangeRevision(r);
         if (!keyed) {
-            if (ranges && !RigExecFormatIsRangeOp(r.op)) {
+            if (ranges && (!RigExecFormatIsRangeOp(r.op) ||
+                           ((r.op == uint8_t(fb::RevisionOp::Smooth) ||
+                             r.op == uint8_t(fb::RevisionOp::DeltaMush)) &&
+                            _f.formatVersion <
+                                RigExecFormatRangeSmoothVersion))) {
                 return _Bad(row + ": " + _N(r.chunks.size()) +
                             " chunks, but not chunked");
             }

@@ -1238,6 +1238,32 @@ struct RoleReads {
                                           : TfToken();
     }
 
+    /// Key \p k's int array, sampled as Token samples; empty for k < 0.
+    VtIntArray Ints(const RigExecBakedPathLeaves &leaves, int k) const
+    {
+        if (k < 0) {
+            return VtIntArray();
+        }
+        const VtValue value = RigExecSampleRevisionLeaf(
+            leaves.decl.keys[size_t(k)], leaves.attributes[size_t(k)],
+            &overlay, UsdTimeCode::Default(), &B.upstream);
+        return value.IsHolding<VtIntArray>() ? value.UncheckedGet<VtIntArray>()
+                                             : VtIntArray();
+    }
+
+    /// Key \p k's int, sampled as Token samples; \p fallback when it holds
+    /// none.
+    int Int(const RigExecBakedPathLeaves &leaves, int k, int fallback) const
+    {
+        if (k < 0) {
+            return fallback;
+        }
+        const VtValue value = RigExecSampleRevisionLeaf(
+            leaves.decl.keys[size_t(k)], leaves.attributes[size_t(k)],
+            &overlay, UsdTimeCode::Default(), &B.upstream);
+        return value.IsHolding<int>() ? value.UncheckedGet<int>() : fallback;
+    }
+
     const RigExecBakedProgramImpl &B;
     const bool exportMode;
     RigExecResolvedInputs overlay;
@@ -1440,9 +1466,145 @@ ClassifyRevision(const RoleReads &reads,
         }
         return GeomRole::Range;
     }
+    case RigExecRevisionOp::Smooth: {
+        // Its group steps read the groups its edge neighbours lie in, cut
+        // from the topology Build reads; a topology that can move runs whole.
+        const int counts = leaves.decl.Role(Role::TopologyCounts);
+        const int indices = leaves.decl.Role(Role::TopologyIndices);
+        for (const int k : {counts, indices}) {
+            if (k < 0 || size_t(k) >= leaves.hops.size() ||
+                !reads.Usable(leaves, k) ||
+                reads.Reaches(leaves.hops[size_t(k)])) {
+                return GeomRole::Whole;
+            }
+        }
+        for (const int k : {counts, indices}) {
+            RolePin pin;
+            pin.kind = RolePin::Kind::NoLayoutOverride;
+            pin.leaf = k;
+            revision->pins.push_back(pin);
+            if (reads.exportMode) {
+                pinned->push_back(leaves.decl.keys[size_t(k)].path);
+            }
+        }
+        return GeomRole::Range;
+    }
+    case RigExecRevisionOp::DeltaMush: {
+        // Its group steps read the region its smoothing reaches, cut from
+        // the topology, the explicit edges and the iteration count Build
+        // reads; any of them that can move runs it whole.
+        const std::array<int, 4> keys = {
+            leaves.decl.Role(Role::TopologyCounts),
+            leaves.decl.Role(Role::TopologyIndices),
+            leaves.decl.Role(Role::MushEdges), leaves.decl.scalarBegin};
+        for (size_t j = 0; j < keys.size(); ++j) {
+            const int k = keys[j];
+            if (k < 0 && j == 2) {
+                continue;
+            }
+            if (k < 0 || size_t(k) >= leaves.hops.size() ||
+                !reads.Usable(leaves, k) ||
+                reads.Reaches(leaves.hops[size_t(k)])) {
+                return GeomRole::Whole;
+            }
+        }
+        for (const int k : keys) {
+            if (k < 0) {
+                continue;
+            }
+            RolePin pin;
+            pin.kind = RolePin::Kind::NoLayoutOverride;
+            pin.leaf = k;
+            revision->pins.push_back(pin);
+            if (reads.exportMode) {
+                pinned->push_back(leaves.decl.keys[size_t(k)].path);
+            }
+        }
+        return GeomRole::Range;
+    }
     default:
         return GeomRole::Whole;
     }
+}
+
+/// The halo of the Range DeltaMush \p revision: per group of \p chain, the
+/// other groups holding a point the group's results read, from the topology,
+/// edges and iteration count Build reads (the classification pinned them).
+/// The graph is the rest builder's own, over rest points that weigh nothing.
+void
+BuildMushHalo(const RoleReads &reads,
+              const RigExecBakedProgramImpl::GeomChain &chain,
+              RigExecBakedProgramImpl::GeomRevision *revision, size_t points)
+{
+    using Role = RigExecRevisionLeafRole;
+    const RigExecBakedPathLeaves &leaves = revision->leaves;
+    const size_t groups =
+        chain.groupBounds.empty() ? 0 : chain.groupBounds.size() - 1;
+    const VtIntArray counts =
+        reads.Ints(leaves, leaves.decl.Role(Role::TopologyCounts));
+    const VtIntArray indices =
+        reads.Ints(leaves, leaves.decl.Role(Role::TopologyIndices));
+    const VtIntArray edges =
+        reads.Ints(leaves, leaves.decl.Role(Role::MushEdges));
+    const int iterations = reads.Int(leaves, leaves.decl.scalarBegin, 10);
+    RigExecDeltaMushSettings settings;
+    settings.onlySmooth = true;
+    settings.edges.assign(edges.cbegin(), edges.cend());
+    RigExecDeltaMushRestData<GfVec3f, GfVec3d> graph;
+    revision->haloGroups.assign(groups, {});
+    if (RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(
+            std::vector<GfVec3f>(points, GfVec3f(0.0f)),
+            std::vector<int>(counts.cbegin(), counts.cend()),
+            std::vector<int>(indices.cbegin(), indices.cend()), iterations,
+            0.5, false, 0.0, settings, &graph)) {
+        std::vector<int> readList;
+        for (size_t g = 0; g < groups; ++g) {
+            const size_t begin = size_t(chain.groupBounds[g]);
+            const size_t end = size_t(chain.groupBounds[g + 1]);
+            if (!RigExecDeltaMushGroupReads(graph, begin, end, &readList)) {
+                continue;
+            }
+            for (const int i : readList) {
+                const size_t h = size_t(std::upper_bound(chain.groupBounds.begin(),
+                                                         chain.groupBounds.end(), i) -
+                                        chain.groupBounds.begin()) - 1;
+                std::vector<int> &halo = revision->haloGroups[g];
+                if (h < groups && h != g &&
+                    (halo.empty() || halo.back() != int(h))) {
+                    halo.push_back(int(h));
+                }
+            }
+        }
+    }
+    revision->haloPoints.assign(
+        groups, std::vector<const GfVec3f *>(groups, nullptr));
+    revision->mushGroups.assign(
+        groups, RigExecDeltaMushGroupState<GfVec3f, GfVec3d>());
+}
+
+/// The halo of the Range Smooth \p revision: per group of \p chain, the
+/// other groups its points' edge neighbours lie in, from the topology Build
+/// reads (the classification pinned it), and its steps' pointer tables.
+void
+BuildSmoothHalo(const RoleReads &reads,
+                const RigExecBakedProgramImpl::GeomChain &chain,
+                RigExecBakedProgramImpl::GeomRevision *revision, size_t points)
+{
+    using Role = RigExecRevisionLeafRole;
+    const RigExecBakedPathLeaves &leaves = revision->leaves;
+    const size_t groups =
+        chain.groupBounds.empty() ? 0 : chain.groupBounds.size() - 1;
+    const VtIntArray counts =
+        reads.Ints(leaves, leaves.decl.Role(Role::TopologyCounts));
+    const VtIntArray indices =
+        reads.Ints(leaves, leaves.decl.Role(Role::TopologyIndices));
+    RigExecMeshAdjacency adjacency;
+    RigExecBuildMeshAdjacency(points, counts.cdata(), counts.size(),
+                              indices.cdata(), indices.size(), &adjacency);
+    RigExecSmoothHaloGroups(adjacency, chain.groupBounds,
+                            &revision->haloGroups);
+    revision->haloPoints.assign(
+        groups, std::vector<const GfVec3f *>(groups, nullptr));
 }
 
 /// Static sparse weight object \p object's resolved unlisted value -- its
@@ -1621,23 +1783,49 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.enteringWriter.clear();
         revision.groups.clear();
         revision.groupIds.clear();
+        revision.haloGroups.clear();
+        revision.haloPoints.clear();
+        revision.mushGroups.clear();
         revision.pins.clear();
         PartitionAtBuild(B, &revision);
         if (!eligible) {
             continue;
         }
-        for (const RigExecRevisionLeafRole role :
-                 {RigExecRevisionLeafRole::SkinningMethod,
-                  RigExecRevisionLeafRole::DeltaSpace,
-                  RigExecRevisionLeafRole::LatticeEvaluation}) {
-            const int k = revision.leaves.decl.Role(role);
-            if (k >= 0 && revision.leaves.decl.keys[size_t(k)]
-                              .path.IsPropertyPath()) {
-                const SdfPath &path = revision.leaves.decl.keys[size_t(k)].path;
+        // What cuts a halo (a smooth's topology; a delta mush's topology,
+        // edges and iteration count) is a compiled rig key: an authored edit
+        // rebuilds.
+        const bool smooth = revision.op == RigExecRevisionOp::Smooth;
+        const bool mush = revision.op == RigExecRevisionOp::DeltaMush;
+        const auto rebuildOn = [&B](const SdfPath &path) {
+            if (path.IsPropertyPath()) {
                 B.rebuild.insert(path);
                 B.named.insert(path);
                 B.prims.insert(path.GetPrimPath());
             }
+        };
+        for (const RigExecRevisionLeafRole role :
+                 {RigExecRevisionLeafRole::SkinningMethod,
+                  RigExecRevisionLeafRole::DeltaSpace,
+                  RigExecRevisionLeafRole::LatticeEvaluation,
+                  RigExecRevisionLeafRole::TopologyCounts,
+                  RigExecRevisionLeafRole::TopologyIndices,
+                  RigExecRevisionLeafRole::MushEdges}) {
+            const bool topology =
+                role == RigExecRevisionLeafRole::TopologyCounts ||
+                role == RigExecRevisionLeafRole::TopologyIndices;
+            if ((topology && !smooth && !mush) ||
+                (role == RigExecRevisionLeafRole::MushEdges && !mush)) {
+                continue;
+            }
+            const int k = revision.leaves.decl.Role(role);
+            if (k >= 0) {
+                rebuildOn(revision.leaves.decl.keys[size_t(k)].path);
+            }
+        }
+        if (mush && revision.leaves.decl.scalarBegin >= 0) {
+            rebuildOn(revision.leaves.decl
+                          .keys[size_t(revision.leaves.decl.scalarBegin)]
+                          .path);
         }
         candidate[r] = ClassifyRevision(reads, &revision, &pinned[r]);
         anyRange = anyRange || candidate[r] == GeomRole::Range;
@@ -1683,6 +1871,11 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             std::vector<char> written;
             if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
                 revision.groupWritten = std::move(written);
+            }
+            if (revision.op == RigExecRevisionOp::Smooth) {
+                BuildSmoothHalo(reads, *chain, &revision, points);
+            } else if (revision.op == RigExecRevisionOp::DeltaMush) {
+                BuildMushHalo(reads, *chain, &revision, points);
             }
             B.exportPinnedPaths.insert(pinned[r].begin(), pinned[r].end());
         } else if (skin && revision.skinTopologyFixed &&
@@ -1968,6 +2161,14 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                     // in its last writer's slot, and nothing of any join.
                     RigExecBakedDeclareGroupRead(B, int(c), r, k,
                                                  &chunk.reads);
+                    if (role == GeomRole::Range &&
+                        k < revision.haloGroups.size()) {
+                        for (const int h : revision.haloGroups[k]) {
+                            RigExecBakedDeclareGroupRead(B, int(c), r,
+                                                         size_t(h),
+                                                         &chunk.reads);
+                        }
+                    }
                 } else {
                     // Which buffer holds the entering points is decided by
                     // the previous fuse, so the read is that fuse's version.
@@ -3456,6 +3657,41 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         GatherChunkTransforms(B, *revision, &chunk);
         view = ChunkTransformsView(chunk, B.useSimd);
     }
+    // A smooth or a delta mush reads its halo groups of the entering version
+    // beside its own, which its step declares (the scheduler ran their
+    // writers first).
+    RigExecGroupPoints<GfVec3f> halo;
+    const bool mush = revision->op == RigExecRevisionOp::DeltaMush;
+    if (revision->op == RigExecRevisionOp::Smooth || mush) {
+        const size_t groups = chain.groupBounds.size() - 1;
+        if (g >= revision->haloGroups.size() ||
+            g >= revision->haloPoints.size() ||
+            revision->haloPoints[g].size() != groups ||
+            (mush && g >= revision->mushGroups.size())) {
+            state.ok = false;
+            RigExecPublishPassedGroup(&state, entering, from);
+            NoteGateViolation(B);
+            return;
+        }
+        std::vector<const GfVec3f *> &table = revision->haloPoints[g];
+        std::fill(table.begin(), table.end(), nullptr);
+        table[g] = entering.data;
+        for (const int h : revision->haloGroups[g]) {
+            const RigExecPointsRef<GfVec3f> &group =
+                RigExecBakedGroupAt(chain, revisionIndex, size_t(h));
+            if (group.count != size_t(chain.groupBounds[size_t(h) + 1] -
+                                      chain.groupBounds[size_t(h)])) {
+                state.ok = false;
+                RigExecPublishPassedGroup(&state, entering, from);
+                NoteGateViolation(B);
+                return;
+            }
+            table[size_t(h)] = group.data;
+        }
+        halo.bounds = chain.groupBounds.data();
+        halo.groups = groups;
+        halo.points = table.data();
+    }
     const int k = RigExecGroupScratch(&state, end - begin);
     bool untouched = false;
     // A sparse walk reuses what it last computed for this group's entries
@@ -3464,7 +3700,8 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         revision->op, revision->parameters, revision->rangeInputs,
         skin ? &view : nullptr, entering.data, state.own[size_t(k)]->data(),
         count, begin, end, GroupEnvelope(*revision), B.useSimd, &untouched,
-        &state.walk);
+        &state.walk, halo.points ? &halo : nullptr,
+        mush ? &revision->mushGroups[g] : nullptr);
     state.ok = ok;
     if (!ok || untouched) {
         RigExecPublishPassedGroup(&state, entering, from);

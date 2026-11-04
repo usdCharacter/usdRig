@@ -1453,6 +1453,16 @@ RigExecRevisionKernelAcceptance(RigExecRevisionOp op,
             return Acceptance::Refuses;
         }
         return Acceptance::Applies;
+    case RigExecRevisionOp::Smooth:
+        // The kernel never refuses: an invalid topology passes the points
+        // through. Only the "apply once" envelope can fail the revision;
+        // validated here, as a lattice's is, since RevisionStatic resolves
+        // only a wire's before it asks.
+        if (!RigExecEnvelopeIsFullStrength(p.weights) &&
+            !p.weights.ResolvesAll(count)) {
+            return Acceptance::Refuses;
+        }
+        return Acceptance::Applies;
     default:
         return Acceptance::Deferred;
     }
@@ -1463,7 +1473,9 @@ RigExecRevisionIsRangeOp(RigExecRevisionOp op)
 {
     return op == RigExecRevisionOp::Matrix || op == RigExecRevisionOp::Wire ||
            op == RigExecRevisionOp::Lattice || op == RigExecRevisionOp::Skin ||
-           op == RigExecRevisionOp::BlendShape;
+           op == RigExecRevisionOp::BlendShape ||
+           op == RigExecRevisionOp::Smooth ||
+           op == RigExecRevisionOp::DeltaMush;
 }
 
 bool
@@ -1490,6 +1502,11 @@ RigExecRevisionGateHolds(RigExecRevisionOp op, const RigExecMoverParameters &p)
     case RigExecRevisionOp::BlendShape:
         // The surface-frame transport reads every entering point.
         return !p.blendSurfaceFrame;
+    case RigExecRevisionOp::Smooth:
+    case RigExecRevisionOp::DeltaMush:
+        // Its separate blend keeps a point of weight <= 0 at its entering
+        // bytes, whatever its neighbours smoothed it to.
+        return true;
     default:
         return false;
     }
@@ -1510,6 +1527,47 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
     prepared->latticeBasis = nullptr;
     prepared->latticeBind.reset();
     prepared->blendWeights.clear();
+    prepared->smoothAdjacency = nullptr;
+    prepared->smoothAdjacencyOwned.reset();
+    prepared->mushRest.reset();
+    if (op == RigExecRevisionOp::DeltaMush) {
+        // What fails the whole kernel: the packet, the "apply once" envelope,
+        // the rest data, the displacement and the computation map. Every
+        // other failure is a point's own.
+        if (!_PacketMatches(op, p) ||
+            (!RigExecEnvelopeIsFullStrength(p.weights) &&
+             !p.weights.ResolvesAll(count))) {
+            return Acceptance::Refuses;
+        }
+        std::shared_ptr<const RigExecDeltaMushRestData<GfVec3f, GfVec3d>> rest;
+        if (cache) {
+            if (cache->MushRest(p.restPoints, p.topologyCounts,
+                                p.topologyIndices, p.mushIterations,
+                                p.mushStep, p.mushPinBorders,
+                                p.mushDistanceWeight, p.mushSettings)) {
+                rest = cache->RetainedMushRest();
+            }
+        } else {
+            auto built =
+                std::make_shared<RigExecDeltaMushRestData<GfVec3f, GfVec3d>>();
+            if (RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(
+                    p.restPoints, p.topologyCounts, p.topologyIndices,
+                    p.mushIterations, p.mushStep, p.mushPinBorders,
+                    p.mushDistanceWeight, p.mushSettings, built.get())) {
+                rest = std::move(built);
+            }
+        }
+        const double d = p.mushDisplacement;
+        if (!rest || !rest->validated || rest->rest.size() != count ||
+            !std::isfinite(d) ||
+            (rest->settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
+             (d < 0 || d > 1)) ||
+            !deltaMushDetail::ComputationMapValid(p.mushComputationToTarget)) {
+            return Acceptance::Refuses;
+        }
+        prepared->mushRest = std::move(rest);
+        return Acceptance::Applies;
+    }
     if (op == RigExecRevisionOp::BlendShape) {
         // RigExecRevisionKernelAcceptance's BlendShape answer, by the
         // kernel's own validation; an envelope below full strength resolves
@@ -1582,6 +1640,25 @@ RigExecPrepareRevisionRanges(RigExecRevisionOp op,
                 prepared->latticeBind = cache->RetainedLatticeBind();
             }
         }
+    } else if (op == RigExecRevisionOp::Smooth) {
+        // The adjacency ApplyRevisionKernel's smooth arm smooths over; none
+        // for a topology it passes through.
+        if (cache) {
+            if (cache->MeshAdjacency(count, p.topologyCounts,
+                                     p.topologyIndices)) {
+                prepared->smoothAdjacencyOwned =
+                    cache->RetainedMeshAdjacency();
+            }
+        } else {
+            auto built = std::make_shared<RigExecMeshAdjacency>();
+            if (RigExecBuildMeshAdjacency(
+                    count, p.topologyCounts.data(), p.topologyCounts.size(),
+                    p.topologyIndices.data(), p.topologyIndices.size(),
+                    built.get())) {
+                prepared->smoothAdjacencyOwned = std::move(built);
+            }
+        }
+        prepared->smoothAdjacency = prepared->smoothAdjacencyOwned.get();
     }
     return acceptance;
 }
@@ -1632,7 +1709,9 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
                         size_t begin, size_t end,
                         const float *separateEnvelope, bool useSimd,
                         bool *untouched,
-                        RigExecSparseWalkMemo<GfVec3f> *walk)
+                        RigExecSparseWalkMemo<GfVec3f> *walk,
+                        const RigExecGroupPoints<GfVec3f> *halo,
+                        RigExecDeltaMushGroupState<GfVec3f, GfVec3d> *mush)
 {
     if (untouched) {
         *untouched = false;
@@ -1756,6 +1835,22 @@ RigExecRunRevisionGroup(RigExecRevisionOp op, const RigExecMoverParameters &p,
             p.restPoints.size(), p.auxPoints.data(), p.auxPoints.size(),
             p.auxPointsB.data(), p.auxPointsB.size(), p.divisions[0],
             p.divisions[1], p.divisions[2], prepared.latticeBasis);
+    } else if (op == RigExecRevisionOp::Smooth) {
+        if (!prepared.smoothAdjacency) {
+            seed();
+        } else if (!halo || halo->At(begin) != in ||
+                   !RigExecApplyLaplacianSmoothGroup(
+                       *prepared.smoothAdjacency, p.strength, count, *halo,
+                       begin, end, out)) {
+            return false;
+        }
+    } else if (op == RigExecRevisionOp::DeltaMush) {
+        if (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
+            !RigExecApplyDeltaMushGroup<GfVec3f, GfVec3d, GfMatrix4d>(
+                prepared.mushRest, p.mushDisplacement,
+                p.mushComputationToTarget, *halo, begin, end, out, mush)) {
+            return false;
+        }
     } else {
         // Skin: the group's part of the layout against the table it reads
         // (\p skin, or the packet's own). The layout and the table were
@@ -1825,9 +1920,18 @@ RigExecRunRevisionRange(RigExecRevisionOp op, const RigExecMoverParameters &p,
         (count && !entering) || (count && entering == out->data())) {
         return false;
     }
+    // The whole entering array as one group, for an op that reads neighbours.
+    const int bounds[2] = {0, int(count)};
+    const GfVec3f *const points[1] = {entering};
+    RigExecGroupPoints<GfVec3f> whole;
+    whole.bounds = bounds;
+    whole.groups = 1;
+    whole.points = points;
+    RigExecDeltaMushGroupState<GfVec3f, GfVec3d> mush;
     return RigExecRunRevisionGroup(op, p, prepared, nullptr, entering + begin,
                                    out->data() + begin, count, begin, end,
-                                   separateEnvelope, useSimd, untouched);
+                                   separateEnvelope, useSimd, untouched,
+                                   nullptr, &whole, &mush);
 }
 
 // One revision, envelope included: the packet check, the full-strength fast

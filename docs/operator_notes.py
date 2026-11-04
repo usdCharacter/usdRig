@@ -2126,6 +2126,11 @@ and Wilson (2014), [Delta Mush](https://doi.org/10.1145/2614106.2614144).""",
 the same smoothing settings to rest and incoming points. It transports the
 rest-to-smoothed offset into the deformed local surface frame. Native,
 frozen and binary evaluation share `libs/rigExecMath/deltaMushKernel.h`.
+A point whose result is not finite, or whose transport frame is degenerate,
+keeps its incoming position while the rest of the mesh deforms. Invalid rest
+data, a displacement out of range or an invalid `computationToTarget` passes
+the whole mesh through. With fixed topology, `edges` and `iterations`, each
+vertex group runs on its own and reads only the groups its smoothing reaches.
 
 The defaults are rest-weighted smoothing (`smoothing = rest`) and
 vertex-frame transport (`frameTransport = vertex`). Choose `smoothing = simple` or `lengthWeighted` with

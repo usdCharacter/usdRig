@@ -2681,8 +2681,8 @@ TestRangeChainBake()
                return true;
            },
            ".revisions[2]: its point ranges differ from revisions[0]'s");
-    refuse("a group-shaped smooth revision", [&](fb::RigExecWireFile &f) {
-        revisionAt(f, 1).op = uint8_t(fb::RevisionOp::Smooth);
+    refuse("a group-shaped volume correction", [&](fb::RigExecWireFile &f) {
+        revisionAt(f, 1).op = uint8_t(fb::RevisionOp::VolumeCorrect);
         return true;
     }, std::to_string(ranges) + " chunks, but not chunked");
     refuse("a group step missing the previous revision's group",

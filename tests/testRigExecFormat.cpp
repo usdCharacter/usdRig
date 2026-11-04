@@ -1477,13 +1477,14 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 27 &&
+    static_assert(RigExecFormatVersion == 28 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
                   "RigLogic's solves, format 25 windowed operations, "
                   "format 26 the cloth's material model (RCL3) and format "
-                  "27 volume falloff sample inputs; per-group range chains "
+                  "27 volume falloff sample inputs, format 28 Range "
+                  "Smooth revisions; per-group range chains "
                   "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,
@@ -4604,7 +4605,9 @@ TestRangeChunkTables()
         for (unsigned op = 0; op <= unsigned(fb::RevisionOp::MAX); ++op) {
             rangeOps += RigExecFormatIsRangeOp(uint8_t(op)) ? 1 : 0;
         }
-        CHECK(rangeOps == 5 &&
+        CHECK(rangeOps == 7 &&
+              RigExecFormatIsRangeOp(uint8_t(fb::RevisionOp::Smooth)) &&
+              RigExecFormatIsRangeOp(uint8_t(fb::RevisionOp::DeltaMush)) &&
               RigExecFormatIsRangeOp(uint8_t(fb::RevisionOp::Matrix)) &&
               RigExecFormatIsRangeOp(uint8_t(fb::RevisionOp::Wire)) &&
               RigExecFormatIsRangeOp(uint8_t(fb::RevisionOp::Lattice)) &&
@@ -4753,8 +4756,16 @@ TestRangeChunkTables()
     };
 
     // The Range table, as format 19 held it.
-    refuse("a range-shaped smooth revision",
-           matrix([](F &, R &r) { r.op = uint8_t(fb::RevisionOp::Smooth); }),
+    refuse("a range-shaped volume correction",
+           matrix([](F &, R &r) {
+               r.op = uint8_t(fb::RevisionOp::VolumeCorrect);
+           }),
+           text(row + ": 3 chunks, but not chunked"));
+    refuse("a range-shaped smooth revision in format 27",
+           matrix([](F &f, R &r) {
+               r.op = uint8_t(fb::RevisionOp::Smooth);
+               f.formatVersion = 27;
+           }),
            text(row + ": 3 chunks, but not chunked"));
     refuse("a key on a range",
            matrix([](F &, R &r) { r.chunks[1].key = {0}; }),
@@ -5015,7 +5026,7 @@ TestRangeChunkTables()
     std::printf("group tables: %d chains with groups accepted; %d group "
                 "table, step and constant violations refused\n",
                 accepted, refused);
-    CHECK(refused == 28);
+    CHECK(refused == 29);
 }
 
 // ----------------------------------------------------------------- arrays

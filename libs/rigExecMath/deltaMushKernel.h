@@ -7,6 +7,7 @@
 #include "meshConnectivity.h"
 #include "floatControl.h"
 #include "rangeRunner.h"
+#include "smoothKernel.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -169,7 +170,9 @@ RigExecBuildTransportRestData(
 /// posed normals, then rotate each nonzero offset through its rest/posed
 /// frame pair. The same arithmetic the single-call kernel performs, with
 /// the same failure conditions; invalid input fails atomically, leaving
-/// \p out unchanged.
+/// \p out unchanged. With \p failed, a vertex whose own data fails (a
+/// non-finite point or offset, a degenerate frame, a non-finite result) is
+/// flagged there instead, its offset 0; only the topology fails the call.
 template<class Point, class Wide>
 bool
 RigExecApplyTransportWithRestData(
@@ -178,14 +181,24 @@ RigExecApplyTransportWithRestData(
     const std::vector<int> &faceIndices,
     const std::vector<Point> &deltas,
     const RigExecTransportRestData<Point, Wide> &restData,
-    std::vector<Point> *out)
+    std::vector<Point> *out, std::vector<char> *failed = nullptr)
 {
     if (!out || !restData.Covers(posed.size()) ||
         posed.size() != deltas.size()) return false;
+    if (failed) failed->assign(posed.size(), 0);
+    // True when vertex i's failure fails the call.
+    const auto refuse = [failed](size_t i) {
+        if (!failed) return true;
+        (*failed)[i] = 1;
+        return false;
+    };
     for (size_t i = 0; i < posed.size(); ++i) {
         for (int axis = 0; axis < 3; ++axis) {
             if (!std::isfinite(posed[i][axis]) ||
-                !std::isfinite(deltas[i][axis])) return false;
+                !std::isfinite(deltas[i][axis])) {
+                if (refuse(i)) return false;
+                break;
+            }
         }
     }
     size_t offset = 0;
@@ -213,21 +226,36 @@ RigExecApplyTransportWithRestData(
     if (offset != faceIndices.size()) return false;
     std::vector<Point> result = deltas;
     for (size_t i = 0; i < posed.size(); ++i) {
+        if (failed && (*failed)[i]) {
+            result[i] = Point(0);
+            continue;
+        }
         if (deltas[i] == Point(0)) continue;
-        if (!restData.restOk[i]) return false;
         Wide np = posedNormals[i];
-        if (!deltaMushDetail::Normalize(&np)) return false;
         const int neighbor = restData.neighbor[i];
-        if (neighbor < 0 || static_cast<size_t>(neighbor) >= posed.size()) return false;
+        if (!restData.restOk[i] || !deltaMushDetail::Normalize(&np) ||
+            neighbor < 0 || static_cast<size_t>(neighbor) >= posed.size()) {
+            if (refuse(i)) return false;
+            result[i] = Point(0);
+            continue;
+        }
         const Wide edge = deltaMushDetail::Convert<Wide>(posed[neighbor]) - deltaMushDetail::Convert<Wide>(posed[i]);
         Wide tp = edge - deltaMushDetail::Dot(edge, np) * np;
-        if (tp.GetLengthSq() <= edge.GetLengthSq() * 1e-24 || !deltaMushDetail::Normalize(&tp)) return false;
+        if (tp.GetLengthSq() <= edge.GetLengthSq() * 1e-24 || !deltaMushDetail::Normalize(&tp)) {
+            if (refuse(i)) return false;
+            result[i] = Point(0);
+            continue;
+        }
         const Wide bp = deltaMushDetail::Cross(np, tp);
         const Wide delta = deltaMushDetail::Convert<Wide>(deltas[i]);
         const Wide rotated = deltaMushDetail::Dot(delta, restData.tr[i]) * tp + deltaMushDetail::Dot(delta, restData.br[i]) * bp + deltaMushDetail::Dot(delta, restData.nr[i]) * np;
         result[i] = deltaMushDetail::Convert<Point>(rotated);
         for (int axis = 0; axis < 3; ++axis) {
-            if (!std::isfinite(result[i][axis])) return false;
+            if (!std::isfinite(result[i][axis])) {
+                if (refuse(i)) return false;
+                result[i] = Point(0);
+                break;
+            }
         }
     }
     *out = std::move(result);
@@ -256,14 +284,18 @@ RigExecTransportSurfaceOffsetsKernel(
 // bisector of its two edges and z along their cross product, weighted by the
 // corner angle; offsets move from the rest frames to the posed frames. See
 // docs/references.md (Delta Mush).
+// With \p failed, a vertex whose result is not finite is flagged there
+// instead, its offset 0; only the topology fails the call.
 template<class Point, class Wide>
 bool
 RigExecTransportCornerOffsetsKernel(
     const std::vector<Point> &rest, const std::vector<Point> &posed,
     const std::vector<int> &counts, const std::vector<int> &indices,
-    const std::vector<Point> &deltas, std::vector<Point> *out)
+    const std::vector<Point> &deltas, std::vector<Point> *out,
+    std::vector<char> *failed = nullptr)
 {
     if (!out || rest.size() != posed.size() || rest.size() != deltas.size()) return false;
+    if (failed) failed->assign(rest.size(), 0);
     struct Basis { Wide x{0}, y{0}, z{0}; double weight = 0; };
     const auto basis = [](const std::vector<Point> &points, int previous, int vertex, int next) {
         const auto normalized = [](Wide v) {
@@ -311,8 +343,16 @@ RigExecTransportCornerOffsetsKernel(
     }
     std::vector<Point> converted;
     converted.reserve(result.size());
-    for (const auto &p : result) {
-        for (int a = 0; a < 3; ++a) if (!std::isfinite(p[a])) return false;
+    for (size_t i = 0; i < result.size(); ++i) {
+        const Wide &p = result[i];
+        bool finite = true;
+        for (int a = 0; a < 3; ++a) finite = finite && std::isfinite(p[a]);
+        if (!finite) {
+            if (!failed) return false;
+            (*failed)[i] = 1;
+            converted.push_back(Point(0));
+            continue;
+        }
         converted.push_back(deltaMushDetail::Convert<Point>(p));
     }
     *out = std::move(converted); return true;
@@ -345,15 +385,6 @@ struct RigExecDeltaMushRestData {
     /// The rest-side validation passed; only the posed points and the
     /// displacement are still frame business.
     bool validated = false;
-    /// The rest half of RigExecDeltaMushMaskPreservesVerdict, proved by the
-    /// builder: every smoothing denominator the posed half divides by is
-    /// positive and finite, and every rest and smoothed-rest coordinate is
-    /// bounded, so their float difference cannot overflow. False unless the
-    /// builder established it, which keeps any other producer on the full path.
-    bool maskRestSafe = false;
-    /// The largest |rest| + |smoothRest| coordinate, valid when maskRestSafe.
-    double maskDetailBound = 0;
-
     bool operator==(const RigExecDeltaMushRestData &o) const {
         return validated == o.validated && iterations == o.iterations &&
                step == o.step && pinBorders == o.pinBorders &&
@@ -413,42 +444,6 @@ SmoothWithNeighbors(
     result.reserve(current.size());
     for (const auto &p : current) result.push_back(Convert<Point>(p));
     return result;
-}
-
-// The magnitude both halves of the mask verdict proof stay under: far below
-// float max (3.4e38), so no bounded intermediate overflows.
-constexpr double kMaskSafeMagnitude = 1e30;
-
-// Establishes RigExecDeltaMushRestData::maskRestSafe on a finished build. A
-// rest-weighted vertex divides by its weight sum, which underflows to zero for
-// tiny inverse-distance weights (0/0 in the full kernel, anywhere on the mesh);
-// simple sums count neighbors and length-weighted guards its divisor.
-template<class Point, class Wide>
-void
-ProveMaskRestSafe(RigExecDeltaMushRestData<Point, Wide> *data)
-{
-    data->maskRestSafe = false;
-    data->maskDetailBound = 0;
-    if (data->settings.smoothing == RigExecDeltaMushSmoothing::Rest) {
-        for (size_t i = 0; i < data->neighbors.size(); ++i) {
-            if (data->pinned[i] || data->neighbors[i].empty()) continue;
-            double total = 0;
-            for (const auto &n : data->neighbors[i]) total += n.second;
-            if (!(total > 0) || !std::isfinite(total)) return;
-        }
-    }
-    double bound = 0;
-    for (size_t i = 0; i < data->rest.size(); ++i) {
-        for (int a = 0; a < 3; ++a) {
-            const double r = std::abs(double(data->rest[i][a]));
-            const double s = data->smoothRest.empty()
-                ? 0.0 : std::abs(double(data->smoothRest[i][a]));
-            if (!(r <= kMaskSafeMagnitude) || !(s <= kMaskSafeMagnitude)) return;
-            bound = std::max(bound, r + s);
-        }
-    }
-    data->maskDetailBound = bound;
-    data->maskRestSafe = true;
 }
 
 // The settings' own validation, independent of any mesh.
@@ -568,7 +563,6 @@ RigExecBuildDeltaMushRestData(
     }
     if (!iterations || step == 0 || rest.empty()) {
         built.validated = true;
-        deltaMushDetail::ProveMaskRestSafe(&built);
         *data = std::move(built);
         return true;
     }
@@ -603,7 +597,6 @@ RigExecBuildDeltaMushRestData(
     }
     if (settings.onlySmooth) {
         built.validated = true;
-        deltaMushDetail::ProveMaskRestSafe(&built);
         *data = std::move(built);
         return true;
     }
@@ -616,7 +609,6 @@ RigExecBuildDeltaMushRestData(
         return false;
     }
     built.validated = true;
-    deltaMushDetail::ProveMaskRestSafe(&built);
     *data = std::move(built);
     return true;
 }
@@ -638,15 +630,19 @@ RigExecBuildDeltaMushRestData(
 
 /// Apply a delta-mush deformation with prebuilt rest state: smooth the
 /// posed points, transport the rest detail onto them, and add it. The
-/// same arithmetic the single-call kernel performs, with the same failure
-/// conditions; invalid input fails atomically, leaving \p points unchanged.
-/// The displacement is limited to [0, 1] only for rest-weighted smoothing.
+/// same arithmetic the single-call kernel performs. Invalid rest data, a
+/// displacement out of range or a point count other than the rest's fail
+/// the call, leaving \p points unchanged. A point whose own result fails (it
+/// is not finite, or its frame is degenerate) keeps its entering position
+/// and is flagged in \p kept when given; a non-finite entering point fails
+/// itself and every point its smoothing reaches. The displacement is limited
+/// to [0, 1] only for rest-weighted smoothing.
 template<class Point, class Wide>
 bool
 RigExecApplyDeltaMushWithRestData(
     std::vector<Point> *points,
     const RigExecDeltaMushRestData<Point, Wide> &restData,
-    double displacement)
+    double displacement, std::vector<char> *kept = nullptr)
 {
     if (!points || !restData.validated) return false;
     if (points->size() != restData.rest.size()) return false;
@@ -654,38 +650,45 @@ RigExecApplyDeltaMushWithRestData(
     if (!std::isfinite(displacement) ||
         (settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
          (displacement < 0 || displacement > 1))) return false;
-    for (size_t i = 0; i < points->size(); ++i)
-        for (int a = 0; a < 3; ++a)
-            if (!std::isfinite((*points)[i][a])) return false;
+    const size_t n = points->size();
+    if (kept) kept->assign(n, 0);
     if (!restData.iterations || restData.step == 0 || restData.rest.empty()) return true;
-    if (restData.neighbors.size() != restData.rest.size() ||
-        restData.pinned.size() != restData.rest.size()) return false;
+    if (restData.neighbors.size() != n || restData.pinned.size() != n) return false;
+    const auto finite = [](const Point &p) {
+        return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+    };
     std::vector<Point> smoothPosed = deltaMushDetail::SmoothWithNeighbors<Point, Wide>(
         *points, restData.neighbors, restData.pinned,
         restData.iterations, restData.step, settings);
     if (settings.onlySmooth) {
-        for (const auto &p : smoothPosed)
-            for (int a = 0; a < 3; ++a)
-                if (!std::isfinite(p[a])) return false;
-        *points = std::move(smoothPosed);
+        for (size_t i = 0; i < n; ++i) {
+            if (finite(smoothPosed[i])) (*points)[i] = smoothPosed[i];
+            else if (kept) (*kept)[i] = 1;
+        }
         return true;
     }
-    if (restData.smoothRest.size() != restData.rest.size()) return false;
-    std::vector<Point> detail(restData.rest.size()), rotated;
-    for (size_t i=0; i<restData.rest.size(); ++i) detail[i]=(restData.rest[i]-restData.smoothRest[i])*float(displacement);
+    if (restData.smoothRest.size() != n) return false;
+    std::vector<Point> detail(n), rotated;
+    for (size_t i=0; i<n; ++i) detail[i]=(restData.rest[i]-restData.smoothRest[i])*float(displacement);
+    std::vector<char> failed;
     if (settings.frameTransport == RigExecDeltaMushFrameTransport::Corner) {
         if (!RigExecTransportCornerOffsetsKernel<Point, Wide>(
                 restData.smoothRest, smoothPosed, restData.counts,
-                restData.indices, detail, &rotated)) return false;
+                restData.indices, detail, &rotated, &failed)) return false;
     } else {
-        if (!restData.transport.Covers(restData.rest.size())) return false;
-        if (!RigExecApplyTransportWithRestData(smoothPosed, restData.counts, restData.indices, detail, restData.transport, &rotated)) return false;
+        if (!restData.transport.Covers(n)) return false;
+        if (!RigExecApplyTransportWithRestData(smoothPosed, restData.counts, restData.indices, detail, restData.transport, &rotated, &failed)) return false;
     }
-    for (size_t i=0; i<restData.rest.size(); ++i) {
-        smoothPosed[i] += rotated[i];
-        for (int a=0;a<3;++a) if (!std::isfinite(smoothPosed[i][a])) return false;
+    for (size_t i=0; i<n; ++i) {
+        if (!failed[i]) {
+            smoothPosed[i] += rotated[i];
+            if (finite(smoothPosed[i])) {
+                (*points)[i] = smoothPosed[i];
+                continue;
+            }
+        }
+        if (kept) (*kept)[i] = 1;
     }
-    *points = std::move(smoothPosed);
     return true;
 }
 
@@ -759,8 +762,8 @@ struct RigExecDeltaMushMaskMemo {
 /// call that matches all of them bit for bit returns the remembered results.
 /// An eyelid finish reruns for nothing on a mouth edit.
 ///
-/// Failure differs only in reach: non-finite or degenerate data is detected
-/// on the active region, where the full kernel would detect it anywhere.
+/// A point fails alone, as in the full kernel, so an active point's result,
+/// kept or not, is the full kernel's.
 template<class Point, class Wide>
 bool
 RigExecApplyDeltaMushWithRestDataMasked(
@@ -777,15 +780,6 @@ RigExecApplyDeltaMushWithRestDataMasked(
     if (!std::isfinite(displacement) ||
         (settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
          (displacement < 0 || displacement > 1))) return false;
-    {
-        std::atomic<bool> finite(true);
-        RigExecRunRanges(ranges, n, 4096, [&](size_t begin, size_t end) {
-            for (size_t i = begin; i < end; ++i)
-                for (int a = 0; a < 3; ++a)
-                    if (!std::isfinite((*points)[i][a])) { finite = false; return; }
-        });
-        if (!finite) return false;
-    }
     if (!restData.iterations || restData.step == 0 || restData.rest.empty()) return true;
     if (restData.neighbors.size() != n || restData.pinned.size() != n) return false;
     const std::vector<int> &counts = restData.counts;
@@ -946,16 +940,19 @@ RigExecApplyDeltaMushWithRestDataMasked(
     }
     std::vector<Point> smoothPosed(*points);
     for (int vi : members) smoothPosed[size_t(vi)] = deltaMushDetail::Convert<Point>(current[size_t(vi)]);
+    const auto finitePoint = [](const Point &p) {
+        return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+    };
 
     if (settings.onlySmooth) {
-        for (size_t i = 0; i < n; ++i) {
-            if (!active[i]) continue;
-            for (int a = 0; a < 3; ++a) if (!std::isfinite(smoothPosed[i][a])) return false;
-        }
+        // A point whose result is not finite keeps its entering position.
+        for (size_t i = 0; i < n; ++i)
+            if (active[i] && !finitePoint(smoothPosed[i])) smoothPosed[i] = (*points)[i];
         remember(smoothPosed);
         for (size_t i = 0; i < n; ++i) if (active[i]) (*points)[i] = smoothPosed[i];
         return true;
     }
+    std::vector<char> failed(n, 0);
     if (restData.smoothRest.size() != n) return false;
     const auto detailAt = [&](size_t i) {
         return (restData.rest[i] - restData.smoothRest[i]) * float(displacement);
@@ -1017,8 +1014,10 @@ RigExecApplyDeltaMushWithRestDataMasked(
             if (contributes[corner]) result[size_t(corners[corner][1])] += terms[corner];
         for (size_t i = 0; i < n; ++i) {
             if (!active[i]) continue;
-            for (int a = 0; a < 3; ++a) if (!std::isfinite(result[i][a])) return false;
-            rotated[i] = deltaMushDetail::Convert<Point>(result[i]);
+            bool finite = true;
+            for (int a = 0; a < 3; ++a) finite = finite && std::isfinite(result[i][a]);
+            if (finite) rotated[i] = deltaMushDetail::Convert<Point>(result[i]);
+            else failed[i] = 1;
         }
     } else {
         // RigExecApplyTransportWithRestData over the active vertices: posed
@@ -1045,52 +1044,51 @@ RigExecApplyDeltaMushWithRestDataMasked(
         for (size_t i = 0; i < n; ++i) {
             if (!active[i]) continue;
             const Point delta = detailAt(i);
-            for (int a = 0; a < 3; ++a)
-                if (!std::isfinite(smoothPosed[i][a]) || !std::isfinite(delta[a])) return false;
+            if (!finitePoint(smoothPosed[i]) || !finitePoint(delta)) {
+                failed[i] = 1;
+                continue;
+            }
             rotated[i] = delta;
             if (delta == Point(0)) continue;
-            if (!transport.restOk[i]) return false;
             Wide np = posedNormals[i];
-            if (!deltaMushDetail::Normalize(&np)) return false;
             const int neighbor = transport.neighbor[i];
-            if (neighbor < 0 || size_t(neighbor) >= n) return false;
+            if (!transport.restOk[i] || !deltaMushDetail::Normalize(&np) ||
+                neighbor < 0 || size_t(neighbor) >= n) {
+                failed[i] = 1;
+                continue;
+            }
             const Wide edge = deltaMushDetail::Convert<Wide>(smoothPosed[neighbor]) - deltaMushDetail::Convert<Wide>(smoothPosed[i]);
             Wide tp = edge - deltaMushDetail::Dot(edge, np) * np;
-            if (tp.GetLengthSq() <= edge.GetLengthSq() * 1e-24 || !deltaMushDetail::Normalize(&tp)) return false;
+            if (tp.GetLengthSq() <= edge.GetLengthSq() * 1e-24 || !deltaMushDetail::Normalize(&tp)) {
+                failed[i] = 1;
+                continue;
+            }
             const Wide bp = deltaMushDetail::Cross(np, tp);
             const Wide d = deltaMushDetail::Convert<Wide>(delta);
             rotated[i] = deltaMushDetail::Convert<Point>(deltaMushDetail::Dot(d, transport.tr[i]) * tp +
                 deltaMushDetail::Dot(d, transport.br[i]) * bp + deltaMushDetail::Dot(d, transport.nr[i]) * np);
-            for (int a = 0; a < 3; ++a) if (!std::isfinite(rotated[i][a])) return false;
+            if (!finitePoint(rotated[i])) failed[i] = 1;
         }
     }
-    // Validate every active result before touching the caller's points, so a
-    // failure is atomic, as it is in the full kernel.
+    // A point whose result fails keeps its entering position, as in the full
+    // kernel.
     for (size_t i = 0; i < n; ++i) {
         if (!active[i]) continue;
-        smoothPosed[i] += rotated[i];
-        for (int a = 0; a < 3; ++a) if (!std::isfinite(smoothPosed[i][a])) return false;
+        if (!failed[i]) {
+            smoothPosed[i] += rotated[i];
+            if (finitePoint(smoothPosed[i])) continue;
+        }
+        smoothPosed[i] = (*points)[i];
     }
     remember(smoothPosed);
     for (size_t i = 0; i < n; ++i) if (active[i]) (*points)[i] = smoothPosed[i];
     return true;
 }
 
-/// Whether RigExecApplyDeltaMushWithRestDataMasked provably reaches the same
-/// verdict as the full kernel on these inputs, so a host may substitute it.
-/// The masked kernel validates only the active region; that is equivalent
-/// exactly when nothing outside it can fail. Topology and entering points are
-/// validated whole by both. The builder proves the rest side (maskRestSafe:
-/// no zero smoothing denominator, bounded rest and smoothed rest). Given
-/// that, smoothing-only and corner transport fail only through float
-/// overflow, which the magnitude bound below rules out; vertex transport also
-/// fails on a degenerate posed frame anywhere on the mesh, which only the
-/// full kernel can see, so it is never substituted.
-///
-/// The bound: one Jacobi step moves a coordinate by at most 4|step| times the
-/// largest coordinate (LengthWeighted's worst case; Rest and Simple move at
-/// most 2|step|), and the transported detail is at most 6 times the largest
-/// rest-minus-smoothed-rest coordinate times |displacement|.
+/// Whether a host may substitute RigExecApplyDeltaMushWithRestDataMasked for
+/// the full kernel: every point fails alone (it keeps its entering
+/// position), so the masked result at an active vertex is the full kernel's
+/// whenever the rest data is valid.
 template<class Point, class Wide>
 bool
 RigExecDeltaMushMaskPreservesVerdict(
@@ -1098,47 +1096,10 @@ RigExecDeltaMushMaskPreservesVerdict(
     const RigExecDeltaMushRestData<Point, Wide> &restData,
     double displacement, const RigExecRangeRunner *ranges = nullptr)
 {
-    constexpr double kSafe = deltaMushDetail::kMaskSafeMagnitude;
-    const RigExecDeltaMushSettings &settings = restData.settings;
-    if (!restData.validated || !restData.maskRestSafe ||
-        (!settings.onlySmooth &&
-         settings.frameTransport != RigExecDeltaMushFrameTransport::Corner) ||
-        !(std::abs(displacement) <= kSafe)) {   // also rejects NaN
-        return false;
-    }
-    // The largest coordinate magnitude. A maximum does not depend on the
-    // order it is taken in, so the scan is split into fixed blocks, each
-    // writing only its own slot, and the slots fold here after the join.
-    constexpr size_t kBlock = 32;
-    const size_t blocks = (points.size() + kBlock - 1) / kBlock;
-    std::vector<double> blockLargest(blocks, 0.0);
-    std::vector<char> blockBounded(blocks, 1);
-    RigExecRunRanges(ranges, blocks, 64, [&](size_t begin, size_t end) {
-        for (size_t b = begin; b < end; ++b) {
-            double slice = 0;
-            const size_t last = std::min(points.size(), (b + 1) * kBlock);
-            for (size_t i = b * kBlock; i < last && blockBounded[b]; ++i)
-                for (int a = 0; a < 3; ++a) {
-                    const double v = std::abs(double(points[i][a]));
-                    if (!(v <= kSafe)) { blockBounded[b] = 0; break; }   // also rejects NaN and inf
-                    slice = std::max(slice, v);
-                }
-            blockLargest[b] = slice;
-        }
-    });
-    double largest = 0;
-    for (size_t b = 0; b < blocks; ++b) {
-        if (!blockBounded[b]) return false;
-        largest = std::max(largest, blockLargest[b]);
-    }
-    const double growth = 1 + 4 * std::abs(restData.step);
-    for (int k = 0; k < restData.iterations; ++k) {
-        largest *= growth;
-        if (!(largest <= kSafe)) return false;
-    }
-    if (settings.onlySmooth) return true;
-    if (restData.smoothRest.size() != restData.rest.size()) return false;
-    return largest + 6 * restData.maskDetailBound * std::abs(displacement) <= kSafe;
+    (void)points;
+    (void)displacement;
+    (void)ranges;
+    return restData.validated;
 }
 
 template<class Point, class Wide>
@@ -1148,7 +1109,8 @@ RigExecApplyDeltaMushKernel(
     const std::vector<int> &counts, const std::vector<int> &indices,
     int iterations, double step, bool pinBorders,
     double distanceWeight, double displacement,
-    const RigExecDeltaMushSettings &settings = {})
+    const RigExecDeltaMushSettings &settings = {},
+    std::vector<char> *kept = nullptr)
 {
     if (!points || points->size() != rest.size()) return false;
     RigExecDeltaMushRestData<Point, Wide> restData;
@@ -1157,7 +1119,8 @@ RigExecApplyDeltaMushKernel(
                                        settings, &restData)) {
         return false;
     }
-    return RigExecApplyDeltaMushWithRestData(points, restData, displacement);
+    return RigExecApplyDeltaMushWithRestData(points, restData, displacement,
+                                             kept);
 }
 
 namespace deltaMushDetail {
@@ -1174,8 +1137,10 @@ ComputationMapValid(const Matrix &computationToTarget)
              std::abs(computationToTarget.GetDeterminant()) < 1e-14);
 }
 
-// Runs \p apply on \p points carried into computation space by the inverse
-// of the canonicalized row-vector affine map, then carries the result back.
+// Runs \p apply(local, kept) on \p points carried into computation space by
+// the inverse of the canonicalized row-vector affine map, then carries the
+// result back. A point the kernel kept, or whose result does not carry back
+// finite, keeps its entering bytes.
 template<class Point, class Wide, class Matrix, class Apply>
 bool
 ApplyInComputationSpace(std::vector<Point> *points,
@@ -1188,12 +1153,15 @@ ApplyInComputationSpace(std::vector<Point> *points,
     auto local = *points;
     for (auto &p : local)
         p = Convert<Point>(targetToComputation.TransformAffine(Convert<Wide>(p)));
-    if (!apply(&local)) return false;
-    for (auto &p : local) {
-        p = Convert<Point>(affine.TransformAffine(Convert<Wide>(p)));
-        for (int axis = 0; axis < 3; ++axis) if (!std::isfinite(p[axis])) return false;
+    std::vector<char> kept;
+    if (!apply(&local, &kept)) return false;
+    for (size_t i = 0; i < local.size(); ++i) {
+        if (i < kept.size() && kept[i]) continue;
+        const Point back = Convert<Point>(affine.TransformAffine(Convert<Wide>(local[i])));
+        if (std::isfinite(back[0]) && std::isfinite(back[1]) && std::isfinite(back[2]))
+            (*points)[i] = back;
     }
-    *points = std::move(local); return true;
+    return true;
 }
 } // namespace deltaMushDetail
 
@@ -1212,9 +1180,11 @@ bool RigExecApplyDeltaMushInSpaceKernel(
         return RigExecApplyDeltaMushKernel<Point, Wide>(points, rest, counts, indices,
             iterations, step, pinBorders, distanceWeight, displacement, settings);
     return deltaMushDetail::ApplyInComputationSpace<Point, Wide>(
-        points, computationToTarget, [&](std::vector<Point> *local) {
+        points, computationToTarget,
+        [&](std::vector<Point> *local, std::vector<char> *kept) {
             return RigExecApplyDeltaMushKernel<Point, Wide>(local, rest, counts, indices,
-                iterations, step, pinBorders, distanceWeight, displacement, settings);
+                iterations, step, pinBorders, distanceWeight, displacement, settings,
+                kept);
         });
 }
 
@@ -1230,9 +1200,400 @@ bool RigExecApplyDeltaMushInSpaceWithRestData(
     if (computationToTarget == Matrix(1))
         return RigExecApplyDeltaMushWithRestData(points, restData, displacement);
     return deltaMushDetail::ApplyInComputationSpace<Point, Wide>(
-        points, computationToTarget, [&](std::vector<Point> *local) {
-            return RigExecApplyDeltaMushWithRestData(local, restData, displacement);
+        points, computationToTarget,
+        [&](std::vector<Point> *local, std::vector<char> *kept) {
+            return RigExecApplyDeltaMushWithRestData(local, restData, displacement,
+                                                     kept);
         });
+}
+
+/// The region RigExecApplyDeltaMushWithRestDataMasked reads for one vertex
+/// group [begin, end) as its active set, compiled to local indices: `reads`
+/// lists, ascending, every point the group's results read (the members and
+/// their smoothing neighbors); every other table indexes into it.
+template<class Point>
+struct RigExecDeltaMushGroupPlan {
+    size_t begin = 0, end = 0;
+    std::vector<int> reads;
+    /// The members (F dilated by `iterations` smoothing rings), ascending.
+    std::vector<int> members;
+    /// Per member, its smoothing neighbors (local index, weight) in order.
+    std::vector<std::vector<std::pair<int, double>>> memberNeighbors;
+    /// Per group point, its local index.
+    std::vector<int> active;
+    /// Vertex transport: the faces touching the group in face order, their
+    /// corners local, and per group point its transport neighbor (-1 when
+    /// it lies outside the table).
+    std::vector<int> faceCounts, faceCorners, transportNeighbor;
+    /// Corner transport: the group points' corners (previous, vertex, next)
+    /// in face order, local and global.
+    std::vector<std::array<int, 3>> corners, cornerGlobals;
+};
+
+/// The points vertex group [begin, end) of a delta mush over \p restData
+/// reads, ascending (the masked kernel's region for the group and the
+/// smoothing neighbors of its members), and in \p members the members;
+/// false for a topology the rest data's builder would refuse.
+template<class Point, class Wide>
+bool
+RigExecDeltaMushGroupReads(const RigExecDeltaMushRestData<Point, Wide> &restData,
+                           size_t begin, size_t end, std::vector<int> *reads,
+                           std::vector<int> *members = nullptr)
+{
+    const size_t n = restData.rest.size();
+    const std::vector<int> &counts = restData.counts;
+    const std::vector<int> &indices = restData.indices;
+    reads->clear();
+    if (begin > end || end > n) return false;
+    std::vector<char> region(n, 0);
+    std::vector<int> frontier;
+    size_t offset = 0;
+    for (int count : counts) {
+        if (count < 3 || size_t(count) > indices.size() - offset) return false;
+        bool touches = false;
+        for (int c = 0; c < count; ++c) {
+            const int v = indices[offset + c];
+            if (v < 0 || size_t(v) >= n) return false;
+            touches = touches || (size_t(v) >= begin && size_t(v) < end);
+        }
+        if (touches)
+            for (int c = 0; c < count; ++c) {
+                const int v = indices[offset + c];
+                if (!region[size_t(v)]) { region[size_t(v)] = 1; frontier.push_back(v); }
+            }
+        offset += size_t(count);
+    }
+    if (offset != indices.size()) return false;
+    for (size_t i = begin; i < end; ++i)
+        if (!region[i]) { region[i] = 1; frontier.push_back(int(i)); }
+    std::vector<int> grown = frontier;
+    const bool smooths = restData.iterations && restData.step != 0 &&
+                         restData.neighbors.size() == n;
+    for (int ring = 0; smooths && ring < restData.iterations && !frontier.empty(); ++ring) {
+        std::vector<int> next;
+        for (int v : frontier)
+            for (const auto &nb : restData.neighbors[size_t(v)])
+                if (!region[size_t(nb.first)]) {
+                    region[size_t(nb.first)] = 1;
+                    next.push_back(nb.first);
+                    grown.push_back(nb.first);
+                }
+        frontier.swap(next);
+    }
+    std::sort(grown.begin(), grown.end());
+    std::vector<char> read(region);
+    if (smooths)
+        for (int v : grown)
+            for (const auto &nb : restData.neighbors[size_t(v)]) read[size_t(nb.first)] = 1;
+    for (size_t i = 0; i < n; ++i)
+        if (read[i]) reads->push_back(int(i));
+    if (members) *members = std::move(grown);
+    return true;
+}
+
+/// Compiles \p plan for vertex group [begin, end) of \p restData; false (an
+/// empty plan) for a topology the rest data's builder would refuse.
+template<class Point, class Wide>
+bool
+RigExecBuildDeltaMushGroupPlan(const RigExecDeltaMushRestData<Point, Wide> &restData,
+                               size_t begin, size_t end,
+                               RigExecDeltaMushGroupPlan<Point> *plan)
+{
+    *plan = RigExecDeltaMushGroupPlan<Point>();
+    std::vector<int> members;
+    if (!RigExecDeltaMushGroupReads(restData, begin, end, &plan->reads, &members))
+        return false;
+    const auto local = [&](int global) {
+        const auto it = std::lower_bound(plan->reads.begin(), plan->reads.end(), global);
+        return it != plan->reads.end() && *it == global ? int(it - plan->reads.begin()) : -1;
+    };
+    const bool smooths = restData.iterations && restData.step != 0 &&
+                         restData.neighbors.size() == restData.rest.size();
+    for (int v : members) {
+        plan->members.push_back(local(v));
+        std::vector<std::pair<int, double>> ring;
+        if (smooths)
+            for (const auto &nb : restData.neighbors[size_t(v)]) ring.emplace_back(local(nb.first), nb.second);
+        plan->memberNeighbors.push_back(std::move(ring));
+    }
+    for (size_t i = begin; i < end; ++i) plan->active.push_back(local(int(i)));
+    const std::vector<int> &counts = restData.counts;
+    const std::vector<int> &indices = restData.indices;
+    const RigExecDeltaMushSettings &settings = restData.settings;
+    if (!settings.onlySmooth && settings.frameTransport == RigExecDeltaMushFrameTransport::Corner) {
+        size_t offset = 0;
+        for (int count : counts) {
+            for (int c = 0; c < count; ++c) {
+                const int vertex = indices[offset + c];
+                if (size_t(vertex) < begin || size_t(vertex) >= end) continue;
+                const int previous = indices[offset + (c + count - 1) % count];
+                const int next = indices[offset + (c + 1) % count];
+                plan->cornerGlobals.push_back({previous, vertex, next});
+                plan->corners.push_back({local(previous), local(vertex), local(next)});
+            }
+            offset += size_t(count);
+        }
+    } else if (!settings.onlySmooth) {
+        size_t offset = 0;
+        for (int count : counts) {
+            bool touches = false;
+            for (int c = 0; c < count; ++c) {
+                const size_t v = size_t(indices[offset + c]);
+                touches = touches || (v >= begin && v < end);
+            }
+            if (touches) {
+                plan->faceCounts.push_back(count);
+                for (int c = 0; c < count; ++c) plan->faceCorners.push_back(local(indices[offset + c]));
+            }
+            offset += size_t(count);
+        }
+        const RigExecTransportRestData<Point, Wide> &transport = restData.transport;
+        for (size_t i = begin; i < end; ++i) {
+            const int neighbor = i < transport.neighbor.size() ? transport.neighbor[i] : -1;
+            plan->transportNeighbor.push_back(
+                neighbor < 0 || size_t(neighbor) >= restData.rest.size() ? -1 : local(neighbor));
+        }
+    }
+    plan->begin = begin;
+    plan->end = end;
+    return true;
+}
+
+/// What one vertex group's delta mush steps reuse between runs: its plan, the
+/// rest data it was built for (held, so a rebuilt rest data never matches a
+/// stale plan by address) and the scratch its run fills. Only that group's
+/// step touches it.
+template<class Point, class Wide>
+struct RigExecDeltaMushGroupState {
+    std::shared_ptr<const RigExecDeltaMushRestData<Point, Wide>> rest;
+    std::shared_ptr<const RigExecDeltaMushGroupPlan<Point>> plan;
+    std::vector<Point> in, smoothPosed;
+    std::vector<Wide> current, next, posedNormals;
+};
+
+/// Vertex group [begin, end) of RigExecApplyDeltaMushInSpaceWithRestData's
+/// result over the points \p groups holds, bit for bit, written to
+/// out[i - begin]: the masked kernel's region arithmetic over the group's
+/// plan (built into \p state when it is not this rest data's). A point whose
+/// result fails keeps its entering position. False, \p out unspecified, for
+/// what fails the whole kernel (invalid rest data, a displacement out of
+/// range, a computation map that is not valid) or a point of the region in
+/// a group \p groups does not hold.
+template<class Point, class Wide, class Matrix>
+bool
+RigExecApplyDeltaMushGroup(
+    const std::shared_ptr<const RigExecDeltaMushRestData<Point, Wide>> &restHandle,
+    double displacement, const Matrix &computationToTarget,
+    const RigExecGroupPoints<Point> &groups, size_t begin, size_t end, Point *out,
+    RigExecDeltaMushGroupState<Point, Wide> *state)
+{
+    if (!restHandle || !state) return false;
+    const RigExecDeltaMushRestData<Point, Wide> &restData = *restHandle;
+    if (!restData.validated || begin > end || end > restData.rest.size())
+        return false;
+    const RigExecDeltaMushSettings &settings = restData.settings;
+    if (!std::isfinite(displacement) ||
+        (settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
+         (displacement < 0 || displacement > 1))) return false;
+    const bool mapped = !(computationToTarget == Matrix(1));
+    if (mapped && !deltaMushDetail::ComputationMapValid(computationToTarget)) return false;
+    const size_t n = end - begin;
+    for (size_t k = 0; k < n; ++k) {
+        const Point *p = groups.At(begin + k);
+        if (!p) return false;
+        out[k] = *p;
+    }
+    const bool smooths = restData.iterations && restData.step != 0 && !restData.rest.empty();
+    if (smooths &&
+        (restData.neighbors.size() != restData.rest.size() ||
+         restData.pinned.size() != restData.rest.size() ||
+         (!settings.onlySmooth && restData.smoothRest.size() != restData.rest.size()) ||
+         (!settings.onlySmooth && settings.frameTransport != RigExecDeltaMushFrameTransport::Corner &&
+          !restData.transport.Covers(restData.rest.size())))) {
+        return false;
+    }
+    if (!smooths && !mapped) return true;
+    if (!state->plan || state->rest != restHandle ||
+        state->plan->begin != begin || state->plan->end != end) {
+        state->plan.reset();
+        state->rest.reset();
+        auto built = std::make_shared<RigExecDeltaMushGroupPlan<Point>>();
+        if (!RigExecBuildDeltaMushGroupPlan(restData, begin, end, built.get())) return false;
+        state->plan = std::move(built);
+        state->rest = restHandle;
+    }
+    const RigExecDeltaMushGroupPlan<Point> &plan = *state->plan;
+    const size_t m = plan.reads.size();
+    // The region's entering points, carried into computation space as
+    // ApplyInComputationSpace carries them.
+    Matrix affine = computationToTarget, targetToComputation(1);
+    if (mapped) {
+        affine[0][3]=affine[1][3]=affine[2][3]=0; affine[3][3]=1;
+        targetToComputation = affine.GetInverse();
+        targetToComputation[0][3]=targetToComputation[1][3]=targetToComputation[2][3]=0;
+        targetToComputation[3][3]=1;
+    }
+    std::vector<Point> &in = state->in;
+    in.resize(m);
+    for (size_t l = 0; l < m; ++l) {
+        const Point *p = groups.At(size_t(plan.reads[l]));
+        if (!p) return false;
+        in[l] = mapped ? deltaMushDetail::Convert<Point>(
+                             targetToComputation.TransformAffine(deltaMushDetail::Convert<Wide>(*p)))
+                       : *p;
+    }
+    const auto finitePoint = [](const Point &p) {
+        return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+    };
+    // Carries group point k's computation-space result back; one that does
+    // not carry back finite keeps its entering bytes (out[k] already).
+    const auto publish = [&](size_t k, const Point &result) {
+        if (!mapped) { out[k] = result; return; }
+        const Point back = deltaMushDetail::Convert<Point>(
+            affine.TransformAffine(deltaMushDetail::Convert<Wide>(result)));
+        if (finitePoint(back)) out[k] = back;
+    };
+    if (!smooths) {
+        for (size_t k = 0; k < n; ++k) publish(k, in[size_t(plan.active[k])]);
+        return true;
+    }
+    // The masked kernel's Jacobi relaxation over the members.
+    std::vector<Wide> &current = state->current, &nextValues = state->next;
+    current.resize(m);
+    for (size_t l = 0; l < m; ++l) current[l] = deltaMushDetail::Convert<Wide>(in[l]);
+    nextValues = current;
+    const bool weighted = !settings.smoothWeights.empty();
+    for (int iteration = 0; iteration < restData.iterations; ++iteration) {
+        for (size_t member = 0; member < plan.members.size(); ++member) {
+            const size_t l = size_t(plan.members[member]);
+            const size_t i = size_t(plan.reads[l]);
+            const auto &ring = plan.memberNeighbors[member];
+            if (restData.pinned[i] || ring.empty()) continue;
+            const double influence = weighted ? double(settings.smoothWeights[i]) : 1.0;
+            Wide sum(0); double total = 0;
+            if (settings.smoothing == RigExecDeltaMushSmoothing::LengthWeighted) {
+                for (const auto &nb : ring) {
+                    const Wide edge = current[size_t(nb.first)] - current[l];
+                    const double length = edge.GetLength();
+                    sum += edge * length; total += length;
+                }
+                const double divisor = total * ring.size();
+                nextValues[l] = current[l];
+                if (divisor > std::numeric_limits<float>::epsilon() * 10)
+                    nextValues[l] += sum * (2 * restData.step * influence / divisor);
+            } else {
+                for (const auto &nb : ring) {
+                    const double w = settings.smoothing == RigExecDeltaMushSmoothing::Simple ? 1 : nb.second;
+                    sum += current[size_t(nb.first)] * w; total += w;
+                }
+                nextValues[l] = current[l] + restData.step * influence * (sum / total - current[l]);
+            }
+        }
+        current.swap(nextValues);
+    }
+    std::vector<Point> &smoothPosed = state->smoothPosed;
+    smoothPosed = in;
+    for (int l : plan.members) smoothPosed[size_t(l)] = deltaMushDetail::Convert<Point>(current[size_t(l)]);
+    if (settings.onlySmooth) {
+        for (size_t k = 0; k < n; ++k) {
+            const Point &p = smoothPosed[size_t(plan.active[k])];
+            if (finitePoint(p)) publish(k, p);
+        }
+        return true;
+    }
+    const auto detailAt = [&](size_t i) {
+        return (restData.rest[i] - restData.smoothRest[i]) * float(displacement);
+    };
+    if (settings.frameTransport == RigExecDeltaMushFrameTransport::Corner) {
+        struct Basis { Wide x{0}, y{0}, z{0}; double weight = 0; };
+        const auto basis = [](const Point &previous, const Point &vertex, const Point &following) {
+            const auto normalized = [](Wide v) {
+                const double length = v.GetLength();
+                return length > 0 ? v / length : Wide(0);
+            };
+            const Wide before = normalized(deltaMushDetail::Convert<Wide>(previous) - deltaMushDetail::Convert<Wide>(vertex));
+            const Wide after = normalized(deltaMushDetail::Convert<Wide>(vertex) - deltaMushDetail::Convert<Wide>(following));
+            Basis result;
+            bool equal = true;
+            for (int a = 0; a < 3; ++a)
+                equal = equal && std::abs(before[a] - after[a]) <= std::numeric_limits<float>::epsilon() * 10;
+            if (equal) { result.x = Wide(1,0,0); result.y = Wide(0,1,0); result.z = Wide(0,0,1); return result; }
+            result.z = normalized(deltaMushDetail::Cross(before, after));
+            result.x = normalized(before + after);
+            result.y = deltaMushDetail::Cross(result.z, result.x);
+            result.weight = std::acos(std::max(-1.0, std::min(1.0, deltaMushDetail::Dot(before, after))));
+            return result;
+        };
+        std::vector<double> sums(n, 0);
+        std::vector<Basis> restBasis(plan.corners.size()), posedBasis(plan.corners.size());
+        for (size_t corner = 0; corner < plan.corners.size(); ++corner) {
+            const auto &g = plan.cornerGlobals[corner];
+            const auto &k = plan.corners[corner];
+            restBasis[corner] = basis(restData.smoothRest[size_t(g[0])], restData.smoothRest[size_t(g[1])],
+                                      restData.smoothRest[size_t(g[2])]);
+            posedBasis[corner] = basis(smoothPosed[size_t(k[0])], smoothPosed[size_t(k[1])],
+                                       smoothPosed[size_t(k[2])]);
+            sums[size_t(g[1]) - begin] += posedBasis[corner].weight;
+        }
+        std::vector<Wide> result(n, Wide(0));
+        for (size_t corner = 0; corner < plan.corners.size(); ++corner) {
+            const size_t vertex = size_t(plan.cornerGlobals[corner][1]);
+            const size_t k = vertex - begin;
+            const Basis &r = restBasis[corner], &p = posedBasis[corner];
+            if (!(sums[k] > 0) || !(p.weight > 0)) continue;
+            const Wide delta = deltaMushDetail::Convert<Wide>(detailAt(vertex));
+            result[k] += (deltaMushDetail::Dot(delta,r.x)*p.x + deltaMushDetail::Dot(delta,r.y)*p.y +
+                deltaMushDetail::Dot(delta,r.z)*p.z) * (p.weight / sums[k]);
+        }
+        for (size_t k = 0; k < n; ++k) {
+            const Wide &r = result[k];
+            if (!(std::isfinite(r[0]) && std::isfinite(r[1]) && std::isfinite(r[2]))) continue;
+            Point p = smoothPosed[size_t(plan.active[k])];
+            p += deltaMushDetail::Convert<Point>(r);
+            if (finitePoint(p)) publish(k, p);
+        }
+        return true;
+    }
+    // Vertex transport: posed normals from the faces touching the group.
+    const RigExecTransportRestData<Point, Wide> &transport = restData.transport;
+    std::vector<Wide> &posedNormals = state->posedNormals;
+    posedNormals.assign(m, Wide(0));
+    size_t offset = 0;
+    for (int count : plan.faceCounts) {
+        const int origin = plan.faceCorners[offset];
+        Wide posedArea(0);
+        for (int c = 1; c + 1 < count; ++c) {
+            const int a = plan.faceCorners[offset + c], b = plan.faceCorners[offset + c + 1];
+            posedArea += deltaMushDetail::Cross(deltaMushDetail::Convert<Wide>(smoothPosed[size_t(a)]) - deltaMushDetail::Convert<Wide>(smoothPosed[size_t(origin)]),
+                                 deltaMushDetail::Convert<Wide>(smoothPosed[size_t(b)]) - deltaMushDetail::Convert<Wide>(smoothPosed[size_t(origin)]));
+        }
+        for (int c = 0; c < count; ++c) posedNormals[size_t(plan.faceCorners[offset + c])] += posedArea;
+        offset += size_t(count);
+    }
+    for (size_t k = 0; k < n; ++k) {
+        const size_t i = begin + k;
+        const size_t l = size_t(plan.active[k]);
+        const Point delta = detailAt(i);
+        if (!finitePoint(smoothPosed[l]) || !finitePoint(delta)) continue;
+        Point rotated = delta;
+        if (!(delta == Point(0))) {
+            Wide np = posedNormals[l];
+            const int neighbor = plan.transportNeighbor[k];
+            if (!transport.restOk[i] || !deltaMushDetail::Normalize(&np) || neighbor < 0) continue;
+            const Wide edge = deltaMushDetail::Convert<Wide>(smoothPosed[size_t(neighbor)]) - deltaMushDetail::Convert<Wide>(smoothPosed[l]);
+            Wide tp = edge - deltaMushDetail::Dot(edge, np) * np;
+            if (tp.GetLengthSq() <= edge.GetLengthSq() * 1e-24 || !deltaMushDetail::Normalize(&tp)) continue;
+            const Wide bp = deltaMushDetail::Cross(np, tp);
+            const Wide d = deltaMushDetail::Convert<Wide>(delta);
+            rotated = deltaMushDetail::Convert<Point>(deltaMushDetail::Dot(d, transport.tr[i]) * tp +
+                deltaMushDetail::Dot(d, transport.br[i]) * bp + deltaMushDetail::Dot(d, transport.nr[i]) * np);
+            if (!finitePoint(rotated)) continue;
+        }
+        Point p = smoothPosed[l];
+        p += rotated;
+        if (finitePoint(p)) publish(k, p);
+    }
+    return true;
 }
 
 } // namespace rigExec

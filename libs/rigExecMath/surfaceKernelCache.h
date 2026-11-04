@@ -113,6 +113,12 @@ public:
         entry->settings=settings;
         mush=entry; mushMask=RigExecDeltaMushMaskMemo<Point>(); return &mush->value;
     }
+    /// The rest data MushRest last answered with, retained, or null.
+    std::shared_ptr<const RigExecDeltaMushRestData<Point,Wide>> RetainedMushRest() const {
+        return mush ? std::shared_ptr<const RigExecDeltaMushRestData<Point,Wide>>(
+                          mush, &mush->value)
+                    : nullptr;
+    }
     /// The masked delta mush memo for the rest data MushRest last returned.
     RigExecDeltaMushMaskMemo<Point> *MushMaskMemo() { return &mushMask; }
     const RigExecWrinkleMesh *WrinkleTopology(size_t points,
@@ -173,6 +179,12 @@ public:
         entry->Build(rest,count,lo,size,dx,dy,dz);
         lattice=entry; latticeRestVersion=restVersion; ++latticeBuilds;
         return &lattice->value;
+    }
+    /// The adjacency MeshAdjacency last answered with, retained, or null.
+    std::shared_ptr<const RigExecMeshAdjacency> RetainedMeshAdjacency() const {
+        return adjacency ? std::shared_ptr<const RigExecMeshAdjacency>(
+                               adjacency, &adjacency->value)
+                         : nullptr;
     }
     /// The lattice bind retained, or null (RigExecLatticeBindSharing).
     const std::shared_ptr<const RigExecLatticeBind<Point>> &RetainedLatticeBind() const {

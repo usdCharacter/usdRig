@@ -1645,7 +1645,18 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                              std::to_string(g) + version +
                              " without declaring its writer's slot");
                 }
-                const int expected = groupSlot(g);
+                // A Range Smooth also reads its halo groups of that version.
+                std::vector<int> allowed{groupSlot(g)};
+                if (range && g < own.haloGroups.size()) {
+                    for (const int h : own.haloGroups[g]) {
+                        if (!readsGroup(size_t(h))) {
+                            out->Add(NameStep(B, index) + " reads halo group " +
+                                     std::to_string(h) + version +
+                                     " without declaring its writer's slot");
+                        }
+                        allowed.push_back(groupSlot(size_t(h)));
+                    }
+                }
                 for (const RigExecBakedSlotRange &read : step.reads) {
                     if (read.domain != RigExecBakedSlotDomain::RevisionOut) {
                         continue;
@@ -1653,7 +1664,8 @@ ValidatePointVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                     for (uint32_t slot = read.begin;
                          slot < read.end && slot < B.chunkRevision.size();
                          ++slot) {
-                        if (int(slot) != expected) {
+                        if (std::find(allowed.begin(), allowed.end(),
+                                      int(slot)) == allowed.end()) {
                             out->Add(NameStep(B, index) + " reads RevisionOut[" +
                                      std::to_string(slot) + "], which is not "
                                      "group " + std::to_string(g) + version);

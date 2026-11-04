@@ -373,15 +373,13 @@ static void CheckMaskedMatchesFull() {
     auto refused = posed;
     CHECK(!RigExecApplyDeltaMushWithRestDataMasked(&refused, restData, 1.0, std::vector<char>(3, 1)));
     CHECK(refused == posed);
-    // The default frame transport is vertex, which is never substituted.
-    CHECK(!RigExecDeltaMushMaskPreservesVerdict(posed, restData, 1.0));
+    // Every point fails alone, so the masked kernel may always stand in.
+    CHECK(RigExecDeltaMushMaskPreservesVerdict(posed, restData, 1.0));
 
-    // Verdict preservation (codex review): two disconnected triangles, only
-    // vertex 0 active, the second triangle collapsed to a point. Vertex
-    // transport fails the whole full kernel on the collapsed frame, which the
-    // masked kernel cannot see, so a host must not substitute it there.
-    // Corner transport tolerates the collapse, so the two agree and the
-    // substitution stays allowed.
+    // Two disconnected triangles, only vertex 0 active, the second triangle
+    // collapsed to a point. The collapsed vertices' frames are degenerate:
+    // under either transport they keep their entering positions and every
+    // other point applies, and the masked result at vertex 0 is the full one.
     const std::vector<GfVec3f> twoRest{{0,0,0},{1,0,0},{0,1,0},{3,0,0},{4,0,0},{3,1,0}};
     const std::vector<int> twoCounts{3, 3}, twoIndices{0,1,2,3,4,5};
     auto twoPosed = twoRest;
@@ -394,22 +392,20 @@ static void CheckMaskedMatchesFull() {
         CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(twoRest, twoCounts, twoIndices, 1, 0.5,
                                                                 false, 0, settings, &twoData)));
         auto full = twoPosed, masked = twoPosed;
-        const bool fullOk = RigExecApplyDeltaMushWithRestData(&full, twoData, 1.0);
-        const bool maskedOk = RigExecApplyDeltaMushWithRestDataMasked(&masked, twoData, 1.0, first);
-        if (transport == RigExecDeltaMushFrameTransport::Vertex) {
-            CHECK(!fullOk && maskedOk);                     // the verdicts really differ
-            CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoPosed, twoData, 1.0));
-        } else {
-            CHECK(fullOk && maskedOk);
-            CHECK(std::memcmp(&full[0], &masked[0], sizeof(GfVec3f)) == 0);
-            CHECK(RigExecDeltaMushMaskPreservesVerdict(twoPosed, twoData, 1.0));
-        }
+        std::vector<char> kept;
+        CHECK(RigExecApplyDeltaMushWithRestData(&full, twoData, 1.0, &kept));
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&masked, twoData, 1.0, first));
+        CHECK(std::memcmp(&full[0], &masked[0], sizeof(GfVec3f)) == 0);
+        CHECK(kept.size() == 6 && !kept[0]);
+        for (int i = 0; i < 6; ++i)
+            if (kept[size_t(i)]) CHECK(std::memcmp(&full[size_t(i)], &twoPosed[size_t(i)], sizeof(GfVec3f)) == 0);
+        if (transport == RigExecDeltaMushFrameTransport::Vertex) CHECK(kept[3] && kept[4] && kept[5]);
+        CHECK(RigExecDeltaMushMaskPreservesVerdict(twoPosed, twoData, 1.0));
     }
 
-    // Atomicity (codex review): finite entering points, vertex 0 computes
-    // normally, then vertex 3 overflows (an extrapolating simple step drives
-    // it past float max). The call fails and every point is untouched; the
-    // full kernel fails too and the magnitudes are never substituted.
+    // Overflow fails only the overflowing points: vertex 3 (an extrapolating
+    // simple step drives it past float max) keeps its entering position while
+    // vertex 0 computes, in the masked and the full kernel alike.
     {
         RigExecDeltaMushSettings settings;
         settings.smoothing = RigExecDeltaMushSmoothing::Simple;
@@ -422,44 +418,66 @@ static void CheckMaskedMatchesFull() {
         entering[5] = GfVec3f(-1e38f, 1, 0);
         std::vector<char> both(6, 0); both[0] = both[3] = 1;
         auto attempt = entering, full = entering;
-        CHECK(!RigExecApplyDeltaMushWithRestDataMasked(&attempt, data, 1.0, both));
-        CHECK(std::memcmp(attempt.data(), entering.data(), 6 * sizeof(GfVec3f)) == 0);
-        CHECK(!RigExecApplyDeltaMushWithRestData(&full, data, 1.0));
-        CHECK(!RigExecDeltaMushMaskPreservesVerdict(entering, data, 1.0));
+        CHECK(RigExecApplyDeltaMushWithRestDataMasked(&attempt, data, 1.0, both));
+        CHECK(RigExecApplyDeltaMushWithRestData(&full, data, 1.0));
+        CHECK(std::memcmp(&attempt[0], &full[0], sizeof(GfVec3f)) == 0);
+        CHECK(std::memcmp(&attempt[3], &entering[3], sizeof(GfVec3f)) == 0);
+        CHECK(std::memcmp(&full[3], &entering[3], sizeof(GfVec3f)) == 0);
     }
-    // Rest-side verdict gaps (codex review), both proved unsafe by the builder:
-    // (a) inverse-distance weights that underflow to zero (0/0 in the full
-    //     kernel on a triangle outside the support);
-    // (b) rest minus smoothed rest that overflows before the displacement
-    //     scale (NaN even at displacement 0).
+
+    // Rest data whose smoothing divides 0 by 0 (underflowing inverse-distance
+    // weights), or whose detail overflows: the affected points keep their
+    // entering positions, and the masked result is the full one.
     {
         RigExecDeltaMushSettings onlySmooth; onlySmooth.onlySmooth = true;
         std::vector<GfVec3f> farRest = twoRest;
         for (int i = 3; i < 6; ++i) farRest[i] = twoRest[i] * 5e37f;   // finite; edges ~5e37
-        RigExecDeltaMushRestData<GfVec3f, GfVec3d> a;
-        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(farRest, twoCounts, twoIndices, 1, 0.5,
-                                                                false, 10, onlySmooth, &a)));
-        CHECK(!a.maskRestSafe);
-        CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoRest, a, 1.0));
-
         RigExecDeltaMushSettings corner;
         corner.smoothing = RigExecDeltaMushSmoothing::Simple;
         corner.frameTransport = RigExecDeltaMushFrameTransport::Corner;
         std::vector<GfVec3f> wideRest = twoRest;
         wideRest[3] = GfVec3f(3e38f, 0, 0); wideRest[4] = GfVec3f(-3e38f, 1, 0);
         wideRest[5] = GfVec3f(-3e38f, 0, 1);
-        RigExecDeltaMushRestData<GfVec3f, GfVec3d> b;
-        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(wideRest, twoCounts, twoIndices, 1, 1.0,
-                                                                false, 0, corner, &b)));
-        CHECK(!b.maskRestSafe);
-        CHECK(!RigExecDeltaMushMaskPreservesVerdict(twoRest, b, 0.0));
+        struct Case { const std::vector<GfVec3f> *rest; double step, distance, displacement;
+                      const RigExecDeltaMushSettings *settings; };
+        for (const Case &c : {Case{&farRest, 0.5, 10, 1.0, &onlySmooth},
+                              Case{&wideRest, 1.0, 0, 0.0, &corner},
+                              Case{&twoRest, 0.5, 1, 1.0, &corner}}) {
+            RigExecDeltaMushRestData<GfVec3f, GfVec3d> data;
+            CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(*c.rest, twoCounts, twoIndices, 1,
+                                                                    c.step, false, c.distance,
+                                                                    *c.settings, &data)));
+            auto full = twoRest, masked = twoRest;
+            std::vector<char> all(6, 1);
+            CHECK(RigExecApplyDeltaMushWithRestData(&full, data, c.displacement));
+            CHECK(RigExecApplyDeltaMushWithRestDataMasked(&masked, data, c.displacement, all));
+            CHECK(SameBytes(full, masked));
+            CHECK(RigExecDeltaMushMaskPreservesVerdict(twoRest, data, c.displacement));
+        }
+    }
 
-        // An ordinary build is proved safe.
-        RigExecDeltaMushRestData<GfVec3f, GfVec3d> c;
-        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(twoRest, twoCounts, twoIndices, 2, 0.5,
-                                                                false, 1, corner, &c)));
-        CHECK(c.maskRestSafe);
-        CHECK(RigExecDeltaMushMaskPreservesVerdict(twoRest, c, 1.0));
+    // A non-finite entering point keeps its position, and so does every
+    // point its smoothing reaches; points beyond its reach are the clean
+    // mesh's results.
+    {
+        RigExecDeltaMushRestData<GfVec3f, GfVec3d> data;
+        CHECK((RigExecBuildDeltaMushRestData<GfVec3f, GfVec3d>(rest, counts, indices, 3, 0.5, true, 0,
+                                                                RigExecDeltaMushSettings(), &data)));
+        auto clean = posed, dirty = posed;
+        dirty[0] = GfVec3f(std::numeric_limits<float>::quiet_NaN(), 0, 0);
+        std::vector<char> kept;
+        CHECK(RigExecApplyDeltaMushWithRestData(&clean, data, 1.0));
+        CHECK(RigExecApplyDeltaMushWithRestData(&dirty, data, 1.0, &kept));
+        CHECK(kept[0] && std::isnan(dirty[0][0]));
+        size_t keptCount = 0;
+        for (size_t i = 0; i < rest.size(); ++i) {
+            if (kept[i]) {
+                ++keptCount;
+                if (i) CHECK(std::memcmp(&dirty[i], &posed[i], sizeof(GfVec3f)) == 0);
+            }
+        }
+        CHECK(keptCount > 1 && keptCount < rest.size() / 4);
+        CHECK(std::memcmp(&dirty.back(), &clean.back(), sizeof(GfVec3f)) == 0);
     }
 }
 int main(int argc,char **argv) {

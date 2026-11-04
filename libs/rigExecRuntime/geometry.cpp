@@ -26,6 +26,7 @@
 #include "rigExecMath/surfaceProjectorKernel.h"
 #include "rigExecMath/surfaceSnapKernel.h"
 #include "rigExecMath/rangeRunner.h"
+#include "rigExecMath/smoothKernel.h"
 #include "poseInternal.h"
 
 #include <algorithm>
@@ -3036,6 +3037,15 @@ RrGeoRevisionKernelAcceptance(int op, const RrGeoMoverParameters &p,
             return RrGeoAcceptance::Refuses;
         }
         return RrGeoAcceptance::Applies;
+    case RrGeoOpSmooth:
+        // The kernel never refuses (an invalid topology passes through); only
+        // the "apply once" envelope can fail the revision, validated here as
+        // the native acceptance does.
+        if (!RrGeoEnvelopeIsFullStrength(p.weights) &&
+            !p.weights.ResolvesAll(count)) {
+            return RrGeoAcceptance::Refuses;
+        }
+        return RrGeoAcceptance::Applies;
     default:
         return RrGeoAcceptance::Deferred;
     }
@@ -3622,6 +3632,12 @@ struct RrGeoRevisionRangeInputs {
     // BlendShape: the envelope resolved at the full count, the weight its
     // kernel blends each point by; empty at full strength.
     std::vector<float> blendWeights;
+    // Smooth: the adjacency the whole kernel smooths over, or null for a
+    // topology it passes through; `smoothAdjacencyOwned` keeps it alive.
+    const RigExecMeshAdjacency *smoothAdjacency = nullptr;
+    std::shared_ptr<const RigExecMeshAdjacency> smoothAdjacencyOwned;
+    // DeltaMush: the rest data the whole kernel deforms with.
+    std::shared_ptr<const RigExecDeltaMushRestData<RrVec3f, RrVec3d>> mushRest;
 };
 
 // RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves), exactly
@@ -3645,6 +3661,48 @@ RrGeoPrepareRevisionRanges(
     prepared->latticeBind.reset();
     prepared->latticeBasis = nullptr;
     prepared->blendWeights.clear();
+    prepared->smoothAdjacency = nullptr;
+    prepared->smoothAdjacencyOwned.reset();
+    prepared->mushRest.reset();
+    if (op == RrGeoOpDeltaMush) {
+        // RigExecPrepareRevisionRanges's DeltaMush answer: what fails the
+        // whole kernel (the packet, the "apply once" envelope, the rest data,
+        // the displacement, the computation map); every other failure is a
+        // point's own.
+        if (!RrGeoPacketMatches(op, p) ||
+            (!RrGeoEnvelopeIsFullStrength(p.weights) &&
+             !p.weights.ResolvesAll(count))) {
+            return RrGeoAcceptance::Refuses;
+        }
+        std::shared_ptr<const RigExecDeltaMushRestData<RrVec3f, RrVec3d>> rest;
+        if (surfaceCache) {
+            if (surfaceCache->MushRest(p.restPoints, p.topologyCounts,
+                                       p.topologyIndices, p.mushIterations,
+                                       p.mushStep, p.mushPinBorders,
+                                       p.mushDistanceWeight, p.mushSettings)) {
+                rest = surfaceCache->RetainedMushRest();
+            }
+        } else {
+            auto built = std::make_shared<
+                RigExecDeltaMushRestData<RrVec3f, RrVec3d>>();
+            if (RigExecBuildDeltaMushRestData<RrVec3f, RrVec3d>(
+                    p.restPoints, p.topologyCounts, p.topologyIndices,
+                    p.mushIterations, p.mushStep, p.mushPinBorders,
+                    p.mushDistanceWeight, p.mushSettings, built.get())) {
+                rest = std::move(built);
+            }
+        }
+        const double d = p.mushDisplacement;
+        if (!rest || !rest->validated || rest->rest.size() != count ||
+            !std::isfinite(d) ||
+            (rest->settings.smoothing == RigExecDeltaMushSmoothing::Rest &&
+             (d < 0 || d > 1)) ||
+            !deltaMushDetail::ComputationMapValid(p.mushComputationToTarget)) {
+            return RrGeoAcceptance::Refuses;
+        }
+        prepared->mushRest = std::move(rest);
+        return RrGeoAcceptance::Applies;
+    }
     const RrGeoAcceptance acceptance =
         RrGeoRevisionKernelAcceptance(op, p, count, envelopeResolves);
     if (acceptance != RrGeoAcceptance::Applies) {
@@ -3694,6 +3752,26 @@ RrGeoPrepareRevisionRanges(
             w.ResolveAll(count, &prepared->blendWeights);
         }
         break;
+    case RrGeoOpSmooth:
+        // The adjacency RrGeoApplyLaplacianSmooth smooths over; none for a
+        // topology it passes through.
+        if (surfaceCache) {
+            if (count > 0 && surfaceCache->MeshAdjacency(
+                                 count, p.topologyCounts, p.topologyIndices)) {
+                prepared->smoothAdjacencyOwned =
+                    surfaceCache->RetainedMeshAdjacency();
+            }
+        } else {
+            auto built = std::make_shared<RigExecMeshAdjacency>();
+            if (RigExecBuildMeshAdjacency(
+                    count, p.topologyCounts.data(), p.topologyCounts.size(),
+                    p.topologyIndices.data(), p.topologyIndices.size(),
+                    built.get())) {
+                prepared->smoothAdjacencyOwned = std::move(built);
+            }
+        }
+        prepared->smoothAdjacency = prepared->smoothAdjacencyOwned.get();
+        break;
     default:
         break;
     }
@@ -3714,13 +3792,18 @@ RrGeoPrepareRevisionRanges(
 // written. Reads only \p prepared and the packet, so groups are independent.
 // \p walk, when given, is the group's own memo, which only this call writes:
 // a sparse Matrix walk reuses through it (RrGeoApplyMatrixSparseWalk).
+// \p halo, required for Smooth and DeltaMush, holds the entering points of
+// this group and of every group a point it reads lies in; \p mush, required
+// for DeltaMush, is the group's own plan and scratch.
 bool
 RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
                       const RrGeoRevisionRangeInputs &prepared,
                       const RrVec3f *in, RrVec3f *out, size_t count,
                       size_t begin, size_t end, const float *separateEnvelope,
                       bool useSimd, bool *untouched = nullptr,
-                      RigExecSparseWalkMemo<RrVec3f> *walk = nullptr)
+                      RigExecSparseWalkMemo<RrVec3f> *walk = nullptr,
+                      const RigExecGroupPoints<RrVec3f> *halo = nullptr,
+                      RigExecDeltaMushGroupState<RrVec3f, RrVec3d> *mush = nullptr)
 {
     if (untouched) {
         *untouched = false;
@@ -3841,6 +3924,28 @@ RrGeoRunRevisionGroup(int op, const RrGeoMoverParameters &p,
         }
         return true;
     }
+    case RrGeoOpSmooth:
+        // An invalid topology copies \p in to \p out, the whole kernel's
+        // pass-through, which the blend below then runs over.
+        if (!prepared.smoothAdjacency) {
+            seed();
+        } else if (n > 0 &&
+                   (!halo || halo->At(begin) != in ||
+                    !RigExecApplyLaplacianSmoothGroup(
+                        *prepared.smoothAdjacency, p.strength, count, *halo,
+                        begin, end, out))) {
+            return false;
+        }
+        break;
+    case RrGeoOpDeltaMush:
+        if (n > 0 &&
+            (!prepared.mushRest || !halo || !mush || halo->At(begin) != in ||
+             !RigExecApplyDeltaMushGroup<RrVec3f, RrVec3d, RrMat4d>(
+                 prepared.mushRest, p.mushDisplacement,
+                 p.mushComputationToTarget, *halo, begin, end, out, mush))) {
+            return false;
+        }
+        break;
     default:
         return false;
     }
@@ -3987,6 +4092,15 @@ struct RrGeometryScratch {
         // The RevisionOut slot of group 0 as this revision publishes it:
         // chunk_base for Range, chunk_base + chunks for Whole.
         int64_t groupSlotBase = 0;
+        // Range Smooth or DeltaMush (Open state): per group g, per group
+        // h, whether g's step reads group h of its entering version (its
+        // own, a declared halo slot, or a group entering from the base,
+        // which every group step reads); and g's step's table of those
+        // groups' points.
+        std::vector<std::vector<char>> haloReads;
+        std::vector<std::vector<const RrVec3f *>> haloPoints;
+        // Range DeltaMush: per group, its step's plan and scratch.
+        std::vector<RigExecDeltaMushGroupState<RrVec3f, RrVec3d>> mushGroups;
         // Per chain group (pointBlocks.h): its publication and, for a Whole
         // keyed skin, chunk g's speculative result. Only written groups are
         // ever published; each owns two buffers sized at Open.
@@ -5358,6 +5472,46 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                                                   : int64_t(wire.chunks.size()));
                 rev.groups.resize(groups);
                 rev.groupIds.assign(groups, RigExecGroupSource());
+                if (rev.role == RrGeoRole::Range &&
+                    (wire.op == uint8_t(RrGeoOpSmooth) ||
+                     wire.op == uint8_t(RrGeoOpDeltaMush))) {
+                    rev.haloReads.assign(groups, std::vector<char>(groups, 0));
+                    rev.haloPoints.assign(
+                        groups, std::vector<const RrVec3f *>(groups, nullptr));
+                    if (wire.op == uint8_t(RrGeoOpDeltaMush)) {
+                        rev.mushGroups.assign(
+                            groups,
+                            RigExecDeltaMushGroupState<RrVec3f, RrVec3d>());
+                    }
+                    for (const RigExecWireStep &step : file.steps) {
+                        if (step.kind != RigExecWireStepKind::RevisionChunk ||
+                            step.object < 0 || size_t(step.object) != id ||
+                            step.part < 0 || size_t(step.part) >= groups) {
+                            continue;
+                        }
+                        std::vector<char> &reads =
+                            rev.haloReads[size_t(step.part)];
+                        reads[size_t(step.part)] = 1;
+                        for (size_t h = 0; h < groups; ++h) {
+                            const int w = rev.enteringWriter[h];
+                            if (w < 0) {
+                                reads[h] = 1;
+                                continue;
+                            }
+                            const int64_t slot =
+                                out.revisions[size_t(w)].groupSlotBase +
+                                int64_t(h);
+                            for (const auto &read : step.reads) {
+                                if (read.domain() ==
+                                        RigExecWireSlotDomain::RevisionOut &&
+                                    int64_t(read.begin()) <= slot &&
+                                    slot < int64_t(read.end())) {
+                                    reads[h] = 1;
+                                }
+                            }
+                        }
+                    }
+                }
                 for (size_t g = 0; g < groups; ++g) {
                     if (!rev.groupWritten[g]) {
                         continue;
@@ -8268,15 +8422,52 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
                                             rev->envelope.size() == count
                                         ? rev->envelope.data()
                                         : nullptr;
+            // A smooth or a delta mush reads the groups of its entering
+            // version its step declares beside its own (the scheduler ran
+            // their writers).
+            RigExecGroupPoints<RrVec3f> halo;
+            bool haloOk = true;
+            const bool mush = rev->op == RrGeoOpDeltaMush;
+            if (rev->op == RrGeoOpSmooth || mush) {
+                const size_t groups = chain.groupBounds.size() - 1;
+                haloOk = g < rev->haloReads.size() &&
+                         g < rev->haloPoints.size() &&
+                         rev->haloPoints[g].size() == groups &&
+                         (!mush || g < rev->mushGroups.size());
+                for (size_t h = 0; haloOk && h < groups; ++h) {
+                    rev->haloPoints[g][h] = nullptr;
+                    if (!rev->haloReads[g][h]) {
+                        continue;
+                    }
+                    const RigExecPointsRef<RrVec3f> &group =
+                        h == g ? entering
+                               : RrGeoGroupAt(chain, revisionIndex, h, nullptr);
+                    haloOk = group.count ==
+                             size_t(chain.groupBounds[h + 1] -
+                                    chain.groupBounds[h]);
+                    rev->haloPoints[g][h] = group.data;
+                }
+                if (haloOk) {
+                    halo.bounds = chain.groupBounds.data();
+                    halo.groups = groups;
+                    halo.points = rev->haloPoints[g].data();
+                } else {
+                    scratch->gateViolations.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
             const int k = RigExecGroupScratch(&state, n);
             std::vector<RrVec3f> &buffer = *state.own[k];
             buffer.resize(n);
             bool untouched = false;
-            ok = RrGeoRunRevisionGroup(rev->op, rev->parameters,
+            ok = haloOk &&
+                 RrGeoRunRevisionGroup(rev->op, rev->parameters,
                                        rev->rangeInputs, entering.data,
                                        buffer.data(), count, begin, end,
                                        envelope, useSimd, &untouched,
-                                       &state.walk);
+                                       &state.walk,
+                                       halo.points ? &halo : nullptr,
+                                       mush ? &rev->mushGroups[g] : nullptr);
             if (ok && !untouched) {
                 RigExecPublishOwnGroup(&state, k);
                 state.ok = true;

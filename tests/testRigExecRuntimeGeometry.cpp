@@ -2289,6 +2289,116 @@ TestGroupChainPlays()
                /*exportRoles=*/true);
 }
 
+// A 12 x 12 grid of quads under Gated (a matrix mover on Moving, tx 1, 2, 3
+// at frames 1-3, weighted to row 0 alone), a Smooth mover, a second Smooth
+// or, with \p mush, a delta mush of three iterations, and After (a matrix
+// mover on Still), in that order.
+static UsdStageRefPtr
+_SmoothChainStage(bool mush = false)
+{
+    constexpr int kFrames = 3, kSide = 12;
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim still = stage->DefinePrim(SdfPath("/Asset/Rig/Still"),
+                                            TfToken("RigExecControl"));
+    still.GetAttribute(TfToken("avars:ty")).Set(1.0);
+    for (int frame = 1; frame <= kFrames; ++frame) {
+        moving.GetAttribute(TfToken("avars:tx"))
+            .Set(double(frame), UsdTimeCode(frame));
+    }
+    const SdfPath target("/Asset/Shape.points");
+    VtVec3fArray points(size_t(kSide * kSide));
+    VtIntArray counts, indices;
+    for (int y = 0; y < kSide; ++y) {
+        for (int x = 0; x < kSide; ++x) {
+            points[size_t(y * kSide + x)] =
+                GfVec3f(0.25f * float(x), 0.125f * float(y),
+                        0.1f * float((x * 7 + y * 3) % 11));
+            if (x + 1 < kSide && y + 1 < kSide) {
+                const int a = y * kSide + x;
+                counts.push_back(4);
+                for (const int v : {a, a + 1, a + kSide + 1, a + kSide}) {
+                    indices.push_back(v);
+                }
+            }
+        }
+    }
+    const UsdPrim mesh =
+        stage->DefinePrim(target.GetPrimPath(), TfToken("Mesh"));
+    mesh.GetAttribute(TfToken("points")).Set(points);
+    mesh.GetAttribute(TfToken("faceVertexCounts")).Set(counts);
+    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(indices);
+    VtIntArray named(static_cast<size_t>(kSide));
+    for (int i = 0; i < kSide; ++i) {
+        named[size_t(i)] = i;
+    }
+    const UsdPrim weight = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Weights/RowZero"), TfToken("RigExecStaticWeight"));
+    weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+        .SetTargets({target});
+    weight.CreateAttribute(TfToken("rigExec:representation"),
+                           SdfValueTypeNames->Token, false)
+        .Set(TfToken("sparse"));
+    weight.CreateAttribute(TfToken("rigExec:indices"),
+                           SdfValueTypeNames->IntArray, false)
+        .Set(named);
+    weight.CreateAttribute(TfToken("rigExec:values"),
+                           SdfValueTypeNames->FloatArray, false)
+        .Set(VtFloatArray(named.size(), 1.0f));
+    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
+                           SdfValueTypeNames->Float, false)
+        .Set(0.0f);
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto mover = [&](const char *name, const char *type) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath("/Asset/Rig/Movers").AppendChild(TfToken(name)),
+            TfToken(type));
+        prim.ApplyAPI(TfToken("RigExecMoverAPI"));
+        prim.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
+        return prim;
+    };
+    // Authored last to first: discovery runs siblings bottom to top.
+    const UsdPrim after = mover("After", "RigExecMatrixMover");
+    after.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({still.GetPath()});
+    after.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    if (mush) {
+        mover("Mush", "RigExecDeltaMushMover")
+            .CreateAttribute(TfToken("inputs:iterations"), SdfValueTypeNames->Int)
+            .Set(3);
+    } else {
+        mover("SmoothTwice", "RigExecSmoothMover");
+    }
+    mover("SmoothOnce", "RigExecSmoothMover");
+    const UsdPrim gated = mover("Gated", "RigExecMatrixMover");
+    gated.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({moving.GetPath()});
+    gated.CreateRelationship(TfToken("rigExec:weightObject"), false)
+        .SetTargets({weight.GetPath()});
+    return stage;
+}
+
+// The smooth chain's Range smooths, each group reading its halo groups
+// (the second's written by the first), play bit for bit with the native
+// program under RIGEXEC_VERIFY_CHAIN_VERSIONS, with groups of eight points
+// that every grid row crosses.
+static void
+TestSmoothChainPlays()
+{
+    const _ScopedEnv chunks("RIGEXEC_BAKED_CHUNK_VERTS", "16");
+    const _ScopedEnv groups("RIGEXEC_BAKED_GROUP_VERTS", "8");
+    const _ScopedEnv verify("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
+    _TestStage("smooth chain reads its halo", _SmoothChainStage(),
+               {1, 2, 3, 2, 1, 3}, nullptr, /*staticClass=*/false,
+               /*exportRoles=*/true);
+    _TestStage("delta mush chain reads its region", _SmoothChainStage(true),
+               {1, 2, 3, 2, 1, 3}, nullptr, /*staticClass=*/false,
+               /*exportRoles=*/true);
+}
+
 // The file's format-20 roles as Open reads them, and the per-group cutoff.
 // Blend, Linear, Gated and Middle are Range (unchunked, the eight groups),
 // Linear's chunk g keyed {g}; Gated has its group 0 step alone; Dual is a
@@ -5162,6 +5272,7 @@ main(int argc, char **argv)
     TestRangeChainPlays();
     TestRangeChainRolesAndCutoff();
     TestGroupChainPlays();
+    TestSmoothChainPlays();
     TestGroupChainRolesAndCutoff();
     TestEpilogueSharesPublications();
     TestPacketArrayVersions();

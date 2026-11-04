@@ -3678,6 +3678,16 @@ struct RigExecBakedProgramImpl {
         /// Range/Whole: per chain group, the chain index of the revision whose
         /// slot holds group g of the version entering this one; -1 the base.
         std::vector<int> enteringWriter;
+        /// Range Smooth and DeltaMush (Build): per group, ascending, the
+        /// other groups holding a point its results read. Its group step
+        /// reads those groups of the entering version beside its own.
+        std::vector<std::vector<int>> haloGroups;
+        /// Range Smooth and DeltaMush: per group, its step's table of
+        /// entering group points (size G, null where not read); only that
+        /// step writes it.
+        std::vector<std::vector<const GfVec3f *>> haloPoints;
+        /// Range DeltaMush: per group, its step's plan and scratch.
+        std::vector<RigExecDeltaMushGroupState<GfVec3f, GfVec3d>> mushGroups;
         /// Range/Whole: size G, indexed by group; only written groups are ever
         /// published. Range: written by the group's step; Whole: chunk g owns
         /// the computed half, the fuse the published half (pointBlocks.h).

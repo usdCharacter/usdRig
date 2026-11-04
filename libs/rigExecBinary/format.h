@@ -554,7 +554,15 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// window and no material model. The tables are unchanged.
 /// Format 27 admits volume falloff sample arrays through the existing typed
 /// path-read rows. Older files use their compiled falloff table.
-inline constexpr uint32_t RigExecFormatVersion = 27;
+/// Format 28 admits Smooth and DeltaMush as Range ops: a group step for part
+/// k also reads the groups of its entering version holding a point group k's
+/// results read (its halo: a smooth's edge neighbours, a delta mush's
+/// smoothing region), declared as their RevisionOut slots. Older files hold
+/// neither as a Range revision.
+inline constexpr uint32_t RigExecFormatVersion = 28;
+
+/// The first format version that may hold a Range Smooth or DeltaMush.
+inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
 
 /// The oldest format version Open reads.
 inline constexpr uint32_t RigExecFormatOldestReadable = 20;
@@ -598,7 +606,8 @@ RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 }
 
 /// The ops a Range revision may have in format 20: Matrix, Wire, Lattice,
-/// BlendShape and Skin (a Skin only with a private classicLinear method).
+/// BlendShape and Skin (a Skin only with a private classicLinear method);
+/// from format 28 also Smooth and DeltaMush.
 inline bool
 RigExecFormatIsRangeOp(uint8_t op)
 {
@@ -606,7 +615,9 @@ RigExecFormatIsRangeOp(uint8_t op)
            op == uint8_t(fb::RevisionOp::Wire) ||
            op == uint8_t(fb::RevisionOp::Lattice) ||
            op == uint8_t(fb::RevisionOp::BlendShape) ||
-           op == uint8_t(fb::RevisionOp::Skin);
+           op == uint8_t(fb::RevisionOp::Skin) ||
+           op == uint8_t(fb::RevisionOp::Smooth) ||
+           op == uint8_t(fb::RevisionOp::DeltaMush);
 }
 
 /// Whether \p r's chunks carry influence keys: a chunked skin (Legacy, or

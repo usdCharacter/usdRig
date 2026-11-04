@@ -7088,6 +7088,321 @@ TestGroupChainsMatchTheWholeChain()
     }
 }
 
+/// A 100 x 100 grid of quads (10,000 points, G = 10 groups of ten rows) under
+/// Gated (a matrix mover on Moving, tx 1, 2, 3 at frames 1-3, weighted to row
+/// 0 alone), Smooth (a \p middle mover) and After (a matrix mover on Still,
+/// full strength), in that order.
+UsdStageRefPtr
+MakeSmoothChainStage(const char *middle = "RigExecSmoothMover")
+{
+    constexpr int kFrames = 3, kSide = 100;
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim moving = stage->DefinePrim(SdfPath("/Asset/Rig/Moving"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim still = stage->DefinePrim(SdfPath("/Asset/Rig/Still"),
+                                            TfToken("RigExecControl"));
+    still.GetAttribute(TfToken("avars:ty")).Set(1.0);
+    for (int frame = 1; frame <= kFrames; ++frame) {
+        moving.GetAttribute(TfToken("avars:tx"))
+            .Set(double(frame), UsdTimeCode(frame));
+    }
+    const SdfPath target("/Asset/Shape.points");
+    VtVec3fArray points(size_t(kSide * kSide));
+    VtIntArray counts, indices;
+    for (int y = 0; y < kSide; ++y) {
+        for (int x = 0; x < kSide; ++x) {
+            points[size_t(y * kSide + x)] =
+                GfVec3f(0.25f * float(x), 0.125f * float(y),
+                        0.1f * float((x * 7 + y * 3) % 11));
+            if (x + 1 < kSide && y + 1 < kSide) {
+                const int a = y * kSide + x;
+                counts.push_back(4);
+                for (const int v : {a, a + 1, a + kSide + 1, a + kSide}) {
+                    indices.push_back(v);
+                }
+            }
+        }
+    }
+    const UsdPrim mesh =
+        stage->DefinePrim(target.GetPrimPath(), TfToken("Mesh"));
+    mesh.GetAttribute(TfToken("points")).Set(points);
+    mesh.GetAttribute(TfToken("faceVertexCounts")).Set(counts);
+    mesh.GetAttribute(TfToken("faceVertexIndices")).Set(indices);
+    VtIntArray named(static_cast<size_t>(kSide));
+    for (int i = 0; i < kSide; ++i) {
+        named[size_t(i)] = i;
+    }
+    const UsdPrim weight = stage->DefinePrim(
+        SdfPath("/Asset/Rig/Weights/RowZero"), TfToken("RigExecStaticWeight"));
+    weight.CreateRelationship(TfToken("rigExec:weightTarget"), false)
+        .SetTargets({target});
+    weight.CreateAttribute(TfToken("rigExec:representation"),
+                           SdfValueTypeNames->Token, false)
+        .Set(TfToken("sparse"));
+    weight.CreateAttribute(TfToken("rigExec:indices"),
+                           SdfValueTypeNames->IntArray, false)
+        .Set(named);
+    weight.CreateAttribute(TfToken("rigExec:values"),
+                           SdfValueTypeNames->FloatArray, false)
+        .Set(VtFloatArray(named.size(), 1.0f));
+    weight.CreateAttribute(TfToken("rigExec:defaultWeight"),
+                           SdfValueTypeNames->Float, false)
+        .Set(0.0f);
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+    const auto mover = [&](const char *name, const char *type) {
+        const UsdPrim prim = stage->DefinePrim(
+            SdfPath("/Asset/Rig/Movers").AppendChild(TfToken(name)),
+            TfToken(type));
+        prim.ApplyAPI(TfToken("RigExecMoverAPI"));
+        prim.GetRelationship(TfToken("rigExec:moves")).SetTargets({target});
+        return prim;
+    };
+    // Authored last to first: discovery runs siblings bottom to top.
+    const UsdPrim after = mover("After", "RigExecMatrixMover");
+    after.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({still.GetPath()});
+    after.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    mover("Smooth", middle);
+    const UsdPrim gated = mover("Gated", "RigExecMatrixMover");
+    gated.GetRelationship(TfToken("rigExec:transform"))
+        .SetTargets({moving.GetPath()});
+    gated.CreateRelationship(TfToken("rigExec:weightObject"), false)
+        .SetTargets({weight.GetPath()});
+    return stage;
+}
+
+/// The smooth chain against itself built with RIGEXEC_BAKED_RANGE_CHAINS=0
+/// over frames {1, 2, 3, 2, 1}, live and export: the smooth takes the Range
+/// role, each of its group steps declares its own group and its halo groups
+/// of the entering version (the rows beside its own) and nothing else, and
+/// every version and diagnostic agrees bit for bit, under the content,
+/// packet and range-chain judges. From frame 1 to 2 only row 0 moves, so of
+/// the smooth's groups only group 0's bytes move: group 1 reads row 9 of
+/// group 0, which held.
+void
+TestASmoothGroupReadsItsHalo()
+{
+    TfSetenv("RIGEXEC_BAKED_RANGE_CHAINS", "0");
+    const BuiltProgram whole = BuildStage(MakeSmoothChainStage());
+    TfUnsetenv("RIGEXEC_BAKED_RANGE_CHAINS");
+    CHECK(whole.program != nullptr);
+    if (!whole.program) {
+        return;
+    }
+    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    CHECK(W.chains.size() == 1 && W.chains[0].revisions.size() == 3);
+    if (W.chains.size() != 1 || W.chains[0].revisions.size() != 3) {
+        return;
+    }
+    for (const RigExecBakedRoleMode mode :
+         {RigExecBakedRoleMode::Live, RigExecBakedRoleMode::Export}) {
+        const char *what =
+            mode == RigExecBakedRoleMode::Live ? "live" : "export";
+        TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
+        TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "1");
+        TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+        const BuiltProgram ranged =
+            BuildStageInMode(MakeSmoothChainStage(), mode);
+        TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+        TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
+        TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
+        CHECK(ranged.program != nullptr);
+        if (!ranged.program) {
+            continue;
+        }
+        const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+        const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
+        CHECK(chain.revisions.size() == 3 && chain.groupBounds.size() == 11);
+        if (chain.revisions.size() != 3 || chain.groupBounds.size() != 11) {
+            continue;
+        }
+        const RigExecBakedProgramImpl::GeomRevision &smooth =
+            chain.revisions[1];
+        CHECK(smooth.op == RigExecRevisionOp::Smooth &&
+              smooth.role == RigExecBakedRevisionRole::Range);
+        CHECK(smooth.haloGroups.size() == 10);
+        for (size_t g = 0; g < smooth.haloGroups.size(); ++g) {
+            std::vector<int> want;
+            if (g > 0) want.push_back(int(g) - 1);
+            if (g + 1 < 10) want.push_back(int(g) + 1);
+            CHECK(smooth.haloGroups[g] == want);
+        }
+        // Each group step reads the RevisionOut slots of its own group and
+        // of its halo groups that a revision wrote (the rest enter from the
+        // base, which every group step reads).
+        const int id = R.chainRevisionBegin[0] + 1;
+        size_t groupSteps = 0;
+        for (const RigExecBakedStep &step : R.steps) {
+            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
+                step.object != id || step.part < 0) {
+                continue;
+            }
+            const size_t g = size_t(step.part);
+            size_t slotted = smooth.enteringWriter[g] >= 0 ? 1 : 0;
+            for (const int h : smooth.haloGroups[g]) {
+                slotted += smooth.enteringWriter[size_t(h)] >= 0 ? 1 : 0;
+            }
+            CHECK(DeclaredSlots(step.reads, RigExecBakedSlotDomain::RevisionOut) ==
+                  slotted);
+            ++groupSteps;
+        }
+        CHECK(groupSteps == 10);
+        std::vector<uint64_t> versions;
+        for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0}) {
+            RigExecRigPose rangedPose, wholePose;
+            CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
+            CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+            CHECK(rangedPose.comparisonMismatches == 0);
+            CHECK(SameBits(chain.result, W.chains[0].result));
+            for (size_t r = 0; r < 3; ++r) {
+                if (!SameBits(GatheredVersion(chain, r + 1),
+                              GatheredVersion(W.chains[0], r + 1))) {
+                    ++failures;
+                    std::printf("FAIL smooth chain (%s) frame %g: version "
+                                "%zu differs from the whole chain's\n",
+                                what, frame, r + 1);
+                }
+                CHECK(chain.revisions[r].rangeRefusals == 0);
+            }
+            CHECK(rangedPose.diagnostics == wholePose.diagnostics);
+            std::vector<uint64_t> now;
+            for (const auto &state : smooth.groups) {
+                now.push_back(state.version);
+            }
+            if (frame == 2.0 && versions.size() == 10) {
+                for (size_t g = 0; g < 10; ++g) {
+                    CHECK((now[g] != versions[g]) == (g == 0));
+                }
+            }
+            versions = now;
+        }
+        CHECK(R.chainVersionMismatches == 0);
+        CHECK(R.packetVersionMismatches == 0);
+        CHECK(R.rangeVerifyMismatches == 0);
+        CHECK(R.gateViolations.load() == 0);
+        std::printf("  smooth chain (%s): its halo matches the whole chain\n",
+                    what);
+    }
+}
+
+/// The smooth chain with a delta mush in the smooth's place (ten iterations,
+/// the vertex transport), against itself built with
+/// RIGEXEC_BAKED_RANGE_CHAINS=0, live and export: the delta mush takes the
+/// Range role, its halo covers the rows its smoothing reaches (the groups
+/// beside its own, and none past the second), and every version and
+/// diagnostic agrees bit for bit under the judges. From frame 1 to 2 only
+/// row 0 moves, which ten iterations carry no further than group 1.
+void
+TestADeltaMushGroupReadsItsRegion()
+{
+    TfSetenv("RIGEXEC_BAKED_RANGE_CHAINS", "0");
+    const BuiltProgram whole =
+        BuildStage(MakeSmoothChainStage("RigExecDeltaMushMover"));
+    TfUnsetenv("RIGEXEC_BAKED_RANGE_CHAINS");
+    CHECK(whole.program != nullptr);
+    if (!whole.program) {
+        return;
+    }
+    const RigExecBakedProgramImpl &W = whole.program->GetStepGraph();
+    CHECK(W.chains.size() == 1 && W.chains[0].revisions.size() == 3);
+    if (W.chains.size() != 1 || W.chains[0].revisions.size() != 3) {
+        return;
+    }
+    for (const RigExecBakedRoleMode mode :
+         {RigExecBakedRoleMode::Live, RigExecBakedRoleMode::Export}) {
+        const char *what =
+            mode == RigExecBakedRoleMode::Live ? "live" : "export";
+        TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "1");
+        TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "1");
+        TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+        const BuiltProgram ranged = BuildStageInMode(
+            MakeSmoothChainStage("RigExecDeltaMushMover"), mode);
+        TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+        TfSetenv("RIGEXEC_VERIFY_PACKET_VERSIONS", "0");
+        TfSetenv("RIGEXEC_VERIFY_CHAIN_VERSIONS", "0");
+        CHECK(ranged.program != nullptr);
+        if (!ranged.program) {
+            continue;
+        }
+        const RigExecBakedProgramImpl &R = ranged.program->GetStepGraph();
+        const RigExecBakedProgramImpl::GeomChain &chain = R.chains[0];
+        CHECK(chain.revisions.size() == 3 && chain.groupBounds.size() == 11);
+        if (chain.revisions.size() != 3 || chain.groupBounds.size() != 11) {
+            continue;
+        }
+        const RigExecBakedProgramImpl::GeomRevision &mush = chain.revisions[1];
+        CHECK(mush.op == RigExecRevisionOp::DeltaMush &&
+              mush.role == RigExecBakedRevisionRole::Range);
+        CHECK(mush.haloGroups.size() == 10);
+        for (size_t g = 0; g < mush.haloGroups.size(); ++g) {
+            const std::vector<int> &halo = mush.haloGroups[g];
+            for (const int h : {int(g) - 1, int(g) + 1}) {
+                if (h >= 0 && h < 10) {
+                    CHECK(std::count(halo.begin(), halo.end(), h) == 1);
+                }
+            }
+            for (const int h : halo) {
+                CHECK(std::abs(h - int(g)) <= 2 && h != int(g));
+            }
+        }
+        const int id = R.chainRevisionBegin[0] + 1;
+        size_t groupSteps = 0;
+        for (const RigExecBakedStep &step : R.steps) {
+            if (step.kind != RigExecBakedStepKind::RevisionChunk ||
+                step.object != id || step.part < 0) {
+                continue;
+            }
+            const size_t g = size_t(step.part);
+            size_t slotted = mush.enteringWriter[g] >= 0 ? 1 : 0;
+            for (const int h : mush.haloGroups[g]) {
+                slotted += mush.enteringWriter[size_t(h)] >= 0 ? 1 : 0;
+            }
+            CHECK(DeclaredSlots(step.reads, RigExecBakedSlotDomain::RevisionOut) ==
+                  slotted);
+            ++groupSteps;
+        }
+        CHECK(groupSteps == 10);
+        std::vector<uint64_t> versions;
+        for (const double frame : {1.0, 2.0, 3.0, 2.0, 1.0}) {
+            RigExecRigPose rangedPose, wholePose;
+            CHECK(ranged.program->Run(UsdTimeCode(frame), &rangedPose));
+            CHECK(whole.program->Run(UsdTimeCode(frame), &wholePose));
+            CHECK(rangedPose.comparisonMismatches == 0);
+            CHECK(SameBits(chain.result, W.chains[0].result));
+            for (size_t r = 0; r < 3; ++r) {
+                if (!SameBits(GatheredVersion(chain, r + 1),
+                              GatheredVersion(W.chains[0], r + 1))) {
+                    ++failures;
+                    std::printf("FAIL delta mush chain (%s) frame %g: version "
+                                "%zu differs from the whole chain's\n",
+                                what, frame, r + 1);
+                }
+                CHECK(chain.revisions[r].rangeRefusals == 0);
+            }
+            CHECK(rangedPose.diagnostics == wholePose.diagnostics);
+            std::vector<uint64_t> now;
+            for (const auto &state : mush.groups) {
+                now.push_back(state.version);
+            }
+            if (frame == 2.0 && versions.size() == 10) {
+                CHECK(now[0] != versions[0]);
+                for (size_t g = 2; g < 10; ++g) {
+                    CHECK(now[g] == versions[g]);
+                }
+            }
+            versions = now;
+        }
+        CHECK(R.chainVersionMismatches == 0);
+        CHECK(R.packetVersionMismatches == 0);
+        CHECK(R.rangeVerifyMismatches == 0);
+        CHECK(R.gateViolations.load() == 0);
+        std::printf("  delta mush chain (%s): its region matches the whole "
+                    "chain\n", what);
+    }
+}
+
 /// Per-group dependence on the group chain (gates on, live), frame by frame
 /// in order:
 ///  * 4 -> 5, J3 alone moves: the linear skin runs its group-3 step alone,
@@ -9703,6 +10018,8 @@ main(int argc, char **argv)
         // keys against the chain built whole, and the groups each move
         // reruns.
         TestGroupChainsMatchTheWholeChain();
+        TestASmoothGroupReadsItsHalo();
+        TestADeltaMushGroupReadsItsRegion();
         TestGroupStepsRunOnlyMovedGroups();
         TestARebuildAdoptsAGroupChain();
         TestAWholeSkinChunkOutlivesAStaleFuse();
