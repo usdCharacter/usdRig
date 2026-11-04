@@ -1,7 +1,5 @@
-// The pose-free authored rest placement of a RigExec xformable, composed off
-// the stage without compiling or evaluating the rig. Compiled into
-// rigExecScene. Guide drawing and cold bounds (rigExecImaging) and the
-// skin-weight generator (rigExecAuthoring) place prims with it.
+// The pose-free authored rest placement of a RigExec xformable, composed
+// without compiling or evaluating the rig.
 #ifndef RIGEXEC_SCENE_AUTHORED_REST_SPACE_H
 #define RIGEXEC_SCENE_AUTHORED_REST_SPACE_H
 

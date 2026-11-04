@@ -1,16 +1,16 @@
 """rigexec.binding.generate_skin_weights: skin rows from volume weights.
 
 Two nested bones, each holding one sphere weight stretched along its segment
-(at the midpoint, inputs:scaleX = 1 + L/(2S), inputs:falloffMin =
-max(S/4, (L/2) S/(L/2 + S))), over a six-point strip (inside one sphere, in
-the overlap, outside both), with rows from the sphere field formula; partial
+(at the midpoint, inputs:scaleX = 1 + L/(2S), inputs:falloffMin = max(S/4,
+(L/2) S/(L/2 + S))), over a six-point strip (inside one sphere, in the
+overlap, outside both), with rows from the sphere field formula; partial
 regeneration, an influence subset, several spheres on one bone, a pin bone's
-sphere and the setup transform; the other volume shapes from their field
-formulas: a rotated bone's sphere with half-axis scales, a plane (unbounded
-and bounded) and a curve under an Xform; then the checked-in volumeSkin
-fixtures and the docs example must hold exactly the rows the generator
-writes, and the F8 fixture evaluates its rigid and released rows as
-authored.
+sphere, authored falloff samples and the setup transform; the other volume
+shapes from their field formulas: a rotated bone's sphere with half-axis
+scales, a plane (unbounded and bounded) and a curve under an Xform; then the
+checked-in volumeSkin fixtures and the docs example must hold exactly the
+rows the generator writes, and the F8 fixture evaluates its rigid and
+released rows as authored.
 
 Usage: test_generate_skin_weights.py [<generated schema resources dir>]
 """
@@ -365,6 +365,18 @@ class GenerateSkinWeightsTest(unittest.TestCase):
         self.assertEqual(raw[2][0], 1.0)
         self.assertAlmostEqual(_rows(stage)[1][2][0][1], 1.0 / (1.0 + raw[2][1]), places=6)
         self.assertEqual(_rows(stage)[1][5], [(0, 1.0)])
+
+    def test_falloff_samples(self):
+        """Authored inputs:falloffSamples replace the compiled profile, as in
+        every evaluator: [0, 0.25] scales B's linear field by a quarter."""
+        stage = _stage()
+        stage.GetPrimAtPath(B + "/Influence").GetAttribute(
+            "inputs:falloffSamples").Set(Vt.FloatArray([0.0, 0.25]))
+        rigexec.binding.generate_skin_weights(stage, MOVER)
+        expected = [_normalised((_bone_field(stage, A, p), 0.25 * _bone_field(stage, B, p)))
+                    for p in STRIP_POINTS]
+        self.assert_rows(_rows(stage)[1], expected)
+        self.assertNotEqual(_rows(stage)[1], _expected_two_bones(stage))
 
     def test_pin_bone_sphere(self):
         """A pin bone (no joint child, L = 0): an unscaled sphere about its

@@ -2452,16 +2452,9 @@ struct RigExecBakedProgramImpl {
         RigExecBakedInput<double> preserveVolume, midFollowWeight, roll, twist,
             minLengthRatio;
         bool splineParamsVary = false;
-        /// Skeleton2d: each bone's channels, rigExec:joints order. Doubles
-        /// are avars:tx, ty, rz, sx, bone2d:lockX, lockY, lockAngle, offsetX,
-        /// offsetY, targetIndex (ten per bone); bools are bone2d:sideFlip,
-        /// endFlip, lock (three). The selectors follow: each group's
-        /// activeBone in rigExec:boneGroups order, then each space switch's
-        /// active index. Its start frame is `start` and its outside parent
-        /// spaces are `controls`.
-        /// The avars are always read per frame, like a dial: a value edit
-        /// patches the joint's own avar slot in place, which a folded copy
-        /// here would not see.
+        /// Skeleton2d: per bone in rigExec:joints order, ten doubles and three
+        /// bools (RigExecBone2dChannelStorage); then each group's activeBone
+        /// and each space switch's index. Outside parent spaces are `controls`.
         std::vector<RigExecBakedInput<double>> bone2dDoubles;
         std::vector<RigExecBakedInput<bool>> bone2dBools;
         std::vector<RigExecBakedInput<double>> bone2dSelectors;
@@ -5312,12 +5305,6 @@ struct RigExecBakedBuildContext {
     template <class T>
     void CommitBind(const UsdPrim &prim, const TfToken &name,
                     RigExecBakedInput<T> *input, const SdfPathVector &walk);
-    template <class T>
-    void CommitBind(const UsdPrim &prim, const char *name,
-                    RigExecBakedInput<T> *input, const SdfPathVector &walk)
-    {
-        CommitBind(prim, TfToken(name), input, walk);
-    }
 
     /// Binds \p name as a per-frame input, registering it for overrides and
     /// for invalidation. Resolve and commit together, for the call sites
@@ -5325,12 +5312,6 @@ struct RigExecBakedBuildContext {
     template <class T>
     RigExecBakedInput<T> Bind(const UsdPrim &prim, const TfToken &name,
                               T fallback, bool sourceValue = false);
-    template <class T>
-    RigExecBakedInput<T> Bind(const UsdPrim &prim, const char *name,
-                              T fallback, bool sourceValue = false)
-    {
-        return Bind(prim, TfToken(name), fallback, sourceValue);
-    }
 };
 
 inline void

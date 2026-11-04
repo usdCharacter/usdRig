@@ -3061,10 +3061,7 @@ RigExecImagingBridge::_LookupCachedPose(
     if (!program || !_CanSampleCacheInputs()) {
         return false;
     }
-    // One sample serves the proof compare AND the sparse plan: a mismatch
-    // falls through to planning on the same vector. Reached only past the
-    // servable-completion fast path above (a dirty or unrecorded time), so
-    // the sample scope also counts fast-path skips by its absence.
+    // One sample serves the proof compare and the sparse plan.
     {
         std::optional<RigExecProfileScope> sampleScope;
         if (publishing) {
@@ -3290,8 +3287,7 @@ RigExecImagingBridge::_BuildPoseSnapshot(
     // Build the complete immutable generation from the exact native
     // results: points and normals as flat primvars, extent as min/max.
     // Only standard data crosses this boundary. Without publishing, only
-    // what a pose query reads is built: no GPU deform bookkeeping and no
-    // guide, volume, cloth or weight payloads, and no generation.
+    // what a pose query reads is built.
     auto snapshot = std::make_shared<RigExecImagingSnapshot>();
     if (publishing) {
         _StampGeneration(time, snapshot.get());
@@ -3319,10 +3315,8 @@ RigExecImagingBridge::_BuildPoseSnapshot(
         published.shaderFloats[TfToken(name.substr(primvarsPrefix.size()))] =
             found->second.UncheckedGet<float>();
     }
-    // Property chains' float or double primvars (a step table's opacity
-    // or switch index on a group): again only the compiled list, so a
-    // float dial never mints a published prim. A double publishes as the
-    // float the chain computed.
+    // Property chains' scalar primvars, from the compiled list only; a
+    // double publishes as the float the chain computed.
     const std::vector<SdfPath> &scalarTargets =
         _evaluator->GetScalarPrimvarTargets();
     const std::vector<TfToken> &scalarNames =

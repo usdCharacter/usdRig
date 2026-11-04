@@ -3024,9 +3024,8 @@ PYBIND11_MODULE(_rigexec, m) {
        "A (real, i, j, k) quaternion as an XYZ euler in radians -- the exact\n"
        "inverse of the closed form the solver's poses are built with.");
 
-    // 2D bones (rigExecMath/skeleton2dKernel.h): the one definition of the
-    // angle-limit clamp and the cross scale, for authoring tools and their
-    // models. Evaluation never clamps keyed or driven angles.
+    // The kernel's angle-limit clamp and cross scale, for authoring tools;
+    // evaluation never clamps keyed or driven angles.
     m.def("bone2d_clamp_local_angle", &rigExec::RigExecBone2dClampLocalAngle,
        py::arg("rest_local"), py::arg("min_angle"), py::arg("max_angle"),
        py::arg("value"),

@@ -304,9 +304,8 @@ target_include_directories(rigExecAuthoring PUBLIC
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
 target_link_libraries(rigExecAuthoring PUBLIC
     sdf tf gf vt usd)
-# The skin-weight generator places volume weights with the scene library's
-# pose-free rest composer and setup transform, and measures them with the
-# evaluator's packet builder; rigExecScene brings rigExec with it.
+# The skin-weight generator composes rests and measures volume weights
+# through rigExecScene, which brings rigExec.
 target_link_libraries(rigExecAuthoring PRIVATE rigExecMath rigExecScene)
 
 # rigExecGpu: the per-vertex deform program on the GPU as an OpenGL 4.5
@@ -343,8 +342,6 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/liveDebug.cpp
     # Pulled upstream scene-index inputs (rigExecInputs).
     libs/rigExecImaging/upstreamTable.cpp
-    # A prim's evaluated points, driven transform and scalar primvars at
-    # another frame, answered without publishing (onion skins).
     libs/rigExecImaging/frameTable.cpp
 )
 target_include_directories(rigExecImaging PUBLIC
@@ -729,26 +726,20 @@ function(rigexec_add_graph_test name)
 endfunction()
 rigexec_add_graph_test(testRigExecConstraints CONE_VERIFY)
 
-# 2D skeletons. The kernel alone is USD-free; the labeller sees tf/gf/vt
-# through rigExecMath, so the label is explicit.
+# The labeller sees tf/gf/vt through rigExecMath; the kernel is USD-free.
 add_executable(testRigExecSkeleton2dKernel tests/testRigExecSkeleton2dKernel.cpp)
 target_link_libraries(testRigExecSkeleton2dKernel PRIVATE rigExecGraph)
 add_test(NAME testRigExecSkeleton2dKernel COMMAND testRigExecSkeleton2dKernel)
 set_tests_properties(testRigExecSkeleton2dKernel PROPERTIES LABELS "rigExecGraph;usd-free;fast")
 
-# A 2D skeleton in a rig: native, frozen and .rigexec parity.
 add_executable(testRigExecSkeleton2d tests/testRigExecSkeleton2d.cpp)
 target_link_libraries(testRigExecSkeleton2d PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler)
 target_compile_definitions(testRigExecSkeleton2d PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSkeleton2d COMMAND testRigExecSkeleton2d)
-# A nested 2D chain bound by authored skin weights: the golden pose protocol
-# (first, held, forward, reverse and cold visits) in native, frozen and
-# .rigexec evaluation; one checked-in golden serves all three. After an
-# intended change, regenerate it with
-#   rigExecPose tests/fixtures/skeleton2d/<fixture>.usda --rig /Char/Rig
-#       --frames 0,1,2,3,4 --golden-out tests/fixtures/skeleton2d/<fixture>.golden
+# One golden serves native, frozen and .rigexec; regenerate it with
+# rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out.
 foreach(_fixture nested_chain)
     add_test(NAME testRigExecSkeleton2dBake_${_fixture} COMMAND rigExecBakeTool
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
@@ -771,14 +762,8 @@ foreach(_fixture nested_chain)
         FIXTURES_REQUIRED skeleton2dProgram_${_fixture})
 endforeach()
 
-# The 2D layer bind (a transform-domain RigExecMatrixMover carrying a group
-# by a bone's setup-to-pose map): the carried placement against hand-computed
-# values, frozen and .rigexec parity, then the golden pose protocol (first,
-# held, forward, reverse and cold visits) in native, frozen and .rigexec
-# evaluation; one checked-in golden serves all three. After an intended
-# change, regenerate it with
-#   rigExecPose tests/fixtures/layerBind/<fixture>.usda --rig /Char/Rig
-#       --frames 0,1,2,3,4 --golden-out tests/fixtures/layerBind/<fixture>.golden
+# One golden serves native, frozen and .rigexec; regenerate it with
+# rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out.
 add_executable(testRigExecLayerBind tests/testRigExecLayerBind.cpp)
 target_link_libraries(testRigExecLayerBind PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler)
@@ -808,16 +793,8 @@ foreach(_fixture layer_bind)
         FIXTURES_REQUIRED layerBindProgram_${_fixture})
 endforeach()
 
-# Skin rows generated from volume weights (one sphere stretched along each
-# bone): a nested 2D chain (chain_2d), a 3D FkChain arm skinning a stroke
-# (arm_3d) and that arm after a sphere edit with rigid, fixed and released
-# rows (arm_3d_regenerated). testRigExecGenerateSkinWeights re-derives every
-# authored row from the spheres; these goldens hold the pose protocol
-# (first, held, forward, reverse and cold visits) in native, frozen and
-# .rigexec evaluation, one checked-in golden for all three. After an
-# intended change, regenerate it with
-#   rigExecPose tests/fixtures/volumeSkin/<fixture>.usda --rig <rig>
-#       --frames 0,1,2,3,4 --golden-out tests/fixtures/volumeSkin/<fixture>.golden
+# One golden serves native, frozen and .rigexec; regenerate it with
+# rigExecPose <fixture>.usda --rig <rig> --frames 0,1,2,3,4 --golden-out.
 foreach(_fixture chain_2d arm_3d arm_3d_regenerated)
     set(_rig /Arm/Rig)
     if (_fixture STREQUAL "chain_2d")
@@ -844,13 +821,6 @@ foreach(_fixture chain_2d arm_3d arm_3d_regenerated)
         FIXTURES_REQUIRED volumeSkinProgram_${_fixture})
 endforeach()
 
-# Smart-bone step tables: RigExecAnimatedMaps of slope-0 rows on dial
-# angles (whole frames, ties by row order, the side gate, the hold, a full
-# turn's folded angle and its seam row), corrective order and Hydra
-# publication; then property movers reading the maps at rigExecReadPhase
-# "final" (bone, switch and opacity channels, chained dials, the two-way
-# cycle refusal) in native, frozen and .rigexec evaluation, frozen under
-# both baked schedules.
 add_executable(testRigExecStepMaps tests/testRigExecStepMaps.cpp)
 target_link_libraries(testRigExecStepMaps PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler rigExecImaging)

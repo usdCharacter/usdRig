@@ -1248,7 +1248,7 @@ Cold paths and minor cleanups, in decreasing order of value:
 - L4. `libs/rigExec/frozenWorker.cpp:1057`: `.reset()` after moving
   `_lastFrozenSlots` out is redundant (a moved-from `shared_ptr` is
   already null); drop the line.
-- L5. `libs/rigExecRigging/rigBuilder.cpp:2463-2464`:
+- L5. `libs/rigExecAuthoring/rigBuilder.cpp:2463-2464`:
   `AddMatrixMathMover` takes `GfMatrix4d value` by value on an
   authoring (cold) path; take `const GfMatrix4d &` for consistency.
 - L6. `libs/rigExecImaging/touchPoseHighlight.cpp:153-157,631-637`:

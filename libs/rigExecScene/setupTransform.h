@@ -1,11 +1,6 @@
-// A target's setup (Default) transform to the rig's asset space, the frame of
-// the rig root's parent where joint frames live: T with p_asset = p * T, and
-// T^-1, composed from the xform operations of the unshared parts of the
-// target's and the asset root's ancestry, through any reader with the stage
-// reader's Exists/Name/Value (the stage, or the oracle's captured facts).
-// Compile and authoring time only (owning thread); never in an operation
-// body. Header-only: the skin-weight generator in rigExecAuthoring places the
-// target's points with it.
+// A target's Default setup transform T to the rig's asset space (the rig
+// root's parent), p_asset = p * T. Owning thread at compile and authoring
+// time only; never in an operation body.
 #ifndef RIGEXEC_SCENE_SETUP_TRANSFORM_H
 #define RIGEXEC_SCENE_SETUP_TRANSFORM_H
 
@@ -53,9 +48,7 @@ struct RigExecStageXformReader {
 
 namespace setup_transform_detail {
 
-// Operation lookup for RigExecComposeLocalXform over one prim: the
-// operations are the ones xformOpOrder names, found by the order's own
-// tokens.
+// Finds the operations xformOpOrder names by the order's own tokens.
 template <class Reader>
 struct OpSource {
     const Reader &reader;

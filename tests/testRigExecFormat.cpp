@@ -6199,11 +6199,8 @@ void TestSolverSemanticMetadataRefusals()
     reject(std::move(wrongBody),"semantic prerequisites on a non-Solve body");
 }
 
-/// A 2-bone skeleton2d table on a rich-file solver: channels as fresh
-/// constant reads (no override numbers), one group over both bones, the
-/// first bone's tip the second, the second an End joint; a space switch on
-/// the second over the first bone, the base and the row's one control (an
-/// outside parent space), its selector after the group's.
+/// A 2-bone skeleton2d table: one group, an End-joint tip, and a space switch
+/// over a bone, the base and one outside control.
 static void _AttachSkeleton2d(fb::RigExecWireSolver *solver)
 {
     solver->jointRests.resize(2);

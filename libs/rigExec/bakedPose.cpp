@@ -327,10 +327,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 s.jointRests.push_back(B.restPts[foldRest(slot)]);
             }
         }
-        // The scene translation owns the solver's schema interpretation. A
-        // 2D skeleton needs it before its reads are bound (its switches'
-        // selectors and outside parent spaces come from it), so it runs
-        // there; every other kind translates below.
+        // A 2D skeleton translates before its reads bind: its selectors and
+        // outside parent spaces come from the translation.
         RigExecSceneSolverDescriptor descriptor;
         std::string translationError;
         int translated = -1;  // -1 not yet, 0 refused, 1 translated
@@ -704,14 +702,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         } else if (s.type == "RigExecSkeleton2d") {
             translated = RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors, solverPath,
                 providerRests, &descriptor, &translationError) ? 1 : 0;
-            // Thirteen channels per bone, rigExec:joints order, then the
-            // selectors: one activeBone value per group in
-            // rigExec:boneGroups order, then each space switch's active
-            // index. The avars are read per frame, as a dial is: a value
-            // edit on one patches the joint's own avar slot in place
-            // (RigExecProgramAvarPatch), so a folded copy here would keep
-            // the old value. A channel that math movers revise reads that
-            // chain's result.
+            // Thirteen channels per bone, then group and switch selectors.
+            // Avars stay per-frame reads: a value edit patches the avar slot.
             for (const SdfPath &joint : targets(prim, _tokens->rigExecJoints)) {
                 const UsdPrim bone = B.stage->GetPrimAtPath(joint);
                 for (size_t c = 0; c < kRigExecBone2dChannelCount; ++c) {
@@ -753,9 +745,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                     ctx->CommitBind(owner, property.GetNameToken(), &input, walk);
                     s.bone2dSelectors.push_back(std::move(input));
                 }
-                // The outside parent spaces ride on the shared controls:
-                // provider frames read out of `fin` exactly as FK controls
-                // are, their rests folded like any other rest read.
+                // Outside parent spaces ride on the shared controls.
                 for (const SdfPath &space : descriptor.controls) {
                     const int slot = providerSlot(space);
                     if (slot < 0) {
@@ -2315,8 +2305,7 @@ RigExecBakedBuildPoseSteps(RigExecBakedProgramImpl *program)
                                        (solver.start >= 0 ? 1 : 0));
                 RigExecBakedStep &step =
                     AddStep(&B, RigExecBakedStepKind::Solve, si);
-                // The solve's one diagnostic (a refused or failed solve
-                // says why), as for a guide-only solver.
+                // A refused or failed solve reports why.
                 step.maxDiagnostics = 1;
                 for (const int control : solver.controls) {
                     if (control >= 0) {

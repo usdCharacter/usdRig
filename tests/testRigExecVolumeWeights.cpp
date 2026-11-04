@@ -280,10 +280,8 @@ TestSphereWeight()
     }
 }
 
-// Native, frozen and .rigexec evaluation agree bit for bit at every time
-// of \p times, and the .rigexec moves the points (not a vacuous match); with
-// \p sceneProgram, the detached scene program's points agree too at the
-// integral times.
+// Native, frozen and .rigexec agree bit for bit at \p times and the points
+// move; with \p sceneProgram the detached scene program agrees too.
 static void
 CheckThreeEvaluators(const UsdStageRefPtr &stage, const std::string &what,
                      const std::vector<double> &times,

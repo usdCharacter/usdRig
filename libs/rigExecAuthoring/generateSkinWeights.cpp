@@ -1,9 +1,7 @@
 #include "generateSkinWeights.h"
 #include "rigBuilder.h"
 
-// _BakeFalloffLut: the falloff table compile bakes, so a generated field
-// remaps distances exactly as the evaluated volume does; _IsVolumeWeightType:
-// the volume weight types compile places.
+// _BakeFalloffLut: compile's own falloff table, so fields match evaluation.
 #include "rigExec/rigEvaluatorInternal.h"
 #include "rigExec/weightPackets.h"
 #include "rigExecMath/pointFrame.h"
@@ -42,6 +40,7 @@ const TfToken _tRepresentation("rigExec:representation");
 const TfToken _tRangePolicy("rigExec:rangePolicy");
 const TfToken _tFalloffMin("inputs:falloffMin");
 const TfToken _tFalloffMax("inputs:falloffMax");
+const TfToken _tFalloffSamples("inputs:falloffSamples");
 const TfToken _tInvert("inputs:invert");
 const TfToken _tStrength("inputs:strength");
 const TfToken _tScaleX("inputs:scaleX");
@@ -115,9 +114,7 @@ _RigidRest(const UsdPrim &prim, const char *what)
     return rest;
 }
 
-// A curve weight's one rigExec:curve points source at Default, carried into
-// asset space by its own setup transform, as the skin's points are: the
-// schema reads both in the same space.
+// The rigExec:curve points at Default, in asset space like the skin's points.
 std::vector<GfVec3f>
 _CurvePoints(const UsdStagePtr &stage, const UsdPrim &volume,
              const SdfPath &assetPath)
@@ -154,11 +151,8 @@ _CurvePoints(const UsdStagePtr &stage, const UsdPrim &volume,
     return points;
 }
 
-// One volume weight's field over \p points (asset space), as the
-// evaluator's packet builder measures it: the volume placed at its rest
-// frame, its falloff, scales and shape settings read at Default, the range
-// policy applied. Every RigExecVolumeWeight type goes through the one
-// builder, RigExecBuildVolumeWeightPacket, by its type name.
+// One volume weight's field over \p points (asset space), measured by the
+// evaluator's packet builder at the volume's rest placement and Default inputs.
 std::vector<float>
 _VolumeField(const UsdStagePtr &stage, const UsdPrim &volume,
              const SdfPath &assetPath, const std::vector<GfVec3f> &points)
@@ -179,6 +173,13 @@ _VolumeField(const UsdStagePtr &stage, const UsdPrim &volume,
     inputs.params.invert = _Float(volume, _tInvert, 0.0f);
     inputs.params.strength = _Float(volume, _tStrength, 1.0f);
     inputs.params.curve = evaluatorDetail::_BakeFalloffLut(volume);
+    // Authored samples replace the compiled table, as in every evaluator.
+    if (const UsdAttribute a = volume.GetAttribute(_tFalloffSamples)) {
+        VtFloatArray samples;
+        if (a.Get(&samples, UsdTimeCode::Default()) && !samples.empty()) {
+            inputs.params.curve.assign(samples.cbegin(), samples.cend());
+        }
+    }
     inputs.scales = GfVec3f(_Float(volume, _tScaleX, 1.0f),
                             _Float(volume, _tScaleY, 1.0f),
                             _Float(volume, _tScaleZ, 1.0f));
@@ -230,7 +231,6 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         throw std::invalid_argument(who + " is not a RigExecSkinMover");
     }
 
-    // The target's points at Default, in the rig's asset space.
     const SdfPathVector moves = _Targets(mover, _tMoves);
     if (moves.size() != 1) {
         throw std::invalid_argument(
@@ -270,7 +270,6 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         points[p] = GfVec3f(toAsset.Transform(GfVec3d(setupPoints[p])));
     }
 
-    // The rows to replace.
     std::vector<bool> selected(count, pointIndices == nullptr);
     RigExecGeneratedSkinWeights result;
     if (pointIndices) {
@@ -290,7 +289,6 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         result.rowsWritten = count;
     }
 
-    // Each influence's summed volume field, point-major.
     const SdfPathVector influences = _Targets(mover, _tInfluences);
     if (influences.empty()) {
         throw std::invalid_argument(
@@ -359,7 +357,6 @@ RigExecGenerateSkinWeights(const UsdStagePtr &stage, const SdfPath &skinMover,
         }
     }
 
-    // Normalise the selected rows over the influences.
     for (size_t p = 0; p < count; ++p) {
         if (!selected[p]) continue;
         double sum = 0.0;
