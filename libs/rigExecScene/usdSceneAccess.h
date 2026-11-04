@@ -3,6 +3,7 @@
 #include "sceneAccess.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/attribute.h"
+#include "pxr/usd/usd/attributeQuery.h"
 namespace rigExec {
 /// USD frontend for the same composed descriptor input used by scene databases.
 /// Captures values only; compiled graph callbacks must not retain this adapter.
@@ -17,8 +18,13 @@ public:
     // Host-only, per-property capture binding. No handle enters descriptors.
     UsdAttribute BindAttribute(const SdfPath &) const;
     bool Attribute(const UsdAttribute &, RigExecSceneAttribute *) const;
+    // One value resolution per attribute: the query answers the facts, the
+    // values, and the blocks of the same attribute.
+    bool Attribute(const UsdAttributeQuery &, RigExecSceneAttribute *) const;
     bool Resolve(const UsdAttribute &, UsdTimeCode, VtValue *) const;
+    bool Resolve(const UsdAttributeQuery &, UsdTimeCode, VtValue *) const;
     bool ValueBlocked(const UsdAttribute &, UsdTimeCode) const;
+    bool ValueBlocked(const UsdAttributeQuery &, const RigExecSceneAttribute &, UsdTimeCode) const;
     bool Relationship(const SdfPath &, RigExecSceneRelationship *) const override;
     bool Resolve(const SdfPath &, UsdTimeCode, VtValue *) const override;
     bool ValueBlocked(const SdfPath &, UsdTimeCode) const override;

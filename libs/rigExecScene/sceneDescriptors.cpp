@@ -169,13 +169,14 @@ bool RigExecCaptureSceneDescriptors(const RigExecSceneAccess &source,
         for (const auto &property : node.attributes) {
             RigExecSceneAttributeDescriptor attr;
             const auto attribute=usd ? usd->BindAttribute(property) : UsdAttribute();
-            if (!(usd ? usd->Attribute(attribute,&attr.fact) : source.Attribute(property,&attr.fact)) ||
+            const UsdAttributeQuery query=attribute ? UsdAttributeQuery(attribute) : UsdAttributeQuery();
+            if (!(usd ? usd->Attribute(query,&attr.fact) : source.Attribute(property,&attr.fact)) ||
                 !Phase(attr.fact.metadata,&attr.readPhase,error,property)) return false;
             for (const auto time : identities) {
                 RigExecSceneInput input;
-                if (node.fact.active && !(usd ? usd->Resolve(attribute,time,&input.raw) : source.Resolve(property,time,&input.raw)))
+                if (node.fact.active && !(usd ? usd->Resolve(query,time,&input.raw) : source.Resolve(property,time,&input.raw)))
                     return Fail(error,"scene attribute identity unavailable: " + property.GetString());
-                input.rawBlocked = usd ? usd->ValueBlocked(attribute,time) : source.ValueBlocked(property,time);
+                input.rawBlocked = usd ? usd->ValueBlocked(query,attr.fact,time) : source.ValueBlocked(property,time);
                 attr.inputs.push_back(std::move(input));
             }
             scene.attributes.emplace(property,std::move(attr));

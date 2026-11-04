@@ -69,21 +69,29 @@ UsdAttribute RigExecUsdSceneAccess::BindAttribute(const SdfPath &path) const {
 }
 bool RigExecUsdSceneAccess::Attribute(const UsdAttribute &attribute, RigExecSceneAttribute *result) const {
     if (!_stage || !result || !attribute) return false;
+    return Attribute(UsdAttributeQuery(attribute), result);
+}
+bool RigExecUsdSceneAccess::Attribute(const UsdAttributeQuery &query, RigExecSceneAttribute *result) const {
+    const UsdAttribute &attribute = query.GetAttribute();
+    if (!_stage || !result || !attribute) return false;
     *result = {attribute.GetPath(), attribute.GetTypeName(), Metadata(attribute), {}};
-    attribute.GetConnections(&result->connections);
-    result->hasValue = attribute.HasValue();
-    result->variability = attribute.GetVariability();
-    if(attribute.HasSpline())result->spline=VtValue(attribute.GetSpline());
-    result->hasAuthoredValue = attribute.HasAuthoredValueOpinion();
-    result->hasAuthoredReadableValue = attribute.HasAuthoredValue();
+    // Nothing authored means no connections, no block, and no default spec.
     result->hasAuthoredConnections = attribute.HasAuthoredConnections();
-    result->mightBeTimeVarying = attribute.ValueMightBeTimeVarying();
-    attribute.GetTimeSamples(&result->sampleTimes);
-    for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
-        if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
-        result->hasAuthoredDefault = true;
-        result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
-        break;
+    if (result->hasAuthoredConnections) attribute.GetConnections(&result->connections);
+    result->hasValue = query.HasValue();
+    result->variability = attribute.GetVariability();
+    if (query.HasSpline()) result->spline = VtValue(query.GetSpline());
+    result->hasAuthoredValue = query.HasAuthoredValueOpinion();
+    result->hasAuthoredReadableValue = query.HasAuthoredValue();
+    result->mightBeTimeVarying = query.ValueMightBeTimeVarying();
+    query.GetTimeSamples(&result->sampleTimes);
+    if (result->hasAuthoredValue) {
+        for (const auto &spec : attribute.GetPropertyStack(UsdTimeCode::Default())) {
+            if (!spec->HasInfo(SdfFieldKeys->Default)) continue;
+            result->hasAuthoredDefault = true;
+            result->defaultBlocked = spec->GetInfo(SdfFieldKeys->Default).IsHolding<SdfValueBlock>();
+            break;
+        }
     }
     return true;
 }
@@ -108,6 +116,14 @@ bool RigExecUsdSceneAccess::Resolve(const UsdAttribute &attribute, UsdTimeCode t
     attribute.Get(result, time);
     return true;
 }
+bool RigExecUsdSceneAccess::Resolve(const UsdAttributeQuery &query, UsdTimeCode time, VtValue *result) const {
+    if (!result) return false;
+    *result = VtValue();
+    const UsdAttribute &attribute = query.GetAttribute();
+    if (!HasIdentity(time) || !attribute || !attribute.GetPrim().IsActive()) return false;
+    query.Get(result, time);
+    return true;
+}
 bool RigExecUsdSceneAccess::HasIdentity(UsdTimeCode time) const { return _stage && (time.IsDefault() || std::isfinite(time.GetValue())); }
 bool RigExecUsdSceneAccess::ValueBlocked(const SdfPath &path, UsdTimeCode time) const {
     if (!HasIdentity(time)) return false;
@@ -116,6 +132,13 @@ bool RigExecUsdSceneAccess::ValueBlocked(const SdfPath &path, UsdTimeCode time) 
 bool RigExecUsdSceneAccess::ValueBlocked(const UsdAttribute &attribute, UsdTimeCode time) const {
     if (!HasIdentity(time)) return false;
     return attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
+}
+bool RigExecUsdSceneAccess::ValueBlocked(const UsdAttributeQuery &query, const RigExecSceneAttribute &fact,
+                                         UsdTimeCode time) const {
+    if (!HasIdentity(time)) return false;
+    // A block is an authored value opinion.
+    const UsdAttribute &attribute = query.GetAttribute();
+    return fact.hasAuthoredValue && attribute && attribute.GetResolveInfo(time).ValueIsBlocked();
 }
 double RigExecUsdSceneAccess::TimeCodesPerSecond() const { return _stage ? _stage->GetTimeCodesPerSecond() : 24; }
 double RigExecUsdSceneAccess::FramesPerSecond() const { return _stage ? _stage->GetFramesPerSecond() : 24; }
