@@ -254,8 +254,8 @@ static void TestMutualDefaultSpaceCycleClosure()
 // A through a connection; Bone is a joint the FK chain writes, which the
 // compile's own walk stops at, but whose providers BuildSpaces still lists;
 // Recorded is a plain Xformable a constraint moves. Under
-// RIGEXEC_VERIFY_POSEINFO, which main() turns on, the batch also re-walks
-// every closure itself.
+// RIGEXEC_VERIFY_POSEINFO, which its ctest ENVIRONMENT turns on, the batch
+// also re-walks every closure itself.
 static void TestBakedPoseInputClosures()
 {
     const char *text = R"(#usda 1.0
@@ -381,8 +381,6 @@ def Xform "Asset"
 
 int main()
 {
-    // Before the first compile: the verifier reads its switch once.
-    TfSetenv("RIGEXEC_VERIFY_POSEINFO", "1");
     PlugRegistry::GetInstance().RegisterPlugins(RIGEXEC_SCHEMA_RESOURCE_DIR);
     TestMutualDefaultSpaceCycleClosure();
     TestBakedPoseInputClosures();

@@ -1,6 +1,7 @@
 // Exact frame-input and compiled rig constant fingerprints.
 
 #include "frozenContextInternal.h"
+#include "pathText.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3i.h"
 #include "pxr/base/gf/vec4f.h"
@@ -41,6 +42,15 @@ uint64_t
 _HashString(uint64_t hash, const char *text)
 {
     return _HashBytes(hash, text, std::strlen(text));
+}
+
+uint64_t
+_HashPathText(uint64_t hash, const SdfPath &path, std::string *text)
+{
+    if (!RigExecSpellPathText(path, text)) {
+        *text = path.GetString();
+    }
+    return _HashString(hash, text->c_str());
 }
 
 // Mixes a VtValue's bytes. Returns false for a type this function does not
@@ -99,8 +109,8 @@ _HashVtValue(uint64_t *hash, const VtValue &value)
         return true;
     }
     if (value.IsHolding<SdfPath>()) {
-        *hash = _HashString(
-            *hash, value.UncheckedGet<SdfPath>().GetString().c_str());
+        std::string text;
+        *hash = _HashPathText(*hash, value.UncheckedGet<SdfPath>(), &text);
         return true;
     }
     if (value.IsHolding<VtStringArray>()) {

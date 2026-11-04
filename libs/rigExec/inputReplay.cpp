@@ -15,6 +15,7 @@
 #include "pxr/usd/sdf/notice.h"
 #include "pxr/usd/sdf/payload.h"
 #include "pxr/usd/sdf/reference.h"
+#include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/usd/notice.h"
 #include <algorithm>
 #include <cstdio>
@@ -104,7 +105,7 @@ VtValue Rebind(const VtValue &value,const Aliases &aliases) {
 VtValue RebindField(const TfToken &field,const VtValue &value,const Aliases &aliases) {
     // Only Sdf's sublayer field assigns layer identity semantics to strings.
     // Ordinary string inputs and customData remain byte-for-byte authored.
-    if(field==TfToken("subLayers")) {
+    if(field==SdfFieldKeys->SubLayers) {
         if(value.IsEmpty())return value;
         if(value.IsHolding<std::vector<std::string>>()) {auto out=value.Get<std::vector<std::string>>();for(auto &v:out)v=Alias(v,aliases);return VtValue(out);}
         throw std::runtime_error("unsupported sublayer field value type: "+value.GetTypeName());

@@ -1,4 +1,5 @@
 #include "inputReplayValues.h"
+#include "pathText.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/dictionary.h"
 #include "pxr/base/tf/token.h"
@@ -83,7 +84,7 @@ struct Codec {
     void Item(GfHalf& v) { uint16_t x=v.bits();Number(x);if(reading)v.setBits(x); }
     void Item(std::string& v) {Text(v);}
     void Item(TfToken& v) {std::string x=v.GetString();Text(x);if(reading)v=TfToken(x);}
-    void Item(SdfPath& v) {std::string x=v.GetString();Text(x);if(reading)v=SdfPath(x);}
+    void Item(SdfPath& v) {std::string x;if(!reading&&!RigExecSpellPathText(v,&x))x=v.GetString();Text(x);if(reading)v=SdfPath(x);}
     void Item(SdfAssetPath& v) {std::string a=v.GetAuthoredPath(),e=v.GetEvaluatedPath(),r=v.GetResolvedPath();Text(a);Text(e);Text(r);if(reading)v=SdfAssetPath(SdfAssetPathParams().Authored(a).Evaluated(e).Resolved(r));}
     void Item(GfTimeCode& v) {double x=v.GetValue();Item(x);if(reading)v=GfTimeCode(x);}
     void Item(SdfLayerOffset& v) {double o=v.GetOffset(),s=v.GetScale();Item(o);Item(s);if(reading)v=SdfLayerOffset(o,s);}

@@ -3,6 +3,7 @@
 #include "providerContextBinding.h"
 #include "rigExecMath/poseArithmeticKernel.h"
 #include "rigExec/movers/moverRegistry.h"
+#include "rigExec/pathText.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include <set>
 #include <algorithm>
@@ -31,7 +32,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     const std::set<SdfPath> &excludedPoseWriters,const std::set<SdfPath> &excludedSolverBodies,
     const RigExecOpExclusionProof &proof,
     RigExecSceneProgram *destination,std::string *error) {
-    RigExecSceneDescriptors scene=captured;
+    RigExecSceneDescriptors scene=captured;RigExecPathText pathText;
     // rigEvaluatorCompile's consumed-solver relaxation: a solver another
     // solver reads (an IK feeding a blend) names the joints an unread solver
     // poses for their rests only. Every other joint binding writes, and
@@ -183,7 +184,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const auto aggregate=program.layout.solverAggregates.find(binding.solver);
         if(chain==program.layout.routes.chains.end() || aggregate==program.layout.solverAggregates.end())continue;
         const auto earlier=extracted.find(binding.joint);
-        const auto name=binding.solver.GetString()+":"+binding.joint.GetString();
+        const auto name=pathText(binding.solver)+":"+pathText(binding.joint);
         const auto id=program.layout.Allocate("solverJointCandidate:"+name);
         const auto published=program.layout.Allocate("solverJoint:"+name);
         // An unavailable solve passes through what the joint holds before it.
@@ -215,7 +216,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             }
             if(solverBarrier)continue;
             auto chain=program.layout.routes.chains.find({path,RigExecSceneValueDomain::Pose});if(chain==program.layout.routes.chains.end())continue;
-            const auto output=program.layout.Allocate("solverPropagate:"+solver.GetString()+":"+path.GetString());
+            const auto output=program.layout.Allocate("solverPropagate:"+pathText(solver)+":"+pathText(path));
             const auto current=chain->second.base;chain->second.poseBase=output;
             const auto solverNode=scene.nodes.find(solver);
             if(solverNode!=scene.nodes.end() && solverNode->second.stackOrdinal>=0 && !program.layout.routes.Append({path,RigExecSceneValueDomain::Pose},{output,solver,solverNode->second.stackOrdinal},error))return false;
@@ -232,7 +233,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const auto &driver=descriptor.record.binding.driverFrames;
         if(driver.IsEmpty() || (authored.count(driver) &&
            program.layout.solverAggregates.count(driver) && !excludedSolverBodies.count(driver)))return true;
-        program.skippedOperations[descriptor.mover]="driver frames "+driver.GetString()+
+        program.skippedOperations[descriptor.mover]="driver frames "+pathText(driver)+
             " is not a solver of this rig; mover set aside";
         return false;
     };
@@ -292,13 +293,13 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             const RigExecSceneVersionKey key{application.canonicalTarget,applicationDomain(application)};
             const auto chain=program.layout.routes.chains.find(key);
             if(chain==program.layout.routes.chains.end()) {
-                const auto base=program.layout.Allocate("missingBase:"+application.canonicalTarget.GetString());program.layout.constants.emplace(base,VtValue());program.layout.leaves.push_back(base);
+                const auto base=program.layout.Allocate("missingBase:"+pathText(application.canonicalTarget));program.layout.constants.emplace(base,VtValue());program.layout.leaves.push_back(base);
                 if(!program.layout.routes.RegisterBase(key,base,error))return false;
             }
             const auto targetChain=program.layout.routes.chains.find(key);
             auto incoming=targetChain->second.base;
             for(const auto &version:targetChain->second.versions)if(version.ordinal<application.stackOrdinal)incoming=version.value;else break;
-            const auto name="revision:"+application.owner.GetString()+":"+application.canonicalTarget.GetString()+":"+std::to_string(application.targetIndex);
+            const auto name="revision:"+pathText(application.owner)+":"+pathText(application.canonicalTarget)+":"+std::to_string(application.targetIndex);
             const auto output=program.layout.Allocate(name);
             const auto candidate=key.domain==RigExecSceneValueDomain::Pose?program.layout.Allocate("candidate:"+name):output;
             if(!program.layout.routes.Append(key,{output,application.owner,application.stackOrdinal},error))return false;
@@ -330,7 +331,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 auto chain=program.layout.routes.chains.find({path,RigExecSceneValueDomain::Pose});if(chain==program.layout.routes.chains.end())continue;
                 auto current=chain->second.base;
                 for(const auto &version:chain->second.versions)if(version.ordinal<authoredApplications[begin].stackOrdinal)current=version.value;else break;
-                const auto output=program.layout.Allocate("propagate:"+authoredApplications[begin].owner.GetString()+":"+path.GetString());
+                const auto output=program.layout.Allocate("propagate:"+pathText(authoredApplications[begin].owner)+":"+pathText(path));
                 if(!program.layout.routes.Append({path,RigExecSceneValueDomain::Pose},{output,authoredApplications[begin].owner,authoredApplications[begin].stackOrdinal},error))return false;
                 commit.descendants.push_back({current,output,selected,parentBlocked,false});commit.reads.push_back(current);commit.writes.push_back(output);
             }
@@ -353,7 +354,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             if(!program.layout.routes.Resolve(scene,{descendantPaths->second[i],RigExecSceneValueDomain::Pose},solver,_tokens->preceding,&descendant.current,error))return false;
             commit.reads.push_back(descendant.current);
         }
-        if(!program.Append("solverCommit:"+solver.GetString(),std::move(commit),error))return false;
+        if(!program.Append("solverCommit:"+pathText(solver),std::move(commit),error))return false;
     }
     std::map<SdfPath,std::pair<std::vector<RigExecValueId>,std::vector<RigExecValueId>>> interpolatorOutputs;
     std::map<SdfPath,std::vector<RigExecValueId>> interpolatorPrimvars;
@@ -368,7 +369,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         auto &outputs=interpolatorOutputs[path];
         auto reserve=[&](const SdfPathVector &paths,std::vector<RigExecValueId> *ids) {
             for(const auto &attribute:paths) {
-                const auto id=program.layout.Allocate("poseWeight:"+attribute.GetString());ids->push_back(id);
+                const auto id=program.layout.Allocate("poseWeight:"+pathText(attribute));ids->push_back(id);
                 const RigExecSceneVersionKey key{attribute,RigExecSceneValueDomain::Property};
                 if(!program.layout.routes.chains.count(key)) {
                     if(!program.layout.routes.RegisterBase(key,id,error))return false;
@@ -389,7 +390,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         const bool expression=request.atDefault || connected;
         if(!expression || (!request.computation.empty() && request.computation!="computeRestFrame") || source>=program.layout.providers.valueKeys.size()){*output=source;return true;}
         const auto phase=request.phase.IsEmpty()?_tokens->base:request.phase;
-        const auto key=request.consumer.GetString()+"|"+request.reader.GetString()+"|"+phase.GetString()+"|"+std::to_string(source)+(request.atDefault?"|default":"|current");
+        const auto key=pathText(request.consumer)+"|"+pathText(request.reader)+"|"+phase.GetString()+"|"+std::to_string(source)+(request.atDefault?"|default":"|current");
         const auto cached=contexts.find(key);if(cached!=contexts.end()){*output=cached->second;return true;}
         std::map<RigExecValueId,RigExecValueId> selected;
         for(const auto &[route,chain]:program.layout.routes.chains) {
@@ -577,13 +578,13 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             RigExecSceneSolverDescriptor source;RigExecSolverGraphBinding bound;
             if(!RigExecTranslateSceneSolver(scene,path,rests,&source,error) ||
                !RigExecBindSolverGraph(source,context,program.layout.solverAggregates.at(path),&bound,error) ||
-               !program.Append("solver:"+path.GetString(),std::move(bound),error))return false;
+               !program.Append("solver:"+pathText(path),std::move(bound),error))return false;
         } else if(node.domain==RigExecSceneDomain::Weight) {
             RigExecSceneWeightProgram source;RigExecWeightGraphBinding bound;
             if(!RigExecTranslateSceneWeight(scene,path,&source,error) ||
                !RigExecBindWeightGraph(source,context,path,_tokens->base,&bound,error))return false;
             RigExecSceneWeightOp op;op.object=bound.root;op.output=program.layout.weightPackets.at(path);op.binding=std::move(bound);
-            if(!program.Append("weightPacket:"+path.GetString(),std::move(op),error))return false;
+            if(!program.Append("weightPacket:"+pathText(path),std::move(op),error))return false;
         } else if(publishesWeights(node)) {
             RigExecScenePoseInterpolatorDescriptor source;RigExecBoundPoseInterpolator bound;
             if(!RigExecTranslateScenePoseInterpolator(scene,path,&source,error))return false;
@@ -591,7 +592,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             const auto &disabled=interpolatorOutputs.at(path).second;
             if(!RigExecBindScenePoseInterpolator(source,context,weights,disabled,&bound,error,
                    interpolatorPrimvars.at(path)) ||
-               !program.Append("poseInterpolator:"+path.GetString(),std::move(bound),error))return false;
+               !program.Append("poseInterpolator:"+pathText(path),std::move(bound),error))return false;
         } else if(node.domain==RigExecSceneDomain::UnknownRigExec)return Fail(error,"unsupported RigExec scene domain "+node.fact.type.GetString()+": "+path.GetString());
     }
     auto bindField=[&](const SdfPath &consumer,const SdfPath &weightObject,const SdfPath &moverTarget,RigExecValueId points,const std::string &key,RigExecValueId *id) {
@@ -623,7 +624,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     // IK/FK match's re-run of its pole's switch.
     std::map<SdfPath,std::pair<RigExecBoundSpaceSwitch,SdfPathVector>> boundSwitches;
     for(const auto &application:applications) {
-        const auto &a=*application.source;const auto key="revision:"+a.owner.GetString()+":"+a.canonicalTarget.GetString();
+        const auto &a=*application.source;const auto key="revision:"+pathText(a.owner)+":"+pathText(a.canonicalTarget);
         if(a.domain==RigExecSceneDomain::PropertyMover) {
             RigExecScenePropertyDescriptor source;RigExecPropertyGraphBinding bound;
             if(!RigExecTranslateSceneProperty(scene,a.owner,a.canonicalTarget,&source,error))return false;
@@ -694,7 +695,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             if(source.record.kind==RigExecConstraintKind::SingleChainIk) {
                 if(a.targetIndex!=0)continue;
                 source=chainConstraints.at(a.owner);
-                target.output=program.layout.Allocate("constraintStatus:"+a.owner.GetString());
+                target.output=program.layout.Allocate("constraintStatus:"+pathText(a.owner));
                 for(const auto &joint:source.ikChain) {
                     RigExecSceneGraphReadRequest request;request.source=joint;request.reader=a.owner;request.domain=RigExecSceneValueDomain::Pose;request.computation="computeRestFrame";
                     RigExecValueId rest;if(!context.resolve(request,&rest,error))return false;target.chainRests.push_back(rest);target.restLive.push_back(extracted.count(joint)!=0);
@@ -714,7 +715,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     for(const auto &path:ikFkMatches) {
         RigExecSceneConstraintDescriptor source;
         if(!RigExecTranslateSceneConstraint(scene,path,{},&source,error))return false;
-        const auto &facts=source.match;const auto name="RigExecIkFkMatchConstraint "+path.GetString();
+        const auto &facts=source.match;const auto name="RigExecIkFkMatchConstraint "+pathText(path);
         const auto one=[&](const SdfPathVector &rows,const char *relationship) {
             return (rows.size()==1 && rows[0].IsPrimPath()) || Fail(error,name+" requires exactly one "+relationship);
         };
@@ -833,21 +834,21 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         match->ikValue=facts.ikValue;match->scaleCalibration=facts.scaleCalibration;
         match->upperLengthOffset=facts.upperLengthOffset;match->lowerLengthOffset=facts.lowerLengthOffset;
         match->stretchLimb=facts.stretchLimb;
-        match->unreadable=path.GetString()+" could not read its limb; constraint passed through";
-        match->unmatched=path.GetString()+" could not match its limb's other half";
+        match->unreadable=pathText(path)+" could not read its limb; constraint passed through";
+        match->unmatched=pathText(path)+" could not match its limb's other half";
         // Outputs, allocated once every read is resolved.
-        const auto key="ikFkMatch:"+path.GetString();
+        const auto key="ikFkMatch:"+pathText(path);
         match->ikValues=program.layout.Allocate(key+":ikValues");match->fkValues=program.layout.Allocate(key+":fkValues");
         program.publicValues[path.AppendProperty(_tokens->outputsIkValues)]=match->ikValues;
         program.publicValues[path.AppendProperty(_tokens->outputsFkValues)]=match->fkValues;
         bound.target.output=match->ikValues;bound.writes.push_back(match->fkValues);
         for(size_t k=0;k<5;++k) {
-            match->presented[k]=program.layout.Allocate("presented:"+path.GetString()+":"+controls[k].GetString());
+            match->presented[k]=program.layout.Allocate("presented:"+pathText(path)+":"+pathText(controls[k]));
             bound.writes.push_back(match->presented[k]);presented[controls[k]]=match->presented[k];
         }
         for(size_t r=0;r<match->riders.size();++r) {
             auto &rider=match->riders[r];
-            rider.presented=program.layout.Allocate("presented:"+path.GetString()+":"+riderPaths[r].GetString());
+            rider.presented=program.layout.Allocate("presented:"+pathText(path)+":"+pathText(riderPaths[r]));
             bound.writes.push_back(rider.presented);presented[riderPaths[r]]=rider.presented;
         }
         std::sort(bound.reads.begin(),bound.reads.end());
@@ -859,7 +860,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     for(auto &[owner,commit]:commits) {
         const auto writer=scene.nodes.find(owner);
         if(writer!=scene.nodes.end() && writer->second.domain==RigExecSceneDomain::SpaceSwitch)continue;
-        if(!program.Append("commit:"+owner.GetString(),std::move(commit),error))return false;
+        if(!program.Append("commit:"+pathText(owner),std::move(commit),error))return false;
     }
     if(!RigExecRebindProviderInputs(&program.layout.providers,program.layout.initialProviderOps,
         [&](const SdfPath &attribute,RigExecValueId original,RigExecValueId *bound,std::string *why) {
@@ -885,7 +886,7 @@ static bool TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
         RigExecSceneCopyOp op;op.output=routed.value;
         if(!context.resolve(request,&op.input,error))return false;
         auto &leaves=program.layout.leaves;leaves.erase(std::remove(leaves.begin(),leaves.end(),op.output),leaves.end());
-        if(!program.Append("route:"+routed.consumer.GetString(),op,error))return false;
+        if(!program.Append("route:"+pathText(routed.consumer),op,error))return false;
     }
     for(const auto &[path,node]:scene.nodes)if(node.fact.type=="RigExecBlendInput") {
         RigExecSceneGeometryDescriptor descriptor;RigExecSceneBlendChannelOp op;
@@ -910,7 +911,7 @@ bool RigExecTranslateSceneProgram(const RigExecSceneDescriptors &captured,
     RigExecSceneProgram *destination,std::string *error) {
     if(!destination)return Fail(error,"null scene compiler output");
     std::set<SdfPath> excludedPoseWriters,excludedSolverBodies;
-    RigExecOpExclusionProof proof;
+    RigExecOpExclusionProof proof;RigExecPathText pathText;
     std::map<std::string,SdfPath> removableOwners;
     std::map<std::string,SdfPath> removableGeometryDrivers;
     // Each retry adds a previously unseen solver-body or pose-writer role.
@@ -970,7 +971,7 @@ bool RigExecTranslateSceneProgram(const RigExecSceneDescriptors &captured,
             } else if(std::holds_alternative<RigExecSceneExtractOp>(operation)) {
                 const auto *extract=std::get_if<RigExecSceneExtractOp>(&operation);
                 for(const auto &binding:captured.jointBindings)
-                    if(key=="solverJoint:"+binding.solver.GetString()+":"+binding.joint.GetString() && binding.element==extract->element) {
+                    if(key=="solverJoint:"+pathText(binding.solver)+":"+pathText(binding.joint) && binding.element==extract->element) {
                         const auto inserted=removableOwners.emplace(key,binding.solver);
                         if(!inserted.second && inserted.first->second!=binding.solver)
                             return Fail(error,"solver joint removal owner is ambiguous");
@@ -980,14 +981,14 @@ bool RigExecTranslateSceneProgram(const RigExecSceneDescriptors &captured,
                       std::holds_alternative<RigExecBoundAutoClavicle>(operation) ||
                       std::holds_alternative<RigExecSceneFieldOp>(operation)) {
                 for(const auto &application:captured.applications)if(application.domain==RigExecSceneDomain::Constraint || application.domain==RigExecSceneDomain::AutoClavicle) {
-                    const auto revision="revision:"+application.owner.GetString()+":"+application.canonicalTarget.GetString();
+                    const auto revision="revision:"+pathText(application.owner)+":"+pathText(application.canonicalTarget);
                     if(key==revision || key=="field:"+revision)removableOwners.emplace(key,application.owner);
                 }
                 // Single-chain IK applications are generated from retained
                 // authored chain facts rather than a moves application row.
                 for(const auto &[owner,node]:captured.nodes)if(node.fact.type=="RigExecSingleChainIkConstraint") {
                     const auto prefix=(std::holds_alternative<RigExecSceneFieldOp>(operation)?
-                        "field:revision:":"revision:")+owner.GetString()+":";
+                        "field:revision:":"revision:")+pathText(owner)+":";
                     if(key.compare(0,prefix.size(),prefix)==0 && SdfPath(key.substr(prefix.size())).IsPrimPath())
                         removableOwners.emplace(key,owner);
                 }
@@ -1003,7 +1004,7 @@ bool RigExecTranslateSceneProgram(const RigExecSceneDescriptors &captured,
             const auto &driver=source.record.binding.driverFrames;
             if(driver.IsEmpty())continue;
             const auto &key=candidate.layout.descriptors[first+i].key;
-            if(key!="revision:"+source.mover.GetString()+":"+source.target.GetString())
+            if(key!="revision:"+pathText(source.mover)+":"+pathText(source.target))
                 return Fail(error,"geometry withdrawal owner key is inconsistent");
             removableGeometryDrivers.emplace(key,driver);
             const auto fieldKey="field:"+key;

@@ -26,7 +26,7 @@ bool RigExecTranslateSceneProperty(const RigExecSceneDescriptors &scene,const Sd
     const auto type=node->fact.type;
     const bool scalar=result.targetType==SdfValueTypeNames->Float || result.targetType==SdfValueTypeNames->Double;
     if(type=="RigExecFloatMathMover" && scalar)result.record=RigExecFloatPropertyRecord{};
-    else if(type=="RigExecVec3fMathMover" && result.targetType.GetType()==TfType::Find<GfVec3f>())
+    else if(type=="RigExecVec3fMathMover" && result.targetType.GetType()==SdfValueTypeNames->Float3.GetType())
         result.record=RigExecVec3PropertyRecord{};
     else if(type=="RigExecMatrixMathMover" && result.targetType==SdfValueTypeNames->Matrix4d)
         result.record=RigExecMatrixPropertyRecord{};

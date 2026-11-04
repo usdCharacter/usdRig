@@ -746,14 +746,14 @@ bool Encode(const VtValue &data, const RigExecRevisionBinding &,
 
 bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 {
-    const std::string who = ctx.prim.GetPath().GetString();
+    const auto who = [&] { return ctx.prim.GetPath().GetString(); };
     if (ctx.targets.size() != 1) {
-        *error = who + ": cloth mover requires a single target";
+        *error = who() + ": cloth mover requires a single target";
         return false;
     }
     const UsdPrim mesh = ctx.stage->GetPrimAtPath(ctx.targets[0].GetPrimPath());
     if (!mesh || !mesh.IsA<UsdGeomMesh>() || ctx.targets[0].GetNameToken() != _points) {
-        *error = who + ": cloth mover must move a Mesh's points";
+        *error = who() + ": cloth mover must move a Mesh's points";
         return false;
     }
     VtIntArray counts;
@@ -761,14 +761,14 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     const UsdGeomMesh geom(mesh);
     if (!geom.GetFaceVertexCountsAttr().Get(&counts) || counts.empty() ||
         !geom.GetPointsAttr().Get(&rest) || rest.empty()) {
-        *error = who + ": cloth mesh " + mesh.GetPath().GetString() +
+        *error = who() + ": cloth mesh " + mesh.GetPath().GetString() +
                  " needs authored points and faceVertexCounts";
         return false;
     }
     VtFloatArray pins;
     if (const UsdAttribute a = ctx.prim.GetAttribute(_pinWeights)) a.Get(&pins);
     if (!pins.empty() && pins.size() != rest.size()) {
-        *error = who + ": rigExec:pinWeights holds " + std::to_string(pins.size()) +
+        *error = who() + ": rigExec:pinWeights holds " + std::to_string(pins.size()) +
                  " weights; the cloth mesh has " + std::to_string(rest.size()) +
                  " points";
         return false;
@@ -782,19 +782,19 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         !intIn(_maxWindowFrames, kMaxWindowFrames, 1, RigExecClothMaxWindowFrames) ||
         !intIn(_substeps, kSubsteps, 1, RigExecClothMaxSubsteps) ||
         !intIn(_iterations, kIterations, 1, RigExecClothMaxIterations)) {
-        *error = who + ": rigExec:windowFrames, maxWindowFrames, substeps or iterations "
+        *error = who() + ": rigExec:windowFrames, maxWindowFrames, substeps or iterations "
                        "is out of range";
         return false;
     }
     for (const SdfPath &collider : CollidersOf(ctx.prim)) {
         const UsdPrim prim = ctx.stage->GetPrimAtPath(collider);
         if (!prim || !prim.IsA<UsdGeomMesh>()) {
-            *error = who + ": rigExec:colliders target " + collider.GetString() +
+            *error = who() + ": rigExec:colliders target " + collider.GetString() +
                      " is not a Mesh";
             return false;
         }
         if (collider == mesh.GetPath()) {
-            *error = who + ": the cloth mesh cannot collide with itself through "
+            *error = who() + ": the cloth mesh cannot collide with itself through "
                            "rigExec:colliders";
             return false;
         }
@@ -821,7 +821,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         std::string why;
         if (!Payload(values, binding, &payload) || !CompiledRigOf(payload, &compiledRig, &why) ||
             compiledRig.pointCount != rest.size() || !RigExecPrepareCloth(compiledRig, &prepared, &why)) {
-            *error = who + ": invalid cloth rest shape, UVs, constraint binding or painted map";
+            *error = who() + ": invalid cloth rest shape, UVs, constraint binding or painted map";
             if (!why.empty()) *error += ": " + why;
             return false;
         }

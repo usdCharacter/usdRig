@@ -13,6 +13,17 @@ namespace rigExec {
 
 using namespace frozenDetail;
 
+namespace {
+
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+);
+
+}  // namespace
+
 namespace frozenDetail {
 
 namespace {
@@ -740,28 +751,28 @@ RigExecFreezeProgram(const RigExecRigEvaluator &evaluator,
         bindings->ribbonQueryValid.push_back(
             solver.ribbonPointsQuery.IsValid() ? 1 : 0);
     }
+    const auto &T = *_tokens;
     for (const auto &[chainIndex, revisionIndex] : B.revisionIndex) {
         const RigExecBakedProgramImpl::GeomRevision &revision =
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         const UsdPrim &moverPrim = revision.moverPrim;
         bindings->moverHasEnabled.push_back(
-            moverPrim && moverPrim.GetAttribute(TfToken("inputs:enabled"))
+            moverPrim && moverPrim.GetAttribute(T.inputsEnabled)
                 ? 1
                 : 0);
         bindings->moverHasDefaultWeight.push_back(
             moverPrim &&
-                    moverPrim.GetAttribute(TfToken("inputs:defaultWeight"))
+                    moverPrim.GetAttribute(T.inputsDefaultWeight)
                 ? 1
                 : 0);
         bindings->moverHasMethod.push_back(
             moverPrim &&
-                    moverPrim.GetAttribute(TfToken("rigExec:skinningMethod"))
+                    moverPrim.GetAttribute(T.rigExecSkinningMethod)
                 ? 1
                 : 0);
         // The sampler's key for the mover's defaultWeight sample.
         bindings->moverDefaultWeightKeys.push_back(
-            revision.moverPath.AppendProperty(
-                TfToken("inputs:defaultWeight")));
+            revision.moverPath.AppendProperty(T.inputsDefaultWeight));
     }
     // The sampler's synthetic weight-array keys, by the same function.
     for (const RigExecBakedProgramImpl::WeightObject &object :

@@ -1054,25 +1054,28 @@ ValidatePoseVersions(const RigExecBakedProgramImpl &B, GraphViolations *out)
                               covers(step.writes, domain, entry);
         const bool available = writer >= 0 ? writer < reader || internal
                                           : IsDeclaredSeedOrExcluded(B, domain, entry);
-        std::string line = NameStep(B, reader) + " is bound to " +
-                           RigExecBakedSlotDomainName(domain) + " version " +
-                           std::to_string(entry);
-        const std::vector<int> &slots = domain == kFin ? finSlot : baseSlot;
-        const int slot = entry < slots.size() ? slots[entry] : -1;
-        if (slot >= 0 && size_t(slot) < n)
-            line += " of " + B.paths[size_t(slot)].GetString();
+        const auto line = [&] {
+            std::string text = NameStep(B, reader) + " is bound to " +
+                               RigExecBakedSlotDomainName(domain) + " version " +
+                               std::to_string(entry);
+            const std::vector<int> &slots = domain == kFin ? finSlot : baseSlot;
+            const int slot = entry < slots.size() ? slots[entry] : -1;
+            if (slot >= 0 && size_t(slot) < n)
+                text += " of " + B.paths[size_t(slot)].GetString();
+            return text;
+        };
         if (!available) {
-            out->Add(line + (writer < 0 ? std::string(", which no step writes")
+            out->Add(line() + (writer < 0 ? std::string(", which no step writes")
                 : ", which " + NameStep(B, writer) + " writes at or after it"));
             return;
         }
         if (internal) return;
         if (!covers(step.reads, domain, entry)) {
-            out->Add(line + " without declaring it");
+            out->Add(line() + " without declaring it");
             return;
         }
         if (writer >= 0 && !SortedContains(step.preds, writer))
-            out->Add(line + " without an edge from its producer " + NameStep(B, writer));
+            out->Add(line() + " without an edge from its producer " + NameStep(B, writer));
     };
 
     for (int reader = 0; reader < int(B.steps.size()); ++reader) {

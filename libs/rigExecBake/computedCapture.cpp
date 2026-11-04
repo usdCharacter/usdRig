@@ -1514,8 +1514,8 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                     bool ok = true;
                     frozenDetail::_VisitIterativeMoverScalars(
                         op, parameters,
-                        [&](const char *name, auto fallback, auto &) {
-                            ok = ok && pathRead(attr(name),
+                        [&](const TfToken &name, auto fallback, auto &) {
+                            ok = ok && pathRead(prim.GetAttribute(name),
                                                 S.Value(fallback), false);
                         });
                     if (!ok) {

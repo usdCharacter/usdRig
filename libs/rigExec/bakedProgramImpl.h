@@ -24,6 +24,7 @@
 #include "gpuDeformTranslation.h"
 #include "scalarReferenceAdapter.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "profiler.h"
 #include "solverKernels.h"
 #include "tapSet.h"
@@ -2905,6 +2906,9 @@ struct RigExecBakedProgramImpl {
     /// RIGEXEC_GPU_DEFORM_STATS: the owning thread prints device-chain
     /// timings at the GPU boundary. Never printed on a frozen worker.
     bool gpuDeformStats = false;
+    /// RIGEXEC_INPUT_REPLAY, read once at Build: Run refuses an unrecorded
+    /// entry only under capture.
+    bool inputReplayCapture = false;
     /// Schedule diagnostics, read once at Build by
     /// RigExecBakedReadScheduleSettings (bakedSchedule.h).
     bool scheduleParallel = false;
@@ -4768,8 +4772,9 @@ RigExecBakedSpellPathTexts(const std::vector<SdfPath> &paths)
 {
     auto texts = std::make_shared<std::vector<std::string>>();
     texts->reserve(paths.size());
+    RigExecPathText pathText;
     for (const SdfPath &path : paths) {
-        texts->push_back(path.GetString());
+        texts->push_back(pathText(path));
     }
     return texts;
 }
@@ -5373,7 +5378,9 @@ RigExecBakedBuildContext::ResolveBind(const UsdPrim &prim, const TfToken &name,
     // Only opted-in direct numeric arguments sample ordinary source edits.
     if constexpr (std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>) {
         if (sourceValue && !input.varying && input.head &&
-            input.head.GetTypeName().GetType()==TfType::Find<T>() && walk &&
+            input.head.GetTypeName().GetType()==
+                (std::is_same_v<T,double> ? SdfValueTypeNames->Double
+                                          : SdfValueTypeNames->Double3).GetType() && walk &&
             walk->size()==1 && walk->front()==input.head.GetPath() &&
             !input.head.ValueMightBeTimeVarying() &&
             input.head.GetNumTimeSamples()==0 && !input.head.HasSpline()) {

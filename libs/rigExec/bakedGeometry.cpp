@@ -176,11 +176,12 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         ctx->Refuse(what, where);
     };
     auto slotOf = [&](const SdfPath &path) { return ctx->SlotOf(path); };
+    RigExecPathText pathText;
 
     auto bakeRevision = [&](const RigExecBakedRevisionSpec &r) {
         RigExecBakedProgramImpl::GeomRevision out;
         out.moverPath = r.moverPath;
-        out.moverPathText = r.moverPath.GetString();
+        out.moverPathText = pathText(r.moverPath);
         out.target = r.target;
         out.moverPrim = B.stage->GetPrimAtPath(r.moverPath);
         out.op = r.op;
@@ -562,7 +563,7 @@ RigExecBakedBuildGeometry(RigExecBakedBuildContext *ctx,
         for (const RigExecBakedRevisionSpec &derived : spec.derived) {
             RigExecBakedProgramImpl::GeomChain::Derived d;
             d.target = derived.target;
-            d.targetText = derived.target.GetString();
+            d.targetText = pathText(derived.target);
             d.matrixTarget = RigExecIsDerivedMatrixOp(derived.op);
             B.prims.insert(derived.target.GetPrimPath());
             B.named.insert(derived.target);
@@ -5540,7 +5541,7 @@ RigExecBakedGeometryReport(const RigExecBakedProgramImpl &B)
             std::snprintf(
                 line, sizeof(line),
                 "  %s: %zu chunk(s), %zu vertex(es), %zu influence(s)%s\n",
-                revision.moverPath.GetString().c_str(), chunks, vertexSum,
+                revision.moverPathText.c_str(), chunks, vertexSum,
                 influences, revision.chunked ? "" : " [not partitioned]");
             out += line;
             std::snprintf(line, sizeof(line),
@@ -6160,7 +6161,7 @@ RigExecBakedBuildLayoutSteps(RigExecBakedProgramImpl *program)
         step.part = 0;
         step.kind = RigExecBakedStepKind::SkinTopology;
         step.object = int(r);
-        step.label = "SkinTopology " + revision.moverPath.GetString();
+        step.label = "SkinTopology " + revision.moverPathText;
         step.writes.push_back(RigExecBakedOne(
             RigExecBakedSlotDomain::SkinTopology, uint32_t(r)));
         B.steps.push_back(std::move(step));
@@ -6343,7 +6344,7 @@ RigExecBakedProgramTesting::ShadowAssembly(
         const RigExecMoverParameters b = AssembleRevisionFromStage(
             B, local, &fromStage, base, baseCount, time, &stageLines,
             /*record=*/false);
-        const std::string where = live.moverPath.GetString();
+        const std::string &where = live.moverPathText;
         for (const std::string &name : missing) {
             report.push_back(where + ": undeclared read " + name);
         }
@@ -6377,7 +6378,7 @@ RigExecBakedProgramTesting::ShadowAssembly(
                                                  &a);
             RigExecReadProjectorTarget(live.moverPrim, live.op, live.binding,
                                        &local, time, &b);
-            const std::string where = live.moverPath.GetString();
+            const std::string &where = live.moverPathText;
             for (const std::string &name : missing) {
                 report.push_back(where + ": undeclared read " + name);
             }

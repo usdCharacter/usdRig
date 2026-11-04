@@ -1,4 +1,5 @@
 #include "weightSceneTranslation.h"
+#include "rigExec/pathText.h"
 #include <algorithm>
 #include "pxr/base/tf/staticTokens.h"
 #include <set>
@@ -56,7 +57,8 @@ bool RigExecTranslateSceneWeight(const RigExecSceneDescriptors &scene,const SdfP
         if(!node || !node->fact.active){Fail(error,"missing weight object "+who.GetString());return -1;}
         RigExecWeightRecord record;RigExecSceneWeightObject object;
         object.path=who;object.assetAnchor=scene.rigRoot.GetParentPath();
-        record.name=who.GetString();record.type=node->fact.type;
+        if(!RigExecSpellPathText(who,&record.name) && !who.IsEmpty())record.name=who.GetAsString();
+        record.type=node->fact.type;
         record.kind=record.type=="RigExecStaticWeight"?0:record.type=="RigExecDynamicWeight"?1:
             record.type=="RigExecCombineWeight"?2:record.type=="RigExecSphereWeight"?3:
             record.type=="RigExecPlaneWeight"?4:record.type=="RigExecCurveWeight"?5:-1;

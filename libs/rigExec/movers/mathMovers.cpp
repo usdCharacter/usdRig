@@ -32,8 +32,10 @@ _ValidateMathMoverOp(
 {
     const UsdPrim &prim = ctx.prim;
     const rigExec::RigExecMoverDomain domain = ctx.handler->domain;
-    const std::string who = std::string(ctx.handler->schemaType) + " " +
-                            prim.GetPath().GetString();
+    const auto who = [&] {
+        return std::string(ctx.handler->schemaType) + " " +
+               prim.GetPath().GetString();
+    };
     // allowedTokens is advisory in USD, and an unparsed
     // operation would otherwise fall through to a silent
     // pass-through every frame.
@@ -44,7 +46,7 @@ _ValidateMathMoverOp(
     }
     rigExec::RigExecPropertyOp op;
     if (!rigExec::RigExecParsePropertyOp(operation, &op)) {
-        *error = who + ": unknown rigExec:operation '" +
+        *error = who() + ": unknown rigExec:operation '" +
                  operation.GetString() + "'";
         return false;
     }
@@ -53,7 +55,7 @@ _ValidateMathMoverOp(
         const UsdAttribute keysAttr =
             prim.GetAttribute(_mathTokens->inputsKeys);
         if (domain != rigExec::RigExecMoverDomain::PropertyFloat) {
-            *error = who + ": rigExec:operation 'curve' is defined only "
+            *error = who() + ": rigExec:operation 'curve' is defined only "
                            "for RigExecFloatMathMover";
             return false;
         }
@@ -68,7 +70,7 @@ _ValidateMathMoverOp(
                 keys.cdata(), keys.size()) ||
             (!tangents.empty() &&
              tangents.size() != keys.size())) {
-            *error = who + ": rigExec:operation 'curve' needs "
+            *error = who() + ": rigExec:operation 'curve' needs "
                            "inputs:keys with finite keys strictly "
                            "increasing in input, and inputs:tangents "
                            "empty or one per key";
@@ -78,7 +80,7 @@ _ValidateMathMoverOp(
     if (op == rigExec::RigExecPropertyOp::Quantize ||
         op == rigExec::RigExecPropertyOp::Path) {
         if (domain != rigExec::RigExecMoverDomain::PropertyFloat) {
-            *error = who + ": rigExec:operation '" + operation.GetString() +
+            *error = who() + ": rigExec:operation '" + operation.GetString() +
                      "' is defined only for RigExecFloatMathMover";
             return false;
         }
@@ -91,7 +93,7 @@ _ValidateMathMoverOp(
     if (domain == rigExec::RigExecMoverDomain::PropertyMatrix &&
         op != rigExec::RigExecPropertyOp::Multiply &&
         op != rigExec::RigExecPropertyOp::Blend) {
-        *error = who + ": rigExec:operation '" + operation.GetString() +
+        *error = who() + ": rigExec:operation '" + operation.GetString() +
                  "' has no matrix meaning (multiply or blend)";
         return false;
     }

@@ -12,18 +12,26 @@ using namespace frozenDetail;
 
 namespace {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((rigExecOperation, "rigExec:operation"))
+    ((inputsValue, "inputs:value"))
+    ((inputsMin, "inputs:min"))
+    ((inputsMax, "inputs:max"))
+    ((inputsKeys, "inputs:keys"))
+    ((inputsTangents, "inputs:tangents"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+    ((rigExecInputWeights, "rigExec:inputWeights"))
+    ((rigExecBaseWeight, "rigExec:baseWeight"))
+);
+
 bool
 _IsChainMathMover(const TfToken &schemaType)
 {
     return RigExecIsPropertyMover(schemaType);
 }
-
-// The eight inputs a revision pins, by attribute name, for the currency
-// check below.
-const char *const _kChainInputNames[8] = {
-    "inputs:enabled", "inputs:defaultWeight", "rigExec:operation",
-    "inputs:value", "inputs:min", "inputs:max", "inputs:keys",
-    "inputs:tangents"};
 
 const RigExecChainSampleInput *
 _ChainBoundInput(const RigExecChainSampleRevision &revision, size_t i)
@@ -127,11 +135,11 @@ _OrderDiscoveredChains(
             }
             const UsdPrim weight = stage->GetPrimAtPath(weightPath);
             addPrimDependencies(consumer, weight);
-            for (const char *relationship :
-                 {"rigExec:inputWeights", "rigExec:baseWeight"}) {
+            for (const TfToken &relationship :
+                 {_tokens->rigExecInputWeights, _tokens->rigExecBaseWeight}) {
                 SdfPathVector inputs;
                 if (const UsdRelationship rel =
-                        weight.GetRelationship(TfToken(relationship))) {
+                        weight.GetRelationship(relationship)) {
                     rel.GetTargets(&inputs);
                 }
                 for (const SdfPath &input : inputs) {
@@ -146,7 +154,7 @@ _OrderDiscoveredChains(
             addPrimDependencies(target, mover);
             SdfPathVector weights;
             if (const UsdRelationship rel = mover.GetRelationship(
-                    TfToken("rigExec:weightObject"))) {
+                    _tokens->rigExecWeightObject)) {
                 rel.GetTargets(&weights);
             }
             std::set<SdfPath> visitedWeights;
@@ -195,13 +203,13 @@ _OrderDiscoveredChains(
 // first-run time; a constant reads identically at every time code, so the
 // pins agree whatever frame ran first.
 RigExecChainSampleInput
-_BindChainInput(const UsdPrim &prim, const char *name)
+_BindChainInput(const UsdPrim &prim, const TfToken &name)
 {
     RigExecChainSampleInput input;
     if (!prim) {
         return input;
     }
-    if (const UsdAttribute a = prim.GetAttribute(TfToken(name))) {
+    if (const UsdAttribute a = prim.GetAttribute(name)) {
         input.attribute = a;
         input.path = a.GetPath();
         input.connected = a.HasAuthoredConnections();
@@ -263,6 +271,12 @@ RigExecChainSampleBindingsStillCurrent(
     if (grouped.size() != bindings.chains.size()) {
         return false;
     }
+    const auto &T = *_tokens;
+    // The eight inputs a revision pins, by attribute name.
+    const TfToken *const chainInputNames[8] = {
+        &T.inputsEnabled, &T.inputsDefaultWeight, &T.rigExecOperation,
+        &T.inputsValue, &T.inputsMin, &T.inputsMax, &T.inputsKeys,
+        &T.inputsTangents};
     // The same phased reads, each over the same hops: a phase edit or a
     // rewire recompiles the evaluator, which resolves them afresh, and the
     // hops decide who stands aside for a drag.
@@ -327,7 +341,7 @@ RigExecChainSampleBindingsStillCurrent(
             }
             SdfPathVector weights;
             if (const UsdRelationship rel = mover.GetRelationship(
-                    TfToken("rigExec:weightObject"))) {
+                    T.rigExecWeightObject)) {
                 rel.GetTargets(&weights);
             }
             if (weights != revision.weightObjects) {
@@ -340,8 +354,8 @@ RigExecChainSampleBindingsStillCurrent(
             for (size_t i = 0; i < 8; ++i) {
                 const RigExecChainSampleInput *pinned =
                     _ChainBoundInput(revision, i);
-                const UsdAttribute fresh = mover.GetAttribute(
-                    TfToken(_kChainInputNames[i]));
+                const UsdAttribute fresh =
+                    mover.GetAttribute(*chainInputNames[i]);
                 if (bool(fresh) != bool(*pinned)) {
                     return false;
                 }

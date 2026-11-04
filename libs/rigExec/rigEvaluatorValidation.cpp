@@ -933,18 +933,18 @@ RigExecRigEvaluator::_DiscoverMovers(
             // would otherwise be ignored silently. The predecessor name comes
             // from the mover's own row; movers without one have nothing to reject.
             {
-                const RigExecMoverHandler *migrationHandler =
-                    RigExecFindMoverHandler(record.schemaType);
-                const char *oldName = migrationHandler
-                    ? migrationHandler->legacyEnvelopeAttribute
-                    : nullptr;
-                if (oldName) {
-                    const UsdAttribute old =
-                        prim.GetAttribute(TfToken(oldName));
+                const RigExecMoverRegistration *migration =
+                    RigExecFindMoverRegistration(record.schemaType);
+                if (migration &&
+                    !migration->legacyEnvelopeAttribute.IsEmpty()) {
+                    const TfToken &oldName =
+                        migration->legacyEnvelopeAttribute;
+                    const UsdAttribute old = prim.GetAttribute(oldName);
                     if (old && old.HasAuthoredValue()) {
                         return fail(
                             record.schemaType.GetString() + " " +
-                            prim.GetPath().GetString() + " authors " + oldName +
+                            prim.GetPath().GetString() + " authors " +
+                            oldName.GetString() +
                             ", which was replaced by inputs:defaultWeight", {prim.GetPath()});
                     }
                 }

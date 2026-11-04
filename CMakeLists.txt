@@ -1914,6 +1914,8 @@ target_link_libraries(testRigExecDefaultSpaces PRIVATE rigExec)
 target_compile_definitions(testRigExecDefaultSpaces PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecDefaultSpaces COMMAND testRigExecDefaultSpaces)
+set_tests_properties(testRigExecDefaultSpaces PROPERTIES
+    ENVIRONMENT "RIGEXEC_VERIFY_POSEINFO=1")
 
 add_executable(testRigExecSchemaAuthoring
     tests/testRigExecSchemaAuthoring.cpp)
@@ -2600,7 +2602,9 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecSurfaceSnap testRigExecValueEdits testRigExecVolumeWeights
     testRigExecWeightProgram testRigExecWrinkle
     testRigExecStandalone testRigExecRigLogic)
-    target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
+    if (TARGET ${_rigexec_scene_exe})
+        target_link_libraries(${_rigexec_scene_exe} PRIVATE rigExecScene)
+    endif()
 endforeach()
 
 # Oracles are linked only where a test runs cpu-reference, golden capture,
@@ -2617,7 +2621,9 @@ foreach(_rigexec_oracle_exe IN ITEMS
     testRigExecOpTrace testRigExecOracleInputs testRigExecPatchMover testRigExecPhaseBindings
     testRigExecPropertyOps testRigExecRestOps testRigExecSkinTopology
     testRigExecSolverStacking testRigExecVolumeWeights testRigExecWrinkle)
-    target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)
+    if (TARGET ${_rigexec_oracle_exe})
+        target_link_libraries(${_rigexec_oracle_exe} PRIVATE rigExecOracle)
+    endif()
 endforeach()
 
 # Install

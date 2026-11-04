@@ -26,6 +26,25 @@ namespace frozenDetail {
 // doubles is three orders of magnitude past anything a real job sizes.
 inline constexpr size_t kMaxFrozenArenaSlots = size_t(1) << 27;
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _frozenIterativeTokens,
+    ((iterations, "inputs:iterations"))
+    ((step, "inputs:step"))
+    ((pinBorders, "inputs:pinBorders"))
+    ((distanceWeight, "inputs:distanceWeight"))
+    ((displacement, "inputs:displacement"))
+    ((neighborDistance, "inputs:neighborDistance"))
+    ((restLengthScale, "inputs:restLengthScale"))
+    ((stretchStiffness, "inputs:stretchStiffness"))
+    ((compressionStiffness, "inputs:compressionStiffness"))
+    ((bendStiffness, "inputs:bendStiffness"))
+    ((maxDisplacement, "inputs:maxDisplacement"))
+    ((tangentPlaneCollisions, "inputs:tangentPlaneCollisions"))
+    ((tangentPlaneInset, "inputs:tangentPlaneInset"))
+    ((wrinkleScale, "inputs:wrinkleScale"))
+    ((smoothingIterations, "inputs:smoothingIterations"))
+);
+
 // Shared scalar schema for the iterative deformers' inputs: the frozen
 // stage sampler folds them into the digest, and the .rigexec exporter lists
 // the same inputs as input slots (rigExecBake/computedCapture.cpp), so it
@@ -35,27 +54,28 @@ void
 _VisitIterativeMoverScalars(RigExecRevisionOp op,
                            RigExecMoverParameters &params, Fn &&fn)
 {
+    const auto &T = *_frozenIterativeTokens;
     if (op == RigExecRevisionOp::DeltaMush) {
-        fn("inputs:iterations", 10, params.mushIterations);
-        fn("inputs:step", 0.5f, params.mushStep);
-        fn("inputs:pinBorders", true, params.mushPinBorders);
-        fn("inputs:distanceWeight", 0.0f, params.mushDistanceWeight);
-        fn("inputs:displacement", 1.0f, params.mushDisplacement);
+        fn(T.iterations, 10, params.mushIterations);
+        fn(T.step, 0.5f, params.mushStep);
+        fn(T.pinBorders, true, params.mushPinBorders);
+        fn(T.distanceWeight, 0.0f, params.mushDistanceWeight);
+        fn(T.displacement, 1.0f, params.mushDisplacement);
     } else if (op == RigExecRevisionOp::Wrinkle) {
         auto &settings = params.wrinkleSettings;
-        fn("inputs:iterations", 80, settings.iterations);
-        fn("inputs:neighborDistance", 2, settings.neighborDistance);
-        fn("inputs:restLengthScale", 1.0f, settings.restLengthScale);
-        fn("inputs:stretchStiffness", 1.0f, settings.stretchStiffness);
-        fn("inputs:compressionStiffness", 1.0f, settings.compressionStiffness);
-        fn("inputs:bendStiffness", 0.1f, settings.bendStiffness);
-        fn("inputs:maxDisplacement", 0.2f, settings.maxDisplacement);
-        fn("inputs:pinBorders", true, settings.pinBorders);
-        fn("inputs:tangentPlaneCollisions", true,
+        fn(T.iterations, 80, settings.iterations);
+        fn(T.neighborDistance, 2, settings.neighborDistance);
+        fn(T.restLengthScale, 1.0f, settings.restLengthScale);
+        fn(T.stretchStiffness, 1.0f, settings.stretchStiffness);
+        fn(T.compressionStiffness, 1.0f, settings.compressionStiffness);
+        fn(T.bendStiffness, 0.1f, settings.bendStiffness);
+        fn(T.maxDisplacement, 0.2f, settings.maxDisplacement);
+        fn(T.pinBorders, true, settings.pinBorders);
+        fn(T.tangentPlaneCollisions, true,
            settings.tangentPlaneCollisions);
-        fn("inputs:tangentPlaneInset", 0.0f, settings.tangentPlaneInset);
-        fn("inputs:wrinkleScale", 1.0f, settings.wrinkleScale);
-        fn("inputs:smoothingIterations", 0, settings.smoothingIterations);
+        fn(T.tangentPlaneInset, 0.0f, settings.tangentPlaneInset);
+        fn(T.wrinkleScale, 1.0f, settings.wrinkleScale);
+        fn(T.smoothingIterations, 0, settings.smoothingIterations);
     }
 }
 
@@ -237,11 +257,28 @@ enum _FrozenWeightArrayRole : size_t {
     _FrozenWeightArrayRoleCount
 };
 
-SdfPath
-_FrozenWireInputKey(const SdfPath &moverPath, const char *role);
+TF_DEFINE_PRIVATE_TOKENS(
+    _frozenInputKeyTokens,
+    ((wireRestPoints, "frozenWire:restPoints"))
+    ((wireCurveOrder, "frozenWire:curveOrder"))
+    ((wireCurveKnots, "frozenWire:curveKnots"))
+    ((wireDropoffDistance, "frozenWire:dropoffDistance"))
+    ((wireBindCoords, "frozenWire:bindCoords"))
+    ((wireDriverWeights, "frozenWire:driverWeights"))
+    ((wireDriverBaseWeights, "frozenWire:driverBaseWeights"))
+    ((wireDriverCurvePoints, "frozenWire:driverCurvePoints"))
+    ((blendPoints, "frozenBlend:points"))
+    ((surfacePoints, "frozenSurface:surfacePoints"))
+    ((latticeCageRest, "frozenLattice:cageRest"))
+    ((latticeCageLive, "frozenLattice:cageLive"))
+    ((ribbonBindCoords, "frozenRibbon:bindCoords"))
+);
 
 SdfPath
-_FrozenBlendInputKey(const SdfPath &samplePath, const char *role);
+_FrozenWireInputKey(const SdfPath &moverPath, const TfToken &key);
+
+SdfPath
+_FrozenBlendInputKey(const SdfPath &samplePath, const TfToken &key);
 
 /// Each override's property path (prim.attribute), empty where it names a
 /// computation. UI thread: it builds paths.
@@ -257,13 +294,13 @@ _FrozenPlaceOverrides(const RigExecBakedProgramImpl &B,
                       std::vector<char> *flags);
 
 SdfPath
-_FrozenSurfaceInputKey(const SdfPath &moverPath, const char *role);
+_FrozenSurfaceInputKey(const SdfPath &moverPath, const TfToken &key);
 
 SdfPath
-_FrozenLatticeInputKey(const SdfPath &moverPath, const char *role);
+_FrozenLatticeInputKey(const SdfPath &moverPath, const TfToken &key);
 
 SdfPath
-_FrozenRibbonInputKey(const SdfPath &moverPath, const char *role);
+_FrozenRibbonInputKey(const SdfPath &moverPath, const TfToken &key);
 
 struct _ChainMoverDesc {
     SdfPath moverPath;
@@ -282,7 +319,7 @@ _OrderDiscoveredChains(
     std::vector<SdfPath> *order, std::string *error);
 
 RigExecChainSampleInput
-_BindChainInput(const UsdPrim &prim, const char *name);
+_BindChainInput(const UsdPrim &prim, const TfToken &name);
 
 uint64_t
 _MixWord(uint64_t hash, uint64_t word);
@@ -292,6 +329,9 @@ _HashBytes(uint64_t hash, const void *data, size_t size);
 
 uint64_t
 _HashString(uint64_t hash, const char *text);
+
+uint64_t
+_HashPathText(uint64_t hash, const SdfPath &path, std::string *text);
 
 bool
 _HashVtValue(uint64_t *hash, const VtValue &value);

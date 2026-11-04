@@ -2,6 +2,7 @@
 #include "rigExecGraph/windowHistory.h"
 #include "moverGraph.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "frameExtraction.h"
 #include "movers/moverRegistry.h"
 
@@ -2047,7 +2048,13 @@ RigExecReadPhase::GetAsString() const
     case RigExecReadPhaseKind::Base:      return "base";
     case RigExecReadPhaseKind::Preceding: return "preceding";
     case RigExecReadPhaseKind::Final:     return "final";
-    case RigExecReadPhaseKind::AtPrim:    return prim.GetString();
+    case RigExecReadPhaseKind::AtPrim: {
+        std::string text;
+        if (!RigExecSpellPathText(prim, &text)) {
+            text = prim.GetString();
+        }
+        return text;
+    }
     }
     return "base";
 }
@@ -4886,9 +4893,11 @@ RigExecEvaluateProjectorTarget(
     RigExecReadProjectorTarget(projectorPrim, op, binding, resolved, time,
                                &reads);
     // Only the surface projector names its mover in a diagnostic.
-    const std::string who = op == RigExecRevisionOp::SurfaceProjector
-                                ? binding.moverPath.GetString()
-                                : std::string();
+    std::string who;
+    if (op == RigExecRevisionOp::SurfaceProjector &&
+        !RigExecSpellPathText(binding.moverPath, &who)) {
+        who = binding.moverPath.GetString();
+    }
     return RigExecRunProjectorTarget(op, binding, frames, reads, basePoints,
                                      finalPoints, who, matrix, diagnostics);
 }

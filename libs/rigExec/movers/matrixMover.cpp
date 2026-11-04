@@ -163,9 +163,9 @@ _ValidateMatrixMover(
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
     const std::vector<SdfPath> &targets = ctx.targets;
-    const std::string who = "MatrixMover " + prim.GetPath().GetString();
+    const auto who = [&] { return "MatrixMover " + prim.GetPath().GetString(); };
     if (targets.size() != 1) {
-        *error = who + ": moves must resolve to exactly one target";
+        *error = who() + ": moves must resolve to exactly one target";
         return false;
     }
     // Transform domain: a bare prim path names the frame to deform, and the
@@ -184,7 +184,7 @@ _ValidateMatrixMover(
         const TfToken type = owner ? owner.GetTypeName() : TfToken();
         if (!owner || !(type == "RigExecControl" || type == "RigExecJoint" ||
                         UsdGeomXformable(owner))) {
-            *error = who + ": a bare prim move target names the transform "
+            *error = who() + ": a bare prim move target names the transform "
                            "domain, so it must be an Xformable, a "
                            "RigExecControl or a RigExecJoint";
             return false;
@@ -193,7 +193,7 @@ _ValidateMatrixMover(
     }
     if (!targets[0].IsPropertyPath() ||
         targets[0].GetNameToken() != "points") {
-        *error = who + ": moves must resolve to exactly one native "
+        *error = who() + ": moves must resolve to exactly one native "
                        "PointBased points property, or one prim for the "
                        "transform domain" +
                  rigExec::RigExecPointsTargetHint(stage, targets[0]);
@@ -202,7 +202,7 @@ _ValidateMatrixMover(
     const UsdPrim owner =
         stage->GetPrimAtPath(targets[0].GetPrimPath());
     if (!owner || !owner.IsA<UsdGeomPointBased>()) {
-        *error = who + ": move target owner is not a stock PointBased prim";
+        *error = who() + ": move target owner is not a stock PointBased prim";
         return false;
     }
     // Exact Sdf type/role check: equal C++ element types never infer
@@ -211,7 +211,7 @@ _ValidateMatrixMover(
         stage->GetAttributeAtPath(targets[0]);
     if (!targetAttr ||
         targetAttr.GetTypeName() != SdfValueTypeNames->Point3fArray) {
-        *error = who + ": move target is not an exact point3f[] property";
+        *error = who() + ": move target is not an exact point3f[] property";
         return false;
     }
 
@@ -221,7 +221,7 @@ _ValidateMatrixMover(
         rel.GetTargets(&transforms);
     }
     if (transforms.size() != 1) {
-        *error = who + ": rigExec:transform must have exactly one target";
+        *error = who() + ": rigExec:transform must have exactly one target";
         return false;
     }
     // The transform target must be a catalogued computeMatrix provider.
@@ -236,13 +236,13 @@ _ValidateMatrixMover(
         rel.GetTargets(&spaces);
     }
     if (spaces.size() > 1) {
-        *error = who + ": rigExec:transformSpace takes at most one target";
+        *error = who() + ": rigExec:transformSpace takes at most one target";
         return false;
     }
     if (!spaces.empty()) {
         const UsdPrim spacePrim = stage->GetPrimAtPath(spaces[0]);
         if (!spacePrim || !isFrameProvider(spacePrim.GetTypeName())) {
-            *error = who + ": rigExec:transformSpace target is not a "
+            *error = who() + ": rigExec:transformSpace target is not a "
                            "catalogued matrix provider";
             return false;
         }
@@ -256,13 +256,13 @@ _ValidateMatrixMover(
         rel.GetTargets(&carries);
     }
     if (carries.size() > 1) {
-        *error = who + ": rigExec:space takes at most one target";
+        *error = who() + ": rigExec:space takes at most one target";
         return false;
     }
     if (!carries.empty()) {
         const UsdPrim carryPrim = stage->GetPrimAtPath(carries[0]);
         if (!carryPrim || !isFrameProvider(carryPrim.GetTypeName())) {
-            *error = who + ": rigExec:space target is not a catalogued "
+            *error = who() + ": rigExec:space target is not a catalogued "
                            "matrix provider";
             return false;
         }
@@ -273,7 +273,7 @@ _ValidateMatrixMover(
     const bool isProvider =
         transformPrim && isFrameProvider(transformPrim.GetTypeName());
     if (!isProvider) {
-        *error = who + ": rigExec:transform target is not a catalogued "
+        *error = who() + ": rigExec:transform target is not a catalogued "
                        "matrix provider";
         return false;
     }
@@ -284,7 +284,7 @@ _ValidateMatrixMover(
     if (references.size() > 1 || referenceSpaces.size() > 1 ||
         (!referenceSpaces.empty() && (references.empty() || spaces.empty())) ||
         (!references.empty() && !spaces.empty() && referenceSpaces.empty())) {
-        *error = who + ": referenceTransform takes one provider; a transformSpace "
+        *error = who() + ": referenceTransform takes one provider; a transformSpace "
                        "also requires referenceTransformSpace";
         return false;
     }
@@ -292,7 +292,7 @@ _ValidateMatrixMover(
         for (const auto &path : paths) {
             const UsdPrim reference = stage->GetPrimAtPath(path);
             if (!reference || !isFrameProvider(reference.GetTypeName())) {
-                *error = who + ": reference target is not a matrix provider";
+                *error = who() + ": reference target is not a matrix provider";
                 return false;
             }
         }

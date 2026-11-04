@@ -3,6 +3,7 @@
 #include "moverRegistry.h"
 #include "externalPlayback.h"
 #include "../parallel.h"
+#include "../pathText.h"
 #include "rigExecMath/geometryKernels.h"
 #include "rigExecScene/sceneDescriptors.h"
 
@@ -805,6 +806,15 @@ void AppendString(std::vector<uint8_t> *out, const std::string &s)
     out->insert(out->end(), s.begin(), s.end());
 }
 
+void AppendPath(std::vector<uint8_t> *out, const SdfPath &path)
+{
+    std::string text;
+    if (!RigExecSpellPathText(path, &text)) {
+        text = path.GetAsString();
+    }
+    AppendString(out, text);
+}
+
 bool ReadCount(const uint8_t *data, size_t size, size_t *offset,
                uint32_t *out)
 {
@@ -837,11 +847,11 @@ bool EncodeCompiledData(const RigExecRevisionBinding &binding,
     if (inputs.size() != InputCount(layout)) {
         return false;
     }
-    AppendString(compiledRig, inputs[PatchPoints].path.GetString());
-    AppendString(compiledRig, inputs[UvPoints].path.GetString());
+    AppendPath(compiledRig, inputs[PatchPoints].path);
+    AppendPath(compiledRig, inputs[UvPoints].path);
     AppendCount(compiledRig, uint32_t(layout.shapes));
     for (size_t k = 0; k < layout.shapes; ++k) {
-        AppendString(compiledRig, inputs[UvShapes + k].path.GetString());
+        AppendPath(compiledRig, inputs[UvShapes + k].path);
     }
     AppendCount(compiledRig, layout.connected ? 1u : 0u);
     return true;
@@ -936,43 +946,43 @@ bool IsPointsProperty(const UsdStageRefPtr &stage, const SdfPath &path)
 {
     const UsdAttribute attr = stage->GetAttributeAtPath(path);
     return attr &&
-           attr.GetTypeName().GetType() == TfType::Find<VtVec3fArray>();
+           attr.GetTypeName().GetType() == SdfValueTypeNames->Float3Array.GetType();
 }
 
 bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 {
-    const std::string who = ctx.prim.GetPath().GetString();
+    const auto who = [&] { return ctx.prim.GetPath().GetString(); };
     if (ctx.targets.size() != 1) {
-        *error = who + ": patch mover requires a single target";
+        *error = who() + ": patch mover requires a single target";
         return false;
     }
     const auto patches = RigExecRelationshipTargets(ctx.prim, _relTokens->patch);
     if (patches.size() != 1) {
-        *error = who + ": rigExec:patch requires exactly one target";
+        *error = who() + ": rigExec:patch requires exactly one target";
         return false;
     }
     const auto uvs = RigExecRelationshipTargets(ctx.prim, _relTokens->uvPoints);
     if (uvs.size() != 1) {
-        *error = who + ": rigExec:uvPoints requires exactly one target";
+        *error = who() + ": rigExec:uvPoints requires exactly one target";
         return false;
     }
     const UsdPrim patchPrim =
         ctx.stage->GetPrimAtPath(patches[0].GetPrimPath());
     if (!patchPrim || !patchPrim.GetAttribute(_patchTokens->points)) {
-        *error = who + ": rigExec:patch target has no points attribute";
+        *error = who() + ": rigExec:patch target has no points attribute";
         return false;
     }
     const SdfPath patchPointsPath =
         patchPrim.GetPath().AppendProperty(_patchTokens->points);
     const SdfPath uvPointsPath = RigExecPointsOf(uvs[0]);
     if (!IsPointsProperty(ctx.stage, uvPointsPath)) {
-        *error = who + ": rigExec:uvPoints target is not a point3f[]/float3[] property";
+        *error = who() + ": rigExec:uvPoints target is not a point3f[]/float3[] property";
         return false;
     }
     if (patchPointsPath == uvPointsPath &&
         RigExecPhaseForInput(ctx.prim, _relTokens->patch) !=
             RigExecPhaseForInput(ctx.prim, _relTokens->uvPoints)) {
-        *error = who + ": rigExec:patch and rigExec:uvPoints name the same "
+        *error = who() + ": rigExec:patch and rigExec:uvPoints name the same "
                        "points property with conflicting read phases";
         return false;
     }
@@ -983,7 +993,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     for (const SdfPath &shape : shapes) {
         const SdfPath shapePath = RigExecPointsOf(shape);
         if (!IsPointsProperty(ctx.stage, shapePath)) {
-            *error = who + ": rigExec:uvShapes target " + shapePath.GetString() +
+            *error = who() + ": rigExec:uvShapes target " + shapePath.GetString() +
                      " is not a point3f[]/float3[] property";
             return false;
         }
@@ -991,7 +1001,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         if (haveNeutral &&
             ctx.stage->GetAttributeAtPath(shapePath).Get(&points) &&
             points.size() != neutral.size()) {
-            *error = who + ": UV shape " + shapePath.GetString() + " has " +
+            *error = who() + ": UV shape " + shapePath.GetString() + " has " +
                      std::to_string(points.size()) +
                      " points; rigExec:uvPoints has " +
                      std::to_string(neutral.size());
@@ -1003,7 +1013,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     // (or none).
     const SdfPathVector sources = WeightSources(ctx.prim);
     if (!sources.empty() && sources.size() != shapes.size()) {
-        *error = who + ": inputs:uvWeights connects " +
+        *error = who() + ": inputs:uvWeights connects " +
                  std::to_string(sources.size()) +
                  " sources; rigExec:uvShapes names " +
                  std::to_string(shapes.size());
@@ -1012,8 +1022,9 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
     for (const SdfPath &source : sources) {
         const UsdAttribute attr = ctx.stage->GetAttributeAtPath(source);
         const TfType type = attr ? attr.GetTypeName().GetType() : TfType();
-        if (type != TfType::Find<float>() && type != TfType::Find<double>()) {
-            *error = who + ": inputs:uvWeights source " + source.GetString() +
+        if (type != SdfValueTypeNames->Float.GetType() &&
+            type != SdfValueTypeNames->Double.GetType()) {
+            *error = who() + ": inputs:uvWeights source " + source.GetString() +
                      " is not a float or double attribute";
             return false;
         }
@@ -1024,7 +1035,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         if (weights && weights.GetNumTimeSamples() == 0 &&
             weights.Get(&authored) && !authored.empty() &&
             authored.size() != shapes.size()) {
-            *error = who + ": inputs:uvWeights holds " +
+            *error = who() + ": inputs:uvWeights holds " +
                      std::to_string(authored.size()) +
                      " weights; rigExec:uvShapes names " +
                      std::to_string(shapes.size());
@@ -1043,7 +1054,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         contactLower, contactUpper,
         haveNeutral ? neutral.size() : size_t(std::numeric_limits<int>::max()));
     if (!contactError.empty()) {
-        *error = who + ": " + contactError;
+        *error = who() + ": " + contactError;
         return false;
     }
     // Validate authored Default values when present; time-sampled or connected
@@ -1075,7 +1086,7 @@ bool Validate(const RigExecMoverValidateContext &ctx, std::string *error)
         anyAnimatedOrConnected) {
         return true;
     }
-    *error = who + ": invalid NURBS patch topology, knots, weights, form, "
+    *error = who() + ": invalid NURBS patch topology, knots, weights, form, "
                    "UV point count or UV shapes";
     return false;
 }

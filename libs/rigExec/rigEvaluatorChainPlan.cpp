@@ -70,9 +70,11 @@ RigExecRigEvaluator::_ValidateNativePhases(
         for (const auto &[target, revisions] : graphChains) {
             for (const _GraphRevision &revision : revisions) {
                 for (const auto &[inputPath, phase] : revision.binding.GetPhasedInputs()) {
-                    const std::string who =
-                        revision.moverPath.GetString() + ": read phase '" +
-                        phase.GetAsString() + "' on " + inputPath.GetString();
+                    const auto who = [&revision, &phase = phase,
+                                      &inputPath = inputPath]() {
+                        return revision.moverPath.GetString() + ": read phase '" +
+                               phase.GetAsString() + "' on " + inputPath.GetString();
+                    };
 
                     // A phase on an input nothing writes is a no-op that
                     // reads as intent. Reject it: the author asked for a
@@ -81,7 +83,7 @@ RigExecRigEvaluator::_ValidateNativePhases(
                     // deforming against the wrong pose with no signal.
                     const auto moversIt = chainMovers.find(inputPath);
                     if (moversIt == chainMovers.end()) {
-                        return fail(who + " names a property no mover writes; "
+                        return fail(who() + " names a property no mover writes; "
                                           "only `base` is meaningful there", {revision.moverPath});
                     }
                     const std::vector<SdfPath> &movers = moversIt->second;
@@ -109,7 +111,7 @@ RigExecRigEvaluator::_ValidateNativePhases(
                         }
                     }
                     if (found.IsEmpty()) {
-                        return fail(who + " names " + phase.prim.GetString() +
+                        return fail(who() + " names " + phase.prim.GetString() +
                                     ", which writes nothing to " +
                                     inputPath.GetString(), {revision.moverPath});
                     }
@@ -126,13 +128,14 @@ RigExecRigEvaluator::_ValidateNativePhases(
                 if (phase.kind != RigExecReadPhaseKind::AtPrim) {
                     continue;
                 }
-                const std::string who =
-                    revision.moverPath.GetString() + ": read phase '" +
-                    phase.GetAsString() + "' on rigExec:transform";
+                const auto who = [&revision, &phase]() {
+                    return revision.moverPath.GetString() + ": read phase '" +
+                           phase.GetAsString() + "' on rigExec:transform";
+                };
                 const auto frameIt =
                     frameChains.find(revision.binding.transform);
                 if (frameIt == frameChains.end()) {
-                    return fail(who + " names a point in the pose walk, but " +
+                    return fail(who() + " names a point in the pose walk, but " +
                                 revision.binding.transform.GetString() +
                                 " is revised by no pose mover", {revision.moverPath});
                 }
@@ -144,7 +147,7 @@ RigExecRigEvaluator::_ValidateNativePhases(
                     }
                 }
                 if (found.IsEmpty()) {
-                    return fail(who + " names " + phase.prim.GetString() +
+                    return fail(who() + " names " + phase.prim.GetString() +
                                 ", which revises nothing on " +
                                 revision.binding.transform.GetString(), {revision.moverPath});
                 }

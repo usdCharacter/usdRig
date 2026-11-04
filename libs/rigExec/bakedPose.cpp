@@ -14,6 +14,7 @@
 #include "frameExtraction.h"
 #include "frozenContextInternal.h"
 #include "moverGraph.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "solverKernels.h"
 #include "rigExecScene/sceneCompileInputs.h"
@@ -201,6 +202,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         return ctx->Bind(prim, name, fallback);
     };
     auto slotOf = [&](const SdfPath &path) { return ctx->SlotOf(path); };
+    RigExecPathText pathText;
     // "Publishes computePointFrame and computeRestFrame", which is what a
     // solver relationship target has to do for its frame to reach the
     // computation at all: the two are registered for RigExecJoint,
@@ -238,7 +240,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             return slot;
         };
         s.path = solverPath;
-        s.pathText = solverPath.GetString();
+        s.pathText = pathText(solverPath);
         const UsdPrim prim = B.stage->GetPrimAtPath(solverPath);
         const auto *node=compileInputs.Node(solverPath);
         s.type = node?node->fact.type:TfToken();
@@ -787,7 +789,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
     auto bakeConstraint = [&](const RigExecBakedConstraintSpec &fc) {
         RigExecBakedProgramImpl::Constraint c;
         c.path = fc.moverPath;
-        c.pathText = fc.moverPath.GetString();
+        c.pathText = pathText(fc.moverPath);
         c.type = fc.schemaType;
         c.singleChainIk = fc.schemaType == "RigExecSingleChainIkConstraint";
         const UsdPrim prim = B.stage->GetPrimAtPath(fc.moverPath);
@@ -839,7 +841,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
             c.sources.push_back(slot);
             c.sourceNatives.push_back(native);
             c.sourcePaths.push_back(fc.sources[k]);
-            c.sourcePathTexts.push_back(fc.sources[k].GetString());
+            c.sourcePathTexts.push_back(pathText(fc.sources[k]));
         }
         c.enabled = bind(prim, _tokens->inputsEnabled, true);
         c.defaultWeight = bind(prim, _tokens->inputsDefaultWeight, 1.0f);
@@ -918,7 +920,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         c.pointsTarget = fc.pointsTarget;
         if (!fc.pointsTarget.IsEmpty() && !fc.targets.empty()) {
             c.deltaBasePath = fc.targets[0];
-            c.deltaBasePathText = fc.targets[0].GetString();
+            c.deltaBasePathText = pathText(fc.targets[0]);
             c.deltaBase = int(B.deltaBasePaths.size());
             B.deltaBasePaths.push_back(fc.targets[0]);
             B.prims.insert(fc.targets[0]);
@@ -1975,6 +1977,7 @@ RigExecBakedBindSpaceSwitchVersions(RigExecBakedProgramImpl *program,std::string
 {
     auto &B=*program;
     using FrameVersion=RigExecBakedProgramImpl::SpaceSwitch::FrameVersion;
+    RigExecPathText pathText;
     std::vector<uint8_t> composed(B.paths.size(),0);
     for(size_t slot=0;slot<B.paths.size();++slot)
         composed[slot]=B.slotKind[slot]==RigExecBakedSlotKind::FirstFramePose;
@@ -1997,7 +2000,7 @@ RigExecBakedBindSpaceSwitchVersions(RigExecBakedProgramImpl *program,std::string
             if(selected.recompose.empty())read.anchor=selected.anchor;
             else {
                 RigExecBakedProgramImpl::SpaceCheckpoint checkpoint;
-                checkpoint.key="switchCheckpoint:"+B.paths[size_t(sw.slot)].GetString()+":"+site;
+                checkpoint.key="switchCheckpoint:"+pathText(B.paths[size_t(sw.slot)])+":"+site;
                 checkpoint.anchor=selected.anchor;checkpoint.recompose=selected.recompose;
                 checkpoint.kernelInputs.resize(checkpoint.recompose.size());
                 read.context=int(B.switchFrameContexts.size());
@@ -3929,6 +3932,7 @@ void
 RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
+    RigExecPathText pathText;
     const auto ranges = [](RigExecBakedSlotDomain domain,
                            const std::set<uint32_t> &slots,
                            std::vector<RigExecBakedSlotRange> *out) {
@@ -3953,7 +3957,7 @@ RigExecBakedBuildRestSteps(RigExecBakedProgramImpl *program)
             step.part = rest ? 0 : 1;
             step.label =
                 std::string(rest ? "RestCompose " : "LadderCompose ") +
-                first.GetString();
+                pathText(first);
             std::set<uint32_t> versions, rests, ladders, spaces;
             for (int i = group.begin; i < group.end; ++i) {
                 const size_t slot = size_t(i);
@@ -4246,9 +4250,10 @@ void
 RigExecBakedBuildAvarSteps(RigExecBakedProgramImpl *program)
 {
     auto &B=*program;
+    RigExecPathText pathText;
     for(size_t slot=0;slot<B.paths.size();++slot) {
         RigExecBakedStep step; step.kind=RigExecBakedStepKind::AvarInputs; step.object=int(slot);
-        step.label="AvarInputs "+B.paths[slot].GetString();
+        step.label="AvarInputs "+pathText(B.paths[slot]);
         step.writes.push_back(RigExecBakedOne(RigExecBakedSlotDomain::Avars,slot));
         B.steps.push_back(std::move(step));
     }

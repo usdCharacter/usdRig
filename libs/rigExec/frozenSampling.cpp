@@ -101,6 +101,60 @@ using namespace frozenDetail;
 
 namespace {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((inputsDropoffDistance, "inputs:dropoffDistance"))
+    ((inputsDriverWeights, "inputs:driverWeights"))
+    ((inputsDriverBaseWeights, "inputs:driverBaseWeights"))
+    ((rigExecPointFrame, "rigExec:pointFrame"))
+    ((rigExecDriverDeltaFrame, "rigExec:driverDeltaFrame"))
+    ((rigExecRayOrigin, "rigExec:rayOrigin"))
+    ((rigExecRayDirection, "rigExec:rayDirection"))
+    ((rigExecRayUp, "rigExec:rayUp"))
+    ((rigExecShaderOffset, "rigExec:shaderOffset"))
+    ((rigExecProjectionMode, "rigExec:projectionMode"))
+    ((inputsRestPoints, "inputs:restPoints"))
+    ((inputsSmoothing, "inputs:smoothing"))
+    ((inputsFrameTransport, "inputs:frameTransport"))
+    ((inputsOnlySmooth, "inputs:onlySmooth"))
+    ((inputsComputationToTarget, "inputs:computationToTarget"))
+    ((inputsSmoothWeights, "inputs:smoothWeights"))
+    ((inputsEdges, "inputs:edges"))
+    ((inputsTopology, "inputs:topology"))
+    ((inputsPinPoints, "inputs:pinPoints"))
+    ((rigExecSnapMode, "rigExec:snapMode"))
+    ((rigExecPointSpace, "rigExec:pointSpace"))
+    ((rigExecOffset, "rigExec:offset"))
+    ((rigExecSurfaceMatrix, "rigExec:surfaceMatrix"))
+    ((rigExecTargetMatrix, "rigExec:targetMatrix"))
+    ((rigExecMask, "rigExec:mask"))
+    ((rigExecTriangles, "rigExec:triangles"))
+    ((rigExecEvaluation, "rigExec:evaluation"))
+    ((rigExecInterpolationU, "rigExec:interpolationU"))
+    ((rigExecInterpolationV, "rigExec:interpolationV"))
+    ((rigExecInterpolationW, "rigExec:interpolationW"))
+    ((rigExecOrigin, "rigExec:origin"))
+    ((rigExecSpacing, "rigExec:spacing"))
+    ((rigExecStrength, "rigExec:strength"))
+    ((rigExecCageMatrix, "rigExec:cageMatrix"))
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((rigExecSkinningMethod, "rigExec:skinningMethod"))
+    ((rigExecWeightBlend, "rigExec:weightBlend"))
+    ((rigExecDeltaSpace, "rigExec:deltaSpace"))
+    ((rigExecDivisions, "rigExec:divisions"))
+    (rest)
+    (vertex)
+    (cloth)
+    (onSurface)
+    (local)
+    (legacy)
+    (bspline)
+    (classicLinear)
+    (target)
+    (surfaceFrame)
+);
+
 // The sampler below mirrors the binding walk the frame-cache bench measures
 // (tests/benchFrameCache.cpp MeasureSampling): the same tables, in the same
 // order, through the same read route the baked frame path takes. The bench
@@ -963,7 +1017,8 @@ _SampleWeightArrays(const RigExecBakedProgramImpl::WeightObject &object,
 // samples are the digest's material for the same reads.
 void
 _SampleMoverToken(const UsdPrim &moverPrim, const SdfPath &moverPath,
-                  const char *name, UsdTimeCode time, RigExecFrameInputs *out);
+                  const TfToken &name, UsdTimeCode time,
+                  RigExecFrameInputs *out);
 
 void
 _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
@@ -971,6 +1026,8 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                   const UsdStageRefPtr &stage, UsdTimeCode time,
                   RigExecFrameInputs *out)
 {
+    const auto &T = *_tokens;
+    const auto &K = *_frozenInputKeyTokens;
     const UsdPrim &moverPrim = revision.moverPrim;
     const RigExecRevisionBinding &binding = revision.binding;
     const SdfPath &moverPath = revision.moverPath;
@@ -981,7 +1038,7 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                 stage->GetAttributeAtPath(binding.driverCurvePoints)) {
             has = a.Get(&rest, UsdTimeCode::Default());
         }
-        out->Add(_FrozenWireInputKey(moverPath, "restPoints"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireRestPoints),
                  VtValue(has ? rest : VtVec3fArray()), has);
     }
     if (moverPrim && !binding.driverCurveOrder.IsEmpty() && stage) {
@@ -995,7 +1052,7 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                 has = true;
             }
         }
-        out->Add(_FrozenWireInputKey(moverPath, "curveOrder"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireCurveOrder),
                  VtValue(order), has);
     }
     if (moverPrim && !binding.driverCurveKnots.IsEmpty() && stage) {
@@ -1005,16 +1062,16 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                 stage->GetAttributeAtPath(binding.driverCurveKnots)) {
             has = a.Get(&knots, UsdTimeCode::Default());
         }
-        out->Add(_FrozenWireInputKey(moverPath, "curveKnots"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireCurveKnots),
                  VtValue(has ? knots : VtDoubleArray()), has);
     }
     if (const UsdAttribute a =
-            moverPrim.GetAttribute(TfToken("inputs:dropoffDistance"))) {
+            moverPrim.GetAttribute(T.inputsDropoffDistance)) {
         float dropoff = 0.0f;
         const bool has = a.Get(&dropoff, time);
         // Live assigns even on a failed read (0.0f init), so hasValue is
         // always true here; the value carries the outcome.
-        out->Add(_FrozenWireInputKey(moverPath, "dropoffDistance"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireDropoffDistance),
                  VtValue(dropoff), /*hasValue=*/true);
         (void)has;
     }
@@ -1027,11 +1084,11 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                 has = a.Get(&coords, time);
             }
         }
-        out->Add(_FrozenWireInputKey(moverPath, "bindCoords"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireBindCoords),
                  VtValue(has ? coords : VtArray<GfVec2f>()), has);
     }
-    const auto floats = [&](const char *name, const char *role) {
-        const UsdAttribute a = moverPrim.GetAttribute(TfToken(name));
+    const auto floats = [&](const TfToken &name, const TfToken &key) {
+        const UsdAttribute a = moverPrim.GetAttribute(name);
         if (!a.IsValid()) {
             return;
         }
@@ -1040,13 +1097,13 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
         if (!has) {
             has = a.Get(&value, time);
         }
-        out->Add(_FrozenWireInputKey(moverPath, role),
+        out->Add(_FrozenWireInputKey(moverPath, key),
                  VtValue(has ? value : VtFloatArray()), has);
     };
-    floats("inputs:driverWeights", "driverWeights");
-    floats("inputs:driverBaseWeights", "driverBaseWeights");
-    _SampleMoverToken(moverPrim, moverPath, "rigExec:pointFrame", time, out);
-    _SampleMoverToken(moverPrim, moverPath, "rigExec:driverDeltaFrame", time,
+    floats(T.inputsDriverWeights, K.wireDriverWeights);
+    floats(T.inputsDriverBaseWeights, K.wireDriverBaseWeights);
+    _SampleMoverToken(moverPrim, moverPath, T.rigExecPointFrame, time, out);
+    _SampleMoverToken(moverPrim, moverPath, T.rigExecDriverDeltaFrame, time,
                       out);
     if (binding.driverTransformCount == 0 &&
         !binding.driverCurvePoints.IsEmpty()) {
@@ -1059,7 +1116,7 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
                 has = a.Get(&posed, time);
             }
         }
-        out->Add(_FrozenWireInputKey(moverPath, "driverCurvePoints"),
+        out->Add(_FrozenWireInputKey(moverPath, K.wireDriverCurvePoints),
                  VtValue(has ? posed : VtVec3fArray()), has);
     }
 }
@@ -1073,18 +1130,19 @@ _SampleWireInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
 // frame.
 void
 _SampleMoverToken(const UsdPrim &moverPrim, const SdfPath &moverPath,
-                  const char *name, UsdTimeCode time, RigExecFrameInputs *out)
+                  const TfToken &name, UsdTimeCode time,
+                  RigExecFrameInputs *out)
 {
     if (!moverPrim) {
         return;
     }
-    const UsdAttribute a = moverPrim.GetAttribute(TfToken(name));
+    const UsdAttribute a = moverPrim.GetAttribute(name);
     if (!a || !a.HasAuthoredValue()) {
         return;
     }
     TfToken value;
     const bool has = a.Get(&value, time);
-    out->Add(moverPath.AppendProperty(TfToken(name)), VtValue(value), has);
+    out->Add(moverPath.AppendProperty(name), VtValue(value), has);
 }
 
 void
@@ -1442,8 +1500,9 @@ _FrozenSamplerMemo(const RigExecRigEvaluator &evaluator,
                         keepSamples ? &old->points[s] : nullptr,
                         [&](RigExecFrameInputs *into) {
                             _SampleBlendPoints(
-                                _FrozenBlendInputKey(sample.samplePath,
-                                                     "points"),
+                                _FrozenBlendInputKey(
+                                    sample.samplePath,
+                                    _frozenInputKeyTokens->blendPoints),
                                 sample.points, time, &none, into);
                         });
                 }
@@ -1925,19 +1984,20 @@ _SampleProjectorInputs(const RigExecBakedProgramImpl::GeomRevision &revision,
         return;
     }
     const SdfPath &path = revision.moverPath;
-    _SampleMoverScalar(path.AppendProperty(TfToken("rigExec:rayOrigin")),
-                       prim.GetAttribute(TfToken("rigExec:rayOrigin")),
+    const auto &T = *_tokens;
+    _SampleMoverScalar(path.AppendProperty(T.rigExecRayOrigin),
+                       prim.GetAttribute(T.rigExecRayOrigin),
                        GfVec3d(0.0, 0.0, 0.0), time, refreshed, out, layer);
-    _SampleMoverScalar(path.AppendProperty(TfToken("rigExec:rayDirection")),
-                       prim.GetAttribute(TfToken("rigExec:rayDirection")),
+    _SampleMoverScalar(path.AppendProperty(T.rigExecRayDirection),
+                       prim.GetAttribute(T.rigExecRayDirection),
                        GfVec3d(0.0, 0.0, 1.0), time, refreshed, out, layer);
-    _SampleMoverScalar(path.AppendProperty(TfToken("rigExec:rayUp")),
-                       prim.GetAttribute(TfToken("rigExec:rayUp")),
+    _SampleMoverScalar(path.AppendProperty(T.rigExecRayUp),
+                       prim.GetAttribute(T.rigExecRayUp),
                        GfVec3d(0.0, 1.0, 0.0), time, refreshed, out, layer);
-    _SampleMoverScalar(path.AppendProperty(TfToken("rigExec:shaderOffset")),
-                       prim.GetAttribute(TfToken("rigExec:shaderOffset")),
+    _SampleMoverScalar(path.AppendProperty(T.rigExecShaderOffset),
+                       prim.GetAttribute(T.rigExecShaderOffset),
                        GfMatrix4d(1.0), time, refreshed, out, layer);
-    _SampleMoverToken(prim, path, "rigExec:projectionMode", time, out);
+    _SampleMoverToken(prim, path, T.rigExecProjectionMode, time, out);
 }
 
 // Samples one derived-topology array: the resolved memory first (an
@@ -1974,8 +2034,9 @@ _SampleIterativeMoverInputs(
         revision.op != RigExecRevisionOp::Wrinkle) {
         return;
     }
+    const auto &T = *_tokens;
     _SampleTopologyArray<GfVec3f>(
-        revision.moverPath.AppendProperty(TfToken("inputs:restPoints")),
+        revision.moverPath.AppendProperty(T.inputsRestPoints),
         UsdTimeCode::Default(), refreshed, stage, out);
     _SampleTopologyArray<int>(revision.binding.topologyCounts, time,
                               refreshed, stage, out);
@@ -1983,8 +2044,7 @@ _SampleIterativeMoverInputs(
                               refreshed, stage, out);
     RigExecMoverParameters parameters;
     _VisitIterativeMoverScalars(revision.op, parameters,
-        [&](const char *name, auto fallback, auto &) {
-            const TfToken token(name);
+        [&](const TfToken &token, auto fallback, auto &) {
             _SampleMoverScalar(revision.moverPath.AppendProperty(token),
                 revision.moverPrim.GetAttribute(token), fallback,
                 time, refreshed, out, layer);
@@ -1992,30 +2052,29 @@ _SampleIterativeMoverInputs(
     if (revision.op == RigExecRevisionOp::DeltaMush) {
         // The extended settings, where their leaves read them: the modes
         // and the edges at Default, the rest at the job's time.
-        const auto scalar = [&](const char *name, auto fallback,
+        const auto scalar = [&](const TfToken &token, auto fallback,
                                 UsdTimeCode at) {
-            const TfToken token(name);
             _SampleMoverScalar(revision.moverPath.AppendProperty(token),
                 revision.moverPrim.GetAttribute(token), fallback, at,
                 refreshed, out, layer);
         };
-        scalar("inputs:smoothing", TfToken("rest"), UsdTimeCode::Default());
-        scalar("inputs:frameTransport", TfToken("vertex"),
+        scalar(T.inputsSmoothing, T.rest, UsdTimeCode::Default());
+        scalar(T.inputsFrameTransport, T.vertex,
                UsdTimeCode::Default());
-        scalar("inputs:onlySmooth", false, time);
-        scalar("inputs:computationToTarget", GfMatrix4d(1.0), time);
-        _SampleTopologyArray<float>(revision.moverPath.AppendProperty(TfToken("inputs:smoothWeights")),
+        scalar(T.inputsOnlySmooth, false, time);
+        scalar(T.inputsComputationToTarget, GfMatrix4d(1.0), time);
+        _SampleTopologyArray<float>(revision.moverPath.AppendProperty(T.inputsSmoothWeights),
                                     time, refreshed, stage, out);
-        _SampleTopologyArray<int>(revision.moverPath.AppendProperty(TfToken("inputs:edges")),
+        _SampleTopologyArray<int>(revision.moverPath.AppendProperty(T.inputsEdges),
                                   UsdTimeCode::Default(), refreshed, stage, out);
     }
     if (revision.op == RigExecRevisionOp::Wrinkle) {
-        const TfToken topology("inputs:topology");
+        const TfToken &topology = T.inputsTopology;
         _SampleMoverScalar(revision.moverPath.AppendProperty(topology),
-            revision.moverPrim.GetAttribute(topology), TfToken("cloth"),
+            revision.moverPrim.GetAttribute(topology), T.cloth,
             UsdTimeCode::Default(), refreshed, out);
         _SampleTopologyArray<int>(
-            revision.moverPath.AppendProperty(TfToken("inputs:pinPoints")),
+            revision.moverPath.AppendProperty(T.inputsPinPoints),
             UsdTimeCode::Default(), refreshed, stage, out);
     }
 }
@@ -2377,10 +2436,9 @@ _FrozenWeightArrayKey(const SdfPath &objectPath, const TfToken &name)
 }
 
 SdfPath
-_FrozenWireInputKey(const SdfPath &moverPath, const char *role)
+_FrozenWireInputKey(const SdfPath &moverPath, const TfToken &key)
 {
-    return moverPath.AppendProperty(
-        TfToken(std::string("frozenWire:") + role));
+    return moverPath.AppendProperty(key);
 }
 
 // Synthetic key for one blend sample's dense target points, under the
@@ -2390,10 +2448,9 @@ _FrozenWireInputKey(const SdfPath &moverPath, const char *role)
 // (an override standing on the mesh), and first-wins would serve one
 // reader's value to the other. Same reason as the weight and wire keys.
 SdfPath
-_FrozenBlendInputKey(const SdfPath &samplePath, const char *role)
+_FrozenBlendInputKey(const SdfPath &samplePath, const TfToken &key)
 {
-    return samplePath.AppendProperty(
-        TfToken(std::string("frozenBlend:") + role));
+    return samplePath.AppendProperty(key);
 }
 
 std::vector<SdfPath>
@@ -2462,13 +2519,12 @@ namespace {
 template <class T>
 void
 _SampleSettingRead(const RigExecBakedProgramImpl::GeomRevision &revision,
-                   const char *name, T fallback, UsdTimeCode time,
+                   const TfToken &token, T fallback, UsdTimeCode time,
                    const RigExecResolvedInputs *resolved,
                    RigExecFrameInputs *out,
                    const std::map<SdfPath, VtValue> *layer,
                    RigExecBurstSampleCache *cache)
 {
-    const TfToken token(name);
     const SdfPath path = revision.moverPath.AppendProperty(token);
     const UsdAttribute attr = revision.moverPrim.GetAttribute(token);
     if (cache) {
@@ -2486,17 +2542,18 @@ _SampleSurfaceSettings(const RigExecBakedProgramImpl::GeomRevision &revision,
                        const std::map<SdfPath, VtValue> *layer,
                        RigExecBurstSampleCache *cache = nullptr)
 {
-    const auto read = [&](const char *name, auto fallback) {
+    const auto &T = *_tokens;
+    const auto read = [&](const TfToken &name, auto fallback) {
         _SampleSettingRead(revision, name, fallback, time, resolved, out,
                            layer, cache);
     };
-    read("rigExec:snapMode", TfToken("onSurface"));
-    read("rigExec:pointSpace", TfToken("local"));
-    read("rigExec:offset", 0.0f);
-    read("rigExec:surfaceMatrix", GfMatrix4d(1.0));
-    read("rigExec:targetMatrix", GfMatrix4d(1.0));
-    read("rigExec:mask", VtFloatArray());
-    read("rigExec:triangles", VtIntArray());
+    read(T.rigExecSnapMode, T.onSurface);
+    read(T.rigExecPointSpace, T.local);
+    read(T.rigExecOffset, 0.0f);
+    read(T.rigExecSurfaceMatrix, GfMatrix4d(1.0));
+    read(T.rigExecTargetMatrix, GfMatrix4d(1.0));
+    read(T.rigExecMask, VtFloatArray());
+    read(T.rigExecTriangles, VtIntArray());
 }
 
 void
@@ -2506,21 +2563,22 @@ _SampleLatticeSettings(const RigExecBakedProgramImpl::GeomRevision &revision,
                        const std::map<SdfPath, VtValue> *layer,
                        RigExecBurstSampleCache *cache = nullptr)
 {
-    const auto read = [&](const char *name, auto fallback) {
+    const auto &T = *_tokens;
+    const auto read = [&](const TfToken &name, auto fallback) {
         _SampleSettingRead(revision, name, fallback, time, resolved, out,
                            layer, cache);
     };
-    read("rigExec:evaluation", TfToken("legacy"));
-    read("rigExec:interpolationU", TfToken("bspline"));
-    read("rigExec:interpolationV", TfToken("bspline"));
-    read("rigExec:interpolationW", TfToken("bspline"));
-    read("rigExec:origin", GfVec3f(-0.5f));
-    read("rigExec:spacing", GfVec3f(1.0f));
-    read("rigExec:strength", 1.0f);
-    read("rigExec:pointSpace", TfToken("local"));
-    read("rigExec:cageMatrix", GfMatrix4d(1.0));
-    read("rigExec:targetMatrix", GfMatrix4d(1.0));
-    read("rigExec:mask", VtFloatArray());
+    read(T.rigExecEvaluation, T.legacy);
+    read(T.rigExecInterpolationU, T.bspline);
+    read(T.rigExecInterpolationV, T.bspline);
+    read(T.rigExecInterpolationW, T.bspline);
+    read(T.rigExecOrigin, GfVec3f(-0.5f));
+    read(T.rigExecSpacing, GfVec3f(1.0f));
+    read(T.rigExecStrength, 1.0f);
+    read(T.rigExecPointSpace, T.local);
+    read(T.rigExecCageMatrix, GfMatrix4d(1.0));
+    read(T.rigExecTargetMatrix, GfMatrix4d(1.0));
+    read(T.rigExecMask, VtFloatArray());
 }
 
 } // namespace
@@ -2531,27 +2589,24 @@ _SampleLatticeSettings(const RigExecBakedProgramImpl::GeomRevision &revision,
 // lattice cage's rest/live pair (one path, two times). Same reason as the
 // weight, wire and blend keys.
 SdfPath
-_FrozenSurfaceInputKey(const SdfPath &moverPath, const char *role)
+_FrozenSurfaceInputKey(const SdfPath &moverPath, const TfToken &key)
 {
-    return moverPath.AppendProperty(
-        TfToken(std::string("frozenSurface:") + role));
+    return moverPath.AppendProperty(key);
 }
 
 SdfPath
-_FrozenLatticeInputKey(const SdfPath &moverPath, const char *role)
+_FrozenLatticeInputKey(const SdfPath &moverPath, const TfToken &key)
 {
-    return moverPath.AppendProperty(
-        TfToken(std::string("frozenLattice:") + role));
+    return moverPath.AppendProperty(key);
 }
 
 // Synthetic key for the ribbon bind coordinates: the same binding field
 // the wire arm reads under its own synthetic key, and a revision is one
 // op, so one key per read keeps the routes from ever aliasing.
 SdfPath
-_FrozenRibbonInputKey(const SdfPath &moverPath, const char *role)
+_FrozenRibbonInputKey(const SdfPath &moverPath, const TfToken &key)
 {
-    return moverPath.AppendProperty(
-        TfToken(std::string("frozenRibbon:") + role));
+    return moverPath.AppendProperty(key);
 }
 
 } // namespace frozenDetail
@@ -3018,8 +3073,8 @@ _SampleWithPinnedChainBindings(
                                                sample.activation, 1.0f, time,
                                                &refreshed, into, layer);
                         });
-                    const SdfPath pointsKey =
-                        _FrozenBlendInputKey(sample.samplePath, "points");
+                    const SdfPath pointsKey = _FrozenBlendInputKey(
+                        sample.samplePath, _frozenInputKeyTokens->blendPoints);
                     _SampleHeldRead(
                         memo, _HeldAt(held ? &held->points : nullptr, s),
                         pointsKey, touched, &sampled,
@@ -3067,28 +3122,30 @@ _SampleWithPinnedChainBindings(
     // layoutLeaves); the samples of the same reads are
     // what the digest folds for them. RevisionStatic still reads each
     // revision's defaultWeight sample.
+    const auto &T = *_tokens;
+    const auto &K = *_frozenInputKeyTokens;
     for (const auto &[chainIndex, revisionIndex] : B.revisionIndex) {
         const RigExecBakedProgramImpl::GeomRevision &revision =
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         const UsdPrim &moverPrim = revision.moverPrim;
         _SampleMoverScalar(
-            revision.moverPath.AppendProperty(TfToken("inputs:enabled")),
-            moverPrim.GetAttribute(TfToken("inputs:enabled")), true, time,
+            revision.moverPath.AppendProperty(T.inputsEnabled),
+            moverPrim.GetAttribute(T.inputsEnabled), true, time,
             &refreshed, &sampled, layer);
         _SampleMoverScalar(
-            revision.moverPath.AppendProperty(TfToken("inputs:defaultWeight")),
-            moverPrim.GetAttribute(TfToken("inputs:defaultWeight")), 1.0f,
+            revision.moverPath.AppendProperty(T.inputsDefaultWeight),
+            moverPrim.GetAttribute(T.inputsDefaultWeight), 1.0f,
             time, &refreshed, &sampled, layer);
         _SampleMoverScalar(
-            revision.moverPath.AppendProperty(TfToken("rigExec:skinningMethod")),
-            moverPrim.GetAttribute(TfToken("rigExec:skinningMethod")),
-            TfToken("classicLinear"), time, &refreshed, &sampled, layer);
+            revision.moverPath.AppendProperty(T.rigExecSkinningMethod),
+            moverPrim.GetAttribute(T.rigExecSkinningMethod),
+            T.classicLinear, time, &refreshed, &sampled, layer);
         if (revision.op == RigExecRevisionOp::Wire) {
             _SampleWireInputs(revision, &refreshed, B.stage, time, &sampled);
         }
         if (revision.op == RigExecRevisionOp::Matrix) {
             _SampleMoverToken(moverPrim, revision.moverPath,
-                              "rigExec:weightBlend", time, &sampled);
+                              T.rigExecWeightBlend, time, &sampled);
         }
         _SampleIterativeMoverInputs(revision, &refreshed, B.stage, time,
                                     &sampled, layer);
@@ -3097,11 +3154,11 @@ _SampleWithPinnedChainBindings(
             // raw Default read with no resolved arm, "target" when absent.
             // Read once here; the value both samples and decides whether
             // the surface-frame topology below is read at all, as live.
-            TfToken deltaSpace("target");
+            TfToken deltaSpace = T.target;
             const SdfPath deltaSpacePath = revision.moverPath.AppendProperty(
-                TfToken("rigExec:deltaSpace"));
+                T.rigExecDeltaSpace);
             if (const UsdAttribute deltaSpaceAttr =
-                    moverPrim.GetAttribute(TfToken("rigExec:deltaSpace"))) {
+                    moverPrim.GetAttribute(T.rigExecDeltaSpace)) {
                 TfToken read;
                 if (deltaSpaceAttr.Get(&read, UsdTimeCode::Default())) {
                     deltaSpace = read;
@@ -3109,7 +3166,7 @@ _SampleWithPinnedChainBindings(
                 sampled.Add(deltaSpacePath, VtValue(deltaSpace),
                             /*hasValue=*/true);
             }
-            if (deltaSpace == "surfaceFrame") {
+            if (deltaSpace == T.surfaceFrame) {
                 _SampleTopologyArray<int>(revision.binding.topologyCounts,
                                           time, &refreshed, B.stage, &sampled);
                 _SampleTopologyArray<int>(revision.binding.topologyIndices,
@@ -3130,7 +3187,7 @@ _SampleWithPinnedChainBindings(
         if (revision.op == RigExecRevisionOp::SurfaceProject && moverPrim) {
             _SampleSurfaceSettings(revision, time, &refreshed, &sampled, layer);
             _SampleMoverPathArray<GfVec3f>(
-                _FrozenSurfaceInputKey(revision.moverPath, "surfacePoints"),
+                _FrozenSurfaceInputKey(revision.moverPath, K.surfacePoints),
                 revision.binding.surfacePoints, time, &refreshed, B.stage,
                 &sampled);
         }
@@ -3139,16 +3196,15 @@ _SampleWithPinnedChainBindings(
             // The rest/live cage pair, under distinct synthetic keys: one
             // path, two times (Default raw, evaluated resolved-first).
             _SampleMoverPathArrayAtDefault<GfVec3f>(
-                _FrozenLatticeInputKey(revision.moverPath, "cageRest"),
+                _FrozenLatticeInputKey(revision.moverPath, K.latticeCageRest),
                 revision.binding.cagePoints, B.stage, &sampled);
             _SampleMoverPathArray<GfVec3f>(
-                _FrozenLatticeInputKey(revision.moverPath, "cageLive"),
+                _FrozenLatticeInputKey(revision.moverPath, K.latticeCageLive),
                 revision.binding.cagePoints, time, &refreshed, B.stage,
                 &sampled);
             _SampleLatticeDivisions(
-                revision.moverPath.AppendProperty(
-                    TfToken("rigExec:divisions")),
-                moverPrim.GetAttribute(TfToken("rigExec:divisions")), time,
+                revision.moverPath.AppendProperty(T.rigExecDivisions),
+                moverPrim.GetAttribute(T.rigExecDivisions), time,
                 &sampled);
         }
         if (revision.op == RigExecRevisionOp::Ribbon && moverPrim) {
@@ -3157,7 +3213,7 @@ _SampleWithPinnedChainBindings(
             // step runs on the worker from already-sampled inputs, and
             // the assembly reads the worker's own aggregate.
             _SampleMoverPathArray<GfVec2f>(
-                _FrozenRibbonInputKey(revision.moverPath, "bindCoords"),
+                _FrozenRibbonInputKey(revision.moverPath, K.ribbonBindCoords),
                 revision.binding.bindCoords, time, &refreshed, B.stage,
                 &sampled);
         }
@@ -3605,7 +3661,9 @@ RigExecSampleFrameInputsWithBurstCache(
                         sample.activation.GetPath(), sample.activation, 1.0f,
                         time, &refreshed, &sampled, cache);
                     _SampleBlendPointsCached(
-                        _FrozenBlendInputKey(sample.samplePath, "points"),
+                        _FrozenBlendInputKey(
+                            sample.samplePath,
+                            _frozenInputKeyTokens->blendPoints),
                         sample.points, time, &refreshed, &sampled, cache);
                 }
             }
@@ -3645,28 +3703,30 @@ RigExecSampleFrameInputsWithBurstCache(
                                    &sampled, cache);
         }
     }
+    const auto &T = *_tokens;
+    const auto &K = *_frozenInputKeyTokens;
     for (const auto &[chainIndex, revisionIndex] : B.revisionIndex) {
         const RigExecBakedProgramImpl::GeomRevision &revision =
             B.chains[size_t(chainIndex)].revisions[size_t(revisionIndex)];
         const UsdPrim &moverPrim = revision.moverPrim;
         _SampleMoverScalarCached(
-            revision.moverPath.AppendProperty(TfToken("inputs:enabled")),
-            moverPrim.GetAttribute(TfToken("inputs:enabled")), true, time,
+            revision.moverPath.AppendProperty(T.inputsEnabled),
+            moverPrim.GetAttribute(T.inputsEnabled), true, time,
             &refreshed, &sampled, cache);
         _SampleMoverScalarCached(
-            revision.moverPath.AppendProperty(TfToken("inputs:defaultWeight")),
-            moverPrim.GetAttribute(TfToken("inputs:defaultWeight")), 1.0f,
+            revision.moverPath.AppendProperty(T.inputsDefaultWeight),
+            moverPrim.GetAttribute(T.inputsDefaultWeight), 1.0f,
             time, &refreshed, &sampled, cache);
         _SampleMoverScalarCached(
-            revision.moverPath.AppendProperty(TfToken("rigExec:skinningMethod")),
-            moverPrim.GetAttribute(TfToken("rigExec:skinningMethod")),
-            TfToken("classicLinear"), time, &refreshed, &sampled, cache);
+            revision.moverPath.AppendProperty(T.rigExecSkinningMethod),
+            moverPrim.GetAttribute(T.rigExecSkinningMethod),
+            T.classicLinear, time, &refreshed, &sampled, cache);
         if (revision.op == RigExecRevisionOp::Wire) {
             _SampleWireInputs(revision, &refreshed, B.stage, time, &sampled);
         }
         if (revision.op == RigExecRevisionOp::Matrix) {
             _SampleMoverToken(moverPrim, revision.moverPath,
-                              "rigExec:weightBlend", time, &sampled);
+                              T.rigExecWeightBlend, time, &sampled);
         }
         _SampleIterativeMoverInputs(revision, &refreshed, B.stage, time,
                                     &sampled, layer);
@@ -3674,11 +3734,11 @@ RigExecSampleFrameInputsWithBurstCache(
             // rigExec:deltaSpace, as the slow sampler reads it: raw Default,
             // no resolved arm. Unmemoized -- one token read per frame is
             // nothing, and the value doubles as the topology condition.
-            TfToken deltaSpace("target");
+            TfToken deltaSpace = T.target;
             const SdfPath deltaSpacePath = revision.moverPath.AppendProperty(
-                TfToken("rigExec:deltaSpace"));
+                T.rigExecDeltaSpace);
             if (const UsdAttribute deltaSpaceAttr =
-                    moverPrim.GetAttribute(TfToken("rigExec:deltaSpace"))) {
+                    moverPrim.GetAttribute(T.rigExecDeltaSpace)) {
                 TfToken read;
                 if (deltaSpaceAttr.Get(&read, UsdTimeCode::Default())) {
                     deltaSpace = read;
@@ -3686,7 +3746,7 @@ RigExecSampleFrameInputsWithBurstCache(
                 sampled.Add(deltaSpacePath, VtValue(deltaSpace),
                             /*hasValue=*/true);
             }
-            if (deltaSpace == "surfaceFrame") {
+            if (deltaSpace == T.surfaceFrame) {
                 _SampleTopologyArrayCached<int>(
                     revision.binding.topologyCounts, time, &refreshed, B.stage,
                     &sampled, cache);
@@ -3708,28 +3768,27 @@ RigExecSampleFrameInputsWithBurstCache(
         if (revision.op == RigExecRevisionOp::SurfaceProject && moverPrim) {
             _SampleSurfaceSettings(revision, time, &refreshed, &sampled, nullptr, cache);
             _SampleMoverPathArrayCached<GfVec3f>(
-                _FrozenSurfaceInputKey(revision.moverPath, "surfacePoints"),
+                _FrozenSurfaceInputKey(revision.moverPath, K.surfacePoints),
                 revision.binding.surfacePoints, time, &refreshed, B.stage,
                 &sampled, cache);
         }
         if (revision.op == RigExecRevisionOp::Lattice && moverPrim) {
             _SampleLatticeSettings(revision, time, &refreshed, &sampled, nullptr, cache);
             _SampleMoverPathArrayAtDefaultCached<GfVec3f>(
-                _FrozenLatticeInputKey(revision.moverPath, "cageRest"),
+                _FrozenLatticeInputKey(revision.moverPath, K.latticeCageRest),
                 revision.binding.cagePoints, B.stage, &sampled, cache);
             _SampleMoverPathArrayCached<GfVec3f>(
-                _FrozenLatticeInputKey(revision.moverPath, "cageLive"),
+                _FrozenLatticeInputKey(revision.moverPath, K.latticeCageLive),
                 revision.binding.cagePoints, time, &refreshed, B.stage,
                 &sampled, cache);
             _SampleLatticeDivisionsCached(
-                revision.moverPath.AppendProperty(
-                    TfToken("rigExec:divisions")),
-                moverPrim.GetAttribute(TfToken("rigExec:divisions")), time,
+                revision.moverPath.AppendProperty(T.rigExecDivisions),
+                moverPrim.GetAttribute(T.rigExecDivisions), time,
                 &sampled, cache);
         }
         if (revision.op == RigExecRevisionOp::Ribbon && moverPrim) {
             _SampleMoverPathArrayCached<GfVec2f>(
-                _FrozenRibbonInputKey(revision.moverPath, "bindCoords"),
+                _FrozenRibbonInputKey(revision.moverPath, K.ribbonBindCoords),
                 revision.binding.bindCoords, time, &refreshed, B.stage,
                 &sampled, cache);
         }
@@ -3820,8 +3879,9 @@ RigExecFrozenControlDigest(const RigExecFrameInputs &inputs, bool *exact)
     const size_t count = inputs.values.size();
     hash = _HashBytes(hash, &count, sizeof(count));
     bool named = true;
+    std::string pathText;
     for (const RigExecSampledInput &sampled : inputs.values) {
-        hash = _HashString(hash, sampled.path.GetString().c_str());
+        hash = _HashPathText(hash, sampled.path, &pathText);
         hash = _HashBytes(hash, &sampled.hasValue, sizeof(sampled.hasValue));
         hash = _HashBytes(hash, &sampled.valueBlocked, sizeof(sampled.valueBlocked));
         if (sampled.hasValue) {
@@ -3840,7 +3900,7 @@ RigExecFrozenControlDigest(const RigExecFrameInputs &inputs, bool *exact)
             }
             const VtValue &value = constants->values[j];
             const bool hasValue = !value.IsEmpty();
-            hash = _HashString(hash, constants->keys[j].GetString().c_str());
+            hash = _HashPathText(hash, constants->keys[j], &pathText);
             hash = _HashBytes(hash, &hasValue, sizeof(hasValue));
             if (hasValue) {
                 named = _HashVtValue(&hash, value) && named;
@@ -3860,7 +3920,7 @@ RigExecFrozenControlDigest(const RigExecFrameInputs &inputs, bool *exact)
             continue;
         }
         for(size_t k=0;k<size;++k) {
-            hash = _HashString(hash,inputs.layoutSourcePaths[row][k].GetString().c_str());
+            hash = _HashPathText(hash,inputs.layoutSourcePaths[row][k],&pathText);
             const bool present=!values[k].IsEmpty();
             hash = _HashBytes(hash,&present,sizeof(present));
             if(present) named = _HashVtValue(&hash,values[k]) && named;
@@ -3919,7 +3979,7 @@ RigExecFrozenControlDigest(const RigExecFrameInputs &inputs, bool *exact)
         // apart even where no sample shows the difference.
         hash = _HashString(hash, "ups");
         for (const RigExecUpstreamValue &value : inputs.upstream) {
-            hash = _HashString(hash, value.path.GetString().c_str());
+            hash = _HashPathText(hash, value.path, &pathText);
             hash = _HashBytes(hash, &value.foldHash, sizeof(value.foldHash));
             named = _HashVtValue(&hash, value.value) && named;
         }

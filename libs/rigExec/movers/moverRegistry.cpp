@@ -11,6 +11,7 @@
 #include "pxr/usd/usdGeom/pointBased.h"
 #include "pxr/usd/usdSkel/blendShape.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -28,28 +29,56 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 
 namespace {
 
+TfToken
+_Intern(const char *name)
+{
+    return name ? TfToken(name) : TfToken();
+}
+
 struct _Entry {
     explicit _Entry(RigExecMoverHandler value)
         : schemaType(value.schemaType), handler(std::move(value))
     {
         handler.schemaType = schemaType.c_str();
+        registration.handler = &handler;
+        registration.schemaType = TfToken(schemaType);
+        registration.transformRelationship =
+            _Intern(handler.transformRelationship);
+        registration.spaceRelationship = _Intern(handler.spaceRelationship);
+        registration.legacyEnvelopeAttribute =
+            _Intern(handler.legacyEnvelopeAttribute);
     }
     std::string schemaType;
     RigExecMoverHandler handler;
+    RigExecMoverRegistration registration;
 };
 
+using _Snapshot = std::vector<const RigExecMoverRegistration *>;
+
 struct _Registry {
-    // Deque insertion keeps previously returned handler pointers valid.
+    // Deque insertion keeps previously returned pointers valid.
     std::deque<_Entry> rows;
+    // Every snapshot ever published stays alive: a lookup may still be
+    // reading an older one.
+    std::deque<_Snapshot> snapshots;
     std::mutex mutex;
 };
 
+// Never destroyed, so a lookup during static destruction stays valid.
 _Registry &
 _GetRegistry()
 {
-    static _Registry registry;
-    return registry;
+    static _Registry *registry = new _Registry;
+    return *registry;
 }
+
+// Lookups read the latest published snapshot without a lock. Constant
+// initialized, so registration during another TU's static initialization
+// can publish before this TU's dynamic initializers run.
+std::atomic<const _Snapshot *> _published{nullptr};
+// Set once the first plugin discovery has finished, after which a miss is
+// final and takes no lock.
+std::atomic<bool> _discoveryComplete{false};
 
 struct _PluginLoader {
     std::recursive_mutex mutex;
@@ -63,14 +92,14 @@ _GetPluginLoader()
     return loader;
 }
 
-const RigExecMoverHandler *
+const RigExecMoverRegistration *
 _Find(const TfToken &schemaType)
 {
-    _Registry &registry = _GetRegistry();
-    std::lock_guard<std::mutex> lock(registry.mutex);
-    for (const _Entry &entry : registry.rows) {
-        if (schemaType == entry.handler.schemaType) {
-            return &entry.handler;
+    if (const _Snapshot *rows = _published.load(std::memory_order_acquire)) {
+        for (const RigExecMoverRegistration *row : *rows) {
+            if (row->schemaType == schemaType) {
+                return row;
+            }
         }
     }
     return nullptr;
@@ -137,6 +166,12 @@ RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
         }
     }
     registry.rows.emplace_back(std::move(handler));
+    _Snapshot &rows = registry.snapshots.emplace_back();
+    rows.reserve(registry.rows.size());
+    for (const _Entry &entry : registry.rows) {
+        rows.push_back(&entry.registration);
+    }
+    _published.store(&rows, std::memory_order_release);
     return true;
 }
 
@@ -184,14 +219,18 @@ RigExecLoadMoverPlugins(std::vector<std::string> *diagnostics)
             }
         }
     }
+    _discoveryComplete.store(true, std::memory_order_release);
     return ok;
 }
 
-const RigExecMoverHandler *
-RigExecFindMoverHandler(const TfToken &schemaType)
+const RigExecMoverRegistration *
+RigExecFindMoverRegistration(const TfToken &schemaType)
 {
-    if (const RigExecMoverHandler *handler = _Find(schemaType)) {
-        return handler;
+    if (const RigExecMoverRegistration *row = _Find(schemaType)) {
+        return row;
+    }
+    if (_discoveryComplete.load(std::memory_order_acquire)) {
+        return nullptr;
     }
     _PluginLoader &loader = _GetPluginLoader();
     std::lock_guard<std::recursive_mutex> lock(loader.mutex);
@@ -199,6 +238,14 @@ RigExecFindMoverHandler(const TfToken &schemaType)
         RigExecLoadMoverPlugins();
     }
     return _Find(schemaType);
+}
+
+const RigExecMoverHandler *
+RigExecFindMoverHandler(const TfToken &schemaType)
+{
+    const RigExecMoverRegistration *row =
+        RigExecFindMoverRegistration(schemaType);
+    return row ? row->handler : nullptr;
 }
 
 std::vector<RigExecMoverHandler>

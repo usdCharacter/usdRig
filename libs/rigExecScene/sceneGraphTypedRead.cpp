@@ -1,4 +1,5 @@
 #include "sceneGraphTypedRead.h"
+#include "rigExec/pathText.h"
 #include <algorithm>
 namespace rigExec {
 namespace {
@@ -8,8 +9,10 @@ bool RigExecBindGraphTypedRead(const RigExecSceneTypedRead &source,
     const RigExecSceneGraphBindingContext &context,RigExecGraphTypedRead *out,std::string *error) {
     if(!out || !context.resolve)return Fail(error,"missing typed graph linker");
     RigExecGraphTypedRead read;read.type=source.cppType;read.element=source.inputElement;
-    read.base=source.readPhase=="base";read.unavailable="typed input unavailable: "+source.consumer.GetString();
-    read.elementUnavailable="diag "+source.consumer.GetString()+": selected array element is unavailable; using the typed fallback";
+    std::string consumer;
+    if(!RigExecSpellPathText(source.consumer,&consumer) && !source.consumer.IsEmpty())consumer=source.consumer.GetAsString();
+    read.base=source.readPhase=="base";read.unavailable="typed input unavailable: "+consumer;
+    read.elementUnavailable="diag "+consumer+": selected array element is unavailable; using the typed fallback";
     auto bind=[&](const auto &inputs,auto *hops) {
         for(const auto &input:inputs) {
             RigExecGraphTypedHop hop;

@@ -4,6 +4,7 @@
 #include "weightField.h"
 #include "scalarReferenceAdapter.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "profiler.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/work/dispatcher.h"
@@ -142,7 +143,8 @@ bool RigExecBakedEffectiveMemo(const RigExecBakedProgramImpl &B,uint32_t c,
 }
 
 namespace {
-std::string SkinValueIdentity(const RigExecBakedProgramImpl &B,const RigExecOpValueState &v)
+std::string SkinValueIdentity(const RigExecBakedProgramImpl &B,const RigExecOpValueState &v,
+    RigExecPathText &text)
 {
     using D=RigExecBakedSlotDomain;
     std::string result=std::to_string(v.domain)+":";
@@ -152,22 +154,22 @@ std::string SkinValueIdentity(const RigExecBakedProgramImpl &B,const RigExecOpVa
         result += "request";
         for (const int slot : B.xformSlots) {
             if (slot < 0 || size_t(slot) >= B.paths.size()) return {};
-            const auto path = B.paths[size_t(slot)].GetString();
+            const auto &path = text(B.paths[size_t(slot)]);
             result += ":" + std::to_string(path.size()) + ":" + path;
         }
         return result;
     case D::PoseBase: case D::PoseFin: case D::PosedM:
     case D::FinalMatrix: case D::BaseMatrix:
-        return v.slot<B.paths.size()?result+B.paths[v.slot].GetString():std::string();
+        return v.slot<B.paths.size()?result+text(B.paths[v.slot]):std::string();
     case D::ChainBase: case D::ChainPoints: case D::ChainInput:
-        return v.slot<B.chains.size()?result+B.chains[v.slot].target.GetString():std::string();
+        return v.slot<B.chains.size()?result+text(B.chains[v.slot].target):std::string();
     case D::SkinTopology: case D::RevisionPacket: case D::RevisionTransforms:
     case D::RevisionDone: case D::ChainDirty:
         if(v.slot<B.revisionIndex.size()) {
             const auto &index=B.revisionIndex[v.slot];
             const auto &chain=B.chains[size_t(index.first)];
             const auto &revision=chain.revisions[size_t(index.second)];
-            return result+chain.target.GetString()+":"+revision.moverPath.GetString()+":"+std::to_string(index.second);
+            return result+text(chain.target)+":"+text(revision.moverPath)+":"+std::to_string(index.second);
         }
         return {};
     case D::RevisionOut:
@@ -177,8 +179,8 @@ std::string SkinValueIdentity(const RigExecBakedProgramImpl &B,const RigExecOpVa
             const auto &index=B.revisionIndex[r];const auto &chain=B.chains[size_t(index.first)];
             const auto &revision=chain.revisions[size_t(index.second)];
             const size_t part=size_t(v.slot-uint32_t(base));
-            const std::string prefix=result+chain.target.GetString()+":"+
-                revision.moverPath.GetString()+":"+std::to_string(index.second)+":";
+            const std::string prefix=result+text(chain.target)+":"+
+                text(revision.moverPath)+":"+std::to_string(index.second)+":";
             if(part<revision.chunks.size()) {
                 const auto &chunk=revision.chunks[part];
                 return prefix+std::to_string(chunk.begin)+":"+std::to_string(chunk.end);
@@ -374,13 +376,14 @@ void RigExecBakedAdoptSkinOpState(RigExecBakedProgramImpl *program,const RigExec
     RigExecBakedOpIdentityRemap map;
     if(!SkinSourceMap(B,P,&map))return;
     std::map<std::string,int> newValues;
+    RigExecPathText text;
     for(size_t i=0;i<B.opAdapter.values.size();++i) {
-        const auto key=SkinValueIdentity(B,B.opAdapter.values[i]);
+        const auto key=SkinValueIdentity(B,B.opAdapter.values[i],text);
         if(!key.empty() && !newValues.emplace(key,int(i)).second)return;
     }
     map.values.assign(P.opAdapter.values.size(),-1);
     for(size_t i=0;i<P.opAdapter.values.size();++i) {
-        const auto found=newValues.find(SkinValueIdentity(P,P.opAdapter.values[i]));
+        const auto found=newValues.find(SkinValueIdentity(P,P.opAdapter.values[i],text));
         if(found!=newValues.end())map.values[i]=found->second;
     }
     std::map<std::string,uint32_t> oldOps;

@@ -1,4 +1,5 @@
 #include "providerContextBinding.h"
+#include "rigExec/pathText.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <functional>
 #include <algorithm>
@@ -15,7 +16,14 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((defaultTy,"default:ty")) ((defaultTz,"default:tz")) ((defaultRx,"default:rx"))
     ((defaultRy,"default:ry")) ((defaultRz,"default:rz")) ((restSpace,"rest:space"))
 );
-namespace {bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}}
+namespace {
+bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}
+std::string PathText(const SdfPath &path) {
+    std::string text;
+    if(!RigExecSpellPathText(path,&text) && !path.IsEmpty())text=path.GetAsString();
+    return text;
+}
+}
 bool RigExecBindProviderContext(RigExecProviderProgram *program,
     const std::vector<std::string> &fullValueKeys,RigExecValueId sourceResult,
     const SdfPath &consumer,const std::string &phase,
@@ -90,7 +98,7 @@ bool RigExecBindProviderContext(RigExecProviderProgram *program,
             if(mark==2 && value!=sourceResult && producers.count(value) &&
                !replacements.count(value))replacements.emplace(value,value);
     }
-    const std::string prefix="context:"+consumer.GetString()+":"+phase+":"+
+    const std::string prefix="context:"+PathText(consumer)+":"+phase+":"+
         program->valueKeys[size_t(sourceResult)]+":";
     if(!indexedKeys) {program->valueKeys=fullValueKeys;program->valueIds=std::move(ids);}
     *beginOp=program->ops.size();
@@ -129,7 +137,7 @@ bool RigExecBindProviderParentDelivery(RigExecProviderProgram *program,
     if(producer==program->ops.size() || program->ops[producer].kind!=RigExecProviderOpKind::SpaceExpression ||
        program->ops[producer].inputs.size()!=3 || program->ops[producer].inputs[1]!=RigExecNoProviderValue)
         return Fail(error,"parent-space delivery requires an unconnected expression: "+consumer.GetString());
-    const std::string key="parentDelivery:"+consumer.GetString();
+    const std::string key="parentDelivery:"+PathText(consumer);
     const auto existing=program->valueIds.find(key);
     if(existing!=program->valueIds.end()){*output=existing->second;return true;}
     auto op=program->ops[producer];op.output=RigExecValueId(program->valueKeys.size());op.inputs[2]=RigExecNoProviderValue;

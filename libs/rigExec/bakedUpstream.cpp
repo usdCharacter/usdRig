@@ -18,6 +18,7 @@
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
+#include "pxr/usd/sdf/types.h"
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/stage.h"
@@ -77,11 +78,12 @@ RigExecUpstreamSlotType(const SdfValueTypeName &typeName)
         return false;
     }
     const TfType type = typeName.GetType();
-    return type == TfType::Find<double>() || type == TfType::Find<float>() ||
-           type == TfType::Find<bool>() || type == TfType::Find<int>() ||
-           type == TfType::Find<TfToken>() ||
-           type == TfType::Find<GfMatrix4d>() ||
-           type == TfType::Find<GfVec3d>() || type == TfType::Find<GfVec3f>();
+    const auto &N = *SdfValueTypeNames;
+    return type == N.Double.GetType() || type == N.Float.GetType() ||
+           type == N.Bool.GetType() || type == N.Int.GetType() ||
+           type == N.Token.GetType() ||
+           type == N.Matrix4d.GetType() ||
+           type == N.Double3.GetType() || type == N.Float3.GetType();
 }
 
 namespace {
@@ -112,11 +114,12 @@ RigExecUpstreamArraySlotType(const SdfValueTypeName &typeName)
         return false;
     }
     const TfType type = typeName.GetType();
-    return type == TfType::Find<VtIntArray>() ||
-           type == TfType::Find<VtFloatArray>() ||
-           type == TfType::Find<VtDoubleArray>() ||
-           type == TfType::Find<VtVec2fArray>() ||
-           type == TfType::Find<VtVec3fArray>();
+    const auto &N = *SdfValueTypeNames;
+    return type == N.IntArray.GetType() ||
+           type == N.FloatArray.GetType() ||
+           type == N.DoubleArray.GetType() ||
+           type == N.Float2Array.GetType() ||
+           type == N.Float3Array.GetType();
 }
 
 std::string
@@ -150,7 +153,7 @@ RigExecUpstreamDropReason(const UsdStageRefPtr &stage,
               : !RigExecUpstreamSlotType(typeName)) {
         return "no input slot holds a " + typeName.GetAsToken().GetString();
     }
-    if (value.GetType() != typeName.GetType()) {
+    if (value.GetTypeid() != typeName.GetType().GetTypeid()) {
         return "a " + value.GetTypeName() + " value on a " +
                typeName.GetAsToken().GetString() + " attribute";
     }
@@ -553,20 +556,21 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                 };
                 const auto addSource = [&](const SdfPath &path, RigExecRevisionLeafType requested) {
                     const auto attribute = B.stage->GetAttributeAtPath(path);
+                    const auto &N = *SdfValueTypeNames;
                     if (!attribute || !attribute.HasValue() ||
                         !RigExecUpstreamSlotType(attribute.GetTypeName()) ||
-                        attribute.GetTypeName().GetType() == TfType::Find<TfToken>()) return;
+                        attribute.GetTypeName().GetType() == N.Token.GetType()) return;
                     const auto actual = attribute.GetTypeName().GetType();
                     using Type = RigExecRevisionLeafType;
                     const bool compatible =
                         ((requested == Type::Float || requested == Type::Dial) &&
-                         (actual == TfType::Find<float>() || actual == TfType::Find<double>())) ||
-                        (requested == Type::Double && actual == TfType::Find<double>()) ||
-                        (requested == Type::Bool && actual == TfType::Find<bool>()) ||
-                        (requested == Type::Int && actual == TfType::Find<int>()) ||
-                        (requested == Type::Matrix4d && actual == TfType::Find<GfMatrix4d>()) ||
-                        (requested == Type::Vec3d && actual == TfType::Find<GfVec3d>()) ||
-                        (requested == Type::Vec3f && actual == TfType::Find<GfVec3f>());
+                         (actual == N.Float.GetType() || actual == N.Double.GetType())) ||
+                        (requested == Type::Double && actual == N.Double.GetType()) ||
+                        (requested == Type::Bool && actual == N.Bool.GetType()) ||
+                        (requested == Type::Int && actual == N.Int.GetType()) ||
+                        (requested == Type::Matrix4d && actual == N.Matrix4d.GetType()) ||
+                        (requested == Type::Vec3d && actual == N.Double3.GetType()) ||
+                        (requested == Type::Vec3f && actual == N.Float3.GetType());
                     if (!compatible) return;
                     SdfPathVector connections;
                     if (attribute.HasAuthoredConnections()) attribute.GetConnections(&connections);
@@ -593,8 +597,8 @@ _BuildUpstreamSets(RigExecBakedProgramImpl *program)
                 op == RigExecRevisionOp::Wrinkle) {
                 RigExecMoverParameters parameters;
                 frozenDetail::_VisitIterativeMoverScalars(
-                    op, parameters, [&](const char *name, auto, auto &) {
-                        _AddWalk(B, attr(TfToken(name)), &paths);
+                    op, parameters, [&](const TfToken &name, auto, auto &) {
+                        _AddWalk(B, attr(name), &paths);
                     });
             }
             // The extended deformer settings read at the time (the

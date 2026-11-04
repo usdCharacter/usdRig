@@ -11,6 +11,7 @@
 // agree with the cone run about the one thing the cone got wrong. What it
 // leaves out on purpose, and why, is listed beside RigExecBakedRunShadow.
 #include "bakedProgramImpl.h"
+#include "pathText.h"
 
 #include "pxr/base/tf/getenv.h"
 
@@ -1062,6 +1063,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
                                std::vector<std::string> *differences) const
 {
     size_t count = 0;
+    RigExecPathText pathText;
     // Project work observations through the cone's actual body selection.
     // A forced run computes identical values while deliberately doing more work.
     std::vector<char> selected(program.steps.size(), 1);
@@ -1296,7 +1298,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
                   program.frameMatrixValid);
     for (size_t s = 0; s < program.solvers.size() && s < solvers.size(); ++s) {
         const std::string where =
-            "solver " + program.solvers[s].path.GetString();
+            "solver " + pathText(program.solvers[s].path);
         CompareVector(differences, &count, where + " outFrames",
                       solvers[s].outFrames, program.solvers[s].outFrames);
         CompareVector(differences, &count, where + " outPresent",
@@ -1353,7 +1355,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
     }
     for (size_t c = 0; c < program.chains.size() && c < chains.size(); ++c) {
         const RigExecBakedProgramImpl::GeomChain &chain = program.chains[c];
-        const std::string where = "chain " + chain.target.GetString();
+        const std::string where = "chain " + pathText(chain.target);
         if (!Same(chains[c].result, chain.result)) {
             Differ(differences, &count, where + " points");
         }
@@ -1372,7 +1374,7 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
              ++r) {
             CompareRevision(differences, &count,
                             where + " revision " +
-                                chain.revisions[r].moverPath.GetString(),
+                                pathText(chain.revisions[r].moverPath),
                             chains[c].revisions[r], chain.revisions[r],
                             staticSelected[c][r], fuseSelected[c][r]);
         }
@@ -1385,13 +1387,13 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
             }
             CompareValue(differences, &count,
                          where + " derived " +
-                             chain.derived[d].target.GetString() +
+                             pathText(chain.derived[d].target) +
                              " haveResult",
                          chains[c].derived[d].haveResult,
                          chain.derived[d].haveResult);
             CompareValue(differences, &count,
                          where + " derived " +
-                             chain.derived[d].target.GetString() +
+                             pathText(chain.derived[d].target) +
                              " haveMatrix",
                          chains[c].derived[d].haveMatrix,
                          chain.derived[d].haveMatrix);
@@ -1402,13 +1404,13 @@ RigExecBakedRunShadow::Compare(const RigExecBakedProgramImpl &program,
             }
             CompareValue(differences, &count,
                          where + " derived " +
-                             chain.derived[d].target.GetString() +
+                             pathText(chain.derived[d].target) +
                              " points version",
                          chains[c].derived[d].resultVersion,
                          chain.derived[d].resultVersion);
             CompareRevision(differences, &count,
                             where + " derived " +
-                                chain.derived[d].target.GetString(),
+                                pathText(chain.derived[d].target),
                             chains[c].derived[d].revision,
                             chain.derived[d].revision);
         }

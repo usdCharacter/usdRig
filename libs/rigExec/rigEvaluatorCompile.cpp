@@ -157,7 +157,8 @@ RigExecRigEvaluator::Compile(std::vector<std::string> *errors)
             VtValue element;
             attribute.GetMetadata(_tokens->inputElement, &element);
             if (!element.IsHolding<int>() || element.UncheckedGet<int>() < 0 ||
-                attribute.GetTypeName().GetType() != TfType::Find<GfVec3f>()) {
+                attribute.GetTypeName().GetType() !=
+                    SdfValueTypeNames->Float3.GetType()) {
                 if (errors) errors->push_back(attribute.GetPath().GetString() +
                     ": rigExecInputElement requires a nonnegative int on a Vec3f input");
                 if (_inputReplayObserver)
@@ -745,14 +746,14 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
             }
         }
         for (const RigExecMoverRecord &m : newMovers) {
-            const RigExecMoverHandler *transformHandler =
-                RigExecFindMoverHandler(m.schemaType);
-            const char *transformRel = transformHandler
-                ? transformHandler->transformRelationship
-                : nullptr;
-            if (!transformRel) {
+            const RigExecMoverRegistration *transformHandler =
+                RigExecFindMoverRegistration(m.schemaType);
+            if (!transformHandler ||
+                transformHandler->transformRelationship.IsEmpty()) {
                 continue;
             }
+            const TfToken &transformRel =
+                transformHandler->transformRelationship;
             const UsdPrim prim = _stage->GetPrimAtPath(m.moverPath);
             if (!prim) {
                 continue;
@@ -762,17 +763,16 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                 continue;
             }
             SdfPathVector transforms;
-            if (UsdRelationship rel = prim.GetRelationship(TfToken(
-                    transformRel))) {
+            if (UsdRelationship rel = prim.GetRelationship(transformRel)) {
                 rel.GetTargets(&transforms);
             }
-            if (transformHandler->spaceRelationship) {
+            if (!transformHandler->spaceRelationship.IsEmpty()) {
                 // Both spaces: the measuring one the handler names, and
                 // rigExec:space, the rig's carry. They are read at the SAME
                 // phase as the transform, so a final read of either carries
                 // the same ordering obligation.
                 for (const TfToken &name :
-                     {TfToken(transformHandler->spaceRelationship),
+                     {transformHandler->spaceRelationship,
                       _tokens->rigExecSpace}) {
                     SdfPathVector spaces;
                     if (UsdRelationship rel =
@@ -995,8 +995,10 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     if (jointTargets.empty()) {
                         continue;
                     }
-                    const std::string who = solver.GetTypeName().GetString() +
-                                            " " + solver.GetPath().GetString();
+                    const auto who = [&solver] {
+                        return solver.GetTypeName().GetString() + " " +
+                               solver.GetPath().GetString();
+                    };
 
                     // The claimant must be a real aggregate solver (it must
                     // publish computePointFrameArray for the joint to extract).
@@ -1004,7 +1006,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     // otherwise pass, and the binding would name a prim with no
                     // aggregate computation to extract an element from.
                     if (!_IsAggregateSolverType(solver.GetTypeName())) {
-                        return fail(who + " authors rigExec:joints but is not a "
+                        return fail(who() + " authors rigExec:joints but is not a "
                                           "recognized aggregate solver type", {solver.GetPath()});
                     }
 
@@ -1015,7 +1017,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             _tokens->rigExecJointElements)) {
                         std::vector<double> times;
                         if (a.GetTimeSamples(&times) && !times.empty()) {
-                            return fail(who + ": rigExec:jointElements must not "
+                            return fail(who() + ": rigExec:jointElements must not "
                                               "carry time samples", {solver.GetPath()});
                         }
                         a.Get(&jointElements);
@@ -1023,7 +1025,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                     if (!jointElements.empty() &&
                         jointElements.size() != jointTargets.size()) {
                         return fail(
-                            who + ": rigExec:jointElements length " +
+                            who() + ": rigExec:jointElements length " +
                             std::to_string(jointElements.size()) +
                             " must equal rigExec:joints length " +
                             std::to_string(jointTargets.size()), {solver.GetPath()});
@@ -1080,7 +1082,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 if (e >= 0 && e < knownCount) {
                                     if (filled[e]) {
                                         return fail(
-                                            who + ": rigExec:jointElements "
+                                            who() + ": rigExec:jointElements "
                                             "fills chain slot " +
                                             std::to_string(e) + " twice", {solver.GetPath()});
                                     }
@@ -1095,7 +1097,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                             if (!weights.empty() &&
                                 weights.size() != jointTargets.size()) {
                                 return fail(
-                                    who + ": rigExec:volumeWeights length " +
+                                    who() + ": rigExec:volumeWeights length " +
                                     std::to_string(weights.size()) +
                                     " must equal rigExec:joints length " +
                                     std::to_string(jointTargets.size()) +
@@ -1109,13 +1111,13 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         const int element = i < jointElements.size()
                             ? jointElements[i] : static_cast<int>(i);
                         if (element < 0) {
-                            return fail(who + ": negative element index " +
+                            return fail(who() + ": negative element index " +
                                         std::to_string(element) + " for " +
                                         jointPath.GetString(), {solver.GetPath()});
                         }
                         if (knownCount >= 0 && element >= knownCount) {
                             return fail(
-                                who + ": element " + std::to_string(element) +
+                                who() + ": element " + std::to_string(element) +
                                 " for " + jointPath.GetString() +
                                 " is out of range (solver produces " +
                                 std::to_string(knownCount) + " frames)", {solver.GetPath()});
@@ -1123,12 +1125,12 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         const UsdPrim jointPrim =
                             _stage->GetPrimAtPath(jointPath);
                         if (!jointPrim) {
-                            return fail(who + " rigExec:joints targets missing "
+                            return fail(who() + " rigExec:joints targets missing "
                                               "prim " + jointPath.GetString(), {solver.GetPath()});
                         }
                         if (jointPrim.GetTypeName() != "RigExecJoint") {
                             return fail(
-                                who + " rigExec:joints target " +
+                                who() + " rigExec:joints target " +
                                 jointPath.GetString() + " is a " +
                                 jointPrim.GetTypeName().GetString() +
                                 ", not a RigExecJoint", {solver.GetPath()});
@@ -1141,7 +1143,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         if (jointPrim.IsInstanceProxy() ||
                             jointPrim.IsInPrototype()) {
                             return fail(
-                                who + " rigExec:joints target " +
+                                who() + " rigExec:joints target " +
                                 jointPath.GetString() +
                                 " is instance-proxy/prototype hosted and cannot "
                                 "receive a solver binding", {solver.GetPath()});
@@ -1164,7 +1166,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                                 const SdfPathVector conns =
                                     _AuthoredConnections(posed);
                                 if (!conns.empty()) {
-                                    return fail(who + ": joint " +
+                                    return fail(who() + ": joint " +
                                                 jointPath.GetString() +
                                                 " also connects posed:space", {solver.GetPath()});
                                 }
@@ -1191,7 +1193,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         for (const auto &[writer, writerElement] : writers) {
                             if (writer == solver.GetPath()) {
                                 return fail(
-                                    who + ": rigExec:joints names " +
+                                    who() + ": rigExec:joints names " +
                                     jointPath.GetString() +
                                     " more than once", {solver.GetPath()});
                             }
@@ -2727,7 +2729,7 @@ RigExecRigEvaluator::_CompileRigAttempt(std::vector<std::string> *errors,
                         ? target.AppendProperty(_tokens->points) : target;
                     const UsdAttribute input = _stage->GetAttributeAtPath(points);
                     if (phased && (!input || input.GetTypeName().GetType() !=
-                                              TfType::Find<VtVec3fArray>())) {
+                                              SdfValueTypeNames->Float3Array.GetType())) {
                         return fail(solver.GetString() + " rigExec:driverCurve declares rigExecReadPhase '" +
                                     phase.GetAsString() + "' on " + target.GetString() +
                                     ", which is not a Vec3f array points source", {solver});

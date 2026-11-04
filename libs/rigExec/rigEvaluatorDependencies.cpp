@@ -129,13 +129,8 @@ _CollectAttributeConnectionInputs(const UsdPrim &prim)
 // compile and for the baked program's BuildSpaces, is recomputed by
 // _CollectPoseInputInfo, the per-prim walker it replaces, and the build fails
 // fatally unless providers, attributes and connectedPose all agree.
-static bool
-_PoseInfoVerifyRequested()
-{
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_VERIFY_POSEINFO", false);
-    return requested;
-}
+const bool _kPoseInfoVerifyRequested =
+    TfGetenvBool("RIGEXEC_VERIFY_POSEINFO", false);
 
 // A PoseInfoPrefetch round (_PoseInputGraph::Extend) is spread across the
 // pool only when it holds at least this many attribute reads, counting a
@@ -907,7 +902,7 @@ _PoseInputGraph::Extend(
         }
     }
 
-    if (_PoseInfoVerifyRequested()) {
+    if (_kPoseInfoVerifyRequested) {
         std::vector<uint32_t> compMark(_compProviders.size(), _None);
         std::vector<uint32_t> attrMark(_attrs.size(), _None);
         std::vector<uint32_t> reached;

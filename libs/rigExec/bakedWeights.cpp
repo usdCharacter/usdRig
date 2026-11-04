@@ -179,7 +179,8 @@ RigExecBakedBakeWeightObject(RigExecBakedBuildContext *ctx,
                 // typed point gather. Keep connected walks and missing values
                 // on actual point-array attributes; raw oracle relationship
                 // facts retain the target and its unavailable typed value.
-                if (a.GetTypeName().GetType() != TfType::Find<VtVec3fArray>() &&
+                if (a.GetTypeName().GetType() !=
+                        SdfValueTypeNames->Float3Array.GetType() &&
                     !a.HasAuthoredConnections()) {
                     continue;
                 }

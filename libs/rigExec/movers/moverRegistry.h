@@ -310,8 +310,25 @@ bool RigExecLoadMoverPlugins(std::vector<std::string> *diagnostics = nullptr);
 /// The registered handler for \p schemaType, or null for an unregistered
 /// type (constraints, solvers, weight objects -- everything that is not
 /// a mover). The first miss loads discoverable external mover libraries.
-/// The pointer stays valid across subsequent plugin registration.
+/// The pointer stays valid across subsequent plugin registration. A lookup
+/// takes no lock once that first discovery has finished.
 const RigExecMoverHandler *RigExecFindMoverHandler(const TfToken &schemaType);
+
+/// A registered handler with its names interned at registration, so a
+/// caller on a parallel lane never builds a token from the handler's text.
+/// An empty token stands for a null name.
+struct RigExecMoverRegistration {
+    const RigExecMoverHandler *handler = nullptr;
+    TfToken schemaType;
+    TfToken transformRelationship;
+    TfToken spaceRelationship;
+    TfToken legacyEnvelopeAttribute;
+};
+
+/// RigExecFindMoverHandler with the interned names; same lifetime and
+/// discovery rules.
+const RigExecMoverRegistration *
+RigExecFindMoverRegistration(const TfToken &schemaType);
 
 /// Snapshot of every registered handler, in registration order.
 std::vector<RigExecMoverHandler> RigExecMoverHandlers();

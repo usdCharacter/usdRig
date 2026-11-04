@@ -1,5 +1,6 @@
 #include "autoClavicleGraph.h"
 #include "rigExec/frameExtraction.h"
+#include "rigExec/pathText.h"
 #include "rigExecMath/rbf.h"
 #include "rigExecMath/pointFrame.h"
 #include "pxr/base/gf/quatf.h"
@@ -31,6 +32,11 @@ bool Fail(std::string *error,const std::string &message) {
     if(error)*error=message;
     return false;
 }
+std::string PathText(const SdfPath &path) {
+    std::string text;
+    if(!RigExecSpellPathText(path,&text) && !path.IsEmpty())text=path.GetAsString();
+    return text;
+}
 template<class T> bool Constant(const RigExecSceneCompileInputs &source,
     const SdfPath &path,T *value,std::string *error) {
     const auto *attribute=source.Attribute(path);
@@ -49,7 +55,7 @@ bool RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,const SdfPath 
     if(!destination || !context.resolve)return Fail(error,"missing auto clavicle graph linker");
     RigExecSceneCompileInputs source(scene);RigExecBoundAutoClavicle result;
     result.output=output;result.frames[0]=incoming;result.reads.push_back(incoming);
-    result.unavailable=path.GetString()+" has no usable frame for its limb; the clavicle is not carried";
+    result.unavailable=PathText(path)+" has no usable frame for its limb; the clavicle is not carried";
     const auto property=[&](const TfToken &name){return path.AppendProperty(name);};
     const auto one=[&](const TfToken &name,bool required,SdfPath *out) {
         const auto targets=source.Targets(property(name));

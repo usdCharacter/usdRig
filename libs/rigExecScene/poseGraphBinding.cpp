@@ -1,5 +1,6 @@
 #include "poseGraphBinding.h"
 #include "rigExec/frameExtraction.h"
+#include "rigExec/pathText.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
 namespace rigExec {
@@ -9,6 +10,11 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 );
 namespace {
 bool Fail(std::string *error,const std::string &message){if(error)*error=message;return false;}
+std::string PathText(const SdfPath &path) {
+    std::string text;
+    if(!RigExecSpellPathText(path,&text) && !path.IsEmpty())text=path.GetAsString();
+    return text;
+}
 void TypedInputs(const RigExecGraphTypedRead &input,std::vector<RigExecValueId> *reads) {
     for(const auto *hops:{&input.hops,&input.doubleHops})for(const auto &hop:*hops)
         for(auto value:{hop.raw,hop.overlay})if(value!=UINT64_MAX)reads->push_back(value);
@@ -28,7 +34,7 @@ bool RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
     if(!out || !context.resolve)return Fail(error,"missing space switch graph linker");
     RigExecBoundSpaceSwitch packet;packet.record=source.record;
     packet.labels=source.labels;packet.tokenIndex=source.tokenIndex;packet.activeFallback=source.activeFallback;
-    packet.unavailable="space switch "+source.path.GetString()+" has an unavailable current input";
+    packet.unavailable="space switch "+PathText(source.path)+" has an unavailable current input";
     if(!RigExecBindGraphTypedRead(source.active,context,&packet.active,error))return false;
     TypedInputs(packet.active,&packet.reads);
     const auto named=[&](const SdfPath &provider,const std::string &computation,RigExecValueId *value) {
@@ -82,11 +88,12 @@ bool RigExecBindScenePoseInterpolator(const RigExecScenePoseInterpolatorDescript
         return Fail(error,"pose interpolator output identity count mismatch");
     RigExecBoundPoseInterpolator packet;packet.record=source.record;packet.weights=weights;packet.disabledWeights=disabledWeights;
     packet.primvars=primvars;packet.primvarSources=source.primvarSources;
-    packet.unusableRotation="pose interpolator "+source.path.GetString()+" has no usable frame for its driver "+
-        source.driver.GetString()+" after the pose walk; its weights are zero this generation";
-    packet.unusableTranslation="pose interpolator "+source.path.GetString()+
+    const std::string who=PathText(source.path);
+    packet.unusableRotation="pose interpolator "+who+" has no usable frame for its driver "+
+        PathText(source.driver)+" after the pose walk; its weights are zero this generation";
+    packet.unusableTranslation="pose interpolator "+who+
         " could not measure its driver's translation; its weights are zero this generation";
-    packet.countMismatch="pose interpolator "+source.path.GetString()+" solved an unexpected number of weights";
+    packet.countMismatch="pose interpolator "+who+" solved an unexpected number of weights";
     if(!RigExecBindGraphTypedRead(source.enabled,context,&packet.enabled,error))return false;
     TypedInputs(packet.enabled,&packet.reads);
     packet.ml=source.ml;

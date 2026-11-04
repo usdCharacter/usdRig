@@ -2,6 +2,7 @@
 #include "moverRegistry.h"
 #include "externalPlayback.h"
 #include "../parallel.h"
+#include "../pathText.h"
 #include "rigExecScene/sceneDescriptors.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/dictionary.h"
@@ -393,7 +394,9 @@ bool Apply(const VtValue &data,std::vector<GfVec3f> *output) {
 constexpr char kCompiledDataTag[]={'R','S','B','1'};
 bool EncodeCompiledData(const RigExecRevisionBinding &binding,std::vector<uint8_t> *compiledRig) {
     compiledRig->assign(kCompiledDataTag,kCompiledDataTag+sizeof(kCompiledDataTag));
-    const std::string surface=binding.surfacePoints.IsEmpty()?std::string():binding.surfacePoints.GetString();
+    std::string surface;
+    if(!binding.surfacePoints.IsEmpty() && !RigExecSpellPathText(binding.surfacePoints,&surface))
+        surface=binding.surfacePoints.GetAsString();
     compiledRig->insert(compiledRig->end(),surface.begin(),surface.end());
     return true;
 }

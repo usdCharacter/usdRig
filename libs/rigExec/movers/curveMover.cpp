@@ -622,16 +622,16 @@ _ValidateCurveMover(
             ctx.prim.GetRelationship(_curveTokens->space)) {
         rel.GetTargets(&carries);
     }
-    const std::string who = "CurveMover " + ctx.prim.GetPath().GetString();
+    const auto who = [&] { return "CurveMover " + ctx.prim.GetPath().GetString(); };
     if (carries.size() > 1) {
-        *error = who + ": rigExec:space takes at most one target";
+        *error = who() + ": rigExec:space takes at most one target";
         return false;
     }
     if (!carries.empty()) {
         const UsdPrim carryPrim = ctx.stage->GetPrimAtPath(carries[0]);
         const TfToken type = carryPrim ? carryPrim.GetTypeName() : TfToken();
         if (type != "RigExecControl" && type != "RigExecJoint") {
-            *error = who + ": rigExec:space target is not a catalogued "
+            *error = who() + ": rigExec:space target is not a catalogued "
                            "matrix provider";
             return false;
         }

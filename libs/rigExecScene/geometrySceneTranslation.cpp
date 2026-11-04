@@ -2,6 +2,7 @@
 #include "providerProgram.h"
 #include "rigExec/movers/moverRegistry.h"
 #include "rigExec/moverGraph.h"
+#include "rigExec/pathText.h"
 #include "pxr/usd/usdGeom/xformOp.h"
 #include "pxr/base/tf/staticTokens.h"
 #include <algorithm>
@@ -57,6 +58,11 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((rigExecWeightObject, "rigExec:weightObject"))
 );
 bool Fail(std::string *error,const std::string &message) {if(error)*error=message;return false;}
+std::string PathText(const SdfPath &path) {
+    std::string text;
+    if(!RigExecSpellPathText(path,&text) && !path.IsEmpty())text=path.GetAsString();
+    return text;
+}
 TfToken ReadPhaseToken(const RigExecReadPhase &phase) {
     switch(phase.kind) {
     case RigExecReadPhaseKind::Base:return _tokens->base;
@@ -392,7 +398,7 @@ bool StaticMeshWorld(const RigExecSceneDescriptors &scene,const SdfPath &mesh,Gf
         const auto *node=source.Node(owner);
         if(!node)return Fail(error,"uncaptured projector surface ancestry: "+owner.GetString());
         RigExecProviderProgram program;RigExecTypedValueStore values(1);
-        program.valueKeys.push_back(owner.GetString() + "|localXform");
+        program.valueKeys.push_back(PathText(owner) + "|localXform");
         RigExecProviderOp op;op.kind=RigExecProviderOpKind::LocalXform;op.owner=owner;op.output=0;
         auto raw=[&](const SdfPath &path,RigExecValueId *id) {
             *id=RigExecNoProviderValue;const auto *attribute=source.Attribute(path);

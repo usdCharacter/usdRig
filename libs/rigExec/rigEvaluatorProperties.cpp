@@ -79,7 +79,8 @@ _PhasedTypesAgree(const SdfValueTypeName &consumer,
         return true;
     }
     const auto scalar = [](const TfType &type) {
-        return type == TfType::Find<float>() || type == TfType::Find<double>();
+        return type == SdfValueTypeNames->Float.GetType() ||
+               type == SdfValueTypeNames->Double.GetType();
     };
     return scalar(consumerValue) && scalar(targetValue);
 }
@@ -408,8 +409,9 @@ RigExecRigEvaluator::_CompilePropertyChains(
             fail(message,
                  owner.IsEmpty() ? SdfPathVector() : SdfPathVector{owner});
         };
-        const std::string who =
-            path.GetString() + ": rigExecReadPhase";
+        const auto who = [&path]() {
+            return path.GetString() + ": rigExecReadPhase";
+        };
         const bool declared = input.HasAuthoredMetadata(phaseField);
         RigExecReadPhase phase;  // base
         if (declared) {
@@ -420,14 +422,14 @@ RigExecRigEvaluator::_CompilePropertyChains(
             if (phase.kind == RigExecReadPhaseKind::Preceding &&
                 !input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
                 input.GetTypeName() != SdfValueTypeNames->Matrix4d) {
-                return refuse(who + " 'preceding' names no position for a "
+                return refuse(who() + " 'preceding' names no position for a "
                                     "connection; use base, final or a prim "
                                     "path");
             }
         }
         if (newPropertyChains.count(path)) {
             if (declared) {
-                refuse(who + " on an input math movers also revise is "
+                refuse(who() + " on an input math movers also revise is "
                              "ambiguous");
             }
             return;
@@ -449,7 +451,8 @@ RigExecRigEvaluator::_CompilePropertyChains(
             }
             crossDomain = crossDomain ||
                 (input.HasAuthoredMetadata(_tokens->rigExecInputElement) &&
-                 next.GetTypeName().GetType() == TfType::Find<VtVec3fArray>()) ||
+                 next.GetTypeName().GetType() ==
+                     SdfValueTypeNames->Float3Array.GetType()) ||
                 (input.GetTypeName() == SdfValueTypeNames->Matrix4d &&
                  next.GetTypeName() == SdfValueTypeNames->Matrix4d &&
                  next.GetName() == _tokens->posedSpace);
@@ -458,14 +461,14 @@ RigExecRigEvaluator::_CompilePropertyChains(
         }
         if (target.IsEmpty()) {
             if (phase.kind == RigExecReadPhaseKind::Preceding && !crossDomain) {
-                return refuse(who + " 'preceding' names no position for a "
+                return refuse(who() + " 'preceding' names no position for a "
                                     "connection; use base, final or a prim path");
             }
             // No math mover writes what the connection reads: base and
             // final are the same value there, and a checkpoint names a
             // revision that does not exist.
             if (phase.kind == RigExecReadPhaseKind::AtPrim && !crossDomain) {
-                refuse(who + " names " + phase.prim.GetString() +
+                refuse(who() + " names " + phase.prim.GetString() +
                        ", but the connection reaches no property a math "
                        "mover writes");
             }
@@ -473,7 +476,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
         }
         const UsdAttribute targetAttr = _stage->GetAttributeAtPath(target);
         if (phase.kind == RigExecReadPhaseKind::Preceding) {
-            return refuse(who + " 'preceding' names no position for a "
+            return refuse(who() + " 'preceding' names no position for a "
                                 "connection; use base, final or a prim path");
         }
         const SdfValueTypeName consumerType = input.GetTypeName();
@@ -481,7 +484,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
             targetAttr ? targetAttr.GetTypeName() : SdfValueTypeName();
         if (!_PhasedTypesAgree(consumerType, targetType)) {
             if (declared) {
-                refuse(who + " reads " + target.GetString() + " (" +
+                refuse(who() + " reads " + target.GetString() + " (" +
                        targetType.GetAsToken().GetString() + ") into a " +
                        consumerType.GetAsToken().GetString() +
                        " input; a phased read needs the same value type, "
@@ -497,8 +500,8 @@ RigExecRigEvaluator::_CompilePropertyChains(
         candidate.connection.target = target;
         candidate.connection.hops = std::move(hops);
         candidate.widens =
-            consumerType.GetType() == TfType::Find<double>() &&
-            targetType.GetType() == TfType::Find<float>();
+            consumerType.GetType() == SdfValueTypeNames->Double.GetType() &&
+            targetType.GetType() == SdfValueTypeNames->Float.GetType();
         if (phase.kind == RigExecReadPhaseKind::Final) {
             candidate.connection.final = true;
             candidate.connection.applied = revisions.size();
@@ -511,7 +514,7 @@ RigExecRigEvaluator::_CompilePropertyChains(
                 }
             }
             if (applied == 0) {
-                return refuse(who + " names " + phase.prim.GetString() +
+                return refuse(who() + " names " + phase.prim.GetString() +
                               ", which revises nothing on " +
                               target.GetString());
             }

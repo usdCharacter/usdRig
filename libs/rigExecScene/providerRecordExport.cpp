@@ -1,5 +1,6 @@
 #include "pxr/base/gf/vec3i.h"
 #include "providerRecordExport.h"
+#include "rigExec/pathText.h"
 #include <type_traits>
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
@@ -88,16 +89,17 @@ bool RigExecExportProviderRecords(const RigExecProviderProgram &program,
         },source.value);
         if(!valid)return fail("provider export has an unsupported typed raw value: "+program.valueKeys[i]);
     }
+    RigExecPathText pathText;
     for(const auto &op:program.ops) {
         if(op.kind==RigExecProviderOpKind::LocalXform || op.kind==RigExecProviderOpKind::InterveningXform)
             return fail("provider wire export requires intervening transforms translated to external matrix leaves");
-        records.ops.push_back({op.kind,op.owner.GetString(),op.output,op.inputs,op.scaleAvars,
+        records.ops.push_back({op.kind,pathText(op.owner),op.output,op.inputs,op.scaleAvars,
             op.affineKind,op.affineTargets});
     }
-    for(const auto &leaf:program.sampled)records.sampled.push_back({leaf.value,leaf.attribute.GetString(),{}});
-    for(const auto &leaf:program.externalInputs)records.externalInputs.push_back({leaf.value,leaf.owner.GetString(),leaf.computation});
-    for(const auto &leaf:program.routedInputs)records.routedInputs.push_back({leaf.value,leaf.consumer.GetString(),
-        leaf.source.GetString(),leaf.readPhase.GetString()});
+    for(const auto &leaf:program.sampled)records.sampled.push_back({leaf.value,pathText(leaf.attribute),{}});
+    for(const auto &leaf:program.externalInputs)records.externalInputs.push_back({leaf.value,pathText(leaf.owner),leaf.computation});
+    for(const auto &leaf:program.routedInputs)records.routedInputs.push_back({leaf.value,pathText(leaf.consumer),
+        pathText(leaf.source),leaf.readPhase.GetString()});
     *output=std::move(records);return true;
 }
 }

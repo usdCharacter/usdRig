@@ -33,6 +33,7 @@
 #include "movers/moverRegistry.h"
 #include "movers/pathOperation.h"
 #include "parallel.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorInternal.h"
 #include "types.h"
@@ -1103,7 +1104,10 @@ bool _FixedNumericSourceResync(const RigExecBakedProgramImpl &B,
     _ForEachFixedNumericSource(B,[&](const auto &input) {
         if (input.head.GetPath()!=path) return;
         using T=std::decay_t<decltype(input.sourceFallback)>;
-        found=true;valid=valid && attribute.GetTypeName().GetType()==TfType::Find<T>();
+        static_assert(std::is_same_v<T,double> || std::is_same_v<T,GfVec3d>);
+        found=true;valid=valid && attribute.GetTypeName().GetType()==
+            (std::is_same_v<T,double> ? SdfValueTypeNames->Double
+                                      : SdfValueTypeNames->Double3).GetType();
     });
     return found && valid;
 }
@@ -2175,6 +2179,7 @@ _ProgramDigestRequested()
 struct _DigestTable {
     uint64_t hash = 1469598103934665603ull;
     size_t count = 0;
+    RigExecPathText pathText;
 
     void Bytes(const void *data, size_t size)
     {
@@ -2190,7 +2195,7 @@ struct _DigestTable {
         Bytes(&n, sizeof(n));
         Bytes(s.data(), s.size());
     }
-    void Path(const SdfPath &p) { Str(p.GetString()); }
+    void Path(const SdfPath &p) { Str(pathText(p)); }
     void Int(int64_t v) { Bytes(&v, sizeof(v)); }
     void Double(double v) { Bytes(&v, sizeof(v)); }
     void Matrix(const GfMatrix4d &m)
@@ -2956,6 +2961,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     B.chunkVertexTarget = RigExecBakedChunkVertexTargetFromEnvironment();
     B.gpuDeformStats = TfGetenvBool("RIGEXEC_GPU_DEFORM_STATS", false);
     RigExecBakedReadScheduleSettings(&B);
+    B.inputReplayCapture = RigExecInputReplayCaptureRequested();
     B.chunkCap = RigExecBakedChunkCapFromEnvironment();
     B.rangeChains = RigExecBakedRangeChainsFromEnvironment();
     B.groupVertexTarget = RigExecBakedGroupVertexTargetFromEnvironment();
@@ -3798,6 +3804,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     // the evaluator.
     phases.Next("Bake.pose_interpolators");
     // Geometry readers bind these compiled weight output identities.
+    RigExecPathText interpolatorText;
     for (const RigExecRigEvaluator::_PoseInterpolator &record :
              E._poseInterpolators) {
         if(!record.descriptor) {
@@ -3807,7 +3814,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         RigExecBakedProgramImpl::PoseInterpolator out;
         static_cast<RigExecPoseInterpolatorRecord &>(out)=captured.record;
         out.path = record.prim;
-        out.pathText = record.prim.GetString();
+        out.pathText = interpolatorText(record.prim);
         // A numeric driver reads dials, not a frame: it names no driver prim
         // and needs no slot.
         const bool numeric = !captured.driverAttributes.empty();
@@ -4296,6 +4303,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
     };
     // Keys describe authored owners and domain-local revisions, independently
     // of the descriptor emission or eventual execution order.
+    RigExecPathText labelText;
     for (auto &step : B.steps) {
         using K=RigExecBakedStepKind;
         SdfPath owner,target;
@@ -4400,9 +4408,9 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(RigExecRigEvaluator *evaluato
         }
         const auto position=E._nativePoseOrdinals.find(owner);
         if(position!=E._nativePoseOrdinals.end()) ordinal=position->second;
-        step.label=expression.empty()?owner.GetString():expression;
+        step.label=expression.empty()?labelText(owner):expression;
         step.descriptorKey=step.label+"/category:"+std::to_string(int(step.kind))+
-            "/stack:"+std::to_string(ordinal)+"/target:"+target.GetString()+
+            "/stack:"+std::to_string(ordinal)+"/target:"+labelText(target)+
             "/revision:"+std::to_string(revision)+"/subindex:"+std::to_string(step.part);
     }
     if (!ctx.ok) return nullptr;
@@ -4492,9 +4500,11 @@ RigExecBakedProgramImpl::ConstraintArrays::Names()
 bool
 RigExecBakedProgram::Run(UsdTimeCode time, RigExecRigPose *pose)
 {
-    RigExecInputReplayObserver::UnsupportedAction("RigExecBakedProgram::Run");
-    _lastBail = RigExecBakedBail::None;
     RigExecBakedProgramImpl &B = *_impl;
+    if (B.inputReplayCapture) {
+        RigExecInputReplayObserver::UnsupportedAction("RigExecBakedProgram::Run");
+    }
+    _lastBail = RigExecBakedBail::None;
     RigExecRigEvaluator &E = *B.evaluator;
     if (E.cpuReference) {
         std::string error;
@@ -5040,14 +5050,14 @@ RigExecBakedProgram::DescribeWeightOracle(
         }
         return value;
     };
-    const std::string who = prim.GetPath().GetAsString();
+    const auto who = [&prim] { return prim.GetPath().GetAsString(); };
     if (typeName == _tokens->rigExecCombineWeight) {
         const TfToken mode = readToken(_tokens->rigExecCombineMode, _tokens->multiply);
         if (mode != "multiply" && mode != "add" && mode != "subtract" &&
             mode != "max" && mode != "min" && mode != "average" &&
             mode != "overlay") {
             facts->staticError =
-                who + ": unknown rigExec:combineMode " + mode.GetString();
+                who() + ": unknown rigExec:combineMode " + mode.GetString();
         }
         return;
     }
@@ -5056,14 +5066,14 @@ RigExecBakedProgram::DescribeWeightOracle(
         std::string why;
         if (!evaluatorDetail::_VolumeWeightSamplesInFlight(prim, &inFlight,
                                                            &why)) {
-            facts->phaseError = who + ": " + why;
+            facts->phaseError = who() + ": " + why;
             return;
         }
         RigExecReadPhase targetPhase;
         std::string targetPhaseError;
         if (!RigExecResolveReadPhase(prim.GetRelationship(_tokens->rigExecWeightTarget),
                                     &targetPhase,&targetPhaseError)) {
-            facts->phaseError = who + ": " + targetPhaseError;
+            facts->phaseError = who() + ": " + targetPhaseError;
             return;
         }
         facts->samplesInFlight = targetPhase.kind == RigExecReadPhaseKind::Preceding;

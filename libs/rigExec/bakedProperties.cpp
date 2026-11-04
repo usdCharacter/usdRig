@@ -8,6 +8,7 @@
 #include "frozenContextInternal.h"
 #include "movers/moverRegistry.h"
 #include "movers/pathOperation.h"
+#include "pathText.h"
 #include "rigEvaluator.h"
 #include "rigEvaluatorPropertyBindings.h"
 
@@ -148,16 +149,16 @@ TfType
 TypeOf(HeadType type)
 {
     switch (type) {
-    case HeadType::Bool: return TfType::Find<bool>();
-    case HeadType::Float: return TfType::Find<float>();
-    case HeadType::Double: return TfType::Find<double>();
-    case HeadType::Vec3f: return TfType::Find<GfVec3f>();
-    case HeadType::Matrix4d: return TfType::Find<GfMatrix4d>();
-    case HeadType::Vec2fArray: return TfType::Find<VtArray<GfVec2f>>();
-    case HeadType::Int: return TfType::Find<int>();
-    case HeadType::Token: return TfType::Find<TfToken>();
-    case HeadType::Vec3d: return TfType::Find<GfVec3d>();
-    case HeadType::Vec3fArray: return TfType::Find<VtVec3fArray>();
+    case HeadType::Bool: return SdfValueTypeNames->Bool.GetType();
+    case HeadType::Float: return SdfValueTypeNames->Float.GetType();
+    case HeadType::Double: return SdfValueTypeNames->Double.GetType();
+    case HeadType::Vec3f: return SdfValueTypeNames->Float3.GetType();
+    case HeadType::Matrix4d: return SdfValueTypeNames->Matrix4d.GetType();
+    case HeadType::Vec2fArray: return SdfValueTypeNames->Float2Array.GetType();
+    case HeadType::Int: return SdfValueTypeNames->Int.GetType();
+    case HeadType::Token: return SdfValueTypeNames->Token.GetType();
+    case HeadType::Vec3d: return SdfValueTypeNames->Double3.GetType();
+    case HeadType::Vec3fArray: return SdfValueTypeNames->Float3Array.GetType();
     }
     return TfType();
 }
@@ -231,6 +232,7 @@ struct BindState {
     std::unordered_map<SdfPath, int, SdfPath::Hash> recordOfConsumer;
     /// When set, receives each override slot this state creates.
     std::vector<SdfPath> *newSlots = nullptr;
+    RigExecPathText pathText;
 
     int Slot(const SdfPath &path)
     {
@@ -282,7 +284,8 @@ struct BindState {
             read.phase = consumerPhase;
             bool cross = false;
             if (consumerType == HeadType::Vec3f && consumerElement >= 0 &&
-                attribute.GetTypeName().GetType() == TfType::Find<VtVec3fArray>()) {
+                attribute.GetTypeName().GetType() ==
+                    SdfValueTypeNames->Float3Array.GetType()) {
                 read.kind = RigExecCrossDomainRead::Kind::PointElement;
                 read.element = consumerElement;
                 // A source with no mover chain is an ordinary sampled array.
@@ -291,7 +294,8 @@ struct BindState {
                 if (!chain) read.rawLeaf = Leaf(attribute,HeadType::Vec3fArray);
                 cross = true;
             } else if (consumerType == HeadType::Vec3fArray &&
-                       attribute.GetTypeName().GetType() == TfType::Find<VtVec3fArray>()) {
+                       attribute.GetTypeName().GetType() ==
+                           SdfValueTypeNames->Float3Array.GetType()) {
                 cross = RigExecBakedBindConnectionValue(B,consumer.GetPath(),hop.path,consumerPhase,&read);
             } else if (consumerType == HeadType::Matrix4d &&
                        attribute.GetTypeName() == SdfValueTypeNames->Matrix4d &&
@@ -311,8 +315,8 @@ struct BindState {
                 }
             }
             if (cross) {
-                read.unavailable = "diag " + read.consumer.GetString() +
-                    ": cross-domain input " + read.source.GetString() +
+                read.unavailable = "diag " + pathText(read.consumer) +
+                    ": cross-domain input " + pathText(read.source) +
                     (read.element >= 0 ? " element " + std::to_string(read.element) : std::string()) +
                     " is unavailable; using the typed fallback";
                 hop.crossDomain = int(B.crossDomainReads.size());
@@ -1220,7 +1224,7 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
         state.chainOfTarget.emplace(target, int(B.propertyChains.size()));
         Chain chain;
         chain.target = target;
-        chain.linePrefix = "property chain " + target.GetString();
+        chain.linePrefix = "property chain " + state.pathText(target);
         B.propertyChains.push_back(std::move(chain));
         revisionsOf.push_back(&found->second);
     }
@@ -1274,7 +1278,7 @@ RigExecBakedProgram::_BindPropertyChains(const RigExecRigEvaluator &E,
              *revisionsOf[c]) {
             Chain::Revision r;
             r.mover = revision.moverPath;
-            r.linePrefix = "diag " + r.mover.GetString();
+            r.linePrefix = "diag " + state.pathText(r.mover);
             const UsdPrim mover = stage->GetPrimAtPath(r.mover);
             r.moverExists = bool(mover);
             // Structural: the operation is folded and the weight object
@@ -1529,6 +1533,7 @@ void
 RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
+    RigExecPathText pathText;
     uint32_t id = 0;
     for (Chain &chain : B.propertyChains) {
         chain.versionBase = id;
@@ -1561,7 +1566,7 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                 if (chain.targetSlot >= 0) {
                     slots.insert(uint32_t(chain.targetSlot));
                 }
-                step.label = "PropertyRevision " + chain.target.GetString() +
+                step.label = "PropertyRevision " + pathText(chain.target) +
                              " base";
             } else {
                 const Chain::Revision &r = chain.revisions[k - 1];
@@ -1608,7 +1613,7 @@ RigExecBakedBuildPropertySteps(RigExecBakedProgramImpl *program)
                     }
                 });
                 step.alwaysRuns = !r.weightObject.IsEmpty();
-                step.label = "PropertyRevision " + r.mover.GetString();
+                step.label = "PropertyRevision " + pathText(r.mover);
             }
             writes.insert(chain.versionBase + uint32_t(k));
             for (const uint32_t record : chain.records) {

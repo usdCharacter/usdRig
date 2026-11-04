@@ -1,6 +1,7 @@
 #include "geometryProgram.h"
 #include "rigExecMath/blendLayoutKernel.h"
 #include "rigExec/moverGraph.h"
+#include "rigExec/pathText.h"
 #include <cmath>
 namespace rigExec {
 RigExecMoverParameters RigExecAssembleGeometry(const RigExecGeometryRecord &record,
@@ -91,8 +92,10 @@ bool RigExecRunGeometryMatrix(const RigExecGeometryRecord &record,
     std::vector<std::string> *diagnostics)
 {
     // Only the surface projector names its mover in a diagnostic.
-    const std::string who=record.op==RigExecRevisionOp::SurfaceProjector?
-        record.binding.moverPath.GetString():std::string();
+    std::string who;
+    const SdfPath &mover=record.binding.moverPath;
+    if(record.op==RigExecRevisionOp::SurfaceProjector && !RigExecSpellPathText(mover,&who) && !mover.IsEmpty())
+        who=mover.GetAsString();
     return workspace && matrix && RigExecRunProjectorTarget(record.op,record.binding,
         frames,reads,base,final,who,matrix,diagnostics,&workspace->surface);
 }

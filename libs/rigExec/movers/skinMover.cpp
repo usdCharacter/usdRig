@@ -73,14 +73,14 @@ _ValidateSkinMover(
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
     const std::vector<SdfPath> &targets = ctx.targets;
-    const std::string who = "SkinMover " + prim.GetPath().GetString();
+    const auto who = [&] { return "SkinMover " + prim.GetPath().GetString(); };
     // The target rules are the matrix mover's: one native points property,
     // because the jointIndices/jointWeights layout is written against one
     // point count and a fan-out would alias it across targets.
     if (targets.size() != 1 ||
         !targets[0].IsPropertyPath() ||
         targets[0].GetNameToken() != "points") {
-        *error = who + ": moves must resolve to exactly one native "
+        *error = who() + ": moves must resolve to exactly one native "
                        "PointBased points property" +
                  (targets.size() == 1
                       ? rigExec::RigExecPointsTargetHint(stage, targets[0])
@@ -90,14 +90,14 @@ _ValidateSkinMover(
     const UsdPrim owner =
         stage->GetPrimAtPath(targets[0].GetPrimPath());
     if (!owner || !owner.IsA<UsdGeomPointBased>()) {
-        *error = who + ": move target owner is not a stock PointBased prim";
+        *error = who() + ": move target owner is not a stock PointBased prim";
         return false;
     }
     const UsdAttribute targetAttr =
         stage->GetAttributeAtPath(targets[0]);
     if (!targetAttr ||
         targetAttr.GetTypeName() != SdfValueTypeNames->Point3fArray) {
-        *error = who + ": move target is not an exact point3f[] property";
+        *error = who() + ": move target is not an exact point3f[] property";
         return false;
     }
 
@@ -107,7 +107,7 @@ _ValidateSkinMover(
         rel.GetTargets(&influences);
     }
     if (influences.empty()) {
-        *error = who + ": rigExec:influences must name at least one matrix "
+        *error = who() + ": rigExec:influences must name at least one matrix "
                        "provider";
         return false;
     }
@@ -118,7 +118,7 @@ _ValidateSkinMover(
     for (const SdfPath &influence : influences) {
         const UsdPrim provider = stage->GetPrimAtPath(influence);
         if (!provider || !isFrameProvider(provider.GetTypeName())) {
-            *error = who + ": rigExec:influences target " +
+            *error = who() + ": rigExec:influences target " +
                      influence.GetString() +
                      " is not a catalogued matrix provider";
             return false;
@@ -132,7 +132,7 @@ _ValidateSkinMover(
         a.Get(&method);
     }
     if (method != "classicLinear" && method != "dualQuaternion") {
-        *error = who + ": unknown rigExec:skinningMethod '" +
+        *error = who() + ": unknown rigExec:skinningMethod '" +
                  method.GetString() + "'";
         return false;
     }
@@ -146,7 +146,7 @@ _ValidateSkinMover(
         a.Get(&elementSize);
     }
     if (elementSize < 1) {
-        *error = who + ": rigExec:elementSize must be at least 1";
+        *error = who() + ": rigExec:elementSize must be at least 1";
         return false;
     }
     VtIntArray indices;
@@ -158,7 +158,7 @@ _ValidateSkinMover(
         a.Get(&weights);
     }
     if (indices.size() != weights.size()) {
-        *error = who + ": rigExec:jointIndices length " +
+        *error = who() + ": rigExec:jointIndices length " +
                  std::to_string(indices.size()) +
                  " must equal rigExec:jointWeights length " +
                  std::to_string(weights.size());
@@ -167,7 +167,7 @@ _ValidateSkinMover(
     VtVec3fArray points;
     if (targetAttr.Get(&points) && !points.empty() &&
         indices.size() != points.size() * size_t(elementSize)) {
-        *error = who + ": rigExec:jointIndices length " +
+        *error = who() + ": rigExec:jointIndices length " +
                  std::to_string(indices.size()) + " must equal " +
                  std::to_string(points.size()) + " points * elementSize " +
                  std::to_string(elementSize);
@@ -175,14 +175,14 @@ _ValidateSkinMover(
     }
     for (size_t i = 0; i < indices.size(); ++i) {
         if (indices[i] < 0 || size_t(indices[i]) >= influences.size()) {
-            *error = who + ": rigExec:jointIndices[" + std::to_string(i) +
+            *error = who() + ": rigExec:jointIndices[" + std::to_string(i) +
                      "] = " + std::to_string(indices[i]) +
                      " is outside the " + std::to_string(influences.size()) +
                      " influences";
             return false;
         }
         if (!std::isfinite(weights[i]) || weights[i] < 0.0f) {
-            *error = who + ": rigExec:jointWeights[" + std::to_string(i) +
+            *error = who() + ": rigExec:jointWeights[" + std::to_string(i) +
                      "] must be finite and non-negative";
             return false;
         }

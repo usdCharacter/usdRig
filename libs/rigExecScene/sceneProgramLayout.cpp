@@ -1,6 +1,7 @@
 #include "sceneProgramLayout.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "sceneCompileInputs.h"
+#include "rigExec/pathText.h"
 #include <algorithm>
 namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
@@ -29,14 +30,14 @@ bool RigExecSceneProgramLayout::Prepare(const RigExecSceneDescriptors &scene,std
         }
     }
     providers.valueKeys=valueKeys;
-    RigExecSceneCompileInputs source(scene);
+    RigExecSceneCompileInputs source(scene);RigExecPathText pathText;
     for(const auto &[path,attribute]:scene.attributes) {
-        RigExecSceneSampleSlot slot;slot.path=path;
+        RigExecSceneSampleSlot slot;slot.path=path;const std::string &text=pathText(path);
         const auto existing=providers.rawInputs.find(path);
         slot.providerRaw=existing==providers.rawInputs.end()?UINT64_MAX:existing->second;
-        slot.raw=Allocate("sourceRaw:"+path.GetString());slot.type=std::type_index(attribute.fact.type.GetType().GetTypeid());
-        slot.rawDefault=Allocate("rawDefault:"+path.GetString());
-        slot.overlay=Allocate("overlay:"+path.GetString());
+        slot.raw=Allocate("sourceRaw:"+text);slot.type=std::type_index(attribute.fact.type.GetType().GetTypeid());
+        slot.rawDefault=Allocate("rawDefault:"+text);
+        slot.overlay=Allocate("overlay:"+text);
         RigExecSceneBoundInput raw;
         if(!source.Bind(path,RigExecSceneReadRoute::Raw,&raw,error))return false;
         slot.values=raw.values;slot.available=raw.available;slot.blocked=raw.blocked;
@@ -47,13 +48,13 @@ bool RigExecSceneProgramLayout::Prepare(const RigExecSceneDescriptors &scene,std
         for(const auto id:{samples.back().raw,samples.back().rawDefault,samples.back().overlay})
             if(std::find(leaves.begin(),leaves.end(),id)==leaves.end())leaves.push_back(id);
         const auto domain=path.GetNameToken()=="points"?RigExecSceneValueDomain::Points:RigExecSceneValueDomain::Property;
-        const auto base=Allocate("base:"+path.GetString());
+        const auto base=Allocate("base:"+text);
         baseSelections.push_back({samples.back().raw,samples.back().overlay,base});
-        RigExecOpDescriptor select;select.key="selectBase:"+path.GetString();select.kind=100;
+        RigExecOpDescriptor select;select.key="selectBase:"+text;select.kind=100;
         select.reads={samples.back().raw,samples.back().overlay};select.writes={base};descriptors.push_back(std::move(select));
-        const auto selectedDefault=Allocate("selectedDefault:"+path.GetString());samples.back().selectedDefault=selectedDefault;
+        const auto selectedDefault=Allocate("selectedDefault:"+text);samples.back().selectedDefault=selectedDefault;
         baseSelections.push_back({samples.back().rawDefault,samples.back().overlay,selectedDefault});
-        RigExecOpDescriptor defaultSelect;defaultSelect.key="selectDefault:"+path.GetString();defaultSelect.kind=100;
+        RigExecOpDescriptor defaultSelect;defaultSelect.key="selectDefault:"+text;defaultSelect.kind=100;
         defaultSelect.reads={samples.back().rawDefault,samples.back().overlay};defaultSelect.writes={selectedDefault};descriptors.push_back(std::move(defaultSelect));
         if(!routes.RegisterBase({path,domain},base,error))return false;
     }
@@ -63,11 +64,11 @@ bool RigExecSceneProgramLayout::Prepare(const RigExecSceneDescriptors &scene,std
             if(id!=UINT64_MAX && !routes.RegisterBase({path,RigExecSceneValueDomain::Pose},id,error))return false;
         }
         if(node.domain==RigExecSceneDomain::Solver) {
-            const auto id=Allocate("solverAggregate:"+path.GetString());solverAggregates[path]=id;
+            const auto id=Allocate("solverAggregate:"+pathText(path));solverAggregates[path]=id;
             if(!routes.RegisterBase({path,RigExecSceneValueDomain::SolverAggregate},id,error))return false;
         }
         if(node.domain==RigExecSceneDomain::Weight) {
-            const auto id=Allocate("weightPacket:"+path.GetString());weightPackets[path]=id;
+            const auto id=Allocate("weightPacket:"+pathText(path));weightPackets[path]=id;
             if(!routes.RegisterBase({path,RigExecSceneValueDomain::Weight},id,error))return false;
         }
     }

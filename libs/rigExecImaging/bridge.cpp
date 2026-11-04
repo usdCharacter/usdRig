@@ -1507,15 +1507,16 @@ RigExecImagingBridge::_FillClothConstraintGuides(
                     RigExecRevisionBinding binding;
                     auto declaration = cloth_inputs::StageDeclaration(_stage, &leaves, &binding);
                     if (declaration.type(constraint) != "RigExecClothConstraintSet") continue;
+                    const auto &T = *cloth_inputs::_clothInputsTokens;
                     VtDictionary kind;
-                    declaration.Attribute(&kind, "kind", constraint, "rigExec:kind",
-                                          RigExecRevisionLeafType::Token, VtValue(TfToken("stretch")));
-                    guide.targetMesh = declaration.Target(constraint, "rigExec:targetMesh").GetPrimPath();
+                    declaration.Attribute(&kind, "kind", constraint, T.rigExecKind,
+                                          RigExecRevisionLeafType::Token, VtValue(T.stretch));
+                    guide.targetMesh = declaration.Target(constraint, T.rigExecTargetMesh).GetPrimPath();
                     if (guide.targetMesh.IsEmpty()) guide.targetMesh = guide.sourceMesh;
                     const auto source = declaration.Binding(
-                        declaration.Target(constraint, "rigExec:sourceBinding"), guide.sourceMesh);
+                        declaration.Target(constraint, T.rigExecSourceBinding), guide.sourceMesh);
                     const auto target = declaration.Binding(
-                        declaration.Target(constraint, "rigExec:targetBinding"), guide.targetMesh);
+                        declaration.Target(constraint, T.rigExecTargetBinding), guide.targetMesh);
                     const auto values = cloth_inputs::SampleLeaves(_stage, leaves, UsdTimeCode::Default());
                     const auto *attachment = cloth_inputs::Value<TfToken>(values, kind, "kind");
                     if (declaration.valid && attachment && *attachment == "attachment" &&

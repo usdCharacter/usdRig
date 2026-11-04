@@ -15,6 +15,19 @@ using namespace frozenDetail;
 
 namespace {
 
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    ((inputsEnabled, "inputs:enabled"))
+    ((inputsDefaultWeight, "inputs:defaultWeight"))
+    ((rigExecOperation, "rigExec:operation"))
+    ((inputsValue, "inputs:value"))
+    ((inputsMin, "inputs:min"))
+    ((inputsMax, "inputs:max"))
+    ((inputsKeys, "inputs:keys"))
+    ((inputsTangents, "inputs:tangents"))
+    ((rigExecWeightObject, "rigExec:weightObject"))
+);
+
 // Thread-local serial depth. A plain counter rather than a bool so scopes
 // nest; the query is "inside at least one".
 thread_local size_t _frozenSerialDepth = 0;
@@ -354,6 +367,7 @@ RigExecBindChainSampleInputs(const RigExecRigEvaluator &evaluator,
         return false;
     }
     RigExecChainSampleBindings bound;
+    const auto &T = *_tokens;
     for (const SdfPath &targetPath : order) {
         RigExecChainSampleChain chain;
         chain.targetPath = targetPath;
@@ -367,19 +381,19 @@ RigExecBindChainSampleInputs(const RigExecRigEvaluator &evaluator,
             revision.moverPath = mover.moverPath;
             revision.moverPrim = stage->GetPrimAtPath(mover.moverPath);
             if (const UsdRelationship rel = revision.moverPrim.GetRelationship(
-                    TfToken("rigExec:weightObject"))) {
+                    T.rigExecWeightObject)) {
                 rel.GetTargets(&revision.weightObjects);
             }
             const UsdPrim &prim = revision.moverPrim;
-            revision.enabled = _BindChainInput(prim, "inputs:enabled");
+            revision.enabled = _BindChainInput(prim, T.inputsEnabled);
             revision.defaultWeight =
-                _BindChainInput(prim, "inputs:defaultWeight");
-            revision.operation = _BindChainInput(prim, "rigExec:operation");
-            revision.value = _BindChainInput(prim, "inputs:value");
-            revision.minimum = _BindChainInput(prim, "inputs:min");
-            revision.maximum = _BindChainInput(prim, "inputs:max");
-            revision.keys = _BindChainInput(prim, "inputs:keys");
-            revision.tangents = _BindChainInput(prim, "inputs:tangents");
+                _BindChainInput(prim, T.inputsDefaultWeight);
+            revision.operation = _BindChainInput(prim, T.rigExecOperation);
+            revision.value = _BindChainInput(prim, T.inputsValue);
+            revision.minimum = _BindChainInput(prim, T.inputsMin);
+            revision.maximum = _BindChainInput(prim, T.inputsMax);
+            revision.keys = _BindChainInput(prim, T.inputsKeys);
+            revision.tangents = _BindChainInput(prim, T.inputsTangents);
             chain.revisions.push_back(std::move(revision));
         }
         for (const RigExecPhasedConnection &connection :

@@ -3776,7 +3776,8 @@ TestTheSamplerServesStaticBasesAndBlends(const std::string &examplesDir)
                     held.push_back(blendSample.activation.GetPath());
                     if (blendSample.points.IsValid()) {
                         held.push_back(frozenDetail::_FrozenBlendInputKey(
-                            blendSample.samplePath, "points"));
+                            blendSample.samplePath,
+                            frozenDetail::_frozenInputKeyTokens->blendPoints));
                     }
                 }
             }

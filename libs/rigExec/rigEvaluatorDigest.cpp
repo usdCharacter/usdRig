@@ -824,7 +824,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     for (const UsdPrim &prim :
          UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
         if (prim.GetTypeName() != _tokens->rigExecSpaceSwitch) continue;
-        digest += prim.GetPath().GetString();
+        digest += pathText(prim.GetPath());
         digest += '|';
         appendRelTargets(prim, _tokens->rigExecTarget, false);
         appendRelTargets(prim, _tokens->rigExecSources, false);
@@ -857,7 +857,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
     for (const UsdPrim &prim :
          UsdPrimRange(_stage->GetPrimAtPath(_rigPath))) {
         if (prim.GetTypeName() != _tokens->rigExecAutoClavicle) continue;
-        digest += prim.GetPath().GetString();
+        digest += pathText(prim.GetPath());
         digest += '|';
         for (const TfToken &rel :
              {_tokens->rigExecTarget, _tokens->rigExecPivot,

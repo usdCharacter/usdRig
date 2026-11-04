@@ -115,7 +115,6 @@ struct Declaration {
         if (paths.size() > 1) valid = false;
         return paths.size() == 1 ? paths[0] : SdfPath();
     }
-    SdfPath Target(const SdfPath &prim, const char *name) { return Target(prim, TfToken(name)); }
     void Field(Dictionary *d, const char *key, const SdfPath &path,
                RigExecRevisionLeafType type, VtValue fallback)
     {
@@ -126,9 +125,6 @@ struct Declaration {
     void Attribute(Dictionary *d, const char *key, const SdfPath &prim, const TfToken &name,
                    RigExecRevisionLeafType type, VtValue fallback)
     { Field(d, key, prim.AppendProperty(name), type, std::move(fallback)); }
-    void Attribute(Dictionary *d, const char *key, const SdfPath &prim, const char *name,
-                   RigExecRevisionLeafType type, VtValue fallback)
-    { Attribute(d, key, prim, TfToken(name), type, std::move(fallback)); }
     Dictionary UV(SdfPath path)
     {
         Dictionary d;
