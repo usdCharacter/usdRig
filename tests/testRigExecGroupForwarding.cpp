@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -53,6 +54,8 @@ static int failures = 0;
             std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
         }                                                                  \
     } while (0)
+
+#include "rigExecFileEdit.h"
 
 namespace {
 
@@ -619,6 +622,134 @@ TestAGatedChainForwards()
     std::printf("  a gated chain forwards without recomputing its support\n");
 }
 
+void
+TestSparseBlendChunks()
+{
+    const auto stage = MakeGatedStage(0.5f, 0.25f, 1.0);
+    VtVec3fArray base;
+    stage->GetAttributeAtPath(SdfPath("/Asset/Shape.points")).Get(&base);
+    for (const auto &source : {std::make_pair(kRaise, "/Asset/Raised"),
+                               std::make_pair(kLift, "/Asset/Lifted")}) {
+        VtVec3fArray points, offsets;
+        VtIntArray indices;
+        stage->GetAttributeAtPath(SdfPath(source.second).AppendProperty(TfToken("points")))
+            .Get(&points);
+        for (size_t i = 0; i < points.size(); ++i) {
+            if (points[i] != base[i]) {
+                indices.push_back(int(i));
+                offsets.push_back(points[i] - base[i]);
+            }
+        }
+        const auto shape = stage->DefinePrim(
+            SdfPath(source.second).AppendChild(TfToken("Delta")), TfToken("BlendShape"));
+        shape.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Vector3fArray).Set(offsets);
+        shape.CreateAttribute(TfToken("pointIndices"), SdfValueTypeNames->IntArray).Set(indices);
+        auto sample = stage->GetPrimAtPath(SdfPath(source.first).AppendChild(TfToken("Full")));
+        sample.RemoveProperty(TfToken("rigExec:targetPoints"));
+        sample.CreateRelationship(TfToken("rigExec:blendShape")).SetTargets({shape.GetPath()});
+        const auto half = stage->DefinePrim(
+            SdfPath(source.first).AppendChild(TfToken("Half")), TfToken("RigExecBlendSample"));
+        const auto halfShape = stage->DefinePrim(
+            SdfPath(source.second).AppendChild(TfToken("HalfDelta")), TfToken("BlendShape"));
+        for (auto &offset : offsets) offset *= 0.3f;
+        indices.push_back(indices.front());
+        offsets.push_back(GfVec3f(0.013f, 0.027f, -0.019f));
+        halfShape.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Vector3fArray).Set(offsets);
+        halfShape.CreateAttribute(TfToken("pointIndices"), SdfValueTypeNames->IntArray).Set(indices);
+        half.CreateAttribute(TfToken("rigExec:activation"), SdfValueTypeNames->Float).Set(0.4f);
+        half.CreateRelationship(TfToken("rigExec:blendShape")).SetTargets({halfShape.GetPath()});
+        stage->GetPrimAtPath(SdfPath(source.first)).GetRelationship(TfToken("rigExec:samples"))
+            .SetTargets({sample.GetPath(), half.GetPath()});
+    }
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "1");
+    RigExecRigEvaluator evaluator(stage, SdfPath(kRig));
+    std::vector<std::string> errors;
+    const bool compiled = evaluator.Compile(&errors);
+    TfSetenv("RIGEXEC_VERIFY_RANGE_CHAINS", "0");
+    for (const auto &error : errors) std::printf("  sparse compile: %s\n", error.c_str());
+    CHECK(compiled);
+    if (!compiled) return;
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    CHECK(evaluator.Evaluate(UsdTimeCode(1)).valid);
+    const auto &B = evaluator.GetBakedProgram()->GetStepGraph();
+    const int c = FindChain(B, SdfPath("/Asset/Shape.points"));
+    CHECK(c >= 0);
+    if (c < 0) return;
+    const auto &chain = B.chains[size_t(c)];
+    const int r = FindRevision(chain, "Blend");
+    CHECK(r >= 0);
+    if (r < 0) return;
+    const auto &revision = chain.revisions[size_t(r)];
+    CHECK(revision.blendChunked);
+    CHECK(revision.chunks.size() == 10);
+    if (!revision.blendChunked || revision.chunks.size() != 10) return;
+    for (size_t g = 0; g < 10; ++g) {
+        std::vector<int> expected;
+        for (size_t ch = 0; ch < revision.blendChannels.size(); ++ch) {
+            const bool lift = revision.blendChannels[ch].weightPath.GetPrimPath() == SdfPath(kLift);
+            if (lift ? g == 1 : g < 4) expected.push_back(int(ch));
+        }
+        CHECK(revision.chunks[g].key == expected);
+    }
+    RigExecRigEvaluator bakeEvaluator(stage, SdfPath(kRig));
+    std::vector<uint8_t> bytes;
+    std::string error;
+    RigExecTestPlayer player;
+    const bool baked = RigExecTestBakeAt(bakeEvaluator, 1, &bytes, &error) &&
+                       player.Open(bytes, stage, &error);
+    if (!baked) std::printf("  sparse bake: %s\n", error.c_str());
+    CHECK(baked);
+    const int id = B.chainRevisionBegin[size_t(c)] + r;
+    if (baked) {
+        const auto bad = RigExecTestEdited(bytes, [](auto *file) {
+            file->geometry->chains[0].revisions[0].chunks[1].key.clear();
+        });
+        CHECK(!RigExecRuntimeReader::Open(bad.data(), bad.size(), &error));
+        CHECK(error.find("blend key") != std::string::npos);
+        const auto exposed = RigExecTestEdited(bytes, [](auto *file) {
+            const auto &revision = file->geometry->chains[0].revisions[0];
+            for (const auto &site : revision.leafSites) {
+                if (site.read->tag != RigExecWireInputTag::IntArray || site.read->walk.empty()) continue;
+                const auto slot = site.read->walk.front();
+                const auto before = file->inputs[slot];
+                file->inputs[slot] = fb::InputSlot(before.name(), before.value(), before.chain(),
+                    before.phased(), before.type(), before.flags() | uint8_t(fb::InputSlotFlags::Listed));
+                break;
+            }
+        });
+        CHECK(!RigExecRuntimeReader::Open(exposed.data(), exposed.size(), &error));
+    }
+    for (float weight : {0.7f, 0.15f, std::numeric_limits<float>::quiet_NaN(),
+                         std::numeric_limits<float>::infinity(),
+                         -std::numeric_limits<float>::infinity(), 0.3f}) {
+        evaluator.SetInteractiveOverrides({Override(kLift, "inputs:weight", VtValue(weight))});
+        const auto pose = evaluator.Evaluate(UsdTimeCode(1));
+        CHECK(pose.valid);
+        const auto ran = RanSteps(B, RigExecBakedStepKind::RevisionChunk);
+        CHECK(ran.count({id, 1}));
+        for (size_t g = 0; g < 10; ++g) if (g != 1) CHECK(!ran.count({id, int(g)}));
+        CHECK(!RanFor(RanSteps(B, RigExecBakedStepKind::RevisionStatic), id));
+        CHECK(B.rangeVerifyMismatches == 0);
+        if (baked) {
+            if (!std::isfinite(weight)) {
+                CHECK(!player.Hold(std::string(kLift) + ".inputs:weight", weight, &error));
+                CHECK(player.Hold(std::string(kLift) + ".inputs:weight", 0, &error));
+            }
+            const bool played = (!std::isfinite(weight) ||
+                                 player.Hold(std::string(kLift) + ".inputs:weight", weight, &error)) &&
+                                player.Play(1, &error);
+            if (!played) std::printf("  sparse runtime: %s\n", error.c_str());
+            CHECK(played);
+            std::vector<std::string> diffs;
+            CHECK(played && RigExecCompareRuntimeOutputs(pose, player.Reader(), &diffs));
+            for (const auto &diff : diffs) std::printf("  sparse runtime: %s\n", diff.c_str());
+        }
+    }
+    evaluator.ClearInteractiveOverrides();
+    CHECK(RigExecFrozenMatchesLive(&evaluator, SdfPath(kRig), UsdTimeCode(1), &error));
+    std::printf("  sparse blend weights wake only their vertex groups\n");
+}
+
 // --- The biped ---------------------------------------------------------------
 
 const char *const kBipedRig = "/Biped/Rig";
@@ -690,6 +821,24 @@ TestTheBipedArmEditForwards(const std::string &examplesDir)
     }
     const Chain &chain = B.chains[size_t(c)];
     const std::string focus = "cheekPuff_l_cluster";
+    const int bodyBlend = FindRevision(chain, "body_geo_shapes");
+    CHECK(bodyBlend >= 0);
+    if (bodyBlend >= 0) {
+        const auto &blend = chain.revisions[size_t(bodyBlend)];
+        CHECK(blend.blendChunked);
+        size_t smallest = blend.blendChannels.size(), largest = 0;
+        for (const auto &chunk : blend.chunks) {
+            smallest = std::min(smallest, chunk.key.size());
+            largest = std::max(largest, chunk.key.size());
+        }
+        const int id = B.chainRevisionBegin[size_t(c)] + bodyBlend;
+        for (const auto &step : B.steps) {
+            if (step.kind != RigExecBakedStepKind::RevisionStatic || step.object != id) continue;
+            for (const auto &read : step.reads) CHECK(read.domain != RigExecBakedSlotDomain::PoseWeight);
+        }
+        std::printf("  biped body blend: %zu channels, %zu groups, %zu..%zu channels per group; no static pose-weight reads\n",
+                    blend.blendChannels.size(), blend.chunks.size(), smallest, largest);
+    }
     const int r = FindRevision(chain, focus);
     CHECK(r >= 0 && chain.groupBounds.size() >= 3);
     if (r < 0 || chain.groupBounds.size() < 3) {
@@ -792,6 +941,7 @@ main(int argc, char **argv)
         return 2;
     }
     TestAGatedChainForwards();
+    TestSparseBlendChunks();
     TestTheBipedArmEditForwards(argv[1]);
     if (failures) {
         std::printf("testRigExecGroupForwarding: %d failure(s)\n", failures);

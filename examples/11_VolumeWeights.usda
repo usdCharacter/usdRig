@@ -283,9 +283,7 @@ def Xform "VolumeAsset"
             )
             {
                 rel rigExec:moves = </VolumeAsset/Geom/Strip.points>
-                rel rigExec:transform = </VolumeAsset/Rig/Joints/Shoulder> (
-                    rigExecReadPhase = "final"
-                )
+                rel rigExec:transform = </VolumeAsset/Rig/Joints/Shoulder>
                 rel rigExec:weightObject = </VolumeAsset/Rig/Joints/Shoulder/ShoulderVolume>
                 uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -294,9 +292,7 @@ def Xform "VolumeAsset"
                 )
                 {
                     rel rigExec:moves = </VolumeAsset/Geom/Strip.points>
-                    rel rigExec:transform = </VolumeAsset/Rig/Joints/Mid> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </VolumeAsset/Rig/Joints/Mid>
                     rel rigExec:weightObject = </VolumeAsset/Rig/Weights/MidCombined>
                     uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -305,9 +301,7 @@ def Xform "VolumeAsset"
                     )
                     {
                         rel rigExec:moves = </VolumeAsset/Geom/Strip.points>
-                        rel rigExec:transform = </VolumeAsset/Rig/Joints/Tip> (
-                            rigExecReadPhase = "final"
-                        )
+                        rel rigExec:transform = </VolumeAsset/Rig/Joints/Tip>
                         rel rigExec:weightObject = </VolumeAsset/Rig/Weights/TipTube>
                         uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
                     }

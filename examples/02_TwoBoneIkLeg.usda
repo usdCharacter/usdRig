@@ -212,9 +212,7 @@ def Xform "LegAsset"
                 )
                 {
                     rel rigExec:moves = </LegAsset/Geom/LegStrip.points>
-                    rel rigExec:transform = </LegAsset/Rig/Joints/Hip> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </LegAsset/Rig/Joints/Hip>
                     rel rigExec:weightObject = </LegAsset/Rig/Weights/HipW>
                     uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -223,9 +221,7 @@ def Xform "LegAsset"
                     )
                     {
                         rel rigExec:moves = </LegAsset/Geom/LegStrip.points>
-                        rel rigExec:transform = </LegAsset/Rig/Joints/Hip/Knee> (
-                            rigExecReadPhase = "final"
-                        )
+                        rel rigExec:transform = </LegAsset/Rig/Joints/Hip/Knee>
                         rel rigExec:weightObject = </LegAsset/Rig/Weights/KneeDriven>
                         uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -234,9 +230,7 @@ def Xform "LegAsset"
                         )
                         {
                             rel rigExec:moves = </LegAsset/Geom/LegStrip.points>
-                            rel rigExec:transform = </LegAsset/Rig/Joints/Hip/Knee/Ankle> (
-                                rigExecReadPhase = "final"
-                            )
+                            rel rigExec:transform = </LegAsset/Rig/Joints/Hip/Knee/Ankle>
                             rel rigExec:weightObject = </LegAsset/Rig/Weights/AnkleW>
                             uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
                         }

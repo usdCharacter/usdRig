@@ -2741,7 +2741,7 @@ def main(argv):
     parser.add_argument("--out", default=os.path.join(RIG, "docs", "gifs"))
     parser.add_argument("--samples", type=int, default=None,
                         help="poses per loop (default %d, or every frame "
-                             "for a windowed operator)" % TARGET_SAMPLES)
+                             "for a temporal operator)" % TARGET_SAMPLES)
     parser.add_argument("--sheet", action="store_true",
                         help="also write <name>_sheet.png, 6 frames across")
     parser.add_argument("--list", action="store_true", dest="list_only",

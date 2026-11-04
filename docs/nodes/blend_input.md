@@ -35,8 +35,9 @@ bracketing samples, with an implicit zero-delta sample at activation 0.
 
 The channel evaluates its samples against the weight: below the
 first activation the delta fades in, between samples it interpolates,
-past the last it holds: the weight is clamped to [0, last activation]. The result is
-one delta array the mover adds to its sum.
+past the last it holds: the weight is clamped to [0, last activation]. A NaN or
+infinite weight contributes zero for this channel; other channels still apply.
+The result is one delta array the mover adds to its sum.
 
 ## Wiring
 

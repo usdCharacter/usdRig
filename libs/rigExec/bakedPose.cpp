@@ -3217,18 +3217,21 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
     }
     B.providerLeafEditSerial.assign(B.providerLeaves.decl.keys.size(), 0);
     number(B.providerLeaves,{RigExecBakedPathLeafOwner::Provider,0,0,0});
-    const auto declareExact=[&](const RigExecBakedPathLeaves &leaves,RigExecBakedStep *step) {
+    const auto declareExact=[&](const RigExecBakedPathLeaves &leaves,RigExecBakedStep *step,
+        const RigExecBakedProgramImpl::GeomRevision *revision = nullptr) {
         // Every declared source opinion participates in the readiness-time
         // memo, including sites without a produced-value reader walk.
         // Numbering precedes this binding so IDs reference the final census.
         for(size_t i=0;i<B.pathLeafRefs.size();++i)
-            if(RigExecBakedPathLeavesOf(B,B.pathLeafRefs[i])==&leaves) {
+            if(RigExecBakedPathLeavesOf(B,B.pathLeafRefs[i])==&leaves &&
+               (!revision || RigExecBakedGeometryReadsLeaf(*revision,*step,B.pathLeafRefs[i].key))) {
                 const uint32_t id=uint32_t(B.leafRefs.size()+i);
                 if(std::find(step->bindingLeaves.begin(),step->bindingLeaves.end(),id)==step->bindingLeaves.end())
                     step->bindingLeaves.push_back(id);
             }
-        for(int version:leaves.exactVersions) if(version>=0)
-            step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PropertyResult,uint32_t(version)));
+        for(size_t k=0;k<leaves.exactVersions.size();++k)
+            if(leaves.exactVersions[k]>=0 && (!revision || RigExecBakedGeometryReadsLeaf(*revision,*step,k)))
+                step->reads.push_back(RigExecBakedOne(RigExecBakedSlotDomain::PropertyResult,uint32_t(leaves.exactVersions[k])));
     };
     const auto directBindings=[&](RigExecBakedStep *step,const auto &visit) {
         visit([&](const auto &input) {
@@ -3283,9 +3286,10 @@ RigExecBakedNumberLeaves(RigExecBakedProgramImpl *program)
                 if(ac>=0)directBindings(&step,[&](const auto &fn){frozenDetail::_VisitAutoClavicleInputs(B.autoClavicles[size_t(ac)],fn);});
             }
         }
-        if(step.kind==RigExecBakedStepKind::RevisionStatic) {
+        if(step.kind==RigExecBakedStepKind::RevisionStatic || step.kind==RigExecBakedStepKind::RevisionChunk) {
             const auto &at=B.revisionIndex[size_t(step.object)];
-            declareExact(B.chains[size_t(at.first)].revisions[size_t(at.second)].leaves,&step);
+            const auto &revision=B.chains[size_t(at.first)].revisions[size_t(at.second)];
+            declareExact(revision.leaves,&step,&revision);
         } else if(step.kind==RigExecBakedStepKind::Derived) {
             const auto &at=B.derivedIndex[size_t(step.object)];
             declareExact(B.chains[size_t(at.first)].derived[size_t(at.second)].revision.leaves,&step);

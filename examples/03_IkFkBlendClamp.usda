@@ -242,9 +242,7 @@ def Xform "BlendArmAsset"
                 )
                 {
                     rel rigExec:moves = </BlendArmAsset/Geom/ArmStrip.points>
-                    rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder>
                     rel rigExec:weightObject = </BlendArmAsset/Rig/Weights/ShoulderW>
                     uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -253,9 +251,7 @@ def Xform "BlendArmAsset"
                     )
                     {
                         rel rigExec:moves = </BlendArmAsset/Geom/ArmStrip.points>
-                        rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder/Elbow> (
-                            rigExecReadPhase = "final"
-                        )
+                        rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder/Elbow>
                         rel rigExec:weightObject = </BlendArmAsset/Rig/Weights/ElbowW>
                         uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
 
@@ -264,9 +260,7 @@ def Xform "BlendArmAsset"
                         )
                         {
                             rel rigExec:moves = </BlendArmAsset/Geom/ArmStrip.points>
-                            rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder/Elbow/Wrist> (
-                                rigExecReadPhase = "final"
-                            )
+                            rel rigExec:transform = </BlendArmAsset/Rig/Joints/Shoulder/Elbow/Wrist>
                             rel rigExec:weightObject = </BlendArmAsset/Rig/Weights/WristW>
                             uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
                         }

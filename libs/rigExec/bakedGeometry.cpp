@@ -1,5 +1,6 @@
 #include "rigExecScene/geometryProgram.h"
 #include "rigExecMath/blendLayoutKernel.h"
+#include "rigExecMath/blendRangeKernel.h"
 #include "rigExec/weightField.h"
 #include "rigExec/gpuCloth.h"
 // The baked program's geometry half: the chain/revision bake and the frame
@@ -1779,6 +1780,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         RigExecBakedProgramImpl::GeomRevision &revision = chain->revisions[r];
         revision.role = GeomRole::Legacy;
         revision.rangeRole = false;
+        revision.blendChunked = false;
         revision.groupWritten.clear();
         revision.enteringWriter.clear();
         revision.groups.clear();
@@ -1867,6 +1869,66 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
                 }
                 revision.chunked = false;
                 revision.partitionIndices = VtIntArray();
+            }
+            if (B.gpuDeformMode == RigExecGpuDeformMode::Off &&
+                revision.op == RigExecRevisionOp::BlendShape &&
+                !revision.blendChannels.empty()) {
+                bool fixed = true;
+                std::vector<std::vector<int>> keys(groups);
+                for (size_t c = 0; c < revision.blendChannels.size(); ++c) {
+                    std::vector<char> touches(groups, 0);
+                    for (const auto &sample : revision.blendChannels[c].samples) {
+                        if (sample.blendShape.IsEmpty() || !sample.shapeValid || sample.layoutRefused ||
+                            !reads.Usable(revision.leaves, sample.indicesLeaf) ||
+                            !reads.Usable(revision.leaves, sample.offsetsLeaf) ||
+                            reads.Reaches(revision.leaves.hops[size_t(sample.indicesLeaf)]) ||
+                            reads.Reaches(revision.leaves.hops[size_t(sample.offsetsLeaf)])) {
+                            fixed = false;
+                            break;
+                        }
+                        const auto indices = reads.Ints(revision.leaves, sample.indicesLeaf);
+                        const auto &leaves = revision.leaves;
+                        const auto value = RigExecSampleRevisionLeaf(
+                            leaves.decl.keys[size_t(sample.offsetsLeaf)],
+                            leaves.attributes[size_t(sample.offsetsLeaf)],
+                            &reads.overlay, UsdTimeCode::Default(), &B.upstream);
+                        const auto offsets = value.IsHolding<VtVec3fArray>()
+                            ? value.UncheckedGet<VtVec3fArray>() : VtVec3fArray();
+                        RigExecBlendSampleLayout layout;
+                        if (!RigExecBuildGeometryBlendLayout(offsets, indices, points, &layout)) {
+                            fixed = false;
+                            break;
+                        }
+                        if (indices.empty()) std::fill(touches.begin(), touches.end(), 1);
+                        for (int i : indices) if (i >= 0 && size_t(i) < points) {
+                            const size_t g = size_t(std::upper_bound(chain->groupBounds.begin(),
+                                chain->groupBounds.end(), i) - chain->groupBounds.begin() - 1);
+                            touches[g] = 1;
+                        }
+                    }
+                    if (!fixed) break;
+                    for (size_t g = 0; g < groups; ++g)
+                        if (touches[g]) keys[g].push_back(int(c));
+                }
+                if (fixed && std::any_of(keys.begin(), keys.end(),
+                                         [](const auto &key) { return !key.empty(); })) {
+                    revision.blendChunked = true;
+                    for (size_t g = 0; g < groups; ++g) {
+                        revision.chunks[g].key = std::move(keys[g]);
+                        revision.chunks[g].blendDeltas.resize(
+                            size_t(chain->groupBounds[g + 1] - chain->groupBounds[g]));
+                    }
+                    for (const auto &channel : revision.blendChannels)
+                        for (const auto &sample : channel.samples)
+                            for (int k : {sample.indicesLeaf, sample.offsetsLeaf}) {
+                                RolePin pin;
+                                pin.kind = RolePin::Kind::NoLayoutOverride;
+                                pin.leaf = k;
+                                revision.pins.push_back(pin);
+                                if (reads.exportMode)
+                                    pinned[r].push_back(revision.leaves.decl.keys[size_t(k)].path);
+                            }
+                }
             }
             std::vector<char> written;
             if (GateRevision(reads, *chain, &revision, &written, &pinned[r])) {
@@ -1957,6 +2019,7 @@ void
 RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
+    B.gpuDeformMode = RigExecGpuDeformModeFromEnv();
     B.chainChunkBegin.assign(B.chains.size(), 0);
     B.chainChunkEnd.assign(B.chains.size(), 0);
     B.chunkRevision.clear();
@@ -2092,7 +2155,7 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                 // that cannot reach the driver leave this revision alone.
                 for (const RigExecBakedProgramImpl::GeomBlendChannel &channel :
                          revision.blendChannels) {
-                    if (channel.poseWeight >= 0) {
+                    if (!revision.blendChunked && channel.poseWeight >= 0) {
                         assemble.reads.push_back(RigExecBakedOne(
                             RigExecBakedSlotDomain::PoseWeight,
                             channel.poseWeight));
@@ -2128,6 +2191,13 @@ RigExecBakedBuildGeometrySteps(RigExecBakedProgramImpl *program)
                     RigExecBakedSlotDomain::RevisionPacket, id));
                 chunk.reads.push_back(RigExecBakedOne(
                     RigExecBakedSlotDomain::ChainBase, int(c)));
+                if (revision.blendChunked) {
+                    for (int channel : revision.chunks[k].key) {
+                        const int weight = revision.blendChannels[size_t(channel)].poseWeight;
+                        if (weight >= 0) chunk.reads.push_back(RigExecBakedOne(
+                            RigExecBakedSlotDomain::PoseWeight, weight));
+                    }
+                }
                 if (role == GeomRole::Range && skin) {
                     // The fold's validity, which the group step's decision
                     // shares with the join.
@@ -3107,11 +3177,14 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
         // stands on the weight itself, which the dynamic walk's lookup
         // finds before it follows the connection and which the resolved
         // inputs therefore answer here too.
-        if (bound.poseWeight >= 0 && !read.WeightHeld(bound)) {
+        if (revision->blendChunked && record) {
+            channel.weight = 0.0f;
+        } else if (bound.poseWeight >= 0 && !read.WeightHeld(bound)) {
             channel.weight = B.poseWeights[size_t(bound.poseWeight)];
         } else {
             read.Weight(bound, &channel.weight);
         }
+        channel.weight = RigExecBlendInputWeight(channel.weight);
         for (size_t s = 0; s < bound.samples.size(); ++s) {
             auto &boundSample = bound.samples[s];
             RigExecBlendSampleData sample;
@@ -3167,6 +3240,18 @@ GatherBlendChannels(RigExecBakedProgramImpl &B,
                              return a.activation < b.activation;
                          });
         channels.push_back(std::move(channel));
+    }
+    if (revision->blendChunked && record) {
+        if (RigExecBlendChannelsAreUsable(channels, values->BasePointCount())) {
+            values->blendDeltas.assign(values->BasePointCount(), GfVec3f(0));
+        } else {
+            values->blendDeltas.clear();
+        }
+        if (revision->blendSamples != channels) {
+            revision->blendSamples = std::move(channels);
+            ++revision->deltasVersion;
+        }
+        return;
     }
     if (revision->gpuOwned) {
         // The program sums the channels on the device. The packet keeps the
@@ -3317,7 +3402,19 @@ RigExecBakedAssembleFromLeaves(
     }
     RigExecRevisionLeafView view;
     view.decl = &revision->leaves.decl;
-    view.values = &RigExecBakedResolvePathLeaves(B,revision->leaves);
+    if (revision->blendChunked) {
+        auto &values = revision->leaves.consumedValues;
+        values.resize(revision->leaves.decl.keys.size());
+        RigExecBakedStep step;
+        step.kind = RigExecBakedStepKind::RevisionStatic;
+        for (size_t k = 0; k < values.size(); ++k)
+            values[k] = RigExecBakedGeometryReadsLeaf(*revision, step, k)
+                ? RigExecBakedResolvePathLeaf(B, revision->leaves, k)
+                : revision->leaves.decl.keys[k].fallback;
+        view.values = &values;
+    } else {
+        view.values = &RigExecBakedResolvePathLeaves(B,revision->leaves);
+    }
     view.missing = missing;
     if (revision->op == RigExecRevisionOp::External) {
         view.external = &revision->externalPayload;
@@ -3693,6 +3790,35 @@ RunGroupStep(RigExecBakedProgramImpl &B,
         halo.points = table.data();
     }
     const int k = RigExecGroupScratch(&state, end - begin);
+    if (revision->blendChunked) {
+        auto &chunk = revision->chunks[g];
+        auto &deltas = chunk.blendDeltas;
+        deltas.assign(end - begin, GfVec3f(0));
+        for (int c : chunk.key) {
+            const auto &channel = revision->blendChannels[size_t(c)];
+            const auto held = RigExecBakedResolvePathLeaf(
+                B, revision->leaves, size_t(channel.weightHeldLeaf));
+            float weight = 0.0f;
+            if (channel.poseWeight >= 0 &&
+                !(held.IsHolding<bool>() && held.UncheckedGet<bool>())) {
+                weight = B.poseWeights[size_t(channel.poseWeight)];
+            } else {
+                const auto value = RigExecBakedResolvePathLeaf(
+                    B, revision->leaves, size_t(channel.weightLeaf));
+                if (value.IsHolding<float>()) weight = value.UncheckedGet<float>();
+            }
+            RigExecAccumulateBlendRange(revision->blendSamples[size_t(c)].samples,
+                                         weight, begin, end, deltas.data());
+        }
+        const bool full = RigExecEnvelopeIsFullStrength(revision->parameters.weights);
+        auto &out = *state.own[size_t(k)];
+        for (size_t i = 0; i < end - begin; ++i)
+            out[i] = RigExecBlendEnvelope(entering.data[i], entering.data[i] + deltas[i],
+                full ? 1.0f : revision->rangeInputs.blendWeights[begin + i]);
+        state.ok = true;
+        RigExecPublishOwnGroup(&state, k);
+        return;
+    }
     bool untouched = false;
     // A sparse walk reuses what it last computed for this group's entries
     // whose inputs held their bits (`state.walk`).
@@ -4489,7 +4615,6 @@ void
 RigExecBakedSelectGpuChains(RigExecBakedProgramImpl *program)
 {
     RigExecBakedProgramImpl &B = *program;
-    B.gpuDeformMode = RigExecGpuDeformModeFromEnv();
     // Only a consumer that draws the program is handed one; any other
     // reads points, so its chains read the points back.
     if (B.gpuDeformMode == RigExecGpuDeformMode::Shader &&
@@ -5129,7 +5254,7 @@ RigExecBakedRunGeometryStep(RigExecBakedProgramImpl *program,
                              chain.lastBase.size(), time, step,chain.lastBase.size());
         // A range-chain blend keys its deltas by a content version moved
         // exactly when their bytes do, not by the bytes.
-        if (rangeChain && revision.op == RigExecRevisionOp::BlendShape &&
+        if (rangeChain && !revision.blendChunked && revision.op == RigExecRevisionOp::BlendShape &&
             !RigExecBakedSamePoints(assembled.blendDeltas.data(),
                                     assembled.blendDeltas.size(),
                                     revision.parameters.blendDeltas.data(),
@@ -6167,6 +6292,22 @@ RigExecBakedResolvePathLeaves(const RigExecBakedProgramImpl &B,
 }
 
 bool
+RigExecBakedGeometryReadsLeaf(const RigExecBakedProgramImpl::GeomRevision &revision,
+                             const RigExecBakedStep &step, size_t key)
+{
+    const bool assemble = step.kind == RigExecBakedStepKind::RevisionStatic;
+    if (!revision.blendChunked) return assemble;
+    for (size_t c = 0; c < revision.blendChannels.size(); ++c) {
+        const auto &channel = revision.blendChannels[c];
+        if (int(key) != channel.weightLeaf && int(key) != channel.weightHeldLeaf) continue;
+        if (assemble || step.part < 0 || size_t(step.part) >= revision.chunks.size()) return false;
+        const auto &channels = revision.chunks[size_t(step.part)].key;
+        return std::binary_search(channels.begin(), channels.end(), int(c));
+    }
+    return assemble;
+}
+
+bool
 RigExecRevisionLeafHopsComplete(const RigExecRevisionLeafKey &key)
 {
     // A Dial read walks the connections through the overlay whatever its
@@ -6572,6 +6713,7 @@ RigExecBakedProgramTesting::ShadowAssembly(
         ++count;
         RigExecBakedProgramImpl::GeomRevision fromLeaves = live;
         RigExecBakedProgramImpl::GeomRevision fromStage = live;
+        fromLeaves.blendChunked = fromStage.blendChunked = false;
         if (edit) {
             edit(live.moverPath, &fromLeaves.leaves.decl);
         }
@@ -6708,10 +6850,30 @@ RigExecBakedVerifyRangeChains(RigExecBakedProgramImpl *program)
                     }
                 }
             } else {
-                applied = revision.parameters.valid &&
+                auto parameters = revision.parameters;
+                if (revision.blendChunked) {
+                    auto channels = revision.blendSamples;
+                    for (size_t c = 0; c < channels.size(); ++c) {
+                        const auto &bound = revision.blendChannels[c];
+                        const auto held = RigExecBakedResolvePathLeaf(
+                            B, revision.leaves, size_t(bound.weightHeldLeaf));
+                        if (bound.poseWeight >= 0 &&
+                            !(held.IsHolding<bool>() && held.UncheckedGet<bool>())) {
+                            channels[c].weight = B.poseWeights[size_t(bound.poseWeight)];
+                        } else {
+                            const auto value = RigExecBakedResolvePathLeaf(
+                                B, revision.leaves, size_t(bound.weightLeaf));
+                            channels[c].weight = value.IsHolding<float>()
+                                ? value.UncheckedGet<float>() : 0.0f;
+                        }
+                    }
+                    RigExecGeometryBlendDeltas(channels, entering, count,
+                                               &parameters.blendDeltas);
+                }
+                applied = parameters.valid &&
                           revision.status.AllowsApply() &&
                           RigExecRunRevisionKernel(revision.op,
-                                                   revision.parameters, &whole,
+                                                   parameters, &whole,
                                                    B.useSimd, nullptr, nullptr);
             }
             if (!applied) {

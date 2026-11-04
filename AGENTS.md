@@ -79,6 +79,24 @@ starting its workflow, and keep this list current when adding or changing skills
   generated definitions at `Open`. Do not add mover names to runtime dispatch
   or registry lookups to graph bodies. Preserve existing binary opcodes and
   specialized range or weighting contracts when migrating built-ins.
+- Design a new or changed point mover to run per vertex group. A mesh's
+  points are cut into groups once per compiled rig, and a Range mover
+  passes each group straight to the next mover. A Whole mover waits for
+  every group, merges them, and reruns over the whole mesh on any upstream
+  edit. A mover qualifies for Range when each point's result depends only on
+  entering positions within a fixed neighborhood of that point and data
+  shared by all points, and its packet decides apply or fail before any
+  group runs, never a check on computed points
+  (`RigExecRevisionKernelAcceptance`, `ClassifyRevision`). A neighborhood
+  wider than the point, as in Smooth and DeltaMush, becomes halo groups cut
+  at Build from pinned topology. Build shared per-frame state, such as a
+  driver surface's search structure or normals, once before the groups.
+  Choose Whole only when the math reads the whole mesh: a centroid or a
+  solve. External movers always run Whole; keep their kernels to the same
+  rules. In every kernel, run
+  independent per-point loops through the host's `RigExecRangeRunner`
+  (`RigExecGeometryRanges()`) and keep order-dependent sums outside it.
+  Range and Whole results must be bitwise identical.
 - `libs/rigExecImaging`: scene indices, activation, and display state.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
@@ -132,6 +150,12 @@ cycle handling, and native/frozen/runtime parity. See
   or which version of a value a consumer reads; a consumer that needs another
   version declares it with `rigExecReadPhase`. An undeclared connection or
   relationship reads `base`.
+- When authoring a rig, express order through the hierarchy first: sibling
+  order and nesting decide every stack. Declare `rigExecReadPhase` only on an
+  input whose `base` and `final` differ and that the hierarchy cannot
+  reorder, such as a joint a constraint revises above its last solver, a
+  cage other movers deform, or a property math movers revise. Do not add it
+  by habit; where nothing revises the input, the marker changes nothing.
 - Every operation runs in native, frozen, and `.rigexec` evaluation without
   per-evaluator special cases. When one evaluator lacks support, add it there;
   refusing the bake so another path runs is not a fix. Refuse only genuine

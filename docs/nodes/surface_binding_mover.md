@@ -180,8 +180,9 @@ For one triangle binding, author `vertices = [0]`,
 `vertexOffsets = [0, 1]`, `polygonOffsets = [0, 3]`,
 `pointIndices = [0, 1, 2]`, `barycentricWeights = [0.2, 0.3, 0.5]`,
 `bindingWeights = [1]` and `offsets = [(0.1, 0.2, 0.4)]`.
-Wire `rigExec:surface` to the driver mesh with a final read phase and
-`rigExec:moves` to the driven points property. Apply `RigExecMoverAPI`.
+Wire `rigExec:surface` to the driver mesh, with a `final` read phase when
+other movers deform it, and `rigExec:moves` to the driven points property.
+Apply `RigExecMoverAPI`.
 
 ## Tips
 

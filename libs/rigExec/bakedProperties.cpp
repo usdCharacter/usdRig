@@ -1473,10 +1473,13 @@ RigExecBakedDeclareHeadReads(RigExecBakedProgramImpl *program)
     };
     for (RigExecBakedStep &step : B.steps) {
         if (step.isHead) continue;
-        if (step.kind == RigExecBakedStepKind::RevisionStatic) {
+        if (step.kind == RigExecBakedStepKind::RevisionStatic ||
+            step.kind == RigExecBakedStepKind::RevisionChunk) {
             const auto &[c, r] = B.revisionIndex[size_t(step.object)];
-            pathWalks(B.chains[size_t(c)].revisions[size_t(r)].leaves,
-                      &step.readerWalks);
+            const auto &revision = B.chains[size_t(c)].revisions[size_t(r)];
+            for (size_t k = 0; k < revision.leaves.walks.size(); ++k)
+                if (revision.leaves.walks[k] >= 0 && RigExecBakedGeometryReadsLeaf(revision, step, k))
+                    step.readerWalks.push_back(revision.leaves.walks[k]);
         } else if (step.kind == RigExecBakedStepKind::Derived) {
             const auto &[c, d] = B.derivedIndex[size_t(step.object)];
             pathWalks(B.chains[size_t(c)].derived[size_t(d)].revision.leaves,

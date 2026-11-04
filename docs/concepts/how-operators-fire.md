@@ -84,6 +84,12 @@ metadata on the relationship that names the input — `rigExec:transform`,
 and so on. Metadata is the only way to declare a phase; there is no schema
 attribute for it. With none authored the input reads `base`.
 
+Arrange the hierarchy first and declare a phase only where it changes the
+answer. An input that nothing revises after `base` (a joint no constraint
+revises above its last solver, a mesh no other mover deforms, a property no
+math mover revises) reads the same value at every phase, so a marker there
+is noise.
+
 Property matrix connections, selected geometry points, Ribbon driver curves,
 and phased weight sample targets also use this contract. A `float3` input
 selects one array element only when it authors the integer
@@ -251,9 +257,11 @@ full reach of the 3 + 3 unit chain, so the arm holds a slight bend. By frame
 - **"My constraint does nothing."** It is probably below the solver that
   overwrites the joint. Move its scope above the `Solvers` scope — i.e. earlier
   in composed order — or accept that it is now feeding the solve.
-- **"My skinning ignores the constraint."** The mover is reading `base`. Put
-  `rigExecReadPhase = "final"` on its `rigExec:transform` (or
-  `rigExec:influences`), which is what every shipped example does.
+- **"My skinning ignores the constraint."** The mover is reading `base`, the
+  joint after its last solver, and the constraint revises the joint after
+  that. Declare `rigExecReadPhase = "final"` on that one input. Leave inputs
+  that no constraint revises unmarked: their `base` is already their
+  `final`.
 - **"Two movers on one mesh fight."** They do not fight; they stack, bottom
   sibling first, descendants before their parent. Reorder or renest to choose.
   Stacking matrix movers is how you layer rigid follows, not how you blend

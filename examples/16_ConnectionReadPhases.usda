@@ -201,9 +201,7 @@ def Xform "PhaseConnectAsset"
                 )
                 {
                     float inputs:defaultWeight.connect = </PhaseConnectAsset/Rig/Channels/Dial.rigExec:amount>
-                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift>
                     rel rigExec:moves = </PhaseConnectAsset/Geom/BaseCard.points>
                 }
 
@@ -215,9 +213,7 @@ def Xform "PhaseConnectAsset"
                         rigExecReadPhase = "/PhaseConnectAsset/Rig/Movers/Dial/Gain"
                     )
                     float inputs:defaultWeight.connect = </PhaseConnectAsset/Rig/Channels/Dial.rigExec:amount>
-                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift>
                     rel rigExec:moves = </PhaseConnectAsset/Geom/GainCard.points>
                 }
 
@@ -229,9 +225,7 @@ def Xform "PhaseConnectAsset"
                         rigExecReadPhase = "final"
                     )
                     float inputs:defaultWeight.connect = </PhaseConnectAsset/Rig/Channels/Dial.rigExec:amount>
-                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </PhaseConnectAsset/Rig/Joints/Lift>
                     rel rigExec:moves = </PhaseConnectAsset/Geom/FinalCard.points>
                 }
             }

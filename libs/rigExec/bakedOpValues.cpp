@@ -801,6 +801,13 @@ bool RigExecBakedPacketContentKey(const RigExecBakedProgramImpl &B,uint32_t slot
     if(!v) return false;
     Put(out,uint8_t(1)); Put(out,RigExecBakedSlotDomain::RevisionPacket);
     Put(out,v->parameters); Put(out,v->status); Put(out,v->layoutUsable);
+    if(v->blendChunked) {
+        Put(out,uint64_t(v->blendSamples.size()));
+        for(const auto &channel:v->blendSamples) for(const auto &sample:channel.samples) {
+            Put(out,sample.activation); Put(out,bool(sample.layout));
+            if(sample.layout) { Array(out,sample.layout->offsets); Array(out,sample.layout->indices); }
+        }
+    }
     Put(out,v->envelopeOk); Array(out,v->envelope); Put(out,v->fullStrength);
     Put(out,uint64_t(v->precedingCount)); Put(out,v->partitionStale);
     Put(out,v->weightFieldPublished); Array(out,v->publishedWeightValues);

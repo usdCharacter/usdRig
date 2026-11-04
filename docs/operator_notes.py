@@ -1877,8 +1877,9 @@ the mover's external playback kernel.""",
 `vertexOffsets = [0, 1]`, `polygonOffsets = [0, 3]`,
 `pointIndices = [0, 1, 2]`, `barycentricWeights = [0.2, 0.3, 0.5]`,
 `bindingWeights = [1]` and `offsets = [(0.1, 0.2, 0.4)]`.
-Wire `rigExec:surface` to the driver mesh with a final read phase and
-`rigExec:moves` to the driven points property. Apply `RigExecMoverAPI`.""",
+Wire `rigExec:surface` to the driver mesh, with a `final` read phase when
+other movers deform it, and `rigExec:moves` to the driven points property.
+Apply `RigExecMoverAPI`.""",
         "tips": ["Use polygon/geometric settings for barycentric bindings on the control mesh.",
                  "Limit mode requires position and derivative stencils; missing arrays are diagnosed.",
                  "Surface binding does not replace modifiers that deform the driver cage."],
@@ -2337,8 +2338,9 @@ order; the blendshape mover sums every bound channel into the final delta. Chann
 are independent, so weights layer without interfering.""",
         "how_it_works": """The channel evaluates its samples against the weight: below the
 first activation the delta fades in, between samples it interpolates,
-past the last it holds: the weight is clamped to [0, last activation]. The result is
-one delta array the mover adds to its sum.""",
+past the last it holds: the weight is clamped to [0, last activation]. A NaN or
+infinite weight contributes zero for this channel; other channels still apply.
+The result is one delta array the mover adds to its sum.""",
         "wiring": [
             ("`rigExec:samples`", "Target samples for this channel, applied in "
              "activation order whatever the list order.", "yes"),

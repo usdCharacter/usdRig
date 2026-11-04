@@ -63,9 +63,7 @@ def Xform "MatrixSphereAsset"
             {
                 float inputs:defaultWeight = 1
                 rel rigExec:moves = </MatrixSphereAsset/Geom/Sphere.points>
-                rel rigExec:transform = </MatrixSphereAsset/Rig/Controls/Carrier> (
-                    rigExecReadPhase = "final"
-                )
+                rel rigExec:transform = </MatrixSphereAsset/Rig/Controls/Carrier>
             }
         }
     }

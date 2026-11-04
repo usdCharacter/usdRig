@@ -558,8 +558,9 @@ inline constexpr uint8_t RigExecWireConstraintRadialBlend =
 /// k also reads the groups of its entering version holding a point group k's
 /// results read (its halo: a smooth's edge neighbours, a delta mush's
 /// smoothing region), declared as their RevisionOut slots. Older files hold
-/// neither as a Range revision.
-inline constexpr uint32_t RigExecFormatVersion = 28;
+/// neither as a Range revision. Format 29 lets sparse target-space blends
+/// carry channel keys on chunks and read those weights at each chunk.
+inline constexpr uint32_t RigExecFormatVersion = 29;
 
 /// The first format version that may hold a Range Smooth or DeltaMush.
 inline constexpr uint32_t RigExecFormatRangeSmoothVersion = 28;
@@ -598,11 +599,19 @@ bool RigExecFormatExtendedInfluencesValid(uint8_t op, size_t influences);
 
 /// A Range revision (formats 19 and 20): unchunked with two or more chunks,
 /// which are its chain's group partition. Keys are empty except on a Range
-/// Skin (format 20), whose chunk g carries group g's influence key.
+/// Skin (format 20), or a sparse BlendShape's channel key (format 29).
 inline bool
 RigExecFormatIsRangeRevision(const fb::RigExecWireRevision &r)
 {
     return !r.chunked && r.chunks.size() >= 2;
+}
+
+// Format 29: sparse blend chunks carry their channel indices in key.
+inline bool RigExecFormatIsChunkBlend(const fb::RigExecWireRevision &r)
+{
+    if (!RigExecFormatIsRangeRevision(r) || r.op != uint8_t(fb::RevisionOp::BlendShape)) return false;
+    for (const auto &chunk : r.chunks) if (!chunk.key.empty()) return true;
+    return false;
 }
 
 /// The ops a Range revision may have in format 20: Matrix, Wire, Lattice,

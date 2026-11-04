@@ -3167,11 +3167,12 @@ struct RigExecBakedProgramImpl {
         /// in. Vertex order is never permuted: chunk boundaries are the only
         /// thing the partition chooses.
         int begin = 0, end = 0;
-        /// The influence positions the range's vertices index, ascending.
+        /// Influence positions, or sparse blend channel indices, ascending.
         /// An upper bound is safe and a missing entry is not, so this is the
         /// UNION over the range, computed from the same indices the kernel
         /// reads.
         std::vector<int> key;
+        std::vector<GfVec3f> blendDeltas;
         /// The revision's influence table as this chunk sees it: identity
         /// everywhere, with the key's entries copied from the matrix slots
         /// each run. Linear blend skinning reads an entry only through an
@@ -3282,6 +3283,8 @@ struct RigExecBakedProgramImpl {
         /// This revision's blend channels, in `binding.blendInputs` order.
         /// Empty for every operation but a blend shape.
         std::vector<GeomBlendChannel> blendChannels;
+        bool blendChunked = false;
+        std::vector<RigExecBlendChannel> blendSamples;
         std::vector<int> influenceSlots;
         int transformSlot = -1;
         /// The rigExec:transformSpace provider's slot, or -1.
@@ -6443,6 +6446,8 @@ struct RigExecBakedProgramTesting {
 };
 
 VtValue RigExecBakedResolvePathLeaf(const RigExecBakedProgramImpl &,const RigExecBakedPathLeaves &,size_t);
+bool RigExecBakedGeometryReadsLeaf(const RigExecBakedProgramImpl::GeomRevision &,
+                                   const RigExecBakedStep &, size_t);
 /// Exact captured current API4 input heads and connection hops. No stage access.
 bool RigExecBakedHasExternalInputRoute(const RigExecBakedProgramImpl &,const SdfPath &);
 const std::vector<VtValue> &RigExecBakedResolvePathLeaves(const RigExecBakedProgramImpl &, const RigExecBakedPathLeaves &);

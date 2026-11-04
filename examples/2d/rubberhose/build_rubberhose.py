@@ -540,7 +540,7 @@ class Pip(object):
         return prim
 
     def matrix_mover(self, path, moves, transform, space=None, weight=None,
-                     phase="final"):
+                     phase="base"):
         prim = self.mover(path, "RigExecMatrixMover", moves)
         transform_rel = self.a.rel(prim, "rigExec:transform", transform)
         if phase != "base":
@@ -553,8 +553,7 @@ class Pip(object):
 
     def skin_mover(self, path, moves, influences, indices, weights, size):
         prim = self.mover(path, "RigExecSkinMover", moves)
-        self.a.rel(prim, "rigExec:influences", influences).SetMetadata(
-            "rigExecReadPhase", "final")
+        self.a.rel(prim, "rigExec:influences", influences)
         self.a.attr(prim, "rigExec:jointIndices", T.IntArray,
                     Vt.IntArray(indices))
         self.a.attr(prim, "rigExec:jointWeights", T.FloatArray,
@@ -1082,9 +1081,10 @@ class Pip(object):
             self.matrix_mover(base + "/FaceSlide", path + ".points",
                               hp["face"], space=hp["head"], weight=slide)
         if local:
-            for i, (transform, space) in enumerate(local):
+            for i, (transform, space, *phase) in enumerate(local):
                 self.matrix_mover(base + "/Local%d" % i if i else base + "/Local",
-                                  path + ".points", transform, space=space)
+                                  path + ".points", transform, space=space,
+                                  phase=phase[0] if phase else "base")
         if shapes:
             prim = self.mover(base + "/Shapes", "RigExecBlendShapeMover",
                               path + ".points")
@@ -1296,7 +1296,7 @@ class Pip(object):
         for s in SIDES:
             self.face_part(
                 "Pupil_%s" % s, self.pupil_mesh(s), 0.8,
-                local=[(hp["face"] + "/EyeAim_%s" % s, hp["face"])],
+                local=[(hp["face"] + "/EyeAim_%s" % s, hp["face"], "final")],
                 doc="Pie-cut pupil riding a sphere in front of the eye; its "
                     "EyeAim control is aimed at LookAt_ctl.")
             aim = self.mover(MOV + "/Pose/EyeAim_%s" % s,
@@ -1387,7 +1387,7 @@ class Pip(object):
         self.placed(mb, HAT_TILT, HAT_BASE, Z_HAT)
         path = self.mesh("Hat", mb, doc="Bellhop pillbox hat.")
         self.matrix_mover(MOV + "/Geometry/Hat/Follow", path + ".points",
-                          hp["hat"])
+                          hp["hat"], phase="final")
         # the hand-off: a parent constraint onto the left glove, off at
         # rest; a shot keys its envelope (and authors the grab offset)
         pc = self.mover(MOV + "/Pose/HatToGlove", "RigExecParentConstraint",

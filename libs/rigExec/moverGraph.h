@@ -986,9 +986,9 @@ bool RigExecEvaluateProjectorTarget(
 /// with no derived stage. One definition, so the two cannot drift.
 ///
 /// Returns false on a structural error -- a channel with no samples, a
-/// non-finite weight, a non-positive or repeated activation, or a sample whose
+/// non-finite, non-positive or repeated activation, or a sample whose
 /// point count disagrees with \p base -- which fails the mover atomically
-/// rather than applying a partial blend.
+/// rather than applying a partial blend. Nonfinite channel weights contribute zero.
 bool RigExecSumBlendChannels(
     const std::vector<RigExecBlendChannel> &channels,
     const std::vector<GfVec3f> &base,

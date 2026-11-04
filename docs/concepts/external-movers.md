@@ -13,7 +13,7 @@ are required.
 Use the same compiler, architecture, build configuration, OpenUSD installation,
 and RigExec SDK as the host. Plugin API version 7 combines declared external
 input leaves, explicit phased oracle lookup callbacks, the optional
-provider-aware playback kernel and optional windowed movers. Libraries built
+provider-aware playback kernel and optional temporal movers. Libraries built
 for API 1, 2 or 3 must be rebuilt and migrate their assembly callback;
 libraries built for API 4, 5 or 6 must be rebuilt, since the handler grew
 (and, before 6, the playback kernel).
@@ -44,7 +44,7 @@ archive and USD adapter plugin. The kernel definition supplies a `State` type,
 `Prepare` returning `std::shared_ptr<const State>`, and `Apply` taking
 `const State &` followed by the arguments of `RigExecExternalKernel::apply`.
 Definitions receiving provider values implement `ApplyWithProviders` instead.
-Windowed definitions also implement `CaptureWindow` and `ApplyWindow` with
+Temporal definitions also implement `CaptureWindow` and `ApplyWindow` with
 typed state references. `RigExecMakeMoverKernel<Definition>()` generates the
 ABI adapters. The prepared state is immutable; per-run work stays local to
 the graph body. The decoder validates the mover's own payload version.
@@ -438,14 +438,14 @@ updates the affected revisions and their consumers, even when inputs are
 unchanged; independent operations retain their cached results. If a replacement
 cannot prepare a revision, that revision returns to passing its points through
 on the next execution. A later successful registration restores its evaluation.
-Replacing a windowed revision clears its own retained history packets, whose
+Replacing a temporal revision clears its own retained history packets, whose
 layout belongs to the previous kernel. Refill its history before evaluating a
 frame that needs earlier ticks.
 
-## Windowed movers
+## Temporal movers
 
 A mover whose result at a frame depends on the frames before it -- a
-simulation, a lag -- is a windowed mover. It declares how many earlier frames
+simulation, a lag -- is a temporal mover. It declares how many earlier frames
 it reads (`windowFrames`, at compile, and `windowFramesScene`, the same count
 from captured scene facts for the scene program), the packet a frame captures
 from its payload and entering points (`captureWindow`), and the solve over the

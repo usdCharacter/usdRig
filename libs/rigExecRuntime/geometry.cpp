@@ -1,4 +1,5 @@
 #include "rigExecMath/blendLayoutKernel.h"
+#include "rigExecMath/blendRangeKernel.h"
 // rigExecRuntime geometry family:RevisionStatic, InfluenceFold,
 // RevisionChunk, RevisionFuse, ChainStatus, Derived.
 // A zero-USD port of the baked geometry loop (libs/rigExec/bakedGeometry.cpp
@@ -2774,7 +2775,7 @@ RrGeoSumBlendChannels(const std::vector<RrGeoBlendChannel> &channels,
     deltas->assign(base.size(), RrVec3f(0.0f));
 
     for (const RrGeoBlendChannel &channel : channels) {
-        if (channel.samples.empty() || !std::isfinite(channel.weight)) {
+        if (channel.samples.empty()) {
             return false;  // structural error: fails atomically
         }
         for (size_t k = 0; k < channel.samples.size(); ++k) {
@@ -2792,7 +2793,7 @@ RrGeoSumBlendChannels(const std::vector<RrGeoBlendChannel> &channels,
                 return false;
             }
         }
-        const float w = std::min(std::max(channel.weight, 0.0f),
+        const float w = std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
                                  channel.samples.back().activation);
         if (w == 0.0f) {
             continue;
@@ -4025,6 +4026,7 @@ struct RrGeometryScratch {
         int begin = 0;
         int end = 0;
         std::vector<int32_t> key;
+        std::vector<RrVec3f> blendDeltas;
         std::vector<RrMat4d> transforms;
         std::vector<float> rows;
         std::vector<RrGeoScaledDualQuat> palette;
@@ -4032,6 +4034,8 @@ struct RrGeometryScratch {
         bool ok = false;
     };
     struct Revision {
+        bool blendChunked = false;
+        std::vector<RrGeoBlendChannel> blendSamples;
         std::map<std::tuple<uint32_t,bool,uint8_t>,const RigExecWireExternalDeclaredInput *> leafSites;
         mutable RigExecSurfaceKernelCache<RrVec3f,RrVec3d> surfaceCache;
         RigExecWireRestCache<RrVec3f,RrVec2f> wireRestCache;
@@ -5526,6 +5530,7 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                 rev.currentSource = int(r);
             }
             rev.rangeRole = rev.role == RrGeoRole::Range;
+            rev.blendChunked = RigExecFormatIsChunkBlend(wire);
             // One expansion per layout: a partition the bake shared with
             // the topology shares its expansion here too.
             const std::shared_ptr<const RrGeoSkinTopology> topology =
@@ -6025,8 +6030,9 @@ RrGeoAssembleBlendDeltas(const RrGeoAssembleInputs &in,
     for (size_t c = 0; c < in.wire->blendChannels.size(); ++c) {
         const RigExecWireBlendChannel &bound = in.wire->blendChannels[c];
         RrGeoBlendChannel channel;
-        channel.weight = RrReadBlendWeight(in.program, in.chain, in.revision,
-                                           in.derived, c);
+        channel.weight = in.rev->blendChunked ? 0.0f :
+            RigExecBlendInputWeight(RrReadBlendWeight(in.program, in.chain, in.revision,
+                                                     in.derived, c));
         for (size_t s = 0; s < bound.samples.size(); ++s) {
             const RigExecWireBlendSample &boundSample =
                 bound.samples[s];
@@ -6092,6 +6098,7 @@ RrGeoAssembleBlendDeltas(const RrGeoAssembleInputs &in,
     if (!RrGeoSumBlendChannels(channels, base, deltas)) {
         deltas->clear();
     }
+    if (in.rev->blendChunked) in.rev->blendSamples = std::move(channels);
     return true;
 }
 
@@ -8417,6 +8424,25 @@ RrGeoRunGroupStep(RrProgram *program, RrGeometryScratch *scratch,
                     return true;
                 }
             }
+        } else if (rev->blendChunked) {
+            auto &chunk = rev->chunks[g];
+            auto &deltas = chunk.blendDeltas;
+            deltas.assign(n, RrVec3f(0.0f));
+            for (int c : chunk.key) {
+                const float weight = RrReadBlendWeight(program, size_t(&chain - scratch->chains.data()),
+                                                       revisionIndex, false, size_t(c));
+                RigExecAccumulateBlendRange(rev->blendSamples[size_t(c)].samples,
+                                             weight, begin, end, deltas.data());
+            }
+            const int k = RigExecGroupScratch(&state, n);
+            auto &buffer = *state.own[size_t(k)];
+            const bool full = RrGeoEnvelopeIsFullStrength(rev->parameters.weights);
+            for (size_t i = 0; i < n; ++i)
+                buffer[i] = RrGeoBlendEnvelope(entering.data[i], entering.data[i] + deltas[i],
+                    full ? 1.0f : rev->rangeInputs.blendWeights[begin + i]);
+            RigExecPublishOwnGroup(&state, k);
+            state.ok = true;
+            return true;
         } else {
             const float *envelope = !rev->fullStrength && rev->envelopeOk &&
                                             rev->envelope.size() == count
@@ -9295,6 +9321,18 @@ void RrOpParametersKey(std::string *key, const RrGeoMoverParameters &p,
 // bytes in place of their content versions.
 void RrOpPacketKey(std::string *key, const RrGeometryScratch::Revision &rev, bool content)
 {
+    if (rev.blendChunked) {
+        RrOpBytes(key, rev.blendSamples.size());
+        for (const auto &channel : rev.blendSamples)
+            for (const auto &sample : channel.samples) {
+                RrOpBytes(key, sample.activation);
+                RrOpBytes(key, bool(sample.layout));
+                if (sample.layout) {
+                    RrOpBytes(key, sample.layout->offsets);
+                    RrOpBytes(key, sample.layout->indices);
+                }
+            }
+    }
     RrOpParametersKey(key,rev.parameters,content); RrOpBytes(key,rev.status.state);
     RrOpBytes(key,rev.status.firstBadAddress);
     RrOpBytes(key,rev.layoutUsable); RrOpBytes(key,rev.envelopeOk);

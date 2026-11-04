@@ -1299,7 +1299,8 @@ table Revision {
   // is a Range revision (format 20): a Matrix, Wire, Lattice, BlendShape or
   // classicLinear Skin revision whose ranges are its chain's vertex groups,
   // unkeyed except on a Skin, whose range g carries group g's influence
-  // key; it writes group g exactly when a RevisionChunk step names part g
+  // key, or a format-29 sparse BlendShape, whose key names blend channels;
+  // it writes group g exactly when a RevisionChunk step names part g
   // (the others are gated). In a chain with a Range revision every other
   // revision is Whole: a keyed skin's ranges are the same groups, and
   // revision_chunk_count adds one published group per group.

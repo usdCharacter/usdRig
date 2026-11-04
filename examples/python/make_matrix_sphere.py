@@ -151,9 +151,7 @@ def Xform "MatrixSphereAsset"
             {
                 float inputs:defaultWeight = 1
                 rel rigExec:moves = <%s>
-                rel rigExec:transform = <%s/Carrier> (
-                    rigExecReadPhase = "final"
-                )
+                rel rigExec:transform = <%s/Carrier>
             }
         }
     }

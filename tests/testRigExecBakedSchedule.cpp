@@ -9827,6 +9827,7 @@ TestAnEditOnAPrunedAttributeStillRebuilds()
 int
 main(int argc, char **argv)
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0); // DEBUG-UNBUFFERED
     if (argc < 2) {
         std::printf("usage: testRigExecBakedSchedule <examplesDir>\n");
         return 2;

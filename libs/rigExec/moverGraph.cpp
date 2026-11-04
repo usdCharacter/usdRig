@@ -1,5 +1,6 @@
 // RigExec compiled mover graph. See moverGraph.h.
 #include "rigExecGraph/windowHistory.h"
+#include "rigExecMath/blendRangeKernel.h"
 #include "moverGraph.h"
 #include "parallel.h"
 #include "pathText.h"
@@ -3052,7 +3053,7 @@ RigExecSumBlendChannels(
     deltas->assign(baseCount, GfVec3f(0));
 
     for (const RigExecBlendChannel &channel : channels) {
-        if (channel.samples.empty() || !std::isfinite(channel.weight)) {
+        if (channel.samples.empty()) {
             return false;  // structural error: fails atomically
         }
         for (size_t k = 0; k < channel.samples.size(); ++k) {
@@ -3075,7 +3076,7 @@ RigExecSumBlendChannels(
         }
         // The channel weight is clamped into the authored activation range;
         // an implicit zero-delta sample sits at activation 0.
-        const float w = std::min(std::max(channel.weight, 0.0f),
+        const float w = std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
                                  channel.samples.back().activation);
         if (w == 0.0f) {
             continue;

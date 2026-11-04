@@ -1,4 +1,5 @@
 #include "rigExec/gpuDeformTranslation.h"
+#include "rigExecMath/blendRangeKernel.h"
 
 #include "rigExec/moverGraph.h"
 #include "rigExecMath/dualQuat.h"
@@ -65,7 +66,7 @@ _BlendScales(const std::vector<RigExecBlendChannel> &channels,
 {
     size_t id = 0;
     for (const RigExecBlendChannel &channel : channels) {
-        if (channel.samples.empty() || !std::isfinite(channel.weight)) {
+        if (channel.samples.empty()) {
             return false;
         }
         for (size_t k = 0; k < channel.samples.size(); ++k) {
@@ -80,7 +81,7 @@ _BlendScales(const std::vector<RigExecBlendChannel> &channels,
             }
             scales[id + k] = 0.0f;
         }
-        const float w = std::min(std::max(channel.weight, 0.0f),
+        const float w = std::min(std::max(RigExecBlendInputWeight(channel.weight), 0.0f),
                                  channel.samples.back().activation);
         if (w != 0.0f) {
             size_t hi = 0;

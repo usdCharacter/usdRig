@@ -1477,14 +1477,14 @@ TestOpenRefusals()
     wildRoot[3] = 0x0f;
     CHECK(!_Open(wildRoot, &why) && _Contains(why, "malformed"));
 
-    static_assert(RigExecFormatVersion == 28 &&
+    static_assert(RigExecFormatVersion == 29 &&
                       RigExecFormatOldestReadable == 20,
                   "format 22 adds the IK/FK match, format 23 the property "
                   "movers' quantize and path operations, format 24 "
                   "RigLogic's solves, format 25 windowed operations, "
                   "format 26 the cloth's material model (RCL3) and format "
                   "27 volume falloff sample inputs, format 28 Range "
-                  "Smooth revisions; per-group range chains "
+                  "Smooth revisions, format 29 sparse blend channel keys; per-group range chains "
                   "pin the oldest readable format at 20");
     // Every format before 20, 19 among them, requires re-export: a chain
     // with groups' records (gated parts, Whole revisions' published groups,

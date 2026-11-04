@@ -904,13 +904,13 @@ class Builder(object):
 
         def matrix(path, target, joint):
             m = mover(path, "RigExecMatrixMover")
-            rel(m, "rigExec:transform", [joint], phase="final")
+            rel(m, "rigExec:transform", [joint])
             rel(m, "rigExec:moves", [target + ".points"])
             return m
 
         def skin(path, target, influences, idx, wts, esize):
             m = mover(path, "RigExecSkinMover")
-            rel(m, "rigExec:influences", influences, phase="final")
+            rel(m, "rigExec:influences", influences)
             attr(m, "rigExec:jointIndices", T.IntArray, Vt.IntArray.FromNumpy(idx.reshape(-1).astype(np.int32)))
             attr(m, "rigExec:jointWeights", T.FloatArray,
                  Vt.FloatArray.FromNumpy(np.round(wts.reshape(-1), 4).astype(np.float32)))

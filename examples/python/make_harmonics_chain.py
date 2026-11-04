@@ -389,9 +389,7 @@ def Xform "AntennaAsset"
                 )
                 {
                     rel rigExec:moves = </AntennaAsset/Geom/Pad.points>
-                    rel rigExec:transform = <%s/Base> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = <%s/Base>
                     rel rigExec:weightObject = </AntennaAsset/Rig/Weights/PadW>
                     uniform asset ui:nodegraph:node:icon = @../icons/matrix_mover.png@
                 }

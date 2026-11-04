@@ -2018,13 +2018,28 @@ private:
                     for (size_t k=0;k<sites->size();++k) {
                         const auto &site=(*sites)[k];
                         if (!validate(site,row+".leaf_sites["+_N(k)+"]")) return false;
+                        std::vector<size_t> siteOwners = owners;
+                        if (!isLayout && !derived && RigExecFormatIsChunkBlend(rev)) {
+                            for (size_t ch = 0; ch < rev.blendChannels.size(); ++ch) {
+                                if (site.path != rev.blendChannels[ch].weightPath) continue;
+                                siteOwners.clear();
+                                for (size_t step = 0; step < _f.steps.size(); ++step) {
+                                    const auto &body = _f.steps[step];
+                                    if (body.kind != fb::StepKind::RevisionChunk || body.object != ordinary ||
+                                        !_Has(rev.chunks, body.part)) continue;
+                                    const auto &key = rev.chunks[size_t(body.part)].key;
+                                    if (std::binary_search(key.begin(), key.end(), int32_t(ch))) siteOwners.push_back(step);
+                                }
+                                break;
+                            }
+                        }
                         std::vector<int32_t> versions;
                         if(site.exactVersion>=0) versions.push_back(site.exactVersion);
                         if(site.bodyWalk) for(const auto *segment:{&site.bodyWalk->propertyCandidates,&site.bodyWalk->doubleCandidates})
                             for(const auto &candidate:*segment) if(candidate.version>=0) versions.push_back(candidate.version);
-                        if(site.bodyWalk) for(size_t owner:owners)
+                        if(site.bodyWalk) for(size_t owner:siteOwners)
                             if(!_RequireCandidateReads(owner,*site.bodyWalk)) return false;
-                        for(size_t owner:owners) for(int32_t version:versions)
+                        for(size_t owner:siteOwners) for(int32_t version:versions)
                             if(!_Declares(owner,fb::SlotDomain::PropertyResult,uint32_t(version)))
                                 return _Bad(_StepName(owner)+": owning leaf omitted exact PropertyResult dependency");
                     }
@@ -2062,6 +2077,15 @@ private:
                             read.propertyCandidates.empty() && read.doubleCandidates.empty() && read.rawFallbackSlot==-1;
                         if (found->bodyWalk || (!source && !missing))
                             return _Bad(row+": sparse blend source requires raw Default head or missing-source fallback");
+                        if (RigExecFormatIsChunkBlend(rev)) {
+                            if (source && !_PrivateConstant(read.walk.front()))
+                                return _Bad(row+": chunk blend layout requires private, unanimated inputs");
+                            if (tag == InputTag::IntArray) {
+                                const auto &value = _f.values[source ? _f.inputs[read.walk.front()].value() : read.constant];
+                                if (_f.intArrays[value.array].v != sample.indices)
+                                    return _Bad(row+": chunk blend indices differ from pinned source");
+                            }
+                        }
                         if (missing) {
                             const auto &fallback=_f.values[read.constant];
                             const bool empty=tag==InputTag::Vec3fArray ? _f.vec3fArrays[fallback.array].v.empty() : _f.intArrays[fallback.array].v.empty();
@@ -2943,8 +2967,9 @@ private:
                 if(revision.weightObject>=0)read(D::WeightPacket,uint32_t(revision.weightObject));
                 if(revision.weightField>=0)read(D::WeightField,uint32_t(revision.weightField));
                 if(revision.driverFramesSolver>=0)read(D::Aggregate,uint32_t(revision.driverFramesSolver));
-                for(const auto &channel:revision.blendChannels)
-                    if(channel.poseWeight>=0)read(D::PoseWeight,uint32_t(channel.poseWeight));
+                if(!RigExecFormatIsChunkBlend(revision))
+                    for(const auto &channel:revision.blendChannels)
+                        if(channel.poseWeight>=0)read(D::PoseWeight,uint32_t(channel.poseWeight));
             } else if(!_groupWritten[c].empty()) {
                 // A chain with groups (format 20), as _RangeSteps holds the
                 // declarations: a group step reads group `part` of the
@@ -2963,6 +2988,10 @@ private:
                 read(D::RevisionPacket,id);
                 if(step.kind==K::RevisionChunk) {
                     if(!_Has(revision.chunks,step.part))continue;
+                    if(RigExecFormatIsChunkBlend(revision))
+                        for(int channel:revision.chunks[size_t(step.part)].key)
+                            if(_Has(revision.blendChannels,channel) && revision.blendChannels[size_t(channel)].poseWeight>=0)
+                                read(D::PoseWeight,uint32_t(revision.blendChannels[size_t(channel)].poseWeight));
                     if(!range && !keyed) {
                         point(c,uint32_t(r));
                         if(skin)read(D::RevisionTransforms,id);
@@ -5461,6 +5490,9 @@ private:
                         std::to_string(r.partitionElementSize));
         }
         const bool ranges = RigExecFormatIsRangeRevision(r);
+        const bool blendGroups = RigExecFormatIsChunkBlend(r);
+        if (blendGroups && _f.formatVersion < 29)
+            return _Bad(row + ": blend channel keys require format 29");
         if (!keyed) {
             if (ranges && (!RigExecFormatIsRangeOp(r.op) ||
                            ((r.op == uint8_t(fb::RevisionOp::Smooth) ||
@@ -5471,7 +5503,26 @@ private:
                             " chunks, but not chunked");
             }
             for (size_t k = 0; k < r.chunks.size(); ++k) {
-                if (!r.chunks[k].key.empty()) {
+                if (blendGroups) {
+                    const auto &key = r.chunks[k].key;
+                    for (size_t j = 0; j < key.size(); ++j)
+                        if (!_Has(r.blendChannels, key[j]) || (j && key[j] <= key[j - 1]))
+                            return _Bad(_At(row, "chunks", long(k)) + ": invalid blend channel key");
+                    std::vector<int32_t> expected;
+                    for (size_t c = 0; c < r.blendChannels.size(); ++c) {
+                        bool touches = false;
+                        for (const auto &sample : r.blendChannels[c].samples) {
+                            if (!sample.blendShape || !sample.hasLayout)
+                                return _Bad(row + ": blend channel keys require compiled sparse samples");
+                            if (sample.indices.empty()) touches = true;
+                            for (int i : sample.indices)
+                                touches = touches || (i >= r.chunks[k].begin && i < r.chunks[k].end);
+                        }
+                        if (touches) expected.push_back(int32_t(c));
+                    }
+                    if (key != expected)
+                        return _Bad(_At(row, "chunks", long(k)) + ": blend key differs from sample support");
+                } else if (!r.chunks[k].key.empty()) {
                     return _Bad(_At(row, "chunks", long(k)) +
                                 ": a key on an unchunked revision");
                 }

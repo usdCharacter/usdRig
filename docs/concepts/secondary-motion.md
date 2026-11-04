@@ -8,7 +8,7 @@ Two operators answer motion rather than pose:
 [Harmonics Constraint](../nodes/harmonics_constraint.md) rings a joint or
 control with the way it moved, and [Cloth Mover](../nodes/cloth_mover.md)
 simulates a mesh hanging from and colliding with the character. Both are
-*windowed* operations: the result at a frame is a pure function of their
+*temporal* operations: the result at a frame is a pure function of their
 inputs over a fixed number of frames before it and the frame itself. Nothing
 is carried from one evaluation to the next, so a frame looks the same whether
 it was reached by playing forward, scrubbing backward, jumping, a background
@@ -24,7 +24,7 @@ at the stage's frame rate; the rest pose is drawn in blue.
 
 ## The window
 
-At every frame it runs, a windowed operation captures a *packet*: the inputs
+At every frame it runs, a temporal operation captures a *packet*: the inputs
 its solve reads, and nothing computed from earlier frames. For the harmonics
 constraint that is the target's incoming position in its measuring space; for
 the cloth, the points entering the mover, every collider's points and the
@@ -74,7 +74,7 @@ from the same packets.
 ## Earlier frames are generations of the same graph
 
 The packets of the earlier frames come from *history ticks*: runs of the same
-compiled operation graph at those times, masked to the windowed operations and
+compiled operation graph at those times, masked to the temporal operations and
 every operation they depend on. A history tick does not publish anything, and
 operations outside the mask keep what they owe the next full run. There is no
 second evaluator and no separate pre- or post-pass: history is produced by the
@@ -86,9 +86,9 @@ costs no history tick per frame, since each frame's own capture becomes the
 next frame's history; a jump runs the ticks the memo lacks. An edit that
 reaches the history clears the memo. The ring of earlier packets is placed at
 the boundary before a generation, like any sampled input, and a changed ring
-re-runs the windowed operation.
+re-runs the temporal operation.
 
-Inner windows chain: a windowed operation that reads another one's result
+Inner windows chain: a temporal operation that reads another one's result
 solves at the history ticks too, with its own ring, and the history reaches
 back as far as the chain needs.
 
@@ -128,7 +128,7 @@ same bits.
 
 ## .rigexec playback
 
-A `.rigexec` file records the windowed operations; a reader keeps a window of
+A `.rigexec` file records the temporal operations; a reader keeps a window of
 its own frames. A host that plays frames in order pushes each one after it
 runs; a host that jumps replays the frames before the target first:
 
@@ -155,14 +155,14 @@ jolt of starting from rest. The runtime plays the cloth itself (the cloth
 mover is a built-in module in the runtime's generated mover catalog), so a
 file plays in a host that loads no mover library. `usdview`'s binary playback pushes on consecutive frames and rebuilds
 the history on a jump. `rigExecPose --verify-binary` replays history for a
-rig with windowed operations.
+rig with temporal operations.
 
 The standalone scene program (the rigpack path) keeps its history the same
 way: `PushHistory` after a frame played in order, and on a jump
 `ClearHistory` followed by `EvaluateHistory` at each of `GetHistoryDepth`
-earlier frames, oldest first. Its history ticks run the windowed operations
+earlier frames, oldest first. Its history ticks run the temporal operations
 and what they depend on on a runtime of their own, and it matches the native
-evaluator bit for bit. A windowed mover plugin supplies `windowFramesScene`,
+evaluator bit for bit. A temporal mover plugin supplies `windowFramesScene`,
 the window from captured scene facts, for it.
 
 ## Cloth materials and bindings
@@ -341,5 +341,5 @@ substeps, a shorter window or a smaller collision depth cost less.
 - A frame the cloth is disabled at holds no packet, so the history after it
   starts there.
 - Mover plugins built for API 5 or 6 must be rebuilt for API 7, whose
-  windowed hooks include `windowFramesScene`
-  ([external movers](external-movers.md#windowed-movers)).
+  temporal-mover hooks include `windowFramesScene`
+  ([external movers](external-movers.md#temporal-movers)).

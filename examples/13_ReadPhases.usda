@@ -141,9 +141,7 @@ def Xform "ReadPhaseAsset"
                     prepend apiSchemas = ["RigExecMoverAPI"]
                 )
                 {
-                    rel rigExec:transform = </ReadPhaseAsset/Rig/Joints/Lift> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </ReadPhaseAsset/Rig/Joints/Lift>
                     rel rigExec:weightObject = </ReadPhaseAsset/Rig/Weights/CageW>
                     rel rigExec:moves = </ReadPhaseAsset/Geom/Cage.points>
                 }
@@ -152,9 +150,7 @@ def Xform "ReadPhaseAsset"
                     prepend apiSchemas = ["RigExecMoverAPI"]
                 )
                 {
-                    rel rigExec:transform = </ReadPhaseAsset/Rig/Joints/Twist> (
-                        rigExecReadPhase = "final"
-                    )
+                    rel rigExec:transform = </ReadPhaseAsset/Rig/Joints/Twist>
                     rel rigExec:weightObject = </ReadPhaseAsset/Rig/Weights/CageW>
                     rel rigExec:moves = </ReadPhaseAsset/Geom/Cage.points>
                 }
