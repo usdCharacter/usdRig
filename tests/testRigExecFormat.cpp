@@ -6200,8 +6200,8 @@ void TestSolverSemanticMetadataRefusals()
     reject(std::move(wrongBody),"semantic prerequisites on a non-Solve body");
 }
 
-/// A 2-bone skeleton2d table: one group, an End-joint tip, and a space switch
-/// over a bone, the base and one outside control.
+/// A 2-bone skeleton2d table: one joint group, an End-joint tip, and a space
+/// switch over a bone, the base and one outside control.
 static void _AttachSkeleton2d(fb::RigExecWireSolver *solver)
 {
     solver->jointRests.resize(2);
@@ -6227,7 +6227,7 @@ static void _AttachSkeleton2d(fb::RigExecWireSolver *solver)
     table->spaceBegin = {0, 0};
     table->spaceCount = {0, 3};
     table->spaceSources = {0, -1, RigExecBone2dSpaceExternal(0)};
-    table->spaceSelector = {-1, 1};
+    table->spaceSelector = {-1, 0};
     table->targetBegin = {0, 0};
     table->targetCount = {1, 0};
     table->targetCandidates = {1};
@@ -6235,13 +6235,27 @@ static void _AttachSkeleton2d(fb::RigExecWireSolver *solver)
     table->posController = {-1, -1};
     table->scaleController = {-1, -1};
     table->controlFactors = {0, 0, 0, 0, 0.5, 0, 0, 0};
-    table->groupBegin = {0};
-    table->groupCount = {2};
-    table->groupMembers = {0, 1};
-    table->groupEnabled = {1};
-    table->selectorChannels.push_back(_InValue(InputTag::Double));
     table->selectorChannels.push_back(_InValue(InputTag::Double));
     solver->skeleton2d = std::move(table);
+    fb::RigExecWireJointGroup group;
+    group.memberBegin = 0;
+    group.memberCount = 2;
+    solver->jointGroups = {group};
+    solver->jointGroupMembers = {0, 1};
+    solver->jointGroupSelectors.push_back(_InValue(InputTag::Double));
+}
+
+/// Joint groups on an FK chain row of three joints: one group whose two
+/// members hang from joint 0.
+static void _AttachFkJointGroups(fb::RigExecWireSolver *solver)
+{
+    fb::RigExecWireJointGroup group;
+    group.memberBegin = 0;
+    group.memberCount = 2;
+    solver->jointGroups = {group};
+    solver->jointGroupMembers = {1, 2};
+    solver->jointGroupParents = {-1, 0, 0};
+    solver->jointGroupSelectors.push_back(_InValue(InputTag::Double));
 }
 
 void TestSkeleton2dWireShapes()
@@ -6270,9 +6284,9 @@ void TestSkeleton2dWireShapes()
     RigExecWireFile missingSpace = file;
     missingSpace.pose->solvers[0].skeleton2d->spaceSources[2] = RigExecBone2dSpaceExternal(1);
     reject(std::move(missingSpace), "malformed 2D skeleton");
-    RigExecWireFile groupSelector = file;
-    groupSelector.pose->solvers[0].skeleton2d->spaceSelector[1] = 0;
-    reject(std::move(groupSelector), "malformed 2D skeleton");
+    RigExecWireFile straySelector = file;
+    straySelector.pose->solvers[0].skeleton2d->spaceSelector[1] = 1;
+    reject(std::move(straySelector), "malformed 2D skeleton");
     RigExecWireFile strayTip = file;
     strayTip.pose->solvers[0].skeleton2d->tipBone[0] = 2;
     reject(std::move(strayTip), "malformed 2D skeleton");
@@ -6286,17 +6300,63 @@ void TestSkeleton2dWireShapes()
     badCandidate.pose->solvers[0].skeleton2d->targetCandidates[0] = 7;
     reject(std::move(badCandidate), "malformed 2D skeleton");
     RigExecWireFile badMember = file;
-    badMember.pose->solvers[0].skeleton2d->groupMembers[1] = 7;
-    reject(std::move(badMember), "malformed 2D skeleton");
-    RigExecWireFile badEnabled = file;
-    badEnabled.pose->solvers[0].skeleton2d->groupEnabled[0] = 7;
-    reject(std::move(badEnabled), "malformed 2D skeleton");
+    badMember.pose->solvers[0].jointGroupMembers[1] = 7;
+    reject(std::move(badMember), "malformed joint groups");
+    RigExecWireFile skeletonParents = file;
+    skeletonParents.pose->solvers[0].jointGroupParents = {-1, 0};
+    reject(std::move(skeletonParents), "malformed joint groups");
     RigExecWireFile badTag = file;
     badTag.pose->solvers[0].skeleton2d->channels[4].tag = InputTag::Double;
     reject(std::move(badTag), "skeleton2d.channels");
+    RigExecWireFile badSwitches = file;
+    badSwitches.pose->solvers[0].skeleton2d->selectorChannels.clear();
+    reject(std::move(badSwitches), "malformed 2D skeleton");
     RigExecWireFile badGroups = file;
-    badGroups.pose->solvers[0].skeleton2d->selectorChannels.clear();
-    reject(std::move(badGroups), "malformed 2D skeleton");
+    badGroups.pose->solvers[0].jointGroupSelectors.clear();
+    reject(std::move(badGroups), "malformed joint groups");
+}
+
+void TestJointGroupWireShapes()
+{
+    std::string why;
+    RigExecWireFile file = _RichFile();
+    _AttachFkJointGroups(&file.pose->solvers[0]);
+    CHECK(RigExecFormatValidate(file, &why));
+    if (!why.empty()) std::printf("    %s\n", why.c_str());
+    const auto reject = [](RigExecWireFile bad, const char *fragment) {
+        std::string error;
+        CHECK(!RigExecFormatValidate(bad, &error));
+        CHECK(error.find(fragment) != std::string::npos);
+    };
+    // Joint groups are refused in a file older than format 31, each field
+    // on its own.
+    RigExecWireFile older = file;
+    older.formatVersion = 30;
+    reject(std::move(older), "joint_groups: in a format older than 31");
+    RigExecWireFile olderParents = _RichFile();
+    olderParents.formatVersion = 30;
+    olderParents.pose->solvers[0].jointGroupParents = {-1};
+    reject(std::move(olderParents), "joint_groups: in a format older than 31");
+    // A range past the members, a member past the joints, a parent past
+    // the joints, a parent cycle, or a missing selector is refused.
+    RigExecWireFile longRange = file;
+    longRange.pose->solvers[0].jointGroups[0].memberCount = 3;
+    reject(std::move(longRange), "malformed joint groups");
+    RigExecWireFile strayMember = file;
+    strayMember.pose->solvers[0].jointGroupMembers[1] = 3;
+    reject(std::move(strayMember), "malformed joint groups");
+    RigExecWireFile strayParent = file;
+    strayParent.pose->solvers[0].jointGroupParents[2] = 3;
+    reject(std::move(strayParent), "malformed joint groups");
+    RigExecWireFile cycle = file;
+    cycle.pose->solvers[0].jointGroupParents = {2, 0, 1};
+    reject(std::move(cycle), "malformed joint groups");
+    RigExecWireFile unread = file;
+    unread.pose->solvers[0].jointGroupSelectors.clear();
+    reject(std::move(unread), "malformed joint groups");
+    RigExecWireFile badTag = file;
+    badTag.pose->solvers[0].jointGroupSelectors[0].tag = InputTag::Bool;
+    reject(std::move(badTag), "joint_group_selectors");
 }
 
 // The rich file's interpolator turned into a RigExecAnimatedMaps node of
@@ -6629,6 +6689,7 @@ main()
     TestSparseBlendShapeFacts();
     TestSolverSemanticMetadataRefusals();
     TestSkeleton2dWireShapes();
+    TestJointGroupWireShapes();
     TestAnimatedMapsWireShapes();
     TestBitExactness();
     TestDeterminism();

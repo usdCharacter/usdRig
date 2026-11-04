@@ -36,14 +36,6 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((bonePosControlFactorY, "bone2d:posControlFactorY"))
     ((boneScaleControl, "bone2d:scaleControl"))
     ((boneScaleControlFactor, "bone2d:scaleControlFactor"))
-    ((boneGroups, "rigExec:boneGroups"))
-    (RigExecBone2dGroupAPI) (explicitOnly)
-    ((groupIncludes, "collection:members:includes"))
-    ((groupExcludes, "collection:members:excludes"))
-    ((groupExpansionRule, "collection:members:expansionRule"))
-    ((groupExpression, "collection:members:membershipExpression"))
-    ((groupEnabled, "rigExec:enabled"))
-    ((groupActiveBone, "rigExec:activeBone"))
 );
 
 namespace {
@@ -551,67 +543,7 @@ RigExecTranslateSceneSkeleton2d(const RigExecSceneDescriptors &scene,
             controllerOf[k][2] < 0 ? -1 : solveIndex[size_t(controllerOf[k][2])];
     }
 
-    // Groups in rigExec:boneGroups order: prims carrying RigExecBone2dGroupAPI.
-    // Members are the built-in "members" collection's includes in list
-    // order, less its excludes (explicit-only), resolved to solve order;
-    // enabled hashed, one activeBone selector per group.
-    const SdfPathVector groupPaths = source.Targets(path.AppendProperty(_tokens->boneGroups));
-    for (const SdfPath &groupPath : groupPaths) {
-        const auto *groupNode = source.Node(groupPath);
-        if (!groupNode || !groupNode->fact.active ||
-            !HasApplied(*groupNode, _tokens->RigExecBone2dGroupAPI)) {
-            return Fail(error, who + ": rigExec:boneGroups target " + Text(groupPath) +
-                                   " is not an active prim with RigExecBone2dGroupAPI");
-        }
-        TfToken expansion;
-        if (!Uniform(source, groupPath.AppendProperty(_tokens->groupExpansionRule),
-                     _tokens->explicitOnly, &expansion, error)) {
-            return false;
-        }
-        if (expansion != _tokens->explicitOnly) {
-            return Fail(error, who + ": group " + Text(groupPath) +
-                                   " must list its members explicitly "
-                                   "(collection:members:expansionRule = explicitOnly)");
-        }
-        if (const auto *expression =
-                source.Attribute(groupPath.AppendProperty(_tokens->groupExpression))) {
-            if (expression->fact.hasAuthoredValue) {
-                return Fail(error, who + ": group " + Text(groupPath) +
-                                       " authors collection:members:membershipExpression; "
-                                       "a bone group lists its members explicitly");
-            }
-        }
-        const SdfPathVector excluded =
-            source.Targets(groupPath.AppendProperty(_tokens->groupExcludes));
-        RigExecBone2dGroup group;
-        group.memberBegin = uint32_t(result.groupMembers.size());
-        for (const SdfPath &member : source.Targets(groupPath.AppendProperty(_tokens->groupIncludes))) {
-            if (std::find(excluded.begin(), excluded.end(), member) != excluded.end()) {
-                continue;
-            }
-            const auto found = index.find(member);
-            if (found == index.end()) {
-                return Fail(error, who + ": group " + Text(groupPath) + " has member " +
-                                       Text(member) + ", which is not a bone of this skeleton");
-            }
-            result.groupMembers.push_back(solveIndex[found->second]);
-        }
-        group.memberCount = uint32_t(result.groupMembers.size()) - group.memberBegin;
-        if (!Uniform(source, groupPath.AppendProperty(_tokens->groupEnabled), true,
-                     &group.enabled, error)) {
-            return false;
-        }
-        RigExecSceneTypedRead activeRead;
-        if (!RigExecBindSceneTypedRead(scene,
-                groupPath.AppendProperty(_tokens->groupActiveBone),
-                SdfValueTypeNames->Double, &activeRead, error)) {
-            return false;
-        }
-        result.selectorReads.push_back(std::move(activeRead));
-        result.selectorFallbacks.push_back(0.0);
-        result.groups.push_back(group);
-    }
-    // Then one active-index selector per switch, in solve order.
+    // One active-index selector per switch, in solve order.
     for (size_t e = 0; e < count; ++e) {
         const size_t k = result.solveOrder[e];
         if (switchOf[k].IsEmpty()) continue;

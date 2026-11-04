@@ -208,6 +208,8 @@ Input SolveInputs(const B &b, int index)
         SolverFrame(in,b,s.start,s.startRead);
         Attr(in,path,"rigExec:segmentScale",VtValue(Token(s.scaleSegments?"toChild":"none")));
         Attr(in,path,"rigExec:controlSpace",VtValue(Token(s.parentRelative ? "parentRelative" : "world")));
+        // The exec FK computation reads no joint groups.
+        if (!s.jointGroups.empty()) in.skip = RigExecExecCheckSkip::NoEquivalent;
     } else if (s.type == "RigExecTwoBoneIk") {
         SolverFrame(in,b,s.root,s.rootRead); SolverFrame(in,b,s.end,s.endRead); SolverFrame(in,b,s.pole,s.poleRead);
         if (s.spaceSlot >= 0) SolverFrame(in,b,s.spaceSlot,uint32_t(s.spaceRead));

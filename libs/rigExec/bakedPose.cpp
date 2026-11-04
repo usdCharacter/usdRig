@@ -59,8 +59,6 @@ namespace rigExec {
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((rigExecJoints, "rigExec:joints"))
-    ((rigExecBoneGroups, "rigExec:boneGroups"))
-    ((rigExecActiveBone, "rigExec:activeBone"))
     ((rigExecJointElements, "rigExec:jointElements"))
     ((rigExecControlSpace, "rigExec:controlSpace"))
     ((rigExecControls, "rigExec:controls"))
@@ -702,7 +700,7 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
         } else if (s.type == "RigExecSkeleton2d") {
             translated = RigExecDispatchTranslateSceneSolver(*B.sceneDescriptors, solverPath,
                 providerRests, &descriptor, &translationError) ? 1 : 0;
-            // Thirteen channels per bone, then group and switch selectors.
+            // Thirteen channels per bone, then the switch selectors.
             // Avars stay per-frame reads: a value edit patches the avar slot.
             for (const SdfPath &joint : targets(prim, _tokens->rigExecJoints)) {
                 const UsdPrim bone = B.stage->GetPrimAtPath(joint);
@@ -724,17 +722,8 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                     s.bone2dDoubles.push_back(std::move(input));
                 }
             }
-            for (const SdfPath &groupPath : targets(prim, _tokens->rigExecBoneGroups)) {
-                const UsdPrim group = B.stage->GetPrimAtPath(groupPath);
-                SdfPathVector walk;
-                RigExecBakedInput<double> input = ctx->ResolveBind(
-                    group, _tokens->rigExecActiveBone, 0.0, &walk);
-                ctx->CommitBind(group, _tokens->rigExecActiveBone, &input, walk);
-                s.bone2dSelectors.push_back(std::move(input));
-            }
             if (translated == 1) {
-                const size_t groups = s.bone2dSelectors.size();
-                for (size_t g = groups; g < descriptor.bone2dSelectorReads.size(); ++g) {
+                for (size_t g = 0; g < descriptor.bone2dSelectorReads.size(); ++g) {
                     const SdfPath &property = descriptor.bone2dSelectorReads[g].consumer;
                     const UsdPrim owner = B.stage->GetPrimAtPath(property.GetPrimPath());
                     const double fallback = g < descriptor.bone2dSelectorFallbacks.size()
@@ -819,6 +808,13 @@ RigExecBakedBuildWalk(RigExecBakedBuildContext *ctx,
                 record.startRest=s.startRest;
             }
             static_cast<RigExecSolverRecord &>(s)=std::move(record);
+            for(const auto &read:descriptor.jointGroupSelectorReads) {
+                const UsdPrim owner=B.stage->GetPrimAtPath(read.consumer.GetPrimPath());
+                SdfPathVector walk;
+                RigExecBakedInput<double> input=ctx->ResolveBind(owner,read.consumer.GetNameToken(),0.0,&walk);
+                ctx->CommitBind(owner,read.consumer.GetNameToken(),&input,walk);
+                s.jointGroupSelectors.push_back(std::move(input));
+            }
         }
         s.kernelInputs.controls.resize(s.controls.size());
         s.kernelInputs.ribbonPoints.reserve(std::max(s.ribbonPoints.size(),s.ribbonConstantPoints.size()));
@@ -2955,6 +2951,7 @@ NoteSolverInputs(const RigExecBakedProgramImpl::Solver &solver,
     for (const auto &input : solver.bone2dDoubles) NoteInput(input, sink);
     for (const auto &input : solver.bone2dBools) NoteInput(input, sink);
     for (const auto &input : solver.bone2dSelectors) NoteInput(input, sink);
+    for (const auto &input : solver.jointGroupSelectors) NoteInput(input, sink);
     // The spline parameters the bake could not fold, which the solve re-reads
     // as a group rather than one input at a time.
     sink->step->varyingInputs = sink->step->varyingInputs || solver.splineParamsVary;
@@ -5063,6 +5060,9 @@ RigExecBakedRunPoseStep(RigExecBakedProgramImpl *program,
             for(size_t g=0;g<s.bone2dSelectors.size();++g)
                 input.bone2dSelectors[g]=rd(s.bone2dSelectors[g]);
         }
+        input.jointGroupSelectors.resize(s.jointGroupSelectors.size());
+        for(size_t g=0;g<s.jointGroupSelectors.size();++g)
+            input.jointGroupSelectors[g]=rd(s.jointGroupSelectors[g]);
         std::string error;
         if(!RigExecRunSolver(s,input,&s.kernelWorkspace,&aggregate,&error) && !error.empty())
             step->diagnostics.push_back("diag "+s.pathText+": "+error);

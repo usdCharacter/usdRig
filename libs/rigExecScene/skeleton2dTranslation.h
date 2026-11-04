@@ -47,12 +47,8 @@ struct RigExecSceneSkeleton2dDescriptor {
     /// indices, kRigExecBone2dSpaceBase and RigExecBone2dSpaceExternal for
     /// spaces); RigExecBone2dSetup ranges index them.
     std::vector<int32_t> spaceSources, targetCandidates;
-    /// Groups in rigExec:boneGroups order, with concatenated members.
-    std::vector<RigExecBone2dGroup> groups;
-    std::vector<int32_t> groupMembers;
-    /// The selectors: one rigExec:activeBone read per group, then one
-    /// active-index read per space switch (switches order), each with the
-    /// value it reads when unauthored.
+    /// The selectors: one active-index read per space switch (switches
+    /// order), each with the value it reads when unauthored.
     std::vector<RigExecSceneTypedRead> selectorReads;
     std::vector<double> selectorFallbacks;
     /// The RigExecSpaceSwitch prims the skeleton reads, in solve order of

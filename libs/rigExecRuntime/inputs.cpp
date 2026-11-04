@@ -1683,6 +1683,7 @@ RrInputsBindReads(RrProgram *program, std::string *error)
     }
     program->solverBone2dRead.assign(poses.solvers.size(), {});
     program->solverBone2dSelectorRead.assign(poses.solvers.size(), {});
+    program->solverJointGroupRead.assign(poses.solvers.size(), {});
     for (size_t i = 0; i < poses.solvers.size(); ++i) {
         for (int field = 0; field < RrSolverFieldCount; ++field) {
             if(field>=14 && !_RrSolverField(poses.solvers[i],field))continue;
@@ -1712,6 +1713,18 @@ RrInputsBindReads(RrProgram *program, std::string *error)
                           &selectorReads[g])) {
                     return unbound("pose.solvers.skeleton2d.selector", i);
                 }
+            }
+        }
+        // Joint groups after the solver's other inputs.
+        const auto *skeleton = poses.solvers[i].skeleton2d.get();
+        const size_t groupField = size_t(RrSolverFieldCount) +
+            (skeleton ? skeleton->channels.size() + skeleton->selectorChannels.size() : 0);
+        const auto &groupSelectors = poses.solvers[i].jointGroupSelectors;
+        auto &groupReads = program->solverJointGroupRead[i];
+        groupReads.assign(groupSelectors.size(), -1);
+        for (size_t g = 0; g < groupSelectors.size(); ++g) {
+            if (!bind(&groupSelectors[g], _RrFamily::Solver, i, groupField + g, &groupReads[g])) {
+                return unbound("pose.solvers.joint_group_selectors", i);
             }
         }
     }

@@ -86,6 +86,12 @@ bool RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
         for(const auto *hops:{&bound.bone2dSelectors[g].hops,&bound.bone2dSelectors[g].doubleHops})
             for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
     }
+    bound.jointGroupSelectors.resize(source.jointGroupSelectorReads.size());
+    for(size_t g=0;g<source.jointGroupSelectorReads.size();++g) {
+        if(!RigExecBindGraphTypedRead(source.jointGroupSelectorReads[g],context,&bound.jointGroupSelectors[g],error))return false;
+        for(const auto *hops:{&bound.jointGroupSelectors[g].hops,&bound.jointGroupSelectors[g].doubleHops})
+            for(const auto &hop:*hops) {Add(&bound.reads,hop.raw);Add(&bound.reads,hop.overlay);}
+    }
     const auto bind=[&](const SdfPath &path,const TfToken &name,RigExecValueId *id,bool aggregate=false,bool *required=nullptr) {
         if(path.IsEmpty() || source.record.degenerate)return true;
         RigExecSceneGraphReadRequest request;
@@ -229,6 +235,15 @@ bool RigExecRunSolverGraph(const RigExecSolverGraphBinding &bound,RigExecTypedVa
                 }
                 if(value.IsHolding<double>())input.bone2dSelectors[g]=value.UncheckedGet<double>();
             }
+        }
+        input.jointGroupSelectors.assign(bound.jointGroupSelectors.size(),0.0);
+        for(size_t g=0;g<bound.jointGroupSelectors.size();++g) {
+            VtValue value;std::string unavailable;
+            if(!RigExecReadGraphTypedRead(bound.jointGroupSelectors[g],*store,&value,&unavailable)) {
+                if(!unavailable.empty())return fail(unavailable);
+                continue;
+            }
+            if(value.IsHolding<double>())input.jointGroupSelectors[g]=value.UncheckedGet<double>();
         }
     }
     const bool valid=RigExecRunSolver(record,input,workspace,&output,error);

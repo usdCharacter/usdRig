@@ -635,14 +635,15 @@ RrPoseSizeScratch(RrProgram *program, std::string *error)
             }
             state.bone2dSpaceSources = skeleton->spaceSources;
             state.bone2dTargetCandidates = skeleton->targetCandidates;
-            state.bone2dGroups.resize(skeleton->groupCount.size());
-            for (size_t g = 0; g < skeleton->groupCount.size(); ++g) {
-                state.bone2dGroups[g].memberBegin = skeleton->groupBegin[g];
-                state.bone2dGroups[g].memberCount = skeleton->groupCount[g];
-                state.bone2dGroups[g].enabled = skeleton->groupEnabled[g] != 0;
-            }
-            state.bone2dGroupMembers = skeleton->groupMembers;
         }
+        state.jointGroups.resize(wire.jointGroups.size());
+        for (size_t g = 0; g < wire.jointGroups.size(); ++g) {
+            state.jointGroups[g].memberBegin = wire.jointGroups[g].memberBegin;
+            state.jointGroups[g].memberCount = wire.jointGroups[g].memberCount;
+            state.jointGroups[g].enabled = wire.jointGroups[g].enabled;
+        }
+        state.jointGroupMembers.assign(wire.jointGroupMembers.begin(), wire.jointGroupMembers.end());
+        state.jointGroupParents = wire.jointGroupParents;
     }
     scratch->recordAfter.assign(poses.commits.size(), 1);
     scratch->recordEveryTarget.assign(poses.commits.size(), 1);

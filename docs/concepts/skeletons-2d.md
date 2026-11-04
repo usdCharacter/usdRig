@@ -90,12 +90,13 @@ Per frame the solver:
    (a pin turns its ancestors so its base meets the target);
 6. publishes one frame per bone: its setup-to-pose deformation.
 
-Locks win over targets. [Bone groups](../nodes/bone_2d_group.md) hold
-alternative chains; the bones under inactive members publish their rest
-frames. A group is a prim (conventionally a `Scope`) with
-`RigExecBone2dGroupAPI`, whose built-in collection `members` lists the chains'
-first bones explicitly. Children compose from the pose frame, so a bone's
-cross scale never shears them.
+Locks win over targets. [Joint groups](../nodes/joint_group.md) on the
+skeleton's `rigExec:jointGroups` hold alternative chains; the bones under
+inactive members publish their rest frames. A group is a prim (conventionally a
+`Scope`) with `RigExecJointGroupAPI`, whose built-in collection `members` lists
+the chains' first bones explicitly; an FK chain reads the same groups.
+Children compose from the pose frame, so a bone's cross scale never shears
+them.
 
 `bone2d:colorTag`, `bone2d:showLabel` and `bone2d:shy` are display hints for
 editors; evaluation never reads them.

@@ -55,6 +55,9 @@ numbers — but the solve itself is absolute: unless `rigExec:startFrame`
 names the provider the chain hangs from, or `rigExec:startFramePolicy =
 "parent"` derives it from the joint hierarchy, the chain ignores whatever
 its joints sit under.
+A [Joint Group](joint_group.md) listed on `rigExec:jointGroups` picks one of
+several alternative chains among the joints: a joint under an inactive member
+publishes the frame the chain gives it at rest, carried by the start frame.
 Skinning movers then read the posed joints at the `final` phase.
 
 ## Wiring
@@ -64,6 +67,7 @@ Skinning movers then read the posed joints at the `final` phase.
 | `rigExec:controls` | Ordered animator controls, one per joint. | yes |
 | `rigExec:joints` | Ordered nested joints the chain poses; with none, the solver publishes frames nothing reads. | no |
 | `rigExec:controlSpace` | `parentRelative` when the controls are nested under each other; `world` for sibling controls. | no |
+| `rigExec:jointGroups` | Ordered joint groups (prims with `RigExecJointGroupAPI`) whose members are joints of this chain; empty keeps every joint active. | no |
 
 ## Parameters
 
@@ -214,6 +218,18 @@ the aggregate element index; length is the effective sample count.
 The compiler binds each joint to one aggregate element
 in the compiled program.
 
+#### `rigExec:jointGroups`
+
+*Relationship.*
+
+Ordered joint groups of this chain: prims carrying
+RigExecJointGroupAPI (conventionally Scopes) whose members are
+joints of this chain. A joint under an inactive member publishes
+the rest frame the chain publishes for zero control motion: its
+output rest carried through the start frame's rest-to-pose delta.
+The chain still composes later elements from every control. Empty
+keeps every joint active.
+
 #### `guide:radius`
 
 *Type:* `double`. *Default:* `1.0`.
@@ -272,6 +288,7 @@ python docs/render_media.py --page fk_chain
 - [Two-Bone IK](two_bone_ik.md)
 - [Blend Point Frames](blend_point_frames.md)
 - [Joint](joint.md)
+- [Joint Group](joint_group.md)
 
 ---
 

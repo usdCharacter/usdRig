@@ -1336,9 +1336,9 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
                 place(fields[f], Family::Solver, i, f);
             }
             // A 2D skeleton's channels follow: thirteen per bone, in
-            // RigExecBone2dChannelNames order (Skeleton2d.channels), then the
-            // selectors (Skeleton2d.selector_channels): each group's
-            // activeBone, then each space switch's active index.
+            // RigExecBone2dChannelNames order (Skeleton2d.channels), then each
+            // space switch's active index (Skeleton2d.selector_channels);
+            // then each joint group's active member (joint_group_selectors).
             const size_t bones = std::min(s.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
                                           s.bone2dBools.size() / kRigExecBone2dBoolChannels);
             for (size_t k = 0; k < bones; ++k) {
@@ -1354,6 +1354,11 @@ RigExecBakeComputedCapture::RigExecBakeComputedCapture(
             for (size_t g = 0; g < s.bone2dSelectors.size(); ++g) {
                 place(static_cast<const void *>(&s.bone2dSelectors[g]), Family::Solver, i,
                       RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount + g);
+            }
+            for (size_t g = 0; g < s.jointGroupSelectors.size(); ++g) {
+                place(static_cast<const void *>(&s.jointGroupSelectors[g]), Family::Solver, i,
+                      RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount +
+                          s.bone2dSelectors.size() + g);
             }
         }
         for (size_t i = 0; i < B.constraints.size(); ++i) {

@@ -1,0 +1,134 @@
+#usda 1.0
+(
+    defaultPrim = "JointGroupAsset"
+    doc = """
+    Docs example: a RigExecJointGroupAPI group switching two alternative
+    chains of one RigExecFkChain.
+
+    A wrist carries two alternative fingers, Open and Curl; Curl has a tip
+    joint. The joints and their parent-relative controls nest alike, and
+    the chain hangs from the Arm control, which slides along +X. The group
+    Fingers lists both fingers; rigExec:activeMember is held at 0 until frame
+    1012, then 1, so the open finger poses first and the curled finger
+    afterward, while the inactive finger and its tip sit at their rests
+    carried by the arm. Turn on Display -> Display Purposes -> Guide to see
+    the joints.
+    """
+    endTimeCode = 1024
+    metersPerUnit = 0.01
+    startTimeCode = 1001
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "JointGroupAsset"
+{
+    def RigExecRoot "Rig"
+    {
+        def Scope "Controls"
+        {
+            def RigExecControl "Arm"
+            {
+                double avars:tx.timeSamples = {
+                    1001: 0,
+                    1024: 4,
+                }
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+            }
+
+            def RigExecControl "Wrist"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+
+                def RigExecControl "Open"
+                {
+                    double avars:rz.timeSamples = {
+                        1001: 0,
+                        1024: 30,
+                    }
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0.5, 0, 1) )
+                }
+
+                def RigExecControl "Curl"
+                {
+                    double avars:rz.timeSamples = {
+                        1001: 0,
+                        1024: -60,
+                    }
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, -0.5, 0, 1) )
+
+                    def RigExecControl "Tip"
+                    {
+                        double avars:rz.timeSamples = {
+                            1001: 0,
+                            1024: -45,
+                        }
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.8, 0, 0, 1) )
+                    }
+                }
+            }
+        }
+
+        def Scope "Joints"
+        {
+            def RigExecJoint "Wrist"
+            {
+                matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (2, 0, 0, 1) )
+
+                def RigExecJoint "Open"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0.5, 0, 1) )
+                }
+
+                def RigExecJoint "Curl"
+                {
+                    matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, -0.5, 0, 1) )
+
+                    def RigExecJoint "Tip"
+                    {
+                        matrix4d rest:space = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.8, 0, 0, 1) )
+                    }
+                }
+            }
+        }
+
+        def Scope "Groups"
+        {
+            def Scope "Fingers" (
+                prepend apiSchemas = ["RigExecJointGroupAPI"]
+            )
+            {
+                rel collection:members:includes = [
+                    </JointGroupAsset/Rig/Joints/Wrist/Open>,
+                    </JointGroupAsset/Rig/Joints/Wrist/Curl>,
+                ]
+                double rigExec:activeMember.spline = {
+                    1001: 0; post held,
+                    1012: 1; post held,
+                }
+            }
+        }
+
+        def Scope "Solvers"
+        {
+            def RigExecFkChain "Hand"
+            {
+                uniform token rigExec:controlSpace = "parentRelative"
+                rel rigExec:startFrame = </JointGroupAsset/Rig/Controls/Arm>
+                rel rigExec:controls = [
+                    </JointGroupAsset/Rig/Controls/Wrist>,
+                    </JointGroupAsset/Rig/Controls/Wrist/Open>,
+                    </JointGroupAsset/Rig/Controls/Wrist/Curl>,
+                    </JointGroupAsset/Rig/Controls/Wrist/Curl/Tip>,
+                ]
+                rel rigExec:joints = [
+                    </JointGroupAsset/Rig/Joints/Wrist>,
+                    </JointGroupAsset/Rig/Joints/Wrist/Open>,
+                    </JointGroupAsset/Rig/Joints/Wrist/Curl>,
+                    </JointGroupAsset/Rig/Joints/Wrist/Curl/Tip>,
+                ]
+                rel rigExec:jointGroups = </JointGroupAsset/Rig/Groups/Fingers>
+            }
+        }
+    }
+}

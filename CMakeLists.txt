@@ -104,6 +104,7 @@ add_library(rigExecScene SHARED
     libs/rigExecScene/constraintSceneTranslation.cpp
     libs/rigExecScene/geometryGraphBinding.cpp
     libs/rigExecScene/geometrySceneTranslation.cpp
+    libs/rigExecScene/jointGroupTranslation.cpp
     libs/rigExecScene/poseCommit.cpp
     libs/rigExecScene/poseGraphBinding.cpp
     libs/rigExecScene/poseSceneTranslation.cpp
@@ -738,6 +739,13 @@ target_link_libraries(testRigExecSkeleton2d PRIVATE rigExec rigExecScene
 target_compile_definitions(testRigExecSkeleton2d PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecSkeleton2d COMMAND testRigExecSkeleton2d)
+
+add_executable(testRigExecJointGroups tests/testRigExecJointGroups.cpp)
+target_link_libraries(testRigExecJointGroups PRIVATE rigExec rigExecScene
+    rigExecBake rigExecRuntime rigExecSampler)
+target_compile_definitions(testRigExecJointGroups PRIVATE
+    ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecJointGroups COMMAND testRigExecJointGroups)
 # One golden serves native, frozen and .rigexec; regenerate it with
 # rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out.
 foreach(_fixture nested_chain)
@@ -1546,6 +1554,12 @@ rigexec_add_verify_binary_test(NAME docs_cloth_mover
     STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/cloth_mover.usda"
     FRAMES 1,12,30,41,60 CLASS inputs
     DRAGS "/ClothAsset/Rig/Controls/Bar.avars:tx")
+# A joint group on an FK chain: the drags switch the active finger and move
+# the start frame the inactive finger's rest rides.
+rigexec_add_verify_binary_test(NAME docs_joint_group
+    STAGE "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/joint_group.usda"
+    FRAMES 1001,1011,1012,1024 CLASS inputs
+    DRAGS "/JointGroupAsset/Rig/Groups/Fingers.rigExec:activeMember,/JointGroupAsset/Rig/Controls/Arm.avars:tx")
 
 add_executable(testRigExecPack tests/testRigExecPack.cpp)
 target_link_libraries(testRigExecPack PRIVATE rigExecStandalone rigExecAuthoring)

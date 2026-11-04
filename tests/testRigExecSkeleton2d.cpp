@@ -10,7 +10,7 @@
 // and End joints; a skeleton hanging from a tilted, constrained start
 // frame; space switches on bones (same-skeleton, outside and base sources,
 // whole and fractional indices); the compile refusals; rigging (offsets, IK
-// targets, control bones, bone groups) with parity, value/structural edits
+// targets, control bones, joint groups) with parity, value/structural edits
 // and refusals; and no stage authoring.
 #include "rigExec/rigEvaluator.h"
 #include "pxr/base/plug/registry.h"
@@ -151,13 +151,13 @@ std::string Usda(const std::vector<BoneSpec> &bones, const std::string &before =
         s << (i ? ", " : "") << "<" << BonePath(bones, bones[i].name) << ">";
     s << "]\n";
     if (!groups.empty()) {
-        s << "            rel rigExec:boneGroups = [";
+        s << "            rel rigExec:jointGroups = [";
         for (size_t i = 0; i < groups.size(); ++i)
             s << (i ? ", " : "") << "</Char/Rig/Skeleton/" << groups[i].name << ">";
         s << "]\n";
         for (const GroupSpec &g : groups) {
             s << "            def Scope \"" << g.name
-              << "\" (prepend apiSchemas = [\"RigExecBone2dGroupAPI\"])\n            {\n"
+              << "\" (prepend apiSchemas = [\"RigExecJointGroupAPI\"])\n            {\n"
               << "                rel collection:members:includes = [";
             for (size_t i = 0; i < g.members.size(); ++i)
                 s << (i ? ", " : "") << "<" << BonePath(bones, g.members[i]) << ">";
@@ -1286,7 +1286,7 @@ void ControlBones()
 
 // exactly one member active; inactive chains publish
 // their setup frames; a disabled group keeps every member active.
-void BoneGroups()
+void JointGroups()
 {
     BoneSpec torso;
     torso.name = "T"; torso.x = 0; torso.y = 0; torso.angle = 0;
@@ -1300,7 +1300,7 @@ void BoneGroups()
     headB.extra = "                double avars:rz = 30\n";
     GroupSpec g;
     g.name = "G"; g.members = {"HA", "HB"};
-    g.extra = "                double rigExec:activeBone.spline = { 1: 0; post held, 2: 1; post held, }\n";
+    g.extra = "                double rigExec:activeMember.spline = { 1: 0; post held, 2: 1; post held, }\n";
     auto stage = Stage(Usda({torso, headA, jawA, headB}, "", "", {g}));
     RigExecRigEvaluator rig(stage, kRig);
     CHECK(Compiles(rig));
@@ -1583,10 +1583,14 @@ void RiggingRefusals()
     BoneSpec foreign = b;
     foreign.extra = "                rel bone2d:posControl = </Char/Rig/Skeleton>\n";
     Refused(Usda({a, foreign}), "not a bone of this skeleton");
-    // Groups hold bones of the skeleton.
+    // Groups hold bones of the skeleton, each in at most one group.
     GroupSpec bad;
     bad.name = "G"; bad.members = {"Missing"};
-    Refused(Usda({a, b}, "", "", {bad}), "not a bone of this skeleton");
+    Refused(Usda({a, b}, "", "", {bad}), "not a joint of this solver");
+    GroupSpec first, second;
+    first.name = "G"; first.members = {"B"};
+    second.name = "H"; second.members = {"A", "B"};
+    Refused(Usda({a, b}, "", "", {first, second}), "is a member of two joint groups");
     // The skeleton holds groups: a bone targeted as a group is refused.
     GroupSpec ok;
     ok.name = "G"; ok.members = {"B"};
@@ -1597,7 +1601,7 @@ void RiggingRefusals()
     if (relAt != std::string::npos) {
         impostor.replace(relAt, groupPath.size(), "</Char/Rig/Bones/A>");
     }
-    Refused(impostor, "not an active prim with RigExecBone2dGroupAPI");
+    Refused(impostor, "not an active prim with RigExecJointGroupAPI");
     // A group's collection lists its members explicitly.
     GroupSpec expanding;
     expanding.name = "G"; expanding.members = {"B"};
@@ -1632,7 +1636,7 @@ int main()
     Offset();
     IkTarget();
     ControlBones();
-    BoneGroups();
+    JointGroups();
     SpaceSwitch();
     StartFrame();
     RiggingRefusals();

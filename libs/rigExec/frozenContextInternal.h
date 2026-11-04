@@ -123,6 +123,7 @@ _VisitSolverInputs(Obj &solver, Fn &&fn)
     for (auto &input : solver.bone2dDoubles) fn(input);
     for (auto &input : solver.bone2dBools) fn(input);
     for (auto &input : solver.bone2dSelectors) fn(input);
+    for (auto &input : solver.jointGroupSelectors) fn(input);
 }
 
 template <class Obj, class Fn>

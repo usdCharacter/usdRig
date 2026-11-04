@@ -38,7 +38,8 @@
 //                  along-bone scale -- meets its target bone's base; a lone
 //                  bone aims, with stretch-to-reach up to maxStretch
 //   deform frame   Scale(s_i, cross_i) * P_i, published to the joint; a bone
-//                  under an inactive group member publishes its rest frame
+//                  under an inactive joint-group member publishes its rest
+//                  frame
 // Children compose from the pose frame, never the deform frame, so a
 // bone's cross scale never shears its children.
 //
@@ -50,7 +51,7 @@
 // Rigging inputs (RigExecSkeleton2dStatic, all solve-order indices): per-bone
 // parent spaces of a space switch, selected per evaluation by its active
 // index; per-bone target candidates selected by bone2d:targetIndex (-1:
-// none); bone groups whose active member index arrives per evaluation. The
+// none); joint groups whose active member index arrives per evaluation. The
 // static solve order covers the union of the namespace parents and every
 // switch source (the compile refuses a cyclic union), so no per-frame
 // reorder is needed. Locks win over targets: a locked bone keeps its hold
@@ -66,6 +67,8 @@
 // frames are orthonormal (det +1, or -1 under an odd number of flips).
 #ifndef RIGEXEC_MATH_SKELETON2D_KERNEL_H
 #define RIGEXEC_MATH_SKELETON2D_KERNEL_H
+
+#include "rigExecMath/jointGroupKernel.h"
 
 #include <algorithm>
 #include <array>
@@ -169,15 +172,6 @@ struct RigExecBone2dSetup {
     double angleFactor = 0, posFactorX = 0, posFactorY = 0, scaleFactor = 0;
 };
 
-/// One alternative-chain bone group: alternative chains whose first
-/// bones are the members. Structural, except the active member, which
-/// arrives per evaluation. A disabled group keeps every member active.
-struct RigExecBone2dGroup {
-    /// Members in RigExecSkeleton2dStatic::groupMembers (solve order).
-    uint32_t memberBegin = 0, memberCount = 0;
-    bool enabled = true;
-};
-
 /// Parent-space, target and group arrays, shared by reference (never copied
 /// per frame). All bone indices are solve-order indices. Counts bound every
 /// range the kernel reads, so a malformed record fails safely.
@@ -189,9 +183,10 @@ struct RigExecSkeleton2dStatic {
     /// Concatenated target candidates; RigExecBone2dSetup ranges.
     const int32_t *targetCandidates = nullptr;
     size_t targetCandidateCount = 0;
-    const RigExecBone2dGroup *groups = nullptr;
+    /// Joint groups; members are solve-order indices.
+    const RigExecJointGroup *groups = nullptr;
     size_t groupCount = 0;
-    /// Concatenated group members; RigExecBone2dGroup ranges.
+    /// Concatenated group members; RigExecJointGroup ranges.
     const int32_t *groupMembers = nullptr;
     size_t groupMemberCount = 0;
 };
@@ -205,14 +200,16 @@ struct RigExecBone2dRest {
 
 /// One evaluation's values besides the channels: each outside parent
 /// space's setup frame and posed placement in the plane (entry e for
-/// RigExecBone2dSpaceExternal(e)), and the selectors -- each group's active
-/// member index, then each space switch's active index.
+/// RigExecBone2dSpaceExternal(e)), each space switch's active index (the
+/// selectors) and each joint group's active member index.
 struct RigExecSkeleton2dFrameInputs {
     const RigExecBone2dRest *externalRests = nullptr;
     const RigExecBone2dRest *externalPoses = nullptr;
     size_t externalCount = 0;
     const double *selectors = nullptr;
     size_t selectorCount = 0;
+    const double *groupSelectors = nullptr;
+    size_t groupSelectorCount = 0;
 };
 
 /// One evaluation's channel values, read at the boundary. A channel that
@@ -1178,12 +1175,9 @@ inline bool ResolveSpaces(const RigExecBone2dSetup *setup, size_t count,
     return true;
 }
 
-/// Marks ws.active: a bone under an inactive member of an enabled group is
-/// inactive, unless it is also under an active member (active wins); every
-/// other bone is active. An out-of-range active index clamps to the nearest
-/// member. Inactive bones publish their rest frames and neither solve nor
-/// join chains.
-// An active member wins where chains overlap; the active index clamps to the nearest member.
+/// Marks ws.active by the joint-group rule (RigExecResolveJointGroups) over
+/// this frame's chain parents. Inactive bones publish their rest frames and
+/// neither solve nor join chains.
 inline void ResolveGroups(const RigExecBone2dSetup *effSetup, size_t count,
     const RigExecSkeleton2dStatic *extra, const double *groupActive,
     RigExecSkeleton2dWorkspace &ws)
@@ -1193,42 +1187,10 @@ inline void ResolveGroups(const RigExecBone2dSetup *effSetup, size_t count,
         return;
     }
     ws.groupSlot.assign(extra->groupCount, -1);
-    for (size_t g = 0; g < extra->groupCount; ++g) {
-        const RigExecBone2dGroup &group = extra->groups[g];
-        if (!group.enabled || group.memberCount == 0) {
-            continue;
-        }
-        const double v = groupActive[g];
-        int64_t slot = SelectIndex(v, group.memberCount);
-        if (slot < 0) {
-            slot = (!(v >= 0.0)) ? 0 : int64_t(group.memberCount) - 1;
-        }
-        ws.groupSlot[g] = int32_t(slot);
-    }
-    for (size_t i = 0; i < count; ++i) {
-        bool underActive = false, underInactive = false;
-        for (int32_t a = int32_t(i);
-             a >= 0 && !(underActive && underInactive);
-             a = effSetup[size_t(a)].parent) {
-            for (size_t g = 0; g < extra->groupCount; ++g) {
-                const int32_t slot = ws.groupSlot[g];
-                if (slot < 0) {
-                    continue;
-                }
-                const RigExecBone2dGroup &group = extra->groups[g];
-                for (uint32_t m = 0; m < group.memberCount; ++m) {
-                    if (extra->groupMembers[group.memberBegin + m] == a) {
-                        if (int32_t(m) == slot) {
-                            underActive = true;
-                        } else {
-                            underInactive = true;
-                        }
-                    }
-                }
-            }
-        }
-        ws.active[i] = (underActive || !underInactive) ? uint8_t(1) : uint8_t(0);
-    }
+    RigExecResolveJointGroups(count,
+        [effSetup](size_t i) { return effSetup[i].parent; },
+        extra->groups, extra->groupCount, extra->groupMembers, groupActive,
+        ws.groupSlot.data(), ws.active.data());
 }
 
 /// The target chain of bone \p k: itself plus its ancestors nearest first,
@@ -1535,7 +1497,8 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
 {
     namespace d = skeleton2d_detail;
     if ((inputs.externalCount > 0 && (!inputs.externalRests || !inputs.externalPoses)) ||
-        (inputs.selectorCount > 0 && !inputs.selectors)) {
+        (inputs.selectorCount > 0 && !inputs.selectors) ||
+        (inputs.groupSelectorCount > 0 && !inputs.groupSelectors)) {
         return false;
     }
     for (size_t i = 0; i < count; ++i) {
@@ -1550,7 +1513,8 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
     }
     if ((extra->spaceSourceCount > 0 && !extra->spaceSources) ||
         (extra->targetCandidateCount > 0 && !extra->targetCandidates) ||
-        (extra->groupCount > 0 && (!extra->groups || inputs.selectorCount < extra->groupCount)) ||
+        (extra->groupCount > 0 &&
+         (!extra->groups || inputs.groupSelectorCount < extra->groupCount)) ||
         (extra->groupMemberCount > 0 && !extra->groupMembers)) {
         return false;
     }
@@ -1563,8 +1527,7 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
             return false;
         }
         if (b.spaceCount > 0 &&
-            (b.spaceSelector < int32_t(extra->groupCount) ||
-             size_t(b.spaceSelector) >= inputs.selectorCount)) {
+            (b.spaceSelector < 0 || size_t(b.spaceSelector) >= inputs.selectorCount)) {
             return false;
         }
         for (uint32_t k = 0; k < b.spaceCount; ++k) {
@@ -1589,10 +1552,10 @@ inline bool RigExecBone2dStaticIsValid(const RigExecBone2dSetup *setup,
         }
     }
     for (size_t g = 0; g < extra->groupCount; ++g) {
-        const RigExecBone2dGroup &group = extra->groups[g];
+        const RigExecJointGroup &group = extra->groups[g];
         if (group.memberBegin > extra->groupMemberCount ||
             group.memberCount > extra->groupMemberCount - group.memberBegin ||
-            !d::Finite(inputs.selectors[g])) {
+            !d::Finite(inputs.groupSelectors[g])) {
             return false;
         }
         for (uint32_t m = 0; m < group.memberCount; ++m) {
@@ -1709,7 +1672,7 @@ inline bool RigExecSolveSkeleton2d(const RigExecBone2dSetup *setup,
     }
     const RigExecBone2dSetup *effSetup = ws.effSetup.data();
     const RigExecBone2dChannels *eff = ws.eff.data();
-    d::ResolveGroups(effSetup, count, extra, inputs.selectors, ws);
+    d::ResolveGroups(effSetup, count, extra, inputs.groupSelectors, ws);
     for (size_t i = 0; i < count; ++i) {
         const int32_t p = effSetup[i].parent;
         // Pins and bones ignored by IK leave a parent's lock and target
@@ -1817,7 +1780,7 @@ enum class RigExecSkeleton2dResult : uint8_t { Solved, Malformed, NotPlanar, Not
 /// them; the vectors must outlive the result.
 inline RigExecSkeleton2dStatic RigExecSkeleton2dStaticOf(
     const std::vector<int32_t> &spaceSources, const std::vector<int32_t> &targetCandidates,
-    const std::vector<RigExecBone2dGroup> &groups, const std::vector<int32_t> &groupMembers)
+    const std::vector<RigExecJointGroup> &groups, const std::vector<int32_t> &groupMembers)
 {
     RigExecSkeleton2dStatic extra;
     extra.spaceSources = spaceSources.data();
@@ -1920,7 +1883,8 @@ private:
 /// One evaluation's landmarks besides the bones' rests (rig-common, as the
 /// caller holds them): the start frame's rest and posed landmarks (both null:
 /// asset space), each outside parent space's rest and posed landmarks
-/// (externalCount of each), and the selectors (RigExecSkeleton2dFrameInputs).
+/// (externalCount of each), and the switch and group selectors
+/// (RigExecSkeleton2dFrameInputs).
 template <class Landmarks>
 struct RigExecSkeleton2dLandmarkInputs {
     const Landmarks *startRest = nullptr, *startPose = nullptr;
@@ -1928,6 +1892,8 @@ struct RigExecSkeleton2dLandmarkInputs {
     size_t externalCount = 0;
     const double *selectors = nullptr;
     size_t selectorCount = 0;
+    const double *groupSelectors = nullptr;
+    size_t groupSelectorCount = 0;
 };
 
 /// The whole skeleton solve over rigExec:joints-ordered rests and frames.
@@ -1980,6 +1946,8 @@ inline RigExecSkeleton2dResult RigExecSolveSkeleton2dJoints(
     inputs.externalCount = frames.externalCount;
     inputs.selectors = frames.selectors;
     inputs.selectorCount = frames.selectorCount;
+    inputs.groupSelectors = frames.groupSelectors;
+    inputs.groupSelectorCount = frames.groupSelectorCount;
     const bool solved = planar && RigExecSolveSkeleton2d(setup.data(), scratch->rests.data(),
         scratch->channels.data(), n, &scratch->solve, scratch->pose.data(),
         scratch->deform.data(), &extra, inputs);

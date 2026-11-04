@@ -1474,6 +1474,20 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
     aggregate.frames.clear();
     aggregate.rests.clear();
     const std::string type = program->TextOrEmpty(ws.type);
+    if (size_t(wire.object) >= program->solverJointGroupRead.size()) {
+        if (error) {
+            *error = _RrStepHead(program, step) + " names no solver";
+        }
+        return false;
+    }
+    {
+        const std::vector<int32_t> &groupReads =
+            program->solverJointGroupRead[size_t(wire.object)];
+        s.jointGroupSelectors.resize(groupReads.size());
+        for (size_t g = 0; g < groupReads.size(); ++g) {
+            s.jointGroupSelectors[g] = program->ReadRegistered(groupReads[g]).f64;
+        }
+    }
     const auto finAt = [&](uint32_t version, const RrPointFrame **out) {
         if (size_t(version) >= store.fin.size()) {
             if (error) {
@@ -1555,6 +1569,36 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         }
         if (base && !aggregate.frames.empty()) {
             aggregate.frames.erase(aggregate.frames.begin());
+        }
+        if (!s.jointGroups.empty()) {
+            // RigExecRunSolver's FkChain groups: a joint under an inactive
+            // member publishes its output rest through the start delta.
+            if (s.jointGroupSelectors.size() != s.jointGroups.size()) {
+                if (error) {
+                    *error = _RrStepHead(program, step) + " names no joint group";
+                }
+                return false;
+            }
+            const size_t joints = s.jointGroupParents.size();
+            s.jointGroupActive.resize(joints);
+            s.jointGroupSlots.resize(s.jointGroups.size());
+            RigExecResolveJointGroups(joints,
+                [&s](size_t i) { return s.jointGroupParents[i]; },
+                s.jointGroups.data(), s.jointGroups.size(), s.jointGroupMembers.data(),
+                s.jointGroupSelectors.data(), s.jointGroupSlots.data(),
+                s.jointGroupActive.data());
+            RrMat4d start = _RrIdentity();
+            if (base) {
+                RrPointsToMatrix(s.elements[0].restPoints, s.elements[0].posePoints, &start);
+            }
+            for (size_t k = 0; k < joints && k < aggregate.frames.size(); ++k) {
+                if (s.jointGroupActive[k]) {
+                    continue;
+                }
+                const RrPoseFkElement &element = s.elements[k + base];
+                aggregate.frames[k] = RrMatrixToPoints(
+                    element.hasOutRest ? element.outRestPoints : element.restPoints, start);
+            }
         }
     } else if (type == "RigExecTwoBoneIk") {
         RrPoseTwoBoneIkParams params = s.ikParams;
@@ -1740,9 +1784,11 @@ _RrRunSolveStep(RrProgram *program, size_t step, std::string *error)
         frames.externalCount = s.bone2dExternalPoses.size();
         frames.selectors = s.bone2dSelectors.data();
         frames.selectorCount = s.bone2dSelectors.size();
+        frames.groupSelectors = s.jointGroupSelectors.data();
+        frames.groupSelectorCount = s.jointGroupSelectors.size();
         const RigExecSkeleton2dStatic extra = RigExecSkeleton2dStaticOf(
-            s.bone2dSpaceSources, s.bone2dTargetCandidates, s.bone2dGroups,
-            s.bone2dGroupMembers);
+            s.bone2dSpaceSources, s.bone2dTargetCandidates, s.jointGroups,
+            s.jointGroupMembers);
         const RigExecSkeleton2dResult result = RigExecSolveSkeleton2dJoints(
             s.bone2dOrder, s.jointRests, s.bone2dSetup, extra, frames,
             [&](size_t j, RigExecBone2dChannels *channels) {

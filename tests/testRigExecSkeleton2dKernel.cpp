@@ -91,9 +91,10 @@ struct Rig {
                                       channels.data(), setup.size(), &ws,
                                       pose.data(), deform.data());
     }
-    /// Outside parent spaces (rest, pose) and the selectors.
+    /// Outside parent spaces (rest, pose), the switch selectors and the
+    /// joint-group selectors.
     std::vector<RigExecBone2dRest> externalRests, externalPoses;
-    std::vector<double> selectors;
+    std::vector<double> selectors, groupSelectors;
     bool SolveEx(const RigExecSkeleton2dStatic *extra)
     {
         pose.assign(setup.size(), RigExecBone2dFrame());
@@ -104,6 +105,8 @@ struct Rig {
         inputs.externalCount = externalRests.size();
         inputs.selectors = selectors.data();
         inputs.selectorCount = selectors.size();
+        inputs.groupSelectors = groupSelectors.data();
+        inputs.groupSelectorCount = groupSelectors.size();
         return RigExecSolveSkeleton2d(setup.data(), rests.data(),
                                       channels.data(), setup.size(), &ws,
                                       pose.data(), deform.data(), extra,
@@ -1252,8 +1255,8 @@ void TestControlBones()
     CHECK_NEAR(noop.WorldAngle(nm), 10, 1e-9);
 }
 
-// Bone groups switch alternative chains.
-void TestBoneGroups()
+// Joint groups switch alternative chains.
+void TestJointGroups()
 {
     _context = "groups";
     Rig rig;
@@ -1262,7 +1265,7 @@ void TestBoneGroups()
     const size_t jawA = rig.Add(int(headA), 0, 1.5, 0);
     const size_t headB = rig.Add(int(torso), 0, 1, 0);
     const size_t jawB = rig.Add(int(headB), 0, 1.5, 0);
-    RigExecBone2dGroup groups[1];
+    RigExecJointGroup groups[1];
     groups[0].memberBegin = 0;
     groups[0].memberCount = 2;
     groups[0].enabled = true;
@@ -1275,14 +1278,14 @@ void TestBoneGroups()
     rig.channels[headA].rz = 30;
     rig.channels[headB].rz = 30;
     rig.channels[jawB].rz = 15;
-    rig.selectors = {0};
+    rig.groupSelectors = {0};
     CHECK(rig.SolveEx(&extra));
     CHECK_NEAR(rig.WorldAngle(headA), 30, 1e-9);
     CHECK_NEAR(rig.WorldAngle(jawA), 30, 1e-9);
     CHECK(_IsRestFrame(rig.pose[headB], rig.rests[headB]));
     CHECK(_IsRestFrame(rig.deform[headB], rig.rests[headB]));
     CHECK(_IsRestFrame(rig.deform[jawB], rig.rests[jawB]));
-    rig.selectors = {1};
+    rig.groupSelectors = {1};
     CHECK(rig.SolveEx(&extra));
     CHECK(_IsRestFrame(rig.pose[headA], rig.rests[headA]));
     CHECK_NEAR(rig.WorldAngle(headB), 30, 1e-9);
@@ -1294,13 +1297,58 @@ void TestBoneGroups()
     CHECK_NEAR(rig.WorldAngle(headB), 30, 1e-9);
     groups[0].enabled = true;
     // An out-of-range index clamps to the nearest member.
-    rig.selectors = {5};
+    rig.groupSelectors = {5};
     CHECK(rig.SolveEx(&extra));
     CHECK_NEAR(rig.WorldAngle(headB), 30, 1e-9);
     CHECK(_IsRestFrame(rig.pose[headA], rig.rests[headA]));
-    rig.selectors = {-1};
+    rig.groupSelectors = {-1};
     CHECK(rig.SolveEx(&extra));
     CHECK_NEAR(rig.WorldAngle(headA), 30, 1e-9);
+}
+
+// The shared joint-group rule: the selector rounds half away from zero and
+// clamps (NaN selects the first member); a joint under any active member
+// stays active, where groups nest; a parent cycle ends the walk.
+void TestJointGroupRule()
+{
+    _context = "joint group rule";
+    RigExecJointGroup g;
+    g.memberCount = 3;
+    CHECK(RigExecJointGroupSlot(g, -0.5) == 0);
+    CHECK(RigExecJointGroupSlot(g, 0.49) == 0);
+    CHECK(RigExecJointGroupSlot(g, 0.5) == 1);
+    CHECK(RigExecJointGroupSlot(g, 2.49) == 2);
+    CHECK(RigExecJointGroupSlot(g, 9) == 2);
+    CHECK(RigExecJointGroupSlot(g, -9) == 0);
+    CHECK(RigExecJointGroupSlot(g, std::nan("")) == 0);
+    g.enabled = false;
+    CHECK(RigExecJointGroupSlot(g, 1) == -1);
+    // 0 -> {1, 2}; 1 -> {3, 4}: group A picks a member of 0, group B, nested
+    // under 1, picks among 1's children.
+    const int32_t parents[] = {-1, 0, 0, 1, 1};
+    RigExecJointGroup groups[2];
+    groups[0].memberBegin = 0; groups[0].memberCount = 2;
+    groups[1].memberBegin = 2; groups[1].memberCount = 2;
+    const int32_t members[] = {1, 2, 3, 4};
+    int32_t slots[2];
+    uint8_t active[5];
+    const auto parentOf = [&](size_t i) { return parents[i]; };
+    double selectors[] = {1, 0};
+    RigExecResolveJointGroups(5, parentOf, groups, 2, members, selectors, slots, active);
+    CHECK(slots[0] == 1 && slots[1] == 0);
+    CHECK(active[0] && !active[1] && active[2] && active[3] && !active[4]);
+    // Under group A's active member, every joint stays active.
+    selectors[0] = 0;
+    RigExecResolveJointGroups(5, parentOf, groups, 2, members, selectors, slots, active);
+    CHECK(active[1] && !active[2] && active[3] && active[4]);
+    const int32_t cyclic[] = {1, 0};
+    RigExecJointGroup one;
+    one.memberCount = 1;
+    const int32_t member[] = {1};
+    const double zero[] = {0};
+    RigExecResolveJointGroups(2, [&](size_t i) { return cyclic[i]; }, &one, 1, member, zero,
+                              slots, active);
+    CHECK(active[0] && active[1]);
 }
 
 // A space switch selects the bone's parent space per evaluation: a bone,
@@ -1517,7 +1565,8 @@ int main()
     TestIkTargetAimAndNone();
     TestPinTarget();
     TestControlBones();
-    TestBoneGroups();
+    TestJointGroups();
+    TestJointGroupRule();
     TestSpaceSwitch();
     TestStartFramePlane();
     if (_failures) {

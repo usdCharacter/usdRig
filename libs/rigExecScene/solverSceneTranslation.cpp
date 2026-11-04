@@ -2,6 +2,8 @@
 #include "sceneInputTypes.h"
 #include "startFrameDerivation.h"
 #include "skeleton2dTranslation.h"
+#include "jointGroupTranslation.h"
+#include "rigExec/pathText.h"
 #include "rigExec/solverKernels.h"
 #include "rigExec/types.h"
 #include "pxr/base/vt/types.h"
@@ -243,8 +245,6 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         s.bone2dOrder=std::move(skeleton.solveOrder);s.bone2dSetup=std::move(skeleton.setup);
         s.bone2dSpaceSources=std::move(skeleton.spaceSources);
         s.bone2dTargetCandidates=std::move(skeleton.targetCandidates);
-        s.bone2dGroups=std::move(skeleton.groups);
-        s.bone2dGroupMembers=std::move(skeleton.groupMembers);
         // Outside parent spaces ride on the shared controls: provider frames
         // read out of the pose exactly as FK controls are.
         for(const auto &space:skeleton.externalSources) {
@@ -253,6 +253,30 @@ bool RigExecTranslateSceneSolver(const RigExecSceneDescriptors &scene,const SdfP
         result.bone2dChannelReads=std::move(skeleton.channelReads);
         result.bone2dSelectorReads=std::move(skeleton.selectorReads);
         result.bone2dSelectorFallbacks=std::move(skeleton.selectorFallbacks);
+    }
+    if(s.kind==RigExecSolverKind::FkChain || s.kind==RigExecSolverKind::Skeleton2d) {
+        // Members index the joints as the solve does: a 2D bone by its
+        // solve order, an FK joint by its rigExec:joints position.
+        std::map<SdfPath,int32_t> jointIndex;
+        if(s.kind==RigExecSolverKind::Skeleton2d) {
+            for(size_t e=0;e<s.bone2dOrder.size();++e)jointIndex.emplace(result.joints[s.bone2dOrder[e]],int32_t(e));
+        } else {
+            for(size_t k=0;k<result.joints.size();++k)jointIndex.emplace(result.joints[k],int32_t(k));
+        }
+        std::string who;
+        if(!RigExecSpellPathText(path,&who))who=path.GetAsString();
+        if(!RigExecTranslateSceneJointGroups(scene,path,jointIndex,who,&s.jointGroups,&s.jointGroupMembers,
+               &result.jointGroupSelectorReads,error))return false;
+        if(s.kind==RigExecSolverKind::FkChain && !s.jointGroups.empty()) {
+            s.jointGroupParents.assign(result.joints.size(),-1);
+            for(size_t k=0;k<result.joints.size();++k) {
+                for(SdfPath up=result.joints[k].GetParentPath();!up.IsEmpty() && !up.IsAbsoluteRootPath();
+                    up=up.GetParentPath()) {
+                    const auto found=jointIndex.find(up);
+                    if(found!=jointIndex.end()) {s.jointGroupParents[k]=found->second;break;}
+                }
+            }
+        }
     }
     for(const TfToken *name:{&_tokens->rigExecControls,&_tokens->rigExecStartFrame,&_tokens->rigExecRootControl,
         &_tokens->rigExecMidControl,&_tokens->rigExecEffectorControl,&_tokens->rigExecEndControl,
@@ -369,6 +393,15 @@ bool RigExecResolveSceneSolverInputs(const RigExecSceneDescriptors &scene,
             if(!RigExecResolveSceneTypedRead(scene,typed,identity,deliveredInputs,&boxed,nullptr))continue;
             if(boxed.IsHolding<double>())input.bone2dSelectors[g]=boxed.UncheckedGet<double>();
         }
+    }
+    input.jointGroupSelectors.assign(descriptor.jointGroupSelectorReads.size(),0.0);
+    for(size_t g=0;g<descriptor.jointGroupSelectorReads.size();++g) {
+        VtValue boxed;
+        const auto &typed=descriptor.jointGroupSelectorReads[g];
+        if(typed.readPhase!="base" && !deliveredInputs.count(typed.consumer))
+            return Fail(error,"phased joint group selector producer unavailable: "+typed.consumer.GetString());
+        if(!RigExecResolveSceneTypedRead(scene,typed,identity,deliveredInputs,&boxed,nullptr))continue;
+        if(boxed.IsHolding<double>())input.jointGroupSelectors[g]=boxed.UncheckedGet<double>();
     }
     return RigExecRefreshSolverParameters(descriptor.record.kind,readValue,&input,error);
 }

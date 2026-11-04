@@ -659,8 +659,7 @@ table Skeleton2d {
   /// kRigExecBone2dChannelCount per bone in rigExec:joints order
   /// (RigExecBone2dChannelNames order).
   channels: [Input] (native_inline);
-  /// The selectors: one rigExec:activeBone value per group, in
-  /// rigExec:boneGroups order, then one active index per space switch.
+  /// The selectors: one active index per space switch.
   selector_channels: [Input] (native_inline);
   /// Space-switch ranges per bone into space_sources (rigExec:sources
   /// order): a solve-order bone index, -1 the base (the start frame, or
@@ -681,12 +680,6 @@ table Skeleton2d {
   scale_controller: [int];
   /// Four control factors per bone: angle, posX, posY, scale.
   control_factors: [double];
-  /// One entry per group: member ranges into group_members.
-  group_begin: [uint];
-  group_count: [uint];
-  group_members: [int];
-  /// One per group, 1 enabled.
-  group_enabled: [ubyte];
 }
 table SplineIkRest {
   cvs: Landmarks (native_inline);
@@ -701,6 +694,13 @@ table SplineIkRest {
 table SolverRelationshipRequirement {
   port: string (required);
   solver: int = -1;
+}
+/// Format 31. One joint group (RigExecJointGroupAPI): a member range into
+/// Solver.joint_group_members.
+table JointGroup {
+  member_begin: uint;
+  member_count: uint;
+  enabled: bool = true;
 }
 /// One solver's epoch description. *_read fields are fin versions.
 table Solver {
@@ -806,6 +806,16 @@ table Solver {
   limb_twist: Input;
   /// Format 31: present for a RigExecSkeleton2d.
   skeleton2d: Skeleton2d;
+  /// Format 31: the joint groups of a RigExecFkChain or RigExecSkeleton2d
+  /// in rigExec:jointGroups order, their concatenated members (an FK
+  /// joint's rigExec:joints index, a 2D bone's solve-order index) and one
+  /// rigExec:activeMember read per group.
+  joint_groups: [JointGroup] (native_inline);
+  joint_group_members: [uint];
+  joint_group_selectors: [Input] (native_inline);
+  /// A RigExecFkChain's: per joint, its nearest namespace ancestor among
+  /// its joints, -1 for none.
+  joint_group_parents: [int];
 }
 table Constraint {
   path: uint;

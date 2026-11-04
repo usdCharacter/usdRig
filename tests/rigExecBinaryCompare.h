@@ -3635,6 +3635,11 @@ _BinaryForEachRead(const _BinaryFile &file,
                   &s.pin, &s.upperScale, &s.lowerScale, &s.softDistance, &s.limbTwist}) {
                 one(*read);
             }
+            if (s.skeleton2d) {
+                for (const auto &read : s.skeleton2d->channels) visit(read);
+                for (const auto &read : s.skeleton2d->selectorChannels) visit(read);
+            }
+            for (const auto &read : s.jointGroupSelectors) visit(read);
         }
         for (const auto &c : pose.constraints) {
             for (const auto *read :

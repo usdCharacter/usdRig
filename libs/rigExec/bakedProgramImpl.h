@@ -2453,11 +2453,13 @@ struct RigExecBakedProgramImpl {
             minLengthRatio;
         bool splineParamsVary = false;
         /// Skeleton2d: per bone in rigExec:joints order, ten doubles and three
-        /// bools (RigExecBone2dChannelStorage); then each group's activeBone
-        /// and each space switch's index. Outside parent spaces are `controls`.
+        /// bools (RigExecBone2dChannelStorage); then each space switch's
+        /// index. Outside parent spaces are `controls`.
         std::vector<RigExecBakedInput<double>> bone2dDoubles;
         std::vector<RigExecBakedInput<bool>> bone2dBools;
         std::vector<RigExecBakedInput<double>> bone2dSelectors;
+        /// FkChain and Skeleton2d: each joint group's rigExec:activeMember.
+        std::vector<RigExecBakedInput<double>> jointGroupSelectors;
         // TwistDistribution. rigExec:start and rigExec:end ride on the shared
         // `root` and `end` members rather than a pair of their own: they are
         // provider slots read out of `fin` exactly as an IK control is, and

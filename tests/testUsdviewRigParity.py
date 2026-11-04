@@ -525,18 +525,18 @@ def _Steps(s):
         s.Shot("rigparity-reparent.png")
     report.check("4a. snapshot then follows", ReparentSnapshot)
 
-    # -- 5. bone groups ---------------------------------------------------
+    # -- 5. joint groups --------------------------------------------------
     def AuthorGroup():
-        with s.Txn("Bone Groups"):
+        with s.Txn("Joint Groups"):
             group = stage.DefinePrim(SKEL + "/G", "Scope")
-            group.AddAppliedSchema("RigExecBone2dGroupAPI")
+            group.AddAppliedSchema("RigExecJointGroupAPI")
             group.CreateRelationship("collection:members:includes").SetTargets(
                 [Sdf.Path(s.BonePath("HA")), Sdf.Path(s.BonePath("HB"))])
             stage.GetPrimAtPath(SKEL).CreateRelationship(
-                "rigExec:boneGroups").SetTargets([group.GetPath()])
-            _SetAttr(group, "rigExec:activeBone", 0.0,
+                "rigExec:jointGroups").SetTargets([group.GetPath()])
+            _SetAttr(group, "rigExec:activeMember", 0.0,
                      Sdf.ValueTypeNames.Double, 1)
-            _SetAttr(group, "rigExec:activeBone", 1.0,
+            _SetAttr(group, "rigExec:activeMember", 1.0,
                      Sdf.ValueTypeNames.Double, 10)
             for head in ("HA", "HB"):
                 _SetAttr(stage.GetPrimAtPath(s.BonePath(head)), "avars:rz",

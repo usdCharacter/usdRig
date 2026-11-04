@@ -55,6 +55,7 @@ Storm viewport with the rig guides on.
 | ![Blend Point Frames](../icons/blend_point_frames.png) | [Blend Point Frames](nodes/blend_point_frames.md) | Blends two solver poses per joint under one weight. |
 | ![Twist Distribution](../icons/twist_distribution.png) | [Twist Distribution](nodes/twist_distribution.md) | Unwinds roll between two frames across N interpolated frames. |
 | ![Ribbon](../icons/ribbon.png) | [Ribbon](nodes/ribbon.md) | Samples a driver curve into transported frames for wrap deformers. |
+| ![Joint Group](../icons/concept.png) | [Joint Group](nodes/joint_group.md) | API schema that makes a prim (conventionally a Scope) a group of alternative chains among a solver's joints: exactly one member chain is active at a time. |
 
 ## 2D skeletons
 
@@ -62,7 +63,6 @@ Storm viewport with the rig guides on.
 |---|---|---|
 | ![Skeleton 2D](../icons/concept.png) | [Skeleton 2D](nodes/skeleton_2d.md) | Solves a flat cut-out skeleton: bone channels, flips, locks and targets, one frame per bone. |
 | ![Bone 2D](../icons/concept.png) | [Bone 2D](nodes/bone_2d.md) | API schema that makes a joint one bone of a 2D skeleton. |
-| ![Bone 2D Group](../icons/concept.png) | [Bone 2D Group](nodes/bone_2d_group.md) | API schema that makes a prim (conventionally a Scope) an alternative-chain bone group: exactly one member chain is active at a time. |
 
 ## Constraints
 

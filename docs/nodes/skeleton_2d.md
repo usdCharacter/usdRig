@@ -67,7 +67,7 @@ independent angles, applies the cross scale, then runs the lock solve (cyclic
 coordinate descent over each locked bone's ancestors, within the angle limits)
 and the target solve (a bone's tip follows its target bone's base). A bone's
 tip is its first child joint. Locks win over targets. Bones under an inactive
-member of a [bone group](bone_2d_group.md) publish their rest frames and take
+member of a [joint group](joint_group.md) publish their rest frames and take
 no part. The published frame is the bone's setup-to-pose deformation,
 including its cross scale; children compose from the pose frame, so a bone's
 cross scale never shears them.
@@ -96,7 +96,7 @@ in [References](../references.md#2d-skeleton-rules-without-a-public-source).
 |---|---|---|
 | `rigExec:joints` | Ordered bones (joints with `RigExecBone2dAPI`); list position is the aggregate element index. | yes |
 | `rigExec:startFrame` | The joint or control the skeleton hangs from; its XY plane is the skeleton's plane. It may not be a bone or sit under one. | no |
-| `rigExec:boneGroups` | Ordered bone groups of this skeleton (prims with `RigExecBone2dGroupAPI`, conventionally Scopes); empty keeps every bone active. | no |
+| `rigExec:jointGroups` | Ordered joint groups of this skeleton (prims with `RigExecJointGroupAPI`, conventionally Scopes); empty keeps every bone active. | no |
 
 ## Parameters
 
@@ -142,12 +142,12 @@ that every bone shares, and falls back to asset space with a compile
 warning when there is none. Compiled into the solve, never
 authored.
 
-#### `rigExec:boneGroups`
+#### `rigExec:jointGroups`
 
 *Relationship.*
 
-Ordered bone groups of this skeleton: prims carrying
-RigExecBone2dGroupAPI (conventionally Scopes). Empty keeps every
+Ordered joint groups of this skeleton: prims carrying
+RigExecJointGroupAPI (conventionally Scopes). Empty keeps every
 bone active.
 
 ## Example
@@ -183,7 +183,7 @@ bin\launch_usdview.bat docs\examples\skeleton_2d.usda
 ## See also
 
 - [Bone 2D](bone_2d.md)
-- [Bone 2D Group](bone_2d_group.md)
+- [Joint Group](joint_group.md)
 - [Space Switch](space_switch.md)
 - [FK Chain](fk_chain.md)
 - [Skin Mover](skin_mover.md)

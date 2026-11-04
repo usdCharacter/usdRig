@@ -3,6 +3,7 @@
 #include "rigExecMath/solvers.h"
 #include "rigExecMath/splineIk.h"
 #include "rigExecMath/skeleton2dKernel.h"
+#include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/pointFrame.h"
 namespace rigExec {
 // Defined in rigExec/types.h; held and passed by pointer here.
@@ -59,13 +60,17 @@ struct RigExecSolverRecord {
     /// the structural setup in that order. Rests are jointRests (rigExec:joints
     /// order), refreshed by the solver rest route; the start frame rides on
     /// hasStart/startRest and the outside parent spaces on controlRests, as
-    /// for an FK chain. The space, candidate and member arrays below are
+    /// for an FK chain. The space and candidate arrays below are
     /// concatenated in the setup's ranges.
     std::vector<uint32_t> bone2dOrder;
     std::vector<RigExecBone2dSetup> bone2dSetup;
     std::vector<int32_t> bone2dSpaceSources, bone2dTargetCandidates;
-    std::vector<RigExecBone2dGroup> bone2dGroups;
-    std::vector<int32_t> bone2dGroupMembers;
+    /// FkChain and Skeleton2d: joint groups in rigExec:jointGroups order and
+    /// their concatenated members (a joint's rigExec:joints index; a 2D
+    /// bone's solve-order index). An FkChain with groups also holds, per
+    /// joint, its nearest namespace ancestor among its joints (-1: none).
+    std::vector<RigExecJointGroup> jointGroups;
+    std::vector<int32_t> jointGroupMembers, jointGroupParents;
 };
 /// Current graph values, delivered after typed read-phase resolution. Null
 /// aggregate pointers preserve BlendPointFrames unwired-input pass-through.
@@ -86,12 +91,13 @@ struct RigExecSolverInputs {
     RigExecPointFrame space;
     bool refreshSplineParams=false;
     double preserveVolume=0,midFollowWeight=0,rollDegrees=0,twistDegrees=0,minLengthRatio=0;
-    /// Skeleton2d: each bone's channels, rigExec:joints order, then the
-    /// selectors: the active member index per group (rigExec:boneGroups
-    /// order), then each space switch's active index. Its start frame is
-    /// `start` and its outside parent spaces are `controls`.
+    /// Skeleton2d: each bone's channels, rigExec:joints order, and each
+    /// space switch's active index. Its start frame is `start` and its
+    /// outside parent spaces are `controls`.
     std::vector<RigExecBone2dChannels> bone2dChannels;
     std::vector<double> bone2dSelectors;
+    /// Each joint group's rigExec:activeMember (FkChain, Skeleton2d).
+    std::vector<double> jointGroupSelectors;
 };
 struct RigExecSolverWorkspace {
     std::vector<RigExecFkChainElement> fkElements;
@@ -101,6 +107,10 @@ struct RigExecSolverWorkspace {
     RigExecSkeleton2dScratch bone2d;
     /// Skeleton2d: the outside parent spaces' posed landmarks this solve.
     std::vector<RigExecSolverRest> bone2dExternalPoses;
+    /// FkChain joint groups: each group's active member and each joint's
+    /// activity this solve.
+    std::vector<int32_t> jointGroupSlots;
+    std::vector<uint8_t> jointGroupActive;
 };
 /// One production numerical body for native and direct SceneDb graphs.
 /// Clears outputs even for malformed/degenerate bindings.

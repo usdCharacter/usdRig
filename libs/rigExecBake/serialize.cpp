@@ -784,10 +784,9 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
     if (solver.kind == RigExecSolverKind::Skeleton2d) {
         // The structural setup in solve order; the channels as registered,
         // kRigExecBone2dChannelCount per bone after the
-        // RigExecWireSolverFixedFieldCount fixed fields, then the selectors:
-        // one group activeBone value per group, then one active index per
-        // space switch (computedCapture.cpp). The start frame and the
-        // outside parent spaces are the row's start and controls.
+        // RigExecWireSolverFixedFieldCount fixed fields, then one active
+        // index per space switch (computedCapture.cpp). The start frame and
+        // the outside parent spaces are the row's start and controls.
         auto skeleton = std::make_unique<fb::RigExecWireSkeleton2d>();
         const size_t bones = solver.bone2dOrder.size();
         skeleton->solveOrder = solver.bone2dOrder;
@@ -817,12 +816,6 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
         }
         skeleton->spaceSources = solver.bone2dSpaceSources;
         skeleton->targetCandidates = solver.bone2dTargetCandidates;
-        for (const RigExecBone2dGroup &group : solver.bone2dGroups) {
-            skeleton->groupBegin.push_back(group.memberBegin);
-            skeleton->groupCount.push_back(group.memberCount);
-            skeleton->groupEnabled.push_back(group.enabled ? uint8_t(1) : uint8_t(0));
-        }
-        skeleton->groupMembers = solver.bone2dGroupMembers;
         skeleton->channels.reserve(bones * kRigExecBone2dChannelCount);
         for (size_t f = 0; f < bones * kRigExecBone2dChannelCount; ++f) {
             skeleton->channels.push_back(
@@ -835,6 +828,27 @@ _FileFill::_Solver(size_t index, fb::RigExecWireSolver *out)
                 RigExecWireSolverFixedFieldCount + bones * kRigExecBone2dChannelCount + g));
         }
         out->skeleton2d = std::move(skeleton);
+    }
+    // Joint groups, registered after the solver's other inputs.
+    const size_t bones2d = std::min(solver.bone2dDoubles.size() / kRigExecBone2dDoubleChannels,
+                                    solver.bone2dBools.size() / kRigExecBone2dBoolChannels);
+    const size_t groupField = RigExecWireSolverFixedFieldCount +
+        bones2d * kRigExecBone2dChannelCount + solver.bone2dSelectors.size();
+    for (const RigExecJointGroup &group : solver.jointGroups) {
+        fb::RigExecWireJointGroup wire;
+        wire.memberBegin = group.memberBegin;
+        wire.memberCount = group.memberCount;
+        wire.enabled = group.enabled;
+        out->jointGroups.push_back(wire);
+    }
+    for (const int32_t member : solver.jointGroupMembers) {
+        out->jointGroupMembers.push_back(uint32_t(member));
+    }
+    out->jointGroupParents = solver.jointGroupParents;
+    out->jointGroupSelectors.reserve(solver.jointGroupSelectors.size());
+    for (size_t g = 0; g < solver.jointGroupSelectors.size(); ++g) {
+        out->jointGroupSelectors.push_back(
+            _RegisteredValue(_Family::Solver, index, groupField + g));
     }
 }
 

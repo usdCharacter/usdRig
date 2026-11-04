@@ -304,7 +304,7 @@ the dial's turn.
 ## See also
 
 - [Skeleton 2D](skeleton_2d.md)
-- [Bone 2D Group](bone_2d_group.md)
+- [Joint Group](joint_group.md)
 - [Space Switch](space_switch.md)
 - [Skin Mover](skin_mover.md)
 

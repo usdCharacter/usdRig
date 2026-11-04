@@ -23,13 +23,15 @@ struct RigExecSceneSolverDescriptor {
     std::map<std::string,RigExecSceneSolverFrameBinding> frameBindings;
     /// Skeleton2d: kRigExecBone2dChannelCount typed reads per bone, in
     /// rigExec:joints order (RigExecBone2dChannelNames order within a bone),
-    /// then the selectors: one rigExec:activeBone read per group
-    /// (rigExec:boneGroups order), then one active-index read per space
-    /// switch the skeleton reads, each with its unauthored value. Its
-    /// outside parent spaces ride on `controls`, read like FK controls.
+    /// and one active-index read per space switch the skeleton reads, each
+    /// with its unauthored value. Its outside parent spaces ride on
+    /// `controls`, read like FK controls.
     std::vector<RigExecSceneTypedRead> bone2dChannelReads;
     std::vector<RigExecSceneTypedRead> bone2dSelectorReads;
     std::vector<double> bone2dSelectorFallbacks;
+    /// FkChain and Skeleton2d: one rigExec:activeMember read per joint
+    /// group (rigExec:jointGroups order); unauthored reads 0.
+    std::vector<RigExecSceneTypedRead> jointGroupSelectorReads;
 };
 /// Translate structural solver facts using already compiled provider rest values.
 /// The caller binds frame versions and scalar producer IDs from these paths.

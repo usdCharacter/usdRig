@@ -40,6 +40,28 @@ bool RigExecRunSolver(const RigExecSolverRecord &s,const RigExecSolverInputs &in
         aggregate.frames=RigExecSolveFkChain(elements);
         if(s.scaleSegments)RigExecScaleFkSegments(elements,&aggregate.frames);
         if(base && !aggregate.frames.empty())aggregate.frames.erase(aggregate.frames.begin());
+        if(!s.jointGroups.empty()) {
+            if(input.jointGroupSelectors.size()!=s.jointGroups.size()) {
+                if(error)*error="FK joint group/selector cardinality mismatch";
+                return false;
+            }
+            // A joint under an inactive member publishes its output rest
+            // through the start frame's rest-to-pose delta.
+            const size_t joints=s.jointGroupParents.size();
+            auto &active=scratch->jointGroupActive;active.resize(joints);
+            scratch->jointGroupSlots.resize(s.jointGroups.size());
+            RigExecResolveJointGroups(joints,[&](size_t i){return s.jointGroupParents[i];},
+                s.jointGroups.data(),s.jointGroups.size(),s.jointGroupMembers.data(),
+                input.jointGroupSelectors.data(),scratch->jointGroupSlots.data(),active.data());
+            GfMatrix4d start(1.0);
+            if(base)RigExecPointsToMatrix(s.startRest,input.start.points,&start);
+            for(size_t k=0;k<joints && k<aggregate.frames.size();++k) {
+                if(active[k])continue;
+                const auto &element=elements[k+size_t(base)];
+                aggregate.frames[k]=RigExecMatrixToPoints(
+                    element.hasOutRest?element.outRestPoints:element.restPoints,start);
+            }
+        }
         return true;
     }
     case RigExecSolverKind::TwoBoneIk: {
@@ -132,7 +154,7 @@ bool RigExecRunSolver(const RigExecSolverRecord &s,const RigExecSolverInputs &in
             return false;
         }
         const RigExecSkeleton2dStatic extra=RigExecSkeleton2dStaticOf(s.bone2dSpaceSources,
-            s.bone2dTargetCandidates,s.bone2dGroups,s.bone2dGroupMembers);
+            s.bone2dTargetCandidates,s.jointGroups,s.jointGroupMembers);
         auto &posed=scratch->bone2dExternalPoses;
         posed.resize(input.controls.size());
         for(size_t e=0;e<input.controls.size();++e)posed[e]=input.controls[e].points;
@@ -141,6 +163,8 @@ bool RigExecRunSolver(const RigExecSolverRecord &s,const RigExecSolverInputs &in
         frames.externalRests=s.controlRests.data();frames.externalPoses=posed.data();
         frames.externalCount=posed.size();
         frames.selectors=input.bone2dSelectors.data();frames.selectorCount=input.bone2dSelectors.size();
+        frames.groupSelectors=input.jointGroupSelectors.data();
+        frames.groupSelectorCount=input.jointGroupSelectors.size();
         const RigExecSkeleton2dResult result=RigExecSolveSkeleton2dJoints(s.bone2dOrder,s.jointRests,
             s.bone2dSetup,extra,frames,
             [&](size_t j,RigExecBone2dChannels *channels){*channels=input.bone2dChannels[j];},

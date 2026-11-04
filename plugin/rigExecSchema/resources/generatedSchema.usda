@@ -624,6 +624,13 @@ class RigExecFkChain "RigExecFkChain" (
             string userDocBrief = "What each control's posed frame already contains, i.e."
         }
     )
+    rel rigExec:jointGroups (
+        customData = {
+            string userDocBrief = """Ordered joint groups of this chain: prims carrying
+        RigExecJointGroupAPI (conventionally Scopes) whose members are
+        joints of this chain."""
+        }
+    )
     rel rigExec:joints (
         customData = {
             string userDocBrief = "Ordered output joints this solver poses."
@@ -5724,10 +5731,10 @@ class RigExecSkeleton2d "RigExecSkeleton2d" (
     }
 )
 {
-    rel rigExec:boneGroups (
+    rel rigExec:jointGroups (
         customData = {
-            string userDocBrief = """Ordered bone groups of this skeleton: prims carrying
-        RigExecBone2dGroupAPI (conventionally Scopes)."""
+            string userDocBrief = """Ordered joint groups of this skeleton: prims carrying
+        RigExecJointGroupAPI (conventionally Scopes)."""
         }
     )
     rel rigExec:joints (
@@ -5757,13 +5764,13 @@ class RigExecSkeleton2d "RigExecSkeleton2d" (
     )
 }
 
-class "RigExecBone2dGroupAPI" (
+class "RigExecJointGroupAPI" (
     apiSchemas = ["CollectionAPI:members"]
     customData = {
         token[] apiSchemaOverridePropertyNames = ["collection:members:expansionRule"]
-        string userDocBrief = """One alternative-chain bone group, applied to a prim (by
-    convention a Scope) that a RigExecSkeleton2d lists in
-    rigExec:boneGroups."""
+        string userDocBrief = """Alternative chains among a solver's joints, applied to a prim
+    (by convention a Scope) that a RigExecFkChain or RigExecSkeleton2d lists
+    in rigExec:jointGroups."""
     }
 )
 {
@@ -5771,10 +5778,10 @@ class "RigExecBone2dGroupAPI" (
         allowedTokens = ["explicitOnly", "expandPrims", "expandPrimsAndProperties"]
         customData = {
             string userDocBrief = """Members are listed explicitly; descendants of an included
-        bone are never members themselves."""
+        joint are never members themselves."""
         }
     )
-    double rigExec:activeBone = 0 (
+    double rigExec:activeMember = 0 (
         customData = {
             string userDocBrief = """Index into the members (rounded; out of range clamps to the
         nearest member)."""

@@ -190,6 +190,10 @@ struct SolverRelationshipRequirement;
 struct SolverRelationshipRequirementBuilder;
 struct RigExecWireSolverRelationshipRequirement;
 
+struct JointGroup;
+struct JointGroupBuilder;
+struct RigExecWireJointGroup;
+
 struct Solver;
 struct SolverBuilder;
 struct RigExecWireSolver;
@@ -519,6 +523,8 @@ inline const ::flatbuffers::TypeTable *Skeleton2dTypeTable();
 inline const ::flatbuffers::TypeTable *SplineIkRestTypeTable();
 
 inline const ::flatbuffers::TypeTable *SolverRelationshipRequirementTypeTable();
+
+inline const ::flatbuffers::TypeTable *JointGroupTypeTable();
 
 inline const ::flatbuffers::TypeTable *SolverTypeTable();
 
@@ -7979,10 +7985,6 @@ struct RigExecWireSkeleton2d : public ::flatbuffers::NativeTable {
   std::vector<int32_t> posController{};
   std::vector<int32_t> scaleController{};
   std::vector<double> controlFactors{};
-  std::vector<uint32_t> groupBegin{};
-  std::vector<uint32_t> groupCount{};
-  std::vector<int32_t> groupMembers{};
-  std::vector<uint8_t> groupEnabled{};
 };
 
 /// Format 31. RigExecSkeleton2d: structural setup per bone in solve order
@@ -8017,11 +8019,7 @@ struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ANGLECONTROLLER = 40,
     VT_POSCONTROLLER = 42,
     VT_SCALECONTROLLER = 44,
-    VT_CONTROLFACTORS = 46,
-    VT_GROUPBEGIN = 48,
-    VT_GROUPCOUNT = 50,
-    VT_GROUPMEMBERS = 52,
-    VT_GROUPENABLED = 54
+    VT_CONTROLFACTORS = 46
   };
   /// rigExec:joints index of each solve-order entry.
   const ::flatbuffers::Vector<uint32_t> *solveOrder() const {
@@ -8064,8 +8062,7 @@ struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *channels() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_CHANNELS);
   }
-  /// The selectors: one rigExec:activeBone value per group, in
-  /// rigExec:boneGroups order, then one active index per space switch.
+  /// The selectors: one active index per space switch.
   const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *selectorChannels() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_SELECTORCHANNELS);
   }
@@ -8109,20 +8106,6 @@ struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// Four control factors per bone: angle, posX, posY, scale.
   const ::flatbuffers::Vector<double> *controlFactors() const {
     return GetPointer<const ::flatbuffers::Vector<double> *>(VT_CONTROLFACTORS);
-  }
-  /// One entry per group: member ranges into group_members.
-  const ::flatbuffers::Vector<uint32_t> *groupBegin() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_GROUPBEGIN);
-  }
-  const ::flatbuffers::Vector<uint32_t> *groupCount() const {
-    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_GROUPCOUNT);
-  }
-  const ::flatbuffers::Vector<int32_t> *groupMembers() const {
-    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_GROUPMEMBERS);
-  }
-  /// One per group, 1 enabled.
-  const ::flatbuffers::Vector<uint8_t> *groupEnabled() const {
-    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_GROUPENABLED);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -8173,14 +8156,6 @@ struct Skeleton2d FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyVector(scaleController()) &&
            VerifyOffset(verifier, VT_CONTROLFACTORS) &&
            verifier.VerifyVector(controlFactors()) &&
-           VerifyOffset(verifier, VT_GROUPBEGIN) &&
-           verifier.VerifyVector(groupBegin()) &&
-           VerifyOffset(verifier, VT_GROUPCOUNT) &&
-           verifier.VerifyVector(groupCount()) &&
-           VerifyOffset(verifier, VT_GROUPMEMBERS) &&
-           verifier.VerifyVector(groupMembers()) &&
-           VerifyOffset(verifier, VT_GROUPENABLED) &&
-           verifier.VerifyVector(groupEnabled()) &&
            verifier.EndTable();
   }
   RigExecWireSkeleton2d *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -8258,18 +8233,6 @@ struct Skeleton2dBuilder {
   void add_controlFactors(::flatbuffers::Offset<::flatbuffers::Vector<double>> controlFactors) {
     fbb_.AddOffset(Skeleton2d::VT_CONTROLFACTORS, controlFactors);
   }
-  void add_groupBegin(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> groupBegin) {
-    fbb_.AddOffset(Skeleton2d::VT_GROUPBEGIN, groupBegin);
-  }
-  void add_groupCount(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> groupCount) {
-    fbb_.AddOffset(Skeleton2d::VT_GROUPCOUNT, groupCount);
-  }
-  void add_groupMembers(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> groupMembers) {
-    fbb_.AddOffset(Skeleton2d::VT_GROUPMEMBERS, groupMembers);
-  }
-  void add_groupEnabled(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> groupEnabled) {
-    fbb_.AddOffset(Skeleton2d::VT_GROUPENABLED, groupEnabled);
-  }
   explicit Skeleton2dBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -8304,16 +8267,8 @@ inline ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2d(
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> angleController = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> posController = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> scaleController = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<double>> controlFactors = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> groupBegin = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> groupCount = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> groupMembers = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> groupEnabled = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<double>> controlFactors = 0) {
   Skeleton2dBuilder builder_(_fbb);
-  builder_.add_groupEnabled(groupEnabled);
-  builder_.add_groupMembers(groupMembers);
-  builder_.add_groupCount(groupCount);
-  builder_.add_groupBegin(groupBegin);
   builder_.add_controlFactors(controlFactors);
   builder_.add_scaleController(scaleController);
   builder_.add_posController(posController);
@@ -8367,11 +8322,7 @@ inline ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2dDirect(
     const std::vector<int32_t> *angleController = nullptr,
     const std::vector<int32_t> *posController = nullptr,
     const std::vector<int32_t> *scaleController = nullptr,
-    const std::vector<double> *controlFactors = nullptr,
-    const std::vector<uint32_t> *groupBegin = nullptr,
-    const std::vector<uint32_t> *groupCount = nullptr,
-    const std::vector<int32_t> *groupMembers = nullptr,
-    const std::vector<uint8_t> *groupEnabled = nullptr) {
+    const std::vector<double> *controlFactors = nullptr) {
   auto solveOrder__ = solveOrder ? _fbb.CreateVector<uint32_t>(*solveOrder) : 0;
   auto parent__ = parent ? _fbb.CreateVector<int32_t>(*parent) : 0;
   auto flags__ = flags ? _fbb.CreateVector<uint8_t>(*flags) : 0;
@@ -8394,10 +8345,6 @@ inline ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2dDirect(
   auto posController__ = posController ? _fbb.CreateVector<int32_t>(*posController) : 0;
   auto scaleController__ = scaleController ? _fbb.CreateVector<int32_t>(*scaleController) : 0;
   auto controlFactors__ = controlFactors ? _fbb.CreateVector<double>(*controlFactors) : 0;
-  auto groupBegin__ = groupBegin ? _fbb.CreateVector<uint32_t>(*groupBegin) : 0;
-  auto groupCount__ = groupCount ? _fbb.CreateVector<uint32_t>(*groupCount) : 0;
-  auto groupMembers__ = groupMembers ? _fbb.CreateVector<int32_t>(*groupMembers) : 0;
-  auto groupEnabled__ = groupEnabled ? _fbb.CreateVector<uint8_t>(*groupEnabled) : 0;
   return rigExec::fb::CreateSkeleton2d(
       _fbb,
       solveOrder__,
@@ -8421,11 +8368,7 @@ inline ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2dDirect(
       angleController__,
       posController__,
       scaleController__,
-      controlFactors__,
-      groupBegin__,
-      groupCount__,
-      groupMembers__,
-      groupEnabled__);
+      controlFactors__);
 }
 
 ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2d(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireSkeleton2d *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -8683,6 +8626,92 @@ inline ::flatbuffers::Offset<SolverRelationshipRequirement> CreateSolverRelation
 
 ::flatbuffers::Offset<SolverRelationshipRequirement> CreateSolverRelationshipRequirement(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireSolverRelationshipRequirement *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct RigExecWireJointGroup : public ::flatbuffers::NativeTable {
+  typedef JointGroup TableType;
+  uint32_t memberBegin = 0;
+  uint32_t memberCount = 0;
+  bool enabled = true;
+};
+
+/// Format 31. One joint group (RigExecJointGroupAPI): a member range into
+/// Solver.joint_group_members.
+struct JointGroup FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef RigExecWireJointGroup NativeTableType;
+  typedef JointGroupBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return JointGroupTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_MEMBERBEGIN = 4,
+    VT_MEMBERCOUNT = 6,
+    VT_ENABLED = 8
+  };
+  uint32_t memberBegin() const {
+    return GetField<uint32_t>(VT_MEMBERBEGIN, 0);
+  }
+  uint32_t memberCount() const {
+    return GetField<uint32_t>(VT_MEMBERCOUNT, 0);
+  }
+  bool enabled() const {
+    return GetField<uint8_t>(VT_ENABLED, 1) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_MEMBERBEGIN, 4) &&
+           VerifyField<uint32_t>(verifier, VT_MEMBERCOUNT, 4) &&
+           VerifyField<uint8_t>(verifier, VT_ENABLED, 1) &&
+           verifier.EndTable();
+  }
+  RigExecWireJointGroup *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(RigExecWireJointGroup *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<JointGroup> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireJointGroup* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct JointGroupBuilder {
+  typedef JointGroup Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_memberBegin(uint32_t memberBegin) {
+    fbb_.AddElement<uint32_t>(JointGroup::VT_MEMBERBEGIN, memberBegin, 0);
+  }
+  void add_memberCount(uint32_t memberCount) {
+    fbb_.AddElement<uint32_t>(JointGroup::VT_MEMBERCOUNT, memberCount, 0);
+  }
+  void add_enabled(bool enabled) {
+    fbb_.AddElement<uint8_t>(JointGroup::VT_ENABLED, static_cast<uint8_t>(enabled), 1);
+  }
+  explicit JointGroupBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<JointGroup> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<JointGroup>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<JointGroup> CreateJointGroup(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t memberBegin = 0,
+    uint32_t memberCount = 0,
+    bool enabled = true) {
+  JointGroupBuilder builder_(_fbb);
+  builder_.add_memberCount(memberCount);
+  builder_.add_memberBegin(memberBegin);
+  builder_.add_enabled(enabled);
+  return builder_.Finish();
+}
+
+struct JointGroup::Traits {
+  using type = JointGroup;
+  static auto constexpr Create = CreateJointGroup;
+};
+
+::flatbuffers::Offset<JointGroup> CreateJointGroup(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireJointGroup *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   typedef Solver TableType;
   uint32_t path = 0;
@@ -8763,6 +8792,10 @@ struct RigExecWireSolver : public ::flatbuffers::NativeTable {
   std::unique_ptr<rigExec::fb::RigExecWireInput> softDistance{};
   std::unique_ptr<rigExec::fb::RigExecWireInput> limbTwist{};
   std::unique_ptr<rigExec::fb::RigExecWireSkeleton2d> skeleton2d{};
+  std::vector<rigExec::fb::RigExecWireJointGroup> jointGroups{};
+  std::vector<uint32_t> jointGroupMembers{};
+  std::vector<rigExec::fb::RigExecWireInput> jointGroupSelectors{};
+  std::vector<int32_t> jointGroupParents{};
   RigExecWireSolver() = default;
   RigExecWireSolver(const RigExecWireSolver &o);
   RigExecWireSolver(RigExecWireSolver&&) FLATBUFFERS_NOEXCEPT = default;
@@ -8855,7 +8888,11 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_LOWERSCALE = 152,
     VT_SOFTDISTANCE = 154,
     VT_LIMBTWIST = 156,
-    VT_SKELETON2D = 158
+    VT_SKELETON2D = 158,
+    VT_JOINTGROUPS = 160,
+    VT_JOINTGROUPMEMBERS = 162,
+    VT_JOINTGROUPSELECTORS = 164,
+    VT_JOINTGROUPPARENTS = 166
   };
   uint32_t path() const {
     return GetField<uint32_t>(VT_PATH, 0);
@@ -9108,6 +9145,24 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const rigExec::fb::Skeleton2d *skeleton2d() const {
     return GetPointer<const rigExec::fb::Skeleton2d *>(VT_SKELETON2D);
   }
+  /// Format 31: the joint groups of a RigExecFkChain or RigExecSkeleton2d
+  /// in rigExec:jointGroups order, their concatenated members (an FK
+  /// joint's rigExec:joints index, a 2D bone's solve-order index) and one
+  /// rigExec:activeMember read per group.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::JointGroup>> *jointGroups() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::JointGroup>> *>(VT_JOINTGROUPS);
+  }
+  const ::flatbuffers::Vector<uint32_t> *jointGroupMembers() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_JOINTGROUPMEMBERS);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *jointGroupSelectors() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>> *>(VT_JOINTGROUPSELECTORS);
+  }
+  /// A RigExecFkChain's: per joint, its nearest namespace ancestor among
+  /// its joints, -1 for none.
+  const ::flatbuffers::Vector<int32_t> *jointGroupParents() const {
+    return GetPointer<const ::flatbuffers::Vector<int32_t> *>(VT_JOINTGROUPPARENTS);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -9230,6 +9285,16 @@ struct Solver FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(limbTwist()) &&
            VerifyOffset(verifier, VT_SKELETON2D) &&
            verifier.VerifyTable(skeleton2d()) &&
+           VerifyOffset(verifier, VT_JOINTGROUPS) &&
+           verifier.VerifyVector(jointGroups()) &&
+           verifier.VerifyVectorOfTables(jointGroups()) &&
+           VerifyOffset(verifier, VT_JOINTGROUPMEMBERS) &&
+           verifier.VerifyVector(jointGroupMembers()) &&
+           VerifyOffset(verifier, VT_JOINTGROUPSELECTORS) &&
+           verifier.VerifyVector(jointGroupSelectors()) &&
+           verifier.VerifyVectorOfTables(jointGroupSelectors()) &&
+           VerifyOffset(verifier, VT_JOINTGROUPPARENTS) &&
+           verifier.VerifyVector(jointGroupParents()) &&
            verifier.EndTable();
   }
   RigExecWireSolver *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -9475,6 +9540,18 @@ struct SolverBuilder {
   void add_skeleton2d(::flatbuffers::Offset<rigExec::fb::Skeleton2d> skeleton2d) {
     fbb_.AddOffset(Solver::VT_SKELETON2D, skeleton2d);
   }
+  void add_jointGroups(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::JointGroup>>> jointGroups) {
+    fbb_.AddOffset(Solver::VT_JOINTGROUPS, jointGroups);
+  }
+  void add_jointGroupMembers(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> jointGroupMembers) {
+    fbb_.AddOffset(Solver::VT_JOINTGROUPMEMBERS, jointGroupMembers);
+  }
+  void add_jointGroupSelectors(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> jointGroupSelectors) {
+    fbb_.AddOffset(Solver::VT_JOINTGROUPSELECTORS, jointGroupSelectors);
+  }
+  void add_jointGroupParents(::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> jointGroupParents) {
+    fbb_.AddOffset(Solver::VT_JOINTGROUPPARENTS, jointGroupParents);
+  }
   explicit SolverBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -9580,9 +9657,17 @@ inline ::flatbuffers::Offset<Solver> CreateSolver(
     ::flatbuffers::Offset<rigExec::fb::Input> lowerScale = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softDistance = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> limbTwist = 0,
-    ::flatbuffers::Offset<rigExec::fb::Skeleton2d> skeleton2d = 0) {
+    ::flatbuffers::Offset<rigExec::fb::Skeleton2d> skeleton2d = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::JointGroup>>> jointGroups = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> jointGroupMembers = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<rigExec::fb::Input>>> jointGroupSelectors = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<int32_t>> jointGroupParents = 0) {
   SolverBuilder builder_(_fbb);
   builder_.add_splineCount(splineCount);
+  builder_.add_jointGroupParents(jointGroupParents);
+  builder_.add_jointGroupSelectors(jointGroupSelectors);
+  builder_.add_jointGroupMembers(jointGroupMembers);
+  builder_.add_jointGroups(jointGroups);
   builder_.add_skeleton2d(skeleton2d);
   builder_.add_limbTwist(limbTwist);
   builder_.add_softDistance(softDistance);
@@ -9747,7 +9832,11 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
     ::flatbuffers::Offset<rigExec::fb::Input> lowerScale = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> softDistance = 0,
     ::flatbuffers::Offset<rigExec::fb::Input> limbTwist = 0,
-    ::flatbuffers::Offset<rigExec::fb::Skeleton2d> skeleton2d = 0) {
+    ::flatbuffers::Offset<rigExec::fb::Skeleton2d> skeleton2d = 0,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::JointGroup>> *jointGroups = nullptr,
+    const std::vector<uint32_t> *jointGroupMembers = nullptr,
+    const std::vector<::flatbuffers::Offset<rigExec::fb::Input>> *jointGroupSelectors = nullptr,
+    const std::vector<int32_t> *jointGroupParents = nullptr) {
   auto restSlots__ = restSlots ? _fbb.CreateVector<int32_t>(*restSlots) : 0;
   auto restRefs__ = restRefs ? _fbb.CreateVectorOfStructs<rigExec::fb::IntPair>(*restRefs) : 0;
   auto restIsLive__ = restIsLive ? _fbb.CreateVector<uint8_t>(*restIsLive) : 0;
@@ -9767,6 +9856,10 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
   auto controlReads__ = controlReads ? _fbb.CreateVector<uint32_t>(*controlReads) : 0;
   auto relationshipRequirements__ = relationshipRequirements ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::SolverRelationshipRequirement>>(*relationshipRequirements) : 0;
   auto solveDescriptorKey__ = solveDescriptorKey ? _fbb.CreateString(solveDescriptorKey) : 0;
+  auto jointGroups__ = jointGroups ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::JointGroup>>(*jointGroups) : 0;
+  auto jointGroupMembers__ = jointGroupMembers ? _fbb.CreateVector<uint32_t>(*jointGroupMembers) : 0;
+  auto jointGroupSelectors__ = jointGroupSelectors ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>>(*jointGroupSelectors) : 0;
+  auto jointGroupParents__ = jointGroupParents ? _fbb.CreateVector<int32_t>(*jointGroupParents) : 0;
   return rigExec::fb::CreateSolver(
       _fbb,
       path,
@@ -9846,7 +9939,11 @@ inline ::flatbuffers::Offset<Solver> CreateSolverDirect(
       lowerScale,
       softDistance,
       limbTwist,
-      skeleton2d);
+      skeleton2d,
+      jointGroups__,
+      jointGroupMembers__,
+      jointGroupSelectors__,
+      jointGroupParents__);
 }
 
 ::flatbuffers::Offset<Solver> CreateSolver(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireSolver *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -23483,10 +23580,6 @@ inline void Skeleton2d::UnPackTo(RigExecWireSkeleton2d *_o, const ::flatbuffers:
   { auto _e = posController(); if (_e) { _o->posController.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->posController[_i] = _e->Get(_i); } } else { _o->posController.resize(0); } }
   { auto _e = scaleController(); if (_e) { _o->scaleController.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scaleController[_i] = _e->Get(_i); } } else { _o->scaleController.resize(0); } }
   { auto _e = controlFactors(); if (_e) { _o->controlFactors.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->controlFactors[_i] = _e->Get(_i); } } else { _o->controlFactors.resize(0); } }
-  { auto _e = groupBegin(); if (_e) { _o->groupBegin.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->groupBegin[_i] = _e->Get(_i); } } else { _o->groupBegin.resize(0); } }
-  { auto _e = groupCount(); if (_e) { _o->groupCount.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->groupCount[_i] = _e->Get(_i); } } else { _o->groupCount.resize(0); } }
-  { auto _e = groupMembers(); if (_e) { _o->groupMembers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->groupMembers[_i] = _e->Get(_i); } } else { _o->groupMembers.resize(0); } }
-  { auto _e = groupEnabled(); if (_e) { _o->groupEnabled.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->groupEnabled.begin()); } }
 }
 
 inline ::flatbuffers::Offset<Skeleton2d> CreateSkeleton2d(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireSkeleton2d *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23519,10 +23612,6 @@ inline ::flatbuffers::Offset<Skeleton2d> Skeleton2d::Pack(::flatbuffers::FlatBuf
   auto _posController = _o->posController.size() ? _fbb.CreateVector(_o->posController) : 0;
   auto _scaleController = _o->scaleController.size() ? _fbb.CreateVector(_o->scaleController) : 0;
   auto _controlFactors = _o->controlFactors.size() ? _fbb.CreateVector(_o->controlFactors) : 0;
-  auto _groupBegin = _o->groupBegin.size() ? _fbb.CreateVector(_o->groupBegin) : 0;
-  auto _groupCount = _o->groupCount.size() ? _fbb.CreateVector(_o->groupCount) : 0;
-  auto _groupMembers = _o->groupMembers.size() ? _fbb.CreateVector(_o->groupMembers) : 0;
-  auto _groupEnabled = _o->groupEnabled.size() ? _fbb.CreateVector(_o->groupEnabled) : 0;
   return rigExec::fb::CreateSkeleton2d(
       _fbb,
       _solveOrder,
@@ -23546,11 +23635,7 @@ inline ::flatbuffers::Offset<Skeleton2d> Skeleton2d::Pack(::flatbuffers::FlatBuf
       _angleController,
       _posController,
       _scaleController,
-      _controlFactors,
-      _groupBegin,
-      _groupCount,
-      _groupMembers,
-      _groupEnabled);
+      _controlFactors);
 }
 
 inline RigExecWireSplineIkRest *SplineIkRest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -23627,6 +23712,38 @@ inline ::flatbuffers::Offset<SolverRelationshipRequirement> SolverRelationshipRe
       _fbb,
       _port,
       _solver);
+}
+
+inline RigExecWireJointGroup *JointGroup::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<RigExecWireJointGroup>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void JointGroup::UnPackTo(RigExecWireJointGroup *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = memberBegin(); _o->memberBegin = _e; }
+  { auto _e = memberCount(); _o->memberCount = _e; }
+  { auto _e = enabled(); _o->enabled = _e; }
+}
+
+inline ::flatbuffers::Offset<JointGroup> CreateJointGroup(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireJointGroup *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return JointGroup::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<JointGroup> JointGroup::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireJointGroup* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const RigExecWireJointGroup* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _memberBegin = _o->memberBegin;
+  auto _memberCount = _o->memberCount;
+  auto _enabled = _o->enabled;
+  return rigExec::fb::CreateJointGroup(
+      _fbb,
+      _memberBegin,
+      _memberCount,
+      _enabled);
 }
 
 inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
@@ -23707,7 +23824,11 @@ inline RigExecWireSolver::RigExecWireSolver(const RigExecWireSolver &o)
         lowerScale((o.lowerScale) ? new rigExec::fb::RigExecWireInput(*o.lowerScale) : nullptr),
         softDistance((o.softDistance) ? new rigExec::fb::RigExecWireInput(*o.softDistance) : nullptr),
         limbTwist((o.limbTwist) ? new rigExec::fb::RigExecWireInput(*o.limbTwist) : nullptr),
-        skeleton2d((o.skeleton2d) ? new rigExec::fb::RigExecWireSkeleton2d(*o.skeleton2d) : nullptr) {
+        skeleton2d((o.skeleton2d) ? new rigExec::fb::RigExecWireSkeleton2d(*o.skeleton2d) : nullptr),
+        jointGroups(o.jointGroups),
+        jointGroupMembers(o.jointGroupMembers),
+        jointGroupSelectors(o.jointGroupSelectors),
+        jointGroupParents(o.jointGroupParents) {
 }
 
 inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLATBUFFERS_NOEXCEPT {
@@ -23789,6 +23910,10 @@ inline RigExecWireSolver &RigExecWireSolver::operator=(RigExecWireSolver o) FLAT
   std::swap(softDistance, o.softDistance);
   std::swap(limbTwist, o.limbTwist);
   std::swap(skeleton2d, o.skeleton2d);
+  std::swap(jointGroups, o.jointGroups);
+  std::swap(jointGroupMembers, o.jointGroupMembers);
+  std::swap(jointGroupSelectors, o.jointGroupSelectors);
+  std::swap(jointGroupParents, o.jointGroupParents);
   return *this;
 }
 
@@ -23879,6 +24004,10 @@ inline void Solver::UnPackTo(RigExecWireSolver *_o, const ::flatbuffers::resolve
   { auto _e = softDistance(); if (_e) { if(_o->softDistance) { _e->UnPackTo(_o->softDistance.get(), _resolver); } else { _o->softDistance = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->softDistance) { _o->softDistance.reset(); } }
   { auto _e = limbTwist(); if (_e) { if(_o->limbTwist) { _e->UnPackTo(_o->limbTwist.get(), _resolver); } else { _o->limbTwist = std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->UnPack(_resolver)); } } else if (_o->limbTwist) { _o->limbTwist.reset(); } }
   { auto _e = skeleton2d(); if (_e) { if(_o->skeleton2d) { _e->UnPackTo(_o->skeleton2d.get(), _resolver); } else { _o->skeleton2d = std::unique_ptr<rigExec::fb::RigExecWireSkeleton2d>(_e->UnPack(_resolver)); } } else if (_o->skeleton2d) { _o->skeleton2d.reset(); } }
+  { auto _e = jointGroups(); if (_e) { _o->jointGroups.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointGroups[_i] = *std::unique_ptr<rigExec::fb::RigExecWireJointGroup>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->jointGroups.resize(0); } }
+  { auto _e = jointGroupMembers(); if (_e) { _o->jointGroupMembers.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointGroupMembers[_i] = _e->Get(_i); } } else { _o->jointGroupMembers.resize(0); } }
+  { auto _e = jointGroupSelectors(); if (_e) { _o->jointGroupSelectors.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointGroupSelectors[_i] = *std::unique_ptr<rigExec::fb::RigExecWireInput>(_e->Get(_i)->UnPack(_resolver)); } } else { _o->jointGroupSelectors.resize(0); } }
+  { auto _e = jointGroupParents(); if (_e) { _o->jointGroupParents.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->jointGroupParents[_i] = _e->Get(_i); } } else { _o->jointGroupParents.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<Solver> CreateSolver(::flatbuffers::FlatBufferBuilder &_fbb, const RigExecWireSolver *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -23967,6 +24096,10 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
   auto _softDistance = _o->softDistance ? CreateInput(_fbb, _o->softDistance.get(), _rehasher) : 0;
   auto _limbTwist = _o->limbTwist ? CreateInput(_fbb, _o->limbTwist.get(), _rehasher) : 0;
   auto _skeleton2d = _o->skeleton2d ? CreateSkeleton2d(_fbb, _o->skeleton2d.get(), _rehasher) : 0;
+  auto _jointGroups = _o->jointGroups.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::JointGroup>> (_o->jointGroups.size(), [](size_t i, _VectorArgs *__va) { return CreateJointGroup(*__va->__fbb, &(__va->__o->jointGroups[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _jointGroupMembers = _o->jointGroupMembers.size() ? _fbb.CreateVector(_o->jointGroupMembers) : 0;
+  auto _jointGroupSelectors = _o->jointGroupSelectors.size() ? _fbb.CreateVector<::flatbuffers::Offset<rigExec::fb::Input>> (_o->jointGroupSelectors.size(), [](size_t i, _VectorArgs *__va) { return CreateInput(*__va->__fbb, &(__va->__o->jointGroupSelectors[i]), __va->__rehasher); }, &_va ) : 0;
+  auto _jointGroupParents = _o->jointGroupParents.size() ? _fbb.CreateVector(_o->jointGroupParents) : 0;
   return rigExec::fb::CreateSolver(
       _fbb,
       _path,
@@ -24046,7 +24179,11 @@ inline ::flatbuffers::Offset<Solver> Solver::Pack(::flatbuffers::FlatBufferBuild
       _lowerScale,
       _softDistance,
       _limbTwist,
-      _skeleton2d);
+      _skeleton2d,
+      _jointGroups,
+      _jointGroupMembers,
+      _jointGroupSelectors,
+      _jointGroupParents);
 }
 
 inline RigExecWireConstraint::RigExecWireConstraint(const RigExecWireConstraint &o)
@@ -29592,17 +29729,13 @@ inline const ::flatbuffers::TypeTable *Skeleton2dTypeTable() {
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_INT, 1, -1 },
     { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_DOUBLE, 1, -1 },
-    { ::flatbuffers::ET_UINT, 1, -1 },
-    { ::flatbuffers::ET_UINT, 1, -1 },
-    { ::flatbuffers::ET_INT, 1, -1 },
-    { ::flatbuffers::ET_UCHAR, 1, -1 }
+    { ::flatbuffers::ET_DOUBLE, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::InputTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 26, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 22, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -29636,6 +29769,18 @@ inline const ::flatbuffers::TypeTable *SolverRelationshipRequirementTypeTable() 
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 2, type_codes, nullptr, nullptr, nullptr, nullptr
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *JointGroupTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, nullptr
   };
   return &tt;
 }
@@ -29719,7 +29864,11 @@ inline const ::flatbuffers::TypeTable *SolverTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 9 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 9 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 10 },
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 3 },
+    { ::flatbuffers::ET_INT, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     rigExec::fb::IntPairTypeTable,
@@ -29731,10 +29880,11 @@ inline const ::flatbuffers::TypeTable *SolverTypeTable() {
     rigExec::fb::SplineIkParamsTypeTable,
     rigExec::fb::Vec3fTypeTable,
     rigExec::fb::SolverRelationshipRequirementTypeTable,
-    rigExec::fb::Skeleton2dTypeTable
+    rigExec::fb::Skeleton2dTypeTable,
+    rigExec::fb::JointGroupTypeTable
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 78, type_codes, type_refs, nullptr, nullptr, nullptr
+    ::flatbuffers::ST_TABLE, 82, type_codes, type_refs, nullptr, nullptr, nullptr
   };
   return &tt;
 }

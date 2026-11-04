@@ -4098,10 +4098,9 @@ private:
     /// A RigExecSkeleton2d's table: one entry per bone in solve order, a
     /// permutation of the joints, every parent and bone space solved before
     /// its child, kRigExecBone2dChannelCount channel reads per bone, the
-    /// tip, space, candidate, control and group arrays
-    /// (rigExecMath/skeleton2dKernel.h), the selectors (one activeBone read
-    /// per group, then one active-index read per space switch). The row's
-    /// controls are the outside parent spaces.
+    /// tip, space, candidate and control arrays
+    /// (rigExecMath/skeleton2dKernel.h) and one active-index read per space
+    /// switch. The row's controls are the outside parent spaces.
     bool _Skeleton2d(const fb::RigExecWireSolver &s, const std::string &row)
     {
         const fb::RigExecWireSkeleton2d &k = *s.skeleton2d;
@@ -4110,7 +4109,6 @@ private:
         }
         const size_t perBone = kRigExecBone2dChannelCount;
         const size_t n = k.solveOrder.size();
-        const size_t groups = k.groupCount.size();
         const size_t outside = s.controls.size();
         bool ok = k.parent.size() == n && k.flags.size() == n &&
                   k.limits.size() == 2 * n && k.scaling.size() == n &&
@@ -4124,10 +4122,7 @@ private:
              k.targetBegin.size() == n && k.targetCount.size() == n &&
              k.angleController.size() == n && k.posController.size() == n &&
              k.scaleController.size() == n &&
-             k.controlFactors.size() == 4 * n &&
-             k.groupBegin.size() == groups &&
-             k.groupEnabled.size() == groups &&
-             k.selectorChannels.size() >= groups;
+             k.controlFactors.size() == 4 * n;
         std::vector<char> seen(ok ? n : 0, 0);
         for (size_t e = 0; ok && e < n; ++e) {
             ok = k.solveOrder[e] < n && !seen[k.solveOrder[e]] &&
@@ -4144,7 +4139,7 @@ private:
                      k.spaceCount[e] <= k.spaceSources.size() - k.spaceBegin[e] &&
                      (k.spaceCount[e] == 0
                           ? k.spaceSelector[e] == -1
-                          : (k.spaceSelector[e] >= int32_t(groups) &&
+                          : (k.spaceSelector[e] >= 0 &&
                              size_t(k.spaceSelector[e]) < k.selectorChannels.size())) &&
                      k.targetBegin[e] <= k.targetCandidates.size() &&
                      k.targetCount[e] <= k.targetCandidates.size() - k.targetBegin[e] &&
@@ -4168,14 +4163,6 @@ private:
         for (size_t e = 0; ok && e < k.targetCandidates.size(); ++e) {
             ok = k.targetCandidates[e] >= 0 && k.targetCandidates[e] < int32_t(n);
         }
-        for (size_t g = 0; ok && g < groups; ++g) {
-            ok = k.groupBegin[g] <= k.groupMembers.size() &&
-                 k.groupCount[g] <= k.groupMembers.size() - k.groupBegin[g] &&
-                 k.groupEnabled[g] <= 1;
-        }
-        for (size_t e = 0; ok && e < k.groupMembers.size(); ++e) {
-            ok = k.groupMembers[e] >= 0 && k.groupMembers[e] < int32_t(n);
-        }
         if (!ok) {
             return _Bad(row + ".skeleton2d: malformed 2D skeleton");
         }
@@ -4189,6 +4176,50 @@ private:
         for (size_t g = 0; g < k.selectorChannels.size(); ++g) {
             if (!_Read(&k.selectorChannels[g], int(InputTag::Double), _Baked, row,
                        "skeleton2d.selector_channels", long(g))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// A solver's joint groups: member ranges in bounds, one selector read
+    /// per group, members naming a 2D skeleton's bones or an FK chain's
+    /// joints (joint_group_parents: one acyclic parent per joint).
+    bool _JointGroups(const fb::RigExecWireSolver &s, const std::string &row)
+    {
+        if (s.jointGroups.empty() && s.jointGroupMembers.empty() &&
+            s.jointGroupSelectors.empty() && s.jointGroupParents.empty()) {
+            return true;
+        }
+        if (_f.formatVersion < 31) {
+            return _Bad(row + ".joint_groups: in a format older than 31");
+        }
+        const size_t n = s.skeleton2d ? s.skeleton2d->solveOrder.size()
+                                      : s.jointGroupParents.size();
+        bool ok = s.jointGroupSelectors.size() == s.jointGroups.size() &&
+                  (!s.skeleton2d || s.jointGroupParents.empty());
+        for (size_t g = 0; ok && g < s.jointGroups.size(); ++g) {
+            const fb::RigExecWireJointGroup &group = s.jointGroups[g];
+            ok = group.memberBegin <= s.jointGroupMembers.size() &&
+                 group.memberCount <= s.jointGroupMembers.size() - group.memberBegin;
+        }
+        for (size_t e = 0; ok && e < s.jointGroupMembers.size(); ++e) {
+            ok = s.jointGroupMembers[e] < n;
+        }
+        for (size_t j = 0; ok && j < s.jointGroupParents.size(); ++j) {
+            int32_t a = s.jointGroupParents[j];
+            for (size_t step = 0; ok && a >= 0; ++step) {
+                ok = a < int32_t(n) && step < n;
+                if (ok) a = s.jointGroupParents[size_t(a)];
+            }
+            ok = ok && a == -1;
+        }
+        if (!ok) {
+            return _Bad(row + ".joint_groups: malformed joint groups");
+        }
+        for (size_t g = 0; g < s.jointGroupSelectors.size(); ++g) {
+            if (!_Read(&s.jointGroupSelectors[g], int(InputTag::Double), _Baked, row,
+                       "joint_group_selectors", long(g))) {
                 return false;
             }
         }
@@ -4232,6 +4263,9 @@ private:
             return _Bad(row + ".spline_rest: missing");
         }
         if (s.skeleton2d && !_Skeleton2d(s, row)) {
+            return false;
+        }
+        if (!_JointGroups(s, row)) {
             return false;
         }
         return _ReadPtr(s.bend, dbl, _Baked, row, "bend") &&

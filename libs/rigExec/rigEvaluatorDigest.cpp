@@ -58,8 +58,8 @@ TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestRests,
     ((space, "rest:space")));
 TF_DEFINE_PRIVATE_TOKENS(_bone2dDigestMisc,
     ((bone2dApi, "RigExecBone2dAPI"))
-    ((boneGroups, "rigExec:boneGroups"))
-    ((groupApi, "RigExecBone2dGroupAPI"))
+    ((jointGroups, "rigExec:jointGroups"))
+    ((groupApi, "RigExecJointGroupAPI"))
     ((includes, "collection:members:includes"))
     ((excludes, "collection:members:excludes"))
     ((expansionRule, "collection:members:expansionRule"))
@@ -1767,6 +1767,49 @@ RigExecRigEvaluator::_ComputeStructureDigest(
             // edits that don't change frame count stay value-only.
             digest += "|card=";
             const TfToken stype = solver.GetTypeName();
+            // Value hashes are in-process only.
+            const auto appendValueNamed = [&](const UsdPrim &prim,
+                                              const TfToken &name) {
+                noteValueNamed(prim, name);
+                VtValue value;
+                const UsdAttribute a = prim.GetAttribute(name);
+                if (a) {
+                    a.Get(&value);
+                }
+                digest.append(name.GetText(), name.size());
+                digest += '=';
+                digest += std::to_string(value.GetHash());
+                digest += '|';
+                return a;
+            };
+            const auto appendSamples = [&](const UsdAttribute &a) {
+                digest += a ? std::to_string(a.GetNumTimeSamples()) +
+                                  (a.HasSpline() ? "s" : "") : "-";
+                digest += ',';
+            };
+            // Joint groups: order, API, membership and enabled flags
+            // compile; the active member is a per-frame read.
+            const auto appendJointGroups = [&]() {
+                const std::vector<SdfPath> groupPaths = appendRelTargets(
+                    solver, _bone2dDigestMisc->jointGroups, false);
+                for (const SdfPath &groupPath : groupPaths) {
+                    const UsdPrim group = _stage->GetPrimAtPath(groupPath);
+                    if (!group) {
+                        continue;
+                    }
+                    bool hasGroupApi = false;
+                    for (const TfToken &api : group.GetAppliedSchemas()) {
+                        hasGroupApi = hasGroupApi || api == _bone2dDigestMisc->groupApi;
+                    }
+                    digest += hasGroupApi ? "api|" : "noapi|";
+                    digest += group.IsActive() ? "active|" : "inactive|";
+                    appendRelTargets(group, _bone2dDigestMisc->includes, false);
+                    appendRelTargets(group, _bone2dDigestMisc->excludes, true);
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->expansionRule));
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->membershipExpression));
+                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->enabled));
+                }
+            };
             if (stype == _tokens->rigExecFkChain) {
                 appendRelTargets(solver, _tokens->rigExecControls, false);
                 // The start-frame inference switch. Flipping it changes
@@ -1774,6 +1817,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                 // inputs (authored targets, joints, their ancestor
                 // chains) are hashed by the relationship loop above.
                 appendToken(solver, _tokens->rigExecStartFramePolicy);
+                appendJointGroups();
             } else if (stype == _tokens->rigExecTwistDistribution) {
                 const UsdAttribute ca = solver.GetAttribute(kCount);
                 const UsdAttribute wa = solver.GetAttribute(kWeights);
@@ -1835,26 +1879,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                           ",";
             } else if (stype == "RigExecSkeleton2d") {
                 // Bone hierarchy, tips and uniform RigExecBone2dAPI settings
-                // compile into the record; value hashes are in-process only.
-                const auto appendValueNamed = [&](const UsdPrim &prim,
-                                                  const TfToken &name) {
-                    noteValueNamed(prim, name);
-                    VtValue value;
-                    const UsdAttribute a = prim.GetAttribute(name);
-                    if (a) {
-                        a.Get(&value);
-                    }
-                    digest.append(name.GetText(), name.size());
-                    digest += '=';
-                    digest += std::to_string(value.GetHash());
-                    digest += '|';
-                    return a;
-                };
-                const auto appendSamples = [&](const UsdAttribute &a) {
-                    digest += a ? std::to_string(a.GetNumTimeSamples()) +
-                                      (a.HasSpline() ? "s" : "") : "-";
-                    digest += ',';
-                };
+                // compile into the record.
                 appendSamples(appendValueNamed(solver, _bone2dDigestMisc->startFramePolicy));
                 const std::set<SdfPath> boneSet(joints.begin(), joints.end());
                 for (const SdfPath &j : joints) {
@@ -1905,25 +1930,7 @@ RigExecRigEvaluator::_ComputeStructureDigest(
                         digest += ',';
                     }
                 }
-                // Group order, API, membership and enabled flags compile.
-                const std::vector<SdfPath> groupPaths = appendRelTargets(
-                    solver, _bone2dDigestMisc->boneGroups, false);
-                for (const SdfPath &groupPath : groupPaths) {
-                    const UsdPrim group = _stage->GetPrimAtPath(groupPath);
-                    if (!group) {
-                        continue;
-                    }
-                    bool hasGroupApi = false;
-                    for (const TfToken &api : group.GetAppliedSchemas()) {
-                        hasGroupApi = hasGroupApi || api == _bone2dDigestMisc->groupApi;
-                    }
-                    digest += hasGroupApi ? "api|" : "noapi|";
-                    appendRelTargets(group, _bone2dDigestMisc->includes, false);
-                    appendRelTargets(group, _bone2dDigestMisc->excludes, true);
-                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->expansionRule));
-                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->membershipExpression));
-                    appendSamples(appendValueNamed(group, _bone2dDigestMisc->enabled));
-                }
+                appendJointGroups();
             }
             digest += ';';
         }

@@ -644,6 +644,15 @@ class RigExecFkChain "RigExecFkChain" (
         The compiler binds each joint to one aggregate element
         in the compiled program."""
     )
+    rel rigExec:jointGroups (
+        doc = """Ordered joint groups of this chain: prims carrying
+        RigExecJointGroupAPI (conventionally Scopes) whose members are
+        joints of this chain. A joint under an inactive member publishes
+        the rest frame the chain publishes for zero control motion: its
+        output rest carried through the start frame's rest-to-pose delta.
+        The chain still composes later elements from every control. Empty
+        keeps every joint active."""
+    )
     double guide:radius = 1.0 (
         doc = """Radius of the sphere and cone drawn at each aggregate
         element: the exact counterpart of RigExecJoint's guide:radius,
@@ -5074,33 +5083,36 @@ class RigExecSkeleton2d "RigExecSkeleton2d" (
         warning when there is none. Compiled into the solve, never
         authored."""
     )
-    rel rigExec:boneGroups (
-        doc = """Ordered bone groups of this skeleton: prims carrying
-        RigExecBone2dGroupAPI (conventionally Scopes). Empty keeps every
+    rel rigExec:jointGroups (
+        doc = """Ordered joint groups of this skeleton: prims carrying
+        RigExecJointGroupAPI (conventionally Scopes). Empty keeps every
         bone active."""
     )
 }
 
-class "RigExecBone2dGroupAPI" (
+class "RigExecJointGroupAPI" (
     inherits = </APISchemaBase>
     customData = {
-        string className = "Bone2dGroupAPI"
+        string className = "JointGroupAPI"
         token apiSchemaType = "singleApply"
     }
     prepend apiSchemas = ["CollectionAPI:members"]
-    doc = """One alternative-chain bone group, applied to a prim (by
-    convention a Scope) that a RigExecSkeleton2d lists in
-    rigExec:boneGroups. The group holds alternative chains in one skeleton;
-    its members are the first bone of each chain. Exactly one member is
-    active; bones under inactive members publish their rest frames and
-    neither solve nor join chains. A disabled group keeps every member
-    active.
+    doc = """Alternative chains among a solver's joints, applied to a prim
+    (by convention a Scope) that a RigExecFkChain or RigExecSkeleton2d lists
+    in rigExec:jointGroups. Each member is the first joint of one
+    alternative chain. Exactly one member is active; the joints under an
+    inactive member (the member and its descendants that the solver lists)
+    publish their rest frames, composed through the solver's start frame;
+    a 2D skeleton's inactive bones neither solve nor join lock or target
+    chains. A joint under an active member stays active where groups nest.
+    A disabled group keeps every member active.
 
-    Membership is the built-in collection "members": the bones of
-    collection:members:includes in list order, less any bone in
+    Membership is the built-in collection "members": the joints of
+    collection:members:includes in list order, less any joint in
     collection:members:excludes. The collection is explicit-only; a group
     whose expansion rule is not explicitOnly, or that authors a membership
-    expression, is refused at compile."""
+    expression, is refused at compile, as is a member that is not a joint
+    of the solver or a joint that is a member of two groups."""
 )
 {
     uniform token collection:members:expansionRule = "explicitOnly" (
@@ -5109,12 +5121,12 @@ class "RigExecBone2dGroupAPI" (
             bool apiSchemaOverride = true
         }
         doc = """Members are listed explicitly; descendants of an included
-        bone are never members themselves."""
+        joint are never members themselves."""
     )
     uniform bool rigExec:enabled = true (
         doc = "A disabled group keeps every member active."
     )
-    double rigExec:activeBone = 0 (
+    double rigExec:activeMember = 0 (
         doc = """Index into the members (rounded; out of range clamps to the
         nearest member). Authored with held knots, so the active member
         steps at its keys."""

@@ -785,11 +785,13 @@ struct RrProgram {
     std::vector<int32_t> revisionStaticStep;
     std::vector<std::array<int32_t, RrSolverFieldCount>> solverRead;
     // Per solver, a RigExecSkeleton2d's channel reads (thirteen per bone,
-    // Skeleton2d.channels order) and selector reads (each group's
-    // activeBone, then each space switch's active index;
-    // Skeleton2d.selector_channels order); empty for every other solver.
+    // Skeleton2d.channels order) and switch selector reads
+    // (Skeleton2d.selector_channels order); empty for every other solver.
     std::vector<std::vector<int32_t>> solverBone2dRead;
     std::vector<std::vector<int32_t>> solverBone2dSelectorRead;
+    // Per solver, each joint group's active-member read
+    // (Solver.joint_group_selectors order).
+    std::vector<std::vector<int32_t>> solverJointGroupRead;
     std::vector<std::array<int32_t, RrConstraintFieldCount>> constraintRead;
     std::vector<std::array<int32_t, RrWeightFieldCount>> weightRead;
 

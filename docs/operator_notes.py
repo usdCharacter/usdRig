@@ -19,8 +19,9 @@ CATEGORIES = [
                              "bone_frame", "copy_frame", "mapped_frame",
                              "skin_influence", "armature_parent"]),
     ("Solvers", ["fk_chain", "two_bone_ik", "spline_ik",
-                 "blend_point_frames", "twist_distribution", "ribbon"]),
-    ("2D skeletons", ["skeleton_2d", "bone_2d", "bone_2d_group"]),
+                 "blend_point_frames", "twist_distribution", "ribbon",
+                 "joint_group"]),
+    ("2D skeletons", ["skeleton_2d", "bone_2d"]),
     ("Constraints", ["aim_constraint", "position_constraint",
                      "rotation_constraint", "scale_constraint",
                      "parent_constraint", "single_chain_ik_constraint",
@@ -465,6 +466,9 @@ numbers — but the solve itself is absolute: unless `rigExec:startFrame`
 names the provider the chain hangs from, or `rigExec:startFramePolicy =
 "parent"` derives it from the joint hierarchy, the chain ignores whatever
 its joints sit under.
+A [Joint Group](joint_group.md) listed on `rigExec:jointGroups` picks one of
+several alternative chains among the joints: a joint under an inactive member
+publishes the frame the chain gives it at rest, carried by the start frame.
 Skinning movers then read the posed joints at the `final` phase.""",
         "wiring": [
             # Both control inputs are .Required() on the computation
@@ -493,6 +497,9 @@ Skinning movers then read the posed joints at the `final` phase.""",
             # motion is composed in twice (libs/rigExec/computations.cpp:601-608).
             ("`rigExec:controlSpace`", "`parentRelative` when the controls are "
              "nested under each other; `world` for sibling controls.", "no"),
+            ("`rigExec:jointGroups`", "Ordered joint groups (prims with "
+             "`RigExecJointGroupAPI`) whose members are joints of this chain; "
+             "empty keeps every joint active.", "no"),
         ],
         "param_groups": [],
         # The strip is 10 quads at 0.5 units (x = 0 .. 5, 22 points) and the
@@ -537,6 +544,7 @@ draw as arcs rather than creases.""",
             ("two_bone_ik", "Two-Bone IK"),
             ("blend_point_frames", "Blend Point Frames"),
             ("joint", "Joint"),
+            ("joint_group", "Joint Group"),
         ],
     },
     "two_bone_ik": {
@@ -4263,7 +4271,7 @@ independent angles, applies the cross scale, then runs the lock solve (cyclic
 coordinate descent over each locked bone's ancestors, within the angle limits)
 and the target solve (a bone's tip follows its target bone's base). A bone's
 tip is its first child joint. Locks win over targets. Bones under an inactive
-member of a [bone group](bone_2d_group.md) publish their rest frames and take
+member of a [joint group](joint_group.md) publish their rest frames and take
 no part. The published frame is the bone's setup-to-pose deformation,
 including its cross scale; children compose from the pose frame, so a bone's
 cross scale never shears them.
@@ -4288,7 +4296,7 @@ in [References](../references.md#2d-skeleton-rules-without-a-public-source).""",
         "wiring": [
             ("`rigExec:joints`", "Ordered bones (joints with `RigExecBone2dAPI`); list position is the aggregate element index.", "yes"),
             ("`rigExec:startFrame`", "The joint or control the skeleton hangs from; its XY plane is the skeleton's plane. It may not be a bone or sit under one.", "no"),
-            ("`rigExec:boneGroups`", "Ordered bone groups of this skeleton (prims with `RigExecBone2dGroupAPI`, conventionally Scopes); empty keeps every bone active.", "no"),
+            ("`rigExec:jointGroups`", "Ordered joint groups of this skeleton (prims with `RigExecJointGroupAPI`, conventionally Scopes); empty keeps every bone active.", "no"),
         ],
         "example": """A leg nested Hip / Thigh / Shin, with an `End` joint under the shin,
 and a pin bone Foot beside it with no joint child. The bones key
@@ -4310,7 +4318,7 @@ and holds still.""",
             "Bind artwork with a Skin Mover whose `rigExec:influences` are the skeleton's bones; put a Sphere Weight inside each bone, stretched along its segment, and write `rigExec:jointIndices` / `rigExec:jointWeights` with `rigexec.binding.generate_skin_weights`.",
             "See [2D skeletons, binding and smart-bone step tables](../concepts/skeletons-2d.md) for the whole workflow.",
         ],
-        "see_also": [("bone_2d", "Bone 2D"), ("bone_2d_group", "Bone 2D Group"),
+        "see_also": [("bone_2d", "Bone 2D"), ("joint_group", "Joint Group"),
                      ("space_switch", "Space Switch"), ("fk_chain", "FK Chain"),
                      ("skin_mover", "Skin Mover"), ("animated_maps", "Animated Maps")],
     },
@@ -4359,44 +4367,57 @@ the dial's turn.""",
             "Evaluation never clamps keyed or driven angles to `bone2d:minAngle` and `bone2d:maxAngle`; authoring tools clamp the values they write.",
             "Order the children (`reorder nameChildren`) when a bone has several: the first child joint is its tip.",
         ],
-        "see_also": [("skeleton_2d", "Skeleton 2D"), ("bone_2d_group", "Bone 2D Group"),
+        "see_also": [("skeleton_2d", "Skeleton 2D"), ("joint_group", "Joint Group"),
                      ("space_switch", "Space Switch"), ("skin_mover", "Skin Mover")],
     },
-    "bone_2d_group": {
-        "title": "Bone 2D Group",
-        "schema": "RigExecBone2dGroupAPI",
+    "joint_group": {
+        "title": "Joint Group",
+        "schema": "RigExecJointGroupAPI",
         "no_gif": True,
-        "summary": "API schema that makes a prim (conventionally a Scope) an alternative-chain bone group: exactly one member chain is active at a time.",
-        "description": """Apply `RigExecBone2dGroupAPI` to a prim, conventionally a `Scope`, and list
-it on a [Skeleton 2D](skeleton_2d.md)'s `rigExec:boneGroups`. The group names the
-first bone of each alternative chain in that skeleton. Exactly one member is
-active; the bones under the inactive members publish their rest frames and
-neither solve nor join lock or target chains. Animating `rigExec:activeBone`
+        "example_key": "joint_group",
+        "summary": "API schema that makes a prim (conventionally a Scope) a group of alternative chains among a solver's joints: exactly one member chain is active at a time.",
+        "description": """Apply `RigExecJointGroupAPI` to a prim, conventionally a `Scope`, and list
+it on the `rigExec:jointGroups` of an [FK Chain](fk_chain.md) or a
+[Skeleton 2D](skeleton_2d.md). The group names the first joint of each
+alternative chain among that solver's joints. Exactly one member is active;
+the joints under the inactive members (the member and its descendants that
+the solver lists) publish their rest frames. Animating `rigExec:activeMember`
 swaps the visible chain.
 
 Membership is the schema's built-in `UsdCollectionAPI` instance `members`: the
-bones of `collection:members:includes` in list order, less any bone in
+joints of `collection:members:includes` in list order, less any joint in
 `collection:members:excludes`.""",
         "how_it_works": """The group's membership is structural and compiled once. The collection is
 explicit-only: its `expansionRule` defaults to `explicitOnly`, and a group that
 changes it or authors a `membershipExpression` is refused when the rig compiles,
-the same way in every evaluator. The active index arrives per evaluation, held
-between keys so the active member steps at its keys; an out-of-range value
-clamps to the nearest member. A group with `rigExec:enabled` false keeps every
-member active.""",
+the same way in every evaluator, as is a member that is not a joint of the
+solver and a joint that is a member of two groups. The active index arrives per
+evaluation, held between keys so the active member steps at its keys; it rounds
+to the nearest member and an out-of-range value clamps. A group with
+`rigExec:enabled` false keeps every member active. Where groups nest, a joint
+under any active member stays active.
+
+An FK chain publishes an inactive joint's output rest carried by the start
+frame's rest-to-pose delta, the frame the chain gives it when no control moves;
+the chain still composes later elements from every control. A 2D skeleton
+publishes an inactive bone's rest frame, and the bone neither solves nor joins
+lock or target chains. The same operation graph runs in native, frozen and
+`.rigexec` evaluation.""",
         "wiring": [
-            ("`collection:members:includes`", "Ordered first bones of the alternative chains.", "yes"),
-            ("`collection:members:excludes`", "Bones dropped from the includes.", "no"),
+            ("`collection:members:includes`", "Ordered first joints of the alternative chains.", "yes"),
+            ("`collection:members:excludes`", "Joints dropped from the includes.", "no"),
         ],
-        "example": """Two hand drawings, an open hand and a fist, hang as two chains from the
-wrist. A group lists both chain roots, and `rigExec:activeBone` is keyed 0 then
-1: the open hand's bones solve until the key and the fist's bones afterward,
-while the other chain sits at its rest.""",
+        "example": """A wrist carries two alternative fingers, an open one and a curled one with
+a tip, posed by one FK chain hanging from the arm. A group lists both fingers,
+and `rigExec:activeMember` is keyed 0 then 1 with held knots: the open finger
+poses until the key and the curled finger afterward, while the other finger
+sits at its rest and moves with the arm. On a 2D skeleton, two hand drawings
+switch the same way.""",
         "tips": [
-            "List the group on the skeleton's `rigExec:boneGroups`; a group the skeleton does not list has no effect.",
-            "Bind each chain's geometry to its own bones so the inactive drawing is not deformed.",
-            "A member's chain is the bones under it: nest each alternative drawing's bones under its member.",
+            "List the group on the solver's `rigExec:jointGroups`; a group no solver lists has no effect.",
+            "Bind each chain's geometry to its own joints so the inactive drawing is not deformed.",
+            "A member's chain is the joints under it: nest each alternative's joints under its member.",
         ],
-        "see_also": [("skeleton_2d", "Skeleton 2D"), ("bone_2d", "Bone 2D")],
+        "see_also": [("fk_chain", "FK Chain"), ("skeleton_2d", "Skeleton 2D"), ("bone_2d", "Bone 2D")],
     },
 })

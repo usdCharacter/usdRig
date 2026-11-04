@@ -7,6 +7,7 @@
 #include "rigExecMath/autoClavicleKernel.h"
 #include "rigExecMath/harmonicsKernel.h"
 #include "rigExecMath/ikFkMatchKernel.h"
+#include "rigExecMath/jointGroupKernel.h"
 #include "rigExecMath/skeleton2dKernel.h"
 #include "rigExecMath/spaceMatchKernel.h"
 #include "rigExecMath/poseArithmeticKernel.h"
@@ -281,10 +282,15 @@ struct RrPoseSolverState {
     std::vector<uint32_t> bone2dOrder;
     std::vector<RigExecBone2dSetup> bone2dSetup;
     std::vector<int32_t> bone2dSpaceSources, bone2dTargetCandidates;
-    std::vector<RigExecBone2dGroup> bone2dGroups;
-    std::vector<int32_t> bone2dGroupMembers;
     RigExecSkeleton2dScratch bone2d;
     std::vector<double> bone2dSelectors;
+    // Joint groups (FkChain, Skeleton2d): the file's groups, members and an
+    // FK chain's joint parents; this run's selectors, slots and activity.
+    std::vector<RigExecJointGroup> jointGroups;
+    std::vector<int32_t> jointGroupMembers, jointGroupParents;
+    std::vector<double> jointGroupSelectors;
+    std::vector<int32_t> jointGroupSlots;
+    std::vector<uint8_t> jointGroupActive;
     std::array<RrVec3d, 4> bone2dStartPose;
     std::vector<std::array<RrVec3d, 4>> bone2dExternalPoses;
 };

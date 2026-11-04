@@ -43,8 +43,9 @@ not cover have no public source; they come from an unpublished internal
 specification. They include the 2D lock and IK solve rules: the lock and
 target rules of the coordinate descent (chain stops, pins left out of a
 parent's children, the 32-bone chain cap, the retry from the other bend,
-out-of-reach stretch, limit handling), delta-form control bones and
-alternative-chain bone groups.
+out-of-reach stretch, limit handling), delta-form control bones and the
+alternative-chain joint groups of `jointGroupKernel.h`, which RigExecFkChain
+shares.
 [2D skeletons, binding and smart-bone step tables](concepts/skeletons-2d.md)
 describes the behavior. A smart bone's frame rules (which side it serves,
 the full-turn wrap, ties, offset and value channels) are written into
