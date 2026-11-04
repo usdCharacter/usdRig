@@ -46,7 +46,8 @@ TF_DEFINE_PRIVATE_TOKENS(_blendShapeTokens,
     ((moves, "rigExec:moves"))
     ((blendInputs, "rigExec:blendInputs"))
     ((samples, "rigExec:samples"))
-    ((rigExecBlendShape, "rigExec:blendShape")));
+    ((rigExecBlendShape, "rigExec:blendShape"))
+    (target));
 
 namespace {
 const TfToken _oracleToken0("rigExec:blendInputs");
@@ -203,7 +204,7 @@ _ValidateBlendShapeMover(
 {
     const UsdStageRefPtr &stage = ctx.stage;
     const UsdPrim &prim = ctx.prim;
-    TfToken deltaSpace("target");
+    TfToken deltaSpace = _blendShapeTokens->target;
     prim.GetAttribute(_blendShapeTokens->deltaSpace).Get(&deltaSpace);
     if (deltaSpace != "target" && deltaSpace != "surfaceFrame") {
         *error = prim.GetPath().GetString() + ": invalid blend deltaSpace";

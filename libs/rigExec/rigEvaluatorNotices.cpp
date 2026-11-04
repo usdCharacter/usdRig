@@ -20,6 +20,31 @@
 
 namespace rigExec {
 
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((defaultToken, "default"))
+    (timeSamples)
+    (spline)
+    (typeName)
+    (custom)
+    (variability)
+    (targetPaths)
+    (connectionPaths)
+    (RigExecJoint)
+    (RigExecControl)
+    (RigExecPoseInterpolator)
+    ((rigExecJointElements, "rigExec:jointElements"))
+    ((avarsTx, "avars:tx"))
+    ((avarsTy, "avars:ty"))
+    ((avarsTz, "avars:tz"))
+    ((avarsSx, "avars:sx"))
+    ((avarsSy, "avars:sy"))
+    ((avarsSz, "avars:sz"))
+    ((avarsRx, "avars:rx"))
+    ((avarsRy, "avars:ry"))
+    ((avarsRz, "avars:rz"))
+    ((avarsRspin, "avars:rspin"))
+    ((avarsUnitScaleFactor, "avars:unitScaleFactor")));
+
 using namespace evaluatorDetail;
 
 namespace {
@@ -27,13 +52,12 @@ namespace {
 // RIGEXEC_VERIFY_DIGEST_GATE=1: every notice the digest gate calls neutral,
 // on a compiled rig nothing has dirtied since its last commit or settle, has the
 // digest recomputed there and then, and moving it is fatal.
-bool
-_DigestGateVerifyRequested()
-{
-    static const bool requested =
-        TfGetenvBool("RIGEXEC_VERIFY_DIGEST_GATE", false);
-    return requested;
-}
+const bool _kDigestGateVerifyRequested =
+    TfGetenvBool("RIGEXEC_VERIFY_DIGEST_GATE", false);
+
+const TfToken _kAvarChannels[] = {
+    _tokens->avarsTx, _tokens->avarsTy, _tokens->avarsTz, _tokens->avarsSx, _tokens->avarsSy, _tokens->avarsSz,
+    _tokens->avarsRx, _tokens->avarsRy, _tokens->avarsRz, _tokens->avarsRspin, _tokens->avarsUnitScaleFactor};
 
 // Whether \p notice is provably nothing but new VALUES on the numeric avar
 // channels (see _OnObjectsChanged): the gate for the in-place patch path.
@@ -45,22 +69,17 @@ _NoticeIsAvarValuesOnly(const UsdNotice::ObjectsChanged &notice)
     if (!notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
     }
-    static const TfToken kDefault("default");
-    static const TfToken kTimeSamples("timeSamples");
-    static const TfToken kSpline("spline");
-    static const TfToken kTypeName("typeName");
+    const TfToken &kDefault = _tokens->defaultToken;
+    const TfToken &kTimeSamples = _tokens->timeSamples;
+    const TfToken &kSpline = _tokens->spline;
+    const TfToken &kTypeName = _tokens->typeName;
     // The numeric channels only. avars:defaultSpace,
     // avars:rotationOrder and avars:rotationSign choose how a frame is
     // composed, which is structure, so they are not in this list -- the
     // baked program captures the sign once per slot and only a recompile
     // can move it.
-    static const TfToken kChannels[] = {
-        TfToken("avars:tx"), TfToken("avars:ty"), TfToken("avars:tz"),
-        TfToken("avars:sx"), TfToken("avars:sy"), TfToken("avars:sz"),
-        TfToken("avars:rx"), TfToken("avars:ry"), TfToken("avars:rz"),
-        TfToken("avars:rspin"), TfToken("avars:unitScaleFactor")};
     const auto isChannel = [](const TfToken &name) {
-        for (const TfToken &avar : kChannels) {
+        for (const TfToken &avar : _kAvarChannels) {
             if (name == avar) {
                 return true;
             }
@@ -109,9 +128,9 @@ const TfToken _animatedMapsType("RigExecAnimatedMaps");
 bool
 _IsDigestDiscoveredType(const TfToken &type)
 {
-    static const TfToken kJoint("RigExecJoint");
-    static const TfToken kControl("RigExecControl");
-    static const TfToken kInterpolator("RigExecPoseInterpolator");
+    const TfToken &kJoint = _tokens->RigExecJoint;
+    const TfToken &kControl = _tokens->RigExecControl;
+    const TfToken &kInterpolator = _tokens->RigExecPoseInterpolator;
     return type == kJoint || type == kControl || type == kInterpolator ||
            type == _mlMoverType || type == _animatedMapsType ||
            _IsVolumeWeightType(type) || _IsAggregateSolverType(type);
@@ -293,12 +312,12 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
         !notice.GetResolvedAssetPathsResyncedPaths().empty()) {
         return false;
     }
-    static const TfToken kDefault("default");
-    static const TfToken kTimeSamples("timeSamples");
-    static const TfToken kSpline("spline");
-    static const TfToken kTypeName("typeName");
-    static const TfToken kCustom("custom");
-    static const TfToken kVariability("variability");
+    const TfToken &kDefault = _tokens->defaultToken;
+    const TfToken &kTimeSamples = _tokens->timeSamples;
+    const TfToken &kSpline = _tokens->spline;
+    const TfToken &kTypeName = _tokens->typeName;
+    const TfToken &kCustom = _tokens->custom;
+    const TfToken &kVariability = _tokens->variability;
     const auto valueRead = [this](const SdfPath &path) {
         for (const _CertainFootprint &certain : _digestGate.certain) {
             if (certain.valueReads.count(path)) {
@@ -314,7 +333,7 @@ RigExecRigEvaluator::_NoticeIsDigestValueNeutral(
     const auto samplesMoved = [this](const SdfPath &path,
                                      const std::vector<TfToken> &fields,
                                      const UsdAttribute &attribute) {
-        static const TfToken kSamples("timeSamples");
+        const TfToken &kSamples = _tokens->timeSamples;
         for (const _CertainFootprint &certain : _digestGate.certain) {
             const auto found = certain.sampleCountReads.find(path);
             if (found == certain.sampleCountReads.end()) {
@@ -481,9 +500,9 @@ RigExecRigEvaluator::_NoteCertainStructuralCandidates(
             return;
         }
     }
-    static const TfToken kTargetPaths("targetPaths");
-    static const TfToken kConnectionPaths("connectionPaths");
-    static const TfToken kJointElements("rigExec:jointElements");
+    const TfToken &kTargetPaths = _tokens->targetPaths;
+    const TfToken &kConnectionPaths = _tokens->connectionPaths;
+    const TfToken &kJointElements = _tokens->rigExecJointElements;
     for (const SdfPath &path : notice.GetChangedInfoOnlyPaths()) {
         if (!path.IsPropertyPath()) {
             continue;
@@ -513,8 +532,8 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
     if (!rig || rig.IsInstanceProxy() || !UsdPrimDefaultPredicate(rig)) {
         return false;
     }
-    static const TfToken kJoint("RigExecJoint");
-    static const TfToken kJointElements("rigExec:jointElements");
+    const TfToken &kJoint = _tokens->RigExecJoint;
+    const TfToken &kJointElements = _tokens->rigExecJointElements;
     // A prim's state as the digest's discovery walks see it now: its type,
     // when it is in the walk and of a discovered type; empty when it is not
     // written for its type at all; nothing when that cannot be told. A joint
@@ -539,7 +558,7 @@ RigExecRigEvaluator::_EditIsCertainlyStructural() const
         if (walked) {
             return type;
         }
-        if (type == kJoint) {
+        if (type == _tokens->RigExecJoint) {
             return std::nullopt;
         }
         return TfToken();
@@ -726,7 +745,7 @@ RigExecRigEvaluator::_OnObjectsChanged(
             _structureDirty = true;
             _NoteCertainStructuralCandidates(notice);
         } else if (!_structureDirty && _compiled &&
-                   _DigestGateVerifyRequested()) {
+                   _kDigestGateVerifyRequested) {
             _VerifyNeutralNotice(notice);
         }
     }

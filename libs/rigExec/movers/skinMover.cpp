@@ -32,7 +32,8 @@ TF_DEFINE_PRIVATE_TOKENS(_skinTokens,
     ((skinningMethod, "rigExec:skinningMethod"))
     ((elementSize, "rigExec:elementSize"))
     ((jointIndices, "rigExec:jointIndices"))
-    ((jointWeights, "rigExec:jointWeights")));
+    ((jointWeights, "rigExec:jointWeights"))
+    (classicLinear));
 
 namespace {
 const TfToken _oracleToken0("rigExec:influences");
@@ -127,7 +128,7 @@ _ValidateSkinMover(
 
     // Strict about the method: a declared token the kernel cannot honour is
     // a compile error, never a silent fallback to different maths.
-    TfToken method("classicLinear");
+    TfToken method = _skinTokens->classicLinear;
     if (UsdAttribute a = prim.GetAttribute(_skinTokens->skinningMethod)) {
         a.Get(&method);
     }
