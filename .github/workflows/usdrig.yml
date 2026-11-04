@@ -34,6 +34,9 @@
 #                    the build tree's source manifests.
 #   install-check    cmake --install into a scratch prefix; verify layout
 #                    and that both plugInfo.json files parse.
+#   hidden-locks     tools/check_hidden_locks.py: no new text-built token,
+#                    guarded static, environment read, or lock on the
+#                    parallel-lane sources beyond its allowlist.
 #
 # Deliberately not a GitHub job (workstation / manual):
 #
@@ -61,6 +64,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  hidden-locks:
+    name: no new hidden locks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Scan parallel-lane sources
+        run: python3 tools/check_hidden_locks.py
+
   runtime-usd-free:
     name: runtime compiles without OpenUSD
     runs-on: ubuntu-24.04

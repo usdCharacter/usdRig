@@ -207,8 +207,11 @@ parallel lanes. Many ordinary calls take a lock and serialize those lanes:
 - `SdfPath` locks a node-table shard when it parses text, creates a node
   (`AppendChild`, `AppendProperty`, `ReplacePrefix`, and similar), or drops
   the last reference to one. `GetString()`, `GetText()`, and `GetAsToken()`
-  intern the text under a lock; spell paths with `RigExecPathText` or
-  `RigExecSpellPathText` from [pathText.h](libs/rigExec/pathText.h).
+  intern the text under a lock; on parallel lanes and per-frame paths,
+  spell paths with `RigExecPathText` or `RigExecSpellPathText` from
+  [pathText.h](libs/rigExec/pathText.h). A single-threaded Build pass that
+  spells each path once is faster with `GetString()`: a fresh memo spells
+  every ancestor again. Measure before converting one.
 - A function-local `static` runs a thread-safe initialization guard. Library
   calls hide some: `TfToken::GetString()` on an empty token reads one, and
   `SdfPath::IsPrimPath()` may.
@@ -226,6 +229,12 @@ Keep per-slot results rather than shared containers on parallel paths.
 Before reporting a change, search every added line for these calls and for
 `mutex`, `lock`, `call_once`, and `static`. Audit every commit of the task
 and anything merged or ported into it, not only the last diff.
+`tools/check_hidden_locks.py` runs in CI and fails on a new text-built
+token, guarded static, environment read, or lock in the compile, graph,
+math, runtime, and sampler sources. It cannot see path text or locks inside
+library calls. List a deliberate site in `tools/hidden_locks_allowlist.txt`.
+Do not convert a `static` table into a local rebuilt per call on a hot path:
+build it once at namespace scope instead.
 
 ## Build and verify
 
