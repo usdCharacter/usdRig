@@ -552,13 +552,27 @@ class RigExecUsdviewContainer(PluginContainer):
         has one process-wide context, and gets the unconditional global
         Deactivate it always got.
         """
-        lib = getattr(self, "_lib", None)
-        if not lib:
-            return
-        if imagingHandle.SupportsMultiStage(lib):
-            if getattr(self, "_cachedStage", None) is None:
+        try:
+            lib = getattr(self, "_lib", None)
+            if not lib:
                 return
-        self._Imaging().Deactivate()
+            if imagingHandle.SupportsMultiStage(lib):
+                if getattr(self, "_cachedStage", None) is None:
+                    return
+            self._Imaging().Deactivate()
+        finally:
+            self._RestorePlayback()
+
+    def _RestorePlayback(self):
+        """Give usdview its playback timer back, never blocking deactivation."""
+        playback = getattr(self, "_playbackDriver", None)
+        self._playbackDriver = None
+        if playback is None:
+            return
+        try:
+            playback.Restore()
+        except Exception as error:
+            Tf.Warn("rigExecUsdview: playback timer not restored: %s" % error)
 
     def _HasWeightOverlay(self):
         """
@@ -1542,6 +1556,10 @@ class RigExecUsdviewContainer(PluginContainer):
     def _OnActivated(self, stage):
         """Plugin-side setup once the native context is active on `stage`."""
         self._active = True
+        if getattr(self._api, "_UsdviewApi__appController", None) is not None:
+            from pxr.Usdviewq.qt import QtCore
+            # Plugin activation precedes construction of usdview's playback timer.
+            QtCore.QTimer.singleShot(0, self._EnsurePlaybackDriver)
         # Activation installs the native evaluator's stage notice.
         # Re-register ours afterwards so root removal/addition reaches
         # this root-set guard before the evaluator tries to recompile
@@ -1551,6 +1569,11 @@ class RigExecUsdviewContainer(PluginContainer):
         self._PushWarmRangeFromStage()
         self._EnsureTimelineOverlay()
         self._WakeWarmingDriver()
+
+    def _EnsurePlaybackDriver(self):
+        if self._active and getattr(self, "_playbackDriver", None) is None:
+            import playbackDriver
+            self._playbackDriver = playbackDriver.Install(self._api)
 
     def _AdoptNativeActivation(self):
         """Finish setup when the native edit-driven retry activated the rig.

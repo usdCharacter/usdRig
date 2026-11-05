@@ -26,6 +26,10 @@ re-evaluation.
 - **During playback** warming gets out of the way: the sweep skips frames
   the playhead already passed.
 
+The usdview integration paces playback with a Qt timer rather than sleeping on
+the UI thread. This leaves time for each requested frame to paint while keeping
+the stage's playback rate and frame step. Deactivation restores usdview's timer.
+
 ## What warming never does
 
 - **Never shows the wrong frame.** A cached pose is bit-identical to a live

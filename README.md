@@ -164,6 +164,12 @@ Run the build helper after native changes. For Python interaction math, use
 checks are available through the `bin/test/run_testusdview*` helpers and require a
 working graphics context.
 
+After loading `bin/_env.sh` or `bin\_env.bat`, run `testusdview --testScript
+tests/testUsdviewPlayback.py docs/examples/tutorial_rolling_ball.usda` to check
+first-loop and steady playback at the stage rate, then measure completed paints
+at 1280 × 720 with playback requested at 120 fps. `RIGEXEC_PLAYBACK_MIN_FPS`
+sets the throughput requirement (24 by default).
+
 Node pages are generated from `libs/rigExecSchema/schema.usda` and
 `docs/operator_notes.py` by `python docs/build_pages.py`. Generate the optional
 HTML reference with `python docs/build_html.py` (requires `markdown`). Generated
