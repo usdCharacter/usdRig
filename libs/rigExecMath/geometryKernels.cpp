@@ -1073,6 +1073,7 @@ RigExecBuildWireBasis(const GfVec2f *bindCoords, size_t bindCount,
     const double u0 = knots[size_t(p)];
     const double u1 = knots[n];
     basis->byControlPoint.assign(n, {});
+    basis->ascendingIndices = std::is_sorted(indices.begin(), indices.end());
     double left[16], right[16], N[16];
     for (size_t k = 0; k < indices.size(); ++k) {
         const int index = indices[k];
@@ -1185,7 +1186,17 @@ RigExecApplyWireBasisGroup(GfVec3f *out, size_t begin, size_t end,
         if (delta == GfVec3f(0.0f)) {
             continue;  // a control point at rest moves nothing
         }
-        for (const auto &[k, coefficient] : basis.byControlPoint[j]) {
+        const auto &entries = basis.byControlPoint[j];
+        auto first = entries.begin(), last = entries.end();
+        if (basis.ascendingIndices) {
+            const auto before = [&](const auto &entry, size_t bound) {
+                return indices[entry.first] < 0 || size_t(indices[entry.first]) < bound;
+            };
+            first = std::lower_bound(first, last, begin, before);
+            last = std::lower_bound(first, last, end, before);
+        }
+        for (auto entry = first; entry != last; ++entry) {
+            const auto [k, coefficient] = *entry;
             const int index = indices[k];
             if (index < 0 || size_t(index) < begin || size_t(index) >= end) {
                 continue;

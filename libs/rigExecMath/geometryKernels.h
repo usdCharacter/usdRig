@@ -397,6 +397,7 @@ bool RigExecApplyWireSparse(
 struct RigExecWireBasis {
     /// For control point j: (position in the weight index list, coefficient).
     std::vector<std::vector<std::pair<uint32_t, float>>> byControlPoint;
+    bool ascendingIndices = false;
 };
 
 /// Builds the basis for the points named by \p indices. \p bindCoords is
