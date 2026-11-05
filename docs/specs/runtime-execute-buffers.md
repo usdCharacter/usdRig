@@ -4,6 +4,12 @@ A successful `RigExecRuntimeReader::Execute` shares every moved point array
 and every resolved weight field it retains with the views `GetPoints` and
 `GetWeightFields` return. It does not copy their elements.
 
+Publication rows retain their storage and path order while output membership
+is unchanged. A membership change rebuilds the ordering; ordinary frames
+replace values in those rows without allocating and sorting new path lists.
+Every output builds its changed rows before any output is replaced, and the
+rows a change drops return their buffers to the spare pool.
+
 `RigExecRuntimePoints::points` is a `RigExecSharedArray<RrVec3f>`.
 `RigExecRuntimeWeightField::weights` is a `RigExecSharedArray<float>`.
 Copying either view copies the pointer, not the elements.

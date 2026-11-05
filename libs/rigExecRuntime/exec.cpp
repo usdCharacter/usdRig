@@ -11,15 +11,74 @@ namespace rigExec {
 
 namespace {
 
-// The store's publication maps key by path id (bake insertion order);
-// every reader getter promises path order, so each assembly sorts by the
-// resolved path text before it ships.
 template <typename T>
 void
 _SortByPath(std::vector<T> *out)
 {
     std::sort(out->begin(), out->end(),
               [](const T &a, const T &b) { return a.path < b.path; });
+}
+
+// A membership change's new rows, built before any output changes.
+template<class T>
+struct _StagedRows {
+    bool changed=false;
+    std::vector<T> rows;
+    std::vector<size_t> positions;
+};
+
+// \p describe fills what a row keeps for its key, beyond its path.
+template<class Order,class T,class Enumerate,class Describe>
+void _StageRows(Order *order,const std::vector<T> &rows,const RrProgram &program,
+                Enumerate enumerate,Describe describe,_StagedRows<T> *staged)
+{
+    order->nextKeys.clear();
+    enumerate([&](uint32_t id,const auto &) {order->nextKeys.push_back(id);});
+    staged->changed=order->keys!=order->nextKeys || rows.size()!=order->nextKeys.size();
+    if(!staged->changed)return;
+    const size_t count=order->nextKeys.size();
+    staged->rows.resize(count);
+    std::vector<size_t> sorted(count);
+    for(size_t i=0;i<count;++i) {
+        sorted[i]=i;
+        staged->rows[i].path=program.TextOrEmpty(order->nextKeys[i]);
+    }
+    std::sort(sorted.begin(),sorted.end(),[&](size_t a,size_t b) {
+        return staged->rows[a].path<staged->rows[b].path;
+    });
+    _SortByPath(&staged->rows);
+    staged->positions.resize(count);
+    for(size_t i=0;i<count;++i)staged->positions[sorted[i]]=i;
+    size_t at=0;
+    enumerate([&](uint32_t,const auto &value) {
+        describe(staged->rows[staged->positions[at++]],value);
+    });
+}
+
+template<class Order,class T,class Enumerate,class Assign,class Recycle>
+void _CommitRows(Order *order,std::vector<T> *rows,_StagedRows<T> *staged,
+                 Enumerate enumerate,Assign assign,Recycle recycle)
+{
+    if(staged->changed) {
+        for(T &row:*rows)recycle(row);
+        rows->swap(staged->rows);
+        order->keys.swap(order->nextKeys);
+        order->positions.swap(staged->positions);
+    }
+    size_t at=0;
+    enumerate([&](uint32_t,const auto &value) {
+        assign((*rows)[order->positions[at++]],value);
+    });
+}
+
+// The pool only spares an allocation: one that cannot grow drops the buffer.
+template<class T>
+void _Recycle(RigExecSharedArray<T> *array) noexcept
+{
+    try {
+        RrRetainedRecycle(array->Release());
+    } catch(...) {
+    }
 }
 
 }  // namespace
@@ -826,95 +885,66 @@ RigExecRuntimeReader::Execute(std::string *error)
     }
 
     // Assemble the outputs only here, at the one exit that published:
-    // a failure anywhere above keeps the previous frame.
-    std::vector<RigExecRuntimeJointMatrix> jointMatrices;
-    jointMatrices.reserve(store.jointMatricesFinal.size());
-    for (const auto &entry : store.jointMatricesFinal) {
-        RigExecRuntimeJointMatrix joint;
-        joint.path = program.TextOrEmpty(entry.first);
-        joint.matrix = entry.second;
-        jointMatrices.push_back(std::move(joint));
-    }
-    std::vector<RigExecRuntimePoints> points;
-    points.reserve(store.movedProperties.size());
-    for (const auto &entry : store.movedProperties) {
-        RigExecRuntimePoints moved;
-        moved.path = program.TextOrEmpty(entry.first);
-        moved.points = RigExecSharedArray<RrVec3f>(entry.second.Share());
-        points.push_back(std::move(moved));
-    }
-    std::vector<RigExecRuntimeMatrixPrimvar> matrixPrimvars;
-    matrixPrimvars.reserve(store.movedMatrices.size());
-    for (const auto &entry : store.movedMatrices) {
-        RigExecRuntimeMatrixPrimvar primvar;
-        primvar.path = program.TextOrEmpty(entry.first);
-        primvar.matrix = entry.second;
-        matrixPrimvars.push_back(std::move(primvar));
-    }
-    // Every volume slot whose VolumePlacements step has run, under the
-    // slot's path.
-    std::vector<RigExecRuntimeWeightFrame> weightFrames;
-    const size_t volumeSlots =
-        std::min({program.slotMeta ? program.slotMeta->paths.size()
-                                   : size_t(0),
-                  store.volumePlaced.size(), store.volumePlacement.size()});
-    for (size_t slot = 0; slot < volumeSlots; ++slot) {
-        if (!store.volumePlaced[slot]) {
-            continue;
+    // a failure anywhere above keeps the previous frame. Every output stages
+    // its rows before any is committed, so a throw while staging publishes
+    // none of this frame.
+    const auto entries=[](const auto &map) {
+        return [&map](auto visit) {for(const auto &entry:map)visit(entry.first,entry.second);};
+    };
+    const auto joints=entries(store.jointMatricesFinal);
+    const auto moved=entries(store.movedProperties);
+    const auto matrices=entries(store.movedMatrices);
+    const auto frames=[&](auto visit) {
+        const size_t count=std::min({program.slotMeta?program.slotMeta->paths.size():size_t(0),
+            store.volumePlaced.size(),store.volumePlacement.size()});
+        for(size_t slot=0;slot<count;++slot)if(store.volumePlaced[slot])
+            visit(program.slotMeta->paths[slot],store.volumePlacement[slot]);
+    };
+    const auto fields=entries(store.weightFields);
+    const auto providers=[&](auto visit) {
+        for(const auto &entry:store.providerXforms) {
+            const auto base=store.providerBaseXforms.find(entry.first);
+            if(base!=store.providerBaseXforms.end())
+                visit(entry.first,std::make_pair(entry.second,base->second));
         }
-        RigExecRuntimeWeightFrame placed;
-        placed.path = program.TextOrEmpty(program.slotMeta->paths[slot]);
-        placed.matrix = store.volumePlacement[slot];
-        weightFrames.push_back(std::move(placed));
-    }
-    std::vector<RigExecRuntimeWeightField> weightFieldsOut;
-    weightFieldsOut.reserve(store.weightFields.size());
-    for (const auto &entry : store.weightFields) {
-        RigExecRuntimeWeightField field;
-        field.path = program.TextOrEmpty(entry.first);
-        field.target = program.TextOrEmpty(entry.second.target);
-        field.weights =
-            RigExecSharedArray<float>(entry.second.weights.Share());
-        weightFieldsOut.push_back(std::move(field));
-    }
-    // The outputs share the retained buffers. Clearing the maps drops the
-    // epilogue's extra retainers. A buffer this reader still owns alone is
-    // returned to the spare pool; the chain has already published the new
-    // one. A share the caller kept is left alone, and the next fill of that
-    // array allocates.
+    };
+    _StagedRows<RigExecRuntimeJointMatrix> jointRows;
+    _StagedRows<RigExecRuntimePoints> pointRows;
+    _StagedRows<RigExecRuntimeMatrixPrimvar> matrixRows;
+    _StagedRows<RigExecRuntimeWeightFrame> frameRows;
+    _StagedRows<RigExecRuntimeWeightField> fieldRows;
+    _StagedRows<RigExecRuntimeProviderXform> providerRows;
+    const auto pathOnly=[](auto &,const auto &) {};
+    _StageRows(&_jointOrder,_jointMatrices,program,joints,pathOnly,&jointRows);
+    _StageRows(&_pointOrder,_points,program,moved,pathOnly,&pointRows);
+    _StageRows(&_matrixOrder,_matrixPrimvars,program,matrices,pathOnly,&matrixRows);
+    _StageRows(&_weightFrameOrder,_weightFrames,program,frames,pathOnly,&frameRows);
+    // A field's target comes from its file record, so it moves only with
+    // membership.
+    _StageRows(&_weightOrder,_weightFields,program,fields,
+        [&](auto &row,const auto &value) {
+            if(!program.GetText(value.target,&row.target))row.target.clear();
+        },&fieldRows);
+    _StageRows(&_providerOrder,_providerXforms,program,providers,pathOnly,&providerRows);
+    const auto matrix=[](auto &row,const auto &value) {row.matrix=value;};
+    const auto keep=[](auto &) {};
+    _CommitRows(&_jointOrder,&_jointMatrices,&jointRows,joints,matrix,keep);
+    _CommitRows(&_pointOrder,&_points,&pointRows,moved,
+        [](auto &row,const auto &value) {
+            _Recycle(&row.points);
+            row.points=RigExecSharedArray<RrVec3f>(value.Share());
+        },[](auto &row) {_Recycle(&row.points);});
+    _CommitRows(&_matrixOrder,&_matrixPrimvars,&matrixRows,matrices,matrix,keep);
+    _CommitRows(&_weightFrameOrder,&_weightFrames,&frameRows,frames,matrix,keep);
+    _CommitRows(&_weightOrder,&_weightFields,&fieldRows,fields,
+        [](auto &row,const auto &value) {
+            _Recycle(&row.weights);
+            row.weights=RigExecSharedArray<float>(value.weights.Share());
+        },[](auto &row) {_Recycle(&row.weights);});
+    _CommitRows(&_providerOrder,&_providerXforms,&providerRows,providers,
+        [](auto &row,const auto &value) {row.matrix=value.first;row.base=value.second;},keep);
     store.movedProperties.clear();
     store.weightFields.clear();
-    _SortByPath(&jointMatrices);
-    _SortByPath(&points);
-    _SortByPath(&matrixPrimvars);
-    _SortByPath(&weightFrames);
-    _SortByPath(&weightFieldsOut);
-    std::vector<RigExecRuntimeProviderXform> providerXforms;
-    providerXforms.reserve(store.providerXforms.size());
-    for (const auto &entry : store.providerXforms) {
-        const auto base = store.providerBaseXforms.find(entry.first);
-        if (base == store.providerBaseXforms.end()) {
-            continue;
-        }
-        RigExecRuntimeProviderXform revised;
-        revised.path = program.TextOrEmpty(entry.first);
-        revised.matrix = entry.second;
-        revised.base = base->second;
-        providerXforms.push_back(std::move(revised));
-    }
-    _SortByPath(&providerXforms);
-    for (RigExecRuntimePoints &old : _points) {
-        RrRetainedRecycle(old.points.Release());
-    }
-    for (RigExecRuntimeWeightField &old : _weightFields) {
-        RrRetainedRecycle(old.weights.Release());
-    }
-    _jointMatrices = std::move(jointMatrices);
-    _points = std::move(points);
-    _matrixPrimvars = std::move(matrixPrimvars);
-    _weightFrames = std::move(weightFrames);
-    _weightFields = std::move(weightFieldsOut);
-    _providerXforms = std::move(providerXforms);
     _diagnostics = std::move(poseDiagnostics);
     _counters = counters;
     return true;

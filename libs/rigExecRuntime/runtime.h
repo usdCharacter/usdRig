@@ -553,6 +553,12 @@ private:
     std::vector<RigExecRuntimeWeightFrame> _weightFrames;
     std::vector<RigExecRuntimeWeightField> _weightFields;
     std::vector<RigExecRuntimeProviderXform> _providerXforms;
+    struct PublicationOrder {
+        std::vector<uint32_t> keys, nextKeys;
+        std::vector<size_t> positions;
+    };
+    PublicationOrder _jointOrder, _pointOrder, _matrixOrder, _weightFrameOrder,
+                     _weightOrder, _providerOrder;
     std::vector<std::string> _diagnostics;
     RigExecRuntimeCounters _counters;
 };
