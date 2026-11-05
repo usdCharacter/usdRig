@@ -1185,13 +1185,18 @@ ApplyRevisionKernel(RigExecRevisionOp op,
         RigExecApplyLattice(
             pts, p.restPoints, p.auxPoints, p.auxPointsB, p.divisions, cache);
         return true;
-    case RigExecRevisionOp::SurfaceProject:
+    case RigExecRevisionOp::SurfaceProject: {
         if(RigExecSurfaceSnapIsLegacy(p.surfaceSettings,p.targetToSurface,p.surfaceToTarget,p.surfaceToMetric)) {
             RigExecApplySurfaceProject(pts,p.auxPoints,p.topologyCounts,p.topologyIndices,p.strength);return true;
         }
+        const auto *triangles=cache?cache->SnapTriangles(p.auxPoints.size(),
+            p.topologyCounts,p.topologyIndices,p.surfaceSettings.triangles):nullptr;
+        if(cache && !triangles)return false;
         return RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(
             pts, p.auxPoints, p.topologyCounts, p.topologyIndices,
-            p.surfaceSettings,p.targetToSurface,p.surfaceToTarget,p.surfaceToMetric);
+            p.surfaceSettings,p.targetToSurface,p.surfaceToTarget,p.surfaceToMetric,
+            triangles,RigExecGeometryRanges(),cache?&cache->SnapScratch():nullptr);
+    }
     case RigExecRevisionOp::EmitGuidePoints:
         if (p.frames.GetSize() != pts->size()) {
             return false;

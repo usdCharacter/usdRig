@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include "rangeRunner.h"
 namespace rigExec {
 enum class RigExecSurfaceSnapMode { OnSurface, Inside, Outside, OutsideSurface };
 template<class M> bool RigExecSurfaceSnapValidMatrix(const M &m) {
@@ -93,18 +94,49 @@ template<class V> V Snap(const V &p,const V &hit,const V &normal,
     return hit+delta*(s.offset*side);
 }
 }
+inline bool RigExecBuildSurfaceSnapTriangles(size_t pointCount,
+    const std::vector<int> &counts, const std::vector<int> &indices,
+    const std::vector<int> &authored, std::vector<int> *triangles) {
+    *triangles=authored;
+    if(triangles->empty()) {
+        size_t cursor=0;
+        for(int n:counts) {
+            if(n<3 || size_t(n)>indices.size()-cursor)return false;
+            for(int j=1;j+1<n;++j) {
+                triangles->push_back(indices[cursor]);
+                triangles->push_back(indices[cursor+j]);
+                triangles->push_back(indices[cursor+j+1]);
+            }
+            cursor+=n;
+        }
+        if(cursor!=indices.size())return false;
+    }
+    if(triangles->empty() || triangles->size()%3)return false;
+    for(int i:*triangles)if(i<0 || size_t(i)>=pointCount)return false;
+    return true;
+}
+/// Buffers the snap kernel refills on every call; one owner at a time.
+template<class V> struct RigExecSurfaceSnapScratch {
+    std::vector<V> metricSurface,normals,candidate;
+    std::vector<float> lengths;
+    std::vector<char> pending;
+};
 // Both maps are row-vector affine maps. Distance and clearance are measured
 // in surface coordinates, then the candidate returns to incoming point space.
 template<class V,class D,class M>
 bool RigExecApplySurfaceSnapKernel(std::vector<V> *points,const std::vector<V> &surface,
     const std::vector<int> &counts,const std::vector<int> &indices,
     const RigExecSurfaceSnapSettings &settings,const M &toSurface,const M &toTarget,
-    const M &surfaceToMetric) {
+    const M &surfaceToMetric, const std::vector<int> *compiledTriangles=nullptr,
+    const RigExecRangeRunner *ranges=nullptr,RigExecSurfaceSnapScratch<V> *scratch=nullptr) {
     using namespace surfaceSnapDetail;
     if(!points || surface.empty() || !std::isfinite(settings.offset) ||
        (!settings.mask.empty() && settings.mask.size()!=points->size()))return false;
     for(float w:settings.mask)if(!std::isfinite(w) || w<0 || w>1)return false;
-    std::vector<V> metricSurface;metricSurface.reserve(surface.size());
+    RigExecSurfaceSnapScratch<V> own;
+    RigExecSurfaceSnapScratch<V> &work=scratch?*scratch:own;
+    auto &metricSurface=work.metricSurface;
+    metricSurface.clear();metricSurface.reserve(surface.size());
     for(const V &v:surface) {
         if(!Finite(v))return false;
         const D p=surfaceToMetric.TransformAffine(D(v[0],v[1],v[2]));
@@ -116,39 +148,42 @@ bool RigExecApplySurfaceSnapKernel(std::vector<V> *points,const std::vector<V> &
            !std::isfinite(surfaceToMetric[i][j]))return false;
     for(const auto &m:{toSurface,toTarget,surfaceToMetric})
         if(m[0][3]!=0 || m[1][3]!=0 || m[2][3]!=0 || m[3][3]!=1)return false;
-    std::vector<int> triangles=settings.triangles;
-    if(triangles.empty()) {
-        size_t cursor=0;
-        for(int n:counts) {
-            if(n<3 || size_t(n)>indices.size()-cursor)return false;
-            for(int j=1;j+1<n;++j) {
-                triangles.push_back(indices[cursor]);triangles.push_back(indices[cursor+j]);triangles.push_back(indices[cursor+j+1]);
-            }
-            cursor+=n;
-        }
-        if(cursor!=indices.size())return false;
+    std::vector<int> localTriangles;
+    if(!compiledTriangles && !RigExecBuildSurfaceSnapTriangles(
+        surface.size(),counts,indices,settings.triangles,&localTriangles))return false;
+    // A retained triangulation was validated against this compiled surface.
+    const auto &triangles=compiledTriangles?*compiledTriangles:localTriangles;
+    auto &normals=work.normals;auto &lengths=work.lengths;
+    normals.resize(triangles.size()/3);lengths.resize(normals.size());
+    for(size_t t=0;t<normals.size();++t) {
+        const V &a=metricSurface[triangles[3*t]],&b=metricSurface[triangles[3*t+1]],&c=metricSurface[triangles[3*t+2]];
+        normals[t]=Cross(b-a,c-a);lengths[t]=normals[t].GetLength();
     }
-    if(triangles.empty() || triangles.size()%3)return false;
-    for(int i:triangles)if(i<0 || size_t(i)>=surface.size())return false;
-    auto candidate=*points;
-    for(size_t i=0;i<candidate.size();++i) {
-        const float w=settings.mask.empty()?1:settings.mask[i];if(w==0)continue;
+    auto &candidate=work.candidate;candidate.assign(points->begin(),points->end());
+    // A point stays pending until its snap succeeds, so a range the runner
+    // never ran fails the kernel as a failed point does.
+    auto &pending=work.pending;pending.assign(candidate.size(),1);
+    RigExecRunRanges(ranges,candidate.size(),RigExecGeometryGrainSize,[&](size_t begin,size_t end) {
+    for(size_t i=begin;i<end;++i) {
+        const float w=settings.mask.empty()?1:settings.mask[i];if(w==0){pending[i]=0;continue;}
         const D query=toSurface.TransformAffine(D(candidate[i][0],candidate[i][1],candidate[i][2]));
-        const V p{float(query[0]),float(query[1]),float(query[2])};if(!Finite(p))return false;
+        const V p{float(query[0]),float(query[1]),float(query[2])};if(!Finite(p))continue;
         float best=std::numeric_limits<float>::max();V hit=p,normal(0);bool found=false;
         for(size_t t=0;t<triangles.size();t+=3) {
             const V &a=metricSurface[triangles[t]],&b=metricSurface[triangles[t+1]],&c=metricSurface[triangles[t+2]];
-            V n=Cross(b-a,c-a);const float length=n.GetLength();if(length<=0)continue;
+            const V &n=normals[t/3];const float length=lengths[t/3];if(length<=0)continue;
             const V q=Closest(p,a,b,c);const float distance=(q-p).GetLengthSq();
             if(distance<best) {best=distance;hit=q;normal=n/length;found=true;}
         }
-        if(!found)return false;
+        if(!found)continue;
         const V snapped=Snap(p,hit,normal,settings);
         const D result=toTarget.TransformAffine(D(snapped[0],snapped[1],snapped[2]));
         const V local{float(result[0]),float(result[1]),float(result[2])};
-        candidate[i]+=(local-candidate[i])*w;if(!Finite(candidate[i]))return false;
+        candidate[i]+=(local-candidate[i])*w;pending[i]=char(!Finite(candidate[i]));
     }
-    *points=std::move(candidate);return true;
+    });
+    if(std::find(pending.begin(),pending.end(),char(1))!=pending.end())return false;
+    points->swap(candidate);return true;
 }
 }
 #endif

@@ -86,6 +86,31 @@ int main() {
     CHECK(clone.TransportRest(points,counts,indices)==rest);
     auto *adj=cache.MeshAdjacency(points.size(),counts,indices); CHECK(adj);
     CHECK(cache.MeshAdjacency(points.size(),counts,indices)==adj);
+    {
+        RigExecSurfaceKernelCache<GfVec3f,GfVec3d> compiled;
+        compiled.PinTopology(true);
+        const auto *topology=compiled.MeshAdjacency(points.size(),counts,indices);
+        auto retained=compiled;
+        CHECK(topology && retained.MeshAdjacency(points.size(),counts,indices)==topology);
+        const auto *triangles=compiled.SnapTriangles(points.size(),counts,indices,{});
+        CHECK(triangles && *triangles==indices);
+        CHECK(compiled.SnapTriangles(points.size(),counts,indices,{0,2,1}) &&
+              *compiled.SnapTriangles(points.size(),counts,indices,{0,2,1})==std::vector<int>({0,2,1}));
+        CHECK(!compiled.SnapTriangles(points.size(),counts,indices,{0,1,99}));
+        const auto *rest=compiled.MushRest(points,counts,indices,2,.5,true,0);
+        CHECK(rest && compiled.MushRest(points,counts,indices,2,.5,true,0)==rest);
+        const auto held=compiled.RetainedMushRest();
+        auto changed=points;changed[1][0]=2;
+        CHECK(compiled.MushRest(changed,counts,indices,2,.5,true,0)!=rest);
+        CHECK(held.get()==rest);
+        // Unpinned, the same point count with moved indices rebuilds.
+        RigExecSurfaceKernelCache<GfVec3f,GfVec3d> live;
+        const std::vector<int> flipped={0,2,1};
+        CHECK(live.SnapTriangles(points.size(),counts,indices,{}) &&
+              *live.SnapTriangles(points.size(),counts,flipped,{})==flipped);
+        CHECK(*compiled.SnapTriangles(points.size(),counts,indices,{})==indices &&
+              *compiled.SnapTriangles(points.size(),counts,flipped,{})==indices);
+    }
     CHECK(cache.MeshAdjacency(points.size(),counts,{0,1,99})==nullptr);
     CHECK(cache.MeshAdjacency(points.size(),counts,indices)==adj);
     auto *mush=cache.MushRest(points,counts,indices,2,0.5,true,0.0); CHECK(mush);

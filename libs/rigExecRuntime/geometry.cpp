@@ -2608,19 +2608,20 @@ struct RrGeoRangeShare {
 // At most this many helper tasks per split; a late one costs a claim.
 constexpr size_t kRrGeoMaxRangeHelpers = 63;
 
-// \p body over [begin, end) in grains of RigExecGeometryGrainSize: the
-// calling body drains ranges itself while helper tasks it hands \p dispatch
-// claim from the same counter. The caller never waits on the dispatcher: it
-// spins only on the ranges other threads already claimed, so a busy or
-// single-threaded host still finishes (the caller drains everything).
-// False when a range threw.
+// \p body over [begin, end) in grains of \p grain points: the calling body
+// drains ranges itself while helper tasks it hands \p dispatch claim from
+// the same counter. The caller never waits on the dispatcher: it spins only
+// on the ranges other threads already claimed, so a busy or single-threaded
+// host still finishes (the caller drains everything). False when a range
+// threw.
 bool
 RrGeoParallelPointRanges(const RrGeoDispatch &dispatch, size_t begin,
                          size_t end,
-                         const std::function<void(size_t, size_t)> &body)
+                         const std::function<void(size_t, size_t)> &body,
+                         size_t grain = RigExecGeometryGrainSize)
 {
     const size_t count = end > begin ? end - begin : 0;
-    const size_t grain = RigExecGeometryGrainSize;
+    grain = std::max<size_t>(grain, 1);
     const size_t ranges = (count + grain - 1) / grain;
     if (ranges < 2) {
         body(begin, end);
@@ -2662,6 +2663,22 @@ RrGeoParallelPointRanges(const RrGeoDispatch &dispatch, size_t begin,
         std::this_thread::yield();
     }
     return !share->threw.load(std::memory_order_relaxed);
+}
+
+// A shared kernel's range runner over \p dispatch, with the native runner's
+// threshold; serial without a dispatcher. A range that threw is not rerun,
+// so the kernel must fail the elements its body did not reach.
+RigExecRangeRunner
+RrGeoRangeRunner(const RrGeoDispatch *dispatch)
+{
+    return [dispatch](size_t count, size_t grain, const RigExecRangeBody &body) {
+        if (dispatch && *dispatch &&
+            count >= RigExecGeometryParallelThreshold && count > grain) {
+            RrGeoParallelPointRanges(*dispatch, 0, count, body, grain);
+        } else {
+            body(0, count);
+        }
+    };
 }
 
 bool
@@ -3449,7 +3466,7 @@ RrGeoApplyRevisionKernel(
             pts, p.restPoints, p.auxPoints, p.auxPointsB, p.divisions,
             surfaceCache);
         return true;
-    case RrGeoOpSurfaceProject:
+    case RrGeoOpSurfaceProject: {
         // Default settings and identity maps are the legacy projection.
         if (RigExecSurfaceSnapIsLegacy(p.surfaceSettings, p.targetToSurface,
                                        p.surfaceToTarget, p.surfaceToMetric)) {
@@ -3457,10 +3474,16 @@ RrGeoApplyRevisionKernel(
                                      p.topologyIndices, p.strength);
             return true;
         }
+        const auto *triangles=surfaceCache?surfaceCache->SnapTriangles(p.auxPoints.size(),
+            p.topologyCounts,p.topologyIndices,p.surfaceSettings.triangles):nullptr;
+        if(surfaceCache && !triangles)return false;
+        const RigExecRangeRunner ranges=RrGeoRangeRunner(parallelSkin);
         return RigExecApplySurfaceSnapKernel<RrVec3f, RrVec3d>(
             pts, p.auxPoints, p.topologyCounts, p.topologyIndices,
             p.surfaceSettings, p.targetToSurface, p.surfaceToTarget,
-            p.surfaceToMetric);
+            p.surfaceToMetric,triangles,&ranges,
+            surfaceCache?&surfaceCache->SnapScratch():nullptr);
+    }
     case RrGeoOpEmitGuidePoints:
         if (p.frames.frames.size() != pts->size()) {
             return false;
@@ -5514,6 +5537,11 @@ RrGeometrySizeScratch(RrProgram *program, std::string *error)
                 rev.currentSource = int(r);
             }
             rev.rangeRole = rev.role == RrGeoRole::Range;
+            // Export takes a Range smooth's or delta mush's topology only as
+            // file constants.
+            rev.surfaceCache.PinTopology(
+                rev.rangeRole && (wire.op == uint8_t(RrGeoOpSmooth) ||
+                                  wire.op == uint8_t(RrGeoOpDeltaMush)));
             rev.blendChunked = RigExecFormatIsChunkBlend(wire);
             // One expansion per layout: a partition the bake shared with
             // the topology shares its expansion here too.

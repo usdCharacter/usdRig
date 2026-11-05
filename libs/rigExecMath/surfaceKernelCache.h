@@ -2,6 +2,7 @@
 #define RIGEXEC_MATH_SURFACE_KERNEL_CACHE_H
 #include "deltaMushKernel.h"
 #include "spatialAccel.h"
+#include "surfaceSnapKernel.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -21,10 +22,13 @@ template<class Point> struct RigExecLatticeBind;
 constexpr size_t RigExecLatticeBindBudgetBytes = size_t(64) << 20;
 /// One revision owns and mutates this cache. Clones share only immutable
 /// entries; no global state or locking. Keys compare every scalar's raw bits,
-/// including signed zero/NaN payloads, and every topology element. Between
+/// including signed zero/NaN payloads, and every topology element, except
+/// that a pinned cache (PinTopology) keys topology by point count and a
+/// lattice bind of a known rest version skips the rest-point compare. Between
 /// runs, the thread that runs the owning program may also hand the cache an
 /// equal, immutable lattice bind (RigExecLatticeBindSharing).
 template<class Point,class Wide> class RigExecSurfaceKernelCache {
+    bool pinnedTopology=false;
     static bool Same(const std::vector<Point> &a,const std::vector<Point> &b) {
         if(a.size()!=b.size()) return false;
         for(size_t i=0;i<a.size();++i) for(int axis=0;axis<3;++axis) {
@@ -35,7 +39,8 @@ template<class Point,class Wide> class RigExecSurfaceKernelCache {
     }
     struct MeshKey { std::vector<Point> points; std::vector<int> counts,indices;
         bool Matches(const std::vector<Point> &p,const std::vector<int> &c,
-            const std::vector<int> &i) const { return counts==c && indices==i && Same(points,p); }
+            const std::vector<int> &i,bool pinned) const {
+                return (pinned || (counts==c && indices==i)) && Same(points,p); }
     };
     struct Transport : MeshKey { RigExecTransportRestData<Point,Wide> value; };
     struct Mush : MeshKey { int iterations=0; double step=0,distance=0; bool pin=false;
@@ -63,6 +68,15 @@ template<class Point,class Wide> class RigExecSurfaceKernelCache {
     std::shared_ptr<const Transport> transport;
     std::shared_ptr<const Normals> normals[2];
     std::shared_ptr<const Fan> fan;
+    struct Snap { size_t points=0; std::vector<int> counts,indices,authored,triangles; bool valid=false; };
+    std::shared_ptr<const Snap> snap;
+    // Scratch, not an entry: a copy starts empty instead of copying buffers.
+    struct SnapScratchSlot {
+        RigExecSurfaceSnapScratch<Point> value;
+        SnapScratchSlot()=default;
+        SnapScratchSlot(const SnapScratchSlot &) {}
+        SnapScratchSlot &operator=(const SnapScratchSlot &) { return *this; }
+    } snapScratch;
     std::shared_ptr<const std::vector<Point>> pointSamples[2];
     std::vector<Point> invalidSamples;
     std::shared_ptr<const RigExecLatticeBind<Point>> lattice;
@@ -74,6 +88,22 @@ template<class Point,class Wide> class RigExecSurfaceKernelCache {
     size_t latticeBudget=RigExecLatticeBindBudgetBytes;
     std::vector<Point> smoothSource;
 public:
+    /// Only for a revision whose compiled rig pins its topology counts and
+    /// indices (a Range role's NoLayoutOverride pins, or a file constant):
+    /// a pin that fails rebuilds, and reconnecting recompiles.
+    void PinTopology(bool pinned) { pinnedTopology=pinned; }
+    const std::vector<int> *SnapTriangles(size_t points,const std::vector<int> &c,
+        const std::vector<int> &i,const std::vector<int> &authored) {
+        if(!snap || snap->points!=points || snap->authored!=authored || (!pinnedTopology &&
+            (snap->counts!=c || snap->indices!=i))) {
+            auto entry=std::make_shared<Snap>();entry->points=points;
+            entry->authored=authored;
+            if(!pinnedTopology) {entry->counts=c;entry->indices=i;}
+            entry->valid=RigExecBuildSurfaceSnapTriangles(points,c,i,authored,&entry->triangles);
+            snap=std::move(entry);
+        }
+        return snap->valid?&snap->triangles:nullptr;
+    }
     /// A boxed-array caller can retain the vector adapter without converting
     /// unchanged source arrays every frame. No borrowed pointer survives here.
     const std::vector<Point> &PointSamples(bool posed,const Point *data,size_t count) {
@@ -92,7 +122,7 @@ public:
     }
     const RigExecTransportRestData<Point,Wide> *TransportRest(
         const std::vector<Point> &p,const std::vector<int> &c,const std::vector<int> &i) {
-        if(transport && transport->Matches(p,c,i)) return &transport->value;
+        if(transport && transport->Matches(p,c,i,pinnedTopology)) return &transport->value;
         auto entry=std::make_shared<Transport>();
         if(!RigExecBuildTransportRestData<Point,Wide>(p,c,i,&entry->value)) return nullptr;
         entry->points=p; entry->counts=c; entry->indices=i; transport=entry;
@@ -102,7 +132,7 @@ public:
         const std::vector<Point> &p,const std::vector<int> &c,const std::vector<int> &i,
         int iterations,double step,bool pin,double distance,
         const RigExecDeltaMushSettings &settings=RigExecDeltaMushSettings()) {
-        if(mush && mush->Matches(p,c,i) && mush->iterations==iterations && mush->pin==pin &&
+        if(mush && mush->Matches(p,c,i,pinnedTopology) && mush->iterations==iterations && mush->pin==pin &&
             !std::memcmp(&mush->step,&step,sizeof(step)) &&
             !std::memcmp(&mush->distance,&distance,sizeof(distance)) &&
             SameSettings(mush->settings,settings)) return &mush->value;
@@ -124,7 +154,7 @@ public:
     const RigExecWrinkleMesh *WrinkleTopology(size_t points,
         const std::vector<int> &c,const std::vector<int> &i,
         RigExecWrinkleTopology mode,int distance) {
-        if(wrinkle && wrinkle->points==points && wrinkle->counts==c && wrinkle->indices==i &&
+        if(wrinkle && wrinkle->points==points && (pinnedTopology || (wrinkle->counts==c && wrinkle->indices==i)) &&
             wrinkle->mode==mode && wrinkle->distance==distance) return &wrinkle->value;
         auto entry=std::make_shared<Wrinkle>();
         if(!RigExecBuildWrinkleMesh(points,c,i,mode,distance,&entry->value)) return nullptr;
@@ -135,7 +165,7 @@ public:
         const std::vector<Point> &p,const std::vector<int> &c,
         const std::vector<int> &i,Compute &&compute) {
         auto &slot=normals[posed?1:0];
-        if(!slot || !slot->Matches(p,c,i)) {
+        if(!slot || !slot->Matches(p,c,i,pinnedTopology)) {
             auto entry=std::make_shared<Normals>(); entry->points=p;
             entry->counts=c; entry->indices=i; entry->value=compute(p,c,i); slot=entry;
         }
@@ -143,7 +173,7 @@ public:
     }
     const RigExecMeshAdjacency *MeshAdjacency(size_t points,
         const std::vector<int> &c,const std::vector<int> &i) {
-        if(!adjacency || adjacency->points!=points || adjacency->counts!=c || adjacency->indices!=i) {
+        if(!adjacency || adjacency->points!=points || (!pinnedTopology && (adjacency->counts!=c || adjacency->indices!=i))) {
             auto entry=std::make_shared<Adjacency>();
             if(!RigExecBuildMeshAdjacency(points,c.data(),c.size(),i.data(),i.size(),&entry->value)) return nullptr;
             entry->points=points; entry->counts=c; entry->indices=i; adjacency=entry;
@@ -152,7 +182,7 @@ public:
     }
     const RigExecFanTrisStrict &FanTriangles(size_t points,
         const std::vector<int> &c,const std::vector<int> &i) {
-        if(!fan || fan->points!=points || fan->counts!=c || fan->indices!=i) {
+        if(!fan || fan->points!=points || (!pinnedTopology && (fan->counts!=c || fan->indices!=i))) {
             auto entry=std::make_shared<Fan>(); entry->points=points;
             entry->counts=c; entry->indices=i;
             entry->value=RigExecBuildFanTrisStrict(c,i,points); fan=entry;
@@ -205,6 +235,8 @@ public:
     /// The owning revision's thread uses it when mesh adjacency is cached,
     /// so that pass does not copy the point vector.
     std::vector<Point> &SmoothSource() { return smoothSource; }
+    /// The surface snap kernel's buffers, for the owning revision's thread.
+    RigExecSurfaceSnapScratch<Point> &SnapScratch() { return snapScratch.value; }
 };
 }
 #endif

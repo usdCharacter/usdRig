@@ -3369,7 +3369,7 @@ struct RigExecBakedProgramImpl {
         /// Mutated only by this revision's unchunked body/projector, or by a
         /// range-pipelined revision's RevisionStatic; its range steps only
         /// read it. Copies share immutable entries; each clone replaces its
-        /// own cache slots.
+        /// own cache slots. AssignChainRoles decides whether it pins topology.
         mutable RigExecSurfaceKernelCache<GfVec3f,GfVec3d> surfaceCache;
         /// A read phase named this revision as the point in the chain it
         /// wants the target's points from (the dynamic walk records them

@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <thread>
+#include <cstring>
 using namespace rigExec;
 PXR_NAMESPACE_USING_DIRECTIVE
 #define CHECK(x) do {if(!(x))throw std::runtime_error(std::string("line ")+std::to_string(__LINE__)+": " #x);}while(0)
@@ -85,6 +87,31 @@ static void Numeric() {
  for(const auto &p:surface)commonSurface.emplace_back(affine.TransformAffine(GfVec3d(p)));
  CHECK((RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&result,commonSurface,{3},{0,1,2},s,inverse,affine,inverse)));
  Near(result,{GfVec3f(affine.TransformAffine(GfVec3d(.2,.2,-.003)))});
+ {
+  std::vector<int> triangles;
+  CHECK(RigExecBuildSurfaceSnapTriangles(surface.size(),{3},{0,1,2},{},&triangles));
+  std::vector<GfVec3f> serial(4097,original[0]),parallel=serial;
+  const RigExecRangeRunner ranges=[](size_t count,size_t,const RigExecRangeBody &body) {
+   std::thread worker([&]{body(0,count/2);});body(count/2,count);worker.join();
+  };
+  CHECK((RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&serial,surface,{3},{0,1,2},s,GfMatrix4d(1),GfMatrix4d(1),GfMatrix4d(1))));
+  CHECK((RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&parallel,surface,{},{},s,GfMatrix4d(1),GfMatrix4d(1),GfMatrix4d(1),&triangles,&ranges)));
+  CHECK(!std::memcmp(serial.data(),parallel.data(),serial.size()*sizeof(GfVec3f)));
+  RigExecSurfaceSnapScratch<GfVec3f> scratch;
+  for(int pass=0;pass<2;++pass) {
+   std::vector<GfVec3f> reused(serial.size(),original[0]);
+   CHECK((RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&reused,surface,{},{},s,GfMatrix4d(1),GfMatrix4d(1),GfMatrix4d(1),&triangles,&ranges,&scratch)));
+   CHECK(!std::memcmp(serial.data(),reused.data(),serial.size()*sizeof(GfVec3f)));
+  }
+  // A range the runner drops fails the kernel and leaves the points.
+  const RigExecRangeRunner dropping=[](size_t count,size_t,const RigExecRangeBody &body) {body(0,count/2);};
+  std::vector<GfVec3f> dropped(serial.size(),original[0]);const auto entering=dropped;
+  CHECK(!(RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&dropped,surface,{},{},s,GfMatrix4d(1),GfMatrix4d(1),GfMatrix4d(1),&triangles,&dropping,&scratch)));
+  CHECK(!std::memcmp(entering.data(),dropped.data(),dropped.size()*sizeof(GfVec3f)));
+  parallel[2048][0]=NAN;const auto retained=parallel;
+  CHECK(!(RigExecApplySurfaceSnapKernel<GfVec3f,GfVec3d>(&parallel,surface,{},{},s,GfMatrix4d(1),GfMatrix4d(1),GfMatrix4d(1),&triangles,&ranges)));
+  CHECK(!std::memcmp(retained.data(),parallel.data(),parallel.size()*sizeof(GfVec3f)));
+ }
 }
 int main() {
  try {

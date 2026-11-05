@@ -278,12 +278,15 @@ RigExecFrozenPurityAudit()
          "whose entries are immutable and shared, and memoizes into its "
          "own copy"},
         {"revision kernel memo (rigExecMath/surfaceKernelCache.h: "
-         "adjacency, delta-mush rest, wrinkle topology, lattice basis)",
+         "adjacency, delta-mush rest, wrinkle topology, lattice basis, "
+         "snap triangles)",
          RigExecFrozenPurity::Pure,
          "one per revision (GeomRevision::surfaceCache; the runtime's "
          "revision scratch), touched only by the step that runs the "
          "revision, so no lock; answer-preserving (raw-bit compare of every "
-         "input an entry reads, a pure rebuild on a miss); a frozen clone "
+         "input an entry reads, except topology a Range revision's pins or "
+         "file constants hold and lattice rest of a matching content "
+         "version; a pure rebuild on a miss); a frozen clone "
          "shares the immutable entries and replaces only its own slots; "
          "before a run dispatches, the thread running the program points "
          "revisions' equal lattice binds at one immutable instance "

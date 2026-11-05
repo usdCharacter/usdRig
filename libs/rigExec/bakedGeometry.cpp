@@ -1529,6 +1529,28 @@ ClassifyRevision(const RoleReads &reads,
     }
 }
 
+/// Whether \p revision's Range role rests on NoLayoutOverride pins of both
+/// its topology counts and indices; RigExecBakedRolesStand rebuilds when
+/// one fails, so its kernel memo may key that topology by point count.
+bool
+TopologyPinned(const RigExecBakedProgramImpl::GeomRevision &revision)
+{
+    using Role = RigExecRevisionLeafRole;
+    const int counts = revision.leaves.decl.Role(Role::TopologyCounts);
+    const int indices = revision.leaves.decl.Role(Role::TopologyIndices);
+    if (!revision.rangeRole || counts < 0 || indices < 0) {
+        return false;
+    }
+    bool countsPinned = false, indicesPinned = false;
+    for (const RolePin &pin : revision.pins) {
+        if (pin.kind == RolePin::Kind::NoLayoutOverride) {
+            countsPinned = countsPinned || pin.leaf == counts;
+            indicesPinned = indicesPinned || pin.leaf == indices;
+        }
+    }
+    return countsPinned && indicesPinned;
+}
+
 /// The halo of the Range DeltaMush \p revision: per group of \p chain, the
 /// other groups holding a point the group's results read, from the topology,
 /// edges and iteration count Build reads (the classification pinned them).
@@ -1790,6 +1812,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
         revision.haloPoints.clear();
         revision.mushGroups.clear();
         revision.pins.clear();
+        revision.surfaceCache.PinTopology(false);
         PartitionAtBuild(B, &revision);
         if (!eligible) {
             continue;
@@ -1860,6 +1883,7 @@ AssignChainRoles(RigExecBakedProgramImpl *program, const RoleReads &reads,
             revision.rangeRole = false;
             pinned[r].clear();
         }
+        revision.surfaceCache.PinTopology(TopologyPinned(revision));
         if (revision.rangeRole) {
             if (!skin) {
                 revision.chunks.assign(groups,
