@@ -1202,10 +1202,10 @@ void IkTarget()
     Near(reached.first, 0.3, 1e-6, "target tip x");
     Near(reached.second, 0.1, 1e-6, "target tip y");
     // Out of reach with maxStretch 1: straight, short of the goal.
-    BoneSpec far;
-    far.name = "G"; far.x = 2.5; far.y = 2.0; far.angle = 0;
-    far.extra = foot.extra;
-    auto farStage = Stage(Usda({thigh, shin, far}));
+    BoneSpec distantGoal;
+    distantGoal.name = "G"; distantGoal.x = 2.5; distantGoal.y = 2.0; distantGoal.angle = 0;
+    distantGoal.extra = foot.extra;
+    auto farStage = Stage(Usda({thigh, shin, distantGoal}));
     const SdfPath farShin = Bone("S");
     // Repoint the shin at G (it named F, which this stage lacks).
     CHECK(farStage->GetPrimAtPath(farShin)

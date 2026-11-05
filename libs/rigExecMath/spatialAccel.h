@@ -208,7 +208,7 @@ inline void BuildBvh(size_t n, const float *bounds, std::vector<BvhNode> *nodes,
                              return cx < cy;
                          });
         const uint32_t left = uint32_t(nodes->size());
-        BvhNode leftNode, rightNode;
+        BvhNode leftNode{}, rightNode{};
         leftNode.child = first;
         leftNode.count = mid - first;
         rightNode.child = mid;

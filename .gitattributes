@@ -2,6 +2,8 @@
 # Shell scripts must retain platform-compatible line endings.
 *.sh   text eol=lf
 *.bash text eol=lf
+*.golden text eol=lf
+tests/fixtures/**/*.usda text eol=lf
 *.bat  text eol=crlf
 *.cmd  text eol=crlf
 *.usda text
