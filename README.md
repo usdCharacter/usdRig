@@ -78,8 +78,11 @@ test concurrency (`1` runs serially); `JOBS` separately controls compilation.
 CTest schedules tests as workers become available and respects fixture
 dependencies, including bake-before-playback tests.
 
-Platform support depends on a compatible OpenUSD build; these commands
-do not imply that every platform has been qualified for this checkout.
+CI builds and tests the C++ libraries on Ubuntu 24.04, Windows 2022 and
+macOS 15 with OpenUSD 26.08. It also checks installed scene and oracle
+consumers. Python bindings and interactive viewer tests remain local checks.
+See [fixture checks](tests/fixtures/README.md) for floating-point reference
+configuration and cross-platform backend parity.
 
 CMake options: `RIGEXEC_BUILD_TESTS`, `RIGEXEC_BUILD_PYTHON` (on when pybind11
 is found), `RIGEXEC_BUILD_USDNOODLES`, `RIGEXEC_MOVER_PLUGIN_DIRS` (see

@@ -746,32 +746,9 @@ target_link_libraries(testRigExecJointGroups PRIVATE rigExec rigExecScene
 target_compile_definitions(testRigExecJointGroups PRIVATE
     ${_rigexec_schema_resource_define})
 add_test(NAME testRigExecJointGroups COMMAND testRigExecJointGroups)
-# One golden serves native, frozen and .rigexec; regenerate it with
-# rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out.
-foreach(_fixture nested_chain)
-    add_test(NAME testRigExecSkeleton2dBake_${_fixture} COMMAND rigExecBakeTool
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
-        --rig /Char/Rig --time 1
-        -o "${CMAKE_CURRENT_BINARY_DIR}/skeleton2d_${_fixture}.rigexec")
-    set_tests_properties(testRigExecSkeleton2dBake_${_fixture} PROPERTIES
-        FIXTURES_SETUP skeleton2dProgram_${_fixture})
-    foreach(_backend native frozen)
-        add_test(NAME testRigExecSkeleton2dGolden_${_fixture}_${_backend} COMMAND rigExecPose
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
-            --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend ${_backend}
-            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.golden")
-    endforeach()
-    add_test(NAME testRigExecSkeleton2dGolden_${_fixture}_runtime COMMAND rigExecPose
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.usda"
-        --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend runtime
-        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/skeleton2d_${_fixture}.rigexec"
-        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/skeleton2d/${_fixture}.golden")
-    set_tests_properties(testRigExecSkeleton2dGolden_${_fixture}_runtime PROPERTIES
-        FIXTURES_REQUIRED skeleton2dProgram_${_fixture})
-endforeach()
+include(cmake/FixtureChecks.cmake)
+rigexec_add_fixture_checks(testRigExecSkeleton2d skeleton2d nested_chain /Char/Rig)
 
-# One golden serves native, frozen and .rigexec; regenerate it with
-# rigExecPose <fixture>.usda --rig /Char/Rig --frames 0,1,2,3,4 --golden-out.
 add_executable(testRigExecLayerBind tests/testRigExecLayerBind.cpp)
 target_link_libraries(testRigExecLayerBind PRIVATE rigExec rigExecScene
     rigExecBake rigExecRuntime rigExecSampler)
@@ -779,55 +756,10 @@ target_compile_definitions(testRigExecLayerBind PRIVATE
     ${_rigexec_schema_resource_define}
     RIGEXEC_LAYER_BIND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind")
 add_test(NAME testRigExecLayerBind COMMAND testRigExecLayerBind)
-foreach(_fixture layer_bind)
-    add_test(NAME testRigExecLayerBindBake_${_fixture} COMMAND rigExecBakeTool
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
-        --rig /Char/Rig --time 1
-        -o "${CMAKE_CURRENT_BINARY_DIR}/layerBind_${_fixture}.rigexec")
-    set_tests_properties(testRigExecLayerBindBake_${_fixture} PROPERTIES
-        FIXTURES_SETUP layerBindProgram_${_fixture})
-    foreach(_backend native frozen)
-        add_test(NAME testRigExecLayerBindGolden_${_fixture}_${_backend} COMMAND rigExecPose
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
-            --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend ${_backend}
-            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.golden")
-    endforeach()
-    add_test(NAME testRigExecLayerBindGolden_${_fixture}_runtime COMMAND rigExecPose
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.usda"
-        --rig /Char/Rig --frames 0,1,2,3,4 --golden-backend runtime
-        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/layerBind_${_fixture}.rigexec"
-        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/layerBind/${_fixture}.golden")
-    set_tests_properties(testRigExecLayerBindGolden_${_fixture}_runtime PROPERTIES
-        FIXTURES_REQUIRED layerBindProgram_${_fixture})
-endforeach()
-
-# One golden serves native, frozen and .rigexec; regenerate it with
-# rigExecPose <fixture>.usda --rig <rig> --frames 0,1,2,3,4 --golden-out.
-foreach(_fixture chain_2d arm_3d arm_3d_regenerated)
-    set(_rig /Arm/Rig)
-    if (_fixture STREQUAL "chain_2d")
-        set(_rig /Char/Rig)
-    endif()
-    add_test(NAME testRigExecVolumeSkinBake_${_fixture} COMMAND rigExecBakeTool
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
-        --rig ${_rig} --time 1
-        -o "${CMAKE_CURRENT_BINARY_DIR}/volumeSkin_${_fixture}.rigexec")
-    set_tests_properties(testRigExecVolumeSkinBake_${_fixture} PROPERTIES
-        FIXTURES_SETUP volumeSkinProgram_${_fixture})
-    foreach(_backend native frozen)
-        add_test(NAME testRigExecVolumeSkinGolden_${_fixture}_${_backend} COMMAND rigExecPose
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
-            --rig ${_rig} --frames 0,1,2,3,4 --golden-backend ${_backend}
-            --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.golden")
-    endforeach()
-    add_test(NAME testRigExecVolumeSkinGolden_${_fixture}_runtime COMMAND rigExecPose
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.usda"
-        --rig ${_rig} --frames 0,1,2,3,4 --golden-backend runtime
-        --golden-program "${CMAKE_CURRENT_BINARY_DIR}/volumeSkin_${_fixture}.rigexec"
-        --golden-check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/volumeSkin/${_fixture}.golden")
-    set_tests_properties(testRigExecVolumeSkinGolden_${_fixture}_runtime PROPERTIES
-        FIXTURES_REQUIRED volumeSkinProgram_${_fixture})
-endforeach()
+rigexec_add_fixture_checks(testRigExecLayerBind layerBind layer_bind /Char/Rig)
+rigexec_add_fixture_checks(testRigExecVolumeSkin volumeSkin chain_2d /Char/Rig)
+rigexec_add_fixture_checks(testRigExecVolumeSkin volumeSkin arm_3d /Arm/Rig)
+rigexec_add_fixture_checks(testRigExecVolumeSkin volumeSkin arm_3d_regenerated /Arm/Rig)
 
 add_executable(testRigExecStepMaps tests/testRigExecStepMaps.cpp)
 target_link_libraries(testRigExecStepMaps PRIVATE rigExec rigExecScene

@@ -322,11 +322,13 @@ scripts; their defaults look for a sibling dependency install.
    `biped_*.usda` stages and exit with "stage not found" in a fresh checkout.
 7. Report checks actually run and any unavailable dependency or graphics test.
 
-CI runs on Linux only: a Release build, `ctest -R '^testRigExec' -E
-'Cones_|ExampleParity'`, the USD-free runtime check, and an install check.
-It does not build on Windows or macOS, and it does not run the Python
-bindings or the `usdview` helpers. Run those yourself when a change
-touches them.
+CI runs Release builds, `ctest -R '^testRigExec' -E 'Cones_|ExampleParity'`,
+and installed-consumer checks on Linux, Windows and macOS. Linux also runs
+the USD-free runtime compilation check. CI does not run the Python bindings
+or the `usdview` helpers; run those yourself when a change touches them.
+Fixed floating-point captures have an explicit reference configuration; see
+[fixture checks](tests/fixtures/README.md). Every platform runs exact backend
+parity in both scalar and SIMD modes, plus the numerical-reference suites.
 
 Run ctest, and any script that imports `pxr` or `rigexec`, from a shell that
 sourced `bin/_env.sh` (or called `bin\_env.bat`). It puts this build's USD
@@ -353,7 +355,7 @@ Linking rules:
   Keep Windows-only links in that file: the selector reads the root
   `CMakeLists.txt` as text, ignores `if()`, and would apply them to every
   platform. After changing link visibility or splitting a library, build
-  every target on Windows (`cmake --build build -- -k 0`); CI does not.
+  every target on Windows (`cmake --build build -- -k 0`); its CI job does too.
 
 ### Windows and Git Bash
 
