@@ -29,7 +29,7 @@
 #   configure        cmake configure only (fast red/green for cache vars).
 #   build-release    configure + ninja -j$(nproc) + rigExecPose smoke.
 #                    Uploads the build tree so later jobs do not rebuild.
-#   ctest-cpp        ctest -R '^testRigExec' -E 'Cones_|ExampleParity'.
+#   ctest-cpp        Full CTest suite; no exclusions or baseline allowances.
 #   runtime-usd-free compiles the runtime with no pxr include path, from
 #                    the build tree's source manifests.
 #   install-check    cmake --install into a scratch prefix; verify layout
@@ -69,6 +69,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
@@ -81,6 +89,14 @@ jobs:
     needs: build-release
     timeout-minutes: 20
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
@@ -106,7 +122,7 @@ jobs:
   # --------------------------------------------------------------------------
   # OpenUSD v26.08 (PixarAnimationStudios/OpenUSD @ tag v26.08).
   # Cache key = OS + arch + resolved commit + recipe epoch. Bump the epoch
-  # ("exec-usdimg-gl-nopy-v1" -> "...-v2") whenever the build_usd.py
+  # ("exec-usdimg-gl-python312-v2" -> "...-v2") whenever the build_usd.py
   # invocation changes so two prefixes from the same commit with different
   # options never alias.
   # --------------------------------------------------------------------------
@@ -117,6 +133,14 @@ jobs:
     outputs:
       openusd-sha: ${{ steps.openusd-sha.outputs.sha }}
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout OpenUSD @ v26.08
         uses: actions/checkout@v4
         with:
@@ -141,15 +165,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: usd-install
-          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-nopy-v1
+          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-python312-v2
 
       - name: Build OpenUSD (Release, Ninja, imaging, OpenExec)
         # build_scripts/build_usd.py is the v26.08 entry point.
         # --usd-imaging     -> PXR_BUILD_IMAGING=ON + PXR_BUILD_USD_IMAGING=ON
-        # --no-usdview      -> skip PySide/PyOpenGL
-        # --no-python       -> first-gate prefix: C++ tests do not need pxr
-        #                      Python bindings. Python + usdNoodles return
-        #                      when that job is added.
+        # Python and usdview are enabled so Python/UI tests are registered
+        # and execute against the same OpenUSD build as the native tests.
         # --no-materialx    -> drop MaterialX
         # --build-args USD  -> keep OpenExec on even if a later OpenUSD
         #                      default flips (PXR_BUILD_EXEC is ON in 26.08)
@@ -162,8 +184,8 @@ jobs:
             --build-variant release \
             --jobs 4 \
             --usd-imaging \
-            --no-usdview \
-            --no-python \
+            --usdview \
+            --python \
             --no-tests --no-examples --no-tutorials --no-docs \
             --no-materialx \
             --build-args USD,"-DPXR_BUILD_EXEC=ON" \
@@ -178,7 +200,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: usd-install
-          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-nopy-v1
+          key: openusd-${{ runner.os }}-${{ runner.arch }}-${{ steps.openusd-sha.outputs.sha }}-exec-usdimg-gl-python312-v2
 
       - name: Sanity - libraries usdRig links are present
         run: |
@@ -208,9 +230,7 @@ jobs:
           retention-days: 5
 
   # --------------------------------------------------------------------------
-  # Configure only. Proves find_package(pxr) + the first-gate cache vars
-  # against a clean runner. FETCHCONTENT is unused while usdNoodles is off,
-  # so this is already an offline configure.
+  # Configure the complete native/Python/UI build against a clean runner.
   # --------------------------------------------------------------------------
   configure:
     name: configure
@@ -218,6 +238,14 @@ jobs:
     needs: openusd
     timeout-minutes: 20
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
@@ -225,7 +253,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            ninja-build ccache libgl1-mesa-dev xorg-dev
+            ninja-build ccache libgl1-mesa-dev libglew-dev xorg-dev
 
       - name: Download OpenUSD prefix
         uses: actions/download-artifact@v4
@@ -246,8 +274,8 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
             -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
-            -DRIGEXEC_BUILD_PYTHON=OFF \
-            -DRIGEXEC_BUILD_USDNOODLES=OFF
+            -DRIGEXEC_BUILD_PYTHON=ON \
+            -DRIGEXEC_BUILD_USDNOODLES=ON -DRIGEXEC_BUILD_TESTS=ON
 
   # --------------------------------------------------------------------------
   # Release build + rigExecPose smoke on the smallest shipped rig.
@@ -258,6 +286,14 @@ jobs:
     needs: openusd
     timeout-minutes: 90
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
@@ -265,7 +301,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            ninja-build ccache libgl1-mesa-dev xorg-dev
+            ninja-build ccache libgl1-mesa-dev libglew-dev xorg-dev
 
       - name: ccache
         uses: actions/cache@v4
@@ -293,8 +329,8 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DUSD_INSTALL_DIR="${GITHUB_WORKSPACE}/usd-install" \
             -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usd-install" \
-            -DRIGEXEC_BUILD_PYTHON=OFF \
-            -DRIGEXEC_BUILD_USDNOODLES=OFF
+            -DRIGEXEC_BUILD_PYTHON=ON \
+            -DRIGEXEC_BUILD_USDNOODLES=ON -DRIGEXEC_BUILD_TESTS=ON
 
       - name: Build
         run: ninja -C build -j"$(nproc)"
@@ -323,11 +359,19 @@ jobs:
   # the first gate (TIMEOUT 300 s, 4 vCPU).
   # --------------------------------------------------------------------------
   ctest-cpp:
-    name: ctest (C++)
+    name: ctest (full suite)
     runs-on: ubuntu-24.04
     needs: build-release
     timeout-minutes: 45
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
@@ -356,13 +400,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgl1-mesa-dev xorg-dev
 
-      - name: Run C++ tests
+      - name: Install headless graphics dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Run the full CTest suite
         run: |
-          ctest --test-dir build \
-            -R '^testRigExec' \
-            -E 'Cones_|ExampleParity' \
-            -j"$(nproc)" \
+          export PYTHONPATH="${GITHUB_WORKSPACE}/usd-install/lib/python:${GITHUB_WORKSPACE}/build/python"
+          export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/usd-install/lib:${GITHUB_WORKSPACE}/build:${LD_LIBRARY_PATH:-}"
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a ctest --test-dir build \
+            -j"$(nproc)" --no-tests=error \
+            --output-junit "${GITHUB_WORKSPACE}/full-suite.xml" \
             --output-on-failure
+
+      - name: Reject missing or skipped tests
+        if: always()
+        run: python .github/scripts/verify_ctest.py full-suite.xml
 
   # --------------------------------------------------------------------------
   # Install tree: cmake --install into a scratch prefix, then verify the
@@ -375,6 +428,14 @@ jobs:
     needs: build-release
     timeout-minutes: 20
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python and UI dependencies
+        run: python -m pip install pybind11 PySide6 PyOpenGL
+
       - name: Checkout usdRig
         uses: actions/checkout@v4
 
