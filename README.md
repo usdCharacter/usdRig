@@ -78,8 +78,11 @@ test concurrency (`1` runs serially); `JOBS` separately controls compilation.
 CTest schedules tests as workers become available and respects fixture
 dependencies, including bake-before-playback tests.
 
-Platform support depends on a compatible OpenUSD build; these commands
-do not imply that every platform has been qualified for this checkout.
+CI builds and tests the C++ libraries on Ubuntu 24.04, Windows 2022 and
+macOS 15 with OpenUSD 26.08. It also checks installed scene and oracle
+consumers. Python bindings and interactive viewer tests remain local checks.
+See [fixture checks](tests/fixtures/README.md) for floating-point reference
+configuration and cross-platform backend parity.
 
 CMake options: `RIGEXEC_BUILD_TESTS`, `RIGEXEC_BUILD_PYTHON` (on when pybind11
 is found), `RIGEXEC_BUILD_USDNOODLES`, `RIGEXEC_MOVER_PLUGIN_DIRS` (see
@@ -186,19 +189,30 @@ formats require explicit compatibility testing.
 ## OpenExec usage
 
 RigExec builds against [OpenExec](https://openusd.org/release/intro_to_openexec.html)
-from an unmodified OpenUSD 26.08 installation, but production evaluation does
-not run it.
+from an unmodified OpenUSD 26.08 installation: the `rigExec` target links `exec`,
+`execUsd`, `ef` and `vdf` in [CMakeLists.txt](CMakeLists.txt). Native, frozen,
+`.rigexec` and standalone-scene evaluation run the shared operation graph, and the
+binary runtime links no USD or OpenExec library. No option selects OpenExec
+evaluation and no failure falls back to it.
 
-- Native, frozen and `.rigexec` evaluation, and the standalone scene runtime,
-  execute the shared operation graph. The binary runtime links no USD or
-  OpenExec library.
-- `libs/rigExec` registers value types and schema computations with OpenExec.
-  Only an optional reference check and tests request them.
-- `rigExecPose --exec-crosscheck` compares eligible native operation results
-  bit for bit with one-key `ExecUsdSystem` requests that receive the
-  operation's captured inputs as overrides. The registrations share the
-  production kernels, so this checks input binding rather than arithmetic.
-- `libs/rigExecStandalone` contains an Esf scene adapter that nothing calls.
+OpenExec runs in these places:
+
+- [libs/rigExec/types.cpp](libs/rigExec/types.cpp) registers the value types with
+  `ExecTypeRegistry`; [libs/rigExec/computations.cpp](libs/rigExec/computations.cpp)
+  and [libs/rigExec/moverKernels.cpp](libs/rigExec/moverKernels.cpp) register the
+  schema computations against the production kernels.
+- [libs/rigExec/tapSet.cpp](libs/rigExec/tapSet.cpp) owns the one `ExecUsdSystem`
+  per stage and builds its batched requests.
+- `rigExecPose --exec-crosscheck` compares each eligible native row, bit for bit,
+  with a one-key request fed that operation's captured inputs as overrides:
+  [tools/rigExecPose.cpp](tools/rigExecPose.cpp),
+  [libs/rigExecOracle/bakedExecCrossCheck.cpp](libs/rigExecOracle/bakedExecCrossCheck.cpp),
+  [libs/rigExecOracle/bakedExecCrossCheckRows.cpp](libs/rigExecOracle/bakedExecCrossCheckRows.cpp).
+  The registrations share the production kernels, so this checks input binding,
+  not arithmetic.
+- Tests ask the same registrations for reference values, for example
+  [tests/testRigExecArm.cpp](tests/testRigExecArm.cpp) and
+  [tests/testRigExecExecCrossCheck.cpp](tests/testRigExecExecCrossCheck.cpp).
 
 [OpenExec reference checks](docs/concepts/baked-vs-dynamic.md#openexec-reference-checks)
 lists what is judged and where the code is. Other upstream and published

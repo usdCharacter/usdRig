@@ -1,55 +1,6 @@
-# ============================================================================
-# usdRig CI — first shipping-signal version.
-#
-# Structure follows n-burk/usdGen's .github/workflows/usdgen.yml (OpenUSD
-# prefix cache, Release + Ninja, tarball artifacts so exec bits survive,
-# ninja -j$(nproc) on the product build). The jobs are adapted to this
-# repository rather than copied 1:1:
-#
-#   * OpenUSD v26.08 must include OpenExec. PXR_BUILD_EXEC defaults ON in
-#     26.08; the recipe still passes -DPXR_BUILD_EXEC=ON and sanity-checks
-#     the exec/vdf/esf libraries usdRig links (exec, execUsd, ef, vdf, esf).
-#   * CMAKE_PREFIX_PATH must point at the USD prefix so pxrConfig's
-#     find_dependency(OpenSubdiv) resolves the copy build_usd.py installed,
-#     not some other OpenSubdiv on the runner (see bin/build_rigexec.sh).
-#   * Python bindings need a USD-matched interpreter + pybind11.
-#     usdNoodles needs an OpenUSD built with Python + garch/glf, then
-#     FetchContent of facebookexperimental/noodles. testusdview needs a
-#     display / usdview. None of those are in this first gate.
-#   * CTest labels (fast, usd-free, one per project library) select local
-#     runs. The gate is still the C++ suite (`^testRigExec`) minus
-#     cone-verify doubles and the example-parity sweep. The per-test
-#     TIMEOUT is 300s.
-#
-# Jobs:
-#
-#   openusd          OpenUSD v26.08 from the GitHub tag, Release + Ninja,
-#                    imaging + OpenExec, no Python / usdview / MaterialX.
-#                    Cache key = OS + arch + OpenUSD commit + recipe epoch.
-#   configure        cmake configure only (fast red/green for cache vars).
-#   build-release    configure + ninja -j$(nproc) + rigExecPose smoke.
-#                    Uploads the build tree so later jobs do not rebuild.
-#   ctest-cpp        ctest -R '^testRigExec' -E 'Cones_|ExampleParity'.
-#   runtime-usd-free compiles the runtime with no pxr include path, from
-#                    the build tree's source manifests.
-#   install-check    cmake --install into a scratch prefix; verify layout
-#                    and that both plugInfo.json files parse.
-#   hidden-locks     tools/check_hidden_locks.py: no new text-built token,
-#                    guarded static, environment read, or lock on the
-#                    parallel-lane sources beyond its allowlist.
-#
-# Deliberately not a GitHub job (workstation / manual):
-#
-#   * macOS and MSVC. README records those as locally verified; GitHub-
-#     hosted macOS/Windows + a matching OpenUSD prefix is a later pass.
-#   * Python bindings, usdNoodles (including testUsdNoodles), and every
-#     bin/test/run_testusdview*.sh harness. Those need Python-enabled OpenUSD,
-#     PySide/usdview, and a display.
-#
-# Host note: GitHub-hosted ubuntu-24.04 is 4 vCPU / 16 GB. OpenUSD is
-# built with --jobs 4; the usdRig ninja line is -j$(nproc). Do not raise
-# OpenUSD parallelism — usdGen saw SIGTERM / exit 143 when oversubscribed.
-# ============================================================================
+# Release C++ coverage on Linux, Windows and macOS. Python, usdview and
+# interactive graphics remain workstation checks. Cache unchanged OpenUSD
+# separately from the project; retain test logs even when CTest fails.
 
 name: usdRig
 
@@ -301,7 +252,9 @@ jobs:
 
       - name: rigExecPose smoke
         run: |
-          LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/usd-install/lib:${GITHUB_WORKSPACE}/build:${LD_LIBRARY_PATH:-}" \
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
           "${GITHUB_WORKSPACE}/build/rigExecPose" \
             "${GITHUB_WORKSPACE}/examples/rigexec_flat.usda" \
             --frames 0,50,100 --joints
@@ -358,11 +311,21 @@ jobs:
 
       - name: Run C++ tests
         run: |
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
           ctest --test-dir build \
             -R '^testRigExec' \
             -E 'Cones_|ExampleParity' \
             -j"$(nproc)" \
             --output-on-failure
+
+      - name: Upload CTest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-linux
+          path: build/Testing/Temporary/
 
   # --------------------------------------------------------------------------
   # Install tree: cmake --install into a scratch prefix, then verify the
@@ -489,4 +452,137 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/usdrig-install;${GITHUB_WORKSPACE}/usd-install"
           cmake --build installed-scene-build --parallel 2
+          export USD="${GITHUB_WORKSPACE}/usd-install"
+          source bin/_env.sh
           ctest --test-dir installed-scene-build --output-on-failure
+
+
+  platform-cpp:
+    name: Release C++ (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            jobs: 4
+          - os: macos-15
+            jobs: 2
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    steps:
+      - name: Checkout usdRig
+        uses: actions/checkout@v4
+
+      - name: Checkout OpenUSD
+        uses: actions/checkout@v4
+        with:
+          repository: PixarAnimationStudios/OpenUSD
+          ref: v26.08
+          path: OpenUSD
+
+      - name: Set up Python for build tools
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: python -m pip install "cmake>=3.26,<4" ninja
+
+      - name: OpenUSD commit
+        id: usd
+        shell: bash
+        run: echo "sha=$(git -C OpenUSD rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Windows toolchain identity
+        if: runner.os == 'Windows'
+        id: msvc
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $version = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: macOS toolchain identity
+        if: runner.os == 'macOS'
+        id: xcode
+        shell: bash
+        run: echo "version=$(xcodebuild -version | tr '\n' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OpenUSD
+        id: usd-cache
+        uses: actions/cache@v4
+        with:
+          path: usd-install
+          key: openusd-${{ matrix.os }}-${{ runner.arch }}-${{ steps.usd.outputs.sha }}-${{ steps.msvc.outputs.version }}${{ steps.xcode.outputs.version }}-exec-imaging-nopy-v1
+
+      - name: Build OpenUSD on Windows
+        if: runner.os == 'Windows' && steps.usd-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call bin\_vcvars.bat
+          if errorlevel 1 exit /b 1
+          python OpenUSD\build_scripts\build_usd.py usd-install --build usd-build --generator Ninja --build-variant release --jobs ${{ matrix.jobs }} --usd-imaging --no-usdview --no-python --no-tests --no-examples --no-tutorials --no-docs --no-materialx --build-args USD,"-DPXR_BUILD_EXEC=ON" -v
+
+      - name: Build OpenUSD on macOS
+        if: runner.os == 'macOS' && steps.usd-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python OpenUSD/build_scripts/build_usd.py usd-install \
+            --build usd-build --generator Ninja --build-variant release \
+            --jobs ${{ matrix.jobs }} --usd-imaging --no-usdview --no-python \
+            --no-tests --no-examples --no-tutorials --no-docs --no-materialx \
+            --build-args USD,"-DPXR_BUILD_EXEC=ON" -v
+
+      - name: Build and test on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call bin\_vcvars.bat
+          if errorlevel 1 exit /b 1
+          set "USD=%GITHUB_WORKSPACE%\usd-install"
+          call bin\_env.bat
+          set "PXR_PLUGINPATH_NAME=%GITHUB_WORKSPACE%\build\usd\rigExecSchema\resources;%GITHUB_WORKSPACE%\build\usd\rigExecImaging\resources;%GITHUB_WORKSPACE%\build\usd\rigExecMoverPlugins"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSD_INSTALL_DIR="%USD%" -DCMAKE_PREFIX_PATH="%USD%" -DRIGEXEC_BUILD_PYTHON=OFF -DRIGEXEC_BUILD_USDNOODLES=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build build --parallel ${{ matrix.jobs }} -- -k 0
+          if errorlevel 1 exit /b 1
+          ctest --test-dir build -R "^testRigExec" -E "Cones_|ExampleParity" --parallel ${{ matrix.jobs }} --output-on-failure
+          if errorlevel 1 exit /b 1
+          cmake --install build --prefix "%GITHUB_WORKSPACE%/usdrig-install"
+          if errorlevel 1 exit /b 1
+          cmake -S tests/installedScene -B installed-scene-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%GITHUB_WORKSPACE%/usdrig-install;%USD%"
+          if errorlevel 1 exit /b 1
+          cmake --build installed-scene-build --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --test-dir installed-scene-build --output-on-failure
+
+      - name: Build and test on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export USD="$GITHUB_WORKSPACE/usd-install"
+          source bin/_env.sh
+          export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUSD_INSTALL_DIR="$USD" -DCMAKE_PREFIX_PATH="$USD" \
+            -DRIGEXEC_BUILD_PYTHON=OFF -DRIGEXEC_BUILD_USDNOODLES=OFF
+          cmake --build build --parallel ${{ matrix.jobs }}
+          ctest --test-dir build -R '^testRigExec' -E 'Cones_|ExampleParity' \
+            --parallel ${{ matrix.jobs }} --output-on-failure
+          cmake --install build --prefix "$GITHUB_WORKSPACE/usdrig-install"
+          cmake -S tests/installedScene -B installed-scene-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/usdrig-install;$USD"
+          cmake --build installed-scene-build --parallel 2
+          ctest --test-dir installed-scene-build --output-on-failure
+
+      - name: Upload build and test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}-${{ runner.arch }}
+          path: |
+            build/Testing/Temporary/
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            installed-scene-build/Testing/Temporary/
+            usd-build/**/log.txt

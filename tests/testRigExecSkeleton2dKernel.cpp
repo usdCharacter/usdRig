@@ -954,7 +954,13 @@ void TestLockReachedUnchanged()
                             CHECK(_SameAsWithoutRetry(w.rig, ref));
                         } else {
                             ++retried;
-                            CHECK(_LockResidual(w.rig, w.f) <= ref.worst);
+                            // Compare final poses with the same norm; hypot and
+                            // the descent's sqrt(dx*dx + dy*dy) can round apart.
+                            const auto &p = ref.pose[w.f];
+                            const auto &ch = w.rig.channels[w.f];
+                            CHECK(_LockResidual(w.rig, w.f) <=
+                                  std::hypot(p.originX - ch.lockX,
+                                             p.originY - ch.lockY));
                         }
                         if (limited) {
                             const double knee = w.rig.ws.localAngle[w.s];
