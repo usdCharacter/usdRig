@@ -231,9 +231,11 @@ RigExec's evaluation and playback layers are consumed outside this repository.
 | `usdRig_ios` | usdview for iPad with the RigExec viewer plugins and `rigExecImaging` on Storm over HgiMetal | closed source |
 | `usdRig_android` | Android port of that viewer on Storm over HgiVulkan | closed source |
 
-The engine and DCC rows link the USD-free `.rigexec` runtime in
+Godot, Unreal and the Maya plug-in play baked rigs with the USD-free runtime in
 `libs/rigExecRuntime`, the same operation graph the viewport runs; see
 [evaluation and checks](docs/concepts/baked-vs-dynamic.md) and
-[the standalone runtime](docs/specs/standalone-runtime.md). The mobile rows
-carry the Hydra path in `libs/rigExecImaging` and the `plugin/rigExecUsdview`
-tools into their own viewer shells.
+[the standalone runtime](docs/specs/standalone-runtime.md). The Blender and
+Maya ASCII file formats work on the other side of that bake: they translate
+source files into native USD rigs that RigExec compiles in this repository.
+The mobile rows carry the Hydra path in `libs/rigExecImaging` and the
+`plugin/rigExecUsdview` tools into their own viewer shells.
