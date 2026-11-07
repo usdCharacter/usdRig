@@ -1,15 +1,18 @@
-// Input capture over layers whose state delegate is not Sdf's plain one
-// (History's recorder, ovlive's BoundLayer): the capture installs its own
+// Input capture over layers whose state delegate is not Sdf's plain one but
+// tolerates replacement (History's recorder): the capture installs its own
 // delegate, forwards each change hook to the delegate it replaced, and puts
-// that delegate back at teardown. A process holds one capture, so the groups
-// run in order on it; uncaptured runs of the same script are the reference.
+// that delegate back at teardown. A delegate that must stay installed is
+// refused instead. A process holds one capture, so the groups run in order on
+// it, refusals in child processes; uncaptured runs of the script are the reference.
 #include "rigExec/inputReplay.h"
 #include "rigExec/inputReplayValues.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/types.h"
 #include "pxr/base/plug/registry.h"
+#include "pxr/base/tf/diagnosticMgr.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/setenv.h"
+#include "pxr/base/tf/type.h"
 #include "pxr/usd/sdf/abstractData.h"
 #include "pxr/usd/sdf/attributeSpec.h"
 #include "pxr/usd/sdf/changeBlock.h"
@@ -106,6 +109,7 @@ public:
     }
     Strings hooks, attaches;
     size_t installedHooks = 0;
+    bool printAttaches = false;
 
 private:
     SdfLayerHandle _layer;
@@ -143,6 +147,8 @@ private:
     void _OnSetLayer(const SdfLayerHandle &layer) override
     {
         attaches.push_back(layer ? layer->GetIdentifier() : "null");
+        if (printAttaches)
+            std::fprintf(stderr, "attach %s\n", attaches.back().c_str());
     }
     void _OnSetField(const SdfPath &p, const TfToken &f,
                      const VtValue &v) override
@@ -235,28 +241,125 @@ private:
     }
 };
 
-fs::path dir, rootPath, subPath, actions;
+// Stands in for a delegate that must stay installed (ovlive's BoundLayer ends
+// its live session when replaced): it declares the TfType base the capture
+// refuses, and reports a replacement.
+class PinnedStandIn final : public SdfSimpleLayerStateDelegate {
+public:
+    static void InstallOn(const SdfLayerHandle &layer)
+    {
+        TfType::Declare(TfType::GetCanonicalTypeName(typeid(PinnedStandIn)),
+                        {TfType::Declare("PinnedLayerStateDelegate")});
+        layer->SetStateDelegate(
+            TfCreateRefPtr(std::make_unique<PinnedStandIn>().release()));
+    }
+
+private:
+    bool _installed = false;
+    void _OnSetLayer(const SdfLayerHandle &layer) override
+    {
+        if (!layer && _installed)
+            std::fprintf(stderr, "pinned delegate replaced\n");
+        _installed = bool(layer);
+    }
+};
+
+class WarningCounter : public TfDiagnosticMgr::Delegate {
+public:
+    WarningCounter()
+    {
+        TfDiagnosticMgr::GetInstance().AddDelegate(this);
+    }
+    ~WarningCounter() override
+    {
+        TfDiagnosticMgr::GetInstance().RemoveDelegate(this);
+    }
+    size_t count = 0;
+    void IssueError(const TfError &) override
+    {
+    }
+    void IssueFatalError(const TfCallContext &, const std::string &) override
+    {
+        _UnhandledAbort();
+    }
+    void IssueStatus(const TfStatus &) override
+    {
+    }
+    void IssueWarning(const TfWarning &warning) override
+    {
+        ++count;
+        std::printf("warning: %s\n", warning.GetCommentary().c_str());
+    }
+};
+
+fs::path dir, rootPath, subPath, actions, provenance;
 const SdfPath rigPath("/Rig"), tx("/Rig/J.avars:tx"), fromSub("/FromSub");
+std::string self;
+
+void
+SetPaths(const fs::path &directory)
+{
+    dir = directory;
+    rootPath = dir / "root.usda";
+    subPath = dir / "sub.usda";
+    actions = dir / "hosting.actions";
+    provenance = dir / "provenance.txt";
+}
+
+std::string
+Quoted(const std::string &text)
+{
+    return "\"" + text + "\"";
+}
+
+// This executable in \p mode on the fixture; its exit status, output in \p output.
+int
+RunChild(const std::string &mode, std::string *output)
+{
+    const std::string command =
+        Quoted(self) + " " + mode + " " + Quoted(dir.string()) + " 2>&1";
+    std::fflush(stdout);
+#ifdef _WIN32
+    // cmd /c strips one pair of outer quotes (benchEditLatency.cpp).
+    FILE *pipe = _popen(Quoted(command).c_str(), "r");
+#else
+    FILE *pipe = popen(command.c_str(), "r");
+#endif
+    if (!pipe)
+        return -1;
+    char line[4096];
+    while (std::fgets(line, sizeof(line), pipe))
+        *output += line;
+#ifdef _WIN32
+    return _pclose(pipe);
+#else
+    return pclose(pipe);
+#endif
+}
+
+bool
+StartCapture(const std::string &file)
+{
+    return SetCaptureEnvironment("RIGEXEC_INPUT_REPLAY_PROVENANCE",
+                                 provenance.string()) &&
+           SetCaptureEnvironment("RIGEXEC_INPUT_REPLAY",
+                                 "capture:" + (dir / file).string());
+}
 
 void
 Prepare()
 {
-    dir = fs::temp_directory_path() /
-          ("rigexec-input-hosting-" +
-           std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
+    SetPaths(
+        fs::temp_directory_path() /
+        ("rigexec-input-hosting-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count())));
     CHECK(fs::create_directory(dir));
-    rootPath = dir / "root.usda";
-    subPath = dir / "sub.usda";
-    actions = dir / "hosting.actions";
-    const auto provenance = dir / "provenance.txt";
     {
         std::ofstream out(provenance);
         out << "test-owned hosting inputs\n";
         CHECK(bool(out));
     }
-    CHECK(SetCaptureEnvironment("RIGEXEC_INPUT_REPLAY_PROVENANCE",
-                                provenance.string()));
     auto sub = SdfLayer::CreateNew(subPath.string());
     SdfPrimSpec::New(sub->GetPseudoRoot(), "FromSub", SdfSpecifierDef);
     CHECK(sub->Save());
@@ -415,8 +518,7 @@ void
 CaptureHostsTheDelegateItReplaces()
 {
     ++groups;
-    CHECK(SetCaptureEnvironment("RIGEXEC_INPUT_REPLAY",
-                                "capture:" + actions.string()));
+    CHECK(StartCapture(actions.filename().string()));
     hosted.stage = UsdStage::Open(rootPath.string());
     hosted.root = hosted.stage->GetRootLayer();
     SdfLayerRefPtr sub = SdfLayer::Find(subPath.string());
@@ -521,15 +623,77 @@ CaptureOfAHostedLayerReplaysTheSameLayer()
     // Held, so the replay rebuilds this layer and its result can be read.
     SdfLayerRefPtr replayed = SdfLayer::FindOrOpen(rootPath.string());
     std::string error;
-    CHECK(RigExecReplayInputActions(actions.string(), &error));
+    {
+        WarningCounter warnings;
+        CHECK(RigExecReplayInputActions(actions.string(), &error));
+        CHECK(warnings.count == 0);
+    }
     if (!error.empty())
         std::printf("replay: %s\n", error.c_str());
     CHECK(Text(replayed) == plain.text);
 }
+
+// A refusal ends the process, so it runs in a child: the capture names the
+// layer and refuses before it replaces the delegate.
+void
+CaptureRefusesADelegateThatMustStayInstalled()
+{
+    ++groups;
+    std::string output;
+    CHECK(RunChild("pinned", &output) != 0);
+    CHECK(output.find("input replay capture refused: source layer state "
+                      "delegate must stay installed: " +
+                      rootPath.string()) != std::string::npos);
+    CHECK(output.find("pinned delegate replaced") == std::string::npos);
+    if (failures)
+        std::printf("pinned child:\n%s", output.c_str());
+}
+int
+PinnedChild()
+{
+    if (!StartCapture("pinned.actions"))
+        return 2;
+    auto stage = UsdStage::Open(rootPath.string());
+    PinnedStandIn::InstallOn(stage->GetRootLayer());
+    RigExecRigEvaluator rig(stage, rigPath);
+    return 0;
+}
+
+// Teardown reinstalled the delegate once; the capture's own destruction at
+// exit must not detach and attach it again.
+void
+NothingReinstallsAfterTeardown()
+{
+    ++groups;
+    std::string output;
+    CHECK(RunChild("teardown", &output) == 0);
+    CHECK(output.find("attach ") == std::string::npos);
+    if (failures)
+        std::printf("teardown child:\n%s", output.c_str());
+}
+int
+TeardownChild()
+{
+    if (!StartCapture("teardown.actions"))
+        return 2;
+    auto stage = UsdStage::Open(rootPath.string());
+    SdfLayerRefPtr root = stage->GetRootLayer();
+    const TfWeakPtr<HookLog> log = HookLog::InstallOn(root);
+    {
+        RigExecRigEvaluator rig(stage, rigPath);
+    }
+    RigExecFinalizeInputReplay();
+    if (!log || get_pointer(root->GetStateDelegate()) != get_pointer(log))
+        return 3;
+    log->printAttaches = true;
+    // Leaked on purpose: outlives the capture's static destruction.
+    std::make_unique<SdfLayerRefPtr>(root).release();
+    return 0;
+}
 } // namespace
 
 int
-main()
+main(int argc, char **argv)
 {
     const char *existing = std::getenv("RIGEXEC_INPUT_REPLAY");
     if (existing && *existing) {
@@ -539,7 +703,17 @@ main()
     PlugRegistry::GetInstance().RegisterPlugins(
         TfAbsPath(RIGEXEC_SCHEMA_RESOURCE_DIR));
     RigExecLoadComputations();
+    if (argc == 3) {
+        SetPaths(argv[2]);
+        const std::string mode = argv[1];
+        return mode == "pinned"     ? PinnedChild()
+               : mode == "teardown" ? TeardownChild()
+                                    : 2;
+    }
+    self = argv[0];
     Prepare();
+    CaptureRefusesADelegateThatMustStayInstalled();
+    NothingReinstallsAfterTeardown();
     direct = Uncaptured(true);
     plain = Uncaptured(false);
     CaptureHostsTheDelegateItReplaces();

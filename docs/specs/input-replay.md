@@ -32,12 +32,21 @@ replacement notice only when the batch contains that recorded operation.
 It never generates text from computed or captured numeric values. Failed
 imports, unadapted replacement calls and notice differences are refused.
 
-The capture's source delegate replaces each recorded layer's state delegate,
-Sdf's default or a host's own (a History recorder, a live layer's), and hosts
-it: each change hook is recorded, then forwarded to the replaced delegate
-before Sdf applies the change, the changes of an adapted import included. The
-replaced delegate is never attached to the layer while captured, goes with
-its layer, and is reinstalled when capture completes.
+The capture's source delegate replaces each recorded layer's state delegate
+and hosts it: each change hook is recorded, then forwarded to the replaced
+delegate before Sdf applies the change, the changes of an adapted import
+included. Replacing a delegate tells it its layer is gone, so this suits a
+delegate that tolerates replacement: Sdf's default, or History's recorder,
+which keeps recording. The replaced delegate is not attached again while
+captured, goes with its layer, and is reinstalled once when capture completes.
+
+A delegate that must stay installed ends when it is replaced. ovlive's bound
+live layer is one: replacing its delegate fails the live layer and drops what
+it hosts. Such a delegate opts out by declaring its TfType, under its
+canonical C++ name, with the base named `PinnedLayerStateDelegate`; capture
+then refuses its layer, naming it, before replacing anything on it. A
+captured stage must not contain bound live layers, and until ovlive's
+delegate declares that base, capturing one ends its live session.
 
 Caller events record explicit Compile boundaries, requested interactive and
 upstream vectors before admission, vector order and duplicates, clears,
@@ -107,7 +116,8 @@ The original observer verifies evaluator identity, visit order, time, typed
 publication values and complete evaluator/generation inventory. Current
 output capture is never an original judge.
 
-Capture fails for custom resolver contexts, mapped/variant
+Capture fails for layer delegates that must stay installed, custom resolver
+contexts, mapped/variant
 edit targets, unadapted bulk import/reload/replacement or layer identity changes,
 permission/delegate mutation, concurrent or reentrant source histories,
 caller actions inside unfinished authoring batches, and source authoring

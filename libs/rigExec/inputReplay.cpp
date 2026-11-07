@@ -8,6 +8,7 @@
 #include "tapSet.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/scopeDescription.h"
+#include "pxr/base/tf/type.h"
 #include "pxr/usd/ar/defaultResolverContext.h"
 #include "pxr/usd/sdf/abstractData.h"
 #include "pxr/usd/sdf/changeBlock.h"
@@ -27,6 +28,7 @@
 #include <memory>
 #include <set>
 #include <thread>
+#include <typeinfo>
 #include <type_traits>
 #include <utility>
 
@@ -39,6 +41,7 @@ using inputReplay::Writer;
 thread_local unsigned suppressed = 0;
 thread_local unsigned implementationDepth = 0;
 constexpr unsigned noLayer = UINT32_MAX;
+constexpr char pinnedDelegateType[] = "PinnedLayerStateDelegate";
 constexpr char magic[] = "rigexec-input-actions-5\n";
 constexpr char lifetimeMagic[] = "rigexec-input-actions-4\n";
 constexpr char heldMagic[] = "rigexec-input-actions-3\n";
@@ -431,13 +434,17 @@ EncodeOperation(const Operation &op)
 Operation
 DecodeOperation(Reader &r)
 {
+    const auto path = [&r] {
+        const auto text = r.Text();
+        return text.empty() ? SdfPath() : SdfPath(text);
+    };
     Operation op;
     op.layer = r.U32();
     op.kind = Op(r.U8());
-    op.path = SdfPath(r.Text());
+    op.path = path();
     op.field = TfToken(r.Text());
     op.key = TfToken(r.Text());
-    op.other = SdfPath(r.Text());
+    op.other = path();
     op.value = ReadValue(r);
     op.time = r.Double();
     op.type = SdfSpecType(r.U32());
@@ -832,10 +839,11 @@ public:
     {
         TfNotice::Revoke(notice);
         TfNotice::Revoke(stageNotice);
-        for (auto &layer : layers)
-            if (layer.layer && layer.previous)
-                layer.layer->SetStateDelegate(
-                    SdfLayerStateDelegateBaseRefPtr(layer.previous));
+        if (!finished)
+            for (auto &layer : layers)
+                if (layer.layer && layer.previous)
+                    layer.layer->SetStateDelegate(
+                        SdfLayerStateDelegateBaseRefPtr(layer.previous));
     }
     void Check() const
     {
@@ -904,6 +912,15 @@ public:
         if (!handle)
             throw std::runtime_error("null source layer");
         const auto previous = handle->GetStateDelegate();
+        // Replacing a delegate tells it its layer is gone; one that must stay
+        // installed (a bound live layer's) declares this TfType base and is
+        // refused.
+        const TfType pinned = TfType::FindByName(pinnedDelegateType);
+        const auto *current = get_pointer(previous);
+        if (!pinned.IsUnknown() && TfType::Find(typeid(*current)).IsA(pinned))
+            throw std::runtime_error(
+                "source layer state delegate must stay installed: " +
+                handle->GetIdentifier());
         const unsigned id = unsigned(layers.size());
         layerIds.emplace(handle, id);
         const auto observer =
