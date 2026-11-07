@@ -28,7 +28,6 @@
 #include <set>
 #include <thread>
 #include <type_traits>
-#include <typeinfo>
 #include <utility>
 
 namespace rigExec {
@@ -530,12 +529,95 @@ ApplyOperation(const Operation &op, const SdfLayerRefPtr &layer,
 }
 class Recorder;
 std::unique_ptr<Recorder> recorder;
+// The hooks are protected: member pointers named through a derived class
+// reach another delegate's overrides.
+struct HookAccess : SdfLayerStateDelegateBase {
+    using Base = SdfLayerStateDelegateBase;
+    static auto SetField()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const VtValue &)>(
+            &HookAccess::_OnSetField);
+    }
+    static auto SetFieldErased()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const SdfAbstractDataConstValue &)>(
+            &HookAccess::_OnSetField);
+    }
+    static auto SetKey()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const TfToken &, const VtValue &)>(
+            &HookAccess::_OnSetFieldDictValueByKey);
+    }
+    static auto SetKeyErased()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const TfToken &,
+                                          const SdfAbstractDataConstValue &)>(
+            &HookAccess::_OnSetFieldDictValueByKey);
+    }
+    static auto SetSample()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, double,
+                                          const VtValue &)>(
+            &HookAccess::_OnSetTimeSample);
+    }
+    static auto SetSampleErased()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, double,
+                                          const SdfAbstractDataConstValue &)>(
+            &HookAccess::_OnSetTimeSample);
+    }
+    static auto CreateSpec()
+    {
+        return &HookAccess::_OnCreateSpec;
+    }
+    static auto DeleteSpec()
+    {
+        return &HookAccess::_OnDeleteSpec;
+    }
+    static auto MoveSpec()
+    {
+        return &HookAccess::_OnMoveSpec;
+    }
+    static auto PushToken()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const TfToken &)>(
+            &HookAccess::_OnPushChild);
+    }
+    static auto PushPath()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const SdfPath &)>(
+            &HookAccess::_OnPushChild);
+    }
+    static auto PopToken()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const TfToken &)>(
+            &HookAccess::_OnPopChild);
+    }
+    static auto PopPath()
+    {
+        return static_cast<void (Base::*)(const SdfPath &, const TfToken &,
+                                          const SdfPath &)>(
+            &HookAccess::_OnPopChild);
+    }
+};
+// Hosts the delegate it replaced (rigExecHistory layerRecorder.h): each change
+// hook is recorded, then forwarded, before Sdf applies the change. It never
+// attaches the hosted delegate and holds its only strong reference.
 class SourceDelegate final : public SdfSimpleLayerStateDelegate {
 public:
-    static SdfLayerStateDelegateBaseRefPtr New(unsigned id)
+    static SdfLayerStateDelegateBaseRefPtr
+    New(unsigned id, const SdfLayerStateDelegateBaseRefPtr &hosted)
     {
         return TfCreateRefPtr(
-            std::make_unique<SourceDelegate>(_FactoryTag(0), id).release());
+            std::make_unique<SourceDelegate>(_FactoryTag(0), id, hosted)
+                .release());
     }
 
 private:
@@ -548,23 +630,33 @@ private:
     };
 
 public:
-    SourceDelegate(_FactoryTag, unsigned id) : SourceDelegate(id)
+    SourceDelegate(_FactoryTag, unsigned id,
+                   const SdfLayerStateDelegateBaseRefPtr &hosted)
+        : SourceDelegate(id, hosted)
     {
     }
 
 private:
-    explicit SourceDelegate(unsigned id) : _id(id)
+    SourceDelegate(unsigned id, const SdfLayerStateDelegateBaseRefPtr &hosted)
+        : _id(id), _hosted(hosted)
     {
     }
     unsigned _id;
+    SdfLayerStateDelegateBaseRefPtr _hosted;
     void Record(Op, const SdfPath &, const TfToken & = {}, const VtValue & = {},
                 const TfToken & = {}, const SdfPath & = {}, double = 0,
                 SdfSpecType = SdfSpecTypeUnknown, bool = false);
+    template <class Hook, class... Args>
+    void Forward(Hook hook, const Args &...args)
+    {
+        (get_pointer(_hosted)->*hook)(args...);
+    }
     void _OnSetField(const SdfPath &p, const TfToken &f,
                      const VtValue &v) override
     {
         SdfSimpleLayerStateDelegate::_OnSetField(p, f, v);
         Record(Op::Field, p, f, v);
+        Forward(HookAccess::SetField(), p, f, v);
     }
     void _OnSetField(const SdfPath &p, const TfToken &f,
                      const SdfAbstractDataConstValue &v) override
@@ -572,13 +664,16 @@ private:
         VtValue out;
         if (!v.GetValue(&out))
             CaptureFailure("type-erased field cannot be copied");
-        _OnSetField(p, f, out);
+        SdfSimpleLayerStateDelegate::_OnSetField(p, f, v);
+        Record(Op::Field, p, f, out);
+        Forward(HookAccess::SetFieldErased(), p, f, v);
     }
     void _OnSetFieldDictValueByKey(const SdfPath &p, const TfToken &f,
                                    const TfToken &k, const VtValue &v) override
     {
         SdfSimpleLayerStateDelegate::_OnSetFieldDictValueByKey(p, f, k, v);
         Record(Op::Dictionary, p, f, v, k);
+        Forward(HookAccess::SetKey(), p, f, k, v);
     }
     void _OnSetFieldDictValueByKey(const SdfPath &p, const TfToken &f,
                                    const TfToken &k,
@@ -587,12 +682,15 @@ private:
         VtValue out;
         if (!v.GetValue(&out))
             CaptureFailure("type-erased dictionary cannot be copied");
-        _OnSetFieldDictValueByKey(p, f, k, out);
+        SdfSimpleLayerStateDelegate::_OnSetFieldDictValueByKey(p, f, k, v);
+        Record(Op::Dictionary, p, f, out, k);
+        Forward(HookAccess::SetKeyErased(), p, f, k, v);
     }
     void _OnSetTimeSample(const SdfPath &p, double t, const VtValue &v) override
     {
         SdfSimpleLayerStateDelegate::_OnSetTimeSample(p, t, v);
         Record(Op::Sample, p, {}, v, {}, {}, t);
+        Forward(HookAccess::SetSample(), p, t, v);
     }
     void _OnSetTimeSample(const SdfPath &p, double t,
                           const SdfAbstractDataConstValue &v) override
@@ -600,46 +698,55 @@ private:
         VtValue out;
         if (!v.GetValue(&out))
             CaptureFailure("type-erased sample cannot be copied");
-        _OnSetTimeSample(p, t, out);
+        SdfSimpleLayerStateDelegate::_OnSetTimeSample(p, t, v);
+        Record(Op::Sample, p, {}, out, {}, {}, t);
+        Forward(HookAccess::SetSampleErased(), p, t, v);
     }
     void _OnCreateSpec(const SdfPath &p, SdfSpecType t, bool i) override
     {
         SdfSimpleLayerStateDelegate::_OnCreateSpec(p, t, i);
         Record(Op::Create, p, {}, {}, {}, {}, 0, t, i);
+        Forward(HookAccess::CreateSpec(), p, t, i);
     }
     void _OnDeleteSpec(const SdfPath &p, bool i) override
     {
         SdfSimpleLayerStateDelegate::_OnDeleteSpec(p, i);
         Record(Op::Delete, p, {}, {}, {}, {}, 0, SdfSpecTypeUnknown, i);
+        Forward(HookAccess::DeleteSpec(), p, i);
     }
     void _OnMoveSpec(const SdfPath &p, const SdfPath &q) override
     {
         SdfSimpleLayerStateDelegate::_OnMoveSpec(p, q);
         Record(Op::Move, p, {}, {}, {}, q);
+        Forward(HookAccess::MoveSpec(), p, q);
     }
     void _OnPushChild(const SdfPath &p, const TfToken &f,
                       const TfToken &v) override
     {
         SdfSimpleLayerStateDelegate::_OnPushChild(p, f, v);
         Record(Op::PushToken, p, f, VtValue(v));
+        Forward(HookAccess::PushToken(), p, f, v);
     }
     void _OnPushChild(const SdfPath &p, const TfToken &f,
                       const SdfPath &v) override
     {
         SdfSimpleLayerStateDelegate::_OnPushChild(p, f, v);
         Record(Op::PushPath, p, f, VtValue(v));
+        Forward(HookAccess::PushPath(), p, f, v);
     }
     void _OnPopChild(const SdfPath &p, const TfToken &f,
                      const TfToken &v) override
     {
         SdfSimpleLayerStateDelegate::_OnPopChild(p, f, v);
         Record(Op::PopToken, p, f, VtValue(v));
+        Forward(HookAccess::PopToken(), p, f, v);
     }
     void _OnPopChild(const SdfPath &p, const TfToken &f,
                      const SdfPath &v) override
     {
         SdfSimpleLayerStateDelegate::_OnPopChild(p, f, v);
         Record(Op::PopPath, p, f, VtValue(v));
+        Forward(HookAccess::PopPath(), p, f, v);
     }
 };
 
@@ -654,14 +761,19 @@ struct _BraceConstructible<
     T, void(Args...), std::void_t<decltype(T({}, std::declval<Args>()...))>>
     : std::true_type {};
 
-static_assert(!_BraceConstructible<SourceDelegate, void(unsigned)>::value,
-              "SourceDelegate: New() is the only admission");
+static_assert(
+    !_BraceConstructible<SourceDelegate,
+                         void(unsigned,
+                              const SdfLayerStateDelegateBaseRefPtr &)>::value,
+    "SourceDelegate: New() is the only admission");
 
 class Recorder : public TfWeakBase {
 public:
+    // The layer owns observer, and observer owns previous: both go with the
+    // layer.
     struct Layer {
         SdfLayerHandle layer;
-        SdfLayerStateDelegateBaseRefPtr previous, observer;
+        SdfLayerStateDelegateBasePtr previous, observer;
         bool edit;
         bool retired = false;
     };
@@ -721,8 +833,9 @@ public:
         TfNotice::Revoke(notice);
         TfNotice::Revoke(stageNotice);
         for (auto &layer : layers)
-            if (layer.layer)
-                layer.layer->SetStateDelegate(layer.previous);
+            if (layer.layer && layer.previous)
+                layer.layer->SetStateDelegate(
+                    SdfLayerStateDelegateBaseRefPtr(layer.previous));
     }
     void Check() const
     {
@@ -791,15 +904,11 @@ public:
         if (!handle)
             throw std::runtime_error("null source layer");
         const auto previous = handle->GetStateDelegate();
-        if (!previous ||
-            typeid(*previous) != typeid(SdfSimpleLayerStateDelegate))
-            throw std::runtime_error(
-                "unsupported custom source layer state delegate: " +
-                handle->GetIdentifier());
         const unsigned id = unsigned(layers.size());
         layerIds.emplace(handle, id);
-        Layer layer{handle, SdfLayerStateDelegateBaseRefPtr(previous),
-                    SourceDelegate::New(id), handle->PermissionToEdit()};
+        const auto observer =
+            SourceDelegate::New(id, SdfLayerStateDelegateBaseRefPtr(previous));
+        Layer layer{handle, previous, observer, handle->PermissionToEdit()};
         layers.push_back(layer);
         Writer out;
         out.U32(id);
@@ -837,7 +946,7 @@ public:
             }
         }
         Emit(Event::Layer, out.bytes);
-        handle->SetStateDelegate(layer.observer);
+        handle->SetStateDelegate(observer);
         return id;
     }
     std::string Configuration(const UsdStageRefPtr &stage)
@@ -1054,8 +1163,9 @@ public:
         TfNotice::Revoke(stageNotice);
         stageNotice = TfNotice::Key();
         for (auto &layer : layers) {
-            if (layer.layer)
-                layer.layer->SetStateDelegate(layer.previous);
+            if (layer.layer && layer.previous)
+                layer.layer->SetStateDelegate(
+                    SdfLayerStateDelegateBaseRefPtr(layer.previous));
             layer.observer = layer.previous;
         }
         finished = true;

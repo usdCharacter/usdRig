@@ -1215,6 +1215,12 @@ add_executable(testRigExecInputReplayValues tests/testRigExecInputReplayValues.c
 target_link_libraries(testRigExecInputReplayValues PRIVATE rigExec)
 add_test(NAME testRigExecInputReplayValues COMMAND testRigExecInputReplayValues)
 
+add_executable(testRigExecInputReplayHosting tests/testRigExecInputReplayHosting.cpp)
+target_link_libraries(testRigExecInputReplayHosting PRIVATE rigExec)
+target_compile_definitions(testRigExecInputReplayHosting PRIVATE ${_rigexec_schema_resource_define})
+add_test(NAME testRigExecInputReplayHosting COMMAND testRigExecInputReplayHosting)
+set_tests_properties(testRigExecInputReplayHosting PROPERTIES LABELS "input-protocol")
+
 add_executable(testRigExecTypedValues tests/testRigExecTypedValues.cpp)
 target_link_libraries(testRigExecTypedValues PRIVATE rigExec)
 add_test(NAME testRigExecTypedValues COMMAND testRigExecTypedValues)
@@ -2825,7 +2831,7 @@ foreach(_rigexec_scene_exe IN ITEMS
     testRigExecFrameCacheCones_Verify testRigExecFrameCacheSparsity
     testRigExecFrozenContext testRigExecGeometryOpsBakedParity
     testRigExecGeometryProgram testRigExecGraphBindings
-    testRigExecGroupForwarding testRigExecInputActions
+    testRigExecGroupForwarding testRigExecInputActions testRigExecInputReplayHosting
     testRigExecInteractive testRigExecLattice testRigExecLeaves
     testRigExecOneLoopAcceptance testRigExecOpTrace
     testRigExecPatchMover testRigExecPhaseBindings testRigExecPoseInterpolator

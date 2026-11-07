@@ -46,7 +46,7 @@ foreach(kind IN ITEMS truncate extra sequence notice notice-value notice-path no
         message(FATAL_ERROR "Changed known-import notice content/boundary did not fail the exact notice audit: ${error}")
     endif()
 endforeach()
-foreach(kind IN ITEMS custom bulk bulk-clear bulk-transfer mixed-import during unclosed late population load mute freeze held-owner-close held-unclosed held-router-live)
+foreach(kind IN ITEMS bulk bulk-clear bulk-transfer mixed-import during unclosed late population load mute freeze held-owner-close held-unclosed held-router-live)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env
         "RIGEXEC_INPUT_REPLAY=capture:${directory}/${kind}.actions" "RIGEXEC_INPUT_REPLAY_PROVENANCE=${provenance}"
         "RIGEXEC_GOLDEN_SUITE=" "RIGEXEC_INPUT_REPLAY_NATIVE_HISTORIES=" "${DRIVER}" fixture "${kind}" "${SCHEMA}"
@@ -55,6 +55,20 @@ foreach(kind IN ITEMS custom bulk bulk-clear bulk-transfer mixed-import during u
         message(FATAL_ERROR "Unsupported/incomplete ${kind} input history was not explicitly refused: ${error}")
     endif()
 endforeach()
+# A custom layer state delegate is hosted by the capture, not refused.
+set(custom "${directory}/custom.actions")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env
+    "RIGEXEC_INPUT_REPLAY=capture:${custom}" "RIGEXEC_INPUT_REPLAY_PROVENANCE=${provenance}"
+    "RIGEXEC_GOLDEN_SUITE=" "RIGEXEC_INPUT_REPLAY_NATIVE_HISTORIES=" "${DRIVER}" fixture custom "${SCHEMA}"
+    RESULT_VARIABLE status ERROR_VARIABLE error)
+if(NOT status STREQUAL "0")
+    message(FATAL_ERROR "Capture over a custom layer state delegate refused: ${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env "RIGEXEC_INPUT_REPLAY=" "RIGEXEC_GOLDEN_SUITE="
+    "${DRIVER}" replay "${custom}" "${SCHEMA}" RESULT_VARIABLE status ERROR_VARIABLE error)
+if(NOT status STREQUAL "0")
+    message(FATAL_ERROR "Capture over a custom layer state delegate did not replay: ${error}")
+endif()
 set(comparison "${directory}/comparison.actions")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E env
     "RIGEXEC_INPUT_REPLAY=capture:${comparison}" "RIGEXEC_INPUT_REPLAY_PROVENANCE=${provenance}"

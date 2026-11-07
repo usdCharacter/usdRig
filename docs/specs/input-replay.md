@@ -32,6 +32,13 @@ replacement notice only when the batch contains that recorded operation.
 It never generates text from computed or captured numeric values. Failed
 imports, unadapted replacement calls and notice differences are refused.
 
+The capture's source delegate replaces each recorded layer's state delegate,
+Sdf's default or a host's own (a History recorder, a live layer's), and hosts
+it: each change hook is recorded, then forwarded to the replaced delegate
+before Sdf applies the change, the changes of an adapted import included. The
+replaced delegate is never attached to the layer while captured, goes with
+its layer, and is reinstalled when capture completes.
+
 Caller events record explicit Compile boundaries, requested interactive and
 upstream vectors before admission, vector order and duplicates, clears,
 guide/weight-field publication options, exact Default versus numeric-time
@@ -100,7 +107,7 @@ The original observer verifies evaluator identity, visit order, time, typed
 publication values and complete evaluator/generation inventory. Current
 output capture is never an original judge.
 
-Capture fails for custom layer delegates or resolver contexts, mapped/variant
+Capture fails for custom resolver contexts, mapped/variant
 edit targets, unadapted bulk import/reload/replacement or layer identity changes,
 permission/delegate mutation, concurrent or reentrant source histories,
 caller actions inside unfinished authoring batches, and source authoring
