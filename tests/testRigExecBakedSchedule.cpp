@@ -3365,6 +3365,13 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     sample.layout = layout;
     sample.lastPoints = {GfVec3f(2, 0, 0)};
     sample.layoutRefused = true;
+    revision.blendSamples.resize(1);
+    revision.blendSamples[0].samples.resize(2);
+    revision.blendSamples[0].samples[0].layout = layout;
+    revision.blendSamples[0].samples[1].activation = 0.5f;
+    revision.blendSamples[0].samples[1].points = sample.lastPoints;
+    revision.deltasVersion = 7;
+    const auto computed = revision.blendSamples;
     RigExecBakedRunShadow shadow;
     shadow.Capture(B);
 
@@ -3378,6 +3385,8 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     revision.topologyResolved = false;
     sample.lastPoints[0] = GfVec3f(9, 0, 0);
     sample.layoutRefused = false;
+    revision.blendSamples.clear();
+    ++revision.deltasVersion;
     CHECK(shadow.Compare(B, &differences) > 0);
     shadow.Restore(&B);
     CHECK(revision.topology == topology);
@@ -3387,6 +3396,20 @@ TestVerifierRestoresAdoptedLayoutsAndBlendCaches()
     CHECK(sample.layout == layout);
     CHECK(sample.lastPoints == std::vector<GfVec3f>{GfVec3f(2, 0, 0)});
     CHECK(sample.layoutRefused);
+    CHECK(revision.blendSamples == computed);
+    CHECK(revision.blendSamples[0].samples[0].layout == layout);
+    CHECK(!revision.blendSamples[0].samples[1].borrowsPoints);
+    CHECK(revision.deltasVersion == 7);
+    revision.blendSamples[0].samples[1].points[0] = GfVec3f(10);
+    shadow.Restore(&B);
+    CHECK(revision.blendSamples == computed);
+    {
+        RigExecBakedRunShadow retained;
+        retained.Capture(B);
+        revision.blendSamples.clear();
+        retained.Restore(&B);
+    }
+    CHECK(revision.blendSamples == computed);
     differences.clear();
     CHECK(shadow.Compare(B, &differences) == 0);
     auto changed = std::make_shared<RigExecBlendSampleLayout>(*layout);

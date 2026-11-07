@@ -6226,6 +6226,7 @@ struct RigExecBakedRunShadow {
     };
     struct RevisionState {
         std::vector<std::vector<BlendSampleState>> blendSamples;
+        std::vector<RigExecBlendChannel> computedBlendSamples;
         std::shared_ptr<const RigExecSkinTopology> topology, partitionTopology;
         bool topologyResolved = false;
         std::shared_ptr<const RigExecSkinTopology> layoutHandle, layoutCandidate;
