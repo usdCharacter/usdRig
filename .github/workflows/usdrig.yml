@@ -270,13 +270,11 @@ jobs:
           retention-days: 5
 
   # --------------------------------------------------------------------------
-  # C++ CTest gate. -R is a regex on the test name. fast / usd-free /
-  # per-library labels exist for local selection; this job still runs the
-  # suite. Cone-verify doubles and the example-parity sweep stay out of
-  # the first gate (TIMEOUT 300 s, 4 vCPU).
+  # Full configured CTest suite, including cone verification and example
+  # parity. Name and label filters are reserved for local focused runs.
   # --------------------------------------------------------------------------
   ctest-cpp:
-    name: ctest (C++)
+    name: ctest (full suite)
     runs-on: ubuntu-24.04
     needs: build-release
     timeout-minutes: 45
@@ -309,16 +307,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgl1-mesa-dev xorg-dev
 
-      - name: Run C++ tests
+      - name: Run full CTest suite
         run: |
           export USD="${GITHUB_WORKSPACE}/usd-install"
           source bin/_env.sh
           export PXR_PLUGINPATH_NAME="$PWD/build/usd/rigExecSchema/resources:$PWD/build/usd/rigExecImaging/resources:$PWD/build/usd/rigExecMoverPlugins"
           ctest --test-dir build \
-            -R '^testRigExec' \
-            -E 'Cones_|ExampleParity' \
             -j"$(nproc)" \
-            --output-on-failure
+            --output-on-failure --no-tests=error
 
       - name: Upload CTest logs
         if: always()
@@ -546,7 +542,7 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build build --parallel ${{ matrix.jobs }} -- -k 0
           if errorlevel 1 exit /b 1
-          ctest --test-dir build -R "^testRigExec" -E "Cones_|ExampleParity" --parallel ${{ matrix.jobs }} --output-on-failure
+          ctest --test-dir build --parallel ${{ matrix.jobs }} --output-on-failure --no-tests=error
           if errorlevel 1 exit /b 1
           cmake --install build --prefix "%GITHUB_WORKSPACE%/usdrig-install"
           if errorlevel 1 exit /b 1
@@ -567,8 +563,8 @@ jobs:
             -DUSD_INSTALL_DIR="$USD" -DCMAKE_PREFIX_PATH="$USD" \
             -DRIGEXEC_BUILD_PYTHON=OFF -DRIGEXEC_BUILD_USDNOODLES=OFF
           cmake --build build --parallel ${{ matrix.jobs }}
-          ctest --test-dir build -R '^testRigExec' -E 'Cones_|ExampleParity' \
-            --parallel ${{ matrix.jobs }} --output-on-failure
+          ctest --test-dir build \
+            --parallel ${{ matrix.jobs }} --output-on-failure --no-tests=error
           cmake --install build --prefix "$GITHUB_WORKSPACE/usdrig-install"
           cmake -S tests/installedScene -B installed-scene-build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
