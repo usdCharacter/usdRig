@@ -334,6 +334,9 @@ add_library(rigExecImaging SHARED
     # Weight overlay and manipulation preview: declared slots sampled as
     # evaluator overrides and chain xform deltas.
     libs/rigExecImaging/registryPreview.cpp
+    # Diagnostics facade: read-only queries over the scheduler, bridge and
+    # warm-index owners; no counters of its own.
+    libs/rigExecImaging/registryDiagnostics.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
@@ -2761,6 +2764,7 @@ foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rig
             PATTERN ".*" EXCLUDE
             PATTERN "__pycache__" EXCLUDE
             PATTERN "guideBoundsInternal.h" EXCLUDE
+            PATTERN "registryInternal.h" EXCLUDE
             PATTERN "*.h")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers
