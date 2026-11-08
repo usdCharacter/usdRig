@@ -329,6 +329,9 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
     libs/rigExecImaging/registry.cpp
+    # Upstream inputs: chain-pulled tables, each session's slice, the
+    # serial retirement and the live hand-off at a time.
+    libs/rigExecImaging/registryUpstream.cpp
     # Host-facing C surface: the extern "C" activation and query exports.
     libs/rigExecImaging/registryCapi.cpp
     # Weight overlay and manipulation preview: declared slots sampled as
