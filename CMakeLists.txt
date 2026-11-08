@@ -331,6 +331,9 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/registry.cpp
     # Host-facing C surface: the extern "C" activation and query exports.
     libs/rigExecImaging/registryCapi.cpp
+    # Weight overlay and manipulation preview: declared slots sampled as
+    # evaluator overrides and chain xform deltas.
+    libs/rigExecImaging/registryPreview.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
