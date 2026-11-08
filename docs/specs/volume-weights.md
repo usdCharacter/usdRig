@@ -361,7 +361,7 @@ Production evaluation holds no OpenExec `ExecUsdSystem`, whose
 authored. Only the `RigExecTapSet` requests of the
 [reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
 and of tests create one. `_OnObjectsChanged` first calls
-`RigExecTapSet::PrepareStageChange` (`registry.cpp:4324`), which retires
+`RigExecTapSet::PrepareStageChange` (`registryInvalidation.cpp:499`), which retires
 those requests when a prim is removed.
 
 Two things are worth carrying forward. First, a direct `SetTime()` call

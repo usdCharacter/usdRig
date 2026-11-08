@@ -350,6 +350,10 @@ add_library(rigExecImaging SHARED
     # store publish with its generation and frame table, and the broadcast
     # to the bound chains.
     libs/rigExecImaging/registryPublication.cpp
+    # Edit response: the guide-only and rig stage-notice handlers, the
+    # read-root collection and refresh, and the generation cancel plus the
+    # per-time retirement lanes.
+    libs/rigExecImaging/registryInvalidation.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
