@@ -286,6 +286,11 @@ def testUsdviewInputFunction(appController):
     reg = appController._plugRegistry
     _Check(reg.getCommandPlugin("TouchPoseContainer.touchPose") is not None,
            "TouchPose is registered as a command plugin")
+    # The exact menu layout check below only proves the item is not
+    # displayed; this proves the command itself is gone.
+    _Check(reg.getCommandPlugin("RigExecUsdviewContainer.reactivate") is None,
+           "Reactivate RigExec Evaluation is not registered as a command "
+           "plugin")
     menus = _RigExecMenu(appController)
     _Check("RigExec" in menus, "there is a RigExec menu: %s" % sorted(menus))
     topMenu = menus["RigExec"]
