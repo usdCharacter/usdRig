@@ -346,6 +346,10 @@ add_library(rigExecImaging SHARED
     # Frames on demand: the frame-table stamp, the cached-frame read and the
     # demand service call (docs/specs/frames-on-demand.md).
     libs/rigExecImaging/registryFrameDemand.cpp
+    # Publication: session evaluation into one combined generation, the
+    # store publish with its generation and frame table, and the broadcast
+    # to the bound chains.
+    libs/rigExecImaging/registryPublication.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
