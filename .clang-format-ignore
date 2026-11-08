@@ -1,0 +1,6 @@
+# Generated and third-party sources are maintained by their upstream tools.
+third_party/**
+thirdparty/**
+plugin/usdNoodles/**
+libs/rigExecBinary/generated/**
+build*/**

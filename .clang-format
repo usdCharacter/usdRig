@@ -1,0 +1,42 @@
+# usdRig's adaptation of OpenUSD conventions, not an upstream config.
+# https://openusd.org/release/api/_page__coding__guidelines.html
+# Reproducible with clang-format 18.1.8 (see bin/format_cpp.py).
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 80
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterClass: false
+  AfterStruct: false
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+NamespaceIndentation: None
+AccessModifierOffset: -4
+PointerAlignment: Right
+ReferenceAlignment: Right
+DerivePointerAlignment: false
+# Keep include dependencies and authored documentation order intact.
+SortIncludes: Never
+IncludeBlocks: Preserve
+ReflowComments: false
+StatementMacros:
+  - PXR_NAMESPACE_OPEN_SCOPE
+  - PXR_NAMESPACE_CLOSE_SCOPE
+  - PXR_NAMESPACE_USING_DIRECTIVE
+WhitespaceSensitiveMacros:
+  - TF_DECLARE_PUBLIC_TOKENS
+  - TF_DEFINE_PUBLIC_TOKENS
+  - TF_DEFINE_PRIVATE_TOKENS
