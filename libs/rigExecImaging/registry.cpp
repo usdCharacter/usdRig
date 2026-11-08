@@ -58,10 +58,12 @@ struct RigExecWarmWorkspacePool {
     };
     std::array<Lane, kRigExecBackgroundSchedulerMaxWorkers> lanes;
 
-    Lane *Acquire() {
+    Lane *Acquire()
+    {
         for (Lane &lane : lanes) {
             bool expected = false;
-            if (lane.busy.compare_exchange_strong(expected, true)) return &lane;
+            if (lane.busy.compare_exchange_strong(expected, true))
+                return &lane;
         }
         return nullptr;
     }
@@ -71,8 +73,8 @@ namespace {
 
 const TfToken _tRigRootType("RigExecRoot");
 const TfToken _tWeightCage("cage"), _tWeightBrackets("brackets"),
-              _tWeightShell("shell"), _tWeightWire("wire"),
-              _tWeightGeometry("geometry"), _tWeightFalloff("falloff");
+    _tWeightShell("shell"), _tWeightWire("wire"), _tWeightGeometry("geometry"),
+    _tWeightFalloff("falloff");
 
 uint64_t
 _HashCompiledRigPart(uint64_t hash, const void *data, size_t size)
@@ -140,35 +142,43 @@ _CollectReadRoots(const UsdStageRefPtr &stage,
     std::set<SdfPath> scannedSubtrees;
     const auto enqueue = [&](const SdfPath &target) {
         const SdfPath path = target.GetPrimPath();
-        if (!path.IsAbsolutePath() || !path.IsPrimPath()) return;
+        if (!path.IsAbsolutePath() || !path.IsPrimPath())
+            return;
         roots.insert(path);
         for (const SdfPath &scope : scannedSubtrees) {
-            if (path.HasPrefix(scope)) return;
+            if (path.HasPrefix(scope))
+                return;
         }
         pending.push_back(path);
     };
     const auto scan = [&](const UsdPrim &prim) {
-        if (!prim || !scannedPrims.insert(prim.GetPath()).second) return;
+        if (!prim || !scannedPrims.insert(prim.GetPath()).second)
+            return;
         for (const UsdRelationship &rel : prim.GetRelationships()) {
             SdfPathVector targets;
             rel.GetTargets(&targets);
-            for (const SdfPath &target : targets) enqueue(target);
+            for (const SdfPath &target : targets)
+                enqueue(target);
         }
         for (const UsdAttribute &attr : prim.GetAttributes()) {
             SdfPathVector connections;
             attr.GetConnections(&connections);
-            for (const SdfPath &target : connections) enqueue(target);
+            for (const SdfPath &target : connections)
+                enqueue(target);
         }
     };
     while (!pending.empty()) {
         const SdfPath path = pending.back();
         pending.pop_back();
-        if (!scannedSubtrees.insert(path).second) continue;
+        if (!scannedSubtrees.insert(path).second)
+            continue;
         const UsdPrim root = stage->GetPrimAtPath(path);
-        if (!root) continue;
-        for (const UsdPrim &prim : UsdPrimRange(root)) scan(prim);
-        for (UsdPrim parent = root.GetParent(); parent && !parent.IsPseudoRoot();
-             parent = parent.GetParent()) {
+        if (!root)
+            continue;
+        for (const UsdPrim &prim : UsdPrimRange(root))
+            scan(prim);
+        for (UsdPrim parent = root.GetParent();
+             parent && !parent.IsPseudoRoot(); parent = parent.GetParent()) {
             scan(parent);
         }
     }
@@ -183,7 +193,8 @@ _CollectReadRoots(const UsdStageRefPtr &stage,
                 break;
             }
         }
-        if (!covered) compact.insert(path);
+        if (!covered)
+            compact.insert(path);
     }
     return compact;
 }
@@ -217,7 +228,7 @@ _SweepTimes(UsdTimeCode playhead)
     return times;
 }
 
-}  // namespace
+} // namespace
 
 // The directory: stage -> imaging context (registry.h, "PER-STAGE CONTEXTS").
 
@@ -294,7 +305,7 @@ _ParseOverlayPath(const std::string &text, SdfPath *path)
     return true;
 }
 
-}  // namespace
+} // namespace
 
 /// Process-level map from a stage to its imaging context, the chain
 /// registrations, and the legacy current context.
@@ -315,7 +326,10 @@ public:
         return directory;
     }
 
-    Ctx &LegacyHandle() { return _legacyHandle; }
+    Ctx &LegacyHandle()
+    {
+        return _legacyHandle;
+    }
 
     Ptr ForStage(const UsdStageRefPtr &stage, bool create)
     {
@@ -346,7 +360,7 @@ public:
                 _keyByStage[raw] = key;
             }
         }
-        return result;  // `released` dies here, after the unlock
+        return result; // `released` dies here, after the unlock
     }
 
     Ptr ForKey(uint64_t key)
@@ -466,11 +480,13 @@ public:
         return chains;
     }
 
-    ~RigExecImagingDirectory() { _directoryAlive.store(false); }
+    ~RigExecImagingDirectory()
+    {
+        _directoryAlive.store(false);
+    }
 
 private:
-    RigExecImagingDirectory()
-        : _legacyHandle(Ctx::_LegacyHandleTag{})
+    RigExecImagingDirectory() : _legacyHandle(Ctx::_LegacyHandleTag{})
     {
         _directoryAlive.store(true);
     }
@@ -505,12 +521,11 @@ private:
 
     void _PruneChainsLocked()
     {
-        _chains.erase(
-            std::remove_if(_chains.begin(), _chains.end(),
-                           [](const ChainRecord &record) {
-                               return !record.chain.results;
-                           }),
-            _chains.end());
+        _chains.erase(std::remove_if(_chains.begin(), _chains.end(),
+                                     [](const ChainRecord &record) {
+                                         return !record.chain.results;
+                                     }),
+                      _chains.end());
     }
 
     std::mutex _mutex;
@@ -565,13 +580,11 @@ RigExecImagingRegistry::ContextCount()
     return RigExecImagingDirectory::Get().ContextCount();
 }
 
-RigExecImagingRegistry::RigExecImagingRegistry(
-    uint64_t key, const UsdStageRefPtr &stage)
-    : _key(key)
-    , _boundStage(stage)
-    , _legacyHandle(false)
-    , _store(std::make_shared<RigExecSnapshotStore>())
-    , _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
+RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
+                                               const UsdStageRefPtr &stage)
+    : _key(key), _boundStage(stage), _legacyHandle(false),
+      _store(std::make_shared<RigExecSnapshotStore>()),
+      _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
 {
     // RIGEXEC_GPU_DEFORM=readback deforms on the GPU executor; the device
     // starts on its first run, not here.
@@ -584,10 +597,9 @@ RigExecImagingRegistry::RigExecImagingRegistry(
 }
 
 RigExecImagingRegistry::RigExecImagingRegistry(_LegacyHandleTag)
-    : _key(0)
-    , _legacyHandle(true)
-    , _store(std::make_shared<RigExecSnapshotStore>())
-    , _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
+    : _key(0), _legacyHandle(true),
+      _store(std::make_shared<RigExecSnapshotStore>()),
+      _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
 {
 }
 
@@ -695,9 +707,8 @@ RigExecImagingRegistry::BindChain(const RigExecResultsSceneIndex *results,
 {
     Chain chain;
     uint64_t previous = 0;
-    if (!results ||
-        !RigExecImagingDirectory::Get().Rebind(results, key, &chain,
-                                               &previous)) {
+    if (!results || !RigExecImagingDirectory::Get().Rebind(results, key, &chain,
+                                                           &previous)) {
         return;
     }
     if (const Ptr context = ForKey(key)) {
@@ -784,9 +795,10 @@ RigExecImagingRegistry::_AdoptChain(const Chain &chain)
 }
 
 bool
-RigExecImagingRegistry::_LegacyActivate(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath,
-    UsdTimeCode initialTime, std::vector<std::string> *errors)
+RigExecImagingRegistry::_LegacyActivate(const UsdStageRefPtr &stage,
+                                        const SdfPath &rigPath,
+                                        UsdTimeCode initialTime,
+                                        std::vector<std::string> *errors)
 {
     if (!stage) {
         if (errors) {
@@ -838,7 +850,6 @@ RigExecImagingRegistry::_LegacyActivate(
     return true;
 }
 
-
 bool
 RigExecImagingRegistry::_AdoptBridgeChainBindings(RigSession *session)
 {
@@ -882,8 +893,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
         // after the refresh regardless.) Failed pins still retry
         // every trigger -- only verified pins skip. During
         // notice-free playback this skips the refresh on every tick.
-        if (session->frozenSerial == serial &&
-            session->chainBindingsValid) {
+        if (session->frozenSerial == serial && session->chainBindingsValid) {
             return;
         }
         refreshPins();
@@ -903,12 +913,10 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
         // and the snapshot's history predates them either way, so they are
         // asked of the snapshot itself. A refused patch (a shape change
         // wearing a patch's clothes) falls through to a re-freeze.
-        const uint64_t avarDigest =
-            RigExecFrozenAvarRegionDigest(*program);
+        const uint64_t avarDigest = RigExecFrozenAvarRegionDigest(*program);
         if (avarDigest == session->frozenAvarDigest &&
             !(session->frozen &&
-              RigExecFrozenSnapshotOwesLiveEdits(*session->frozen,
-                                                 *program))) {
+              RigExecFrozenSnapshotOwesLiveEdits(*session->frozen, *program))) {
             session->frozenSerial = serial;
             return;
         }
@@ -916,7 +924,7 @@ RigExecImagingRegistry::_RefreshFrozenSnapshot(RigSession *session)
             std::shared_ptr<const RigExecFrozenAvarPatch> patched;
             std::string ignored;
             if (RigExecCaptureFrozenAvarPatch(*session->frozen, *program,
-                                                &patched, &ignored)) {
+                                              &patched, &ignored)) {
                 session->frozenPatch = std::move(patched);
                 session->frozenAvarDigest = avarDigest;
                 session->frozenSerial = serial;
@@ -994,7 +1002,8 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
     if (session->upstream) {
         session->upstream->ValuesAt(session->upstream->t0, &upstream);
     }
-    const uint64_t compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
+    const uint64_t compiledRigSignature =
+        RigExecFrameCacheCompiledRigSignature(evaluator);
     const uint64_t serial = evaluator.GetStageEditSerial();
     const std::vector<RigExecValueOverride> overrides =
         session->bridge->GetInteractiveOverrides();
@@ -1033,16 +1042,15 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
     // re-serve it without paying for the doomed rebuild that produced
     // it. The latch sits past the transient check above, so a failed
     // bindings refresh never latches.
-    if (pinsCurrent &&
-        (session->burstOverrun || session->burstDeclined)) {
+    if (pinsCurrent && (session->burstOverrun || session->burstDeclined)) {
         return &session->standingBurst;
     }
     RigExecBurstSampleCache rebuilt;
     std::string buildError;
     const uint64_t buildStartUs = RigExecProfiler::NowUs();
     const bool built = RigExecBuildBurstSampleCache(
-        *program, session->chainBindings, overrides, upstream, compiledRigSignature,
-        &rebuilt, &buildError);
+        *program, session->chainBindings, overrides, upstream,
+        compiledRigSignature, &rebuilt, &buildError);
     const double buildMs =
         double(RigExecProfiler::NowUs() - buildStartUs) / 1000.0;
     session->burstProgram = program;
@@ -1061,8 +1069,7 @@ RigExecImagingRegistry::_PrepareWarmBurst(RigSession *session)
         session->burstDeclined = false;
     } else {
         session->standingBurst = std::move(rebuilt);
-        session->standingBurst.usable =
-            built && session->standingBurst.usable;
+        session->standingBurst.usable = built && session->standingBurst.usable;
         session->burstOverrun = false;
         session->burstDeclined = !session->standingBurst.usable;
         if (session->burstDeclined) {
@@ -1188,9 +1195,7 @@ RigExecImagingRegistry::GetWarmSamplingMaxMs()
 
 bool
 RigExecImagingRegistry::_EvaluateSessions(
-    RigSessions *sessions,
-    const UsdStageRefPtr &stage,
-    UsdTimeCode time,
+    RigSessions *sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
     std::shared_ptr<RigExecImagingSnapshot> *snapshot,
     RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr *compiledRig,
     std::vector<std::string> *errors)
@@ -1208,7 +1213,8 @@ RigExecImagingRegistry::_EvaluateSessions(
 
     for (RigSession &session : *sessions) {
         RigExecImagingSnapshotConstPtr rigSnapshot = session.store->Get();
-        if (session.dirty || !rigSnapshot || !rigSnapshot->Describes(stage, time)) {
+        if (session.dirty || !rigSnapshot ||
+            !rigSnapshot->Describes(stage, time)) {
             const RigExecImagingBridge::PublishResult result =
                 session.playback
                     ? session.playback->EvaluateAndPublishResult(time)
@@ -1226,7 +1232,8 @@ RigExecImagingRegistry::_EvaluateSessions(
                 }
                 return false;
             }
-            if (result.compiledRig) session.compiledRig = result.compiledRig;
+            if (result.compiledRig)
+                session.compiledRig = result.compiledRig;
             session.dirty = false;
             // Usually the last reference to the replaced generation.
             WorkMoveDestroyAsync(rigSnapshot);
@@ -1254,23 +1261,24 @@ RigExecImagingRegistry::_EvaluateSessions(
             auto rigCompiledRig = std::make_shared<
                 RigExecBindingResolvingSceneIndex::CompiledRigBinding>();
             rigCompiledRig->id =
-                session.playback
-                    ? session.playback->GetCompiledRigSignature()
-                    : session.bridge->GetCompiledRigSignature();
+                session.playback ? session.playback->GetCompiledRigSignature()
+                                 : session.bridge->GetCompiledRigSignature();
             for (const auto &[path, published] : rigSnapshot->prims) {
                 rigCompiledRig->publishedPrims.insert(path);
             }
             session.compiledRig = std::move(rigCompiledRig);
         }
 
-        compiledRigId = _HashCompiledRigPart(compiledRigId, session.rigPath.GetString());
+        compiledRigId =
+            _HashCompiledRigPart(compiledRigId, session.rigPath.GetString());
         const uint64_t rigCompiledRigId = session.compiledRig->id;
-        compiledRigId = _HashCompiledRigPart(compiledRigId, &rigCompiledRigId, sizeof(rigCompiledRigId));
+        compiledRigId = _HashCompiledRigPart(compiledRigId, &rigCompiledRigId,
+                                             sizeof(rigCompiledRigId));
         combinedCompiledRig->publishedPrims.insert(
             session.compiledRig->publishedPrims.begin(),
             session.compiledRig->publishedPrims.end());
         combined->xformResetPaths.insert(rigSnapshot->xformResetPaths.begin(),
-                                        rigSnapshot->xformResetPaths.end());
+                                         rigSnapshot->xformResetPaths.end());
 
         // Carried across for the same reason xformResetPaths is: the
         // combined snapshot is BUILT here, field by field, so anything
@@ -1300,10 +1308,10 @@ RigExecImagingRegistry::_EvaluateSessions(
                                          published);
             if (combined->prims.size() == size) {
                 if (errors) {
-                    errors->push_back(
-                        "two rigs publish the same Hydra prim " +
-                        path.GetString() + "; cross-rig output overlap is "
-                        "not allowed");
+                    errors->push_back("two rigs publish the same Hydra prim " +
+                                      path.GetString() +
+                                      "; cross-rig output overlap is "
+                                      "not allowed");
                 }
                 return false;
             }
@@ -1318,11 +1326,11 @@ RigExecImagingRegistry::_EvaluateSessions(
     return true;
 }
 
-
 RigExecImagingBridge::PublishResult
 RigExecImagingRegistry::_Publish(
     std::shared_ptr<RigExecImagingSnapshot> snapshot,
-    const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr &compiledRig)
+    const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+        &compiledRig)
 {
     RigExecImagingBridge::PublishResult result;
     snapshot->generation = ++_generation;
@@ -1343,9 +1351,10 @@ RigExecImagingRegistry::_Publish(
 }
 
 bool
-RigExecImagingRegistry::Activate(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath,
-    UsdTimeCode initialTime, std::vector<std::string> *errors)
+RigExecImagingRegistry::Activate(const UsdStageRefPtr &stage,
+                                 const SdfPath &rigPath,
+                                 UsdTimeCode initialTime,
+                                 std::vector<std::string> *errors)
 {
     return _Activate(stage, rigPath, initialTime, errors,
                      /* automatic = */ false);
@@ -1370,7 +1379,8 @@ RigExecImagingRegistry::_BuildAuthoredGuides(
     bool firstRoot = true;
     for (const SdfPath &path : rigPaths) {
         const UsdPrim root = stage->GetPrimAtPath(path);
-        if (!root || root.GetTypeName() != _tRigRootType) continue;
+        if (!root || root.GetTypeName() != _tRigRootType)
+            continue;
         RigExecImagingBridge *builder = nullptr;
         for (RigSession &session : _sessions) {
             if (session.rigPath == path && session.bridge) {
@@ -1409,10 +1419,11 @@ RigExecImagingRegistry::_BuildAuthoredGuides(
 }
 
 bool
-RigExecImagingRegistry::_Activate(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath,
-    UsdTimeCode initialTime, std::vector<std::string> *errors,
-    bool automatic)
+RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
+                                  const SdfPath &rigPath,
+                                  UsdTimeCode initialTime,
+                                  std::vector<std::string> *errors,
+                                  bool automatic)
 {
     if (_legacyHandle) {
         return _LegacyActivate(stage, rigPath, initialTime, errors);
@@ -1511,9 +1522,9 @@ RigExecImagingRegistry::_Activate(
     // what makes this safe.
     const std::set<SdfPath> previousAssetRoots = _assetRoots;
     _assetRoots.clear();
-    TfNotice::Key candidateChangeKey = TfNotice::Register(
-        TfCreateWeakPtr(this), &RigExecImagingRegistry::_OnObjectsChanged,
-        stage);
+    TfNotice::Key candidateChangeKey =
+        TfNotice::Register(TfCreateWeakPtr(this),
+                           &RigExecImagingRegistry::_OnObjectsChanged, stage);
 
     // Activation is transactional: a rig that fails to compile or evaluate
     // leaves the previously published generation, and the listener feeding
@@ -1524,8 +1535,8 @@ RigExecImagingRegistry::_Activate(
     RigSessions candidate;
     candidate.reserve(rigPaths.size());
     const auto abandon = [&](bool evaluationFailed) {
-        const bool hasRoot = std::any_of(rigPaths.begin(), rigPaths.end(),
-            [&stage](const SdfPath &path) {
+        const bool hasRoot = std::any_of(
+            rigPaths.begin(), rigPaths.end(), [&stage](const SdfPath &path) {
                 const UsdPrim prim = stage->GetPrimAtPath(path);
                 return prim && prim.GetTypeName() == _tRigRootType;
             });
@@ -1577,9 +1588,8 @@ RigExecImagingRegistry::_Activate(
         const UsdPrim rig = stage->GetPrimAtPath(path);
         if (!rig || rig.GetTypeName() != "RigExecRoot") {
             if (errors) {
-                errors->push_back(
-                    "activation path is not a RigExecRoot: " +
-                    path.GetString());
+                errors->push_back("activation path is not a RigExecRoot: " +
+                                  path.GetString());
             }
             abandon(false);
             return false;
@@ -1626,10 +1636,8 @@ RigExecImagingRegistry::_Activate(
                 const SdfPath rigPath = path;
                 cache->SetEvictionCallback(
                     [index, rigPath](
-                        const std::vector<RigExecFrameCacheEviction>
-                            &evicted) {
-                        for (const RigExecFrameCacheEviction &entry :
-                             evicted) {
+                        const std::vector<RigExecFrameCacheEviction> &evicted) {
+                        for (const RigExecFrameCacheEviction &entry : evicted) {
                             if (entry.time.IsNumeric()) {
                                 index->NoteEvicted(rigPath, entry.key,
                                                    entry.time.GetValue());
@@ -1668,9 +1676,10 @@ RigExecImagingRegistry::_Activate(
         }
     }
     std::shared_ptr<RigExecImagingSnapshot> initialSnapshot;
-    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr initialCompiledRig;
-    if (!_EvaluateSessions(&candidate, stage, initialTime,
-                           &initialSnapshot, &initialCompiledRig, errors)) {
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+        initialCompiledRig;
+    if (!_EvaluateSessions(&candidate, stage, initialTime, &initialSnapshot,
+                           &initialCompiledRig, errors)) {
         abandon(true);
         return false;
     }
@@ -1716,9 +1725,9 @@ RigExecImagingRegistry::_Activate(
     _generatedScopes.clear();
     _assetRoots.clear();
     for (const RigSession &session : _sessions) {
-        _generatedScopes.insert(
-            session.playback ? session.playback->GetGeneratedScope()
-                             : session.bridge->GetGeneratedScope());
+        _generatedScopes.insert(session.playback
+                                    ? session.playback->GetGeneratedScope()
+                                    : session.bridge->GetGeneratedScope());
         _assetRoots.insert(session.assetRoot);
     }
     _RefreshReadRoots();
@@ -1738,8 +1747,8 @@ RigExecImagingRegistry::_Activate(
 }
 
 bool
-RigExecImagingRegistry::EnsureActivated(
-    const UsdStageRefPtr &stage, UsdTimeCode time)
+RigExecImagingRegistry::EnsureActivated(const UsdStageRefPtr &stage,
+                                        UsdTimeCode time)
 {
     if (!stage) {
         return false;
@@ -1757,7 +1766,8 @@ RigExecImagingRegistry::EnsureActivated(
             // Already active on this (its only) stage: a no-op.
             return true;
         }
-        if (!_authoredGuides.empty()) return false;
+        if (!_authoredGuides.empty())
+            return false;
         if (_deactivatedByHost) {
             // The host turned this stage off; only its explicit Activate
             // turns it back on (see the header).
@@ -1818,9 +1828,11 @@ RigExecImagingRegistry::IsDisplayedRigRoot(const SdfPath &path)
         return routed->IsDisplayedRigRoot(path);
     }
     std::lock_guard<std::mutex> lock(_mutex);
-    if (_authoredGuides.count(path)) return true;
+    if (_authoredGuides.count(path))
+        return true;
     for (const RigSession &session : _sessions) {
-        if (session.rigPath == path) return true;
+        if (session.rigPath == path)
+            return true;
     }
     return false;
 }
@@ -1871,8 +1883,7 @@ _PullWindow(const std::vector<std::pair<double, double>> &ranges,
             window.lo = stage->GetStartTimeCode();
             window.hi = std::max(window.lo, stage->GetEndTimeCode());
         }
-        window.held =
-            stage->GetInterpolationType() == UsdInterpolationTypeHeld;
+        window.held = stage->GetInterpolationType() == UsdInterpolationTypeHeld;
     }
     if (lastTime.IsNumeric() && std::isfinite(lastTime.GetValue())) {
         window.haveTime = true;
@@ -1881,7 +1892,7 @@ _PullWindow(const std::vector<std::pair<double, double>> &ranges,
     return window;
 }
 
-}  // namespace
+} // namespace
 
 RigExecUpstreamPullWindow
 RigExecImagingRegistry::GetUpstreamPullWindow()
@@ -1931,7 +1942,7 @@ RigExecImagingRegistry::SetUpstreamTable(
                     otherTable->ValueAt(path, found->second, table->t0,
                                         &previous) &&
                     !RigExecSameSourceValue(incoming.value, true,
-                                           previous.value, true)) {
+                                            previous.value, true)) {
                     TF_WARN("upstream input %s: two scene-index chains "
                             "publish different values; the triggering "
                             "chain's are used",
@@ -1950,8 +1961,7 @@ RigExecImagingRegistry::SetUpstreamTable(
 }
 
 void
-RigExecImagingRegistry::DropUpstreamTable(
-    const RigExecResultsSceneIndex *chain)
+RigExecImagingRegistry::DropUpstreamTable(const RigExecResultsSceneIndex *chain)
 {
     if (const Ptr routed = _Routed()) {
         routed->DropUpstreamTable(chain);
@@ -2031,10 +2041,9 @@ RigExecImagingRegistry::_UpdateSessionUpstreamLocked(RigSession *session)
     }
     std::shared_ptr<const RigExecUpstreamTable> share = _UpstreamShare(
         found != _upstreamTables.end() ? found->second : nullptr, roots);
-    const bool same =
-        share == session->upstream ||
-        (share && session->upstream &&
-         RigExecSameUpstreamSources(*share, *session->upstream));
+    const bool same = share == session->upstream ||
+                      (share && session->upstream &&
+                       RigExecSameUpstreamSources(*share, *session->upstream));
     session->upstream = std::move(share);
     if (!same) {
         // The sources, the window or a frame value moved: rows warmed under
@@ -2063,8 +2072,7 @@ RigExecImagingRegistry::_HandOffUpstreamLocked(RigSession *session,
             for (const auto &[path, entry] : session->upstream->entries) {
                 if (!entry.varies) {
                     values.push_back(
-                        RigExecUpstreamValue{path, entry.atT0,
-                                             entry.hashAtT0});
+                        RigExecUpstreamValue{path, entry.atT0, entry.hashAtT0});
                 }
             }
         }
@@ -2095,11 +2103,13 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     if (_sessions.empty() || !_stage) {
         if (_stage && !_authoredGuides.empty()) {
             const auto current = _store->Get();
-            if (!_authoredGuidesDirty && current && current->Describes(_stage, time)) {
+            if (!_authoredGuidesDirty && current &&
+                current->Describes(_stage, time)) {
                 return false;
             }
             std::vector<SdfPath> roots;
-            for (const auto &entry : _authoredGuides) roots.push_back(entry.first);
+            for (const auto &entry : _authoredGuides)
+                roots.push_back(entry.first);
             auto snapshot = _BuildAuthoredGuides(_stage, roots, time);
             _lastTime = time;
             const auto published = _Publish(std::move(snapshot), nullptr);
@@ -2160,8 +2170,8 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     }
     std::shared_ptr<RigExecImagingSnapshot> snapshot;
     RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
-    if (!_EvaluateSessions(
-            &_sessions, _stage, time, &snapshot, &compiledRig, nullptr)) {
+    if (!_EvaluateSessions(&_sessions, _stage, time, &snapshot, &compiledRig,
+                           nullptr)) {
         // A rig that can no longer evaluate stops driving the scene.
         // The per-session bridge already cleared its own store on the way
         // out, but this COMBINED generation is the one the scene indices
@@ -2174,7 +2184,8 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         RigExecImagingBridge::PublishResult cleared;
         cleared.ok = true;
         std::vector<SdfPath> roots;
-        for (const RigSession &session : _sessions) roots.push_back(session.rigPath);
+        for (const RigSession &session : _sessions)
+            roots.push_back(session.rigPath);
         auto guides = _BuildAuthoredGuides(_stage, roots, time);
         guides->generation = ++_generation;
         RigExecImagingSnapshotConstPtr replaced = _store->Get();
@@ -2196,9 +2207,8 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     // step sheds: a backward scrub is heading into exactly the frames at or
     // behind the new playhead, and purging those would strip the warming
     // the scrub is about to use.
-    const bool advanced =
-        previousTime.IsNumeric() && time.IsNumeric() &&
-        time.GetValue() > previousTime.GetValue();
+    const bool advanced = previousTime.IsNumeric() && time.IsNumeric() &&
+                          time.GetValue() > previousTime.GetValue();
     if (advanced && _scheduler) {
         for (const RigSession &session : _sessions) {
             if (!session.playback) {
@@ -2262,7 +2272,8 @@ RigExecImagingRegistry::GetSessionEvaluationCount(const SdfPath &rigPath)
     }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
-        if (session.rigPath == rigPath) return session.evaluationCount;
+        if (session.rigPath == rigPath)
+            return session.evaluationCount;
     }
     return 0;
 }
@@ -2283,10 +2294,10 @@ RigExecImagingRegistry::RefreshFrameCacheSettings()
 }
 
 RigExecWarmFactoryResult
-RigExecImagingRegistry::BuildWarmWork(
-    const SdfPath &rig, UsdTimeCode time,
-    RigExecFrameGeneration generation, RigExecFrozenStepRunner runner,
-    RigExecBurstSampleCache *burst)
+RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
+                                      RigExecFrameGeneration generation,
+                                      RigExecFrozenStepRunner runner,
+                                      RigExecBurstSampleCache *burst)
 {
     if (const Ptr routed = _Routed()) {
         return routed->BuildWarmWork(rig, time, generation, runner, burst);
@@ -2343,8 +2354,7 @@ RigExecImagingRegistry::BuildWarmWork(
         // A rig with no baked program evaluates dynamically against
         // the live stage, which a worker must never touch. No job, ever;
         // the rig still memoizes its own UI-thread results.
-        return skip(RigExecWarmSkipReason::D7Exempt,
-                    "no baked program (D7)");
+        return skip(RigExecWarmSkipReason::D7Exempt, "no baked program (D7)");
     }
     // The job time's upstream values, from the session's pulled table only
     // (no data source is called here; a varying array is reconstructed
@@ -2357,8 +2367,8 @@ RigExecImagingRegistry::BuildWarmWork(
         return skip(RigExecWarmSkipReason::Unsampleable,
                     "upstream not pulled for this time");
     }
-    const bool cached = burst && burst->usable &&
-        program == burst->program && upstream == burst->upstream;
+    const bool cached = burst && burst->usable && program == burst->program &&
+                        upstream == burst->upstream;
     if (!cached) {
         // Refreshed here -- lazily, at warm-build time -- and not on the
         // per-frame path: only warming reads the snapshot. The live state
@@ -2382,12 +2392,12 @@ RigExecImagingRegistry::BuildWarmWork(
     // brings its own answers and runs without one.
     if (production && !session->frozen) {
         return skip(RigExecWarmSkipReason::FreezeRefused,
-                    session->frozenError.empty()
-                        ? "freeze refused"
-                        : session->frozenError);
+                    session->frozenError.empty() ? "freeze refused"
+                                                 : session->frozenError);
     }
     RigExecProfiler *warmProfiler = session->bridge->MutableProfiler();
-    uint64_t warmPhaseStart = warmProfiler->IsEnabled() ? RigExecProfiler::NowUs() : 0;
+    uint64_t warmPhaseStart =
+        warmProfiler->IsEnabled() ? RigExecProfiler::NowUs() : 0;
     const auto warmPhase = [&](const char *name) {
         if (warmProfiler->IsEnabled()) {
             const uint64_t end = RigExecProfiler::NowUs();
@@ -2397,10 +2407,9 @@ RigExecImagingRegistry::BuildWarmWork(
     };
     RigExecFrameInputs inputs;
     if (cached) {
-        if (!RigExecSampleFrameInputsWithBurstCache(
-                evaluator, time, overrides, upstream, burst, &inputs)) {
-            return skip(RigExecWarmSkipReason::Unsampleable,
-                        "burst-sample");
+        if (!RigExecSampleFrameInputsWithBurstCache(evaluator, time, overrides,
+                                                    upstream, burst, &inputs)) {
+            return skip(RigExecWarmSkipReason::Unsampleable, "burst-sample");
         }
     } else {
         // Sampled here, on the UI thread: the worker receives values, never
@@ -2408,10 +2417,9 @@ RigExecImagingRegistry::BuildWarmWork(
         // the session's pins -- the same values a fresh bind would read, held
         // to account sample by sample by the equivalence test.
         if (!RigExecSampleFrameInputsWithChainBindings(
-                evaluator, time, overrides, upstream,
-                session->chainBindings, &inputs)) {
-            return skip(RigExecWarmSkipReason::Unsampleable,
-                        "chain-sample");
+                evaluator, time, overrides, upstream, session->chainBindings,
+                &inputs)) {
+            return skip(RigExecWarmSkipReason::Unsampleable, "chain-sample");
         }
     }
     warmPhase("Warm.SampleInputs");
@@ -2463,14 +2471,14 @@ RigExecImagingRegistry::BuildWarmWork(
     uint64_t unfoldedDigest = 0;
     if (cached) {
         key.compiledRigSignature = burst->compiledRigSignature;
-        unfoldedDigest = RigExecControlStateDigestWithBurstCache(
-            inputs, overrides, burst);
+        unfoldedDigest =
+            RigExecControlStateDigestWithBurstCache(inputs, overrides, burst);
         key.controlDigest =
             RigExecFoldConstantDigest(unfoldedDigest, constantDigest);
     } else {
-        key.compiledRigSignature = RigExecFrameCacheCompiledRigSignature(evaluator);
-        unfoldedDigest =
-            RigExecControlStateDigest(inputs, overrides);
+        key.compiledRigSignature =
+            RigExecFrameCacheCompiledRigSignature(evaluator);
+        unfoldedDigest = RigExecControlStateDigest(inputs, overrides);
         key.controlDigest =
             RigExecFoldConstantDigest(unfoldedDigest, constantDigest);
     }
@@ -2481,21 +2489,20 @@ RigExecImagingRegistry::BuildWarmWork(
     // this time (the checks above), so the digest names fresh values and
     // proves them.
     session->bridge->NoteWarmingEnqueued(time, key.controlDigest,
-                                        unfoldedDigest, inputs);
+                                         unfoldedDigest, inputs);
     // Dynamic-override bootstrapping: an override identity the
     // compiled rig index never learned would answer every plan as foreign (all
     // clusters). Admission is exact -- the seeds mirror SetOverrides'
     // placement -- and a no-op for identities already known.
     session->bridge->AdmitOverrideControls(overrides);
-    std::shared_ptr<RigExecFrameCache> cache =
-        session->bridge->GetFrameCache();
+    std::shared_ptr<RigExecFrameCache> cache = session->bridge->GetFrameCache();
     RigExecBackgroundScheduler *scheduler = _scheduler.get();
     std::shared_ptr<RigExecWarmFrameIndex> warmIndex = _warmIndex;
     const auto progressPublication = warmIndex->RequestPublicationFor(
         rig, time.GetValue(), generation, key.compiledRigSignature);
     // Null unless explicitly opted in; no worker registry access or lock.
-    const WarmPublishObserver publishObserver = production
-        ? _warmPublishObserver : WarmPublishObserver();
+    const WarmPublishObserver publishObserver =
+        production ? _warmPublishObserver : WarmPublishObserver();
     // Only sampled values cross the thread boundary, plus the snapshot the
     // context points at: the job's own shared_ptr keeps it alive past a
     // deactivation or a refresh that swaps the session's entry out. The
@@ -2508,11 +2515,10 @@ RigExecImagingRegistry::BuildWarmWork(
     // The source snapshot and dependency record travel with the pose.
     RigExecRetainedFrameState retainedState = RigExecCaptureRetainedState(
         inputs, overrides, key.compiledRigSignature,
-        program->GetStepGraph().clustering.clusters.size(),
-        constantDigest);
+        program->GetStepGraph().clustering.clusters.size(), constantDigest);
     warmPhase("Warm.EnqueueProofRetained");
-    auto retained = std::make_shared<RigExecRetainedFrameState>(
-        std::move(retainedState));
+    auto retained =
+        std::make_shared<RigExecRetainedFrameState>(std::move(retainedState));
     const size_t retainedBytes = retained->RetainedBytes();
     RigExecEntryProvenance provenance =
         RigExecFullEvalProvenance(program->GetStepGraph(), time);
@@ -2523,21 +2529,27 @@ RigExecImagingRegistry::BuildWarmWork(
     std::shared_ptr<const RigExecFrameInputs> jobInputs =
         std::make_shared<RigExecFrameInputs>(std::move(inputs));
     RigExecWarmWork work = [jobInputs, context, key, cache, scheduler, rig,
-                              runner, frozen, frozenPatch, workspaces, warmIndex, retained,
-                              retainedBytes, provenance, progressPublication, publishObserver](
-                                 const RigExecWarmRequest &request) {
+                            runner, frozen, frozenPatch, workspaces, warmIndex,
+                            retained, retainedBytes, provenance,
+                            progressPublication, publishObserver](
+                               const RigExecWarmRequest &request) {
         // Phase marks go to the scheduler's per-run timings (null unless
         // its profiler records); _FinishJob records them as one event.
         RigExecWarmPhaseTimings *const timings = request.timings;
         const auto workerPhase = [timings](const char *name) {
-            if (timings) timings->Mark(name);
+            if (timings)
+                timings->Mark(name);
         };
         workerPhase(nullptr);
         RigExecFrozenEvalContext laneContext = context;
         RigExecWarmWorkspacePool::Lane *lane = workspaces->Acquire();
         struct Lease {
             RigExecWarmWorkspacePool::Lane *lane;
-            ~Lease() { if (lane) lane->busy.store(false); }
+            ~Lease()
+            {
+                if (lane)
+                    lane->busy.store(false);
+            }
         } lease{lane};
         if (lane) {
             // The leased worker retires its old arena. A value edit must not
@@ -2573,9 +2585,9 @@ RigExecImagingRegistry::BuildWarmWork(
                            : RigExecWarmOutcome::DeclinedInvalid;
         }
         const bool pubOk = RigExecPublishBackgroundCompletion(
-            cache, key, request.time, pose, request.generation,
-            scheduler, rig, request.fenceToken, retained,
-            retainedBytes, &provenance, warmIndex.get());
+            cache, key, request.time, pose, request.generation, scheduler, rig,
+            request.fenceToken, retained, retainedBytes, &provenance,
+            warmIndex.get());
         workerPhase("Warm.WorkerPublish");
         if (!pubOk) {
             return stale() ? RigExecWarmOutcome::DeclinedGeneration
@@ -2584,16 +2596,17 @@ RigExecImagingRegistry::BuildWarmWork(
         // No new worker mutex: publication is fenced above; this immutable
         // captured cell only marks its own request, never owner request maps.
         progressPublication.Publish(key, request.generation);
-        if (publishObserver) publishObserver(rig, request.time, key,
-            request.generation, pose, cache);
+        if (publishObserver)
+            publishObserver(rig, request.time, key, request.generation, pose,
+                            cache);
         return RigExecWarmOutcome::Published;
     };
     warmPhase("Warm.WorkConstruction");
     return RigExecWarmFactoryResult{std::move(work)};
 }
 
-
-void RigExecImagingRegistry::SetWarmPublishObserverForTesting(
+void
+RigExecImagingRegistry::SetWarmPublishObserverForTesting(
     WarmPublishObserver observer)
 {
     if (const Ptr routed = _Routed()) {
@@ -2649,7 +2662,7 @@ RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
             continue;
         }
         if (!_warmIndex->IsCursorVisitable(session.rigPath, time, generation,
-                                     compiledRig)) {
+                                           compiledRig)) {
             continue;
         }
         scored.emplace_back(std::abs(time - center), time);
@@ -2730,8 +2743,7 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
                     useCachedRoute = burst && burst->usable;
                     allowPlainRoute =
                         burst && !burst->usable &&
-                        (session.burstOverrun ||
-                         session.burstUpstreamVaries ||
+                        (session.burstOverrun || session.burstUpstreamVaries ||
                          (session.burstDeclined && session.upstream));
                     sweepTimes = _CursorSweepTimes(session, playhead);
                     // Retired frames re-warm FIRST: the
@@ -2739,8 +2751,7 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
                     // edit, so a release re-warms what it retired before
                     // the cursor wanders on.
                     _PrependPendingRewarm(&session, playhead, &sweepTimes);
-                    budget.maxFactoryInvocations =
-                        _warmSamplingMaxInvocations;
+                    budget.maxFactoryInvocations = _warmSamplingMaxInvocations;
                     budget.maxMs = _warmSamplingMaxMs;
                     // Stamped after prep: the stop bounds factory sampling,
                     // not the burst prep above (frozen refresh + rebuild),
@@ -2756,8 +2767,7 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
         RigExecWarmJobFactory factory;
         if (useCachedRoute || allowPlainRoute) {
             RigExecBurstSampleCache *route = useCachedRoute ? burst : nullptr;
-            factory = [this, rig, generation, runner, route](
-                          UsdTimeCode time) {
+            factory = [this, rig, generation, runner, route](UsdTimeCode time) {
                 return BuildWarmWork(rig, time, generation, runner, route);
             };
         }
@@ -2770,12 +2780,11 @@ RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
 }
 
 bool
-RigExecImagingRegistry::_WarmOneFallbackFrame(
-    RigSession *session, UsdTimeCode playhead)
+RigExecImagingRegistry::_WarmOneFallbackFrame(RigSession *session,
+                                              UsdTimeCode playhead)
 {
-    if (!session || !session->warmRangeActive ||
-        session->warmRange.empty() || !session->bridge ||
-        session->playback || !_warmIndex || !_scheduler ||
+    if (!session || !session->warmRangeActive || session->warmRange.empty() ||
+        !session->bridge || session->playback || !_warmIndex || !_scheduler ||
         !session->bridge->GetInteractiveOverrides().empty()) {
         return false;
     }
@@ -2799,9 +2808,11 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(
     bool found = false;
     for (size_t i = 0; i < session->warmRange.size(); ++i) {
         const double time = session->warmRange[i];
-        if (_warmIndex->HasRequestPublished(session->rigPath, time,
+        if (_warmIndex->HasRequestPublished(
+                session->rigPath, time,
                 _scheduler->CurrentGeneration(session->rigPath),
-                RigExecFrameCacheCompiledRigSignature(session->bridge->GetEvaluator())))
+                RigExecFrameCacheCompiledRigSignature(
+                    session->bridge->GetEvaluator())))
             continue;
         if (states[i] == RigExecWarmFrameState::Cached ||
             states[i] == RigExecWarmFrameState::Warming ||
@@ -2828,10 +2839,10 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(
         const auto generation = _scheduler->CurrentGeneration(session->rigPath);
         const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(
             session->bridge->GetEvaluator());
-        if (_warmIndex->FindCachedKey(session->rigPath, candidate,
-                generation, compiledRig, &key))
-            _warmIndex->NoteRequestPublished(session->rigPath, candidate,
-                key, generation, token);
+        if (_warmIndex->FindCachedKey(session->rigPath, candidate, generation,
+                                      compiledRig, &key))
+            _warmIndex->NoteRequestPublished(session->rigPath, candidate, key,
+                                             generation, token);
     }
     return true;
 }
@@ -2891,15 +2902,13 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
                     useCachedRoute = burst && burst->usable;
                     allowPlainRoute =
                         burst && !burst->usable &&
-                        (session.burstOverrun ||
-                         session.burstUpstreamVaries ||
+                        (session.burstOverrun || session.burstUpstreamVaries ||
                          (session.burstDeclined && session.upstream));
                     sweepTimes = _CursorSweepTimes(session, playhead);
                     // Retired frames first here too: without-Qt the idle
                     // tick is the only recurring driver.
                     _PrependPendingRewarm(&session, playhead, &sweepTimes);
-                    budget.maxFactoryInvocations =
-                        _warmSamplingMaxInvocations;
+                    budget.maxFactoryInvocations = _warmSamplingMaxInvocations;
                     budget.maxMs = _warmSamplingMaxMs;
                     // Stamped after prep: the stop bounds factory sampling,
                     // not the burst prep above (frozen refresh + rebuild),
@@ -2915,14 +2924,13 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
         RigExecWarmJobFactory factory;
         if (useCachedRoute || allowPlainRoute) {
             RigExecBurstSampleCache *route = useCachedRoute ? burst : nullptr;
-            factory = [this, rig, generation, runner, route](
-                          UsdTimeCode time) {
+            factory = [this, rig, generation, runner, route](UsdTimeCode time) {
                 return BuildWarmWork(rig, time, generation, runner, route);
             };
         }
-        enqueued += scheduler->OnIdle(
-            rig, playhead, generation, std::move(sweepTimes),
-            std::move(factory), budget);
+        enqueued +=
+            scheduler->OnIdle(rig, playhead, generation, std::move(sweepTimes),
+                              std::move(factory), budget);
     }
     // Workers remain the preferred route. If they made no progress and
     // have drained, fill one outstanding frame through the live evaluator.
@@ -3029,8 +3037,7 @@ RigExecImagingRegistry::_CancelGenerationTimesLocked(const SdfPath &rig)
     times.insert(times.end(), completed.begin(), completed.end());
     _scheduler->CancelGenerationTimes(rig, times);
     for (const UsdTimeCode &time : times) {
-        _warmIndex->NoteDirtied(
-            rig, time.IsDefault() ? 0.0 : time.GetValue());
+        _warmIndex->NoteDirtied(rig, time.IsDefault() ? 0.0 : time.GetValue());
     }
 }
 
@@ -3054,8 +3061,8 @@ RigExecImagingRegistry::_NotePendingRewarm(RigSession *session,
             break;
         }
         if (std::find(session->pendingRewarm.begin(),
-                      session->pendingRewarm.end(), time) ==
-            session->pendingRewarm.end()) {
+                      session->pendingRewarm.end(),
+                      time) == session->pendingRewarm.end()) {
             session->pendingRewarm.push_back(time);
         }
     }
@@ -3070,8 +3077,7 @@ RigExecImagingRegistry::_PrependPendingRewarm(
         !session->bridge || !_scheduler || !_warmIndex) {
         return;
     }
-    const double center =
-        playhead.IsNumeric() ? playhead.GetValue() : 0.0;
+    const double center = playhead.IsNumeric() ? playhead.GetValue() : 0.0;
     // One batched read, no sampling on the query path.
     const RigExecFrameGeneration generation =
         _scheduler->CurrentGeneration(session->rigPath);
@@ -3084,8 +3090,7 @@ RigExecImagingRegistry::_PrependPendingRewarm(
     for (size_t i = 0; i < session->pendingRewarm.size(); ++i) {
         const double time = session->pendingRewarm[i];
         const RigExecWarmFrameState state =
-            i < states.size() ? states[i]
-                              : RigExecWarmFrameState::Uncached;
+            i < states.size() ? states[i] : RigExecWarmFrameState::Uncached;
         if (state == RigExecWarmFrameState::Cached) {
             continue;
         }
@@ -3197,8 +3202,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
     } else {
         controls = RigExecNoticeControlIds(notice);
     }
-    const RigExecBakedClusterSet dirty =
-        index->AffectedByControls(controls);
+    const RigExecBakedClusterSet dirty = index->AffectedByControls(controls);
     // Weight-object edits: a notice path at or under a weight object an
     // entry read (WeightPacket steps resolve through step.object, outside
     // the avar-only index, so the provenance read set is the oracle).
@@ -3212,8 +3216,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
             noticePaths.push_back(path.GetPrimPath());
         }
     }
-    for (const SdfPath &path :
-         notice.GetResolvedAssetPathsResyncedPaths()) {
+    for (const SdfPath &path : notice.GetResolvedAssetPathsResyncedPaths()) {
         noticePaths.push_back(path);
     }
     const uint64_t newConstants = [&]() {
@@ -3221,8 +3224,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
                                   "Notice.ConstantDigest", "notice");
         return RigExecCompiledRigConstantDigest(*program);
     }();
-    const std::shared_ptr<RigExecFrameCache> cache =
-        bridge->GetFrameCache();
+    const std::shared_ptr<RigExecFrameCache> cache = bridge->GetFrameCache();
     const std::vector<std::pair<UsdTimeCode, RigExecFrameCacheKey>> done =
         _warmIndex->CompletedKeys(rig);
     std::vector<UsdTimeCode> purge = inFlight;
@@ -3235,8 +3237,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
                                        "Notice.RetireEntry", "notice");
         const UsdTimeCode time = entry.first;
         const RigExecFrameCacheKey &oldKey = entry.second;
-        const double stamped =
-            time.IsDefault() ? 0.0 : time.GetValue();
+        const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
         RigExecEntryProvenance provenance;
         bool affected = true;
         if (cache && cache->LookupProvenance(oldKey, &provenance) &&
@@ -3253,8 +3254,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
             for (const int cluster : provenance.clusters) {
                 // Bounded by hand: ClusterSet::Test guards negative
                 // only, and provenance is publisher-controlled.
-                if (cluster >= 0 &&
-                    size_t(cluster) < dirty.words.size() * 64 &&
+                if (cluster >= 0 && size_t(cluster) < dirty.words.size() * 64 &&
                     dirty.Test(cluster)) {
                     affected = true;
                     break;
@@ -3290,8 +3290,8 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
                 RigExecEntryProvenance carried;
                 if (cache->LookupProvenance(oldKey, &carried) &&
                     carried.unfoldedControlDigest != 0 &&
-                    RigExecFoldConstantDigest(
-                        carried.unfoldedControlDigest, newConstants) !=
+                    RigExecFoldConstantDigest(carried.unfoldedControlDigest,
+                                              newConstants) !=
                         oldKey.controlDigest) {
                     // A namespace move the carry declined (evicted base,
                     // pose-only entry, over-cap re-publish): retire and
@@ -3417,10 +3417,13 @@ RigExecImagingRegistry::ClearFrameCache(const SdfPath &rig)
         }
         _warmIndex->ResetRig(rig);
         for (RigSession &session : _sessions) {
-            if (session.rigPath == rig && session.warmRangeActive && session.bridge)
-                _warmIndex->SetRequest(rig, session.warmRange,
+            if (session.rigPath == rig && session.warmRangeActive &&
+                session.bridge)
+                _warmIndex->SetRequest(
+                    rig, session.warmRange,
                     _scheduler ? _scheduler->CurrentGeneration(rig) : 0,
-                    RigExecFrameCacheCompiledRigSignature(session.bridge->GetEvaluator()));
+                    RigExecFrameCacheCompiledRigSignature(
+                        session.bridge->GetEvaluator()));
         }
         for (RigSession &session : _sessions) {
             if (session.rigPath == rig) {
@@ -3455,24 +3458,23 @@ RigExecImagingRegistry::SetWarmRange(const SdfPath &rig,
         const RigExecUpstreamPullWindow before =
             _PullWindow(ranges(), stage, _lastTime);
         for (RigSession &session : _sessions) {
-            if (session.rigPath == rig && !session.playback &&
-                session.bridge) {
+            if (session.rigPath == rig && !session.playback && session.bridge) {
                 session.warmRange.clear();
                 for (const double time : frames) {
                     if (std::isfinite(time)) {
                         session.warmRange.push_back(time);
                     }
                 }
-                std::sort(session.warmRange.begin(),
-                          session.warmRange.end());
-                session.warmRange.erase(
-                    std::unique(session.warmRange.begin(),
-                                session.warmRange.end()),
-                    session.warmRange.end());
+                std::sort(session.warmRange.begin(), session.warmRange.end());
+                session.warmRange.erase(std::unique(session.warmRange.begin(),
+                                                    session.warmRange.end()),
+                                        session.warmRange.end());
                 session.warmRangeActive = true;
-                _warmIndex->SetRequest(rig, session.warmRange,
+                _warmIndex->SetRequest(
+                    rig, session.warmRange,
                     _scheduler ? _scheduler->CurrentGeneration(rig) : 0,
-                    RigExecFrameCacheCompiledRigSignature(session.bridge->GetEvaluator()));
+                    RigExecFrameCacheCompiledRigSignature(
+                        session.bridge->GetEvaluator()));
                 session.fallbackDeclined.clear();
                 found = true;
                 break;
@@ -3619,7 +3621,8 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         if (!_ParseOverlayPath(weightPrimPath, &resolved)) {
             return false;
         }
-        if (_weightOverlay == resolved) return true;
+        if (_weightOverlay == resolved)
+            return true;
         _weightOverlay = resolved;
         if (_sessions.empty()) {
             // Remembered for whenever a rig is activated. Not a failure:
@@ -3704,7 +3707,8 @@ _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
     static const TfToken kVec3fArray("vec3f[]");
     *arity = 0;
     if (type == SdfValueTypeNames->FloatArray) {
-        if (!hasElementCount) return TfToken();
+        if (!hasElementCount)
+            return TfToken();
         *arity = elementCount;
         return kPreviewFloatArray;
     }
@@ -3762,7 +3766,8 @@ _PreviewValue(const TfToken &kind, const double *v, size_t arity)
     if (kind == kPreviewFloatArray) {
         VtFloatArray array(arity);
         float *out = array.data();
-        for (size_t i = 0; i < arity; ++i) out[i] = float(v[i]);
+        for (size_t i = 0; i < arity; ++i)
+            out[i] = float(v[i]);
         return VtValue(std::move(array));
     }
     if (kind == "float2[]") {
@@ -3795,9 +3800,9 @@ _PreviewValue(const TfToken &kind, const double *v, size_t arity)
         return VtValue(GfVec3f(float(v[0]), float(v[1]), float(v[2])));
     }
     if (kind == "matrix4d") {
-        return VtValue(GfMatrix4d(
-            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
-            v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]));
+        return VtValue(GfMatrix4d(v[0], v[1], v[2], v[3], v[4], v[5], v[6],
+                                  v[7], v[8], v[9], v[10], v[11], v[12], v[13],
+                                  v[14], v[15]));
     }
     return VtValue();
 }
@@ -3823,7 +3828,7 @@ _SplitLines(const std::string &packed)
     return out;
 }
 
-}  // namespace
+} // namespace
 
 int
 RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
@@ -3866,9 +3871,9 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
         PreviewSlot slot;
         slot.primPath = path.GetPrimPath();
         slot.attributeName = path.GetNameToken();
-        slot.valueKind = _PreviewValueKind(
-            attribute.GetTypeName(), hasElementCount, elementCount,
-            &slot.arity);
+        slot.valueKind =
+            _PreviewValueKind(attribute.GetTypeName(), hasElementCount,
+                              elementCount, &slot.arity);
         if (slot.valueKind.IsEmpty()) {
             return -1;
         }
@@ -3878,8 +3883,7 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
         // so an attribute under one falls through to the xform lane (or
         // is refused, when it is not an xform op either).
         for (const RigSession &session : _sessions) {
-            if (!session.playback &&
-                slot.primPath.HasPrefix(session.rigPath)) {
+            if (!session.playback && slot.primPath.HasPrefix(session.rigPath)) {
                 slot.rigPath = session.rigPath;
                 break;
             }
@@ -3917,10 +3921,8 @@ RigExecImagingRegistry::IsPreviewActive() const
 
 bool
 RigExecImagingRegistry::_ComposeXformDelta(
-    const UsdPrim &prim,
-    const std::map<TfToken, VtValue> &opValues,
-    UsdGeomXformCache *cache,
-    GfMatrix4d *delta) const
+    const UsdPrim &prim, const std::map<TfToken, VtValue> &opValues,
+    UsdGeomXformCache *cache, GfMatrix4d *delta) const
 {
     const UsdGeomXformable xformable(prim);
     if (!xformable || !cache || !delta) {
@@ -3965,9 +3967,9 @@ RigExecImagingRegistry::_ComposeXformDelta(
     // RigExecXformOverrideSceneIndex post-multiplies. A prim that resets the
     // xform stack has no parent contribution, and then the conjugation
     // collapses to local^-1 . local' on its own.
-    const GfMatrix4d parentToWorld = resetsXformStack
-        ? GfMatrix4d(1.0)
-        : cache->GetParentToWorldTransform(prim);
+    const GfMatrix4d parentToWorld =
+        resetsXformStack ? GfMatrix4d(1.0)
+                         : cache->GetParentToWorldTransform(prim);
     const GfMatrix4d parentInverse = parentToWorld.GetInverse();
     *delta = parentInverse * authored.GetInverse() * previewed * parentToWorld;
     return true;
@@ -4008,8 +4010,7 @@ RigExecImagingRegistry::_ResolvePreviewSample(
             const UsdPrim prim =
                 stage ? stage->GetPrimAtPath(primPath) : UsdPrim();
             GfMatrix4d delta(1.0);
-            if (!prim ||
-                !_ComposeXformDelta(prim, opValues, &cache, &delta)) {
+            if (!prim || !_ComposeXformDelta(prim, opValues, &cache, &delta)) {
                 return false;
             }
             (*xformDeltas)[primPath] = delta;
@@ -4177,8 +4178,10 @@ RigExecImagingRegistry::_NoticeSettlesPreview(
     // Metadata edits and prim resyncs still require evaluation.
     const auto inertAncestor = [&](const SdfPath &path) {
         return path.IsPrimPath() && notice.GetChangedFields(path).empty() &&
-            std::any_of(stashed.begin(), stashed.end(),
-                [&](const SdfPath &property) { return property.HasPrefix(path); });
+               std::any_of(stashed.begin(), stashed.end(),
+                           [&](const SdfPath &property) {
+                               return property.HasPrefix(path);
+                           });
     };
     const auto valueEdit = [&](const SdfPath &path) {
         if (!stashed.count(path)) {
@@ -4216,8 +4219,7 @@ RigExecImagingRegistry::_NoticeSettlesPreview(
             entry.prim.AppendProperty(entry.attribute));
         VtValue authored;
         if (!attribute || attribute.HasAuthoredConnections() ||
-            !attribute.Get(&authored, _lastTime) ||
-            authored != entry.value) {
+            !attribute.Get(&authored, _lastTime) || authored != entry.value) {
             return false;
         }
     }
@@ -4262,7 +4264,8 @@ RigExecImagingRegistry::_OnGuideOnlyObjectsChanged(
             bool displayValue = path.IsPropertyPath() && !retryOnValues;
             if (displayValue) {
                 const TfToken &name = path.GetNameToken();
-                displayValue = name == UsdGeomTokens->visibility ||
+                displayValue =
+                    name == UsdGeomTokens->visibility ||
                     name == UsdGeomTokens->purpose ||
                     name == UsdGeomTokens->xformOpOrder ||
                     TfStringStartsWith(name.GetString(), "xformOp:") ||
@@ -4318,7 +4321,7 @@ RigExecImagingRegistry::_OnObjectsChanged(
     {
         std::lock_guard<std::mutex> lock(_mutex);
         authoredOnly = _sessions.empty() && !_authoredGuides.empty() &&
-            sender == UsdStageWeakPtr(_stage);
+                       sender == UsdStageWeakPtr(_stage);
         if (authoredOnly) {
             automatic = _autoActivated;
             retryOnValues = _authoredGuidesRetryOnValues;
@@ -4468,7 +4471,8 @@ RigExecImagingRegistry::_OnObjectsChanged(
                 const auto affects = [&session](const SdfPath &path) {
                     const SdfPath prim = path.GetPrimPath();
                     for (const SdfPath &root : session.readRoots) {
-                        if (prim.HasPrefix(root) || root.HasPrefix(prim)) return true;
+                        if (prim.HasPrefix(root) || root.HasPrefix(prim))
+                            return true;
                     }
                     return false;
                 };
@@ -4485,18 +4489,19 @@ RigExecImagingRegistry::_OnObjectsChanged(
                 // a new asset (or a new file behind it) needs a
                 // re-activation.
                 if (affected && !session.playback) {
-                    RigExecProfileScope noticeScope(session.bridge->MutableProfiler(),
-                                                    "Notice.Imaging", "notice");
+                    RigExecProfileScope noticeScope(
+                        session.bridge->MutableProfiler(), "Notice.Imaging",
+                        "notice");
                     // A commit of the pose on screen: the published
                     // generation is already the stage's answer.
-                    const bool settled =
-                        !session.settleOverrides.empty() &&
-                        _NoticeSettlesPreview(session, notice);
+                    const bool settled = !session.settleOverrides.empty() &&
+                                         _NoticeSettlesPreview(session, notice);
                     if (!settled) {
                         session.settleOverrides.clear();
                     }
                     session.dirty = !settled;
-                    session.readRootsDirty = session.readRootsDirty || _readRootsDirty;
+                    session.readRootsDirty =
+                        session.readRootsDirty || _readRootsDirty;
                     // The bridge caches authored guide styling (shape, scale,
                     // colour, purpose...) across generations; an edit that
                     // reaches the rig is the only thing that can move it,
@@ -4522,29 +4527,31 @@ RigExecImagingRegistry::_OnObjectsChanged(
                     std::vector<SdfPath> patchedPaths;
                     const RigExecNoticeDisposition disposition =
                         session.bridge->GetEvaluator()
-                            .ClassifyNoticeDisposition(notice,
-                                                       &patchedPaths);
+                            .ClassifyNoticeDisposition(notice, &patchedPaths);
                     const auto namesRig = [&session](const SdfPath &path) {
                         return path.HasPrefix(session.rigPath) ||
                                session.rigPath.HasPrefix(path);
                     };
                     const auto resynced = notice.GetResyncedPaths();
                     const auto changed = notice.GetChangedInfoOnlyPaths();
-                    const bool rigStructureChanged = session.readRootsDirty &&
-                        (std::any_of(resynced.begin(), resynced.end(), namesRig) ||
+                    const bool rigStructureChanged =
+                        session.readRootsDirty &&
+                        (std::any_of(resynced.begin(), resynced.end(),
+                                     namesRig) ||
                          std::any_of(changed.begin(), changed.end(), namesRig));
                     if (rigStructureChanged) {
                         // A removed binding can disappear from the capture
                         // index before this handler sees its notice.
                         _CancelGenerationLocked(session.rigPath);
                         session.bridge->ClearFrameCache();
-                    } else if (disposition == RigExecNoticeDisposition::Patched ||
-                        disposition == RigExecNoticeDisposition::Edited ||
-                        disposition ==
-                            RigExecNoticeDisposition::StampBumped) {
+                    } else if (disposition ==
+                                   RigExecNoticeDisposition::Patched ||
+                               disposition ==
+                                   RigExecNoticeDisposition::Edited ||
+                               disposition ==
+                                   RigExecNoticeDisposition::StampBumped) {
                         _RetireAffectedTimesLocked(&session, notice,
-                                                   disposition,
-                                                   patchedPaths);
+                                                   disposition, patchedPaths);
                     } else {
                         // A new edit bumps the warming generation and
                         // cancels in-flight jobs for the rig; the commit
@@ -4705,8 +4712,7 @@ RigExecImagingRegistry::_FrameTableStampLocked() const
 
 bool
 RigExecImagingRegistry::_CachedFrameLocked(
-    double time, std::shared_ptr<RigExecImagingSnapshot> *frame,
-    bool evaluate)
+    double time, std::shared_ptr<RigExecImagingSnapshot> *frame, bool evaluate)
 {
     const UsdTimeCode at(time);
     auto combined = std::make_shared<RigExecImagingSnapshot>();
@@ -4796,8 +4802,7 @@ RigExecImagingRegistry::_CachedFrameLocked(
 }
 
 size_t
-RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames,
-                                           bool allowFallback)
+RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames, bool allowFallback)
 {
     if (const Ptr routed = _Routed()) {
         return routed->ServiceFrameDemand(maxFrames, allowFallback);
@@ -4817,8 +4822,9 @@ RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames,
         // asked for meanwhile wait for it to end.
         bool previewing = _previewActive;
         for (const RigSession &session : _sessions) {
-            previewing = previewing || (session.bridge &&
-                !session.bridge->GetInteractiveOverrides().empty());
+            previewing = previewing ||
+                         (session.bridge &&
+                          !session.bridge->GetInteractiveOverrides().empty());
         }
         std::vector<double> wanted = _frameTable->TakeDemand();
         wanted.insert(wanted.end(), _pendingFrameDemand.begin(),
@@ -4826,12 +4832,11 @@ RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames,
         _pendingFrameDemand.clear();
         const double playhead =
             _lastTime.IsNumeric() ? _lastTime.GetValue() : 0.0;
-        std::sort(wanted.begin(), wanted.end(),
-                  [playhead](double a, double b) {
-                      const double da = std::abs(a - playhead);
-                      const double db = std::abs(b - playhead);
-                      return da != db ? da < db : a > b;
-                  });
+        std::sort(wanted.begin(), wanted.end(), [playhead](double a, double b) {
+            const double da = std::abs(a - playhead);
+            const double db = std::abs(b - playhead);
+            return da != db ? da < db : a > b;
+        });
         std::set<int64_t> seen;
         bool fallbackUsed = false;
         std::map<int64_t, int> ages;
@@ -4842,7 +4847,8 @@ RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames,
                 continue;
             }
             const auto aged = _pendingFrameAge.find(key);
-            const int age = (aged == _pendingFrameAge.end() ? 0 : aged->second) + 1;
+            const int age =
+                (aged == _pendingFrameAge.end() ? 0 : aged->second) + 1;
             std::shared_ptr<RigExecImagingSnapshot> frame;
             if (!previewing && added < maxFrames) {
                 bool ready = _CachedFrameLocked(time, &frame);
@@ -4924,7 +4930,7 @@ RigExecImagingRegistry::_Broadcast(
     }
 }
 
-}  // namespace rigExec
+} // namespace rigExec
 
 // C activation surface.
 
@@ -4938,15 +4944,19 @@ _CustomControlRange(const PXR_NS::VtVec3fArray &points,
 {
     PXR_NS::GfRange3d range;
     size_t total = 0;
-    if (counts.empty()) return range;
+    if (counts.empty())
+        return range;
     for (int count : counts) {
-        if (count < 2 || size_t(count) > points.size() - total) return range;
+        if (count < 2 || size_t(count) > points.size() - total)
+            return range;
         total += size_t(count);
     }
-    if (total != points.size()) return range;
+    if (total != points.size())
+        return range;
     for (const PXR_NS::GfVec3f &p : points) {
         for (int axis = 0; axis < 3; ++axis) {
-            if (!std::isfinite(p[axis])) return PXR_NS::GfRange3d();
+            if (!std::isfinite(p[axis]))
+                return PXR_NS::GfRange3d();
         }
         range.UnionWith(PXR_NS::GfVec3d(p));
     }
@@ -4956,8 +4966,8 @@ _CustomControlRange(const PXR_NS::VtVec3fArray &points,
 // Grows \p range to cover everything one published prim draws, in ASSET
 // space. Returns whether it contributed anything at all.
 bool
-_AccumulateGuideBounds(
-    const rigExec::RigExecPublishedPrim &published, PXR_NS::GfRange3d *range)
+_AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
+                       PXR_NS::GfRange3d *range)
 {
     bool any = false;
 
@@ -4968,10 +4978,10 @@ _AccumulateGuideBounds(
     // conservative by design and also covers sphere-less branch links.
     for (size_t i = 0; i < published.guideFrames.size(); ++i) {
         const PXR_NS::GfMatrix4d &frame = published.guideFrames[i];
-        const double radius = i < published.guideRadii.size()
-            ? published.guideRadii[i] : 1.0;
-        const double length = i < published.guideLengths.size()
-            ? published.guideLengths[i] : 0.0;
+        const double radius =
+            i < published.guideRadii.size() ? published.guideRadii[i] : 1.0;
+        const double length =
+            i < published.guideLengths.size() ? published.guideLengths[i] : 0.0;
         const PXR_NS::GfVec3d origin = frame.ExtractTranslation();
         // Row-vector convention: row 0 is the frame's X basis, and the
         // frame is orthonormalized upstream, so it is already unit length.
@@ -5007,19 +5017,20 @@ _AccumulateGuideBounds(
             published.controlGuideWireWidth > 0.0) {
             halfWidth = published.controlGuideWireWidth * 0.5;
         }
-        PXR_NS::GfRange3d local = published.controlGuideShape ==
-            PXR_NS::TfToken("custom")
-            ? _CustomControlRange(published.controlGuidePoints,
-                                  published.controlGuideCounts)
-            : PXR_NS::GfRange3d(PXR_NS::GfVec3d(-1), PXR_NS::GfVec3d(1));
+        PXR_NS::GfRange3d local =
+            published.controlGuideShape == PXR_NS::TfToken("custom")
+                ? _CustomControlRange(published.controlGuidePoints,
+                                      published.controlGuideCounts)
+                : PXR_NS::GfRange3d(PXR_NS::GfVec3d(-1), PXR_NS::GfVec3d(1));
         if (!local.IsEmpty()) {
             const PXR_NS::GfVec3d pad(halfWidth);
-            local = PXR_NS::GfRange3d(local.GetMin() - pad,
-                                      local.GetMax() + pad);
+            local =
+                PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
             PXR_NS::GfMatrix4d scale(1.0);
             scale.SetScale(published.controlGuideScale);
-            range->UnionWith(PXR_NS::GfBBox3d(
-                local, scale * published.controlGuideFrame).ComputeAlignedRange());
+            range->UnionWith(
+                PXR_NS::GfBBox3d(local, scale * published.controlGuideFrame)
+                    .ComputeAlignedRange());
             any = true;
         }
     }
@@ -5031,7 +5042,7 @@ _AccumulateGuideBounds(
     // for. The implicits (a solid sphere iso-surface) carry no points and
     // are the unit sphere by construction, so ±1 is exact for them too.
     for (const rigExec::RigExecVolumeGuideElement &element :
-             published.volumeGuides) {
+         published.volumeGuides) {
         PXR_NS::GfRange3d local;
         for (const PXR_NS::GfVec3f &p : element.points) {
             local.UnionWith(PXR_NS::GfVec3d(p));
@@ -5043,11 +5054,10 @@ _AccumulateGuideBounds(
         // Wire curves are drawn with a width in the element's own local
         // units, so the drawn geometry reaches half a width past the
         // points -- the same correction the control arm applies.
-        if (element.wireWidth > 0.0 &&
-            std::isfinite(element.wireWidth)) {
+        if (element.wireWidth > 0.0 && std::isfinite(element.wireWidth)) {
             const PXR_NS::GfVec3d pad(element.wireWidth * 0.5);
-            local = PXR_NS::GfRange3d(local.GetMin() - pad,
-                                      local.GetMax() + pad);
+            local =
+                PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
         }
         range->UnionWith(
             PXR_NS::GfBBox3d(local, element.xform).ComputeAlignedRange());
@@ -5073,9 +5083,10 @@ _AccumulateGuideBounds(
 // with guides on would frame around it twice. Differing-purpose
 // descendants are excluded here and warned about at compile.
 bool
-_AccumulateSubtreeGuideBounds(
-    const rigExec::RigExecImagingSnapshot &snapshot, const PXR_NS::SdfPath &path,
-    const PXR_NS::TfToken &purpose, PXR_NS::GfRange3d *range)
+_AccumulateSubtreeGuideBounds(const rigExec::RigExecImagingSnapshot &snapshot,
+                              const PXR_NS::SdfPath &path,
+                              const PXR_NS::TfToken &purpose,
+                              PXR_NS::GfRange3d *range)
 {
     bool any = false;
     // The published set is path-keyed and sorted, so the subtree is one
@@ -5113,9 +5124,9 @@ _ResolvedPurpose(const PXR_NS::UsdPrim &prim)
 // nothing: a bounding box that collapses the moment the rig is not running
 // makes framing fail exactly where a user reaches for it first.
 bool
-_AccumulateRestGuideBounds(
-    const PXR_NS::UsdPrim &prim, const PXR_NS::UsdTimeCode &time,
-    PXR_NS::GfRange3d *range)
+_AccumulateRestGuideBounds(const PXR_NS::UsdPrim &prim,
+                           const PXR_NS::UsdTimeCode &time,
+                           PXR_NS::GfRange3d *range)
 {
     auto number = [&prim, &time](const char *name, double fallback) {
         double value = fallback;
@@ -5142,14 +5153,16 @@ _AccumulateRestGuideBounds(
         return value;
     };
     bool rigid = false;
-    const PXR_NS::GfMatrix4d rest = rigExec::RigExecAuthoredGuideRestSpace(prim, time, &rigid);
+    const PXR_NS::GfMatrix4d rest =
+        rigExec::RigExecAuthoredGuideRestSpace(prim, time, &rigid);
     if (!rigid) {
         return false;
     }
     const PXR_NS::TfToken type = prim.GetTypeName();
 
     if (type == "RigExecControl") {
-        if (floatNumber("guide:displayOpacity", 0.5) <= 0.0) return false;
+        if (floatNumber("guide:displayOpacity", 0.5) <= 0.0)
+            return false;
         // Same predicate the scene index draws through: an unrecognized
         // shape/drawMode pair synthesizes nothing and must bound nothing.
         const PXR_NS::TfToken shape = token("guide:shape", "circle");
@@ -5157,22 +5170,22 @@ _AccumulateRestGuideBounds(
         if (!rigExec::RigExecControlGuideIsDrawn(shape, drawMode)) {
             return false;
         }
-        const PXR_NS::GfVec3d authoredScale(
-            number("guide:scaleX", 1.0), number("guide:scaleY", 1.0),
-            number("guide:scaleZ", 1.0));
+        const PXR_NS::GfVec3d authoredScale(number("guide:scaleX", 1.0),
+                                            number("guide:scaleY", 1.0),
+                                            number("guide:scaleZ", 1.0));
         PXR_NS::GfVec3d scale(1.0);
-        static const char *avarScaleNames[3] = {
-            "avars:sx", "avars:sy", "avars:sz"};
+        static const char *avarScaleNames[3] = {"avars:sx", "avars:sy",
+                                                "avars:sz"};
         for (int i = 0; i < 3; ++i) {
             if (!std::isfinite(authoredScale[i]) || authoredScale[i] <= 0.0) {
-                return false;  // draws nothing, so it bounds nothing
+                return false; // draws nothing, so it bounds nothing
             }
             // No evaluated frame exists on this fallback path. Resolve the
             // authored channel at the queried time with the SAME floor and
             // non-finite policy as the runtime, then size the guide by its
             // magnitude so a supported reflection remains visible.
-            const double avarMagnitude = std::abs(
-                rigExec::RigExecNormalizeAvarScale(
+            const double avarMagnitude =
+                std::abs(rigExec::RigExecNormalizeAvarScale(
                     number(avarScaleNames[i], 1.0)));
             scale[i] = authoredScale[i] * avarMagnitude;
             if (!std::isfinite(scale[i]) || scale[i] <= 0.0) {
@@ -5189,26 +5202,33 @@ _AccumulateRestGuideBounds(
         if (shape == PXR_NS::TfToken("custom")) {
             PXR_NS::VtVec3fArray points;
             PXR_NS::VtIntArray counts;
-            prim.GetAttribute(PXR_NS::TfToken("guide:points")).Get(&points, time);
-            prim.GetAttribute(PXR_NS::TfToken("guide:curveVertexCounts")).Get(&counts, time);
+            prim.GetAttribute(PXR_NS::TfToken("guide:points"))
+                .Get(&points, time);
+            prim.GetAttribute(PXR_NS::TfToken("guide:curveVertexCounts"))
+                .Get(&counts, time);
             PXR_NS::GfRange3d local = _CustomControlRange(points, counts);
-            if (local.IsEmpty()) return false;
+            if (local.IsEmpty())
+                return false;
             const PXR_NS::GfVec3d pad(halfWidth);
-            local = PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
+            local =
+                PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
             PXR_NS::GfVec3d signedScale;
             for (int axis = 0; axis < 3; ++axis) {
                 signedScale[axis] = rigExec::RigExecNormalizeAvarScale(
                     number(avarScaleNames[axis], 1.0));
             }
             PXR_NS::GfVec3d offset(0.0);
-            prim.GetAttribute(PXR_NS::TfToken("guide:offset")).Get(&offset, time);
+            prim.GetAttribute(PXR_NS::TfToken("guide:offset"))
+                .Get(&offset, time);
             PXR_NS::GfMatrix4d scaleMatrix(1.0);
             scaleMatrix.SetScale(signedScale);
             PXR_NS::GfMatrix4d shapeScale(1.0);
             shapeScale.SetScale(authoredScale);
             const PXR_NS::GfMatrix4d placement =
-                shapeScale * PXR_NS::GfMatrix4d(1.0).SetTranslate(offset) * scaleMatrix * rest;
-            range->UnionWith(PXR_NS::GfBBox3d(local, placement).ComputeAlignedRange());
+                shapeScale * PXR_NS::GfMatrix4d(1.0).SetTranslate(offset) *
+                scaleMatrix * rest;
+            range->UnionWith(
+                PXR_NS::GfBBox3d(local, placement).ComputeAlignedRange());
             return true;
         }
         // The unit shape, for the same reason the snapshot path uses it:
@@ -5216,9 +5236,8 @@ _AccumulateRestGuideBounds(
         const PXR_NS::GfVec3d half(scale[0] * (1.0 + halfWidth),
                                    scale[1] * (1.0 + halfWidth),
                                    scale[2] * (1.0 + halfWidth));
-        range->UnionWith(
-            PXR_NS::GfBBox3d(PXR_NS::GfRange3d(-half, half), rest)
-                .ComputeAlignedRange());
+        range->UnionWith(PXR_NS::GfBBox3d(PXR_NS::GfRange3d(-half, half), rest)
+                             .ComputeAlignedRange());
         return true;
     }
     if (type == "RigExecJoint") {
@@ -5234,8 +5253,7 @@ _AccumulateRestGuideBounds(
         // A joint's outgoing links terminate at every descendant whose
         // nearest RigExecJoint ancestor is this prim. Intervening grouping
         // scopes therefore preserve the same hierarchy used by evaluation.
-        for (const PXR_NS::UsdPrim &candidate :
-             PXR_NS::UsdPrimRange(prim)) {
+        for (const PXR_NS::UsdPrim &candidate : PXR_NS::UsdPrimRange(prim)) {
             if (candidate == prim ||
                 candidate.GetTypeName() != "RigExecJoint") {
                 continue;
@@ -5250,14 +5268,14 @@ _AccumulateRestGuideBounds(
             }
             bool childRigid = false;
             const PXR_NS::GfMatrix4d childRest =
-                rigExec::RigExecAuthoredGuideRestSpace(candidate, time, &childRigid);
+                rigExec::RigExecAuthoredGuideRestSpace(candidate, time,
+                                                       &childRigid);
             if (!childRigid) {
                 continue;
             }
             const PXR_NS::GfVec3d tip = childRest.ExtractTranslation();
             if (!std::isfinite(tip[0]) || !std::isfinite(tip[1]) ||
-                !std::isfinite(tip[2]) ||
-                (tip - origin).GetLength() <= 1e-12) {
+                !std::isfinite(tip[2]) || (tip - origin).GetLength() <= 1e-12) {
                 continue;
             }
             range->UnionWith(tip - extent);
@@ -5265,14 +5283,13 @@ _AccumulateRestGuideBounds(
         }
         return true;
     }
-    if (type == "RigExecSphereWeight" ||
-        type == "RigExecPlaneWeight" ||
+    if (type == "RigExecSphereWeight" || type == "RigExecPlaneWeight" ||
         type == "RigExecCurveWeight") {
         const PXR_NS::TfToken drawMode = token("guide:drawMode", "falloff");
         const bool clean = drawMode == rigExec::_tWeightFalloff ||
-            drawMode == rigExec::_tWeightCage ||
-            drawMode == rigExec::_tWeightBrackets ||
-            drawMode == rigExec::_tWeightShell;
+                           drawMode == rigExec::_tWeightCage ||
+                           drawMode == rigExec::_tWeightBrackets ||
+                           drawMode == rigExec::_tWeightShell;
         if (drawMode != rigExec::_tWeightWire &&
             drawMode != rigExec::_tWeightGeometry && !clean) {
             return false;
@@ -5285,20 +5302,20 @@ _AccumulateRestGuideBounds(
                 halfWidth = width * (clean ? 0.15 : 0.5);
             }
         }
-        const double falloffMin =
-            floatNumber("inputs:falloffMin", 0.0);
-        const double falloffMax =
-            floatNumber("inputs:falloffMax", 1.0);
+        const double falloffMin = floatNumber("inputs:falloffMin", 0.0);
+        const double falloffMax = floatNumber("inputs:falloffMax", 1.0);
         if (!std::isfinite(falloffMin) || !std::isfinite(falloffMax)) {
             return false;
         }
 
         if (type == "RigExecPlaneWeight") {
-            const PXR_NS::TfToken axisName =
-                token("rigExec:planeAxis", "y");
-            const int axis = axisName == PXR_NS::TfToken("x") ? 0
-                : (axisName == PXR_NS::TfToken("y") ? 1
-                   : (axisName == PXR_NS::TfToken("z") ? 2 : -1));
+            const PXR_NS::TfToken axisName = token("rigExec:planeAxis", "y");
+            const int axis =
+                axisName == PXR_NS::TfToken("x")
+                    ? 0
+                    : (axisName == PXR_NS::TfToken("y")
+                           ? 1
+                           : (axisName == PXR_NS::TfToken("z") ? 2 : -1));
             const PXR_NS::TfToken bounds =
                 token("rigExec:planeBounds", "unbounded");
             const double extentU = floatNumber("inputs:extentU", 1.0);
@@ -5331,10 +5348,9 @@ _AccumulateRestGuideBounds(
             return true;
         }
 
-        PXR_NS::GfVec3d axisScale(
-            floatNumber("inputs:scaleX", 1.0),
-            floatNumber("inputs:scaleY", 1.0),
-            floatNumber("inputs:scaleZ", 1.0));
+        PXR_NS::GfVec3d axisScale(floatNumber("inputs:scaleX", 1.0),
+                                  floatNumber("inputs:scaleY", 1.0),
+                                  floatNumber("inputs:scaleZ", 1.0));
         for (int axis = 0; axis < 3; ++axis) {
             if (!std::isfinite(axisScale[axis]) || axisScale[axis] <= 0.0) {
                 return false;
@@ -5350,8 +5366,11 @@ _AccumulateRestGuideBounds(
                 floatNumber("inputs:scaleYNeg", 1.0),
                 floatNumber("inputs:scaleZNeg", 1.0));
             for (int axis = 0; axis < 3; ++axis) {
-                if (!std::isfinite(positiveScales[axis]) || positiveScales[axis] <= 0 ||
-                    !std::isfinite(negativeScales[axis]) || negativeScales[axis] <= 0) return false;
+                if (!std::isfinite(positiveScales[axis]) ||
+                    positiveScales[axis] <= 0 ||
+                    !std::isfinite(negativeScales[axis]) ||
+                    negativeScales[axis] <= 0)
+                    return false;
             }
             // Wire mode draws dotted curves on both iso-surfaces, so each
             // carries guide:wireWidth. Geometry mode draws both solid.
@@ -5364,14 +5383,15 @@ _AccumulateRestGuideBounds(
                 }
                 const double pad = wire ? halfWidth : 0.0;
                 PXR_NS::GfMatrix4d scale(1.0);
-                scale.SetScale(PXR_NS::GfVec3d(
-                    radius * axisScale[0], radius * axisScale[1],
-                    radius * axisScale[2]));
+                scale.SetScale(PXR_NS::GfVec3d(radius * axisScale[0],
+                                               radius * axisScale[1],
+                                               radius * axisScale[2]));
                 const PXR_NS::GfVec3d padding(pad);
-                range->UnionWith(
-                    PXR_NS::GfBBox3d(PXR_NS::GfRange3d(-negativeScales - padding, positiveScales + padding),
-                                     scale * rest)
-                        .ComputeAlignedRange());
+                range->UnionWith(PXR_NS::GfBBox3d(PXR_NS::GfRange3d(
+                                                      -negativeScales - padding,
+                                                      positiveScales + padding),
+                                                  scale * rest)
+                                     .ComputeAlignedRange());
                 found = true;
             }
             return found;
@@ -5388,9 +5408,10 @@ _AccumulateRestGuideBounds(
         if (targets.size() != 1) {
             return false;
         }
-        const PXR_NS::SdfPath pointsPath = targets[0].IsPropertyPath()
-            ? targets[0]
-            : targets[0].AppendProperty(PXR_NS::TfToken("points"));
+        const PXR_NS::SdfPath pointsPath =
+            targets[0].IsPropertyPath()
+                ? targets[0]
+                : targets[0].AppendProperty(PXR_NS::TfToken("points"));
         PXR_NS::VtVec3fArray curvePoints;
         const PXR_NS::UsdAttribute points =
             prim.GetStage()->GetAttributeAtPath(pointsPath);
@@ -5399,9 +5420,8 @@ _AccumulateRestGuideBounds(
             return false;
         }
         PXR_NS::GfMatrix4d divide(1.0);
-        divide.SetScale(PXR_NS::GfVec3d(
-            1.0 / axisScale[0], 1.0 / axisScale[1],
-            1.0 / axisScale[2]));
+        divide.SetScale(PXR_NS::GfVec3d(1.0 / axisScale[0], 1.0 / axisScale[1],
+                                        1.0 / axisScale[2]));
         const PXR_NS::GfMatrix4d toLocal = rest.GetInverse() * divide;
         PXR_NS::GfRange3d localCenters;
         PXR_NS::GfVec3f previous(0.0f);
@@ -5439,8 +5459,8 @@ _AccumulateRestGuideBounds(
             // conservative at diagonal tangents, which is preferable to a
             // cold framing bound that clips a valid authored guide.
             const PXR_NS::GfVec3d pad(radius + halfWidth);
-            const PXR_NS::GfRange3d local(
-                localCenters.GetMin() - pad, localCenters.GetMax() + pad);
+            const PXR_NS::GfRange3d local(localCenters.GetMin() - pad,
+                                          localCenters.GetMax() + pad);
             range->UnionWith(
                 PXR_NS::GfBBox3d(local, toAsset).ComputeAlignedRange());
             found = true;
@@ -5497,9 +5517,10 @@ _WriteBounds(const PXR_NS::GfRange3d &range, double outMinMax[6])
 // it again on the way out, so a rotated chain grows the box slightly.
 // Bounds are allowed to be too big and are never allowed to be too small.
 PXR_NS::GfRange3d
-_AssetSpaceToLocal(
-    const PXR_NS::UsdPrim &prim, const PXR_NS::SdfPath &assetRootPath,
-    const PXR_NS::UsdTimeCode &time, const PXR_NS::GfRange3d &range)
+_AssetSpaceToLocal(const PXR_NS::UsdPrim &prim,
+                   const PXR_NS::SdfPath &assetRootPath,
+                   const PXR_NS::UsdTimeCode &time,
+                   const PXR_NS::GfRange3d &range)
 {
     if (range.IsEmpty() || assetRootPath.IsEmpty()) {
         return range;
@@ -5525,9 +5546,10 @@ _AssetSpaceToLocal(
 }
 
 bool
-_ComputeRigExecGuideExtent(
-    const PXR_NS::UsdGeomBoundable &boundable, const PXR_NS::UsdTimeCode &time,
-    const PXR_NS::GfMatrix4d *transform, PXR_NS::VtVec3fArray *extent)
+_ComputeRigExecGuideExtent(const PXR_NS::UsdGeomBoundable &boundable,
+                           const PXR_NS::UsdTimeCode &time,
+                           const PXR_NS::GfMatrix4d *transform,
+                           PXR_NS::VtVec3fArray *extent)
 {
     const PXR_NS::UsdPrim prim = boundable.GetPrim();
     if (!prim || !extent) {
@@ -5554,8 +5576,8 @@ _ComputeRigExecGuideExtent(
             found = _AccumulateSubtreeGuideBounds(
                 *snapshot, prim.GetPath(), _ResolvedPurpose(prim), &range);
             if (found) {
-                range = _AssetSpaceToLocal(prim, snapshot->assetRoot, time,
-                                           range);
+                range =
+                    _AssetSpaceToLocal(prim, snapshot->assetRoot, time, range);
             }
         }
     }
@@ -5565,15 +5587,14 @@ _ComputeRigExecGuideExtent(
     // has to speak for the providers nested under it.
     if (!found) {
         const PXR_NS::TfToken purpose = _ResolvedPurpose(prim);
-        for (const PXR_NS::UsdPrim &descendant :
-             PXR_NS::UsdPrimRange(prim)) {
+        for (const PXR_NS::UsdPrim &descendant : PXR_NS::UsdPrimRange(prim)) {
             // Purpose-scoped for the same reason the snapshot path is: one
             // extent carries one purpose.
             if (_ResolvedPurpose(descendant) != purpose) {
                 continue;
             }
-            found = _AccumulateRestGuideBounds(descendant, time, &range) ||
-                    found;
+            found =
+                _AccumulateRestGuideBounds(descendant, time, &range) || found;
         }
     }
     if (!found || range.IsEmpty()) {
@@ -5587,7 +5608,7 @@ _ComputeRigExecGuideExtent(
     return true;
 }
 
-}  // namespace
+} // namespace
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -5609,23 +5630,19 @@ TF_REGISTRY_FUNCTION(UsdGeomBoundable)
     // volume base gets its own registration so its shape-specific authored
     // fallback can be framed cold; aggregate solvers draw guides too but
     // inherit Boundable directly, so they are named individually.
-    for (const char *name : {"RigExecXformable",
-                             "RigExecVolumeWeight",
-                             "RigExecClothConstraintSet",
-                             "RigExecFkChain",
-                             "RigExecTwoBoneIk",
-                             "RigExecBlendPointFrames",
-                             "RigExecTwistDistribution",
-                             "RigExecRibbon",
-                             "RigExecSplineIk"}) {
+    for (const char *name :
+         {"RigExecXformable", "RigExecVolumeWeight",
+          "RigExecClothConstraintSet", "RigExecFkChain", "RigExecTwoBoneIk",
+          "RigExecBlendPointFrames", "RigExecTwistDistribution",
+          "RigExecRibbon", "RigExecSplineIk"}) {
         const TfType type = TfType::FindByName(name);
         if (type.IsUnknown()) {
             // The schema plugin is not registered in this process, so
             // nothing can be Boundable anyway. Not worth shouting about.
             continue;
         }
-        UsdGeomRegisterComputeExtentFunction(
-            type, ::_ComputeRigExecGuideExtent);
+        UsdGeomRegisterComputeExtentFunction(type,
+                                             ::_ComputeRigExecGuideExtent);
     }
 }
 
@@ -5660,8 +5677,8 @@ _Generation(const RigExecImagingRegistry &registry)
 }
 
 int
-_MovedFloats(const RigExecImagingRegistry &registry,
-             const char *packedPaths, float *out, int count)
+_MovedFloats(const RigExecImagingRegistry &registry, const char *packedPaths,
+             float *out, int count)
 {
     if (!packedPaths || !out || count <= 0) {
         return 0;
@@ -5681,8 +5698,8 @@ _MovedFloats(const RigExecImagingRegistry &registry,
     const char *cursor = packedPaths;
     while (*cursor && index < count) {
         const char *end = std::strchr(cursor, '\n');
-        const std::string text(cursor, end ? end - cursor
-                                           : std::strlen(cursor));
+        const std::string text(cursor,
+                               end ? end - cursor : std::strlen(cursor));
         // An arbitrary caller-supplied string reaches SdfPath here, whose
         // constructor is loud about a malformed one. Ask first.
         if (!text.empty() && PXR_NS::SdfPath::IsValidPathString(text)) {
@@ -5751,8 +5768,8 @@ _AllGuideBounds(const RigExecImagingRegistry &registry, double outMinMax[6])
         }
 
         const PXR_NS::SdfPath &assetRoot = published.assetRoot.IsEmpty()
-            ? snapshot->assetRoot
-            : published.assetRoot;
+                                               ? snapshot->assetRoot
+                                               : published.assetRoot;
         if (!any) {
             commonAssetRoot = assetRoot;
         } else if (commonAssetRoot != assetRoot) {
@@ -5881,9 +5898,9 @@ _ActivateC(long long stageCacheId, const char *rigPath, double initialFrame,
     } else {
         const RegistryPtr context =
             RigExecImagingRegistry::ForStage(stage, /* create = */ true);
-        activated = context &&
-            context->Activate(stage, path, PXR_NS::UsdTimeCode(initialFrame),
-                              &errors);
+        activated = context && context->Activate(
+                                   stage, path,
+                                   PXR_NS::UsdTimeCode(initialFrame), &errors);
         if (!context) {
             errors.push_back("no imaging context for the stage");
         }
@@ -5902,20 +5919,20 @@ _ActivateC(long long stageCacheId, const char *rigPath, double initialFrame,
     return 0;
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
 int
-RigExecImaging_Activate(
-    long long stageCacheId, const char *rigPath, double initialFrame)
+RigExecImaging_Activate(long long stageCacheId, const char *rigPath,
+                        double initialFrame)
 {
     return _ActivateC(stageCacheId, rigPath, initialFrame, /* legacy = */ true);
 }
 
 int
-RigExecImaging_ActivateForStage(
-    long long stageCacheId, const char *rigPath, double initialFrame)
+RigExecImaging_ActivateForStage(long long stageCacheId, const char *rigPath,
+                                double initialFrame)
 {
     return _ActivateC(stageCacheId, rigPath, initialFrame,
                       /* legacy = */ false);
@@ -5982,46 +5999,55 @@ RigExecImaging_GetGeneration()
 }
 
 int
-RigExecImaging_GetMovedFloats(
-    const char *packedPaths, float *out, int count)
+RigExecImaging_GetMovedFloats(const char *packedPaths, float *out, int count)
 {
     return _MovedFloats(_Legacy(), packedPaths, out, count);
 }
 
 int
-RigExecImaging_GetControlFrameAssetSpace(
-    long long stageCacheId, const char *primPath, double frame,
-    int isDefault, double outMatrix[16])
+RigExecImaging_GetControlFrameAssetSpace(long long stageCacheId,
+                                         const char *primPath, double frame,
+                                         int isDefault, double outMatrix[16])
 {
-    if (!primPath || !outMatrix || !PXR_NS::SdfPath::IsValidPathString(primPath) ||
-        (!isDefault && !std::isfinite(frame))) return 0;
+    if (!primPath || !outMatrix ||
+        !PXR_NS::SdfPath::IsValidPathString(primPath) ||
+        (!isDefault && !std::isfinite(frame)))
+        return 0;
     const auto stage = PXR_NS::UsdUtilsStageCache::Get().Find(
         PXR_NS::UsdStageCache::Id::FromLongInt(
             static_cast<long int>(stageCacheId)));
-    if (!stage) return 0;
+    if (!stage)
+        return 0;
     // THAT stage's own context: a second stage with the same paths never
     // answers for this one.
     const RegistryPtr context =
         RigExecImagingRegistry::ForStage(stage, /* create = */ false);
     const auto snapshot = context ? context->GetStore()->Get() : nullptr;
-    const auto time = isDefault ? PXR_NS::UsdTimeCode::Default() : PXR_NS::UsdTimeCode(frame);
-    if (!snapshot || !snapshot->Describes(stage, time)) return 0;
+    const auto time =
+        isDefault ? PXR_NS::UsdTimeCode::Default() : PXR_NS::UsdTimeCode(frame);
+    if (!snapshot || !snapshot->Describes(stage, time))
+        return 0;
     const auto it = snapshot->prims.find(PXR_NS::SdfPath(primPath));
-    if (it == snapshot->prims.end()) return 0;
+    if (it == snapshot->prims.end())
+        return 0;
     // Provider frames first; volume weights carry their guide placement
     // instead (live-only, like the guide elements themselves).
     const PXR_NS::GfMatrix4d *found = nullptr;
-    if (it->second.hasControlFrame) found = &it->second.controlFrame;
-    else if (it->second.hasVolumeGuideFrame) found = &it->second.volumeGuideFrame;
-    if (!found) return 0;
-    for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c)
-        outMatrix[r*4+c] = (*found)[r][c];
+    if (it->second.hasControlFrame)
+        found = &it->second.controlFrame;
+    else if (it->second.hasVolumeGuideFrame)
+        found = &it->second.volumeGuideFrame;
+    if (!found)
+        return 0;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            outMatrix[r * 4 + c] = (*found)[r][c];
     return 1;
 }
 
 int
-RigExecImaging_GetGuideBoundsAssetSpace(
-    const char *primPath, double outMinMax[6])
+RigExecImaging_GetGuideBoundsAssetSpace(const char *primPath,
+                                        double outMinMax[6])
 {
     return _GuideBounds(_Legacy(), primPath, outMinMax);
 }
@@ -6033,9 +6059,10 @@ RigExecImaging_GetGuideBoundsAssetSpace(
 int
 RigExecImaging_WriteProfileSummary(const char *path)
 {
-    return _Legacy().WriteProfileSummary(
-               path ? std::string(path) : std::string())
-        ? 0 : 1;
+    return _Legacy().WriteProfileSummary(path ? std::string(path)
+                                              : std::string())
+               ? 0
+               : 1;
 }
 
 int
@@ -6043,7 +6070,8 @@ RigExecImaging_SetWeightOverlay(const char *weightPrimPath)
 {
     return _Legacy().SetWeightOverlay(
                weightPrimPath ? std::string(weightPrimPath) : std::string())
-        ? 0 : 1;
+               ? 0
+               : 1;
 }
 
 int
@@ -6068,8 +6096,7 @@ RigExecImaging_WarmRange(const char *rigPath, const double *frames, int count)
 long long
 RigExecImaging_GetWarmingCompletedCount()
 {
-    return static_cast<long long>(
-        _Legacy().GetBackgroundStats().completed);
+    return static_cast<long long>(_Legacy().GetBackgroundStats().completed);
 }
 
 long long
@@ -6084,9 +6111,9 @@ RigExecImaging_GetWarmingProgressCount()
 int
 RigExecImaging_BeginPreview(const char *packedAttributePaths)
 {
-    return _Legacy().BeginPreview(
-        packedAttributePaths ? std::string(packedAttributePaths)
-                             : std::string());
+    return _Legacy().BeginPreview(packedAttributePaths
+                                      ? std::string(packedAttributePaths)
+                                      : std::string());
 }
 
 int
@@ -6179,9 +6206,10 @@ RigExecImaging_WriteProfileSummaryForStage(long long stageCacheId,
         out << "rig\tname\tcategory\tcount\ttotal_ms\tmax_ms\n";
         return 0;
     }
-    return context->WriteProfileSummary(
-               path ? std::string(path) : std::string())
-        ? 0 : 1;
+    return context->WriteProfileSummary(path ? std::string(path)
+                                             : std::string())
+               ? 0
+               : 1;
 }
 
 void
@@ -6206,46 +6234,54 @@ const rigExec::RigExecPublishedPrim *
 _PublishedPrim(const rigExec::RigExecImagingSnapshotConstPtr &snapshot,
                const char *primPath)
 {
-    if (!snapshot || !primPath || !PXR_NS::SdfPath::IsValidPathString(primPath)) {
+    if (!snapshot || !primPath ||
+        !PXR_NS::SdfPath::IsValidPathString(primPath)) {
         return nullptr;
     }
     const auto it = snapshot->prims.find(PXR_NS::SdfPath(primPath));
     return it == snapshot->prims.end() ? nullptr : &it->second;
 }
 
-}  // namespace
+} // namespace
 
 int
-RigExecImaging_GetPublishedPointsForStage(
-    long long stageCacheId, const char *primPath, float *xyz, int capacity)
+RigExecImaging_GetPublishedPointsForStage(long long stageCacheId,
+                                          const char *primPath, float *xyz,
+                                          int capacity)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
         return -2;
     }
-    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
-    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot =
+        context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim =
+        _PublishedPrim(snapshot, primPath);
     if (!prim || !prim->hasPoints) {
         return -1;
     }
     const int count = int(prim->points.size());
     if (xyz && capacity >= count && count > 0) {
-        std::memcpy(xyz, prim->points.cdata(), sizeof(float) * 3 * prim->points.size());
+        std::memcpy(xyz, prim->points.cdata(),
+                    sizeof(float) * 3 * prim->points.size());
     }
     return count;
 }
 
 int
-RigExecImaging_GetPublishedScalarPrimvarForStage(
-    long long stageCacheId, const char *primPath, const char *primvarName,
-    float *out)
+RigExecImaging_GetPublishedScalarPrimvarForStage(long long stageCacheId,
+                                                 const char *primPath,
+                                                 const char *primvarName,
+                                                 float *out)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
         return -2;
     }
-    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
-    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot =
+        context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim =
+        _PublishedPrim(snapshot, primPath);
     if (!prim || !primvarName) {
         return 0;
     }
@@ -6260,15 +6296,18 @@ RigExecImaging_GetPublishedScalarPrimvarForStage(
 }
 
 int
-RigExecImaging_GetPublishedXformRevisionForStage(
-    long long stageCacheId, const char *primPath, double *out16)
+RigExecImaging_GetPublishedXformRevisionForStage(long long stageCacheId,
+                                                 const char *primPath,
+                                                 double *out16)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
         return -2;
     }
-    const rigExec::RigExecImagingSnapshotConstPtr snapshot = context->GetStore()->Get();
-    const rigExec::RigExecPublishedPrim *prim = _PublishedPrim(snapshot, primPath);
+    const rigExec::RigExecImagingSnapshotConstPtr snapshot =
+        context->GetStore()->Get();
+    const rigExec::RigExecPublishedPrim *prim =
+        _PublishedPrim(snapshot, primPath);
     if (!prim || !prim->hasXform) {
         return 0;
     }
@@ -6284,8 +6323,9 @@ RigExecImaging_GetPublishedXformRevisionForStage(
 }
 
 int
-RigExecImaging_GetMovedFloatsForStage(
-    long long stageCacheId, const char *packedPaths, float *out, int count)
+RigExecImaging_GetMovedFloatsForStage(long long stageCacheId,
+                                      const char *packedPaths, float *out,
+                                      int count)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
@@ -6295,9 +6335,9 @@ RigExecImaging_GetMovedFloatsForStage(
 }
 
 int
-RigExecImaging_GetMovedDoublesForStage(
-    long long stageCacheId, const char *propertyPath, double frame,
-    int isDefault, double *out, int capacity)
+RigExecImaging_GetMovedDoublesForStage(long long stageCacheId,
+                                       const char *propertyPath, double frame,
+                                       int isDefault, double *out, int capacity)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context || !propertyPath ||
@@ -6312,8 +6352,8 @@ RigExecImaging_GetMovedDoublesForStage(
         context->GetStore()->Get();
     // Only a generation of the stage as it stands, at this time: values
     // from an earlier one would match a pose the stage no longer holds.
-    const auto time = isDefault ? PXR_NS::UsdTimeCode::Default()
-                                : PXR_NS::UsdTimeCode(frame);
+    const auto time =
+        isDefault ? PXR_NS::UsdTimeCode::Default() : PXR_NS::UsdTimeCode(frame);
     if (!stage || !snapshot || !snapshot->Describes(stage, time)) {
         return -1;
     }
@@ -6329,16 +6369,17 @@ RigExecImaging_GetMovedDoublesForStage(
 }
 
 int
-RigExecImaging_GetGuideBoundsAssetSpaceForStage(
-    long long stageCacheId, const char *primPath, double outMinMax[6])
+RigExecImaging_GetGuideBoundsAssetSpaceForStage(long long stageCacheId,
+                                                const char *primPath,
+                                                double outMinMax[6])
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     return context ? _GuideBounds(*context, primPath, outMinMax) : 0;
 }
 
 int
-RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(
-    long long stageCacheId, double outMinMax[6])
+RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(long long stageCacheId,
+                                                   double outMinMax[6])
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     return context ? _AllGuideBounds(*context, outMinMax) : 0;
@@ -6356,13 +6397,14 @@ RigExecImaging_SetWeightOverlayForStage(long long stageCacheId,
     }
     return context->SetWeightOverlay(
                weightPrimPath ? std::string(weightPrimPath) : std::string())
-        ? 0 : 1;
+               ? 0
+               : 1;
 }
 
 int
-RigExecImaging_GetFrameStatesForStage(
-    long long stageCacheId, const char *rigPath, const double *frames,
-    int *statesOut, int count)
+RigExecImaging_GetFrameStatesForStage(long long stageCacheId,
+                                      const char *rigPath, const double *frames,
+                                      int *statesOut, int count)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
@@ -6399,16 +6441,17 @@ long long
 RigExecImaging_GetWarmingCompletedCountForStage(long long stageCacheId)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
-    return context ? static_cast<long long>(
-                         context->GetBackgroundStats().completed)
-                   : 0;
+    return context
+               ? static_cast<long long>(context->GetBackgroundStats().completed)
+               : 0;
 }
 
 long long
 RigExecImaging_GetWarmingProgressCountForStage(long long stageCacheId)
 {
     const RegistryPtr context = _ForStage(stageCacheId);
-    return context ? static_cast<long long>(context->GetWarmingProgressCount()) : 0;
+    return context ? static_cast<long long>(context->GetWarmingProgressCount())
+                   : 0;
 }
 
 int
@@ -6421,9 +6464,9 @@ RigExecImaging_BeginPreviewForStage(long long stageCacheId,
     if (!context) {
         return -1;
     }
-    return context->BeginPreview(
-        packedAttributePaths ? std::string(packedAttributePaths)
-                             : std::string());
+    return context->BeginPreview(packedAttributePaths
+                                     ? std::string(packedAttributePaths)
+                                     : std::string());
 }
 
 int
@@ -6463,4 +6506,4 @@ RigExecImaging_ContextCount()
     return static_cast<int>(RigExecImagingRegistry::ContextCount());
 }
 
-}  // extern "C"
+} // extern "C"

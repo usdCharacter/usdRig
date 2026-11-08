@@ -279,6 +279,26 @@ build it once at namespace scope instead.
 
 ## Build and verify
 
+### C++ formatting
+
+Use clang-format 18.1.8 and the root `.clang-format`, adapted from OpenUSD's
+80-column, K&R conventions. Install with `uv tool install clang-format==18.1.8`.
+Run `python3 bin/format_cpp.py --base origin/main` to check the changed C/C++
+files, or add `--fix` to format them. Explicit repository-relative files can
+be supplied instead of `--base`; `--all` audits all owned C/C++ files. The
+comparison includes staged, unstaged and untracked changes. Selected files
+are formatted in full; unchanged files are not reformatted as part of adoption.
+
+Generated FlatBuffers headers, `third_party/`, `thirdparty/`, `plugin/usdNoodles/`, and build
+output are excluded. Preserve include order and documentation. Formatting
+does not enforce naming, header guards, or mandatory control-flow braces;
+those remain review responsibilities. Do not apply Pixar copyright headers
+to usdRig-owned code. CI's `clang-format` check uses the same pinned version;
+the formatter can be run locally before builds. A failing formatting CI check
+blocks merging alongside the other checks.
+
+### Build and test
+
 Use an unchanged OpenUSD 26.08 install with OpenExec, CMake 3.26+, Ninja,
 C++17, and a compatible Python interpreter. `USD` and `PY` configure helper
 scripts; their defaults look for a sibling dependency install.
