@@ -292,9 +292,8 @@ def testUsdviewInputFunction(appController):
     # Two containers fill this menu, so this is where the layout is
     # checked: one of each submenu, in order, whatever the load order.
     top = [a.text() for a in topMenu.actions() if not a.isSeparator()]
-    _Check(top == ["Reactivate RigExec Evaluation", "Viewport",
-                   "General Editors", "Animation Editors"],
-           "the RigExec menu layout is item, then three submenus: %s" % top)
+    _Check(top == ["Viewport", "General Editors", "Animation Editors"],
+           "the RigExec menu layout is three ranked submenus: %s" % top)
     rigMenu = _Submenu(topMenu, "Animation Editors")
     titles = [a.text() for a in rigMenu.actions()]
     _Check("TouchPose" in titles,

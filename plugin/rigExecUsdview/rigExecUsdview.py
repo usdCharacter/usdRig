@@ -168,15 +168,14 @@ def _LoadRigExecImaging():
     return imagingHandle.BindLibrary(lib)
 
 
-# The RigExec menu layout. Items sit at the top level or in one of these
-# submenus, and every entry carries a rank so that the order holds no
-# matter which plugin container's configureView runs first: usdview's
-# PluginMenu only appends, and plugin/touchPose and plugin/shapeEditor add
-# their items to the same submenus from their own containers. Those two
-# carry a copy of this helper rather than importing it, so the directories
-# stay independent; keep the ranks in step.
+# The RigExec menu layout: three ranked submenus, and every entry carries
+# a rank so that the order holds no matter which plugin container's
+# configureView runs first: usdview's PluginMenu only appends, and
+# plugin/touchPose and plugin/shapeEditor add their items to the same
+# submenus from their own containers. Those two carry a copy of this
+# helper rather than importing it, so the directories stay independent;
+# keep the ranks in step.
 #
-#   Reactivate RigExec Evaluation   0
 #   Viewport            10: Viewport Tools 10, View Cube 20, View Axis 30
 #   General Editors     20: Avar Editor 10, Layer Stack 15,
 #                           Layer Opinions 20, Execution Stack 30,
@@ -320,13 +319,6 @@ class RigExecUsdviewContainer(PluginContainer):
         # alive, which is the whole point.
         atexit.register(self._Shutdown)
 
-        # A manual re-activation command (also anchors this container via
-        # its bound-method callback).
-        self._reactivate = plugRegistry.registerCommandPlugin(
-            "RigExecUsdviewContainer.reactivate",
-            "Reactivate RigExec Evaluation",
-            lambda api: self._OnStageReplaced())
-
         # The volumetric weight authoring window. Its module pulls in Qt
         # and is imported lazily inside the callback so that this
         # container stays importable in the headless contexts the C++
@@ -446,7 +438,6 @@ class RigExecUsdviewContainer(PluginContainer):
             self._OnStageReplaced()
 
     def configureView(self, plugRegistry, plugUIBuilder):
-        AddToRigExecMenu(plugUIBuilder, None, self._reactivate, 0)
         AddToRigExecMenu(plugUIBuilder, "Viewport",
                          self._viewportToolsCommand, 10)
         AddToRigExecMenu(plugUIBuilder, "Viewport",
@@ -1387,7 +1378,7 @@ class RigExecUsdviewContainer(PluginContainer):
         The no-argument launcher opens a rootless blank layer.  A stage-
         replacement-only plugin never sees the RigExecRoot subsequently
         created in that layer, so its joints cannot enter the Hydra chain
-        until the file is reopened or the user manually reactivates.
+        until the file is reopened.
 
         Retry while roots exist but activation is still down.  Creating the
         root itself is normally one edit and creating its first output is a
@@ -1448,8 +1439,8 @@ class RigExecUsdviewContainer(PluginContainer):
         stage ownership into the cache and leaves Python holding a weak stage
         wrapper. Erasing the entry while usdview still exposes that wrapper
         turns its current stage into an invalid null stage. Keep the current
-        live stage cached through activation failures and manual reactivation;
-        an actual stage replacement or _Shutdown releases it safely.
+        live stage cached through activation failures; an actual stage
+        replacement or _Shutdown releases it safely.
         """
         if self._cachedStage is None:
             return
