@@ -329,6 +329,8 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
     libs/rigExecImaging/registry.cpp
+    # Host-facing C surface: the extern "C" activation and query exports.
+    libs/rigExecImaging/registryCapi.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
