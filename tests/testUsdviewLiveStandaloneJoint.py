@@ -1,6 +1,6 @@
 #
 # A joint authored into usdview's already-open blank stage must activate
-# RigExec and draw immediately, without a reopen or manual Reactivate.
+# RigExec and draw immediately, without a reopen.
 #
 import ctypes
 import os

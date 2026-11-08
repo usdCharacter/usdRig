@@ -2165,8 +2165,6 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_imaging_published.py"
             "${CMAKE_CURRENT_BINARY_DIR}/usd/rigExecSchema/resources")
-    set_tests_properties(testRigExecImagingPublishedPython PROPERTIES
-        ENVIRONMENT "RIGEXEC_IMAGING_DLL=$<TARGET_FILE:rigExecImaging>")
     add_test(NAME testRigExecPython
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rigexec_python.py"
@@ -2506,7 +2504,19 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
                          testCacheStripModel
                          testCacheStripPanel testUsdviewFrameCacheDriver
                          testImagingHandle
-                         testSessionState testRigExecProfilerModel)
+                         testSessionState testRigExecProfilerModel
+                         testGizmoMarquee testRigExecImagingPublishedPython
+                         testRigExecGil testRigExecBakedPsd testRigExecBakedCone
+                         testRigExecBakedAttributePython
+                         testRigExecBipedHandPython testRigExecBlinkClearancePython
+                         testRigExecDeformerEnabledPython
+                         testRigExecDeformerOrderPython testRigExecEyeSymmetryPython
+                         testRigExecFaceDrivesPython testRigExecFaceSmoothPython
+                         testRigExecFkStartFramePython testRigExecRigidHeadPython
+                         testRigExecPoseCyclePython testRigExecPoseRotationsPython
+                         testRigExecTrsMastersPython testRigExecWireInvariantPython
+                         testRigExecCurveKeyOverrides testRigExecPathPointOverrides
+                         testRigExecSkinLayoutOverrides)
         set_tests_properties(${_python_test} PROPERTIES ENVIRONMENT
             "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python")
         set_property(TEST ${_python_test} APPEND PROPERTY ENVIRONMENT
@@ -2516,6 +2526,10 @@ if (RIGEXEC_BUILD_PYTHON AND RIGEXEC_BUILD_TESTS AND Python3_FOUND)
     endforeach()
     set_property(TEST testRigExecOpTracePython_serial APPEND PROPERTY
         ENVIRONMENT "RIGEXEC_BAKED_SCHEDULE=serial")
+    # APPEND, after the foreach above: its set_tests_properties owns the
+    # base ENVIRONMENT value for every listed test.
+    set_property(TEST testRigExecImagingPublishedPython APPEND PROPERTY
+        ENVIRONMENT "RIGEXEC_IMAGING_DLL=$<TARGET_FILE:rigExecImaging>")
     set_property(TEST testRigExecSpaceSwitchVersionsCones APPEND PROPERTY
         ENVIRONMENT "RIGEXEC_BAKED_VERIFY_CONES=1" "RIGEXEC_BAKED_GRAIN_US=0")
     rigexec_add_digest_gate_test(testRigExecStageEdits

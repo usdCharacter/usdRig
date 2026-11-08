@@ -317,7 +317,7 @@ def TestContainersNeverTouchEachOther():
         _Check(lib.generations == {idA: 1, idB: 1},
                "one publication each: %r" % lib.generations)
 
-        # A re-activation of A (the Reactivate command) deactivates A only.
+        # Re-activating A deactivates A only.
         del lib.calls[:]
         a._ActivateCurrentStage()
         _Check(("DeactivateForStage", idA) in lib.calls,

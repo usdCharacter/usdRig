@@ -32,6 +32,12 @@ else()
     # noodles builds its own GoogleTest suite whenever GTest is findable; that
     set(CMAKE_DISABLE_FIND_PACKAGE_GTest ON)
     FetchContent_MakeAvailable(noodles)
+    # noodles builds GLEW from source, which includes <GL/glu.h> unless
+    # GLEW_NO_GLU is defined. Nothing here calls a GLU function, and hosts
+    # without the GLU development headers cannot build it otherwise.
+    if (TARGET glew_static)
+        target_compile_definitions(glew_static PUBLIC GLEW_NO_GLU)
+    endif()
 endif()
 
 set(_usdnoodles_definitions
