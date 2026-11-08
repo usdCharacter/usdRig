@@ -354,6 +354,12 @@ add_library(rigExecImaging SHARED
     # read-root collection and refresh, and the generation cancel plus the
     # per-time retirement lanes.
     libs/rigExecImaging/registryInvalidation.cpp
+    # Warm work: the frozen-work job factory, the lazy frozen refresh, the
+    # standing burst sample cache and the per-lane workspace pool.
+    libs/rigExecImaging/registryWarmWork.cpp
+    # Warming triggers: the commit and idle enqueues with the sampling
+    # budgets, the cursor sweep, the rewarm queue and the fallback fill.
+    libs/rigExecImaging/registryWarming.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp

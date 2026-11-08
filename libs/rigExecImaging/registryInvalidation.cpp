@@ -4,7 +4,7 @@
 // frame-cache completions by entry provenance (keep / carry-rekey /
 // retire+rewarm) and cancel only the affected times, falling back to the
 // unpartitioned per-time cancel when no capture index answers. The rewarm
-// queue itself belongs to the warming domain (registry.cpp until it moves).
+// queue itself belongs to the warming domain (registryWarming.cpp).
 #include "registry.h"
 
 #include "rigExec/backgroundScheduler.h"
