@@ -329,6 +329,10 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
     libs/rigExecImaging/registry.cpp
+    # Guide geometry queries: published/subtree bounds and the
+    # UsdGeomBoundable extent callback.
+    libs/rigExecImaging/guideBounds.cpp
+    libs/rigExecImaging/guideExtent.cpp
     libs/rigExecImaging/playback.cpp
     libs/rigExecImaging/sceneIndexPlugin.cpp
     libs/rigExecImaging/rigAdapter.cpp
@@ -2751,6 +2755,7 @@ foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rig
         FILES_MATCHING
             PATTERN ".*" EXCLUDE
             PATTERN "__pycache__" EXCLUDE
+            PATTERN "guideBoundsInternal.h" EXCLUDE
             PATTERN "*.h")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers
