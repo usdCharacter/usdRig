@@ -2,8 +2,8 @@
 // scheduler, bridge and warm-index owners. A facade: it adds no counters,
 // no state and no mutex; every number is read from the owner that already
 // keeps it. The mutators stay with their owners (RefreshFrameCacheSettings,
-// ClearFrameCache and SetWarmRange in registry.cpp; the warm setters with
-// warming).
+// ClearFrameCache and SetWarmRange in registryCache.cpp; the warm setters
+// with warming).
 #include "registry.h"
 
 #include "registryInternal.h"

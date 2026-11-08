@@ -340,6 +340,12 @@ add_library(rigExecImaging SHARED
     # Diagnostics facade: read-only queries over the scheduler, bridge and
     # warm-index owners; no counters of its own.
     libs/rigExecImaging/registryDiagnostics.cpp
+    # Frame-cache control: settings refresh, the scheduler-fenced clear, a
+    # rig's warm range and the warm-index frame states.
+    libs/rigExecImaging/registryCache.cpp
+    # Frames on demand: the frame-table stamp, the cached-frame read and the
+    # demand service call (docs/specs/frames-on-demand.md).
+    libs/rigExecImaging/registryFrameDemand.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
