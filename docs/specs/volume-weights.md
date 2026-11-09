@@ -353,7 +353,7 @@ picture moves and only the final value is wrong.
 *first*. A listener that re-evaluates must therefore run after every
 listener that drops cached values for the same edit, or it publishes a
 pre-edit answer. The registry registers its listener before `Compile()`
-(`libs/rigExecImaging/registry.cpp:1511`), which puts it at the back of the
+(`libs/rigExecImaging/registryLifecycle.cpp:233`), which puts it at the back of the
 delivery list.
 
 Production evaluation holds no OpenExec `ExecUsdSystem`, whose

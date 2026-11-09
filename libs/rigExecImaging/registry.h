@@ -173,7 +173,10 @@ public:
     static void ReleaseChain(const RigExecResultsSceneIndex *results);
 
     /// This context's key (0 for the legacy handle).
-    uint64_t GetKey() const { return _key; }
+    uint64_t GetKey() const
+    {
+        return _key;
+    }
 
     /// The stage this context belongs to, or null (the legacy handle, or a
     /// stage that has gone away).
@@ -189,11 +192,11 @@ public:
     /// Registers a chain BOUND to this context (the legacy handle registers
     /// it unbound), seeding it with this context's store, scopes, deltas and
     /// compiled rig. The scene-index plugin uses RegisterUnboundChain instead.
-    void RegisterChain(
-        const RigExecInternalPrimPruningSceneIndexRefPtr &pruning,
-        const RigExecBindingResolvingSceneIndexRefPtr &binding,
-        const RigExecResultsSceneIndexRefPtr &results,
-        const RigExecXformOverrideSceneIndexRefPtr &xforms = nullptr);
+    void
+    RegisterChain(const RigExecInternalPrimPruningSceneIndexRefPtr &pruning,
+                  const RigExecBindingResolvingSceneIndexRefPtr &binding,
+                  const RigExecResultsSceneIndexRefPtr &results,
+                  const RigExecXformOverrideSceneIndexRefPtr &xforms = nullptr);
 
     /// Activates evaluation for one rig, or every RigExecRoot when rigPath is
     /// empty.  Compilation and the first evaluation complete off to the side;
@@ -205,9 +208,8 @@ public:
     /// the stage has none). On the legacy handle a successful activation
     /// also makes the target the current context. An initial failure keeps
     /// authored rest guides visible while returning false and staying inactive.
-    bool Activate(
-        const UsdStageRefPtr &stage, const SdfPath &rigPath,
-        UsdTimeCode initialTime, std::vector<std::string> *errors);
+    bool Activate(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+                  UsdTimeCode initialTime, std::vector<std::string> *errors);
 
     /// Serialized evaluate-then-publish, broadcast to every chain.
     bool SetTime(UsdTimeCode time);
@@ -238,16 +240,15 @@ public:
     /// \p runner is the frozen serial step the workers execute; the default
     /// (null) builds the production runner via RigExecMakeProductionStepRunner,
     /// which is what the C-API triggers run under. Tests inject a kernel.
-    size_t OnEditCommitted(
-        RigExecFrozenStepRunner runner = RigExecFrozenStepRunner());
+    size_t
+    OnEditCommitted(RigExecFrozenStepRunner runner = RigExecFrozenStepRunner());
 
     /// The secondary warming trigger: call from the frame loop when the UI
     /// is idle. Enqueues the sweep only (neighbors belong to the commit
     /// trigger) with the same runner, gate, and generation rules. Once
     /// workers drain, production fills at most one missing explicit-range
     /// frame on this thread without changing the published viewport.
-    size_t OnIdle(
-        RigExecFrozenStepRunner runner = RigExecFrozenStepRunner());
+    size_t OnIdle(RigExecFrozenStepRunner runner = RigExecFrozenStepRunner());
 
     /// Frames on demand (frameTable.h, docs/specs/frames-on-demand.md).
     /// Turns the frames Hydra readers asked for at a time offset into
@@ -272,7 +273,10 @@ public:
     bool HasFrameDemand();
 
     /// The context's frame table, for tests.
-    RigExecFrameTablePtr GetFrameTableForTesting() const { return _frameTable; }
+    RigExecFrameTablePtr GetFrameTableForTesting() const
+    {
+        return _frameTable;
+    }
 
     /// Factory calls plus calling-thread fill attempts. Idle drivers use
     /// this to distinguish advancing past failed frames from no work.
@@ -306,15 +310,17 @@ public:
     /// publication. Copied when building work; called after all publication
     /// locks are released. Install/remove on the owner thread with no factory
     /// construction in progress and all background work drained.
-    using WarmPublishObserver = std::function<void(const SdfPath &,
-        UsdTimeCode, const RigExecFrameCacheKey &, RigExecFrameGeneration,
-        const RigExecRigPose &, const std::shared_ptr<RigExecFrameCache> &)>;
+    using WarmPublishObserver = std::function<void(
+        const SdfPath &, UsdTimeCode, const RigExecFrameCacheKey &,
+        RigExecFrameGeneration, const RigExecRigPose &,
+        const std::shared_ptr<RigExecFrameCache> &)>;
     void SetWarmPublishObserverForTesting(WarmPublishObserver observer);
 
-    RigExecWarmFactoryResult BuildWarmWork(
-        const SdfPath &rig, UsdTimeCode time,
-        RigExecFrameGeneration generation, RigExecFrozenStepRunner runner,
-        RigExecBurstSampleCache *burst = nullptr);
+    RigExecWarmFactoryResult
+    BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
+                  RigExecFrameGeneration generation,
+                  RigExecFrozenStepRunner runner,
+                  RigExecBurstSampleCache *burst = nullptr);
 
     /// The rig's current warming generation (0 when inactive or unknown).
     RigExecFrameGeneration CurrentFrameGeneration(const SdfPath &rig);
@@ -418,8 +424,8 @@ public:
     /// strip repaint, no sampling on the query path. Empty when the rig is
     /// unknown, a playback session, or simply unqueried (no frames), or
     /// when the list exceeds 100k frames.
-    std::vector<RigExecWarmFrameState> GetFrameStates(
-        const SdfPath &rig, const std::vector<double> &frames);
+    std::vector<RigExecWarmFrameState>
+    GetFrameStates(const SdfPath &rig, const std::vector<double> &frames);
 
     /// One rig's session bridge, or null when the rig is unknown or a
     /// playback session. For tests driving plan-2.x scenarios (provenance
@@ -551,8 +557,7 @@ public:
     /// engine on the same stage activates it again. An explicit Activate on
     /// an automatically active context takes the lifetime over: from then
     /// on only the host deactivates it.
-    bool EnsureActivated(
-        const UsdStageRefPtr &stage, UsdTimeCode time);
+    bool EnsureActivated(const UsdStageRefPtr &stage, UsdTimeCode time);
 
     /// Whether \p path is an active rig root.
     bool IsActiveRigRoot(const SdfPath &path);
@@ -623,8 +628,8 @@ public:
 
     /// The rig's share of the supplying chain's table (null when none) and
     /// its upstream serial. For tests.
-    std::shared_ptr<const RigExecUpstreamTable> GetUpstreamTable(
-        const SdfPath &rig);
+    std::shared_ptr<const RigExecUpstreamTable>
+    GetUpstreamTable(const SdfPath &rig);
     uint64_t GetUpstreamSerial(const SdfPath &rig);
 
     ~RigExecImagingRegistry();
@@ -660,10 +665,9 @@ private:
     /// (EnsureActivated) or explicit. An automatic call re-checks under
     /// _mutex and is a no-op (true) when the context became active meanwhile
     /// and refused (false) when its host deactivated it.
-    bool _Activate(
-        const UsdStageRefPtr &stage, const SdfPath &rigPath,
-        UsdTimeCode initialTime, std::vector<std::string> *errors,
-        bool automatic);
+    bool _Activate(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+                   UsdTimeCode initialTime, std::vector<std::string> *errors,
+                   bool automatic);
 
     /// Deactivate. \p byHost marks a host deactivation (Deactivate): the
     /// automatic path never revives it. Otherwise it is the library's
@@ -680,9 +684,15 @@ private:
     /// Legacy activation (the handle's Activate and RigExecImaging_Activate):
     /// forwards to \p stage's context, created on demand and seeded with
     /// the legacy overlay selection, and makes it current on success.
-    static bool _LegacyActivate(
-        const UsdStageRefPtr &stage, const SdfPath &rigPath,
-        UsdTimeCode initialTime, std::vector<std::string> *errors);
+    static bool _LegacyActivate(const UsdStageRefPtr &stage,
+                                const SdfPath &rigPath, UsdTimeCode initialTime,
+                                std::vector<std::string> *errors);
+
+    /// Offer this context to the directory as the legacy current context:
+    /// it becomes current only when no current context is live, so the
+    /// automatic path never takes the legacy surface away from an explicit
+    /// activation. Defined with the directory.
+    void _OfferCurrent();
 
     /// The chains bound to this context, live ones only (a snapshot taken
     /// under the directory's leaf lock).
@@ -705,7 +715,8 @@ private:
         /// Set when the rig plays a .rigexec instead of evaluating:
         /// exactly one of bridge/playback is ever set (see Activate).
         std::unique_ptr<RigExecBakedPlayback> playback;
-        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+            compiledRig;
         std::set<SdfPath> readRoots;
         bool readRootsDirty = true;
         bool dirty = true;
@@ -841,11 +852,10 @@ private:
     void _HandOffUpstreamLocked(RigSession *session, UsdTimeCode time);
 
     bool _EvaluateSessions(
-        RigSessions *sessions,
-        const UsdStageRefPtr &stage,
-        UsdTimeCode time,
+        RigSessions *sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
         std::shared_ptr<RigExecImagingSnapshot> *snapshot,
-        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr *compiledRig,
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+            *compiledRig,
         std::vector<std::string> *errors);
 
     /// Brings one session's frozen snapshot cache current: re-freezes when
@@ -887,10 +897,10 @@ private:
     /// evaluator's exact patched set (Patched only; empty otherwise).
     /// Falls back to _CancelGenerationTimesLocked when the session has no
     /// program or no usable index. Call with _mutex held.
-    void _RetireAffectedTimesLocked(
-        RigSession *session, const UsdNotice::ObjectsChanged &notice,
-        RigExecNoticeDisposition disposition,
-        const std::vector<SdfPath> &patchedPaths);
+    void _RetireAffectedTimesLocked(RigSession *session,
+                                    const UsdNotice::ObjectsChanged &notice,
+                                    RigExecNoticeDisposition disposition,
+                                    const std::vector<SdfPath> &patchedPaths);
 
     /// Records \p times (time values) for first-priority re-warm on the
     /// next trigger, de-duplicated and capped. Past the cap the overflow
@@ -932,9 +942,10 @@ private:
     // Only the idle trigger calls this, on the stage-owning thread.
     bool _WarmOneFallbackFrame(RigSession *session, UsdTimeCode playhead);
 
-    RigExecImagingBridge::PublishResult _Publish(
-        std::shared_ptr<RigExecImagingSnapshot> snapshot,
-        const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr &compiledRig);
+    RigExecImagingBridge::PublishResult
+    _Publish(std::shared_ptr<RigExecImagingSnapshot> snapshot,
+             const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+                 &compiledRig);
 
     /// Broadcasts a publication to every chain. Call WITHOUT _mutex held:
     /// the sends re-enter this registry (the results index's time trigger),
@@ -947,18 +958,18 @@ private:
     /// asset or transitive external read dependencies re-evaluates at the
     /// last-set time and republishes, so
     /// property edits redraw exactly like timeline changes.
-    void _OnObjectsChanged(
-        const UsdNotice::ObjectsChanged &notice,
-        const UsdStageWeakPtr &sender);
+    void _OnObjectsChanged(const UsdNotice::ObjectsChanged &notice,
+                           const UsdStageWeakPtr &sender);
 
     /// Guide-only mode: edits under \p guideRoots refresh the authored
     /// guides; edits that can complete the rig retry the activation of
     /// \p request. Unrelated edits do nothing. Called unlocked.
-    void _OnGuideOnlyObjectsChanged(
-        const UsdNotice::ObjectsChanged &notice,
-        const UsdStageWeakPtr &sender, const std::set<SdfPath> &guideRoots,
-        const SdfPath &request, UsdTimeCode guideTime, bool automatic,
-        bool retryOnValues);
+    void _OnGuideOnlyObjectsChanged(const UsdNotice::ObjectsChanged &notice,
+                                    const UsdStageWeakPtr &sender,
+                                    const std::set<SdfPath> &guideRoots,
+                                    const SdfPath &request,
+                                    UsdTimeCode guideTime, bool automatic,
+                                    bool retryOnValues);
 
     /// One declared value of a manipulation in progress; see BeginPreview.
     struct PreviewSlot {
@@ -983,18 +994,17 @@ private:
         std::map<SdfPath, GfMatrix4d> *xformDeltas) const;
 
     /// The composed world delta for \p primPath given its overridden ops.
-    bool _ComposeXformDelta(
-        const UsdPrim &prim,
-        const std::map<TfToken, VtValue> &opValues,
-        UsdGeomXformCache *cache,
-        GfMatrix4d *delta) const;
+    bool _ComposeXformDelta(const UsdPrim &prim,
+                            const std::map<TfToken, VtValue> &opValues,
+                            UsdGeomXformCache *cache, GfMatrix4d *delta) const;
 
     void _SetChainXformDeltas(const std::map<SdfPath, GfMatrix4d> &deltas);
 
     /// The scheduler under _mutex, shared so a trigger or a fenced clear
     /// can keep using it after unlocking while a Deactivate stops it: the
     /// last holder destroys it (which joins its workers) outside any lock.
-    std::shared_ptr<RigExecBackgroundScheduler> _SchedulerLocked() const {
+    std::shared_ptr<RigExecBackgroundScheduler> _SchedulerLocked() const
+    {
         return _scheduler;
     }
 
@@ -1031,7 +1041,7 @@ private:
     // carries this table; frames still waiting for the frame cache.
     RigExecFrameTablePtr _frameTable = std::make_shared<RigExecFrameTable>();
     std::vector<double> _pendingFrameDemand;
-    std::map<int64_t, int> _pendingFrameAge;  // service calls a frame waited
+    std::map<int64_t, int> _pendingFrameAge; // service calls a frame waited
     uint64_t _FrameTableStampLocked() const;
     bool _CachedFrameLocked(double time,
                             std::shared_ptr<RigExecImagingSnapshot> *frame,
@@ -1055,9 +1065,10 @@ private:
     /// True when the failure came from evaluation rather than compile, so
     /// a value edit may complete the rig and is worth a retry.
     bool _authoredGuidesRetryOnValues = false;
-    std::shared_ptr<RigExecImagingSnapshot> _BuildAuthoredGuides(
-        const UsdStageRefPtr &stage, const std::vector<SdfPath> &rigPaths,
-        UsdTimeCode time);
+    std::shared_ptr<RigExecImagingSnapshot>
+    _BuildAuthoredGuides(const UsdStageRefPtr &stage,
+                         const std::vector<SdfPath> &rigPaths,
+                         UsdTimeCode time);
     uint64_t _nextDebugGraph = 0;
     /// The active stage (strong while active, reset by Deactivate).
     UsdStageRefPtr _stage;
@@ -1098,7 +1109,8 @@ private:
     uint64_t _publishedCompiledRigId = 0;
     /// The compiled rig last announced to the bound chains, for seeding
     /// a chain that binds later (_AdoptChain).
-    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr _publishedCompiledRig;
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+        _publishedCompiledRig;
     /// The frame-warming pool: below-normal workers draining neighbor and
     /// sweep jobs sampled on the UI thread. Its mutex is a LEAF: triggers
     /// take _mutex first and scheduler state second, and workers never take
@@ -1127,7 +1139,7 @@ private:
     const RigExecResultsSceneIndex *_upstreamChain = nullptr;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
 // Visibility for the C surface below. Windows needs dllexport while building
 // rigExecImaging and dllimport when a consumer includes this header -- the
@@ -1135,23 +1147,24 @@ private:
 // ELF/Mach-O equivalent is default visibility, which also keeps the symbols
 // alive if the tree is ever built with -fvisibility=hidden.
 #if defined(_WIN32)
-#  if defined(RIGEXEC_IMAGING_EXPORTS)
-#    define RIGEXEC_IMAGING_C_API __declspec(dllexport)
-#  else
-#    define RIGEXEC_IMAGING_C_API __declspec(dllimport)
-#  endif
-#elif defined(__GNUC__) || defined(__clang__)
-#  define RIGEXEC_IMAGING_C_API __attribute__((visibility("default")))
+#if defined(RIGEXEC_IMAGING_EXPORTS)
+#define RIGEXEC_IMAGING_C_API __declspec(dllexport)
 #else
-#  define RIGEXEC_IMAGING_C_API
+#define RIGEXEC_IMAGING_C_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define RIGEXEC_IMAGING_C_API __attribute__((visibility("default")))
+#else
+#define RIGEXEC_IMAGING_C_API
 #endif
 
 // C surface for language-neutral activation (e.g. the usdview Python
 // plugin via ctypes + UsdUtilsStageCache ids). Returns 0 on success.
 extern "C" {
 
-RIGEXEC_IMAGING_C_API int RigExecImaging_Activate(
-    long long stageCacheId, const char *rigPath, double initialFrame);
+RIGEXEC_IMAGING_C_API int RigExecImaging_Activate(long long stageCacheId,
+                                                  const char *rigPath,
+                                                  double initialFrame);
 RIGEXEC_IMAGING_C_API int RigExecImaging_SetTime(double frame);
 /// The primary warming trigger for language-neutral hosts (see
 /// RigExecImagingRegistry::OnEditCommitted): call on drag release / value
@@ -1184,16 +1197,17 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGeneration();
 /// This exists so a tool (the Shape Editor, for pose-interpolator weights)
 /// does not have to evaluate the rig a second time to see numbers the
 /// viewport already computed.
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloats(
-    const char *packedPaths, float *out, int count);
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloats(const char *packedPaths,
+                                                        float *out, int count);
 
 /// Reads an evaluated control, final joint, or rigid volume placement matrix from the exact
 /// published stage/time. Authored guide placements never supply this value.
 /// Returns 1 on success, 0 without changing output otherwise. isDefault selects
 /// UsdTimeCode::Default; ordinary frames must be finite. Does not evaluate.
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetControlFrameAssetSpace(
-    long long stageCacheId, const char *primPath, double frame,
-    int isDefault, double outMatrix[16]);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_GetControlFrameAssetSpace(long long stageCacheId,
+                                         const char *primPath, double frame,
+                                         int isDefault, double outMatrix[16]);
 
 /// ASSET-SPACE axis-aligned bounds of everything the current generation
 /// draws for \p primPath, as min xyz then max xyz in \p outMinMax.
@@ -1212,16 +1226,17 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_GetControlFrameAssetSpace(
 /// Asset space, not world: guide frames carry no stage placement (see
 /// RigExecImagingSnapshot::assetRoot), so the caller composes the asset
 /// root's own world transform. No Hydra dependency -- snapshot data only.
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetGuideBoundsAssetSpace(
-    const char *primPath, double outMinMax[6]);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_GetGuideBoundsAssetSpace(const char *primPath,
+                                        double outMinMax[6]);
 
 /// The union of RigExecImaging_GetGuideBoundsAssetSpace over every prim in
 /// the current generation, so framing one rig frames its whole guide set.
 /// Returns 0 when guides belong to multiple asset roots because their
 /// asset-space ranges cannot be combined before applying distinct root
 /// transforms. Returns 1 when anything at all draws, 0 otherwise.
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetAllGuideBoundsAssetSpace(
-    double outMinMax[6]);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_GetAllGuideBoundsAssetSpace(double outMinMax[6]);
 
 /// Paints \p weightPrimPath's resolved weight field onto the geometry it
 /// weights, as a grey-to-red vertex gradient in the viewport (the R&H
@@ -1236,8 +1251,8 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_GetAllGuideBoundsAssetSpace(
 ///
 /// Republishes at the current time before returning, so the viewport
 /// updates immediately rather than at the next frame change.
-RIGEXEC_IMAGING_C_API int RigExecImaging_SetWeightOverlay(
-    const char *weightPrimPath);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_SetWeightOverlay(const char *weightPrimPath);
 
 /// Per-frame warming states over an explicit frame list, for the cache
 /// strip: one call per repaint, no sampling on the query path. \p frames
@@ -1245,8 +1260,10 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_SetWeightOverlay(
 /// (0 uncached, 1 warming, 2 cached, 3 dirty) and must hold \p count
 /// ints. Returns how many states were written; -1 on bad arguments or an
 /// unknown/inactive rig.
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetFrameStates(
-    const char *rigPath, const double *frames, int *statesOut, int count);
+RIGEXEC_IMAGING_C_API int RigExecImaging_GetFrameStates(const char *rigPath,
+                                                        const double *frames,
+                                                        int *statesOut,
+                                                        int count);
 
 /// Drops one rig's cached frames, freshness proofs, and warm-frame index
 /// (the strip's clear action; test isolation). Unknown rigs answer 0:
@@ -1258,8 +1275,8 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_ClearFrameCache(const char *rigPath);
 /// triggers instead of the default playhead-relative sweep. An empty list
 /// warms nothing. Returns 0 on success; -1 on bad arguments or an
 /// unknown rig.
-RIGEXEC_IMAGING_C_API int RigExecImaging_WarmRange(
-    const char *rigPath, const double *frames, int count);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_WarmRange(const char *rigPath, const double *frames, int count);
 
 /// Warming completions ("ran", see
 /// RigExecBackgroundSchedulerStats::completed) over the current context's
@@ -1276,10 +1293,10 @@ RIGEXEC_IMAGING_C_API long long RigExecImaging_GetWarmingProgressCount();
 /// VtVec3fArray type such as point3f[]). BeginPreview
 /// returns the double count UpdatePreview expects, or -1; the other two
 /// return 0 on success.
-RIGEXEC_IMAGING_C_API int RigExecImaging_BeginPreview(
-    const char *packedAttributePaths);
-RIGEXEC_IMAGING_C_API int RigExecImaging_UpdatePreview(
-    const double *values, int count);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_BeginPreview(const char *packedAttributePaths);
+RIGEXEC_IMAGING_C_API int RigExecImaging_UpdatePreview(const double *values,
+                                                       int count);
 RIGEXEC_IMAGING_C_API int RigExecImaging_EndPreview();
 /// EndPreview without the republish, for a commit that authors next (see
 /// RigExecImagingRegistry::EndPreview).
@@ -1308,23 +1325,24 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_EndPreviewWithoutPublish();
 /// DeactivateForStage. Same arguments and return codes as
 /// RigExecImaging_Activate (0 success, 1 no stage, 2 bad rig path,
 /// 3 activation failed).
-RIGEXEC_IMAGING_C_API int RigExecImaging_ActivateForStage(
-    long long stageCacheId, const char *rigPath, double initialFrame);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_ActivateForStage(long long stageCacheId, const char *rigPath,
+                                double initialFrame);
 
-RIGEXEC_IMAGING_C_API int RigExecImaging_SetTimeForStage(
-    long long stageCacheId, double frame);
-RIGEXEC_IMAGING_C_API int RigExecImaging_OnEditCommittedForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_ServiceFrameDemandForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_HasFrameDemandForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_OnIdleForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_WriteProfileSummaryForStage(
-    long long stageCacheId, const char *path);
-RIGEXEC_IMAGING_C_API void RigExecImaging_DeactivateForStage(
-    long long stageCacheId);
+RIGEXEC_IMAGING_C_API int RigExecImaging_SetTimeForStage(long long stageCacheId,
+                                                         double frame);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_OnEditCommittedForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_ServiceFrameDemandForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_HasFrameDemandForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int RigExecImaging_OnIdleForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_WriteProfileSummaryForStage(long long stageCacheId,
+                                           const char *path);
+RIGEXEC_IMAGING_C_API void
+RigExecImaging_DeactivateForStage(long long stageCacheId);
 /// What the displayed generation publishes for one prim (frames on demand
 /// serves other frames through Hydra; these read only what the last SetTime
 /// published, for tools and tests without a Hydra chain). Never evaluate.
@@ -1341,8 +1359,8 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_GetPublishedScalarPrimvarForStage(
     float *out);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetPublishedXformRevisionForStage(
     long long stageCacheId, const char *primPath, double *out16);
-RIGEXEC_IMAGING_C_API long long RigExecImaging_GetGenerationForStage(
-    long long stageCacheId);
+RIGEXEC_IMAGING_C_API long long
+RigExecImaging_GetGenerationForStage(long long stageCacheId);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedFloatsForStage(
     long long stageCacheId, const char *packedPaths, float *out, int count);
 /// The double array a rig published at \p propertyPath
@@ -1355,40 +1373,45 @@ RIGEXEC_IMAGING_C_API int RigExecImaging_GetMovedDoublesForStage(
     int isDefault, double *out, int capacity);
 RIGEXEC_IMAGING_C_API int RigExecImaging_GetGuideBoundsAssetSpaceForStage(
     long long stageCacheId, const char *primPath, double outMinMax[6]);
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(
-    long long stageCacheId, double outMinMax[6]);
-RIGEXEC_IMAGING_C_API int RigExecImaging_SetWeightOverlayForStage(
-    long long stageCacheId, const char *weightPrimPath);
-RIGEXEC_IMAGING_C_API int RigExecImaging_GetFrameStatesForStage(
-    long long stageCacheId, const char *rigPath, const double *frames,
-    int *statesOut, int count);
-RIGEXEC_IMAGING_C_API int RigExecImaging_ClearFrameCacheForStage(
-    long long stageCacheId, const char *rigPath);
-RIGEXEC_IMAGING_C_API int RigExecImaging_WarmRangeForStage(
-    long long stageCacheId, const char *rigPath, const double *frames,
-    int count);
-RIGEXEC_IMAGING_C_API long long RigExecImaging_GetWarmingCompletedCountForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API long long RigExecImaging_GetWarmingProgressCountForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_BeginPreviewForStage(
-    long long stageCacheId, const char *packedAttributePaths);
-RIGEXEC_IMAGING_C_API int RigExecImaging_UpdatePreviewForStage(
-    long long stageCacheId, const double *values, int count);
-RIGEXEC_IMAGING_C_API int RigExecImaging_EndPreviewForStage(
-    long long stageCacheId);
-RIGEXEC_IMAGING_C_API int RigExecImaging_EndPreviewWithoutPublishForStage(
-    long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(long long stageCacheId,
+                                                   double outMinMax[6]);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_SetWeightOverlayForStage(long long stageCacheId,
+                                        const char *weightPrimPath);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_GetFrameStatesForStage(long long stageCacheId,
+                                      const char *rigPath, const double *frames,
+                                      int *statesOut, int count);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_ClearFrameCacheForStage(long long stageCacheId,
+                                       const char *rigPath);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_WarmRangeForStage(long long stageCacheId, const char *rigPath,
+                                 const double *frames, int count);
+RIGEXEC_IMAGING_C_API long long
+RigExecImaging_GetWarmingCompletedCountForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API long long
+RigExecImaging_GetWarmingProgressCountForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_BeginPreviewForStage(long long stageCacheId,
+                                    const char *packedAttributePaths);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_UpdatePreviewForStage(long long stageCacheId,
+                                     const double *values, int count);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_EndPreviewForStage(long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_EndPreviewWithoutPublishForStage(long long stageCacheId);
 
 /// 1 when the stage's context has an active rig, 0 otherwise (including an
 /// unknown id).
-RIGEXEC_IMAGING_C_API int RigExecImaging_IsActiveForStage(
-    long long stageCacheId);
+RIGEXEC_IMAGING_C_API int
+RigExecImaging_IsActiveForStage(long long stageCacheId);
 
 /// How many imaging contexts the process holds for live stages (tests and
 /// diagnostics).
 RIGEXEC_IMAGING_C_API int RigExecImaging_ContextCount();
-
 }
 
-#endif  // RIGEXEC_IMAGING_REGISTRY_H
+#endif // RIGEXEC_IMAGING_REGISTRY_H

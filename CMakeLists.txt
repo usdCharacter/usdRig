@@ -360,6 +360,10 @@ add_library(rigExecImaging SHARED
     # Warming triggers: the commit and idle enqueues with the sampling
     # budgets, the cursor sweep, the rewarm queue and the fallback fill.
     libs/rigExecImaging/registryWarming.cpp
+    # Session lifecycle: explicit and automatic activation with the
+    # transactional commit, the authored-guide display on initial failure,
+    # rig-root noting and the teardown that stops the warming pool.
+    libs/rigExecImaging/registryLifecycle.cpp
     # Guide geometry queries: published/subtree bounds and the
     # UsdGeomBoundable extent callback.
     libs/rigExecImaging/guideBounds.cpp
