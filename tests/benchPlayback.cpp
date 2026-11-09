@@ -52,8 +52,7 @@ GetEnv(const char *name)
 #ifdef _WIN32
     static char buffer[256];
     size_t needed = 0;
-    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 ||
-        needed == 0) {
+    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 || needed == 0) {
         return nullptr;
     }
     return buffer;
@@ -110,7 +109,7 @@ FindRig(const UsdStageRefPtr &stage)
     return SdfPath();
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -125,11 +124,11 @@ main(int argc, char **argv)
     if (!GetEnv("RIGEXEC_FRAME_CACHE")) {
         SetEnv("RIGEXEC_FRAME_CACHE", "on");
     }
-    std::printf("RIGEXEC_FRAME_CACHE=%s\n",
-                GetEnv("RIGEXEC_FRAME_CACHE"));
+    std::printf("RIGEXEC_FRAME_CACHE=%s\n", GetEnv("RIGEXEC_FRAME_CACHE"));
     std::printf("RIGEXEC_ENABLE_PARALLEL_EVAL=%s\n",
-                GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL") ?
-                    GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL") : "(unset)");
+                GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL")
+                    ? GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL")
+                    : "(unset)");
     std::printf("background warming enabled: %s\n",
                 RigExecBackgroundWarmingEnabled() ? "yes" : "NO");
 
@@ -152,15 +151,19 @@ main(int argc, char **argv)
     const std::string::size_type slash = stageFile.rfind('/');
     const std::string label =
         slash == std::string::npos ? stageFile : stageFile.substr(slash + 1);
-    std::printf("[%s] %s rig=%s start=%g frames=%d pace=%g ms\n",
-                label.c_str(), stagePath.c_str(), rig.GetString().c_str(),
-                startValue, frameCount, paceMs);
+    std::printf("[%s] %s rig=%s start=%g frames=%d pace=%g ms\n", label.c_str(),
+                stagePath.c_str(), rig.GetString().c_str(), startValue,
+                frameCount, paceMs);
 
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    if (!registry) {
+        std::printf("FATAL: no imaging context for the stage\n");
+        return 1;
+    }
     {
         std::vector<std::string> errors;
-        if (!registry.Activate(stage, rig, UsdTimeCode(startValue),
-                               &errors)) {
+        if (!registry->Activate(stage, rig, UsdTimeCode(startValue), &errors)) {
             std::printf("FATAL: activation failed\n");
             for (const std::string &error : errors) {
                 std::printf("  %s\n", error.c_str());
@@ -173,15 +176,15 @@ main(int argc, char **argv)
     // user who opens the stage and immediately presses play starts here.
     if (profile) {
         if (RigExecProfiler *schedulerProfiler =
-                registry.MutableSchedulerProfiler()) {
+                registry->MutableSchedulerProfiler()) {
             schedulerProfiler->SetEnabled(true);
         }
         if (RigExecProfiler *bridgeProfiler =
-                registry.MutableBridgeProfiler(rig)) {
+                registry->MutableBridgeProfiler(rig)) {
             bridgeProfiler->SetEnabled(true);
         }
     }
-    const size_t evalsAtOpen = registry.GetSessionEvaluationCount(rig);
+    const size_t evalsAtOpen = registry->GetSessionEvaluationCount(rig);
     std::printf("pass 1: cold first play, %d ticks (SetTime + OnIdle)\n",
                 frameCount);
     std::vector<double> setTimes;
@@ -191,19 +194,19 @@ main(int argc, char **argv)
         const auto tickStart = std::chrono::steady_clock::now();
         const UsdTimeCode time(startValue + double(tick));
         const double setStart = NowUs();
-        if (!registry.SetTime(time)) {
+        if (!registry->SetTime(time)) {
             std::printf("FATAL: SetTime(%g) failed\n", time.GetValue());
             return 1;
         }
         const double setUs = NowUs() - setStart;
         const double idleStart = NowUs();
-        const size_t enqueued = registry.OnIdle();
+        const size_t enqueued = registry->OnIdle();
         const double idleUs = NowUs() - idleStart;
         setTimes.push_back(setUs);
         idles.push_back(idleUs);
         if (tick < 12 || tick % 8 == 7) {
             const RigExecBackgroundSchedulerStats progress =
-                registry.GetBackgroundStats();
+                registry->GetBackgroundStats();
             std::printf("  tick %3d f=%6g set=%8.1f us idle=%8.1f us "
                         "(enq %zu) completed=%zu queued=%zu\n",
                         tick, time.GetValue(), setUs, idleUs, enqueued,
@@ -211,8 +214,7 @@ main(int argc, char **argv)
         }
         if (paceMs > 0.0) {
             const auto nextStart =
-                tickStart +
-                std::chrono::microseconds(int64_t(paceMs * 1000.0));
+                tickStart + std::chrono::microseconds(int64_t(paceMs * 1000.0));
             std::this_thread::sleep_until(nextStart);
         }
     }
@@ -221,17 +223,17 @@ main(int argc, char **argv)
                    std::chrono::steady_clock::now() - playStart)
                    .count()) /
         1000.0;
-    const size_t evalsAfterPlay = registry.GetSessionEvaluationCount(rig);
+    const size_t evalsAfterPlay = registry->GetSessionEvaluationCount(rig);
     const RigExecFrameCacheStats cacheAfterPlay =
-        registry.GetFrameCacheStats(rig);
+        registry->GetFrameCacheStats(rig);
     const RigExecBackgroundSchedulerStats schedAfterPlay =
-        registry.GetBackgroundStats();
-    std::printf("  SetTime: median %8.1f us, max %8.1f us\n",
-                Median(setTimes), MaxOf(setTimes));
-    std::printf("  OnIdle:  median %8.1f us, max %8.1f us\n",
-                Median(idles), MaxOf(idles));
-    std::printf("  wall: %.1f ms for %d ticks (%.1f fps equivalent)\n",
-                playMs, frameCount,
+        registry->GetBackgroundStats();
+    std::printf("  SetTime: median %8.1f us, max %8.1f us\n", Median(setTimes),
+                MaxOf(setTimes));
+    std::printf("  OnIdle:  median %8.1f us, max %8.1f us\n", Median(idles),
+                MaxOf(idles));
+    std::printf("  wall: %.1f ms for %d ticks (%.1f fps equivalent)\n", playMs,
+                frameCount,
                 playMs > 0.0 ? 1000.0 * double(frameCount) / playMs : 0.0);
     std::printf("  pulls: %zu over the pass (%zu at open)\n",
                 evalsAfterPlay - evalsAtOpen, evalsAtOpen);
@@ -252,9 +254,9 @@ main(int argc, char **argv)
     // Second visit: the same frames again, SetTime only, unpaced. Whatever
     // the first pass memoized (or the workers finished since) serves here
     // without evaluating.
-    registry.WaitUntilBackgroundIdle();
+    registry->WaitUntilBackgroundIdle();
     const RigExecBackgroundSchedulerStats schedDrained =
-        registry.GetBackgroundStats();
+        registry->GetBackgroundStats();
     std::printf("pass 2: unpaced replay, SetTime only (drained: "
                 "completed=%zu droppedStale=%zu shed=%zu declined=%zu)\n",
                 schedDrained.completed, schedDrained.droppedStale,
@@ -262,17 +264,17 @@ main(int argc, char **argv)
     std::vector<double> replays;
     for (int tick = 0; tick < frameCount; ++tick) {
         const double start = NowUs();
-        if (!registry.SetTime(UsdTimeCode(startValue + double(tick)))) {
+        if (!registry->SetTime(UsdTimeCode(startValue + double(tick)))) {
             std::printf("FATAL: replay SetTime failed\n");
             return 1;
         }
         replays.push_back(NowUs() - start);
     }
-    const size_t evalsAfterReplay = registry.GetSessionEvaluationCount(rig);
+    const size_t evalsAfterReplay = registry->GetSessionEvaluationCount(rig);
     const RigExecFrameCacheStats cacheAfterReplay =
-        registry.GetFrameCacheStats(rig);
-    std::printf("  SetTime: median %8.1f us, max %8.1f us\n",
-                Median(replays), MaxOf(replays));
+        registry->GetFrameCacheStats(rig);
+    std::printf("  SetTime: median %8.1f us, max %8.1f us\n", Median(replays),
+                MaxOf(replays));
     std::printf("  pulls: %zu over the replay\n",
                 evalsAfterReplay - evalsAfterPlay);
     std::printf("  cache: hits=%zu (+%zu) misses=%zu (+%zu) entries=%zu\n",
@@ -288,17 +290,16 @@ main(int argc, char **argv)
                 return;
             }
             std::printf("profile: %s\n", whose);
-            for (const RigExecProfileSummaryRow &row :
-                 profiler->Summarize()) {
+            for (const RigExecProfileSummaryRow &row : profiler->Summarize()) {
                 std::printf("  %-40s %6zu x %10llu us total %8llu us max\n",
                             (row.category + "." + row.name).c_str(), row.count,
                             (unsigned long long)row.totalUs,
                             (unsigned long long)row.maxUs);
             }
         };
-        printSummary("scheduler", registry.MutableSchedulerProfiler());
-        printSummary("bridge", registry.MutableBridgeProfiler(rig));
+        printSummary("scheduler", registry->MutableSchedulerProfiler());
+        printSummary("bridge", registry->MutableBridgeProfiler(rig));
     }
-    registry.Deactivate();
+    registry->Deactivate();
     return 0;
 }

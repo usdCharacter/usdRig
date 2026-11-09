@@ -54,8 +54,7 @@ GetEnv(const char *name)
 #ifdef _WIN32
     static char buffer[256];
     size_t needed = 0;
-    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 ||
-        needed == 0) {
+    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 || needed == 0) {
         return nullptr;
     }
     return buffer;
@@ -104,12 +103,12 @@ SampledBytes(const VtValue &value, bool *isArray)
     if (value.IsEmpty()) {
         return 0;
     }
-#define _BENCH_ARRAY(type, element)                                  \
-    if (value.IsHolding<type>()) {                                   \
-        if (isArray) {                                               \
-            *isArray = true;                                         \
-        }                                                            \
-        return value.UncheckedGet<type>().size() * sizeof(element);  \
+#define _BENCH_ARRAY(type, element)                                            \
+    if (value.IsHolding<type>()) {                                             \
+        if (isArray) {                                                         \
+            *isArray = true;                                                   \
+        }                                                                      \
+        return value.UncheckedGet<type>().size() * sizeof(element);            \
     }
     _BENCH_ARRAY(VtVec3fArray, GfVec3f)
     _BENCH_ARRAY(VtVec3dArray, GfVec3d)
@@ -121,9 +120,9 @@ SampledBytes(const VtValue &value, bool *isArray)
     _BENCH_ARRAY(VtBoolArray, bool)
     _BENCH_ARRAY(VtStringArray, std::string)
 #undef _BENCH_ARRAY
-#define _BENCH_SCALAR(type)        \
-    if (value.IsHolding<type>()) { \
-        return sizeof(type);       \
+#define _BENCH_SCALAR(type)                                                    \
+    if (value.IsHolding<type>()) {                                             \
+        return sizeof(type);                                                   \
     }
     _BENCH_SCALAR(float)
     _BENCH_SCALAR(double)
@@ -172,7 +171,7 @@ FindAvarDouble(const UsdStageRefPtr &stage, const SdfPath &rig)
     return UsdAttribute();
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -182,11 +181,11 @@ main(int argc, char **argv)
     if (!GetEnv("RIGEXEC_FRAME_CACHE")) {
         SetEnv("RIGEXEC_FRAME_CACHE", "on");
     }
-    std::printf("RIGEXEC_FRAME_CACHE=%s\n",
-                GetEnv("RIGEXEC_FRAME_CACHE"));
+    std::printf("RIGEXEC_FRAME_CACHE=%s\n", GetEnv("RIGEXEC_FRAME_CACHE"));
     std::printf("RIGEXEC_ENABLE_PARALLEL_EVAL=%s\n",
-                GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL") ?
-                    GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL") : "(unset)");
+                GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL")
+                    ? GetEnv("RIGEXEC_ENABLE_PARALLEL_EVAL")
+                    : "(unset)");
     std::printf("background warming enabled: %s\n",
                 RigExecBackgroundWarmingEnabled() ? "yes" : "NO");
 
@@ -194,7 +193,8 @@ main(int argc, char **argv)
     // (e.g. biped/Biped_stack.usda, the full layered character, whose face
     // correctives the body-only default does not carry).
     const char *named = GetEnv("RIGEXEC_BENCH_STAGE");
-    const std::string stagePath = examplesDir + "/" +
+    const std::string stagePath =
+        examplesDir + "/" +
         std::string(named && *named ? named : "biped/Biped_anim.usda");
     const UsdStageRefPtr stage = UsdStage::Open(stagePath);
     if (!stage) {
@@ -255,8 +255,7 @@ main(int argc, char **argv)
         std::string error;
         const bool sampleable = RigExecSampleFrameInputs(
             evaluator, playhead, noOverrides, &probe, &error);
-        std::printf("[biped] sampleable=%s%s%s\n",
-                    sampleable ? "yes" : "NO",
+        std::printf("[biped] sampleable=%s%s%s\n", sampleable ? "yes" : "NO",
                     sampleable ? "" : " (",
                     sampleable ? "" : (error + ")").c_str());
     }
@@ -269,8 +268,9 @@ main(int argc, char **argv)
             (void)digest;
             compiledRig.push_back(NowUs() - start);
         }
-        std::printf("  %-28s %10.1f us (median of %zu)\n", "compiled rig signature",
-                    Median(compiledRig), compiledRig.size());
+        std::printf("  %-28s %10.1f us (median of %zu)\n",
+                    "compiled rig signature", Median(compiledRig),
+                    compiledRig.size());
     }
     RigExecFrameInputs sampled;
     {
@@ -292,8 +292,8 @@ main(int argc, char **argv)
                 sampled = inputs;
             }
         }
-        std::printf("  %-28s %10.1f us (median of %zu)\n",
-                    "sample one frame", Median(samples), samples.size());
+        std::printf("  %-28s %10.1f us (median of %zu)\n", "sample one frame",
+                    Median(samples), samples.size());
     }
     if (!sampled.values.empty()) {
         std::vector<double> digests;
@@ -304,8 +304,8 @@ main(int argc, char **argv)
             (void)digest;
             digests.push_back(NowUs() - start);
         }
-        std::printf("  %-28s %10.1f us (median of %zu)\n",
-                    "control digest", Median(digests), digests.size());
+        std::printf("  %-28s %10.1f us (median of %zu)\n", "control digest",
+                    Median(digests), digests.size());
     }
     {
         // Chain-bind cost apart from the sample: production pins the
@@ -320,8 +320,8 @@ main(int argc, char **argv)
             (void)ok;
             binds.push_back(NowUs() - start);
         }
-        std::printf("  %-28s %10.1f us (median of %zu)\n",
-                    "chain bind", Median(binds), binds.size());
+        std::printf("  %-28s %10.1f us (median of %zu)\n", "chain bind",
+                    Median(binds), binds.size());
     }
     {
         // Pinned-route anatomy: one bind, then per-frame currency, hook,
@@ -330,38 +330,32 @@ main(int argc, char **argv)
         // check, and the sampler's own entry check).
         RigExecChainSampleBindings pinned;
         std::string bindError;
-        if (!RigExecBindChainSampleInputs(evaluator, &pinned,
-                                          &bindError)) {
+        if (!RigExecBindChainSampleInputs(evaluator, &pinned, &bindError)) {
             std::printf("  pinned bind failed: %s\n", bindError.c_str());
         } else {
             std::vector<double> current;
             for (size_t i = 0; i < 200; ++i) {
                 const double start = NowUs();
                 volatile bool ok =
-                    RigExecChainSampleBindingsStillCurrent(pinned,
-                                                           evaluator);
+                    RigExecChainSampleBindingsStillCurrent(pinned, evaluator);
                 (void)ok;
                 current.push_back(NowUs() - start);
             }
             std::printf("  %-28s %10.1f us (median of %zu, x3/frame)\n",
-                        "chain currency", Median(current),
-                        current.size());
+                        "chain currency", Median(current), current.size());
             std::vector<double> pinnedSamples;
             for (int step = 0; step < 8; ++step) {
                 RigExecFrameInputs inputs;
                 std::string error;
                 const double start = NowUs();
-                volatile bool ok =
-                    RigExecSampleFrameInputsWithChainBindings(
-                        evaluator,
-                        UsdTimeCode(playheadValue + double(step)),
-                        noOverrides, pinned, &inputs, &error);
+                volatile bool ok = RigExecSampleFrameInputsWithChainBindings(
+                    evaluator, UsdTimeCode(playheadValue + double(step)),
+                    noOverrides, pinned, &inputs, &error);
                 (void)ok;
                 pinnedSamples.push_back(NowUs() - start);
             }
-            std::printf("  %-28s %10.1f us (median of %zu)\n",
-                        "pinned sample", Median(pinnedSamples),
-                        pinnedSamples.size());
+            std::printf("  %-28s %10.1f us (median of %zu)\n", "pinned sample",
+                        Median(pinnedSamples), pinnedSamples.size());
         }
     }
     if (!sampled.values.empty()) {
@@ -405,8 +399,8 @@ main(int argc, char **argv)
         std::printf("  samples: %zu values (%zu arrays %zu bytes, "
                     "%zu scalars, %zu other, %zu valueless, %zu bytes "
                     "total)\n",
-                    sampled.values.size(), arrays, arrayBytes, scalars,
-                    other, valueless, totalBytes);
+                    sampled.values.size(), arrays, arrayBytes, scalars, other,
+                    valueless, totalBytes);
         std::printf("  static: %zu values %zu bytes; varying: %zu values "
                     "%zu bytes; unresolved: %zu values %zu bytes\n",
                     staticCount, staticBytes, varyingCount, varyingBytes,
@@ -417,10 +411,15 @@ main(int argc, char **argv)
     // The mouse-up simulation: an edit plus the release flush's commit, at
     // a held playhead, with the background drained before each round so
     // every commit samples the full burst (the fresh-release case).
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    if (!registry) {
+        std::printf("FATAL: no imaging context for the stage\n");
+        return 1;
+    }
     {
         std::vector<std::string> errors;
-        if (!registry.Activate(stage, rig, playhead, &errors)) {
+        if (!registry->Activate(stage, rig, playhead, &errors)) {
             std::printf("FATAL: activation failed\n");
             for (const std::string &error : errors) {
                 std::printf("  %s\n", error.c_str());
@@ -447,26 +446,23 @@ main(int argc, char **argv)
     std::vector<double> commits;
     std::vector<size_t> enqueuedCounts;
     for (size_t round = 0; round < 5; ++round) {
-        registry.WaitUntilBackgroundIdle();
+        registry->WaitUntilBackgroundIdle();
         const double value = (round % 2 == 0) ? v1 : v0;
         const double editStart = NowUs();
         if (!avar.Set(value, playhead)) {
-            std::printf("FATAL: round %zu could not author the edit\n",
-                        round);
+            std::printf("FATAL: round %zu could not author the edit\n", round);
             return 1;
         }
         edits.push_back(NowUs() - editStart);
         const double commitStart = NowUs();
-        const size_t enqueued = registry.OnEditCommitted();
+        const size_t enqueued = registry->OnEditCommitted();
         commits.push_back(NowUs() - commitStart);
         enqueuedCounts.push_back(enqueued);
     }
     std::printf("  %-28s %10.1f us (median of %zu)\n",
-                "edit: Set + notices + re-eval", Median(edits),
-                edits.size());
+                "edit: Set + notices + re-eval", Median(edits), edits.size());
     std::printf("  %-28s %10.1f us (median of %zu)\n",
-                "commit: OnEditCommitted", Median(commits),
-                commits.size());
+                "commit: OnEditCommitted", Median(commits), commits.size());
     std::printf("  enqueued per commit:");
     for (size_t count : enqueuedCounts) {
         std::printf(" %zu", count);
@@ -476,13 +472,13 @@ main(int argc, char **argv)
         // The already-warming case: a second commit with no new edit pays
         // only the already-queued skips, without sampling.
         const double start = NowUs();
-        const size_t enqueued = registry.OnEditCommitted();
+        const size_t enqueued = registry->OnEditCommitted();
         std::printf("  %-28s %10.1f us (enqueued %zu)\n",
                     "commit with no new edit", NowUs() - start, enqueued);
     }
     {
         const RigExecBackgroundSchedulerStats stats =
-            registry.GetBackgroundStats();
+            registry->GetBackgroundStats();
         std::printf("  scheduler: queued=%zu running=%zu completed=%zu "
                     "droppedStale=%zu canceled=%zu coalesced=%zu "
                     "declined=%zu\n",
@@ -490,7 +486,7 @@ main(int argc, char **argv)
                     stats.droppedStale, stats.canceled, stats.coalesced,
                     stats.declined);
     }
-    registry.WaitUntilBackgroundIdle();
-    registry.Deactivate();
+    registry->WaitUntilBackgroundIdle();
+    registry->Deactivate();
     return 0;
 }
