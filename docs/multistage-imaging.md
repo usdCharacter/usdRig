@@ -216,10 +216,11 @@ Every name below carries the `RigExecImaging_` prefix.
 | `int GetPublishedScalarPrimvarForStage(long long id, const char *prim, const char *primvarName, float *out)` | 1 published, 0 not published, -2 with no context |
 | `int GetPublishedXformRevisionForStage(long long id, const char *prim, double out[16])` | 1 with the revised * base^-1 map, 0 when the rig drives no transform there, -2 with no context |
 
-`SetWeightOverlayForStage` and `BeginPreviewForStage` create the stage's
-context when it has none (a selection is remembered before activation, and a
-stage with no rig still previews its Xforms); no other entry point creates
-one. These reads already carry the id in their own signature rather than as a
+`ActivateForStage`, `SetWeightOverlayForStage` and `BeginPreviewForStage`
+create the stage's context when it has none (an activation creates it first;
+a selection is remembered before activation, and a stage with no rig still
+previews its Xforms); no other entry point creates one. These reads already
+carry the id in their own signature rather than as a
 `ForStage` suffix, and use **that** stage's context:
 
 - `int RigExecImaging_GetControlFrameAssetSpace(long long id, const char *prim, double frame, int isDefault, double out[16])`.
@@ -365,6 +366,12 @@ scheduler fence mutex          (ClearFrameCache / SetWeightOverlay only)
   `ForKey` resolves that key to nothing, and the chain keeps working and can
   rebind.
 - Nothing in the library holds a context just because it was activated last.
-  The directory's strong reference, and the stage the active context holds,
-  end with the activation: a host deactivation, or an automatic release when
-  the last bound chain goes away (see "Activation lifetimes").
+  What ends with the activation -- a host deactivation, or an automatic
+  release when the last bound chain goes away (see "Activation lifetimes")
+  -- is the active context's own hold on its stage, its rig sessions, and
+  its worker threads. The directory keeps the context itself strongly for as
+  long as the stage lives, including after a host deactivation: a later
+  re-activation sees the same context, with its warming counters surviving
+  deactivation and re-activation (see "The directory" and the
+  `ForStage` table). The context is released only when its stage expires and
+  the next directory call prunes it.
