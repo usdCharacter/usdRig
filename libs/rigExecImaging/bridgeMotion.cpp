@@ -1,8 +1,6 @@
 // Render-motion publication for the imaging bridge: the facade's
-// multi-sample workflow as a stateless TU. It owns no state: the evaluator,
-// store, guide/snapshot components, generation counter and published
-// compiled-rig signature all belong to RigExecImagingBridge (bridge.h).
-// The frame cache is never consulted on this path.
+// multi-sample workflow as a stateless TU. All state belongs to the
+// RigExecImagingBridge facade; this path never consults the frame cache.
 #include "bridge.h"
 
 #include "bridgeGuides.h"

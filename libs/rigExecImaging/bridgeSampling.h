@@ -1,15 +1,5 @@
-// Chain-sample input bindings and live input sampling owned by the imaging
-// bridge: the live sampler's chain bindings pinned for the current compiled
-// rig (rebound on a recompile or on a stage notice that could move a chain),
-// the sorted edit-guard lists behind that notice decision, and the
-// sample-support memo the frame-cache lanes consult. One per bridge,
-// constructed after the evaluator and destroyed before it. The component
-// holds no store, frame cache, warm index, registry state or bridge
-// back-pointer: it reads the evaluator through the reference the bridge
-// bound at construction, and the bridge passes the effective evaluation
-// overrides and upstream values on every sampling call. The upstream
-// setter, the display/evaluation override storage and the evaluator
-// override translation stay on the facade.
+// Chain-sample bindings and live input sampling owned by the imaging
+// bridge: the evaluator is borrowed, and it outlives the component.
 #ifndef RIGEXEC_IMAGING_BRIDGE_SAMPLING_H
 #define RIGEXEC_IMAGING_BRIDGE_SAMPLING_H
 
@@ -32,9 +22,8 @@ class RigExecBakedProgram;
 /// bridge: bindings hold live stage handles.
 class RigExecBridgeSampling {
 public:
-    /// Borrows the owner-thread evaluator the facade owns. The evaluator
-    /// outlives this component: the facade builds it first and destroys
-    /// its components before it.
+    /// Borrows the owner-thread evaluator the facade owns; the evaluator
+    /// is built first and outlives this component.
     explicit RigExecBridgeSampling(const RigExecRigEvaluator &evaluator);
 
     /// Drops the pinned chain bindings when \p notice could move a chain

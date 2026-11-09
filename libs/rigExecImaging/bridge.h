@@ -454,46 +454,17 @@ public:
 
 private:
     std::unique_ptr<RigExecRigEvaluator> _evaluator;
-    /// Guide rendering (bridgeGuides.h): authored-styling caches, the
-    /// joint-hierarchy cache, cloth guide bindings and the fills. Owned
-    /// here; built after the evaluator and destroyed before it; it holds
-    /// no store, frame cache, scheduler, registry or bridge reference and
-    /// reads the stage, serials, overrides and selection through the call
-    /// passed on each fill.
+    /// Guide rendering (bridgeGuides.h). Built after the evaluator and
+    /// destroyed before it; scene state arrives in the per-call record.
     std::unique_ptr<RigExecBridgeGuides> _guides;
-    /// Snapshot payload construction (bridgeSnapshot.h): the pose ->
-    /// published-prims payload, the provider reset-stack walk and its
-    /// serial/provider-set memo, and the GPU deform layout tables and
-    /// per-prim frame history. Owned here; holds no store, frame cache,
-    /// scheduler, results index or bridge reference: the facade passes the
-    /// stage, time, evaluator stage-edit serial and compiled publication
-    /// metadata on every call, and keeps the generation stamp, the guide
-    /// fills, the generation numbering, the compiled-rig announcement and
-    /// the store Publish/Replace.
+    /// Snapshot payload construction (bridgeSnapshot.h): a pure builder
+    /// over per-call state; the facade owns publication and numbering.
     std::unique_ptr<RigExecBridgeSnapshotBuilder> _snapshot;
-    /// Live sampling (bridgeSampling.h): the sampler's chain bindings
-    /// pinned for the current compiled rig, their notice-driven invalidation
-    /// and the sample-support memo. Owned here; built after the evaluator
-    /// and destroyed before it; it holds no store, frame cache, warm index,
-    /// registry state or bridge back-pointer: the facade passes the
-    /// effective evaluation overrides and upstream values on every
-    /// sampling call, and keeps SetUpstreamInputs, the display/evaluation
-    /// override storage and the evaluator override translation.
+    /// Live sampling (bridgeSampling.h). Borrows the evaluator, which
+    /// outlives it; overrides and upstream values arrive per sampling call.
     std::unique_ptr<RigExecBridgeSampling> _sampling;
-    /// Frame-cache state and policy (bridgeFrameCache.h): the shared frame
-    /// cache, its mode/verify switches, the warm-index handle, the
-    /// task-list memo, the freshness-proof map, the affected index, the
-    /// cache edit serial, and the serve/lookup/carry/memoize lanes. Owned
-    /// here; constructed with the rig path; it holds no store, snapshot,
-    /// evaluator-override storage or bridge back-pointer: the facade
-    /// passes one borrowed RigExecCacheCall record (evaluator, sampling
-    /// component, time, overrides, upstream values) on every cache call,
-    /// and keeps the edit-here gate, the interactive-drag and cache-off
-    /// bypasses, the RIGEXEC_FRAME_CACHE_VERIFY shadow verification,
-    /// publication through _PublishPoseSnapshot, and memoization after a
-    /// live evaluation. Background completions stay in the bridge-free
-    /// bridgeWarmPublication free functions over the shared cache, so
-    /// destroying the components cannot invalidate a running worker.
+    /// Frame-cache state and policy (bridgeFrameCache.h): never publishes;
+    /// the facade does. Workers hold the shared cache, never this bridge.
     std::unique_ptr<RigExecBridgeFrameCache> _cache;
     std::shared_ptr<RigExecSnapshotStore> _store;
     RigExecBindingResolvingSceneIndexRefPtr _binding;

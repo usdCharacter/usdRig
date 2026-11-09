@@ -1,15 +1,5 @@
-// Snapshot payload construction owned by the imaging bridge: the pose ->
-// published-prims payload (geometry, matrix and float primvars, provider
-// base+revision transforms), the authored reset-stack walk and its
-// serial/provider-set memo, and the GPU deform layout tables and per-prim
-// frame history feeding velocities. One per bridge, constructed after the
-// evaluator. The component holds no store, frame cache, scheduler, results
-// index, evaluator or bridge back-pointer: the bridge passes the stage, the
-// sample time, the evaluator's stage-edit serial and the explicit compiled
-// publication metadata on every call (RigExecSnapshotCall). Generation
-// stamping, guide fills, generation numbering, the compiled-rig
-// announcement and the store Publish/Replace stay on the facade, in the
-// current order.
+// Snapshot payload construction owned by the imaging bridge: a pure
+// builder over per-call state; publication and numbering stay on the facade.
 #ifndef RIGEXEC_IMAGING_BRIDGE_SNAPSHOT_H
 #define RIGEXEC_IMAGING_BRIDGE_SNAPSHOT_H
 
@@ -34,12 +24,10 @@ namespace rigExec {
 struct RigExecRigPose;
 
 /// The bridge-owned state a snapshot build reads, built at the call site
-/// and borrowed for the duration of the call. The component keeps no copy:
-/// a recompile or a stage edit takes effect on the next call.
-/// \p projectorTargets are the Spatial SurfaceProjector output properties
-/// whose matrices stay target-local; \p animatedMapPrimvars are the float
-/// primvar properties of animated maps; \p scalarPrimvarTargets and \p
-/// scalarPrimvarNames are the compiled scalar chains, paired by index.
+/// and borrowed for the call only; the component keeps no copy, so a
+/// recompile or stage edit takes effect on the next call.
+/// \p scalarPrimvarTargets and \p scalarPrimvarNames are compiled scalar
+/// chains paired by index; \p projectorTargets' matrices stay target-local.
 struct RigExecSnapshotCall {
     UsdStageRefPtr stage;
     UsdTimeCode time;
@@ -53,10 +41,8 @@ struct RigExecSnapshotCall {
 };
 
 /// Which generation a build is for. Displayed: the complete viewport
-/// generation, including the GPU deform publication and per-prim frame
-/// history. Query: the pose-query payload with the gpuDeform snapshot as
-/// the publication only -- no GPU display history is touched (guide fills,
-/// the store, notices and the generation stamp never reach this component).
+/// generation, including the GPU deform publication and frame history.
+/// Query: no GPU display history is touched.
 enum class RigExecSnapshotBuildMode { Displayed, Query };
 
 class RigExecBridgeSnapshotBuilder {

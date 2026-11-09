@@ -1,11 +1,7 @@
-// The bridge-owned frame-cache component's storage TU: the frame cache,
-// warm-index rows, the affected index, carry-over, sparse serving, lookup
-// lanes and memoization. The freshness proof operations -- warming-enqueue
-// proof records, override admission, path-scoped retirement, proof
-// re-pointing and capture-index notice routing -- are this class's second
-// TU, bridgeCacheFreshness.cpp. This TU publishes no viewport generation:
-// a serve fills a RigExecCacheServe outcome and the facade publishes
-// through its single snapshot path (bridge.cpp).
+// The bridge-owned frame-cache component, part 1: storage, lookup lanes,
+// sparse serve, carry-over and memoization. The freshness proof operations
+// are part 2, bridgeCacheFreshness.cpp. This TU publishes no viewport
+// generation.
 #include "bridgeFrameCache.h"
 
 #include "bridgeSampling.h"

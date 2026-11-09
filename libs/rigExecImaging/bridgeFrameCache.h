@@ -1,19 +1,5 @@
-// Frame-cache state and policy owned by the imaging bridge: the shared
-// frame cache, its mode/verify switches, the warm-index handle, the
-// task-list memo, the freshness-proof map, the compiled rig's affected
-// index, the cache edit serial, and the lookup / sparse-serve / carry /
-// memoize lanes. It never publishes a viewport generation: a serve fills
-// a typed outcome and the facade publishes through its single snapshot
-// path. The facade holds this component, passes one borrowed request
-// record per call, and keeps the interactive-drag and cache-off bypasses,
-// the edit-here gate, and the RIGEXEC_FRAME_CACHE_VERIFY shadow
-// verification. Background completions stay in the bridge-free free
-// functions (bridgeWarmPublication.h) over the shared cache, so a worker
-// never holds the bridge or this component. The freshness proof
-// operations -- NoteWarmingEnqueued, AdmitOverrideControls,
-// RetireProofsForControls, RepointProof, GetFreshProof and
-// NoteCaptureIndex -- are this class's second TU,
-// bridgeCacheFreshness.cpp.
+// The imaging bridge's frame-cache state and policy: a serve fills a typed
+// outcome the facade publishes; workers hold the cache, never the bridge.
 #ifndef RIGEXEC_IMAGING_BRIDGE_FRAME_CACHE_H
 #define RIGEXEC_IMAGING_BRIDGE_FRAME_CACHE_H
 
@@ -48,50 +34,40 @@ class RigExecFrameCache;
 class RigExecRigEvaluator;
 class RigExecWarmFrameIndex;
 
-/// Everything a cache operation reads outside its own state, borrowed for
-/// one synchronous call: the owner-thread evaluator, the sampling
-/// component the lookup and memoize lanes sample through, the frame being
-/// served, and the facade's standing evaluation overrides and upstream
-/// values. Nothing here outlives the call: the record is built fresh on
-/// every cache entry point, no reference is retained, and the component
-/// holds no bridge pointer and no closure.
+/// Everything a cache operation reads outside its own state, built fresh
+/// per call and borrowed for its duration; nothing here is retained.
 struct RigExecCacheCall {
     const RigExecRigEvaluator *evaluator = nullptr;
     RigExecBridgeSampling *sampling = nullptr;
     UsdTimeCode time = UsdTimeCode::Default();
-    /// The numerical evaluation overrides (display-only values never
-    /// reach the cache), and the standing upstream values.
+    /// Numerical evaluation overrides (display-only values never reach
+    /// the cache) and the standing upstream values.
     const std::vector<RigExecValueOverride> *overrides = nullptr;
     const std::vector<RigExecUpstreamValue> *upstream = nullptr;
 };
 
-/// The typed outcome of a publishing cache lookup. The cache fills it and
-/// returns; the facade publishes the pose through its single snapshot
-/// path. \p served false means the facade evaluates live. The lookup's
-/// miss facts (the sampled inputs, the unfolded digest, the retained
-/// base) stay inside the cache: the sparse lane runs there.
+/// The typed outcome of a publishing cache lookup: the facade publishes
+/// the pose through its snapshot path. \p served false means live evaluation.
 struct RigExecCacheServe {
     bool served = false;
-    /// The cached pose, owned by the outcome (the store entry keeps its
-    /// own copy) and already re-stamped for the requested time the way
-    /// publication reads it.
+    /// The cached pose, owned by the outcome and re-stamped for the
+    /// requested time the way publication reads it.
     RigExecRigPose pose;
     /// The key the entry was served under.
     RigExecFrameCacheKey key{0, 0};
-    /// RIGEXEC_FRAME_CACHE_VERIFY=1: after serving, the facade proves the
-    /// pose against a live evaluation. The evaluator pull counts as a
-    /// live run whatever the verdict: cacheHit stays false.
+    /// RIGEXEC_FRAME_CACHE_VERIFY=1: prove the pose against a live
+    /// evaluation. The evaluator pull counts as a live run whatever the
+    /// verdict: cacheHit stays false.
     bool liveEvaluationRequested = false;
-    /// The facade memoizes the live pose it evaluated when the shadow
-    /// verdict mismatches, repairing the entry. Only meaningful with
-    /// liveEvaluationRequested.
+    /// Memoize the live pose on a shadow-verdict mismatch, repairing the
+    /// entry. Only meaningful with liveEvaluationRequested.
     bool needsRepairMemoization = false;
 };
 
 /// The bridge-owned frame-cache component. UI thread only, like the
-/// bridge: the proof map and affected index have no lock because the
-/// bridge serializes its callers (the registry holds its mutex on the
-/// memoizing and notice paths).
+/// bridge: the proof map and affected index take no lock because the
+/// bridge serializes its callers. Freshness operations: second TU,
+/// bridgeCacheFreshness.cpp.
 class RigExecBridgeFrameCache {
 public:
     explicit RigExecBridgeFrameCache(const SdfPath &rigPath);

@@ -1,12 +1,7 @@
-// Frame-cache component, part 2: freshness proofs and retirement. Same
-// component as bridgeFrameCache.cpp (bridgeFrameCache.h): the proof map's
-// compiled-rig scope clearing and digest-cap retirement, the warming-
-// enqueue proof record, path-scoped retirement through the compiled rig's
-// output-affected index (override admission included), the carry-over
-// proof re-point, and the capture-index notice routing. The digest-order
-// dependency storage and the RigExecFreshProof contract (bridgeFreshness.h)
-// are shared with the storage TU: no second proof mechanism, no parallel
-// dependency model.
+// Frame-cache component, part 2: freshness proof records, scoping,
+// retirement and capture-index notice routing (bridgeFrameCache.h). Shares
+// the storage TU's digest-order dependency storage and the RigExecFreshProof
+// contract: no second proof mechanism, no parallel dependency model.
 #include "bridgeFrameCache.h"
 
 #include "rigExec/bakedProgramImpl.h"

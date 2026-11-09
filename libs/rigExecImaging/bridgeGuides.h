@@ -1,13 +1,7 @@
-// Guide rendering owned by the imaging bridge: authored-styling caches, the
-// joint-hierarchy cache, cloth constraint guide bindings, and the fills that
-// publish guide geometry and the weight overlay into a snapshot. One per
-// bridge, constructed after the evaluator and destroyed before it. The
-// component holds no store, frame cache, scheduler, registry state or bridge
-// back-pointer: the bridge passes the stage, the evaluator's stage-edit
-// serial and compiled rig signature, the mover order, the standing display
-// overrides and the weight selection on every call (RigExecGuideCall).
-// _FillVolumeGuides and _FillWeightOverlay are this class's second TU,
-// bridgeVolumeGuides.cpp.
+// Guide rendering owned by the imaging bridge. Built after the evaluator
+// and destroyed before it; the stage, serials, overrides and selection
+// arrive on every call (RigExecGuideCall). _FillVolumeGuides and
+// _FillWeightOverlay are the second TU, bridgeVolumeGuides.cpp.
 #ifndef RIGEXEC_IMAGING_BRIDGE_GUIDES_H
 #define RIGEXEC_IMAGING_BRIDGE_GUIDES_H
 
