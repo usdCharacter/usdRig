@@ -6,6 +6,7 @@
 #ifndef RIGEXEC_IMAGING_BRIDGE_H
 #define RIGEXEC_IMAGING_BRIDGE_H
 
+#include "bridgeWarmPublication.h"
 #include "sceneIndices.h"
 #include "snapshotStore.h"
 
@@ -31,64 +32,6 @@
 #include <vector>
 
 namespace rigExec {
-
-class RigExecWarmFrameIndex;
-
-/// Publishes one background warming completion into \p cache and the
-/// optional warm index, never into the snapshot store the viewport reads.
-///
-/// The generation fence is checked first: a token that is no longer the
-/// rig's current one means an edit landed while the job ran, and the result
-/// is dropped. An invalid pose is likewise dropped. Either way the frame the
-/// job would have warmed simply evaluates live when asked.
-///
-/// The fence-check, cache insert and optional index completion run under the
-/// scheduler's fence mutex: a running job can never pass its
-/// check before a generation bump and insert after the fenced clear. The
-/// fenced clear (generation-bump + queue-purge + cache-clear + index-reset)
-/// holds the same mutex, so a clear-while-warming retires the late
-/// completion instead of letting it repopulate the cache. Lock order: fence
-/// outermost, then the scheduler mutex, cache shards or warm index. Cache
-/// eviction callbacks run outside the shard locks.
-/// The UI-thread memoization path needs no fence (the UI thread serializes
-/// with itself).
-///
-/// Free function, not a bridge method, so a worker closure can hold the
-/// cache without holding the bridge: sessions (and their bridges) die on
-/// Deactivate while pool workers outlive them, and a completion for a dead
-/// session must land in a dead cache, not in freed memory.
-bool RigExecPublishBackgroundCompletion(
-    const std::shared_ptr<RigExecFrameCache> &cache,
-    const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
-    const RigExecBackgroundScheduler *scheduler, const SdfPath &rig);
-
-/// The fenced, retained-state completion: as above, plus the
-/// per-time fence token and the retained handle with its provenance. The
-/// fence requires generation AND token match (see
-/// RigExecBackgroundScheduler::IsWarmRequestCurrent): an old job for a
-/// scoped-purged time drops here and can never overwrite the requeued
-/// result. The overload above publishes pose-only under token zero, which
-/// matches only a never-purged time. When supplied, \p warmIndex records the
-/// successful completion under the same fence so a scoped edit cannot
-/// retire the entry between publication and the index update.
-bool RigExecPublishBackgroundCompletion(
-    const std::shared_ptr<RigExecFrameCache> &cache,
-    const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
-    const RigExecBackgroundScheduler *scheduler, const SdfPath &rig,
-    RigExecWarmFenceToken fenceToken,
-    std::shared_ptr<const void> retained, size_t retainedBytes,
-    const RigExecEntryProvenance *provenance,
-    RigExecWarmFrameIndex *warmIndex = nullptr);
-
-/// Test-only probe for the deterministic fence-race test: when set, the
-/// fenced publish above runs it while holding the fence mutex, after a
-/// passing fence-check and before the cache insert. Null in production.
-/// Set only while no publish is in flight (tests set it around one driven
-/// job); the probe itself must never publish or clear.
-void RigExecSetPublishFenceProbeForTesting(
-    std::function<void()> probe);
 
 /// One frame's freshness proof: the folded control digest a
 /// lookup must reproduce, the unfolded digest it folds from, and the
@@ -123,14 +66,12 @@ struct RigExecFreshProof {
 /// Drives one rig's evaluation into the imaging chain.
 class RigExecImagingBridge {
 public:
-    RigExecImagingBridge(
-        const UsdStageRefPtr &stage, const SdfPath &rigPath);
+    RigExecImagingBridge(const UsdStageRefPtr &stage, const SdfPath &rigPath);
 
     /// Constructs over an externally owned store (the application may
     /// create the store before any scene index or bridge exists).
-    RigExecImagingBridge(
-        const UsdStageRefPtr &stage, const SdfPath &rigPath,
-        std::shared_ptr<RigExecSnapshotStore> store);
+    RigExecImagingBridge(const UsdStageRefPtr &stage, const SdfPath &rigPath,
+                         std::shared_ptr<RigExecSnapshotStore> store);
 
     /// The outcome of one evaluate-and-publish step, for callers that
     /// broadcast notices to multiple filter chains.
@@ -138,7 +79,8 @@ public:
         bool ok = false;
         RigExecPublishedDirtyVector dirtied;
         /// Non-null when the compiled rig changed this generation.
-        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
+        RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
+            compiledRig;
         /// True when the published generation came from the frame cache
         /// without running the evaluator: no evaluator pull happened. False
         /// on the live path (including a shadow-verified hit, which DID
@@ -156,10 +98,9 @@ public:
     /// bit before any evaluation: a multi-sample
     /// profile fails preflight when the renderer advertises
     /// motionBlurSupport = false, and an empty offset set never renders.
-    static bool PreflightMotionProfile(
-        const std::vector<float> &shutterOffsets,
-        MotionBlurSupport support,
-        std::string *whyNot = nullptr);
+    static bool PreflightMotionProfile(const std::vector<float> &shutterOffsets,
+                                       MotionBlurSupport support,
+                                       std::string *whyNot = nullptr);
 
     /// Evaluate-then-publish without notifying any scene index; the
     /// caller forwards the result to its chains.
@@ -191,10 +132,10 @@ public:
     /// when the evaluation fails (\p diagnostic then carries its first
     /// message). \p evaluated says whether the evaluator ran. Owner thread,
     /// serialized by the caller.
-    bool SnapshotAtTimeWithoutPublishing(
-        UsdTimeCode time, bool evaluate,
-        RigExecImagingSnapshotConstPtr *snapshot, std::string *diagnostic,
-        bool *evaluated);
+    bool
+    SnapshotAtTimeWithoutPublishing(UsdTimeCode time, bool evaluate,
+                                    RigExecImagingSnapshotConstPtr *snapshot,
+                                    std::string *diagnostic, bool *evaluated);
 
     /// Render-motion publication: evaluates the rig at
     /// baseTime + offset for every explicit frame-relative shutter offset,
@@ -212,25 +153,27 @@ public:
 
     /// Append authored rest guides only. Never publishes evaluated control or
     /// joint frames, deformation, shader results or computed weight fields.
-    void AppendAuthoredGuides(
-        UsdTimeCode time, RigExecImagingSnapshot *snapshot);
+    void AppendAuthoredGuides(UsdTimeCode time,
+                              RigExecImagingSnapshot *snapshot);
 
     /// The store the results scene index reads from.
-    const std::shared_ptr<RigExecSnapshotStore> &GetStore() const {
+    const std::shared_ptr<RigExecSnapshotStore> &GetStore() const
+    {
         return _store;
     }
 
     /// The reserved generated scope this rig owns (for pruning).
     SdfPath GetGeneratedScope() const;
 
-    size_t GetCompiledRigSignature() const {
+    size_t GetCompiledRigSignature() const
+    {
         return _evaluator->GetCompiledRigSignature();
     }
 
     /// Wires the filters that receive compiled rig swaps and generation notices.
-    void SetSceneIndices(
-        const RigExecBindingResolvingSceneIndexRefPtr &binding,
-        const RigExecResultsSceneIndexRefPtr &results) {
+    void SetSceneIndices(const RigExecBindingResolvingSceneIndexRefPtr &binding,
+                         const RigExecResultsSceneIndexRefPtr &results)
+    {
         _binding = binding;
         _results = results;
     }
@@ -251,7 +194,8 @@ public:
     /// Takes effect on the next publication -- this only records the
     /// selection, because publishing is the caller's serialization point
     /// (the registry republishes at the current time right after).
-    void SetWeightOverlay(const SdfPath &weightPrimPath) {
+    void SetWeightOverlay(const SdfPath &weightPrimPath)
+    {
         if (weightPrimPath != _weightOverlay) {
             // The overlay flag changes POSE CONTENT (weightFields resolved
             // or not) without changing any sampled input, so entries stored
@@ -265,12 +209,16 @@ public:
         _evaluator->SetPublishWeightFields(!_weightOverlay.IsEmpty());
     }
 
-    const SdfPath &GetWeightOverlay() const { return _weightOverlay; }
+    const SdfPath &GetWeightOverlay() const
+    {
+        return _weightOverlay;
+    }
 
     /// The standing uncommitted manipulation values (see
     /// SetInteractiveOverrides), including display-only values. Numerical
     /// inputs are filtered separately for evaluation and cache keys.
-    const std::vector<RigExecValueOverride> &GetInteractiveOverrides() const {
+    const std::vector<RigExecValueOverride> &GetInteractiveOverrides() const
+    {
         return _interactiveOverrides;
     }
 
@@ -278,7 +226,8 @@ public:
     /// UI thread memoizes live results into and background completions warm
     /// behind the generation fence. Shared (not unique) so worker closures
     /// can hold it past the session that sampled them.
-    const std::shared_ptr<RigExecFrameCache> &GetFrameCache() const {
+    const std::shared_ptr<RigExecFrameCache> &GetFrameCache() const
+    {
         return _frameCache;
     }
 
@@ -289,7 +238,8 @@ public:
     void RefreshFrameCacheSettings();
 
     /// The stored RIGEXEC_FRAME_CACHE mode (see RefreshFrameCacheSettings).
-    RigExecFrameCacheMode GetFrameCacheMode() const {
+    RigExecFrameCacheMode GetFrameCacheMode() const
+    {
         return _frameCacheMode;
     }
 
@@ -350,14 +300,14 @@ public:
     /// RigExecBakedProgram::SetOverrides placement exactly; an override
     /// that places nowhere is left foreign -- conservative, never wrong.
     /// No-op with no baked program. UI thread only.
-    void AdmitOverrideControls(
-        const std::vector<RigExecValueOverride> &overrides);
+    void
+    AdmitOverrideControls(const std::vector<RigExecValueOverride> &overrides);
 
     /// Retires every freshness proof whose dependency set intersects \p
     /// controls: the path-scoped counterpart to the wholesale
     /// clears. Answers how many proofs were dropped. UI thread only.
-    size_t RetireProofsForControls(
-        const std::vector<RigExecControlId> &controls);
+    size_t
+    RetireProofsForControls(const std::vector<RigExecControlId> &controls);
 
     /// Re-points the proof for \p time at \p newDigest (carry-over): the
     /// entry was re-published under a new key with
@@ -371,7 +321,10 @@ public:
     /// For tests pinning proof scoping; production serves through the
     /// lookup path, never through this.
     bool GetFreshProof(UsdTimeCode time, RigExecFreshProof *proof) const;
-    size_t GetFreshProofCount() const { return _freshDigests.size(); }
+    size_t GetFreshProofCount() const
+    {
+        return _freshDigests.size();
+    }
 
     /// Carries the entry published for \p time under \p oldKey into the
     /// constant namespace \p newConstants: re-publishes
@@ -416,8 +369,8 @@ public:
     /// counter that moves on every rebind, so a holder of a copy (the
     /// warming session) refreshes it only when it actually changed instead
     /// of re-verifying it after every edit. UI thread only.
-    const RigExecChainSampleBindings *AcquireChainBindings(
-        uint64_t *generation = nullptr) const;
+    const RigExecChainSampleBindings *
+    AcquireChainBindings(uint64_t *generation = nullptr) const;
 
     /// Lifetime counters of this rig's frame cache (zeros when empty).
     RigExecFrameCacheStats GetFrameCacheStats() const;
@@ -427,7 +380,8 @@ public:
     /// SetWeightOverlay: publishing is the caller's serialization point.
     void SetInteractiveOverrides(std::vector<RigExecValueOverride> overrides);
 
-    void ClearInteractiveOverrides() {
+    void ClearInteractiveOverrides()
+    {
         _interactiveOverrides.clear();
         _evaluationOverrides.clear();
         _evaluator->ClearInteractiveOverrides();
@@ -440,26 +394,26 @@ public:
     /// every sampled key folds them, and the pose-only key folds them too.
     void SetUpstreamInputs(std::vector<RigExecUpstreamValue> values);
 
-    const std::vector<RigExecUpstreamValue> &GetUpstreamInputs() const {
+    const std::vector<RigExecUpstreamValue> &GetUpstreamInputs() const
+    {
         return _upstreamInputs;
     }
 
     /// The stage the rig evaluates against, for a caller that has to read the
     /// authored value an override is standing in for.
-    const UsdStageRefPtr &GetEvaluationStage() const {
+    const UsdStageRefPtr &GetEvaluationStage() const
+    {
         return _evaluator->GetEvaluationStage();
     }
 
 private:
     /// Publishes guide payloads (joints and aggregate solvers draw as
     /// guide geometry like OpenExec's IrJointScope) into the snapshot.
-    void _FillProviderXforms(
-        const RigExecRigPose &pose,
-        RigExecImagingSnapshot *snapshot) const;
+    void _FillProviderXforms(const RigExecRigPose &pose,
+                             RigExecImagingSnapshot *snapshot) const;
 
-    void _FillGuides(
-        const RigExecRigPose &pose,
-        RigExecImagingSnapshot *snapshot) const;
+    void _FillGuides(const RigExecRigPose &pose,
+                     RigExecImagingSnapshot *snapshot) const;
 
     /// Publishes the single synthesized guide shape each control draws at
     /// its posed frame.
@@ -467,8 +421,8 @@ private:
     /// A complete conservative key for operations without a sampled input
     /// contract: time, stage-edit serial, compiled rig, standing overrides and
     /// upstream values.
-    bool _ComputePoseOnlyCacheKey(
-        UsdTimeCode time, RigExecFrameCacheKey *key) const;
+    bool _ComputePoseOnlyCacheKey(UsdTimeCode time,
+                                  RigExecFrameCacheKey *key) const;
 
     /// Shares the frozen executor's input capability check. Unknown or
     /// unsupported operations still cache complete live poses.
@@ -495,16 +449,16 @@ private:
     /// as one complete immutable generation: geometry, guides, the binding
     /// compiled rig when it moved, and the atomic snapshot swap. Shared by the hit
     /// path and the live path so the two cannot publish differently.
-    void _PublishPoseSnapshot(
-        UsdTimeCode time, const RigExecRigPose &pose,
-        PublishResult *result);
+    void _PublishPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
+                              PublishResult *result);
 
     /// The snapshot \p pose publishes as. With \p publishing false it holds
     /// what a pose query reads (geometry, scalar primvars, provider
     /// transforms) and leaves the GPU deform history and guide payloads
     /// alone. The generation is the publisher's to assign.
-    std::shared_ptr<RigExecImagingSnapshot> _BuildPoseSnapshot(
-        UsdTimeCode time, const RigExecRigPose &pose, bool publishing);
+    std::shared_ptr<RigExecImagingSnapshot>
+    _BuildPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
+                       bool publishing);
 
     /// Retires the freshness proofs when a stage edit moved the serial and
     /// no registry does it. Returns the evaluator's current edit serial.
@@ -571,22 +525,20 @@ private:
     /// so the proof names fresh inputs.
     bool _MemoizeLiveResult(UsdTimeCode time, const RigExecRigPose &pose);
 
-    void _StampGeneration(
-        UsdTimeCode time, RigExecImagingSnapshot *snapshot) const;
+    void _StampGeneration(UsdTimeCode time,
+                          RigExecImagingSnapshot *snapshot) const;
 
-    void _FillControlGuides(
-        const RigExecRigPose &pose,
-        RigExecImagingSnapshot *snapshot) const;
+    void _FillControlGuides(const RigExecRigPose &pose,
+                            RigExecImagingSnapshot *snapshot) const;
 
     /// Publishes the wire (or solid) falloffMin/falloffMax iso-surfaces
     /// every placed influence volume draws, so a rigger can see the shape
     /// being placed rather than infer it from the deformation.
-    void _FillVolumeGuides(
-        const RigExecRigPose &pose,
-        RigExecImagingSnapshot *snapshot) const;
+    void _FillVolumeGuides(const RigExecRigPose &pose,
+                           RigExecImagingSnapshot *snapshot) const;
 
-    void _FillClothConstraintGuides(
-        const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const;
+    void _FillClothConstraintGuides(const RigExecRigPose &pose,
+                                    RigExecImagingSnapshot *snapshot) const;
     struct _ClothGuideBinding {
         SdfPath constraint, sourceMesh, targetMesh;
         std::vector<RigExecClothSample> source, target;
@@ -603,15 +555,15 @@ private:
 
     /// Copies the selected weight object's resolved field onto the
     /// geometry prim it weights.
-    void _FillWeightOverlay(
-        const RigExecRigPose &pose,
-        RigExecImagingSnapshot *snapshot) const;
+    void _FillWeightOverlay(const RigExecRigPose &pose,
+                            RigExecImagingSnapshot *snapshot) const;
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
     /// Weight object currently painted as the influence overlay; empty
     /// means off, which is the default and the ordinary render.
     SdfPath _weightOverlay;
+
 public:
     /// The evaluator's profiler, which the imaging layer also records its
     /// own publish phases into, so one summary covers a whole viewport
@@ -623,15 +575,24 @@ public:
     /// Whether a publication diffs against the previous generation into
     /// PublishResult::dirtied (the default). A caller that combines the
     /// generations and diffs the combination turns it off.
-    void SetPublishesDirtied(bool on) { _publishesDirtied = on; }
+    void SetPublishesDirtied(bool on)
+    {
+        _publishesDirtied = on;
+    }
 
     RigExecProfiler *MutableProfiler() const
     {
         return const_cast<RigExecProfiler *>(&_evaluator->GetProfiler());
     }
     /// The evaluator owning the compiled operation graph.
-    const RigExecRigEvaluator &GetEvaluator() const { return *_evaluator; }
-    void SetOpTimingEnabled(bool enabled) { _evaluator->SetOpTimingEnabled(enabled); }
+    const RigExecRigEvaluator &GetEvaluator() const
+    {
+        return *_evaluator;
+    }
+    void SetOpTimingEnabled(bool enabled)
+    {
+        _evaluator->SetOpTimingEnabled(enabled);
+    }
 
     /// Forgets every cached guide input. Called for any stage notice that
     /// touches the rig and on every recompile: the caches hold AUTHORED
@@ -697,8 +658,7 @@ private:
         double radius = 1.0;
     };
     _GuideInputs &_GuideInputsFor(const SdfPath &path) const;
-    void _ReadGuideStyleCached(_GuideInputs &inputs,
-                               const RigExecRigPose &pose,
+    void _ReadGuideStyleCached(_GuideInputs &inputs, const RigExecRigPose &pose,
                                RigExecPublishedPrim *published) const;
     double _GuideRadius(_GuideInputs &inputs, UsdTimeCode time) const;
     void _ReadOpacityRule(_GuideInputs &inputs, UsdTimeCode time) const;
@@ -832,6 +792,6 @@ private:
     void _SyncGuideCaches() const;
 };
 
-}  // namespace rigExec
+} // namespace rigExec
 
-#endif  // RIGEXEC_IMAGING_BRIDGE_H
+#endif // RIGEXEC_IMAGING_BRIDGE_H

@@ -99,9 +99,8 @@ const TfToken _volumeInputsScaleZPos("inputs:scaleZPos");
 // cannot drift apart: a guide drawn from a frame one of them rejects and
 // the other accepts would be a difference nobody could see coming.
 bool
-_RigidGuideMatrix(
-    const RigExecPointFrame &frame, GfMatrix4d *result,
-    GfVec3d *axisMagnitudes = nullptr)
+_RigidGuideMatrix(const RigExecPointFrame &frame, GfMatrix4d *result,
+                  GfVec3d *axisMagnitudes = nullptr)
 {
     if (!frame.IsValid() || frame.IsDegenerate()) {
         return false;
@@ -152,18 +151,17 @@ _RigidGuideMatrix(
 // either way, so publishing it would only cost the viewer geometry it
 // cannot see.
 bool
-_AppendGuideFrame(
-    const RigExecPointFrame &frame, double length, double authoredRadius,
-    bool useAimFallback, bool drawSphere,
-    RigExecPublishedPrim *published)
+_AppendGuideFrame(const RigExecPointFrame &frame, double length,
+                  double authoredRadius, bool useAimFallback, bool drawSphere,
+                  RigExecPublishedPrim *published)
 {
     GfMatrix4d m(1.0);
     if (!_RigidGuideMatrix(frame, &m)) {
         return false;
     }
     if (length <= 0.0) {
-        length = useAimFallback
-            ? (frame.X() - frame.Origin()).GetLength() : 0.0;
+        length =
+            useAimFallback ? (frame.X() - frame.Origin()).GetLength() : 0.0;
     }
     if (!std::isfinite(length)) {
         return false;
@@ -183,17 +181,16 @@ _AppendGuideFrame(
 // where possible gives a stable frame without assigning semantic roll to the
 // hierarchy edge.
 bool
-_JointLinkFrame(
-    const RigExecPointFrame &parent, const RigExecPointFrame &child,
-    GfMatrix4d *frame, double *length)
+_JointLinkFrame(const RigExecPointFrame &parent, const RigExecPointFrame &child,
+                GfMatrix4d *frame, double *length)
 {
     GfMatrix4d parentMatrix(1.0), childMatrix(1.0);
     if (!_RigidGuideMatrix(parent, &parentMatrix) ||
         !_RigidGuideMatrix(child, &childMatrix)) {
         return false;
     }
-    GfVec3d x = childMatrix.ExtractTranslation() -
-                parentMatrix.ExtractTranslation();
+    GfVec3d x =
+        childMatrix.ExtractTranslation() - parentMatrix.ExtractTranslation();
     *length = x.GetLength();
     if (!std::isfinite(*length) || *length <= 1e-12) {
         return false;
@@ -207,8 +204,8 @@ _JointLinkFrame(
         y -= GfDot(y, x) * x;
     }
     if (y.GetLength() <= 1e-12) {
-        const GfVec3d seed = std::abs(x[0]) < 0.9
-            ? GfVec3d(1, 0, 0) : GfVec3d(0, 1, 0);
+        const GfVec3d seed =
+            std::abs(x[0]) < 0.9 ? GfVec3d(1, 0, 0) : GfVec3d(0, 1, 0);
         y = GfCross(seed, x);
     }
     y.Normalize();
@@ -254,8 +251,8 @@ _ReadGuidePurpose(const UsdPrim &prim)
 // connection read at its phase (RigExecPhasedConnection), the base of a
 // computed dial unless the attribute declares another.
 bool
-_ReadConnectedValue(
-    const UsdAttribute &attr, const RigExecRigPose &pose, VtValue *held)
+_ReadConnectedValue(const UsdAttribute &attr, const RigExecRigPose &pose,
+                    VtValue *held)
 {
     SdfPathVector connections;
     if (!attr.GetConnections(&connections) || connections.empty()) {
@@ -270,8 +267,7 @@ _ReadConnectedValue(
     if (!sourcePath.IsPropertyPath()) {
         return false;
     }
-    const UsdAttribute source =
-        attr.GetStage()->GetAttributeAtPath(sourcePath);
+    const UsdAttribute source = attr.GetStage()->GetAttributeAtPath(sourcePath);
     if (!source) {
         return false;
     }
@@ -305,9 +301,8 @@ _HeldScalar(const VtValue &held, double *value)
 constexpr double _kDefaultGuideOpacityMin = 0.15;
 
 void
-_ReadGuideStyle(
-    const UsdPrim &prim, const RigExecRigPose &pose,
-    RigExecPublishedPrim *published)
+_ReadGuideStyle(const UsdPrim &prim, const RigExecRigPose &pose,
+                RigExecPublishedPrim *published)
 {
     if (!prim) {
         return;
@@ -316,19 +311,16 @@ _ReadGuideStyle(
     published->guidePurpose = _ReadGuidePurpose(prim);
     if (UsdAttribute a = prim.GetAttribute(_tGuideDisplayColor)) {
         VtValue held;
-        if (_ReadConnectedValue(a, pose, &held) &&
-            held.IsHolding<GfVec3f>()) {
+        if (_ReadConnectedValue(a, pose, &held) && held.IsHolding<GfVec3f>()) {
             published->guideColor = held.UncheckedGet<GfVec3f>();
         } else {
             a.Get(&published->guideColor, time);
         }
     }
-    if (UsdAttribute a =
-            prim.GetAttribute(_tGuideDisplayOpacity)) {
+    if (UsdAttribute a = prim.GetAttribute(_tGuideDisplayOpacity)) {
         VtValue held;
         double driven = 0.0;
-        if (_ReadConnectedValue(a, pose, &held) &&
-            _HeldScalar(held, &driven)) {
+        if (_ReadConnectedValue(a, pose, &held) && _HeldScalar(held, &driven)) {
             // A driven opacity is a dial's value, and a dial parks at its
             // end stops: without the complement one switch could not fade
             // two control sets in opposite directions, and without the
@@ -336,13 +328,12 @@ _ReadGuideStyle(
             // unswitchable-back. Both apply ONLY to a connected value; an
             // unconnected attribute draws exactly what it says.
             bool invert = false;
-            if (UsdAttribute i = prim.GetAttribute(
-                    _tGuideDisplayOpacityInvert)) {
+            if (UsdAttribute i =
+                    prim.GetAttribute(_tGuideDisplayOpacityInvert)) {
                 i.Get(&invert, time);
             }
             double floor = _kDefaultGuideOpacityMin;
-            if (UsdAttribute m = prim.GetAttribute(
-                    _tGuideDisplayOpacityMin)) {
+            if (UsdAttribute m = prim.GetAttribute(_tGuideDisplayOpacityMin)) {
                 VtValue heldMin;
                 double authoredMin = 0.0;
                 if (m.Get(&heldMin, time) &&
@@ -407,15 +398,12 @@ constexpr int _kVolumeTubeSegments = 8;
 // one vertex and avoids the linear-periodic path entirely -- the same trade
 // the control guides make.
 void
-_AppendVolumeRing(
-    const GfVec3f &center, const GfVec3f &axisA, const GfVec3f &axisB,
-    int segments, VtVec3fArray *points)
+_AppendVolumeRing(const GfVec3f &center, const GfVec3f &axisA,
+                  const GfVec3f &axisB, int segments, VtVec3fArray *points)
 {
     for (int i = 0; i <= segments; ++i) {
-        const double theta =
-            _kTwoPi * double(i % segments) / double(segments);
-        points->push_back(center +
-                          float(std::cos(theta)) * axisA +
+        const double theta = _kTwoPi * double(i % segments) / double(segments);
+        points->push_back(center + float(std::cos(theta)) * axisA +
                           float(std::sin(theta)) * axisB);
     }
 }
@@ -423,21 +411,19 @@ _AppendVolumeRing(
 // One dotted ring in the same plane: _kSphereWireDots separate two-point
 // marks. Counts are appended beside the points so each mark is its own curve.
 void
-_AppendDottedVolumeRing(
-    const GfVec3f &center, const GfVec3f &axisA, const GfVec3f &axisB,
-    VtVec3fArray *points, VtIntArray *counts)
+_AppendDottedVolumeRing(const GfVec3f &center, const GfVec3f &axisA,
+                        const GfVec3f &axisB, VtVec3fArray *points,
+                        VtIntArray *counts)
 {
     constexpr int samples = 2;
     for (int dot = 0; dot < _kSphereWireDots; ++dot) {
-        const double start =
-            _kTwoPi * double(dot) / double(_kSphereWireDots);
+        const double start = _kTwoPi * double(dot) / double(_kSphereWireDots);
         const double span =
             _kTwoPi * _kSphereWireDotDuty / double(_kSphereWireDots);
         for (int sample = 0; sample < samples; ++sample) {
             const double theta =
                 start + span * (double(sample) / double(samples - 1));
-            points->push_back(center +
-                              float(std::cos(theta)) * axisA +
+            points->push_back(center + float(std::cos(theta)) * axisA +
                               float(std::sin(theta)) * axisB);
         }
         counts->push_back(samples);
@@ -450,8 +436,8 @@ _AppendDottedVolumeRing(
 GfVec3f
 _PerpendicularTo(const GfVec3f &t)
 {
-    const GfVec3f seed = std::abs(t[0]) < 0.9f ? GfVec3f(1, 0, 0)
-                                               : GfVec3f(0, 1, 0);
+    const GfVec3f seed =
+        std::abs(t[0]) < 0.9f ? GfVec3f(1, 0, 0) : GfVec3f(0, 1, 0);
     GfVec3f u = GfCross(t, seed);
     u.Normalize();
     return u;
@@ -487,8 +473,8 @@ _RigidVolumeMatrix(const GfMatrix4d &placement, GfMatrix4d *result)
 // the same two spellings _ReadTargetPoints accepts in the evaluator, so a
 // curve that drives a field is a curve this can draw.
 bool
-_ReadCurveGuidePoints(
-    const UsdPrim &prim, UsdTimeCode time, VtVec3fArray *points)
+_ReadCurveGuidePoints(const UsdPrim &prim, UsdTimeCode time,
+                      VtVec3fArray *points)
 {
     const UsdRelationship rel = prim.GetRelationship(_tRigExecCurve);
     if (!rel) {
@@ -505,8 +491,8 @@ _ReadCurveGuidePoints(
     if (!curvePrim) {
         return false;
     }
-    const TfToken name = target.IsPropertyPath() ? target.GetNameToken()
-                                                 : _tPoints;
+    const TfToken name =
+        target.IsPropertyPath() ? target.GetNameToken() : _tPoints;
     const UsdAttribute attr = curvePrim.GetAttribute(name);
     return attr && attr.Get(points, time) && points->size() >= 2;
 }
@@ -523,16 +509,14 @@ const _UnitSphereMesh _unitSphereMesh = []() {
     _UnitSphereMesh mesh;
     constexpr int longitude = 64, latitude = 32;
     constexpr double pi = 3.14159265358979323846;
-    mesh.units.reserve(
-        size_t((latitude - 1) * longitude) + 2);
+    mesh.units.reserve(size_t((latitude - 1) * longitude) + 2);
     mesh.units.push_back(GfVec3f(0, 1, 0));
     for (int j = 1; j < latitude; ++j) {
         const double theta = pi * j / latitude;
         for (int i = 0; i < longitude; ++i) {
             const double phi = 2 * pi * i / longitude;
             mesh.units.push_back(GfVec3f(
-                float(std::sin(theta) * std::cos(phi)),
-                float(std::cos(theta)),
+                float(std::sin(theta) * std::cos(phi)), float(std::cos(theta)),
                 float(std::sin(theta) * std::sin(phi))));
         }
     }
@@ -542,7 +526,8 @@ const _UnitSphereMesh _unitSphereMesh = []() {
     const int bottom = int(mesh.units.size()) - 1;
     auto face = [&](std::initializer_list<int> ids) {
         mesh.counts.push_back(int(ids.size()));
-        for (int id : ids) mesh.indices.push_back(id);
+        for (int id : ids)
+            mesh.indices.push_back(id);
     };
     for (int i = 0; i < longitude; ++i) {
         const int next = (i + 1) % longitude;
@@ -567,22 +552,19 @@ const _UnitSphereRings _unitSphereRings = []() {
     const GfVec3f kX(1, 0, 0), kY(0, 1, 0), kZ(0, 0, 1);
     const GfVec3f kOrigin(0, 0, 0);
     _UnitSphereRings built;
-    _AppendDottedVolumeRing(
-        kOrigin, kX, kZ, &built.points, &built.counts);
-    _AppendDottedVolumeRing(
-        kOrigin, kX, kY, &built.points, &built.counts);
-    _AppendDottedVolumeRing(
-        kOrigin, kY, kZ, &built.points, &built.counts);
+    _AppendDottedVolumeRing(kOrigin, kX, kZ, &built.points, &built.counts);
+    _AppendDottedVolumeRing(kOrigin, kX, kY, &built.points, &built.counts);
+    _AppendDottedVolumeRing(kOrigin, kY, kZ, &built.points, &built.counts);
     return built;
 }();
 
 const _UnitSphereRings _cleanSphereRings = []() {
     _UnitSphereRings built;
     const GfVec3f axes[3] = {GfVec3f(1, 0, 0), GfVec3f(0, 1, 0),
-                            GfVec3f(0, 0, 1)};
+                             GfVec3f(0, 0, 1)};
     for (int axis = 0; axis < 3; ++axis) {
-        _AppendVolumeRing(GfVec3f(0), axes[axis], axes[(axis + 1) % 3],
-                          64, &built.points);
+        _AppendVolumeRing(GfVec3f(0), axes[axis], axes[(axis + 1) % 3], 64,
+                          &built.points);
         built.counts.push_back(65);
     }
     return built;
@@ -598,11 +580,17 @@ _PatternVolumeCurves(RigExecVolumeGuideElement *element, bool brackets)
     VtIntArray counts;
     size_t start = 0;
     for (const int count : std::as_const(element->counts)) {
-        if (count < 2) { start += count; continue; }
+        if (count < 2) {
+            start += count;
+            continue;
+        }
         double length = 0;
         for (int i = 1; i < count; ++i)
             length += (source[start + i] - source[start + i - 1]).GetLength();
-        if (length <= 1e-9) { start += count; continue; }
+        if (length <= 1e-9) {
+            start += count;
+            continue;
+        }
         const bool closed = source[start] == source[start + count - 1];
         const int marks = brackets ? (closed ? 4 : 2) : 16;
         const double period = length / marks;
@@ -616,13 +604,17 @@ _PatternVolumeCurves(RigExecVolumeGuideElement *element, bool brackets)
             if (segment > 1e-9) {
                 // Center bracket marks at cardinal points, wrapping at zero.
                 for (int mark = -1; mark <= marks; ++mark) {
-                    const double lo = std::max(distance,
+                    const double lo = std::max(
+                        distance,
                         period * (mark - (brackets ? duty * 0.5 : 0.0)));
-                    const double hi = std::min(end,
-                        period * (mark + (brackets ? duty * 0.5 : duty)));
-                    if (hi <= lo) continue;
-                    points.push_back(a + float((lo - distance) / segment) * (b - a));
-                    points.push_back(a + float((hi - distance) / segment) * (b - a));
+                    const double hi = std::min(
+                        end, period * (mark + (brackets ? duty * 0.5 : duty)));
+                    if (hi <= lo)
+                        continue;
+                    points.push_back(a + float((lo - distance) / segment) *
+                                             (b - a));
+                    points.push_back(a + float((hi - distance) / segment) *
+                                             (b - a));
                     counts.push_back(2);
                 }
             }
@@ -642,11 +634,13 @@ _PatternVolumeCurves(RigExecVolumeGuideElement *element, bool brackets)
 // max-weight interior fill, and what geometry draw mode uses for both
 // surfaces. \p opacity replaces guide:displayOpacity when non-negative.
 void
-_AppendSphereVolumeGuide(
-    double radius, const GfVec3d &axisScale,
-    const GfVec3d &positiveScales, const GfVec3d &negativeScales, bool wire,
-    const GfMatrix4d &rigidToAsset, double wireWidth, float opacity,
-    std::vector<RigExecVolumeGuideElement> *elements, bool clean = false)
+_AppendSphereVolumeGuide(double radius, const GfVec3d &axisScale,
+                         const GfVec3d &positiveScales,
+                         const GfVec3d &negativeScales, bool wire,
+                         const GfMatrix4d &rigidToAsset, double wireWidth,
+                         float opacity,
+                         std::vector<RigExecVolumeGuideElement> *elements,
+                         bool clean = false)
 {
     if (!std::isfinite(radius) || radius <= 0.0) {
         // A zero- or negative-radius iso-surface is a point or nothing at
@@ -675,7 +669,8 @@ _AppendSphereVolumeGuide(
     }
     auto shapePoint = [&](GfVec3f p) {
         for (int axis = 0; axis < 3; ++axis)
-            p[axis] *= float(p[axis] < 0 ? negativeScales[axis] : positiveScales[axis]);
+            p[axis] *= float(p[axis] < 0 ? negativeScales[axis]
+                                         : positiveScales[axis]);
         return p;
     };
     if (!wire) {
@@ -689,7 +684,8 @@ _AppendSphereVolumeGuide(
             element.points[v] = shapePoint(sample);
             GfVec3f normal = sample;
             for (int a = 0; a < 3; ++a)
-                normal[a] /= float(sample[a] < 0 ? negativeScales[a] : positiveScales[a]);
+                normal[a] /= float(sample[a] < 0 ? negativeScales[a]
+                                                 : positiveScales[a]);
             normal.Normalize();
             element.normals[v] = normal;
         }
@@ -702,7 +698,8 @@ _AppendSphereVolumeGuide(
     element.wireWidth = wireWidth;
     // Three orthogonal great circles, dotted. Wire mode draws this both
     // on the exterior falloff and over the translucent interior fill.
-    const _UnitSphereRings &rings = clean ? _cleanSphereRings : _unitSphereRings;
+    const _UnitSphereRings &rings =
+        clean ? _cleanSphereRings : _unitSphereRings;
     element.points.resize(rings.points.size());
     for (size_t v = 0; v < rings.points.size(); ++v) {
         element.points[v] = shapePoint(rings.points[v]);
@@ -733,10 +730,10 @@ _AppendSphereVolumeGuide(
 // returns BEFORE inputs:scaleX/Y/Z is folded into its matrix, so a scaled
 // plane guide would draw a band the field does not have.
 void
-_AppendPlaneVolumeGuide(
-    double distance, int axis, double extentU, double extentV, bool bounded,
-    bool wire, const GfMatrix4d &rigidToAsset, double wireWidth,
-    std::vector<RigExecVolumeGuideElement> *elements)
+_AppendPlaneVolumeGuide(double distance, int axis, double extentU,
+                        double extentV, bool bounded, bool wire,
+                        const GfMatrix4d &rigidToAsset, double wireWidth,
+                        std::vector<RigExecVolumeGuideElement> *elements)
 {
     if (!std::isfinite(distance) || !std::isfinite(extentU) ||
         !std::isfinite(extentV) || extentU <= 0.0 || extentV <= 0.0) {
@@ -756,8 +753,8 @@ _AppendPlaneVolumeGuide(
     // The dimensions live in the points here, not in the transform: a
     // plane has no implicit Hydra form whose schema could carry them.
     element.xform = rigidToAsset;
-    const GfVec3f corners[4] = {center - u - v, center - u + v,
-                                center + u + v, center + u - v};
+    const GfVec3f corners[4] = {center - u - v, center - u + v, center + u + v,
+                                center + u - v};
     if (wire) {
         element.primType = HdPrimTypeTokens->basisCurves;
         element.wireWidth = wireWidth;
@@ -813,10 +810,10 @@ _AppendPlaneVolumeGuide(
 // here and the per-axis divisors turn it elliptical through the transform
 // -- the same order the kernel folds them in.
 void
-_AppendCurveVolumeGuide(
-    double radius, const VtVec3fArray &localCurve, const GfMatrix4d &toAsset,
-    bool wire, double wireWidth,
-    std::vector<RigExecVolumeGuideElement> *elements, bool clean = false)
+_AppendCurveVolumeGuide(double radius, const VtVec3fArray &localCurve,
+                        const GfMatrix4d &toAsset, bool wire, double wireWidth,
+                        std::vector<RigExecVolumeGuideElement> *elements,
+                        bool clean = false)
 {
     if (!std::isfinite(radius) || radius <= 0.0 || localCurve.size() < 2) {
         return;
@@ -868,10 +865,9 @@ _AppendCurveVolumeGuide(
             }
             tangents[k].Normalize();
         }
-        GfVec3f u = k == 0
-            ? _PerpendicularTo(tangents[k])
-            : ringU[k - 1] -
-                  GfDot(ringU[k - 1], tangents[k]) * tangents[k];
+        GfVec3f u = k == 0 ? _PerpendicularTo(tangents[k])
+                           : ringU[k - 1] -
+                                 GfDot(ringU[k - 1], tangents[k]) * tangents[k];
         if (u.GetLength() < 1e-6f) {
             u = _PerpendicularTo(tangents[k]);
         } else {
@@ -894,10 +890,11 @@ _AppendCurveVolumeGuide(
         for (size_t k = 0; k < vertices; ++k) {
             // Keep at most five section rings; rails still follow every bend.
             if (clean && k != vertices - 1 &&
-                k % std::max(size_t(1), (vertices - 1 + 3) / 4) != 0) continue;
+                k % std::max(size_t(1), (vertices - 1 + 3) / 4) != 0)
+                continue;
             _AppendVolumeRing(curve[k], float(radius) * ringU[k],
-                              float(radius) * ringV[k],
-                              tubeSegments, &element.points);
+                              float(radius) * ringV[k], tubeSegments,
+                              &element.points);
             element.counts.push_back(tubeSegments + 1);
         }
         // Four rails, at the quarter turns of each ring.
@@ -907,8 +904,7 @@ _AppendCurveVolumeGuide(
             const float s = float(std::sin(theta));
             for (size_t k = 0; k < vertices; ++k) {
                 element.points.push_back(
-                    curve[k] + float(radius) *
-                        (c * ringU[k] + s * ringV[k]));
+                    curve[k] + float(radius) * (c * ringU[k] + s * ringV[k]));
             }
             element.counts.push_back(int(vertices));
         }
@@ -921,11 +917,9 @@ _AppendCurveVolumeGuide(
     element.points.reserve(vertices * tubeSegments);
     for (size_t k = 0; k < vertices; ++k) {
         for (int j = 0; j < tubeSegments; ++j) {
-            const double theta = _kTwoPi * double(j) /
-                                 double(tubeSegments);
-            const GfVec3f radial =
-                float(std::cos(theta)) * ringU[k] +
-                float(std::sin(theta)) * ringV[k];
+            const double theta = _kTwoPi * double(j) / double(tubeSegments);
+            const GfVec3f radial = float(std::cos(theta)) * ringU[k] +
+                                   float(std::sin(theta)) * ringV[k];
             element.points.push_back(curve[k] + float(radius) * radial);
         }
     }
@@ -935,8 +929,7 @@ _AppendCurveVolumeGuide(
     // a hard edge where each cap meets the tube.
     auto appendFace = [&element](const int *face, size_t count) {
         element.counts.push_back(static_cast<int>(count));
-        element.indices.insert(
-            element.indices.end(), face, face + count);
+        element.indices.insert(element.indices.end(), face, face + count);
         GfVec3f normal(0.0f);
         const GfVec3f origin = element.points[face[0]];
         for (size_t i = 1; i + 1 < count; ++i) {
@@ -980,24 +973,22 @@ _AppendCurveVolumeGuide(
     elements->push_back(std::move(element));
 }
 
-}  // namespace
+} // namespace
 
-RigExecImagingBridge::RigExecImagingBridge(
-    const UsdStageRefPtr &stage, const SdfPath &rigPath)
-    : RigExecImagingBridge(
-          stage, rigPath, std::make_shared<RigExecSnapshotStore>())
+RigExecImagingBridge::RigExecImagingBridge(const UsdStageRefPtr &stage,
+                                           const SdfPath &rigPath)
+    : RigExecImagingBridge(stage, rigPath,
+                           std::make_shared<RigExecSnapshotStore>())
 {
 }
 
 RigExecImagingBridge::RigExecImagingBridge(
     const UsdStageRefPtr &stage, const SdfPath &rigPath,
     std::shared_ptr<RigExecSnapshotStore> store)
-    : _stage(stage)
-    , _rigPath(rigPath)
-    , _evaluator(std::make_unique<RigExecRigEvaluator>(
-          stage, rigPath))
-    , _store(std::move(store))
-    , _frameCache(std::make_shared<RigExecFrameCache>())
+    : _stage(stage), _rigPath(rigPath),
+      _evaluator(std::make_unique<RigExecRigEvaluator>(stage, rigPath)),
+      _store(std::move(store)),
+      _frameCache(std::make_shared<RigExecFrameCache>())
 {
     // No overlay is selected yet, so nothing consumes the per-point influence
     // field. SetWeightOverlay turns it back on the moment one is.
@@ -1029,11 +1020,12 @@ RigExecImagingBridge::Compile(std::vector<std::string> *errors)
 }
 
 void
-RigExecImagingBridge::AppendAuthoredGuides(
-    UsdTimeCode time, RigExecImagingSnapshot *snapshot)
+RigExecImagingBridge::AppendAuthoredGuides(UsdTimeCode time,
+                                           RigExecImagingSnapshot *snapshot)
 {
     const UsdPrim root = _stage->GetPrimAtPath(_rigPath);
-    if (!root) return;
+    if (!root)
+        return;
     InvalidateGuideCaches();
     // Scratch inputs for the shared drawing helpers, never a valid rig pose.
     RigExecRigPose authored;
@@ -1043,11 +1035,15 @@ RigExecImagingBridge::AppendAuthoredGuides(
         const TfToken type = prim.GetTypeName();
         const bool provider = type == _tControlType || type == _tJointType;
         const bool volume = type == _tSphereWeightType ||
-            type == _tPlaneWeightType || type == _tCurveWeightType;
-        if (!provider && !volume) continue;
+                            type == _tPlaneWeightType ||
+                            type == _tCurveWeightType;
+        if (!provider && !volume)
+            continue;
         bool rigid = false;
-        const GfMatrix4d rest = RigExecAuthoredGuideRestSpace(prim, time, &rigid);
-        if (!rigid) continue;
+        const GfMatrix4d rest =
+            RigExecAuthoredGuideRestSpace(prim, time, &rigid);
+        if (!rigid)
+            continue;
         if (volume) {
             authored.weightFrames.emplace(prim.GetPath(), rest);
         } else {
@@ -1117,14 +1113,18 @@ RigExecImagingBridge::_FillProviderXforms(
         std::vector<SdfPath> scanned;
         for (const SdfPath &providerPath : providerRoots) {
             bool covered = false;
-            for (const auto &root : scanned) covered = covered || providerPath.HasPrefix(root);
-            if (covered) continue;
+            for (const auto &root : scanned)
+                covered = covered || providerPath.HasPrefix(root);
+            if (covered)
+                continue;
             const auto root = _stage->GetPrimAtPath(providerPath);
-            if (!root) continue;
+            if (!root)
+                continue;
             scanned.push_back(providerPath);
             for (const auto &prim : UsdPrimRange(root)) {
                 const UsdGeomXformable xform(prim);
-                if (xform && xform.GetResetXformStack()) _xformResetPaths.insert(prim.GetPath());
+                if (xform && xform.GetResetXformStack())
+                    _xformResetPaths.insert(prim.GetPath());
             }
         }
         _xformResetRoots = std::move(providerRoots);
@@ -1218,12 +1218,11 @@ namespace {
 bool
 _GuideAttrIsLive(const UsdAttribute &attribute)
 {
-    return attribute &&
-           (attribute.HasAuthoredConnections() ||
-            attribute.ValueMightBeTimeVarying());
+    return attribute && (attribute.HasAuthoredConnections() ||
+                         attribute.ValueMightBeTimeVarying());
 }
 
-}  // namespace
+} // namespace
 
 RigExecImagingBridge::_GuideInputs &
 RigExecImagingBridge::_GuideInputsFor(const SdfPath &path) const
@@ -1237,8 +1236,7 @@ RigExecImagingBridge::_GuideInputsFor(const SdfPath &path) const
 }
 
 double
-RigExecImagingBridge::_GuideRadius(_GuideInputs &inputs,
-                                   UsdTimeCode time) const
+RigExecImagingBridge::_GuideRadius(_GuideInputs &inputs, UsdTimeCode time) const
 {
     // Schema default, so an unauthored joint keeps Hydra's own fallback
     // radius and every existing rig looks exactly as it did.
@@ -1247,8 +1245,7 @@ RigExecImagingBridge::_GuideRadius(_GuideInputs &inputs,
     }
     if (!inputs.radiusReady || inputs.radiusLive) {
         double radius = 1.0;
-        const UsdAttribute a =
-            inputs.prim.GetAttribute(_tGuideRadius);
+        const UsdAttribute a = inputs.prim.GetAttribute(_tGuideRadius);
         if (a) {
             a.Get(&radius, time);
         }
@@ -1351,12 +1348,10 @@ RigExecImagingBridge::_ReadGuideStyleCached(
         if (inputs.colorAttr && !inputs.colorLive) {
             inputs.hasColor = inputs.colorAttr.Get(&inputs.color, time);
         }
-        inputs.opacityAttr =
-            prim.GetAttribute(_tGuideDisplayOpacity);
+        inputs.opacityAttr = prim.GetAttribute(_tGuideDisplayOpacity);
         inputs.opacityLive = _GuideAttrIsLive(inputs.opacityAttr);
         if (inputs.opacityAttr && !inputs.opacityLive) {
-            inputs.hasOpacity =
-                inputs.opacityAttr.Get(&inputs.opacity, time);
+            inputs.hasOpacity = inputs.opacityAttr.Get(&inputs.opacity, time);
         }
     }
     published->guidePurpose = inputs.purpose;
@@ -1433,36 +1428,54 @@ RigExecImagingBridge::_FillClothConstraintGuides(
     if (_clothGuideSerial != serial) {
         _clothGuideBindings.clear();
         for (const auto &mover : _evaluator->GetMoverOrder()) {
-            if (mover.schemaType != "RigExecClothMover") continue;
+            if (mover.schemaType != "RigExecClothMover")
+                continue;
             const UsdPrim moverPrim = _stage->GetPrimAtPath(mover.moverPath);
-            if (!moverPrim) continue;
+            if (!moverPrim)
+                continue;
             for (const auto &constraint :
                  RigExecRelationshipTargets(moverPrim, _tConstraintsRel)) {
                 for (const auto &destination : mover.targets) {
-                    if (destination.GetNameToken() != _tPoints) continue;
+                    if (destination.GetNameToken() != _tPoints)
+                        continue;
                     _ClothGuideBinding guide;
                     guide.constraint = constraint;
                     guide.sourceMesh = destination.GetPrimPath();
                     std::vector<RigExecRevisionLeafKey> leaves;
                     RigExecRevisionBinding binding;
-                    auto declaration = cloth_inputs::StageDeclaration(_stage, &leaves, &binding);
-                    if (declaration.type(constraint) != "RigExecClothConstraintSet") continue;
+                    auto declaration = cloth_inputs::StageDeclaration(
+                        _stage, &leaves, &binding);
+                    if (declaration.type(constraint) !=
+                        "RigExecClothConstraintSet")
+                        continue;
                     const auto &T = *cloth_inputs::_clothInputsTokens;
                     VtDictionary kind;
-                    declaration.Attribute(&kind, "kind", constraint, T.rigExecKind,
-                                          RigExecRevisionLeafType::Token, VtValue(T.stretch));
-                    guide.targetMesh = declaration.Target(constraint, T.rigExecTargetMesh).GetPrimPath();
-                    if (guide.targetMesh.IsEmpty()) guide.targetMesh = guide.sourceMesh;
+                    declaration.Attribute(
+                        &kind, "kind", constraint, T.rigExecKind,
+                        RigExecRevisionLeafType::Token, VtValue(T.stretch));
+                    guide.targetMesh =
+                        declaration.Target(constraint, T.rigExecTargetMesh)
+                            .GetPrimPath();
+                    if (guide.targetMesh.IsEmpty())
+                        guide.targetMesh = guide.sourceMesh;
                     const auto source = declaration.Binding(
-                        declaration.Target(constraint, T.rigExecSourceBinding), guide.sourceMesh);
+                        declaration.Target(constraint, T.rigExecSourceBinding),
+                        guide.sourceMesh);
                     const auto target = declaration.Binding(
-                        declaration.Target(constraint, T.rigExecTargetBinding), guide.targetMesh);
-                    const auto values = cloth_inputs::SampleLeaves(_stage, leaves, UsdTimeCode::Default());
-                    const auto *attachment = cloth_inputs::Value<TfToken>(values, kind, "kind");
-                    if (declaration.valid && attachment && *attachment == "attachment" &&
-                        cloth_inputs::Samples(values, source, &guide.source, nullptr) &&
-                        cloth_inputs::Samples(values, target, &guide.target, nullptr) &&
-                        !guide.source.empty() && guide.source.size() == guide.target.size()) {
+                        declaration.Target(constraint, T.rigExecTargetBinding),
+                        guide.targetMesh);
+                    const auto values = cloth_inputs::SampleLeaves(
+                        _stage, leaves, UsdTimeCode::Default());
+                    const auto *attachment =
+                        cloth_inputs::Value<TfToken>(values, kind, "kind");
+                    if (declaration.valid && attachment &&
+                        *attachment == "attachment" &&
+                        cloth_inputs::Samples(values, source, &guide.source,
+                                              nullptr) &&
+                        cloth_inputs::Samples(values, target, &guide.target,
+                                              nullptr) &&
+                        !guide.source.empty() &&
+                        guide.source.size() == guide.target.size()) {
                         _clothGuideBindings.push_back(std::move(guide));
                     }
                 }
@@ -1470,12 +1483,14 @@ RigExecImagingBridge::_FillClothConstraintGuides(
         }
         _clothGuideSerial = serial;
     }
-    if (_clothGuideBindings.empty()) return;
+    if (_clothGuideBindings.empty())
+        return;
 
     UsdGeomXformCache xforms(pose.time);
     const SdfPath asset = _rigPath.GetParentPath();
     const GfMatrix4d worldToAsset =
-        xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(asset)).GetInverse();
+        xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(asset))
+            .GetInverse();
     const auto points = [&](const SdfPath &mesh, VtVec3fArray *result) {
         // GPU readback, when present, has already joined this generation.
         const auto published = snapshot->prims.find(mesh);
@@ -1486,7 +1501,8 @@ RigExecImagingBridge::_FillClothConstraintGuides(
         const SdfPath path = mesh.AppendProperty(_tPoints);
         const auto moved = pose.movedProperties.find(path);
         if (moved != pose.movedProperties.end()) {
-            if (!moved->second.IsHolding<VtVec3fArray>()) return false;
+            if (!moved->second.IsHolding<VtVec3fArray>())
+                return false;
             *result = moved->second.UncheckedGet<VtVec3fArray>();
             return true;
         }
@@ -1495,41 +1511,49 @@ RigExecImagingBridge::_FillClothConstraintGuides(
     };
     const auto placement = [&](const SdfPath &mesh) {
         const GfMatrix4d base =
-            xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(mesh)) * worldToAsset;
+            xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(mesh)) *
+            worldToAsset;
         // Apply the nearest driven ancestor, respecting resetXformStack.
-        for (SdfPath path = mesh; !path.IsAbsoluteRootPath(); path = path.GetParentPath()) {
+        for (SdfPath path = mesh; !path.IsAbsoluteRootPath();
+             path = path.GetParentPath()) {
             const auto driven = pose.providerXforms.find(path);
             if (driven != pose.providerXforms.end()) {
-                const GfMatrix4d ancestor =
-                    xforms.GetLocalToWorldTransform(_stage->GetPrimAtPath(path)) * worldToAsset;
+                const GfMatrix4d ancestor = xforms.GetLocalToWorldTransform(
+                                                _stage->GetPrimAtPath(path)) *
+                                            worldToAsset;
                 return base * ancestor.GetInverse() * driven->second;
             }
             const UsdGeomXformable xform(_stage->GetPrimAtPath(path));
-            if (xform && xform.GetResetXformStack()) break;
+            if (xform && xform.GetResetXformStack())
+                break;
         }
         return base;
     };
     const auto sample = [](const RigExecClothSample &binding,
-                           const VtVec3fArray &vertices, const GfMatrix4d &matrix,
-                           GfVec3f *result) {
+                           const VtVec3fArray &vertices,
+                           const GfMatrix4d &matrix, GfVec3f *result) {
         GfVec3d value(0);
         double sum = 0;
         for (size_t k = 0; k < 3; ++k) {
             const int32_t index = binding.vertices[k];
             const float weight = binding.weights[k];
             if (index < 0 || size_t(index) >= vertices.size() ||
-                !std::isfinite(weight) || weight < 0) return false;
+                !std::isfinite(weight) || weight < 0)
+                return false;
             value += GfVec3d(vertices[size_t(index)]) * weight;
             sum += weight;
         }
-        if (std::abs(sum - 1) > 1e-5) return false;
+        if (std::abs(sum - 1) > 1e-5)
+            return false;
         *result = GfVec3f(matrix.Transform(value));
         return std::isfinite((*result)[0]) && std::isfinite((*result)[1]) &&
                std::isfinite((*result)[2]);
     };
     for (const auto &guide : _clothGuideBindings) {
         VtVec3fArray source, target;
-        if (!points(guide.sourceMesh, &source) || !points(guide.targetMesh, &target)) continue;
+        if (!points(guide.sourceMesh, &source) ||
+            !points(guide.targetMesh, &target))
+            continue;
         const GfMatrix4d sourceFrame = placement(guide.sourceMesh);
         const GfMatrix4d targetFrame = placement(guide.targetMesh);
         auto &published = snapshot->prims[guide.constraint];
@@ -1537,13 +1561,17 @@ RigExecImagingBridge::_FillClothConstraintGuides(
         published.controlGuideShape = TfToken("custom");
         published.controlGuideDrawMode = _tWire;
         published.controlGuidePlaneNormal = _tY;
-        _ReadGuideStyleCached(_GuideInputsFor(guide.constraint), pose, &published);
-        const auto width = _stage->GetPrimAtPath(guide.constraint).GetAttribute(_tGuideWireWidth);
-        if (width) width.Get(&published.controlGuideWireWidth, pose.time);
+        _ReadGuideStyleCached(_GuideInputsFor(guide.constraint), pose,
+                              &published);
+        const auto width = _stage->GetPrimAtPath(guide.constraint)
+                               .GetAttribute(_tGuideWireWidth);
+        if (width)
+            width.Get(&published.controlGuideWireWidth, pose.time);
         for (size_t i = 0; i < guide.source.size(); ++i) {
             GfVec3f a, b;
             if (!sample(guide.source[i], source, sourceFrame, &a) ||
-                !sample(guide.target[i], target, targetFrame, &b)) continue;
+                !sample(guide.target[i], target, targetFrame, &b))
+                continue;
             published.controlGuidePoints.push_back(a);
             published.controlGuidePoints.push_back(b);
             published.controlGuideCounts.push_back(2);
@@ -1553,8 +1581,8 @@ RigExecImagingBridge::_FillClothConstraintGuides(
 }
 
 void
-RigExecImagingBridge::_FillGuides(
-    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
+RigExecImagingBridge::_FillGuides(const RigExecRigPose &pose,
+                                  RigExecImagingSnapshot *snapshot) const
 {
     _SyncGuideCaches();
     // Guide frames are asset-space; the consumer needs to know which prim
@@ -1593,19 +1621,18 @@ RigExecImagingBridge::_FillGuides(
                 for (size_t i = 0; i < identity.size(); ++i) {
                     linkFrame.points[i] = linkMatrix.Transform(identity[i]);
                 }
-                any = _AppendGuideFrame(
-                          linkFrame, linkLength, authoredRadius,
-                          /* useAimFallback = */ false,
-                          /* drawSphere = */ !any, &published) || any;
+                any = _AppendGuideFrame(linkFrame, linkLength, authoredRadius,
+                                        /* useAimFallback = */ false,
+                                        /* drawSphere = */ !any, &published) ||
+                      any;
             }
         }
         // A leaf, or a joint whose children are all coincident/invalid, still
         // owns its selectable origin sphere.
         if (!any) {
-            any = _AppendGuideFrame(
-                frame, 0.0, authoredRadius,
-                /* useAimFallback = */ false,
-                /* drawSphere = */ true, &published);
+            any = _AppendGuideFrame(frame, 0.0, authoredRadius,
+                                    /* useAimFallback = */ false,
+                                    /* drawSphere = */ true, &published);
         }
         if (any) {
             published.assetRoot = _rigPath.GetParentPath();
@@ -1626,8 +1653,7 @@ RigExecImagingBridge::_FillGuides(
         for (const RigExecPointFrame &frame : frames) {
             any = _AppendGuideFrame(frame, 0.0, authoredRadius,
                                     /* useAimFallback = */ true,
-                                    /* drawSphere = */ true,
-                                    &published) ||
+                                    /* drawSphere = */ true, &published) ||
                   any;
         }
         if (any) {
@@ -1647,8 +1673,8 @@ RigExecImagingBridge::_FillGuides(
 // multiply that authored size while the results scene index places the shape
 // with the rigidized frame.
 void
-RigExecImagingBridge::_FillControlGuides(
-    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
+RigExecImagingBridge::_FillControlGuides(const RigExecRigPose &pose,
+                                         RigExecImagingSnapshot *snapshot) const
 {
     _SyncGuideCaches();
     // Set here as well as in _FillGuides: control guide frames are
@@ -1692,38 +1718,31 @@ RigExecImagingBridge::_FillControlGuides(
             inputs.customCounts.clear();
             bool live = false;
             if (prim) {
-                if (UsdAttribute a =
-                        prim.GetAttribute(_tGuideShape)) {
+                if (UsdAttribute a = prim.GetAttribute(_tGuideShape)) {
                     a.Get(&inputs.shape, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                if (UsdAttribute a =
-                        prim.GetAttribute(_tGuideDrawMode)) {
+                if (UsdAttribute a = prim.GetAttribute(_tGuideDrawMode)) {
                     a.Get(&inputs.drawMode, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                if (UsdAttribute a =
-                        prim.GetAttribute(_tGuidePlaneNormal)) {
+                if (UsdAttribute a = prim.GetAttribute(_tGuidePlaneNormal)) {
                     a.Get(&inputs.planeNormal, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                const TfToken scaleAttrs[3] = {
-                    _tGuideScaleX, _tGuideScaleY,
-                    _tGuideScaleZ};
+                const TfToken scaleAttrs[3] = {_tGuideScaleX, _tGuideScaleY,
+                                               _tGuideScaleZ};
                 for (int axis = 0; axis < 3; ++axis) {
-                    if (UsdAttribute a =
-                            prim.GetAttribute(scaleAttrs[axis])) {
+                    if (UsdAttribute a = prim.GetAttribute(scaleAttrs[axis])) {
                         a.Get(&inputs.scale[axis], pose.time);
                         live = live || _GuideAttrIsLive(a);
                     }
                 }
-                if (UsdAttribute a =
-                        prim.GetAttribute(_tGuideWireWidth)) {
+                if (UsdAttribute a = prim.GetAttribute(_tGuideWireWidth)) {
                     a.Get(&inputs.wireWidth, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
-                if (UsdAttribute a =
-                        prim.GetAttribute(_tGuideOffset)) {
+                if (UsdAttribute a = prim.GetAttribute(_tGuideOffset)) {
                     a.Get(&inputs.offset, pose.time);
                     live = live || _GuideAttrIsLive(a);
                 }
@@ -1733,32 +1752,41 @@ RigExecImagingBridge::_FillControlGuides(
                     live = live || _GuideAttrIsLive(a);
                 }
                 if (inputs.shape == TfToken("custom")) {
-                    if (UsdAttribute a = prim.GetAttribute(TfToken("guide:points"))) {
+                    if (UsdAttribute a =
+                            prim.GetAttribute(TfToken("guide:points"))) {
                         a.Get(&inputs.customPoints, pose.time);
                         live = live || _GuideAttrIsLive(a);
                     }
-                    if (UsdAttribute a = prim.GetAttribute(TfToken("guide:curveVertexCounts"))) {
+                    if (UsdAttribute a = prim.GetAttribute(
+                            TfToken("guide:curveVertexCounts"))) {
                         a.Get(&inputs.customCounts, pose.time);
                         live = live || _GuideAttrIsLive(a);
                     }
                 }
             }
-            if(prim) {
+            if (prim) {
                 SdfPathVector targets;
-                prim.GetRelationship(TfToken("guide:source")).GetTargets(&targets);
-                if(targets.size()==1) inputs.guideSource=targets.front();
+                prim.GetRelationship(TfToken("guide:source"))
+                    .GetTargets(&targets);
+                if (targets.size() == 1)
+                    inputs.guideSource = targets.front();
             }
             inputs.controlLive = live;
             inputs.controlReady = true;
         }
-        if(!inputs.guideSource.IsEmpty()) {
-            const RigExecPointFrame *source=nullptr;
-            const auto control=pose.controlFrames.find(inputs.guideSource);
-            const auto joint=pose.jointFramesFinal.find(inputs.guideSource);
-            if(control!=pose.controlFrames.end()) source=&control->second;
-            else if(joint!=pose.jointFramesFinal.end()) source=&joint->second;
-            if(!source || !RigExecPointsToMatrix(identity.points,source->points,&evaluated) ||
-               !_RigidGuideMatrix(*source,&placement,&evaluatedScale)) continue;
+        if (!inputs.guideSource.IsEmpty()) {
+            const RigExecPointFrame *source = nullptr;
+            const auto control = pose.controlFrames.find(inputs.guideSource);
+            const auto joint = pose.jointFramesFinal.find(inputs.guideSource);
+            if (control != pose.controlFrames.end())
+                source = &control->second;
+            else if (joint != pose.jointFramesFinal.end())
+                source = &joint->second;
+            if (!source ||
+                !RigExecPointsToMatrix(identity.points, source->points,
+                                       &evaluated) ||
+                !_RigidGuideMatrix(*source, &placement, &evaluatedScale))
+                continue;
         }
         TfToken shape = inputs.shape;
         TfToken drawMode = inputs.drawMode;
@@ -1785,8 +1813,7 @@ RigExecImagingBridge::_FillControlGuides(
                 scaleOk = false;
                 break;
             }
-            effectiveScale[axis] =
-                authoredScale[axis] * evaluatedScale[axis];
+            effectiveScale[axis] = authoredScale[axis] * evaluatedScale[axis];
             if (!std::isfinite(effectiveScale[axis]) ||
                 effectiveScale[axis] <= 0.0) {
                 scaleOk = false;
@@ -1803,13 +1830,16 @@ RigExecImagingBridge::_FillControlGuides(
             bool valid = !inputs.customCounts.empty();
             for (int n : inputs.customCounts) {
                 valid = valid && n >= 2;
-                if (n > 0) count += size_t(n);
+                if (n > 0)
+                    count += size_t(n);
             }
             valid = valid && count == inputs.customPoints.size();
             for (const GfVec3f &p : inputs.customPoints) {
-                for (int axis = 0; axis < 3; ++axis) valid = valid && std::isfinite(p[axis]);
+                for (int axis = 0; axis < 3; ++axis)
+                    valid = valid && std::isfinite(p[axis]);
             }
-            if (!valid) continue;
+            if (!valid)
+                continue;
             published.controlGuidePoints = inputs.customPoints;
             published.controlGuideCounts = inputs.customCounts;
         }
@@ -1817,8 +1847,7 @@ RigExecImagingBridge::_FillControlGuides(
         // guide:offset moves the drawn shape in the control's local frame,
         // carried by the evaluated scale; the pivot stays where it is.
         GfMatrix4d guideFrame = placement;
-        if (inputs.offset != GfVec3d(0.0) &&
-            std::isfinite(inputs.offset[0]) &&
+        if (inputs.offset != GfVec3d(0.0) && std::isfinite(inputs.offset[0]) &&
             std::isfinite(inputs.offset[1]) &&
             std::isfinite(inputs.offset[2])) {
             const GfVec3d local(inputs.offset[0] * evaluatedScale[0],
@@ -1830,8 +1859,10 @@ RigExecImagingBridge::_FillControlGuides(
             // Custom shapes may be asymmetric. Preserve reflections and
             // affine axes instead of rebuilding them from axis magnitudes.
             const GfVec3d offset = std::isfinite(inputs.offset[0]) &&
-                std::isfinite(inputs.offset[1]) && std::isfinite(inputs.offset[2])
-                ? inputs.offset : GfVec3d(0.0);
+                                           std::isfinite(inputs.offset[1]) &&
+                                           std::isfinite(inputs.offset[2])
+                                       ? inputs.offset
+                                       : GfVec3d(0.0);
             guideFrame = GfMatrix4d(1.0).SetTranslate(offset) * evaluated;
             effectiveScale = authoredScale;
         }
@@ -1852,7 +1883,8 @@ RigExecImagingBridge::_FillControlGuides(
         _ReadGuideStyleCached(inputs, pose, &published);
         // Static hidden helpers need no synthetic geometry. Keep live opacity
         // guides present so an animated/connected fade can update in place.
-        published.hasControlGuide = published.guideOpacity > 0.0f || inputs.opacityLive;
+        published.hasControlGuide =
+            published.guideOpacity > 0.0f || inputs.opacityLive;
     }
 
     // Pose readers and manipulators consume final joint frames wherever the
@@ -1873,9 +1905,9 @@ RigExecImagingBridge::_FillControlGuides(
     }
 }
 
-
 void
-RigExecImagingBridge::SetInteractiveOverrides(std::vector<RigExecValueOverride> overrides)
+RigExecImagingBridge::SetInteractiveOverrides(
+    std::vector<RigExecValueOverride> overrides)
 {
     _interactiveOverrides = std::move(overrides);
     _evaluationOverrides.clear();
@@ -1896,8 +1928,8 @@ RigExecImagingBridge::SetInteractiveOverrides(std::vector<RigExecValueOverride> 
 // volume is wired, while keeping drawing on the exact same placement path the
 // field uses once it is consumed.
 void
-RigExecImagingBridge::_FillVolumeGuides(
-    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
+RigExecImagingBridge::_FillVolumeGuides(const RigExecRigPose &pose,
+                                        RigExecImagingSnapshot *snapshot) const
 {
     // Set here too: a rig may publish these and no joint or control
     // guides at all, in which case this is the only place the asset-space
@@ -1935,7 +1967,8 @@ RigExecImagingBridge::_FillVolumeGuides(
             continue;
         }
 
-        auto readFloat = [this, &prim, &pose, &weightPath](const TfToken &name, float fallback) {
+        auto readFloat = [this, &prim, &pose, &weightPath](const TfToken &name,
+                                                           float fallback) {
             float value = fallback;
             if (UsdAttribute a = prim.GetAttribute(name)) {
                 // Property movers can drive volume dimensions. The field
@@ -1947,7 +1980,8 @@ RigExecImagingBridge::_FillVolumeGuides(
                     return moved->second.UncheckedGet<float>();
                 }
                 for (const auto &override : _interactiveOverrides) {
-                    if (override.prim == weightPath && override.attribute == a.GetName()) {
+                    if (override.prim == weightPath &&
+                        override.attribute == a.GetName()) {
                         if (override.value.IsHolding<float>())
                             return override.value.UncheckedGet<float>();
                         if (override.value.IsHolding<double>())
@@ -1956,8 +1990,10 @@ RigExecImagingBridge::_FillVolumeGuides(
                 }
                 VtValue authored;
                 if (a.Get(&authored, pose.time)) {
-                    if (authored.IsHolding<float>()) value = authored.UncheckedGet<float>();
-                    else if (authored.IsHolding<double>()) value = float(authored.UncheckedGet<double>());
+                    if (authored.IsHolding<float>())
+                        value = authored.UncheckedGet<float>();
+                    else if (authored.IsHolding<double>())
+                        value = float(authored.UncheckedGet<double>());
                 }
             }
             return value;
@@ -1978,7 +2014,8 @@ RigExecImagingBridge::_FillVolumeGuides(
         std::vector<RigExecVolumeGuideElement> elements;
         const float guideOpacity = readFloat(_tGuideDisplayOpacity, 0.35f);
         auto finishBoundary = [&](size_t first, bool outer) {
-            if (!clean) return;
+            if (!clean)
+                return;
             for (size_t i = first; i < elements.size(); ++i) {
                 auto &element = elements[i];
                 if (element.primType == HdPrimTypeTokens->basisCurves) {
@@ -1994,14 +2031,15 @@ RigExecImagingBridge::_FillVolumeGuides(
 
         if (typeName == "RigExecPlaneWeight") {
             TfToken axisToken("y");
-            if (UsdAttribute a =
-                    prim.GetAttribute(_tRigExecPlaneAxis)) {
+            if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneAxis)) {
                 a.Get(&axisToken, pose.time);
             }
-            const int axis = axisToken == "x" ? 0
-                : (axisToken == "y" ? 1 : (axisToken == "z" ? 2 : -1));
+            const int axis =
+                axisToken == "x"
+                    ? 0
+                    : (axisToken == "y" ? 1 : (axisToken == "z" ? 2 : -1));
             if (axis < 0) {
-                continue;  // the kernel rejects it too
+                continue; // the kernel rejects it too
             }
             // Size from the authored extents ONLY. The band moves the two
             // surfaces apart along the axis; it must not change their
@@ -2009,12 +2047,11 @@ RigExecImagingBridge::_FillVolumeGuides(
             const double extentU = readFloat(_volumeInputsExtentU, 1.0f);
             const double extentV = readFloat(_volumeInputsExtentV, 1.0f);
             TfToken boundsToken("unbounded");
-            if (UsdAttribute a =
-                    prim.GetAttribute(_tRigExecPlaneBounds)) {
+            if (UsdAttribute a = prim.GetAttribute(_tRigExecPlaneBounds)) {
                 a.Get(&boundsToken, pose.time);
             }
             if (boundsToken != "unbounded" && boundsToken != "bounded") {
-                continue;  // the kernel rejects it too
+                continue; // the kernel rejects it too
             }
             const bool bounded = boundsToken == "bounded";
             for (const double distance : {falloffMin, falloffMax}) {
@@ -2022,7 +2059,8 @@ RigExecImagingBridge::_FillVolumeGuides(
                 if ((shell && distance == falloffMax) ||
                     (falloff && distance == falloffMin))
                     _AppendPlaneVolumeGuide(distance, axis, extentU, extentV,
-                        bounded, false, rigid, wireWidth, &elements);
+                                            bounded, false, rigid, wireWidth,
+                                            &elements);
                 _AppendPlaneVolumeGuide(distance, axis, extentU, extentV,
                                         bounded, wire, rigid, wireWidth,
                                         &elements);
@@ -2054,10 +2092,14 @@ RigExecImagingBridge::_FillVolumeGuides(
                     readFloat(_volumeInputsScaleYNeg, 1.0f),
                     readFloat(_volumeInputsScaleZNeg, 1.0f));
                 for (int axis = 0; axis < 3; ++axis) {
-                    if (!std::isfinite(positiveScales[axis]) || positiveScales[axis] <= 0 ||
-                        !std::isfinite(negativeScales[axis]) || negativeScales[axis] <= 0) scaleOk = false;
+                    if (!std::isfinite(positiveScales[axis]) ||
+                        positiveScales[axis] <= 0 ||
+                        !std::isfinite(negativeScales[axis]) ||
+                        negativeScales[axis] <= 0)
+                        scaleOk = false;
                 }
-                if (!scaleOk) continue;
+                if (!scaleOk)
+                    continue;
                 // falloffMin is fully on. In wire mode that interior is a
                 // half-translucent fill plus the same dotted great circles
                 // the exterior uses. falloffMax stays dotted wire only.
@@ -2069,23 +2111,24 @@ RigExecImagingBridge::_FillVolumeGuides(
                     const size_t first = elements.size();
                     if ((shell && surface == 1) || (falloff && surface == 0))
                         _AppendSphereVolumeGuide(radii[surface], axisScale,
-                            positiveScales, negativeScales, false, rigid,
-                            wireWidth, -1.0f, &elements, clean);
+                                                 positiveScales, negativeScales,
+                                                 false, rigid, wireWidth, -1.0f,
+                                                 &elements, clean);
                     const bool interior = wire && !clean && surface == 0;
                     if (interior) {
                         _AppendSphereVolumeGuide(
                             radii[surface], axisScale, positiveScales,
                             negativeScales, false, rigid, wireWidth,
                             _kSphereInteriorOpacity, &elements);
-                        _AppendSphereVolumeGuide(
-                            radii[surface], axisScale, positiveScales,
-                            negativeScales, true, rigid, wireWidth, -1.0f,
-                            &elements);
+                        _AppendSphereVolumeGuide(radii[surface], axisScale,
+                                                 positiveScales, negativeScales,
+                                                 true, rigid, wireWidth, -1.0f,
+                                                 &elements);
                     } else {
-                        _AppendSphereVolumeGuide(
-                            radii[surface], axisScale, positiveScales,
-                            negativeScales, wire, rigid, wireWidth, -1.0f,
-                            &elements, clean);
+                        _AppendSphereVolumeGuide(radii[surface], axisScale,
+                                                 positiveScales, negativeScales,
+                                                 wire, rigid, wireWidth, -1.0f,
+                                                 &elements, clean);
                     }
                     finishBoundary(first, surface == 1);
                 }
@@ -2098,14 +2141,13 @@ RigExecImagingBridge::_FillVolumeGuides(
                 // rigid^-1 then the per-axis divisors, so the drawn tube
                 // is round exactly where the field's is.
                 GfMatrix4d divide(1.0);
-                divide.SetScale(GfVec3d(1.0 / axisScale[0],
-                                        1.0 / axisScale[1],
+                divide.SetScale(GfVec3d(1.0 / axisScale[0], 1.0 / axisScale[1],
                                         1.0 / axisScale[2]));
                 const GfMatrix4d toLocal = rigid.GetInverse() * divide;
                 VtVec3fArray localCurve(curvePoints.size());
                 for (size_t k = 0; k < curvePoints.size(); ++k) {
-                    localCurve[k] =
-                        GfVec3f(toLocal.Transform(GfVec3d(curvePoints.cdata()[k])));
+                    localCurve[k] = GfVec3f(
+                        toLocal.Transform(GfVec3d(curvePoints.cdata()[k])));
                 }
                 GfMatrix4d scale(1.0);
                 scale.SetScale(axisScale);
@@ -2115,13 +2157,14 @@ RigExecImagingBridge::_FillVolumeGuides(
                     if ((shell && radius == falloffMax) ||
                         (falloff && radius == falloffMin))
                         _AppendCurveVolumeGuide(radius, localCurve, toAsset,
-                            false, wireWidth, &elements, clean);
-                    _AppendCurveVolumeGuide(radius, localCurve, toAsset,
-                                            wire, wireWidth, &elements, clean);
+                                                false, wireWidth, &elements,
+                                                clean);
+                    _AppendCurveVolumeGuide(radius, localCurve, toAsset, wire,
+                                            wireWidth, &elements, clean);
                     finishBoundary(first, radius == falloffMax);
                 }
             } else {
-                continue;  // not a shape this version draws
+                continue; // not a shape this version draws
             }
         }
 
@@ -2149,11 +2192,11 @@ RigExecImagingBridge::_FillVolumeGuides(
 // indistinguishable from a correct one by eye, which is the whole reason
 // the visualisation exists.
 void
-RigExecImagingBridge::_FillWeightOverlay(
-    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
+RigExecImagingBridge::_FillWeightOverlay(const RigExecRigPose &pose,
+                                         RigExecImagingSnapshot *snapshot) const
 {
     if (_weightOverlay.IsEmpty()) {
-        return;  // off: an ordinary render is untouched
+        return; // off: an ordinary render is untouched
     }
     const auto it = pose.weightFields.find(_weightOverlay);
     if (it == pose.weightFields.end() || it->second.weights.empty()) {
@@ -2175,8 +2218,10 @@ RigExecImagingBridge::_FillWeightOverlay(
         if (const UsdAttribute attr = weight.GetAttribute(_tWeightDisplay))
             attr.Get(&display, pose.time);
     }
-    published.weightDisplay = display == _tHeatmap ? RigExecWeightDisplay::Heatmap
-        : display == _tBands ? RigExecWeightDisplay::Bands : RigExecWeightDisplay::Tint;
+    published.weightDisplay = display == _tHeatmap
+                                  ? RigExecWeightDisplay::Heatmap
+                              : display == _tBands ? RigExecWeightDisplay::Bands
+                                                   : RigExecWeightDisplay::Tint;
 }
 
 // Stamps WHICH STAGE and WHICH TIME a generation describes onto it.
@@ -2185,74 +2230,12 @@ RigExecImagingBridge::_FillWeightOverlay(
 // and time of its own choosing -- would otherwise accept whatever rig
 // published last, for whatever frame.
 void
-RigExecImagingBridge::_StampGeneration(
-    UsdTimeCode time, RigExecImagingSnapshot *snapshot) const
+RigExecImagingBridge::_StampGeneration(UsdTimeCode time,
+                                       RigExecImagingSnapshot *snapshot) const
 {
     snapshot->stage = UsdStageWeakPtr(_stage);
     snapshot->sampleTimeIsDefault = time.IsDefault();
     snapshot->sampleTime = time.IsDefault() ? 0.0 : time.GetValue();
-}
-
-// The test-only fence probe (see RigExecSetPublishFenceProbeForTesting):
-// null in production, set only while no publish is in flight.
-static std::function<void()> _sPublishFenceProbe;
-
-bool
-RigExecPublishBackgroundCompletion(
-    const std::shared_ptr<RigExecFrameCache> &cache,
-    const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
-    const RigExecBackgroundScheduler *scheduler, const SdfPath &rig)
-{
-    return RigExecPublishBackgroundCompletion(
-        cache, key, time, pose, generation, scheduler, rig,
-        RigExecWarmFenceToken(0), nullptr, 0, nullptr);
-}
-
-bool
-RigExecPublishBackgroundCompletion(
-    const std::shared_ptr<RigExecFrameCache> &cache,
-    const RigExecFrameCacheKey &key, UsdTimeCode time,
-    const RigExecRigPose &pose, RigExecFrameGeneration generation,
-    const RigExecBackgroundScheduler *scheduler, const SdfPath &rig,
-    RigExecWarmFenceToken fenceToken,
-    std::shared_ptr<const void> retained, size_t retainedBytes,
-    const RigExecEntryProvenance *provenance,
-    RigExecWarmFrameIndex *warmIndex)
-{
-    if (!cache || !pose.valid) {
-        return false;
-    }
-    const auto publish = [&] {
-        const bool stored = cache->Publish(
-            key, time, pose, retainedBytes, retained, provenance);
-        if (stored && warmIndex && time.IsNumeric()) {
-            warmIndex->NoteCompleted(rig, time.GetValue(), key, generation);
-        }
-        return stored;
-    };
-    if (!scheduler) {
-        return publish();
-    }
-    // Fence-check, cache insert and index completion share the fence (plan
-    // 3.3): the fenced clear holds the same mutex across bump + purge +
-    // clear + reset, so no clear can land between the check and the store.
-    // Lock order: fence, then scheduler, cache shards or warm index.
-    std::lock_guard<std::mutex> fenceLock(scheduler->FenceMutex());
-    if (!scheduler->IsWarmRequestCurrent(rig, generation, time,
-                                         fenceToken)) {
-        return false;
-    }
-    if (_sPublishFenceProbe) {
-        _sPublishFenceProbe();
-    }
-    return publish();
-}
-
-void
-RigExecSetPublishFenceProbeForTesting(std::function<void()> probe)
-{
-    _sPublishFenceProbe = std::move(probe);
 }
 
 void
@@ -2299,12 +2282,9 @@ RigExecImagingBridge::RetirePoseOnlyCacheEntries()
 }
 
 RigExecFreshProof::RigExecFreshProof(
-    uint64_t digestIn, uint64_t unfoldedIn,
-    const RigExecFrameInputs *inputs,
+    uint64_t digestIn, uint64_t unfoldedIn, const RigExecFrameInputs *inputs,
     const std::vector<RigExecValueOverride> *overrides)
-    : digest(digestIn)
-    , unfolded(unfoldedIn)
-    , sampledInputs(inputs != nullptr)
+    : digest(digestIn), unfolded(unfoldedIn), sampledInputs(inputs != nullptr)
 {
     // The dependency set the digest covers: first-win sample paths (the
     // digest's own granularity) plus standing override identities.
@@ -2345,16 +2325,18 @@ RigExecFreshProof::Covers(const std::string &id, const SdfPath &asPath) const
 }
 
 void
-RigExecImagingBridge::NoteWarmingEnqueued(
-    UsdTimeCode time, uint64_t controlDigest, uint64_t unfoldedDigest,
-    const RigExecFrameInputs &inputs)
+RigExecImagingBridge::NoteWarmingEnqueued(UsdTimeCode time,
+                                          uint64_t controlDigest,
+                                          uint64_t unfoldedDigest,
+                                          const RigExecFrameInputs &inputs)
 {
     if (!_frameCache || _frameCacheMode == RigExecFrameCacheMode::Off) {
         return;
     }
     // Scope check, as on the lookup and memoization paths: the evaluation
     // compiled rig may have moved since the last proof was recorded.
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -2378,14 +2360,15 @@ RigExecImagingBridge::_SyncAffectedIndex()
         return nullptr;
     }
     const RigExecBakedProgramImpl &impl = program->GetStepGraph();
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     // The program object test matters as much as the compiled rig: a rebuild can
     // answer a colliding compiled rig for wholly new clustering, and an index
     // built for the old shape would retire against the wrong cones.
     // (The compiled rig signature folds the build count, so a rebuild moves it in
     // practice; the pointer pins the shape regardless.)
-    if (_affectedValid && _affectedIndex && _affectedCompiledRig == compiledRig &&
-        _affectedProgram == program) {
+    if (_affectedValid && _affectedIndex &&
+        _affectedCompiledRig == compiledRig && _affectedProgram == program) {
         return _affectedIndex.get();
     }
     _affectedIndex.reset(new RigExecOutputAffectedIndex());
@@ -2457,8 +2440,8 @@ RigExecImagingBridge::RetireProofsForControls(
         const std::set<std::string> unique(controls.begin(), controls.end());
         doomed.reserve(unique.size());
         for (const std::string &id : unique) {
-            SdfPath path = SdfPath::IsValidPathString(id) ? SdfPath(id)
-                                                          : SdfPath();
+            SdfPath path =
+                SdfPath::IsValidPathString(id) ? SdfPath(id) : SdfPath();
             if (!path.IsEmpty() && path.GetString() != id) {
                 path = SdfPath();
             }
@@ -2488,8 +2471,7 @@ bool
 RigExecImagingBridge::RepointProof(UsdTimeCode time, uint64_t newDigest)
 {
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
-    const auto found =
-        _freshDigests.find({time.IsDefault(), stamped});
+    const auto found = _freshDigests.find({time.IsDefault(), stamped});
     if (found == _freshDigests.end()) {
         return false;
     }
@@ -2503,14 +2485,13 @@ RigExecImagingBridge::RepointProof(UsdTimeCode time, uint64_t newDigest)
 
 bool
 RigExecImagingBridge::GetFreshProof(UsdTimeCode time,
-                                   RigExecFreshProof *proof) const
+                                    RigExecFreshProof *proof) const
 {
     if (!proof) {
         return false;
     }
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
-    const auto found =
-        _freshDigests.find({time.IsDefault(), stamped});
+    const auto found = _freshDigests.find({time.IsDefault(), stamped});
     if (found == _freshDigests.end()) {
         return false;
     }
@@ -2519,8 +2500,7 @@ RigExecImagingBridge::GetFreshProof(UsdTimeCode time,
 }
 
 bool
-RigExecImagingBridge::NoteCaptureIndex(
-    const UsdNotice::ObjectsChanged &notice)
+RigExecImagingBridge::NoteCaptureIndex(const UsdNotice::ObjectsChanged &notice)
 {
     // First and unconditionally: the pinned bindings serve every live sample,
     // with or without a frame cache.
@@ -2529,7 +2509,8 @@ RigExecImagingBridge::NoteCaptureIndex(
     if (!program || !_frameCache) {
         return false;
     }
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     const bool hit = RigExecNoteCaptureIndex(*_frameCache, _taskListMemo,
                                              compiledRig, *program, notice);
     if (hit && _freshCompiledRigValid && _freshCompiledRig == compiledRig) {
@@ -2643,8 +2624,9 @@ RigExecImagingBridge::_EnsureChainBindings() const
                                      revision.weightObjects.end());
         }
     }
-    for (std::vector<SdfPath> *list : {&_liveChainPrims, &_liveChainMovers,
-                                       &_liveChainTargets, &_liveChainWeights}) {
+    for (std::vector<SdfPath> *list :
+         {&_liveChainPrims, &_liveChainMovers, &_liveChainTargets,
+          &_liveChainWeights}) {
         std::sort(list->begin(), list->end());
         list->erase(std::unique(list->begin(), list->end()), list->end());
     }
@@ -2668,8 +2650,8 @@ RigExecImagingBridge::AcquireChainBindings(uint64_t *generation) const
 }
 
 bool
-RigExecImagingBridge::_SampleLive(
-    UsdTimeCode time, RigExecFrameInputs *out) const
+RigExecImagingBridge::_SampleLive(UsdTimeCode time,
+                                  RigExecFrameInputs *out) const
 {
     // The upstream values ride the vector (RigExecFrameInputs::upstream),
     // admitted as live admits them, so every digest of it folds them.
@@ -2693,10 +2675,9 @@ RigExecImagingBridge::SetUpstreamInputs(
     std::vector<RigExecValueOverride> inputs;
     inputs.reserve(values.size());
     for (const RigExecUpstreamValue &value : values) {
-        inputs.push_back(RigExecValueOverride{value.path.GetPrimPath(),
-                                              TfToken(),
-                                              value.path.GetNameToken(),
-                                              value.value});
+        inputs.push_back(
+            RigExecValueOverride{value.path.GetPrimPath(), TfToken(),
+                                 value.path.GetNameToken(), value.value});
     }
     _upstreamInputs = std::move(values);
     _evaluator->SetUpstreamInputs(std::move(inputs));
@@ -2709,12 +2690,14 @@ RigExecImagingBridge::_CanSampleCacheInputs()
     if (!program || _evaluator->cpuReference) {
         return false;
     }
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     // Whether the program freezes is a question about connections and
     // prims, which no value edit moves.
     const uint64_t serial = _evaluator->GetStageStructureSerial();
     if (!_sampleSupportValid || _sampleSupportProgram != program ||
-        _sampleSupportCompiledRig != compiledRig || _sampleSupportSerial != serial) {
+        _sampleSupportCompiledRig != compiledRig ||
+        _sampleSupportSerial != serial) {
         _sampleSupport = RigExecCanFreezeProgram(*_evaluator);
         _sampleSupportProgram = program;
         _sampleSupportCompiledRig = compiledRig;
@@ -2725,8 +2708,8 @@ RigExecImagingBridge::_CanSampleCacheInputs()
 }
 
 bool
-RigExecImagingBridge::_ComputePoseOnlyCacheKey(
-    UsdTimeCode time, RigExecFrameCacheKey *key) const
+RigExecImagingBridge::_ComputePoseOnlyCacheKey(UsdTimeCode time,
+                                               RigExecFrameCacheKey *key) const
 {
     if (!key || !_frameCache ||
         !RigExecRefusalControlDigestible(_evaluationOverrides,
@@ -2736,17 +2719,19 @@ RigExecImagingBridge::_ComputePoseOnlyCacheKey(
     // Complete live results remain cacheable when an operation has no
     // frozen input contract. Every stage edit moves this namespace; no
     // per-operation input list or partial retained-state proof is needed.
-    key->compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
-    key->controlDigest = RigExecRefusalControlDigest(
-        time, _evaluator->GetStageEditSerial(), _evaluationOverrides,
-        _upstreamInputs);
+    key->compiledRigSignature =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    key->controlDigest =
+        RigExecRefusalControlDigest(time, _evaluator->GetStageEditSerial(),
+                                    _evaluationOverrides, _upstreamInputs);
     return true;
 }
 
 void
-RigExecImagingBridge::_ServeCachedPose(
-    UsdTimeCode time, const RigExecRigPose &pose,
-    const RigExecFrameCacheKey &key, PublishResult *result)
+RigExecImagingBridge::_ServeCachedPose(UsdTimeCode time,
+                                       const RigExecRigPose &pose,
+                                       const RigExecFrameCacheKey &key,
+                                       PublishResult *result)
 {
     _frameCache->NoteProvenanceAlias(key, time);
     RigExecRigPose cached = pose;
@@ -2765,9 +2750,8 @@ RigExecImagingBridge::_ServeCachedPose(
         if (!verdict.match && verdict.mismatches > 0) {
             TF_WARN("rigExec: frame-cache hit at %s mismatches live "
                     "evaluation; serving live and repairing the entry:\n%s",
-                    time.IsDefault()
-                        ? "default"
-                        : std::to_string(time.GetValue()).c_str(),
+                    time.IsDefault() ? "default"
+                                     : std::to_string(time.GetValue()).c_str(),
                     verdict.report.c_str());
             _PublishPoseSnapshot(time, verdict.poseToServe, result);
             _MemoizeLiveResult(time, verdict.poseToServe);
@@ -2792,8 +2776,8 @@ RigExecImagingBridge::_ServeCachedPose(
 
 bool
 RigExecImagingBridge::CarryEntry(UsdTimeCode time,
-                                const RigExecFrameCacheKey &oldKey,
-                                uint64_t newConstants)
+                                 const RigExecFrameCacheKey &oldKey,
+                                 uint64_t newConstants)
 {
     if (!_frameCache) {
         return false;
@@ -2814,8 +2798,8 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
     RigExecRigPose pose;
     std::shared_ptr<const void> retained;
     size_t bytes = 0;
-    if (!_frameCache->Lookup(oldKey, &pose, &retained, &bytes) ||
-        !pose.valid || !retained) {
+    if (!_frameCache->Lookup(oldKey, &pose, &retained, &bytes) || !pose.valid ||
+        !retained) {
         return false;
     }
     // The rewrite sequence: publish under the new key, evict the old,
@@ -2829,25 +2813,23 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
         carried.aliasTimes.clear();
         carried.aliasTimes.push_back(time.GetValue());
     }
-    if (!_frameCache->Publish(newKey, time, pose, bytes, retained,
-                              &carried)) {
+    if (!_frameCache->Publish(newKey, time, pose, bytes, retained, &carried)) {
         return false;
     }
     _frameCache->Evict(oldKey);
     if (_warmIndex && time.IsNumeric()) {
-        _warmIndex->NoteCompleted(
-            _rigPath, time.GetValue(), newKey,
-            _warmIndex->CurrentGeneration(_rigPath));
+        _warmIndex->NoteCompleted(_rigPath, time.GetValue(), newKey,
+                                  _warmIndex->CurrentGeneration(_rigPath));
     }
     RepointProof(time, newKey.controlDigest);
     return true;
 }
 
 bool
-RigExecImagingBridge::_TrySparseServe(
-    UsdTimeCode time, const RigExecFrameInputs &inputs,
-    const RigExecFrameCacheKey &key, uint64_t unfolded,
-    PublishResult *result)
+RigExecImagingBridge::_TrySparseServe(UsdTimeCode time,
+                                      const RigExecFrameInputs &inputs,
+                                      const RigExecFrameCacheKey &key,
+                                      uint64_t unfolded, PublishResult *result)
 {
     if (!result || !_frameCache || !_warmIndex || !time.IsNumeric()) {
         return false;
@@ -2878,9 +2860,8 @@ RigExecImagingBridge::_TrySparseServe(
         }
         _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
             key.controlDigest, unfolded, &inputs, &_evaluationOverrides);
-        _warmIndex->NoteCompleted(
-            _rigPath, stamped, key,
-            _warmIndex->CurrentGeneration(_rigPath));
+        _warmIndex->NoteCompleted(_rigPath, stamped, key,
+                                  _warmIndex->CurrentGeneration(_rigPath));
         _ServeCachedPose(time, cached, key, result);
         return true;
     }
@@ -2888,8 +2869,8 @@ RigExecImagingBridge::_TrySparseServe(
     std::shared_ptr<const void> handle;
     bool baseHit = false;
     {
-        RigExecProfileScope scope(MutableProfiler(),
-                                  "Imaging.FrameCacheLookup", "imaging");
+        RigExecProfileScope scope(MutableProfiler(), "Imaging.FrameCacheLookup",
+                                  "imaging");
         baseHit = _frameCache->Lookup(baseKey, &base, &handle);
     }
     if (!baseHit || !base.valid || !handle) {
@@ -2905,7 +2886,8 @@ RigExecImagingBridge::_TrySparseServe(
     // namespace plans nothing here -- the eager carry covers clean
     // entries, and anything else re-warms.
     if (retained->compiledRigSignature != key.compiledRigSignature ||
-        retained->constantDigest != RigExecCompiledRigConstantDigest(*program)) {
+        retained->constantDigest !=
+            RigExecCompiledRigConstantDigest(*program)) {
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
@@ -2916,8 +2898,9 @@ RigExecImagingBridge::_TrySparseServe(
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
-    if (!RigExecCanReuseRetainedPose(*index, *retained, key.compiledRigSignature,
-                                    inputs, _evaluationOverrides)) {
+    if (!RigExecCanReuseRetainedPose(*index, *retained,
+                                     key.compiledRigSignature, inputs,
+                                     _evaluationOverrides)) {
         MutableProfiler()->RecordCacheLookup(false, stamped);
         return false;
     }
@@ -2932,12 +2915,10 @@ RigExecImagingBridge::_TrySparseServe(
         provenance.unfoldedControlDigest = unfolded;
     }
     RigExecRigPose served = base;
-    if (_frameCache->Publish(key, time, served,
-                             retained->RetainedBytes(), handle,
-                             haveProvenance ? &provenance : nullptr)) {
-        _warmIndex->NoteCompleted(
-            _rigPath, stamped, key,
-            _warmIndex->CurrentGeneration(_rigPath));
+    if (_frameCache->Publish(key, time, served, retained->RetainedBytes(),
+                             handle, haveProvenance ? &provenance : nullptr)) {
+        _warmIndex->NoteCompleted(_rigPath, stamped, key,
+                                  _warmIndex->CurrentGeneration(_rigPath));
     }
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
         key.controlDigest, unfolded, &inputs, &_evaluationOverrides);
@@ -2959,9 +2940,10 @@ RigExecImagingBridge::_NoteCacheEditSerial()
 }
 
 bool
-RigExecImagingBridge::_LookupCachedPose(
-    UsdTimeCode time, bool publishing, RigExecRigPose *pose,
-    RigExecFrameCacheKey *key, _CacheMiss *miss)
+RigExecImagingBridge::_LookupCachedPose(UsdTimeCode time, bool publishing,
+                                        RigExecRigPose *pose,
+                                        RigExecFrameCacheKey *key,
+                                        _CacheMiss *miss)
 {
     // Profiler scopes and lane records belong to the publishing lookup
     // only; a query that publishes nothing leaves the profiler alone.
@@ -2973,7 +2955,8 @@ RigExecImagingBridge::_LookupCachedPose(
     // freshness proof. Cached entries stay for LRU (their digests decide
     // reachability); proofs name the old scope's inputs and must not be
     // consulted. No proof can exist yet, so this is a miss either way.
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -2985,8 +2968,8 @@ RigExecImagingBridge::_LookupCachedPose(
         if (!publishing) {
             return _frameCache->Lookup(lookupKey, pose, retained);
         }
-        RigExecProfileScope scope(MutableProfiler(),
-                                  "Imaging.FrameCacheLookup", "imaging");
+        RigExecProfileScope scope(MutableProfiler(), "Imaging.FrameCacheLookup",
+                                  "imaging");
         return _frameCache->Lookup(lookupKey, pose, retained);
     };
     // Servable completions skip sampling entirely: the index row names the
@@ -3054,7 +3037,7 @@ RigExecImagingBridge::_LookupCachedPose(
     // Only the sparse lane reads the base, and it runs only when publishing;
     // a non-publishing query with no proof cannot hit, so it skips the sample.
     miss->haveBase = publishing && _warmIndex && time.IsNumeric() &&
-        _warmIndex->FindKey(_rigPath, stamped, &baseKey);
+                     _warmIndex->FindKey(_rigPath, stamped, &baseKey);
     if (!haveProof && !miss->haveBase) {
         return false;
     }
@@ -3065,8 +3048,8 @@ RigExecImagingBridge::_LookupCachedPose(
     {
         std::optional<RigExecProfileScope> sampleScope;
         if (publishing) {
-            sampleScope.emplace(MutableProfiler(),
-                                "Imaging.LookupSampleDigest", "imaging");
+            sampleScope.emplace(MutableProfiler(), "Imaging.LookupSampleDigest",
+                                "imaging");
         }
         if (!_SampleLive(time, &miss->inputs) ||
             !RigExecControlStateDigestible(miss->inputs,
@@ -3100,8 +3083,8 @@ RigExecImagingBridge::_LookupCachedPose(
 }
 
 bool
-RigExecImagingBridge::_TryPublishCachedResult(
-    UsdTimeCode time, PublishResult *result)
+RigExecImagingBridge::_TryPublishCachedResult(UsdTimeCode time,
+                                              PublishResult *result)
 {
     if (!result) {
         return false;
@@ -3127,15 +3110,16 @@ RigExecImagingBridge::_TryPublishCachedResult(
 }
 
 bool
-RigExecImagingBridge::_MemoizeLiveResult(
-    UsdTimeCode time, const RigExecRigPose &pose)
+RigExecImagingBridge::_MemoizeLiveResult(UsdTimeCode time,
+                                         const RigExecRigPose &pose)
 {
     if (!_frameCache || !pose.valid) {
         return false;
     }
     // Scope check, as on the lookup path: the evaluation above may have
     // settled a new compiled rig.
-    const uint64_t compiledRig = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+    const uint64_t compiledRig =
+        RigExecFrameCacheCompiledRigSignature(*_evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -3152,19 +3136,16 @@ RigExecImagingBridge::_MemoizeLiveResult(
     {
         RigExecProfileScope scope(MutableProfiler(),
                                   "Imaging.MemoizeSampleDigest", "imaging");
-        if (_CanSampleCacheInputs() &&
-            _SampleLive(time, &memoInputs) &&
+        if (_CanSampleCacheInputs() && _SampleLive(time, &memoInputs) &&
             !memoInputs.HasChainResolvedInputs() &&
-            RigExecControlStateDigestible(memoInputs,
-                                          _evaluationOverrides)) {
-            key.compiledRigSignature = RigExecFrameCacheCompiledRigSignature(*_evaluator);
+            RigExecControlStateDigestible(memoInputs, _evaluationOverrides)) {
+            key.compiledRigSignature =
+                RigExecFrameCacheCompiledRigSignature(*_evaluator);
             const uint64_t unfolded =
-                RigExecControlStateDigest(memoInputs,
-                                          _evaluationOverrides);
+                RigExecControlStateDigest(memoInputs, _evaluationOverrides);
             key.controlDigest = RigExecFoldConstantDigest(
-                unfolded,
-                RigExecCompiledRigConstantDigest(
-                    *_evaluator->GetBakedProgram()));
+                unfolded, RigExecCompiledRigConstantDigest(
+                              *_evaluator->GetBakedProgram()));
             memoUnfolded = unfolded;
             haveInputs = true;
         } else if (!_ComputePoseOnlyCacheKey(time, &key)) {
@@ -3182,14 +3163,13 @@ RigExecImagingBridge::_MemoizeLiveResult(
             const RigExecBakedProgramImpl &impl =
                 _evaluator->GetBakedProgram()->GetStepGraph();
             RigExecRetainedFrameState retainedState =
-                RigExecCaptureRetainedState(memoInputs, _evaluationOverrides,
-                                            key.compiledRigSignature,
-                                            impl.clustering.clusters.size(),
-                                            RigExecCompiledRigConstantDigest(
-                                                *_evaluator->GetBakedProgram()));
-            auto retained =
-                std::make_shared<RigExecRetainedFrameState>(
-                    std::move(retainedState));
+                RigExecCaptureRetainedState(
+                    memoInputs, _evaluationOverrides, key.compiledRigSignature,
+                    impl.clustering.clusters.size(),
+                    RigExecCompiledRigConstantDigest(
+                        *_evaluator->GetBakedProgram()));
+            auto retained = std::make_shared<RigExecRetainedFrameState>(
+                std::move(retainedState));
             const size_t retainedBytes = retained->RetainedBytes();
             RigExecEntryProvenance provenance =
                 RigExecFullEvalProvenance(impl, time);
@@ -3204,21 +3184,21 @@ RigExecImagingBridge::_MemoizeLiveResult(
     // reads, under the generation this evaluation ran in. Default times
     // are not strip frames and record nothing.
     if (stored && _warmIndex && time.IsNumeric()) {
-        _warmIndex->NoteCompleted(
-            _rigPath, time.GetValue(), key,
-            _warmIndex->CurrentGeneration(_rigPath));
+        _warmIndex->NoteCompleted(_rigPath, time.GetValue(), key,
+                                  _warmIndex->CurrentGeneration(_rigPath));
     }
     // The compiled rig half frames were last stored under, for the notice path's
     // drift check -- kept even when the publish declines, so a later notice
     // evicts the half it would have named.
-    _lastPublishedCompiledRig.store(key.compiledRigSignature, std::memory_order_relaxed);
+    _lastPublishedCompiledRig.store(key.compiledRigSignature,
+                                    std::memory_order_relaxed);
     if (_freshDigests.size() >= _kFreshDigestCap) {
         _freshDigests.clear();
     }
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
     _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
-        key.controlDigest, memoUnfolded,
-        haveInputs ? &memoInputs : nullptr, &_evaluationOverrides);
+        key.controlDigest, memoUnfolded, haveInputs ? &memoInputs : nullptr,
+        &_evaluationOverrides);
     // No override admission here: memoization runs only when no overrides
     // stand (the drag bypass), so the list is always empty. Admission
     // lives on the warming path, which samples under standing overrides.
@@ -3263,10 +3243,11 @@ RigExecImagingBridge::_PublishGpuDeform(
         last.frameVersion != publication.frameVersion ||
         last.numeric != time.IsNumeric() ||
         (time.IsNumeric() && last.time != time.GetValue())) {
-        VtFloatArray frame(publication.frame->begin(), publication.frame->end());
-        const bool adjacent = time.IsNumeric() && last.numeric &&
-                              last.serial == layout.serial &&
-                              std::abs(time.GetValue() - last.time - 1.0) < 1e-6;
+        VtFloatArray frame(publication.frame->begin(),
+                           publication.frame->end());
+        const bool adjacent =
+            time.IsNumeric() && last.numeric && last.serial == layout.serial &&
+            std::abs(time.GetValue() - last.time - 1.0) < 1e-6;
         last.previous = adjacent ? last.frame : frame;
         last.frame = frame;
         last.serial = layout.serial;
@@ -3281,8 +3262,9 @@ RigExecImagingBridge::_PublishGpuDeform(
 }
 
 std::shared_ptr<RigExecImagingSnapshot>
-RigExecImagingBridge::_BuildPoseSnapshot(
-    UsdTimeCode time, const RigExecRigPose &pose, bool publishing)
+RigExecImagingBridge::_BuildPoseSnapshot(UsdTimeCode time,
+                                         const RigExecRigPose &pose,
+                                         bool publishing)
 {
     // Build the complete immutable generation from the exact native
     // results: points and normals as flat primvars, extent as min/max.
@@ -3379,10 +3361,9 @@ RigExecImagingBridge::_BuildPoseSnapshot(
             }
             continue;
         }
-        const bool isGeometry =
-            value.IsHolding<VtVec3fArray>() &&
-            (property == "points" || property == "normals" ||
-             property == "extent");
+        const bool isGeometry = value.IsHolding<VtVec3fArray>() &&
+                                (property == "points" ||
+                                 property == "normals" || property == "extent");
         if (!isGeometry) {
             // Not Hydra data -- but a scalar here is a rig output a
             // tool may want (a blend weight, a pose-interpolator
@@ -3438,8 +3419,9 @@ RigExecImagingBridge::_BuildPoseSnapshot(
 }
 
 void
-RigExecImagingBridge::_PublishPoseSnapshot(
-    UsdTimeCode time, const RigExecRigPose &pose, PublishResult *result)
+RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
+                                           const RigExecRigPose &pose,
+                                           PublishResult *result)
 {
     std::shared_ptr<RigExecImagingSnapshot> snapshot =
         _BuildPoseSnapshot(time, pose, /* publishing = */ true);
@@ -3476,8 +3458,8 @@ RigExecImagingBridge::_PublishPoseSnapshot(
 bool
 RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
 {
-    if (!RigExecBackgroundWarmingEnabled(
-            _frameCacheMode, RigExecParallelEvaluationEnabled()) ||
+    if (!RigExecBackgroundWarmingEnabled(_frameCacheMode,
+                                         RigExecParallelEvaluationEnabled()) ||
         !_evaluationOverrides.empty()) {
         return false;
     }
@@ -3509,8 +3491,9 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
     RigExecRigPose pose;
     RigExecFrameCacheKey key{0, 0};
     _CacheMiss miss;
-    if (useCache && _LookupCachedPose(time, /* publishing = */ false, &pose,
-                                      &key, &miss) && pose.valid) {
+    if (useCache &&
+        _LookupCachedPose(time, /* publishing = */ false, &pose, &key, &miss) &&
+        pose.valid) {
         // Stored for an earlier visit: re-stamped as _ServeCachedPose does.
         pose.time = time;
         if (_frameCacheVerify) {
@@ -3521,8 +3504,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
             if (evaluated) {
                 *evaluated = true;
             }
-            const RigExecShadowVerdict verdict = RigExecVerifyHitWithLive(
-                pose, [&live]() { return live; });
+            const RigExecShadowVerdict verdict =
+                RigExecVerifyHitWithLive(pose, [&live]() { return live; });
             if (!verdict.match && verdict.mismatches > 0) {
                 TF_WARN("rigExec: frame-cache entry at %s mismatches live "
                         "evaluation (points at frame); answering live and "
@@ -3604,8 +3587,8 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     _publishedTime = time;
     _publishedSerial = serial;
     _publishedTimeValid = true;
-    const bool useCache = cacheMode != RigExecFrameCacheMode::Off &&
-                          _evaluationOverrides.empty();
+    const bool useCache =
+        cacheMode != RigExecFrameCacheMode::Off && _evaluationOverrides.empty();
     if (useCache && !editedHere && _TryPublishCachedResult(time, &result)) {
         return result;
     }
@@ -3661,7 +3644,9 @@ RigExecImagingBridge::PreflightMotionProfile(
     for (size_t i = 0; i < shutterOffsets.size(); ++i) {
         if (!std::isfinite(shutterOffsets[i]) ||
             (i && shutterOffsets[i] <= shutterOffsets[i - 1])) {
-            if (whyNot) *whyNot = "shutter offsets must be finite and strictly increasing";
+            if (whyNot)
+                *whyNot =
+                    "shutter offsets must be finite and strictly increasing";
             return false;
         }
     }
@@ -3694,8 +3679,7 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
     // The offset nearest zero supplies the primary (non-sampled) outputs.
     size_t baseIndex = 0;
     for (size_t i = 1; i < shutterOffsets.size(); ++i) {
-        if (std::abs(shutterOffsets[i]) <
-            std::abs(shutterOffsets[baseIndex])) {
+        if (std::abs(shutterOffsets[i]) < std::abs(shutterOffsets[baseIndex])) {
             baseIndex = i;
         }
     }
@@ -3705,15 +3689,16 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
     // complete immutable generation swaps in.
     auto snapshot = std::make_shared<RigExecImagingSnapshot>();
     for (size_t i = 0; i < shutterOffsets.size(); ++i) {
-        const UsdTimeCode sampleTime(
-            baseTime.GetValue() + double(shutterOffsets[i]));
+        const UsdTimeCode sampleTime(baseTime.GetValue() +
+                                     double(shutterOffsets[i]));
         const RigExecRigPose pose = _evaluator->Evaluate(sampleTime);
         if (!pose.valid) {
-            return result;  // an incomplete sample set never publishes
+            return result; // an incomplete sample set never publishes
         }
         for (const auto &[path, matrix] : pose.providerXforms) {
             const auto base = pose.providerBaseXforms.find(path);
-            if (base == pose.providerBaseXforms.end()) return result;
+            if (base == pose.providerBaseXforms.end())
+                return result;
             RigExecPublishedPrim &published = snapshot->prims[path];
             published.sampleOffsets = shutterOffsets;
             published.xformSamples.push_back(matrix);
@@ -3760,12 +3745,15 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             RigExecPublishedPrim &published = snapshot->prims[primPath];
             published.sampleOffsets = shutterOffsets;
             const auto &array = value.UncheckedGet<VtVec3fArray>();
-            if (property == "points") published.pointsSamples.push_back(array);
-            else if (property == "normals") published.normalsSamples.push_back(array);
+            if (property == "points")
+                published.pointsSamples.push_back(array);
+            else if (property == "normals")
+                published.normalsSamples.push_back(array);
             else if (array.size() == 2) {
                 published.extentMinSamples.push_back(GfVec3d(array[0]));
                 published.extentMaxSamples.push_back(GfVec3d(array[1]));
-            } else return result;
+            } else
+                return result;
             if (i == baseIndex) {
                 if (property == "points") {
                     published.hasPoints = true;
@@ -3774,8 +3762,7 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
                     published.hasNormals = true;
                     published.normals = value.UncheckedGet<VtVec3fArray>();
                 } else {
-                    const auto extent =
-                        value.UncheckedGet<VtVec3fArray>();
+                    const auto extent = value.UncheckedGet<VtVec3fArray>();
                     if (extent.size() == 2) {
                         published.hasExtent = true;
                         published.extentMin = GfVec3d(extent[0]);
@@ -3786,13 +3773,13 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
         }
     }
     for (const auto &[primPath, published] : snapshot->prims) {
-        for (size_t count : {published.pointsSamples.size(),
-                             published.normalsSamples.size(),
-                             published.xformSamples.size(),
-                             published.xformBaseSamples.size(),
-                             published.extentMinSamples.size(),
-                             published.extentMaxSamples.size()}) {
-            if (count && count != shutterOffsets.size()) return result;
+        for (size_t count :
+             {published.pointsSamples.size(), published.normalsSamples.size(),
+              published.xformSamples.size(), published.xformBaseSamples.size(),
+              published.extentMinSamples.size(),
+              published.extentMaxSamples.size()}) {
+            if (count && count != shutterOffsets.size())
+                return result;
         }
     }
     snapshot->generation = ++_generation;
@@ -3816,4 +3803,4 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
     return result;
 }
 
-}  // namespace rigExec
+} // namespace rigExec
