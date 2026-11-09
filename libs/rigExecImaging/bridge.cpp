@@ -3,6 +3,7 @@
 
 #include "bridgeGuideGeometry.h"
 #include "bridgeGuides.h"
+#include "bridgeSnapshot.h"
 #include "warmIndex.h"
 
 #include "rigExecMath/pointFrame.h"
@@ -17,7 +18,6 @@
 #include "pxr/usd/usd/attribute.h"
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primRange.h"
-#include "pxr/usd/usdGeom/xformable.h"
 
 #include <optional>
 #include <algorithm>
@@ -49,6 +49,25 @@ _MakeGuideCall(const UsdStageRefPtr &stage,
     return call;
 }
 
+// The state the snapshot builder borrows on every call: the bridge owns the
+// stage and the time, and the evaluator's stage-edit serial and compiled
+// publication metadata (projector targets, animated-map and scalar primvar
+// targets/names) are fetched here so the builder never sees the evaluator.
+RigExecSnapshotCall
+_MakeSnapshotCall(const UsdStageRefPtr &stage,
+                  const RigExecRigEvaluator &evaluator, UsdTimeCode time)
+{
+    RigExecSnapshotCall call;
+    call.stage = stage;
+    call.time = time;
+    call.stageEditSerial = evaluator.GetStageEditSerial();
+    call.projectorTargets = evaluator.GetSurfaceProjectorTargets();
+    call.animatedMapPrimvars = evaluator.GetAnimatedMapPrimvars();
+    call.scalarPrimvarTargets = &evaluator.GetScalarPrimvarTargets();
+    call.scalarPrimvarNames = &evaluator.GetScalarPrimvarNames();
+    return call;
+}
+
 } // namespace
 
 RigExecImagingBridge::RigExecImagingBridge(const UsdStageRefPtr &stage,
@@ -64,6 +83,7 @@ RigExecImagingBridge::RigExecImagingBridge(
     : _stage(stage), _rigPath(rigPath),
       _evaluator(std::make_unique<RigExecRigEvaluator>(stage, rigPath)),
       _guides(std::make_unique<RigExecBridgeGuides>(rigPath)),
+      _snapshot(std::make_unique<RigExecBridgeSnapshotBuilder>()),
       _store(std::move(store)),
       _frameCache(std::make_shared<RigExecFrameCache>())
 {
@@ -155,67 +175,6 @@ SdfPath
 RigExecImagingBridge::GetGeneratedScope() const
 {
     return _rigPath.AppendChild(_tRigExecGenerated);
-}
-
-// Constraint-driven transforms, published onto the prim itself so parented
-// geometry rides along. Base and revision travel together: the scene index
-// sits downstream of Hydra's flatten and turns the pair into a world-space
-// delta (see RigExecPublishedPrim::xformBase).
-void
-RigExecImagingBridge::_FillProviderXforms(
-    const RigExecRigPose &pose, RigExecImagingSnapshot *snapshot) const
-{
-    for (const auto &[providerPath, matrix] : pose.providerXforms) {
-        const auto baseIt = pose.providerBaseXforms.find(providerPath);
-        if (baseIt == pose.providerBaseXforms.end()) {
-            // The evaluator writes both or neither; a revision without its
-            // base cannot be turned into a delta, so publishing it would move
-            // the prim by an arbitrary amount.
-            continue;
-        }
-        RigExecPublishedPrim &published = snapshot->prims[providerPath];
-        published.xform = matrix;
-        published.xformBase = baseIt->second;
-        published.hasXform = true;
-        snapshot->hasDrivenXforms = true;
-    }
-    // Flattening stamps resetXformStack=true on every output, so the results
-    // index cannot recover authored reset boundaries from Hydra. Capture
-    // them while the bridge still owns the source stage, under driven roots.
-    // The walk runs when the driven set or the stage changes, not every
-    // frame: any authored edit advances the evaluator's stage edit serial.
-    std::vector<SdfPath> providerRoots;
-    providerRoots.reserve(pose.providerXforms.size());
-    for (const auto &[providerPath, matrix] : pose.providerXforms) {
-        providerRoots.push_back(providerPath);
-    }
-    const uint64_t serial = _evaluator->GetStageEditSerial();
-    if (!_xformResetsValid || _xformResetSerial != serial ||
-        providerRoots != _xformResetRoots) {
-        _xformResetPaths.clear();
-        std::vector<SdfPath> scanned;
-        for (const SdfPath &providerPath : providerRoots) {
-            bool covered = false;
-            for (const auto &root : scanned)
-                covered = covered || providerPath.HasPrefix(root);
-            if (covered)
-                continue;
-            const auto root = _stage->GetPrimAtPath(providerPath);
-            if (!root)
-                continue;
-            scanned.push_back(providerPath);
-            for (const auto &prim : UsdPrimRange(root)) {
-                const UsdGeomXformable xform(prim);
-                if (xform && xform.GetResetXformStack())
-                    _xformResetPaths.insert(prim.GetPath());
-            }
-        }
-        _xformResetRoots = std::move(providerRoots);
-        _xformResetSerial = serial;
-        _xformResetsValid = true;
-    }
-    snapshot->xformResetPaths.insert(_xformResetPaths.begin(),
-                                     _xformResetPaths.end());
 }
 
 void
@@ -1183,203 +1142,16 @@ RigExecImagingBridge::_MemoizeLiveResult(UsdTimeCode time,
 }
 
 void
-RigExecImagingBridge::_PublishGpuDeform(
-    UsdTimeCode time, const SdfPath &primPath,
-    const RigExecGpuDeformPublication &publication,
-    RigExecPublishedPrim *published)
+RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
+                                           const RigExecRigPose &pose,
+                                           PublishResult *result)
 {
-    if (!publication.layout || !publication.frame) {
-        return;
-    }
-    const RigExecGpuDeformLayout &layout = *publication.layout;
-    // The tables once per layout; a layout no publication names any more is
-    // dropped when the cache would otherwise grow past a handful.
-    auto &statics = _gpuDeformStatics[layout.serial];
-    if (!statics) {
-        if (_gpuDeformStatics.size() > 32) {
-            _gpuDeformStatics.clear();
-        }
-        auto built = std::make_shared<RigExecPublishedPrim::GpuDeformStatic>();
-        built->serial = layout.serial;
-        built->ops.assign(layout.ops.begin(), layout.ops.end());
-        built->staticF.assign(layout.staticF.begin(), layout.staticF.end());
-        built->staticI.assign(layout.staticI.begin(), layout.staticI.end());
-        built->opCount = int(layout.OpCount());
-        built->pointCount = layout.pointCount;
-        statics = built;
-        _gpuDeformStatics[layout.serial] = statics;
-    }
-    published->gpuDeform =
-        std::make_shared<const RigExecGpuDeformPublication>(publication);
-    published->gpuDeformStatic = statics;
-    // Velocities difference this frame against the one a frame earlier,
-    // in units per second; anything else (a drag at one time, a jump, a
-    // new layout) has no adjacent frame and publishes zero.
-    _GpuDeformLast &last = _gpuDeformLast[primPath];
-    if (last.serial != layout.serial ||
-        last.frameVersion != publication.frameVersion ||
-        last.numeric != time.IsNumeric() ||
-        (time.IsNumeric() && last.time != time.GetValue())) {
-        VtFloatArray frame(publication.frame->begin(),
-                           publication.frame->end());
-        const bool adjacent =
-            time.IsNumeric() && last.numeric && last.serial == layout.serial &&
-            std::abs(time.GetValue() - last.time - 1.0) < 1e-6;
-        last.previous = adjacent ? last.frame : frame;
-        last.frame = frame;
-        last.serial = layout.serial;
-        last.frameVersion = publication.frameVersion;
-        last.numeric = time.IsNumeric();
-        last.time = time.IsNumeric() ? time.GetValue() : 0.0;
-    }
-    published->gpuDeformFrame = last.frame;
-    published->gpuDeformPreviousFrame = last.previous;
-    published->gpuDeformVelocityScale =
-        _stage ? float(_stage->GetTimeCodesPerSecond()) : 24.0f;
-}
-
-std::shared_ptr<RigExecImagingSnapshot>
-RigExecImagingBridge::_BuildPoseSnapshot(UsdTimeCode time,
-                                         const RigExecRigPose &pose,
-                                         bool publishing)
-{
-    // Build the complete immutable generation from the exact native
-    // results: points and normals as flat primvars, extent as min/max.
-    // Only standard data crosses this boundary. Without publishing, only
-    // what a pose query reads is built.
     auto snapshot = std::make_shared<RigExecImagingSnapshot>();
-    if (publishing) {
-        _StampGeneration(time, snapshot.get());
-    }
-    // Matrix primvars a rig computes for a shader on the prim (a surface
-    // projector's frame and dials), published as constant primvars. The
-    // rig writes them as moved `primvars:<name>` properties and nothing
-    // authors them; indexed before the geometry loop so a prim carrying
-    // only a matrix primvar still gets published.
-    static const std::string primvarsPrefix("primvars:");
-    const std::vector<SdfPath> projectorTargets =
-        _evaluator->GetSurfaceProjectorTargets();
-    // Animated maps' float primvars: only those the evaluator names, so a
-    // property mover's float result never mints a published prim.
-    const std::vector<SdfPath> mapPrimvars =
-        _evaluator->GetAnimatedMapPrimvars();
-    for (const SdfPath &propertyPath : mapPrimvars) {
-        const auto found = pose.movedProperties.find(propertyPath);
-        if (found == pose.movedProperties.end() ||
-            !found->second.IsHolding<float>()) {
-            continue;
-        }
-        const std::string &name = propertyPath.GetName();
-        auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        published.shaderFloats[TfToken(name.substr(primvarsPrefix.size()))] =
-            found->second.UncheckedGet<float>();
-    }
-    // Property chains' scalar primvars, from the compiled list only; a
-    // double publishes as the float the chain computed.
-    const std::vector<SdfPath> &scalarTargets =
-        _evaluator->GetScalarPrimvarTargets();
-    const std::vector<TfToken> &scalarNames =
-        _evaluator->GetScalarPrimvarNames();
-    for (size_t scalar = 0; scalar < scalarTargets.size(); ++scalar) {
-        const SdfPath &propertyPath = scalarTargets[scalar];
-        const auto found = pose.movedProperties.find(propertyPath);
-        if (found == pose.movedProperties.end()) {
-            continue;
-        }
-        float value = 0.0f;
-        if (found->second.IsHolding<float>()) {
-            value = found->second.UncheckedGet<float>();
-        } else if (found->second.IsHolding<double>()) {
-            value = float(found->second.UncheckedGet<double>());
-        } else {
-            continue;
-        }
-        auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        published.shaderFloats[scalarNames[scalar]] = value;
-    }
-    for (const auto &[propertyPath, value] : pose.movedProperties) {
-        if (!value.IsHolding<GfMatrix4d>()) {
-            continue;
-        }
-        const std::string &name = propertyPath.GetName();
-        if (name.compare(0, primvarsPrefix.size(), primvarsPrefix) != 0) {
-            continue;
-        }
-        auto &published = snapshot->prims[propertyPath.GetPrimPath()];
-        const TfToken primvar(name.substr(primvarsPrefix.size()));
-        published.shaderMatrices[primvar] = value.UncheckedGet<GfMatrix4d>();
-        if (std::binary_search(projectorTargets.begin(), projectorTargets.end(),
-                               propertyPath)) {
-            published.targetLocalShaderMatrices.insert(primvar);
-        }
-    }
-    for (const auto &[propertyPath, value] : pose.movedProperties) {
-        const SdfPath primPath = propertyPath.GetPrimPath();
-        const TfToken property = propertyPath.GetNameToken();
-        // Only geometry crosses into imaging. movedProperties also carries
-        // the property-domain math mover results (a float dial, a vector
-        // offset, a matrix), which have no Hydra representation -- and
-        // indexing snapshot->prims for one of those would MINT an empty
-        // published prim for its owner, which then enters the compiled rig
-        // below and makes the scene index resolve a prim RigExec publishes
-        // nothing for. Look the entry up only once there is something to
-        // put in it.
-        if (property == "points" &&
-            value.IsHolding<RigExecGpuDeformPublication>()) {
-            const auto &publication =
-                value.UncheckedGet<RigExecGpuDeformPublication>();
-            if (publishing) {
-                _PublishGpuDeform(time, primPath, publication,
-                                  &snapshot->prims[primPath]);
-            } else if (publication.layout && publication.frame) {
-                snapshot->prims[primPath].gpuDeform =
-                    std::make_shared<const RigExecGpuDeformPublication>(
-                        publication);
-            }
-            continue;
-        }
-        const bool isGeometry = value.IsHolding<VtVec3fArray>() &&
-                                (property == "points" ||
-                                 property == "normals" || property == "extent");
-        if (!isGeometry) {
-            // Not Hydra data -- but a scalar here is a rig output a
-            // tool may want (a blend weight, a pose-interpolator
-            // result), and recovering it otherwise costs a whole
-            // second evaluation of the rig. Recorded beside the
-            // generation that produced it; see
-            // RigExecImagingSnapshot::movedFloats.
-            if (value.IsHolding<float>()) {
-                snapshot->movedFloats[propertyPath] =
-                    value.UncheckedGet<float>();
-            } else if (value.IsHolding<double>()) {
-                snapshot->movedFloats[propertyPath] =
-                    static_cast<float>(value.UncheckedGet<double>());
-            } else if (value.IsHolding<VtDoubleArray>()) {
-                snapshot->movedArrays[propertyPath] =
-                    value.UncheckedGet<VtDoubleArray>();
-            }
-            continue;
-        }
-        RigExecPublishedPrim &published = snapshot->prims[primPath];
-        if (property == "points") {
-            published.hasPoints = true;
-            published.points = value.UncheckedGet<VtVec3fArray>();
-        } else if (property == "normals") {
-            published.hasNormals = true;
-            published.normals = value.UncheckedGet<VtVec3fArray>();
-        } else {
-            const auto extent = value.UncheckedGet<VtVec3fArray>();
-            if (extent.size() == 2) {
-                published.hasExtent = true;
-                published.extentMin = GfVec3d(extent[0]);
-                published.extentMax = GfVec3d(extent[1]);
-            }
-        }
-    }
-    if (!publishing) {
-        _FillProviderXforms(pose, snapshot.get());
-        return snapshot;
-    }
+    _StampGeneration(time, snapshot.get());
+    const RigExecSnapshotCall snapCall =
+        _MakeSnapshotCall(_stage, *_evaluator, time);
+    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Displayed,
+                      snapshot.get());
     // Joints and aggregate solvers publish guide payloads (drawn by the
     // results scene index like OpenExec's IrJointScope guides).
     {
@@ -1387,23 +1159,12 @@ RigExecImagingBridge::_BuildPoseSnapshot(UsdTimeCode time,
                                   "imaging");
         const RigExecGuideCall call = _MakeGuideCall(
             _stage, *_evaluator, _interactiveOverrides, _weightOverlay);
-        _FillProviderXforms(pose, snapshot.get());
         _guides->_FillGuides(call, pose, snapshot.get());
         _guides->_FillControlGuides(call, pose, snapshot.get());
         _guides->_FillVolumeGuides(call, pose, snapshot.get());
         _guides->_FillClothConstraintGuides(call, pose, snapshot.get());
         _guides->_FillWeightOverlay(call, pose, snapshot.get());
     }
-    return snapshot;
-}
-
-void
-RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
-                                           const RigExecRigPose &pose,
-                                           PublishResult *result)
-{
-    std::shared_ptr<RigExecImagingSnapshot> snapshot =
-        _BuildPoseSnapshot(time, pose, /* publishing = */ true);
     snapshot->generation = ++_generation;
 
     // A structural recompile publishes a replacement compiled rig
@@ -1515,7 +1276,12 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
             _MemoizeLiveResult(time, pose);
         }
     }
-    *snapshot = _BuildPoseSnapshot(time, pose, /* publishing = */ false);
+    auto querySnapshot = std::make_shared<RigExecImagingSnapshot>();
+    const RigExecSnapshotCall snapCall =
+        _MakeSnapshotCall(_stage, *_evaluator, time);
+    _snapshot->_Build(snapCall, pose, RigExecSnapshotBuildMode::Query,
+                      querySnapshot.get());
+    *snapshot = std::move(querySnapshot);
     return true;
 }
 
@@ -1687,7 +1453,11 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
             // Guides are single-sampled at the base offset.
             const RigExecGuideCall call = _MakeGuideCall(
                 _stage, *_evaluator, _interactiveOverrides, _weightOverlay);
-            _FillProviderXforms(pose, snapshot.get());
+            RigExecSnapshotCall xformCall;
+            xformCall.stage = _stage;
+            xformCall.time = sampleTime;
+            xformCall.stageEditSerial = _evaluator->GetStageEditSerial();
+            _snapshot->_FillProviderXforms(xformCall, pose, snapshot.get());
             _guides->_FillGuides(call, pose, snapshot.get());
             _guides->_FillControlGuides(call, pose, snapshot.get());
             _guides->_FillVolumeGuides(call, pose, snapshot.get());

@@ -26,13 +26,13 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
 namespace rigExec {
 
 class RigExecBridgeGuides;
+class RigExecBridgeSnapshotBuilder;
 
 /// Drives one rig's evaluation into the imaging chain.
 class RigExecImagingBridge {
@@ -382,13 +382,6 @@ public:
     }
 
 private:
-    /// Publishes constraint-driven transforms onto the prims themselves
-    /// (base and revision travel together); guide payloads, control and
-    /// volume guides, cloth links and the weight overlay come from the
-    /// guide component (bridgeGuides.h).
-    void _FillProviderXforms(const RigExecRigPose &pose,
-                             RigExecImagingSnapshot *snapshot) const;
-
     /// Records the stage identity and sample time on a generation.
     /// A complete conservative key for operations without a sampled input
     /// contract: time, stage-edit serial, compiled rig, standing overrides and
@@ -424,14 +417,6 @@ private:
     void _PublishPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
                               PublishResult *result);
 
-    /// The snapshot \p pose publishes as. With \p publishing false it holds
-    /// what a pose query reads (geometry, scalar primvars, provider
-    /// transforms) and leaves the GPU deform history and guide payloads
-    /// alone. The generation is the publisher's to assign.
-    std::shared_ptr<RigExecImagingSnapshot>
-    _BuildPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
-                       bool publishing);
-
     /// Retires the freshness proofs when a stage edit moved the serial and
     /// no registry does it. Returns the evaluator's current edit serial.
     uint64_t _NoteCacheEditSerial();
@@ -455,12 +440,6 @@ private:
     bool _LookupCachedPose(UsdTimeCode time, bool publishing,
                            RigExecRigPose *pose, RigExecFrameCacheKey *key,
                            _CacheMiss *miss);
-
-    /// Fills \p published with a chain's program publication (shader
-    /// mode): the shared tables, this frame and the adjacent one.
-    void _PublishGpuDeform(UsdTimeCode time, const SdfPath &primPath,
-                           const RigExecGpuDeformPublication &publication,
-                           RigExecPublishedPrim *published);
 
     /// Serves \p time from the frame cache when a proven entry exists, or
     /// false to fall through to live evaluation. A hit never runs the
@@ -499,14 +478,6 @@ private:
 
     void _StampGeneration(UsdTimeCode time,
                           RigExecImagingSnapshot *snapshot) const;
-
-    // Authored resetXformStack prims under the driven provider roots in
-    // _xformResetRoots, walked again only when the provider set or the
-    // stage edit serial moves. A new bridge (each activation) starts empty.
-    mutable std::vector<SdfPath> _xformResetRoots;
-    mutable std::set<SdfPath> _xformResetPaths;
-    mutable uint64_t _xformResetSerial = 0;
-    mutable bool _xformResetsValid = false;
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
@@ -568,26 +539,21 @@ private:
     /// reads the stage, serials, overrides and selection through the call
     /// passed on each fill.
     std::unique_ptr<RigExecBridgeGuides> _guides;
+    /// Snapshot payload construction (bridgeSnapshot.h): the pose ->
+    /// published-prims payload, the provider reset-stack walk and its
+    /// serial/provider-set memo, and the GPU deform layout tables and
+    /// per-prim frame history. Owned here; holds no store, frame cache,
+    /// scheduler, results index or bridge reference: the facade passes the
+    /// stage, time, evaluator stage-edit serial and compiled publication
+    /// metadata on every call, and keeps the generation stamp, the guide
+    /// fills, the generation numbering, the compiled-rig announcement and
+    /// the store Publish/Replace.
+    std::unique_ptr<RigExecBridgeSnapshotBuilder> _snapshot;
     std::shared_ptr<RigExecSnapshotStore> _store;
     RigExecBindingResolvingSceneIndexRefPtr _binding;
     RigExecResultsSceneIndexRefPtr _results;
     static constexpr size_t _kFreshDigestCap = 1024;
     uint64_t _generation = 0;
-    /// Program publications (RigExecGpuDeformMode::Shader): each layout's
-    /// tables as Hydra arrays, built once, and per mesh the last frame
-    /// published with its time, for velocities.
-    std::map<uint64_t,
-             std::shared_ptr<const RigExecPublishedPrim::GpuDeformStatic>>
-        _gpuDeformStatics;
-    struct _GpuDeformLast {
-        double time = 0.0;
-        bool numeric = false;
-        uint64_t serial = 0;
-        uint64_t frameVersion = 0;
-        VtFloatArray frame;
-        VtFloatArray previous;
-    };
-    std::map<SdfPath, _GpuDeformLast> _gpuDeformLast;
     size_t _publishedCompiledRigSignature = 0;
     /// This rig's frame cache, held shared so background completions can
     /// publish into it after the session that sampled them is gone.
