@@ -32,6 +32,7 @@
 namespace rigExec {
 
 class RigExecBridgeGuides;
+class RigExecBridgeSampling;
 class RigExecBridgeSnapshotBuilder;
 
 /// Drives one rig's evaluation into the imaging chain.
@@ -332,10 +333,7 @@ public:
     /// moving the compiled rig signature. The registry calls it for EVERY affected
     /// notice, whatever its disposition -- NoteCaptureIndex runs for only
     /// some of them.
-    void NoteChainEdits(const UsdNotice::ObjectsChanged &notice)
-    {
-        _NoteChainBindings(notice);
-    }
+    void NoteChainEdits(const UsdNotice::ObjectsChanged &notice);
 
     /// The rig's chain bindings, pinned for the current compiled rig and
     /// kept current by NoteChainEdits -- the ones the live sampler uses --
@@ -388,27 +386,6 @@ private:
     /// upstream values.
     bool _ComputePoseOnlyCacheKey(UsdTimeCode time,
                                   RigExecFrameCacheKey *key) const;
-
-    /// Shares the frozen executor's input capability check. Unknown or
-    /// unsupported operations still cache complete live poses.
-    bool _CanSampleCacheInputs();
-
-    /// Samples one frame's input vector for the live lookup and memoize
-    /// paths: through chain bindings pinned for the current compiled rig and kept
-    /// current by stage notices (NoteCaptureIndex drops them), falling back
-    /// to the self-binding sampler whenever the pinned route declines. The
-    /// vector is the plain sampler's, element for element; only the cost
-    /// differs: the self-binding sampler re-discovers and re-orders every
-    /// property chain on each call.
-    bool _SampleLive(UsdTimeCode time, RigExecFrameInputs *out) const;
-    /// Binds the live chain bindings when they are not current; true when
-    /// they are usable afterwards.
-    bool _EnsureChainBindings() const;
-
-    /// Drops the pinned chain bindings when \p notice could move a chain
-    /// without moving the compiled rig signature: any resync, or an edit under a
-    /// chain mover, one of its weight objects, or its target's prim.
-    void _NoteChainBindings(const UsdNotice::ObjectsChanged &notice);
 
     /// Publishes \p pose -- live or cached, already stamped for \p time --
     /// as one complete immutable generation: geometry, guides, the binding
@@ -549,6 +526,15 @@ private:
     /// fills, the generation numbering, the compiled-rig announcement and
     /// the store Publish/Replace.
     std::unique_ptr<RigExecBridgeSnapshotBuilder> _snapshot;
+    /// Live sampling (bridgeSampling.h): the sampler's chain bindings
+    /// pinned for the current compiled rig, their notice-driven invalidation
+    /// and the sample-support memo. Owned here; built after the evaluator
+    /// and destroyed before it; it holds no store, frame cache, warm index,
+    /// registry state or bridge back-pointer: the facade passes the
+    /// effective evaluation overrides and upstream values on every
+    /// sampling call, and keeps SetUpstreamInputs, the display/evaluation
+    /// override storage and the evaluator override translation.
+    std::unique_ptr<RigExecBridgeSampling> _sampling;
     std::shared_ptr<RigExecSnapshotStore> _store;
     RigExecBindingResolvingSceneIndexRefPtr _binding;
     RigExecResultsSceneIndexRefPtr _results;
@@ -568,30 +554,6 @@ private:
     /// The memoized affected-set table for sparse planning: the
     /// capture index retires its compiled rig versions here, beside the frames.
     RigExecTaskListCache _taskListMemo;
-    /// The live sampler's pinned chain bindings (see _SampleLive): bound
-    /// once per Compiled rig (the compiled mover topology -- the chains
-    /// are a function of nothing else) and dropped by _NoteChainBindings.
-    /// Not the frame-cache compiled rig: that also counts baked-program rebuilds,
-    /// which a release triggers and which move no chain. Mutable because
-    /// _ComputeCacheKey, a const query, samples through them.
-    mutable RigExecChainSampleBindings _liveChainBindings;
-    mutable size_t _liveChainCompiledRig = 0;
-    mutable bool _liveChainValid = false;
-    /// Moves on every rebind: what a holder of a copy compares.
-    mutable uint64_t _liveChainGeneration = 0;
-    /// The prims an edit ON can move a bound chain: every chain mover and
-    /// every target's prim. Exact matches only -- a chain targeting an
-    /// attribute on a control high in the hierarchy is not moved by an edit
-    /// to a control below it.
-    mutable std::vector<SdfPath> _liveChainPrims;
-    /// The chain movers alone, whose every property a binding reads, and
-    /// the chain targets: on a target's prim only the target itself is
-    /// bound, so an avar beside it moves nothing.
-    mutable std::vector<SdfPath> _liveChainMovers;
-    mutable std::vector<SdfPath> _liveChainTargets;
-    /// The weight objects the chains read, matched with their subtrees: a
-    /// weight's answer can come from geometry parented under it.
-    mutable std::vector<SdfPath> _liveChainWeights;
     /// The compiled rig half of the last memoized key. Atomic for bare bridges,
     /// which serialize on no lock (registry callers hold its mutex on both
     /// the memoizing and the notice paths). A notice that finds it drifted
@@ -638,11 +600,6 @@ private:
     UsdTimeCode _publishedTime = UsdTimeCode::Default();
     uint64_t _publishedSerial = 0;
     bool _publishedTimeValid = false;
-    const RigExecBakedProgram *_sampleSupportProgram = nullptr;
-    uint64_t _sampleSupportCompiledRig = 0;
-    uint64_t _sampleSupportSerial = 0;
-    bool _sampleSupportValid = false;
-    bool _sampleSupport = false;
 };
 
 } // namespace rigExec
