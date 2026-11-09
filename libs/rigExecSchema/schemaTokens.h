@@ -49,6 +49,7 @@ inline const PXR_NS::TfToken guideWireWidth("guide:wireWidth");
 inline const PXR_NS::TfToken avarsSx("avars:sx");
 inline const PXR_NS::TfToken avarsSy("avars:sy");
 inline const PXR_NS::TfToken avarsSz("avars:sz");
+inline const PXR_NS::TfToken restSpace("rest:space");
 inline const PXR_NS::TfToken rigExecCurve("rigExec:curve");
 inline const PXR_NS::TfToken rigExecPlaneAxis("rigExec:planeAxis");
 inline const PXR_NS::TfToken rigExecPlaneBounds("rigExec:planeBounds");

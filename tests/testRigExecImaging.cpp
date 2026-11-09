@@ -15,6 +15,7 @@
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/avarScale.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/bakedSchedule.h"
 #include "rigExec/bakedTrace.h"
@@ -5350,15 +5351,15 @@ static void
 TestColdExtentFloatRepresentability()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
+    stage->DefinePrim(SdfPath("/Rig"), SchemaType::RigExecRoot);
     VtVec3fArray extent;
 
     const UsdPrim joint =
-        stage->DefinePrim(SdfPath("/Rig/Joint"), TfToken("RigExecJoint"));
+        stage->DefinePrim(SdfPath("/Rig/Joint"), SchemaType::RigExecJoint);
     const UsdGeomBoundable jointBoundable(joint);
 
     // A huge radius still inside the float range frames normally.
-    CHECK(joint.GetAttribute(TfToken("guide:radius")).Set(1e30));
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(1e30));
     CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
         jointBoundable, UsdTimeCode::Default(), &extent));
     bool finite = true;
@@ -5372,14 +5373,14 @@ TestColdExtentFloatRepresentability()
     // A finite double radius outside the float range: no extent rather
     // than infinities in the float box.
     const double huge = std::numeric_limits<double>::max() / 4.0;
-    CHECK(joint.GetAttribute(TfToken("guide:radius")).Set(huge));
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(huge));
     CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
         jointBoundable, UsdTimeCode::Default(), &extent));
 
     // A finite huge rest translation with a normal radius: the same
     // rejection for the other component of the joint's cold bounds.
-    CHECK(joint.GetAttribute(TfToken("guide:radius")).Set(1.0));
-    CHECK(joint.GetAttribute(TfToken("rest:space"))
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(1.0));
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace)
               .Set(GfMatrix4d(1.0).SetTranslateOnly(
                   GfVec3d(0.0, 3.0 * huge, 0.0))));
     CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
@@ -5389,8 +5390,8 @@ TestColdExtentFloatRepresentability()
     // to zero while origin + extent overflows. The element is rejected
     // whole, so no invented point-extent survives at the origin.
     const double dblMax = std::numeric_limits<double>::max();
-    CHECK(joint.GetAttribute(TfToken("guide:radius")).Set(dblMax));
-    CHECK(joint.GetAttribute(TfToken("rest:space"))
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(dblMax));
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace)
               .Set(GfMatrix4d(1.0).SetTranslateOnly(
                   GfVec3d(dblMax, dblMax, dblMax))));
     CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
@@ -5400,20 +5401,20 @@ TestColdExtentFloatRepresentability()
     // under the rejected one frames exactly its own sphere. The outer
     // joint's placement is reset to identity (its rest composes into the
     // nested joint); its DBL_MAX sphere corners are still rejected whole.
-    CHECK(joint.GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0)));
-    stage->DefinePrim(SdfPath("/Rig/Joint/Small"), TfToken("RigExecJoint"));
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace).Set(GfMatrix4d(1.0)));
+    stage->DefinePrim(SdfPath("/Rig/Joint/Small"), SchemaType::RigExecJoint);
     CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
         jointBoundable, UsdTimeCode::Default(), &extent));
     CHECK(extent == VtVec3fArray({GfVec3f(-1, -1, -1), GfVec3f(1, 1, 1)}));
 
     // A control guide goes through the same guard.
     const UsdPrim control =
-        stage->DefinePrim(SdfPath("/Rig/Ctrl"), TfToken("RigExecControl"));
+        stage->DefinePrim(SdfPath("/Rig/Ctrl"), SchemaType::RigExecControl);
     const UsdGeomBoundable controlBoundable(control);
-    CHECK(control.GetAttribute(TfToken("guide:scaleX")).Set(huge));
+    CHECK(control.GetAttribute(SchemaAttr::guideScaleX).Set(huge));
     CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
         controlBoundable, UsdTimeCode::Default(), &extent));
-    CHECK(control.GetAttribute(TfToken("guide:scaleX")).Set(1e30));
+    CHECK(control.GetAttribute(SchemaAttr::guideScaleX).Set(1e30));
     CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
         controlBoundable, UsdTimeCode::Default(), &extent));
 }
