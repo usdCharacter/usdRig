@@ -605,9 +605,21 @@ public:
 private:
     friend class RigExecImagingDirectory;
 
-    /// A context for \p stage under \p key (the directory creates these).
-    RigExecImagingRegistry(uint64_t key, const UsdStageRefPtr &stage);
+    /// Passkey for the directory factory: not an aggregate, so a braced
+    /// empty list cannot build it, and only this class or a friend can
+    /// name the type.
+    struct _FactoryTag {
+        explicit _FactoryTag(int)
+        {
+        }
+    };
 
+public:
+    /// A context for \p stage under \p key (the directory creates these).
+    RigExecImagingRegistry(_FactoryTag, uint64_t key,
+                           const UsdStageRefPtr &stage);
+
+private:
     RigExecImagingRegistry(const RigExecImagingRegistry &) = delete;
     RigExecImagingRegistry &operator=(const RigExecImagingRegistry &) = delete;
 

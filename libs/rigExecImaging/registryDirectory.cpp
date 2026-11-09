@@ -102,7 +102,8 @@ public:
             }
             if (!result && create) {
                 const uint64_t key = ++_nextKey;
-                result = Ptr(new Ctx(key, stage));
+                result = std::make_shared<Ctx>(Ctx::_FactoryTag{0}, key,
+                                             stage);
                 _entries[key] = Entry{UsdStageWeakPtr(stage), result};
                 _keyByStage[raw] = key;
             }
@@ -279,7 +280,7 @@ RigExecImagingRegistry::ContextCount()
     return RigExecImagingDirectory::Get().ContextCount();
 }
 
-RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
+RigExecImagingRegistry::RigExecImagingRegistry(_FactoryTag, uint64_t key,
                                                const UsdStageRefPtr &stage)
     : _key(key), _boundStage(stage),
       _store(std::make_shared<RigExecSnapshotStore>()),
