@@ -58,8 +58,9 @@ libs/rigExec/bakedOpGraph.cpp | env | B->opWorkspace.verifyReset=TfGetenvBool("R
 libs/rigExec/bakedPose.cpp | token-text | TfToken value(fallback);
 libs/rigExec/bakedPose.cpp | token-text | return TfToken(port);
 
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:tx"), TfToken("rest:ty"), TfToken("rest:tz"),
-libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:rx"), TfToken("rest:ry"), TfToken("rest:rz")};
+libs/rigExec/bakedProgram.cpp | token-text | const TfToken kRestAvarTokens[6] = {TfToken("rest:tx"), TfToken("rest:ty"),
+libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:tz"), TfToken("rest:rx"),
+libs/rigExec/bakedProgram.cpp | token-text | TfToken("rest:ry"), TfToken("rest:rz")};
 libs/rigExec/bakedProgram.cpp | token-text | TfToken("default:tx"), TfToken("default:ty"), TfToken("default:tz"),
 libs/rigExec/bakedProgram.cpp | token-text | TfToken("default:rx"), TfToken("default:ry"), TfToken("default:rz")};
 libs/rigExec/bakedProgram.cpp | token-text | TfToken(RigExecBakedAvarNames[0]), TfToken(RigExecBakedAvarNames[1]),
@@ -133,20 +134,20 @@ libs/rigExec/gpuCloth.cpp | env | const char *value = std::getenv("RIGEXEC_GPU_C
 
 libs/rigExec/gpuDeformTranslation.cpp | env | const std::string mode = TfGetenv("RIGEXEC_GPU_DEFORM");
 
-libs/rigExec/heldProgramGolden.h | env | const char *mode=std::getenv("RIGEXEC_GOLDEN_SUITE");
-libs/rigExec/heldProgramGolden.h | env | const char *unit=std::getenv("RIGEXEC_GOLDEN_SUITE_NAME");
-libs/rigExec/heldProgramGolden.h | env | const char *full=std::getenv("RIGEXEC_GOLDEN_SUITE_RAW");raw=full&&std::string(full)=="1";
+libs/rigExec/heldProgramGolden.h | env | const char *mode = std::getenv("RIGEXEC_GOLDEN_SUITE");
+libs/rigExec/heldProgramGolden.h | env | const char *unit = std::getenv("RIGEXEC_GOLDEN_SUITE_NAME");
+libs/rigExec/heldProgramGolden.h | env | const char *full = std::getenv("RIGEXEC_GOLDEN_SUITE_RAW");
 
-libs/rigExec/inputReplay.cpp | env | const char *provenance=std::getenv("RIGEXEC_INPUT_REPLAY_PROVENANCE");
-libs/rigExec/inputReplay.cpp | env | const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");
-libs/rigExec/inputReplay.cpp | env | const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");
-libs/rigExec/inputReplay.cpp | env | const auto *compile=std::getenv("RIGEXEC_COMPILE_GOLDEN");
-libs/rigExec/inputReplay.cpp | env | const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");
-libs/rigExec/inputReplay.cpp | env | const auto *goldenMode=std::getenv("RIGEXEC_GOLDEN_SUITE");
-libs/rigExec/inputReplay.cpp | env | bool RigExecInputReplayCaptureRequested(){const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");return mode&&*mode;}
-libs/rigExec/inputReplay.cpp | env | const char *mode=std::getenv("RIGEXEC_INPUT_REPLAY");
-libs/rigExec/inputReplay.cpp | env | const char *native=std::getenv("RIGEXEC_INPUT_REPLAY_NATIVE_HISTORIES");
-libs/rigExec/inputReplay.cpp | env | if(const auto *capture=std::getenv("RIGEXEC_INPUT_REPLAY"))if(*capture)throw std::runtime_error("input capture must be disabled in replay host");
+libs/rigExec/inputReplay.cpp | env | const char *provenance = std::getenv("RIGEXEC_INPUT_REPLAY_PROVENANCE");
+libs/rigExec/inputReplay.cpp | env | const char *mode = std::getenv("RIGEXEC_INPUT_REPLAY");
+libs/rigExec/inputReplay.cpp | env | const char *mode = std::getenv("RIGEXEC_INPUT_REPLAY");
+libs/rigExec/inputReplay.cpp | env | const auto *compile = std::getenv("RIGEXEC_COMPILE_GOLDEN");
+libs/rigExec/inputReplay.cpp | env | const char *mode = std::getenv("RIGEXEC_INPUT_REPLAY");
+libs/rigExec/inputReplay.cpp | env | const auto *goldenMode = std::getenv("RIGEXEC_GOLDEN_SUITE");
+libs/rigExec/inputReplay.cpp | env | const char *mode = std::getenv("RIGEXEC_INPUT_REPLAY");
+libs/rigExec/inputReplay.cpp | env | const char *mode = std::getenv("RIGEXEC_INPUT_REPLAY");
+libs/rigExec/inputReplay.cpp | env | const char *native = std::getenv("RIGEXEC_INPUT_REPLAY_NATIVE_HISTORIES");
+libs/rigExec/inputReplay.cpp | env | if (const auto *capture = std::getenv("RIGEXEC_INPUT_REPLAY"))
 
 libs/rigExec/inputReplayValues.cpp | token-text | void Item(TfToken& v) {std::string x=v.GetString();Text(x);if(reading)v=TfToken(x);}
 
