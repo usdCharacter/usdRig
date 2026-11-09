@@ -18,11 +18,15 @@
 #include "pxr/base/gf/vec3f.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <random>
+#include <thread>
+#include <type_traits>
 #include <vector>
 
 using namespace rigExec;
@@ -30,14 +34,23 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int g_failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__,    \
-                         __LINE__, #cond);                                 \
-            ++g_failures;                                                  \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__,        \
+                         __LINE__, #cond);                                     \
+            ++g_failures;                                                      \
+        }                                                                      \
     } while (0)
+
+// The executor's factory gate: its passkey is private and non-aggregate,
+// so this TU cannot brace-construct one; only Get()'s make_unique can.
+template <class T, class = void>
+struct _BraceConstructible : std::false_type {};
+template <class T>
+struct _BraceConstructible<T, std::void_t<decltype(T({}))>> : std::true_type {};
+static_assert(!_BraceConstructible<RigExecGpuDeformExecutor>::value,
+              "factory gate: brace-init must be rejected");
 
 namespace {
 
@@ -60,7 +73,8 @@ Mesh()
 {
     std::vector<GfVec3f> points(kPoints);
     for (size_t i = 0; i < kPoints; ++i) {
-        points[i] = GfVec3f(Uniform(-50, 50), Uniform(-50, 50), Uniform(-50, 50));
+        points[i] =
+            GfVec3f(Uniform(-50, 50), Uniform(-50, 50), Uniform(-50, 50));
     }
     return points;
 }
@@ -69,17 +83,17 @@ GfMatrix4d
 RandomTransform(bool scaled)
 {
     GfMatrix4d m(1.0);
-    m.SetRotate(GfRotation(GfVec3d(Uniform(-1, 1), Uniform(-1, 1),
-                                   Uniform(-1, 1)).GetNormalized(),
-                           Uniform(-120, 120)));
+    m.SetRotate(GfRotation(
+        GfVec3d(Uniform(-1, 1), Uniform(-1, 1), Uniform(-1, 1)).GetNormalized(),
+        Uniform(-120, 120)));
     if (scaled) {
         GfMatrix4d s(1.0);
         s.SetScale(GfVec3d(Uniform(0.7f, 1.4f), Uniform(0.7f, 1.4f),
                            Uniform(0.7f, 1.4f)));
         m = s * m;
     }
-    m.SetTranslateOnly(GfVec3d(Uniform(-20, 20), Uniform(-20, 20),
-                               Uniform(-20, 20)));
+    m.SetTranslateOnly(
+        GfVec3d(Uniform(-20, 20), Uniform(-20, 20), Uniform(-20, 20)));
     return m;
 }
 
@@ -135,7 +149,8 @@ Flat(const std::vector<GfVec3f> &points)
 {
     std::vector<float> out(points.size() * 3);
     for (size_t i = 0; i < points.size(); ++i)
-        for (int k = 0; k < 3; ++k) out[3 * i + k] = points[i][k];
+        for (int k = 0; k < 3; ++k)
+            out[3 * i + k] = points[i][k];
     return out;
 }
 
@@ -175,7 +190,8 @@ SkinPacket(const char *method, bool scaled, size_t influences, int k)
             // Some points short of one, so the complement enters.
             float w = s == k - 1 ? std::max(0.0f, (i % 5 ? 1.0f : 0.8f) - total)
                                  : Uniform(0, 1.0f - total) * 0.6f;
-            if (s == 1 && i % 4 == 0) w = 0.0f;
+            if (s == 1 && i % 4 == 0)
+                w = 0.0f;
             p.skinWeights.push_back(w);
             total += w;
         }
@@ -233,8 +249,9 @@ WirePacket(const RigExecWeightPacket &weights, bool sparseBinds)
     p.curveKnots = {0, 0, 0, 0, 0.3, 0.6, 1, 1, 1, 1};
     for (int j = 0; j < 6; ++j) {
         p.restPoints.emplace_back(float(j) * 15.0f - 40.0f, 0.0f, 0.0f);
-        p.auxPoints.push_back(p.restPoints.back() +
-                              GfVec3f(Uniform(-3, 3), Uniform(-3, 3), Uniform(-3, 3)));
+        p.auxPoints.push_back(p.restPoints.back() + GfVec3f(Uniform(-3, 3),
+                                                            Uniform(-3, 3),
+                                                            Uniform(-3, 3)));
     }
     const size_t binds = sparseBinds ? weights.indices.size() : kPoints;
     for (size_t i = 0; i < binds; ++i)
@@ -248,8 +265,8 @@ WirePacket(const RigExecWeightPacket &weights, bool sparseBinds)
 /// program, and returns the worst coordinate difference (or a large number
 /// where either path refused).
 float
-Compare(const std::vector<Revision> &revisions, RigExecGpuDeformTranslation *translation,
-        bool expectApplies = true)
+Compare(const std::vector<Revision> &revisions,
+        RigExecGpuDeformTranslation *translation, bool expectApplies = true)
 {
     const std::vector<GfVec3f> mesh = Mesh();
     std::vector<GfVec3f> cpu = mesh;
@@ -258,12 +275,14 @@ Compare(const std::vector<Revision> &revisions, RigExecGpuDeformTranslation *tra
         std::vector<GfVec3f> before = cpu;
         const bool applied =
             RigExecRunRevisionKernel(r.op, r.packet, &cpu, false, nullptr);
-        if (!applied) cpu = before;
+        if (!applied)
+            cpu = before;
         CHECK(applied == expectApplies);
         RigExecGpuRevisionInput in;
         in.op = r.op;
         in.parameters = &r.packet;
-        in.channels = r.op == RigExecRevisionOp::BlendShape ? &r.channels : nullptr;
+        in.channels =
+            r.op == RigExecRevisionOp::BlendShape ? &r.channels : nullptr;
         in.applies = applied;
         inputs.push_back(in);
     }
@@ -274,7 +293,8 @@ Compare(const std::vector<Revision> &revisions, RigExecGpuDeformTranslation *tra
         return 1e9f;
     }
     std::vector<float> judge = Flat(mesh);
-    if (!RigExecRunGpuDeformProgram(frame, judge.data(), 0, kPoints)) return 1e9f;
+    if (!RigExecRunGpuDeformProgram(frame, judge.data(), 0, kPoints))
+        return 1e9f;
     float error = MaxError(cpu, judge);
     if (RigExecGpuDeformExecutor *executor = RigExecGpuDeformExecutor::Get()) {
         const std::vector<float> base = Flat(mesh);
@@ -322,7 +342,59 @@ Report(const char *name, float error)
     }
 }
 
-}  // namespace
+// Shared with the caller threads; constant-initialized, so no initialization
+// guard runs on the startup path.
+constexpr int kStartupCallers = 8;
+std::atomic<bool> g_startupGo{false};
+std::atomic<int> g_startupSettled{0};
+RigExecGpuDeformExecutor *g_startupResults[kStartupCallers] = {};
+
+/// Get() starts the device once: every concurrent caller settles on the same
+/// result, and that result is remembered for later calls, a failed start
+/// included. \p requireNull asserts the terminal failed state with no device
+/// (the forced-throw child run); otherwise the shared result is either the
+/// device or the remembered device failure. The wait is bounded so a caller
+/// stuck on the starting state fails here instead of hanging the suite.
+void
+CheckExecutorStartup(bool requireNull)
+{
+    std::vector<std::thread> callers;
+    for (int i = 0; i < kStartupCallers; ++i) {
+        callers.push_back(std::thread([i] {
+            while (!g_startupGo.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            g_startupResults[i] = RigExecGpuDeformExecutor::Get();
+            g_startupSettled.fetch_add(1, std::memory_order_release);
+        }));
+    }
+    g_startupGo.store(true, std::memory_order_release);
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (g_startupSettled.load(std::memory_order_acquire) < kStartupCallers &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    const bool settled =
+        g_startupSettled.load(std::memory_order_acquire) == kStartupCallers;
+    CHECK(settled);
+    if (!settled) {
+        for (std::thread &t : callers)
+            t.detach();
+        return;
+    }
+    for (std::thread &t : callers)
+        t.join();
+    // Exactly one executor pointer across all the callers.
+    for (int i = 1; i < kStartupCallers; ++i)
+        CHECK(g_startupResults[i] == g_startupResults[0]);
+    // The state is terminal: later calls read the remembered result, a null
+    // device failure included, and never wait at _Starting or retry.
+    CHECK(RigExecGpuDeformExecutor::Get() == g_startupResults[0]);
+    CHECK(RigExecGpuDeformExecutor::Get() == g_startupResults[0]);
+    if (requireNull)
+        CHECK(g_startupResults[0] == nullptr);
+}
+
+} // namespace
 
 /// A body-sized chain on the device: 26,276 points through correctives,
 /// fifty clusters and a dual-quaternion skin, timed per run.
@@ -350,7 +422,8 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
     }
     const auto add = [&](RigExecRevisionOp op, RigExecMoverParameters p,
                          const std::vector<RigExecBlendChannel> *ch) {
-        packets.push_back(std::make_unique<RigExecMoverParameters>(std::move(p)));
+        packets.push_back(
+            std::make_unique<RigExecMoverParameters>(std::move(p)));
         RigExecGpuRevisionInput in;
         in.op = op;
         in.parameters = packets.back().get();
@@ -370,7 +443,8 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
         m.radialWeight = k % 2 == 0;
         m.weights.representation = TfToken("sparse");
         m.weights.rangePolicy = TfToken("strict");
-        for (size_t i = size_t(k) * 300; i < std::min(n, size_t(k) * 300 + 900); ++i) {
+        for (size_t i = size_t(k) * 300; i < std::min(n, size_t(k) * 300 + 900);
+             ++i) {
             m.weights.indices.push_back(int(i));
             m.weights.values.push_back(0.5f);
         }
@@ -383,7 +457,8 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
     skin.skinningMethod = TfToken("dualQuaternion");
     skin.skinElementSize = 10;
     skin.weights = FullStrength();
-    for (int t = 0; t < 137; ++t) skin.skinTransforms.push_back(RandomTransform(false));
+    for (int t = 0; t < 137; ++t)
+        skin.skinTransforms.push_back(RandomTransform(false));
     for (size_t i = 0; i < n; ++i)
         for (int s = 0; s < 10; ++s) {
             skin.skinIndices.push_back(int((i + size_t(s) * 11) % 137));
@@ -395,7 +470,8 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
     RigExecGpuDeformFrame frame;
     CHECK(translation.Translate(inputs, n, &frame));
     std::vector<float> base(n * 3), out(n * 3);
-    for (size_t i = 0; i < base.size(); ++i) base[i] = Uniform(-50, 50);
+    for (size_t i = 0; i < base.size(); ++i)
+        base[i] = Uniform(-50, 50);
     std::vector<RigExecGpuDeformJob> jobs(1);
     jobs[0].chain = 2;
     jobs[0].frame = &frame;
@@ -408,10 +484,14 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
         const auto t0 = std::chrono::steady_clock::now();
         CHECK(translation.Translate(inputs, n, &frame));
         translateMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - t0).count();
+                          std::chrono::steady_clock::now() - t0)
+                          .count();
         CHECK(executor->Run(&jobs) && jobs[0].ok);
         const double ms = executor->LastRunMs();
-        if (run > 0) { best = std::min(best, ms); total += ms; }
+        if (run > 0) {
+            best = std::min(best, ms);
+            total += ms;
+        }
     }
     std::printf("body-sized chain: translate %.3f ms, device run best %.3f ms, "
                 "mean %.3f ms; %zu ops, %zu static floats\n",
@@ -422,7 +502,8 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
     RigExecRunGpuDeformProgram(frame, judge.data(), 0, n);
     std::printf("body-sized chain on one CPU thread (judge): %.3f ms\n",
                 std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - t0).count());
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
     float worst = 0.0f;
     for (size_t k = 0; k < out.size(); ++k)
         worst = std::max(worst, std::fabs(out[k] - judge[k]));
@@ -433,6 +514,22 @@ TimeBodySizedChain(RigExecGpuDeformExecutor *executor)
 int
 main()
 {
+    // testRigExecGpuDeformStartupThrow runs this same program with the
+    // start forced to throw: every concurrent caller must still settle on
+    // the terminal failed state with null, and a never-started device must
+    // ignore ReleaseKey.
+    if (std::getenv("RIGEXEC_GPU_TEST_THROW_STARTUP")) {
+        CheckExecutorStartup(/*requireNull=*/true);
+        RigExecGpuDeformExecutor::ReleaseKey(1);
+        CHECK(RigExecGpuDeformExecutor::Get() == nullptr);
+        if (g_failures) {
+            std::fprintf(stderr, "%d failure(s)\n", g_failures);
+            return 1;
+        }
+        std::printf("thrown startup ok\n");
+        return 0;
+    }
+    CheckExecutorStartup(/*requireNull=*/false);
     if (RigExecGpuDeformExecutor *executor = RigExecGpuDeformExecutor::Get()) {
         std::printf("GPU device: %s\n", executor->Describe().c_str());
         TimeBodySizedChain(executor);
@@ -440,24 +537,28 @@ main()
         std::printf("GPU device unavailable: CPU judge only\n");
     }
     Report("matrix full strength",
-           CompareOne(RigExecRevisionOp::Matrix, MatrixPacket(FullStrength(), false)));
-    Report("matrix dense",
-           CompareOne(RigExecRevisionOp::Matrix, MatrixPacket(DenseWeights(), false)));
-    Report("matrix sparse",
-           CompareOne(RigExecRevisionOp::Matrix, MatrixPacket(SparseWeights(), false)));
+           CompareOne(RigExecRevisionOp::Matrix,
+                      MatrixPacket(FullStrength(), false)));
+    Report("matrix dense", CompareOne(RigExecRevisionOp::Matrix,
+                                      MatrixPacket(DenseWeights(), false)));
+    Report("matrix sparse", CompareOne(RigExecRevisionOp::Matrix,
+                                       MatrixPacket(SparseWeights(), false)));
     Report("matrix radial dense",
-           CompareOne(RigExecRevisionOp::Matrix, MatrixPacket(DenseWeights(), true)));
-    Report("skin linear",
-           CompareOne(RigExecRevisionOp::Skin, SkinPacket("classicLinear", true, 9, 4)));
+           CompareOne(RigExecRevisionOp::Matrix,
+                      MatrixPacket(DenseWeights(), true)));
+    Report("skin linear", CompareOne(RigExecRevisionOp::Skin,
+                                     SkinPacket("classicLinear", true, 9, 4)));
     {
         RigExecMoverParameters p = SkinPacket("classicLinear", false, 9, 4);
         p.weights = DenseWeights();
         Report("skin linear enveloped", CompareOne(RigExecRevisionOp::Skin, p));
     }
     Report("skin dual quaternion rigid",
-           CompareOne(RigExecRevisionOp::Skin, SkinPacket("dualQuaternion", false, 11, 6)));
+           CompareOne(RigExecRevisionOp::Skin,
+                      SkinPacket("dualQuaternion", false, 11, 6)));
     Report("skin dual quaternion scaled",
-           CompareOne(RigExecRevisionOp::Skin, SkinPacket("dualQuaternion", true, 11, 6)));
+           CompareOne(RigExecRevisionOp::Skin,
+                      SkinPacket("dualQuaternion", true, 11, 6)));
     {
         const auto channels = BlendChannels();
         Report("blend full strength",
@@ -467,24 +568,31 @@ main()
                CompareOne(RigExecRevisionOp::BlendShape,
                           BlendPacket(channels, DenseWeights()), channels));
     }
-    Report("wire dense",
-           CompareOne(RigExecRevisionOp::Wire, WirePacket(DenseWeights(), false)));
-    Report("wire full strength",
-           CompareOne(RigExecRevisionOp::Wire, WirePacket(FullStrength(), false)));
-    Report("wire sparse",
-           CompareOne(RigExecRevisionOp::Wire, WirePacket(SparseWeights(), false)));
-    Report("wire sparse binds",
-           CompareOne(RigExecRevisionOp::Wire, WirePacket(SparseWeights(), true)));
+    Report("wire dense", CompareOne(RigExecRevisionOp::Wire,
+                                    WirePacket(DenseWeights(), false)));
+    Report("wire full strength", CompareOne(RigExecRevisionOp::Wire,
+                                            WirePacket(FullStrength(), false)));
+    Report("wire sparse", CompareOne(RigExecRevisionOp::Wire,
+                                     WirePacket(SparseWeights(), false)));
+    Report("wire sparse binds", CompareOne(RigExecRevisionOp::Wire,
+                                           WirePacket(SparseWeights(), true)));
 
     // One chain in a body's order: correctives, clusters, a wire, the skin.
     {
         const auto channels = BlendChannels();
         std::vector<Revision> chain = {
-            {RigExecRevisionOp::BlendShape, BlendPacket(channels, FullStrength()), channels},
-            {RigExecRevisionOp::Matrix, MatrixPacket(SparseWeights(), true), {}},
-            {RigExecRevisionOp::Matrix, MatrixPacket(DenseWeights(), false), {}},
+            {RigExecRevisionOp::BlendShape,
+             BlendPacket(channels, FullStrength()), channels},
+            {RigExecRevisionOp::Matrix,
+             MatrixPacket(SparseWeights(), true),
+             {}},
+            {RigExecRevisionOp::Matrix,
+             MatrixPacket(DenseWeights(), false),
+             {}},
             {RigExecRevisionOp::Wire, WirePacket(SparseWeights(), false), {}},
-            {RigExecRevisionOp::Skin, SkinPacket("dualQuaternion", true, 13, 8), {}},
+            {RigExecRevisionOp::Skin,
+             SkinPacket("dualQuaternion", true, 13, 8),
+             {}},
         };
         RigExecGpuDeformTranslation translation;
         Report("chain", Compare(chain, &translation));
@@ -505,10 +613,10 @@ main()
     // A refused packet passes its points through on both paths.
     {
         RigExecMoverParameters p = MatrixPacket(DenseWeights(), false);
-        p.weights.values.pop_back();  // wrong cardinality
+        p.weights.values.pop_back(); // wrong cardinality
         RigExecGpuDeformTranslation translation;
-        Report("refused matrix",
-               Compare({{RigExecRevisionOp::Matrix, p, {}}}, &translation, false));
+        Report("refused matrix", Compare({{RigExecRevisionOp::Matrix, p, {}}},
+                                         &translation, false));
     }
 
     if (g_failures) {

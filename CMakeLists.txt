@@ -735,6 +735,11 @@ add_test(NAME testRigExecSingleChainIk COMMAND testRigExecSingleChainIk)
 add_executable(testRigExecGpuDeform tests/testRigExecGpuDeform.cpp)
 target_link_libraries(testRigExecGpuDeform PRIVATE rigExec rigExecGpu)
 add_test(NAME testRigExecGpuDeform COMMAND testRigExecGpuDeform)
+# The same program with the executor's start forced to throw: every
+# concurrent Get() must still settle on the terminal failed state.
+add_test(NAME testRigExecGpuDeformStartupThrow COMMAND testRigExecGpuDeform)
+set_tests_properties(testRigExecGpuDeformStartupThrow PROPERTIES
+    ENVIRONMENT "RIGEXEC_GPU_TEST_THROW_STARTUP=1")
 # The cloth's device solve against the CPU kernel, and a live rig on it.
 add_executable(testRigExecGpuCloth tests/testRigExecGpuCloth.cpp)
 target_link_libraries(testRigExecGpuCloth PRIVATE rigExec rigExecScene rigExecGpu)
