@@ -9,7 +9,11 @@
 // the edit-here gate, and the RIGEXEC_FRAME_CACHE_VERIFY shadow
 // verification. Background completions stay in the bridge-free free
 // functions (bridgeWarmPublication.h) over the shared cache, so a worker
-// never holds the bridge or this component.
+// never holds the bridge or this component. The freshness proof
+// operations -- NoteWarmingEnqueued, AdmitOverrideControls,
+// RetireProofsForControls, RepointProof, GetFreshProof and
+// NoteCaptureIndex -- are this class's second TU,
+// bridgeCacheFreshness.cpp.
 #ifndef RIGEXEC_IMAGING_BRIDGE_FRAME_CACHE_H
 #define RIGEXEC_IMAGING_BRIDGE_FRAME_CACHE_H
 
