@@ -13,7 +13,11 @@ rigexec_add_graph_test() adds are synthesized. Tests registered from
 example-fixture lists are named but not expanded (those lists live in
 tests/exampleFixtures.cmake). Selection follows PUBLIC and INTERFACE
 links. A PRIVATE dependency does not pull in the dependents of the
-library that links it.
+library that links it. An OBJECT library is the exception: its sources
+are compiled into every target that composes it (by a link at any
+visibility or by $<TARGET_OBJECTS:...>), so they are attributed to
+those targets as well. --self-test checks this rule against synthetic
+CMake text and this repository's imaging inventory.
 """
 
 from __future__ import annotations
@@ -220,6 +224,18 @@ def extract_link_names(token: str) -> list[str]:
     return [token]
 
 
+OBJECT_REF = re.compile(r"\$<TARGET_OBJECTS:([A-Za-z_][A-Za-z0-9_]*)>")
+
+
+def object_refs(args: list[str]) -> list[str]:
+    """Object libraries named by $<TARGET_OBJECTS:...> source arguments."""
+    refs = []
+    for arg in args:
+        if arg.startswith("$"):
+            refs.extend(m.group(1) for m in OBJECT_REF.finditer(arg))
+    return refs
+
+
 def parse(cmake_text: str) -> dict:
     text = synthesize_graph_tests(expand_foreach(strip_comments(cmake_text)))
     libraries = {}  # name -> {sources, links, link_vis, kind}
@@ -236,11 +252,15 @@ def parse(cmake_text: str) -> dict:
                 kind = rest[0]
                 rest = rest[1:]
             sources = [a for a in rest if not a.startswith("$")]
-            libraries[lib] = {"kind": kind, "sources": sources, "links": [], "link_vis": {}}
+            objects = object_refs(rest)
+            libraries[lib] = {"kind": kind, "sources": sources, "objects": objects,
+                              "links": [], "link_vis": {}}
         elif name == "add_executable" and args:
             exe = args[0]
             sources = [a for a in args[1:] if not a.startswith("$")]
-            executables[exe] = {"sources": sources, "links": [], "link_vis": {}}
+            objects = object_refs(args[1:])
+            executables[exe] = {"sources": sources, "objects": objects,
+                                "links": [], "link_vis": {}}
         elif name == "rigexec_add_mover" and "BUILTIN" in args:
             # The module helper compiles its pure definition into both hosts;
             # only the native host compiles its USD adapter. Schema defaults
@@ -326,6 +346,38 @@ def closure(start: set[str], edges: dict[str, list[str]]) -> set[str]:
     return seen
 
 
+def object_parents(model: dict) -> dict:
+    """OBJECT library -> targets that compose its objects.
+
+    An OBJECT library's objects go into the target that links it (at any
+    visibility) or names it in $<TARGET_OBJECTS:...>; only OBJECT-kind
+    dependencies compose objects this way. Executables appear as
+    "exe:<name>". A parent that is itself an OBJECT library composes the
+    objects onward to its own parents, so the walk is transitive.
+    """
+    obj_kind = {n for n, info in model["libraries"].items()
+                if info["kind"] == "OBJECT"}
+    parents = defaultdict(set)
+    for tname, info in list(model["libraries"].items()) + \
+            [("exe:" + n, i) for n, i in model["executables"].items()]:
+        for dep in set(info.get("links", [])) | set(info.get("objects", [])):
+            if dep in obj_kind:
+                parents[dep].add(tname)
+    expanded = {}
+    for obj in obj_kind:
+        seen = set()
+        stack = list(parents.get(obj, ()))
+        while stack:
+            parent = stack.pop()
+            if parent in seen:
+                continue
+            seen.add(parent)
+            if parent in obj_kind:
+                stack.extend(parents.get(parent, ()))
+        expanded[obj] = seen
+    return expanded
+
+
 def build_index(model: dict) -> dict:
     lib_edges = {n: info["links"] for n, info in model["libraries"].items()}
     public_edges = {n: public_names(info) for n, info in model["libraries"].items()}
@@ -333,9 +385,23 @@ def build_index(model: dict) -> dict:
     for name, info in model["executables"].items():
         exe_edges[name] = info["links"]
     source_to_lib = defaultdict(list)
+    owner_notes = {}
     for lib, info in model["libraries"].items():
         for src in info["sources"]:
             source_to_lib[os.path.normpath(src)].append(lib)
+    # An OBJECT library compiles its sources into every target that
+    # composes it, so those sources are owned by the composing targets
+    # too. This does not loosen the private-link rule: only OBJECT-kind
+    # dependencies are composed; a private SHARED or STATIC dependency
+    # still keeps its sources inside the library that links it.
+    for obj, owners in object_parents(model).items():
+        if not owners:
+            continue
+        for src in model["libraries"][obj]["sources"]:
+            key = os.path.normpath(src)
+            for owner in sorted(owners):
+                source_to_lib[key].append(owner)
+                owner_notes[(key, owner)] = obj
 
     exe_closure = {}
     for exe, info in model["executables"].items():
@@ -349,6 +415,7 @@ def build_index(model: dict) -> dict:
 
     return {
         "source_to_lib": source_to_lib,
+        "owner_notes": owner_notes,
         "exe_closure": exe_closure,
         "tests_by_exe": tests_by_exe,
         "lib_edges": lib_edges,
@@ -435,7 +502,14 @@ def select(paths: list[str], model: dict, index: dict, follow_headers: bool) -> 
             if owners:
                 for lib in owners:
                     libs.add(lib)
-                    reasons[lib].append(rel + " (compiled into this target)")
+                    via = index.get("owner_notes", {}).get((rel, lib))
+                    if via:
+                        reasons[lib].append(
+                            rel + " (compiled into " + via
+                            + ", composed into this target)"
+                        )
+                    else:
+                        reasons[lib].append(rel + " (compiled into this target)")
             elif follow_headers and rel.endswith((".h", ".hpp")):
                 includers = files_including(rel)
                 header_fans[rel] = includers
@@ -559,6 +633,160 @@ def ctest_label(model: dict, index: dict, result: dict) -> str:
     return "^(" + "|".join(re.escape(lib) for lib in labels) + ")$"
 
 
+# Synthetic CMake text for --self-test: an OBJECT library linked (at any
+# visibility) into a SHARED parent, a genex-composed OBJECT library, and
+# a private SHARED dependency that must stay invisible to consumers.
+SELF_TEST_CMAKE = """\
+add_library(selObjImpl OBJECT
+    libs/sel/obj_alpha.cpp
+    libs/sel/obj_beta.cpp)
+add_library(selParent SHARED
+    libs/sel/parent.cpp)
+target_link_libraries(selParent PRIVATE selObjImpl)
+add_executable(testSelParent tests/testSelParent.cpp)
+target_link_libraries(testSelParent PRIVATE selParent)
+add_test(NAME testSelParent COMMAND testSelParent)
+
+add_library(selGenObj OBJECT
+    libs/sel/obj_genex.cpp)
+add_library(selGenParent SHARED
+    libs/sel/genparent.cpp
+    $<TARGET_OBJECTS:selGenObj>)
+add_executable(testSelGenex tests/testSelGenex.cpp)
+target_link_libraries(testSelGenex PRIVATE selGenParent)
+add_test(NAME testSelGenex COMMAND testSelGenex)
+
+add_library(selPrivDep SHARED libs/sel/privdep.cpp)
+add_library(selPrivParent SHARED libs/sel/privparent.cpp)
+target_link_libraries(selPrivParent PRIVATE selPrivDep)
+add_executable(testSelPriv tests/testSelPriv.cpp)
+target_link_libraries(testSelPriv PRIVATE selPrivParent)
+add_test(NAME testSelPriv COMMAND testSelPriv)
+"""
+
+# The imaging inventory at the base of the registry split: every
+# libs/rigExecImaging/registry*.cpp and the guide bounds/extent sources
+# select these 15 executables and 18 tests, before and after the domain
+# sources moved into private OBJECT libraries.
+IMAGING_SOURCES = [
+    "libs/rigExecImaging/registryCache.cpp",
+    "libs/rigExecImaging/registryCapi.cpp",
+    "libs/rigExecImaging/registryDiagnostics.cpp",
+    "libs/rigExecImaging/registryDirectory.cpp",
+    "libs/rigExecImaging/registryFrameDemand.cpp",
+    "libs/rigExecImaging/registryInvalidation.cpp",
+    "libs/rigExecImaging/registryLifecycle.cpp",
+    "libs/rigExecImaging/registryPreview.cpp",
+    "libs/rigExecImaging/registryPublication.cpp",
+    "libs/rigExecImaging/registryUpstream.cpp",
+    "libs/rigExecImaging/registryWarming.cpp",
+    "libs/rigExecImaging/registryWarmWork.cpp",
+    "libs/rigExecImaging/guideBounds.cpp",
+    "libs/rigExecImaging/guideExtent.cpp",
+]
+IMAGING_EXECUTABLES = [
+    "benchCommitLag",
+    "benchPlayback",
+    "probeImagingPipeline",
+    "testRigExecFrameDemand",
+    "testRigExecImaging",
+    "testRigExecImagingFrameCache",
+    "testRigExecImagingMultiStage",
+    "testRigExecImagingPlayback",
+    "testRigExecLiveDebug",
+    "testRigExecNoAuthoring",
+    "testRigExecProfilerApi",
+    "testRigExecStepMaps",
+    "testRigExecTouchPose",
+    "testRigExecUpstreamInputs",
+    "testRigExecWeightOverlay",
+]
+IMAGING_TESTS = [
+    "testRigExecFrameDemand",
+    "testRigExecImaging",
+    "testRigExecImagingFineClusters",
+    "testRigExecImagingFineClustersReference",
+    "testRigExecImagingFrameCache",
+    "testRigExecImagingMultiStage",
+    "testRigExecImagingPlayback",
+    "testRigExecLiveDebug_parallel",
+    "testRigExecLiveDebug_serial",
+    "testRigExecNoAuthoring",
+    "testRigExecProfilerApi",
+    "testRigExecStepMaps",
+    "testRigExecStepMapsChannels",
+    "testRigExecStepMapsChannels_parallel",
+    "testRigExecStepMapsChannels_serial",
+    "testRigExecTouchPose",
+    "testRigExecUpstreamInputs",
+    "testRigExecWeightOverlay",
+]
+
+
+def self_test() -> int:
+    """Run parse()/select() against synthetic CMake text and the real tree."""
+    failures = []
+
+    def check(label: str, got: list, want: list) -> None:
+        if sorted(got) == sorted(want):
+            print(f"  ok   {label}")
+        else:
+            failures.append(label)
+            print(f"  FAIL {label}")
+            print(f"       got  {sorted(got)}")
+            print(f"       want {sorted(want)}")
+
+    model = parse(SELF_TEST_CMAKE)
+    index = build_index(model)
+
+    # (a) A source compiled into an OBJECT library selects the tests of
+    # the target that composes the library, at any link visibility.
+    res = select(["libs/sel/obj_alpha.cpp"], model, index, False)
+    check("object source selects the parent's executables",
+          res["direct_executables"], ["testSelParent"])
+    check("object source selects the parent's tests",
+          res["direct_tests"], ["testSelParent"])
+
+    # (b) $<TARGET_OBJECTS:...> composition selects the same way.
+    res = select(["libs/sel/obj_genex.cpp"], model, index, False)
+    check("genex-composed object source selects the parent's executables",
+          res["direct_executables"], ["testSelGenex"])
+    check("genex-composed object source selects the parent's tests",
+          res["direct_tests"], ["testSelGenex"])
+
+    # (c) A private SHARED dependency still selects no consumer.
+    res = select(["libs/sel/privdep.cpp"], model, index, False)
+    check("private SHARED dependency selects no executable",
+          res["direct_executables"], [])
+    check("private SHARED dependency selects no test",
+          res["direct_tests"], [])
+
+    # (d) The real repository: every moved imaging domain source still
+    # resolves to the pre-split 15-executable / 18-test inventory.
+    with open(CMAKE, "r", encoding="utf-8") as fh:
+        real_model = parse(fh.read())
+    real_index = build_index(real_model)
+    for src in IMAGING_SOURCES:
+        res = select([src], real_model, real_index, False)
+        check(f"{src} selects the imaging executables",
+              res["direct_executables"], IMAGING_EXECUTABLES)
+        check(f"{src} selects the imaging tests",
+              res["direct_tests"], IMAGING_TESTS)
+    res = select(list(IMAGING_SOURCES), real_model, real_index, False)
+    check("the imaging sources together select the imaging executables",
+          res["direct_executables"], IMAGING_EXECUTABLES)
+    check("the imaging sources together select the imaging tests",
+          res["direct_tests"], IMAGING_TESTS)
+
+    if failures:
+        print(f"self-test FAILED: {len(failures)} check(s)")
+        for label in failures:
+            print(f"  {label}")
+        return 1
+    print("self-test ok")
+    return 0
+
+
 def snapshot(model: dict, index: dict) -> dict:
     by_lib = defaultdict(list)
     for exe, reached in index["exe_closure"].items():
@@ -607,7 +835,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-headers", action="store_true",
                         help="do not scan includers of changed headers")
     parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--self-test", action="store_true",
+                        help="check the OBJECT-source rule and exit")
     args = parser.parse_args(argv)
+
+    self_test_status = 0
+    if args.self_test:
+        self_test_status = self_test()
+        if not args.paths and not args.json and not args.diff:
+            return self_test_status
 
     with open(CMAKE, "r", encoding="utf-8") as fh:
         model = parse(fh.read())
@@ -629,7 +865,7 @@ def main(argv: list[str]) -> int:
         )
         paths.extend(line.strip() for line in out.splitlines() if line.strip())
 
-    if not paths and not args.json:
+    if not paths and not args.json and not args.self_test:
         parser.error("pass paths, --diff REV, or --json FILE")
 
     if paths:
@@ -692,7 +928,7 @@ def main(argv: list[str]) -> int:
             "transitive set is what to run before pushing. Private dependencies "
             "do not select the dependents of the library that links them."
         )
-    return 0
+    return self_test_status
 
 
 if __name__ == "__main__":

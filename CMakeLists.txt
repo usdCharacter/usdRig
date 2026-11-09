@@ -669,6 +669,14 @@ add_test(NAME testRigExecMoverSchemaGen COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecMoverSchemaGen.py"
     "${RIGEXEC_TEST_USD_DIR}")
 
+# The test selector must attribute an OBJECT library's sources to the
+# targets that compose it, or an imaging domain edit would select no
+# test at all. The self-check runs the selector's parse()/select()
+# against synthetic CMake text and this repository's imaging inventory.
+add_test(NAME testRigExecTestSelectorObjectSources
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/select_affected_tests.py" --self-test)
+
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
 target_link_libraries(testRigExecWrinkleMath PRIVATE rigExecMath)
