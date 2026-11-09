@@ -673,17 +673,20 @@ PXR_NAMESPACE_OPEN_SCOPE
 TF_REGISTRY_FUNCTION(UsdGeomBoundable)
 {
     // RigExecXformable covers joints and controls through its ancestors.
-    for (const TfToken &name : {rigExec::SchemaType::RigExecXformable,
-                                rigExec::SchemaType::RigExecVolumeWeight,
-                                rigExec::SchemaType::RigExecClothConstraintSet,
-                                rigExec::SchemaType::RigExecFkChain,
-                                rigExec::SchemaType::RigExecTwoBoneIk,
-                                rigExec::SchemaType::RigExecBlendPointFrames,
-                                rigExec::SchemaType::RigExecTwistDistribution,
-                                rigExec::SchemaType::RigExecRibbon,
-                                rigExec::SchemaType::RigExecSplineIk}) {
-        // TfType indexes schema types by name string only.
-        const TfType type = TfType::FindByName(name.GetString());
+    // Text names, not the SchemaType tokens: Plug loads this dylib on
+    // demand, so this body can run mid-load, before inline TfToken
+    // globals in any translation unit are constructed. TfType indexes
+    // schema types by name text.
+    for (const char *name : {rigExec::SchemaTypeName::RigExecXformable,
+                             rigExec::SchemaTypeName::RigExecVolumeWeight,
+                             rigExec::SchemaTypeName::RigExecClothConstraintSet,
+                             rigExec::SchemaTypeName::RigExecFkChain,
+                             rigExec::SchemaTypeName::RigExecTwoBoneIk,
+                             rigExec::SchemaTypeName::RigExecBlendPointFrames,
+                             rigExec::SchemaTypeName::RigExecTwistDistribution,
+                             rigExec::SchemaTypeName::RigExecRibbon,
+                             rigExec::SchemaTypeName::RigExecSplineIk}) {
+        const TfType type = TfType::FindByName(name);
         if (type.IsUnknown()) {
             // The schema plugin is not registered: nothing is Boundable
             // anyway.

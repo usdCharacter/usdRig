@@ -13,24 +13,54 @@
 namespace rigExec {
 
 // Schema type names (the class names in schema.usda).
+// Text constants first: they need no dynamic initialization, so they are
+// safe inside TF_REGISTRY_FUNCTION bodies, which can run while the
+// consuming dylib is still loading -- before inline TfToken globals in
+// any translation unit have been constructed.
+namespace SchemaTypeName {
+inline constexpr const char *const RigExecRoot = "RigExecRoot";
+inline constexpr const char *const RigExecXformable = "RigExecXformable";
+inline constexpr const char *const RigExecControl = "RigExecControl";
+inline constexpr const char *const RigExecJoint = "RigExecJoint";
+inline constexpr const char *const RigExecVolumeWeight = "RigExecVolumeWeight";
+inline constexpr const char *const RigExecSphereWeight = "RigExecSphereWeight";
+inline constexpr const char *const RigExecPlaneWeight = "RigExecPlaneWeight";
+inline constexpr const char *const RigExecCurveWeight = "RigExecCurveWeight";
+inline constexpr const char *const RigExecClothConstraintSet =
+    "RigExecClothConstraintSet";
+inline constexpr const char *const RigExecFkChain = "RigExecFkChain";
+inline constexpr const char *const RigExecTwoBoneIk = "RigExecTwoBoneIk";
+inline constexpr const char *const RigExecBlendPointFrames =
+    "RigExecBlendPointFrames";
+inline constexpr const char *const RigExecTwistDistribution =
+    "RigExecTwistDistribution";
+inline constexpr const char *const RigExecRibbon = "RigExecRibbon";
+inline constexpr const char *const RigExecSplineIk = "RigExecSplineIk";
+} // namespace SchemaTypeName
+
 namespace SchemaType {
-inline const PXR_NS::TfToken RigExecRoot("RigExecRoot");
-inline const PXR_NS::TfToken RigExecXformable("RigExecXformable");
-inline const PXR_NS::TfToken RigExecControl("RigExecControl");
-inline const PXR_NS::TfToken RigExecJoint("RigExecJoint");
-inline const PXR_NS::TfToken RigExecVolumeWeight("RigExecVolumeWeight");
-inline const PXR_NS::TfToken RigExecSphereWeight("RigExecSphereWeight");
-inline const PXR_NS::TfToken RigExecPlaneWeight("RigExecPlaneWeight");
-inline const PXR_NS::TfToken RigExecCurveWeight("RigExecCurveWeight");
+inline const PXR_NS::TfToken RigExecRoot(SchemaTypeName::RigExecRoot);
+inline const PXR_NS::TfToken RigExecXformable(SchemaTypeName::RigExecXformable);
+inline const PXR_NS::TfToken RigExecControl(SchemaTypeName::RigExecControl);
+inline const PXR_NS::TfToken RigExecJoint(SchemaTypeName::RigExecJoint);
 inline const PXR_NS::TfToken
-    RigExecClothConstraintSet("RigExecClothConstraintSet");
-inline const PXR_NS::TfToken RigExecFkChain("RigExecFkChain");
-inline const PXR_NS::TfToken RigExecTwoBoneIk("RigExecTwoBoneIk");
-inline const PXR_NS::TfToken RigExecBlendPointFrames("RigExecBlendPointFrames");
+    RigExecVolumeWeight(SchemaTypeName::RigExecVolumeWeight);
 inline const PXR_NS::TfToken
-    RigExecTwistDistribution("RigExecTwistDistribution");
-inline const PXR_NS::TfToken RigExecRibbon("RigExecRibbon");
-inline const PXR_NS::TfToken RigExecSplineIk("RigExecSplineIk");
+    RigExecSphereWeight(SchemaTypeName::RigExecSphereWeight);
+inline const PXR_NS::TfToken
+    RigExecPlaneWeight(SchemaTypeName::RigExecPlaneWeight);
+inline const PXR_NS::TfToken
+    RigExecCurveWeight(SchemaTypeName::RigExecCurveWeight);
+inline const PXR_NS::TfToken
+    RigExecClothConstraintSet(SchemaTypeName::RigExecClothConstraintSet);
+inline const PXR_NS::TfToken RigExecFkChain(SchemaTypeName::RigExecFkChain);
+inline const PXR_NS::TfToken RigExecTwoBoneIk(SchemaTypeName::RigExecTwoBoneIk);
+inline const PXR_NS::TfToken
+    RigExecBlendPointFrames(SchemaTypeName::RigExecBlendPointFrames);
+inline const PXR_NS::TfToken
+    RigExecTwistDistribution(SchemaTypeName::RigExecTwistDistribution);
+inline const PXR_NS::TfToken RigExecRibbon(SchemaTypeName::RigExecRibbon);
+inline const PXR_NS::TfToken RigExecSplineIk(SchemaTypeName::RigExecSplineIk);
 } // namespace SchemaType
 
 // Authored attributes and relationships read without the evaluator.
