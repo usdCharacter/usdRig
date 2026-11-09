@@ -234,8 +234,9 @@ time forwarding):
        every frame change, and `_clearCaches()` `Clear()`s on stage edits.
      - A host needing live exactness against the current generation
        without a cache round-trip uses the C API bounds exports
-       (`RigExecImaging_GetGuideBoundsAssetSpace` and the all-bounds
-       variant), which read the published snapshot directly.
+       (`RigExecImaging_GetGuideBoundsAssetSpaceForStage` and the all-bounds
+       variant `RigExecImaging_GetAllGuideBoundsAssetSpaceForStage`), which
+       read the published snapshot directly.
      `TestExtentIsPureFunctionOfStageAndTime` pins all of this, including
      the caching behavior, so that if USD ever begins re-querying, the
      test fails and this section gets corrected rather than quietly going

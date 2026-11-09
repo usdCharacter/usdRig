@@ -257,7 +257,7 @@ missing tail.
 | Compiled rig and falloff tables | `libs/rigExec/rigEvaluatorCompile.cpp`, `libs/rigExec/rigEvaluatorGeometry.cpp` (`_BakeFalloffLut`) |
 | Resolved field for tools | `RigExecRigPose::weightFields` |
 | Authoring UI | `plugin/rigExecUsdview/volumeWeightUI.py`, `plugin/rigExecUsdview/weightViewport.py` |
-| Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlay`) |
+| Influence overlay + guides | `libs/rigExecImaging/` (`RigExecImaging_SetWeightOverlayForStage`) |
 | Example | `examples/11_VolumeWeights.usda` |
 | Tests | `tests/testRigExecWeightFields.cpp`, `tests/testRigExecWeightProgram.cpp`, `tests/testRigExecVolumeWeights.cpp`, `tests/testRigExecWeightOverlay.cpp`, `bin/test/run_testusdview_overlay.bat` |
 
@@ -284,9 +284,10 @@ schema opened exactly once.
 
 ## The influence overlay, and the trap under it
 
-`RigExecImaging_SetWeightOverlay(primPath)` paints a weight object's
-resolved field onto its target geometry as a vertex `displayColor`, grey
-at 0 to red at 1 — the Rhythm & Hues Voodoo idiom — under the default
+`RigExecImaging_SetWeightOverlayForStage(stageCacheId, primPath)` paints
+a weight object's resolved field onto its target geometry as a vertex
+`displayColor`, grey at 0 to red at 1 — the Rhythm & Hues Voodoo idiom —
+under the default
 `guide:weightDisplay = "tint"`; `heatmap` and `bands` use a five-color
 ramp instead. Pass `""` to turn it off. The volume's own falloffMin and
 falloffMax iso-surfaces draw as guides through the same synthesis
@@ -404,7 +405,7 @@ The fix is to use the frame the signal carries
 (`rigExecUsdview.py::_OnFrameChanged`), and the reason it survived so
 long is that `testUsdviewRigExec.py` counted **generations** rather than
 checking which frame was in them. It now drives one frame both ways --
-through `currentFrame` and through `RigExecImaging_SetTime`, which is
+through `currentFrame` and through `RigExecImaging_SetTimeForStage`, which is
 unambiguous by construction -- and compares the published points.
 Mutation-verified: restoring the property read fails that comparison
 (`(0.0, 9.5, 0.0)` vs `(0.06, 10.13, 0.48)`) while
