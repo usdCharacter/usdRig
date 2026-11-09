@@ -1261,16 +1261,16 @@ TestMultiStage(const std::string &examplesDir)
         stage.Reset();
         CHECK(RigExecImagingRegistry::ContextCount() == before);
         CHECK(!RigExecImagingRegistry::ForKey(key));
-        // With no legacy activation live, this automatic activation became
-        // the legacy surface's current context, and that slot holds it --
-        // exactly as the old singleton lived for the process -- even after
-        // the release dropped its stage, threads and directory entry. The
-        // NEXT automatic activation replaces it, and then it dies.
-        CHECK(!weak.expired());
+        // Nothing else holds a context once its stage is gone: the
+        // directory's entry is its only owner, and the pruning that drops
+        // the entry releases the context.
+        CHECK(weak.expired());
         const UsdStageRefPtr successor = UsdStage::Open(turretFile);
         TfWeakPtr<RigExecResultsSceneIndex> later;
         UsdImagingSceneIndices next = _Engine(successor, &later);
-        CHECK(later && weak.expired());
+        // The successor stage gets its own context, and its own key.
+        CHECK(later && later->GetContextKey() != key);
+        CHECK(RigExecImagingRegistry::ContextCount() == before + 1);
         next = UsdImagingSceneIndices();
     }
     {
