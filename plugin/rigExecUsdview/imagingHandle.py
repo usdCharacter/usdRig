@@ -3,38 +3,49 @@
 #
 # rigExecImaging keeps one imaging CONTEXT per UsdStage (docs/
 # multistage-imaging.md): its own snapshot store, chains, previews, warming
-# and published generation. Its C surface has two spellings of every
-# per-stage entry point:
+# and published generation. Its C surface is stage-scoped throughout: every
+# per-stage entry point names its stage --
 #
-#   RigExecImaging_<Name>(args...)                       the CURRENT context:
-#       the stage most recently activated through RigExecImaging_Activate
-#   RigExecImaging_<Name>ForStage(stageCacheId, args...) THAT stage's context
+#   RigExecImaging_<Name>ForStage(stageCacheId, args...)  THAT stage's context
 #
-# A usdview session must only ever touch its own stage, and several sessions
-# share one process in a host, so everything the plugins do goes through an
-# ImagingHandle bound to the session's stage. The handle calls the ForStage
-# symbol when the library exports it and falls back to the legacy symbol when
-# it does not -- an older library is exactly the old single-stage behavior,
-# said once in the log.
+# -- and there is no stage-less spelling to fall back to. A usdview session
+# must only ever touch its own stage, and several sessions share one
+# process in a host, so everything the plugins do goes through an
+# ImagingHandle bound to the session's stage.
 #
-# The handle answers to the legacy NAMES in two ways, so callers written
-# against the library keep working unchanged:
+# The handle ALSO answers to the plain C names, as HANDLE ADAPTERS:
 #
 #   handle.SetTime(frame), handle.OnIdle(), handle.GetGeneration(), ...
-#   handle.RigExecImaging_SetTime(frame)  -- the same, via getattr, which is
-#       what cacheStripModel and the strip panel already look up.
+#   getattr(handle, "RigExecImaging_SetTime")  -- what cacheStripModel and
+#       the strip panel look entry points up by.
 #
-# A missing entry point (neither spelling exported) raises AttributeError from
-# both, exactly like a CDLL does, so `getattr(handle, name, None)` and the
-# existing `except AttributeError` fallbacks behave as they did on the library.
+# Those names are NOT library symbols; each one resolves ONLY to
 #
-# Activation is NOT per-stage-suffixed: RigExecImaging_Activate already takes
-# the stage's cache id. Deactivation is: a handle only ever deactivates its
-# own stage (DeactivateForStage), never another session's.
+#   <Name>ForStage(handle.CacheId(), ...)
+#
+# with the stage's cache id prepended exactly once. A name the library does
+# not export raises AttributeError from both the method and getattr,
+# exactly like a CDLL does, so `getattr(handle, name, None)` and the
+# existing `except AttributeError` fallbacks say "absent" for it.
+#
+# Activation, the control-frame read, the activity probe and the context
+# count take the cache id in their own names (RigExecImaging_ActivateFor-
+# Stage, GetControlFrameAssetSpace, IsActiveForStage, ContextCount) and
+# pass through the handle with their library signatures. Deactivation is
+# scoped too: a handle only ever deactivates its own stage
+# (DeactivateForStage); a session holding no cached stage deactivates
+# nothing.
+#
+# A library that does not export the required scoped entry points
+# (_REQUIRED below) cannot keep this session's calls on this session's
+# stage. BindLibrary -- and every ImagingHandle built over it -- fails
+# with an AttributeError naming what is missing, so the host reports the
+# unsupported library instead of silently acting on another session's
+# context.
 #
 import ctypes
 
-from pxr import Tf, UsdUtils
+from pxr import UsdUtils
 
 
 _PREFIX = "RigExecImaging_"
@@ -48,10 +59,10 @@ _dp = ctypes.POINTER(ctypes.c_double)
 _ip = ctypes.POINTER(ctypes.c_int)
 _fp = ctypes.POINTER(ctypes.c_float)
 
-# name -> (restype, argtypes of the LEGACY spelling). The ForStage spelling
-# is the same with the stage cache id (long long) in front. Only names that
-# are per-stage appear here; Activate and GetControlFrameAssetSpace already
-# take the id and are bound separately below.
+# name -> (restype, argtypes) of RigExecImaging_<Name>ForStage AFTER its
+# leading stage cache id (long long). Only per-stage names appear here;
+# the id-taking symbols bound in _STAGE_ID below carry the id in their
+# own signatures.
 _PER_STAGE = {
     "SetTime": (_i, [_d]),
     "OnEditCommitted": (_i, []),
@@ -76,22 +87,21 @@ _PER_STAGE = {
     "GetAllGuideBoundsAssetSpace": (_i, [_dp]),
 }
 
-# Entry points that take the stage cache id in every library.
+# Entry points that take the stage cache id in their own names.
 _STAGE_ID = {
-    "Activate": (_i, [_ll, _s, _d]),
+    "ActivateForStage": (_i, [_ll, _s, _d]),
     "GetControlFrameAssetSpace": (_i, [_ll, _s, _d, _i, _dp]),
     "IsActiveForStage": (_i, [_ll]),
     "ContextCount": (_i, []),
 }
 
-# The symbol whose presence says the library has per-stage contexts.
-_MULTI_STAGE_PROBE = _PREFIX + "DeactivateForStage"
+# The scoped entry points without which no call could be kept on THIS
+# stage: activation, the frame change, and shutdown. A library missing
+# one is unsupported: BindLibrary raises rather than handing out a
+# handle that could reach whichever stage another session named last.
+_REQUIRED = ("ActivateForStage", "SetTimeForStage", "DeactivateForStage")
 
 _BOUND_MARK = "_rigExecImagingHandleBound"
-
-# Whether the "library predates multi-stage support" warning was given. A
-# log-once flag, not state any session reads.
-_warnedLegacy = [False]
 
 
 def _Bind(function, restype, argtypes):
@@ -104,17 +114,26 @@ def _Bind(function, restype, argtypes):
 
 def BindLibrary(lib):
     """
-    Give every per-stage symbol `lib` exports its ctypes signature, once.
+    Give every scoped symbol `lib` exports its ctypes signature, once.
 
-    Idempotent and tolerant: a symbol the library does not export is
-    skipped, and a double that is not a CDLL is left alone.
+    Idempotent and tolerant of OPTIONAL features: a scoped symbol the
+    library does not export is skipped, and a double that is not a CDLL
+    is left alone. `lib` must export the required scoped entry points
+    (_REQUIRED); one that does not raises AttributeError naming what is
+    missing, so an unsupported library is reported at load rather than
+    silently routed to another stage's context.
     """
-    if lib is None or getattr(lib, _BOUND_MARK, False):
+    if lib is None:
+        return lib
+    missing = [name for name in _REQUIRED
+               if getattr(lib, _PREFIX + name, None) is None]
+    if missing:
+        raise AttributeError(
+            "rigExecImaging lacks the required stage-scoped entry "
+            "points: " + ", ".join(_PREFIX + name for name in missing))
+    if getattr(lib, _BOUND_MARK, False):
         return lib
     for name, (restype, argtypes) in _PER_STAGE.items():
-        legacy = getattr(lib, _PREFIX + name, None)
-        if legacy is not None:
-            _Bind(legacy, restype, argtypes)
         scoped = getattr(lib, _PREFIX + name + _SUFFIX, None)
         if scoped is not None:
             _Bind(scoped, restype, [_ll] + list(argtypes))
@@ -127,21 +146,6 @@ def BindLibrary(lib):
     except Exception:
         pass
     return lib
-
-
-def SupportsMultiStage(lib):
-    """Whether `lib` keeps one imaging context per stage."""
-    return lib is not None and getattr(lib, _MULTI_STAGE_PROBE,
-                                       None) is not None
-
-
-def _WarnLegacyOnce():
-    if _warnedLegacy[0]:
-        return
-    _warnedLegacy[0] = True
-    Tf.Warn("rigExecUsdview: rigExecImaging predates multi-stage support "
-            "(no RigExecImaging_*ForStage entry points); RigExec evaluates "
-            "one stage per process, the most recently activated.")
 
 
 def StageCacheId(stage, insert=False):
@@ -167,19 +171,16 @@ def StageCacheId(stage, insert=False):
 
 
 class _Scoped(object):
-    """A per-stage entry point with the legacy call signature."""
+    """A scoped entry point called with this handle's cache id in front."""
 
-    __slots__ = ("_handle", "_function", "_scoped")
+    __slots__ = ("_handle", "_function")
 
-    def __init__(self, handle, function, scoped):
+    def __init__(self, handle, function):
         self._handle = handle
         self._function = function
-        self._scoped = scoped
 
     def __call__(self, *args):
-        if self._scoped:
-            return self._function(self._handle.CacheId(), *args)
-        return self._function(*args)
+        return self._function(self._handle.CacheId(), *args)
 
 
 class ImagingHandle(object):
@@ -187,10 +188,10 @@ class ImagingHandle(object):
     One stage's view of rigExecImaging.
 
     `lib` is the loaded library (or a test double carrying the same
-    symbols); `stage` the session's UsdStage. With `insert`, the stage is
-    put in UsdUtils.StageCache if it is not there yet (see StageCacheId);
-    without, a stage that is not cached has id -1 until someone caches it,
-    and the id is looked up again on the next call.
+    scoped symbols); `stage` the session's UsdStage. With `insert`, the
+    stage is put in UsdUtils.StageCache if it is not there yet (see
+    StageCacheId); without, a stage that is not cached has id -1 until
+    someone caches it, and the id is looked up again on the next call.
     """
 
     def __init__(self, lib, stage, insert=False):
@@ -198,16 +199,12 @@ class ImagingHandle(object):
         self._stage = stage
         self._insert = bool(insert)
         self._cacheId = StageCacheId(stage, self._insert)
-        self._multiStage = SupportsMultiStage(lib)
-        if lib is not None and not self._multiStage:
-            _WarnLegacyOnce()
 
     def __repr__(self):
-        return "<ImagingHandle stage=%s id=%d %s>" % (
+        return "<ImagingHandle stage=%s id=%d>" % (
             getattr(self._stage, "GetRootLayer", lambda: None)()
             if self._stage else None,
-            self._cacheId,
-            "per-stage" if self._multiStage else "legacy")
+            self._cacheId)
 
     # -- identity --------------------------------------------------------
 
@@ -219,10 +216,6 @@ class ImagingHandle(object):
     def stage(self):
         return self._stage
 
-    def IsMultiStage(self):
-        """Whether calls reach this stage's own context (else the current)."""
-        return self._multiStage
-
     def CacheId(self):
         """The stage's cache id, looked up again while it is still -1."""
         if self._cacheId < 0 and self._stage:
@@ -232,18 +225,13 @@ class ImagingHandle(object):
     # -- dispatch --------------------------------------------------------
 
     def _Entry(self, name):
-        """The callable for per-stage `name`, legacy signature; raises
-        AttributeError like a CDLL when neither spelling is exported."""
+        """The callable for per-stage `name`, legacy call signature;
+        raises AttributeError like a CDLL when the scoped spelling is not
+        exported."""
         lib = self._lib
         if lib is None:
-            raise AttributeError(_PREFIX + name)
-        scoped = getattr(lib, _PREFIX + name + _SUFFIX, None)
-        if scoped is not None:
-            return _Scoped(self, scoped, True)
-        legacy = getattr(lib, _PREFIX + name, None)
-        if legacy is None:
-            raise AttributeError(_PREFIX + name)
-        return _Scoped(self, legacy, False)
+            raise AttributeError(_PREFIX + name + _SUFFIX)
+        return _Scoped(self, getattr(lib, _PREFIX + name + _SUFFIX))
 
     def Has(self, name):
         """Whether `name` (legacy spelling, prefix optional) is callable."""
@@ -258,11 +246,11 @@ class ImagingHandle(object):
             return False
 
     def __getattr__(self, name):
-        # Only reached for names the class does not define: the legacy
-        # C spellings, so a handle stands in for the library wherever a
-        # caller looks symbols up by name (cacheStripModel does). Entry
-        # points that already take the cache id pass through with
-        # their own (identical) signature.
+        # Only reached for names the class does not define: the plain C
+        # spellings, which this class ADAPTS -- each resolves to the
+        # scoped symbol with this handle's cache id in front, never to a
+        # library symbol of that name. Entry points that already take the
+        # cache id pass through with their own (identical) signature.
         if name.startswith(_PREFIX):
             short = name[len(_PREFIX):]
             if short in _PER_STAGE:
@@ -274,24 +262,25 @@ class ImagingHandle(object):
     # -- activation --------------------------------------------------------
 
     def Activate(self, rigPath=b"", frame=0.0):
-        """RigExecImaging_Activate on this stage. 0 on success."""
+        """RigExecImaging_ActivateForStage on this stage. 0 on success."""
         if isinstance(rigPath, str):
             rigPath = rigPath.encode("utf-8")
-        activate = getattr(self._lib, _PREFIX + "Activate")
+        activate = getattr(self._lib, _PREFIX + "ActivateForStage")
         return activate(self.CacheId(), rigPath, frame)
 
     def Deactivate(self):
-        """Stop evaluating THIS stage (legacy library: the current one)."""
+        """Stop evaluating THIS stage and no other."""
         return self._Entry("Deactivate")()
 
     def IsActive(self):
-        """True/False from a per-stage library, None when it cannot say."""
+        """True/False from the scoped activity probe, None when the
+        library cannot say."""
         probe = getattr(self._lib, _PREFIX + "IsActiveForStage", None)
         if probe is None:
             return None
         return bool(probe(self.CacheId()))
 
-    # -- the per-stage surface, by its legacy names --------------------------
+    # -- the per-stage surface, by its adapter names -------------------------
 
     def SetTime(self, frame):
         return self._Entry("SetTime")(frame)
@@ -370,6 +359,6 @@ class ImagingHandle(object):
 
 
 def ContextCount(lib):
-    """RigExecImaging_ContextCount(), or None from an older library."""
+    """RigExecImaging_ContextCount(), the directory's context count."""
     count = getattr(lib, _PREFIX + "ContextCount", None)
     return None if count is None else int(count())

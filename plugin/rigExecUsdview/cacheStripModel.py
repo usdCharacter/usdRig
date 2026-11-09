@@ -8,8 +8,8 @@
 # different answers.
 #
 # State ints mirror the C API exactly (registry.h:
-# RigExecImaging_GetFrameStates writes 0 uncached, 1 warming, 2 cached,
-# 3 dirty). The palette is the coloring, defined once here;
+# RigExecImaging_GetFrameStatesForStage writes 0 uncached, 1 warming,
+# 2 cached, 3 dirty). The palette is the coloring, defined once here;
 # the Stream 3 view reuses it rather than naming its own colors.
 #
 import ctypes
@@ -152,12 +152,15 @@ def WarmRangeDrifted(cachedFrames, startTime, endTime):
 def FetchFrameStates(lib, rigPath, frames):
     """Batched per-frame states over `frames`, in order.
 
-    One C call per strip repaint, no sampling on the query path. `lib`
-    is the loaded rigExecImaging library (or anything carrying
-    RigExecImaging_GetFrameStates with the C signature -- the tests pass
-    a double). Returns the state ints, or None when the binding is
-    missing, the rig is unknown, or the query fails: the caller degrades
-    to frame-change-only warming rather than guessing at colors.
+    One imaging call per strip repaint, no sampling on the query path.
+    `lib` is this session's stage-bound imaging handle (an
+    imagingHandle.ImagingHandle, or a test double carrying the same
+    RigExecImaging_GetFrameStates name with the C signature): the handle
+    adapts that name to GetFrameStatesForStage with its stage's cache id,
+    so the query can only reach THAT stage. Returns the state ints, or
+    None when the binding is missing, the rig is unknown, or the query
+    fails: the caller degrades to frame-change-only warming rather than
+    guessing at colors.
     """
     frames = list(frames)
     if not frames:
@@ -181,7 +184,8 @@ def PushWarmRange(lib, rigPath, frames):
     The full-range cursor visits these closest-first from the playhead
     across idle triggers instead of the default playhead-relative sweep.
     An empty list warms nothing. True on success, False when the binding
-    is missing or the rig is unknown.
+    is missing or the rig unknown. `lib` is the stage-bound handle of
+    FetchFrameStates.
     """
     frames = list(frames)
     if isinstance(rigPath, str):
@@ -200,9 +204,10 @@ def FetchCompletedCount(lib):
     """Lifetime warming completions, the strip's repaint gate.
 
     A poll whose counter is still, with unchanged states and playhead,
-    skips the repaint. None when the binding is missing (an older
-    library): the caller degrades to repainting on states alone rather
-    than skipping repaints it cannot prove needless.
+    skips the repaint. None when the binding is missing (a library
+    without the feature): the caller degrades to repainting on states
+    alone rather than skipping repaints it cannot prove needless. `lib`
+    is the stage-bound handle of FetchFrameStates.
     """
     entry = getattr(lib, "RigExecImaging_GetWarmingCompletedCount", None)
     if entry is None:
@@ -214,7 +219,8 @@ def ClearFrameCache(lib, rigPath):
     """Drops one rig's cached frames (the strip's clear action).
 
     True on success, False when the binding is missing. Unknown rigs
-    answer success: nothing to drop is still dropped.
+    answer success: nothing to drop is still dropped. `lib` is the
+    stage-bound handle of FetchFrameStates.
     """
     if isinstance(rigPath, str):
         rigPath = rigPath.encode("utf-8")

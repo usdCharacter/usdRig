@@ -19,6 +19,23 @@ def _CacheId(stage):
     return stageId.ToLongInt() if stageId.IsValid() else -1
 
 
+class _ScopedCore:
+    """The required stage-scoped entry points every imaging double carries.
+
+    An imagingHandle over a library missing one of these fails at load, so
+    a container double that skips the call still has to answer it.
+    """
+
+    def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
+        return 0
+
+    def RigExecImaging_SetTimeForStage(self, cacheId, frame):
+        return 0
+
+    def RigExecImaging_DeactivateForStage(self, cacheId):
+        pass
+
+
 def _Observer():
     """A HydraObserver on the app's own TERMINAL scene index."""
     from pxr.Usdviewq._usdviewq import HydraObserver
@@ -52,7 +69,7 @@ def _AssertActivationFailureKeepsStageAlive():
     stage = Usd.Stage.CreateInMemory()
     stage.DefinePrim("/Rig", "RigExecRoot")
 
-    class _FailureLibrary:
+    class _FailureLibrary(_ScopedCore):
         def __init__(self):
             self.activations = 0
             self.activationCacheIds = []
@@ -61,7 +78,7 @@ def _AssertActivationFailureKeepsStageAlive():
         def RigExecImaging_DeactivateForStage(self, cacheId):
             self.deactivationCacheIds.append(cacheId)
 
-        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+        def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
             self.activations += 1
             self.activationCacheIds.append(cacheId)
             return 3
@@ -112,7 +129,7 @@ def _AssertLiveRootAutoActivation():
     # Match usdview's initially unmapped, 24 fps session edit target.
     stage.SetEditTarget(stage.GetSessionLayer())
 
-    class _SuccessLibrary:
+    class _SuccessLibrary(_ScopedCore):
         def __init__(self):
             self.activations = 0
             self.activationCacheIds = []
@@ -123,7 +140,7 @@ def _AssertLiveRootAutoActivation():
             self.deactivations += 1
             self.deactivationCacheIds.append(cacheId)
 
-        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+        def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
             self.activations += 1
             self.activationCacheIds.append(cacheId)
             return 0
@@ -202,7 +219,7 @@ def _AssertWarmingFlushOnRelease():
     """A pending edit-commit flushes at the held playhead, once per burst."""
     from rigExecUsdview import RigExecUsdviewContainer
 
-    class _CommitLibrary:
+    class _CommitLibrary(_ScopedCore):
         def __init__(self):
             self.commits = 0
             self.commitCacheIds = []
@@ -275,7 +292,7 @@ def _AssertWarmingCommitDeferred():
             "the commit delay is not positive: the sampling burst runs "
             "inside the gesture again")
 
-    class _CommitLibrary:
+    class _CommitLibrary(_ScopedCore):
         def __init__(self):
             self.commits = 0
             self.commitCacheIds = []
@@ -356,7 +373,7 @@ def _AssertWarmRangeRepushOnRangeChange():
     UsdUtils.StageCache.Get().Insert(stage)
     cacheId = _CacheId(stage)
 
-    class _WarmLibrary:
+    class _WarmLibrary(_ScopedCore):
         def __init__(self):
             self.warmCalls = []
             self.stateCacheIds = []
@@ -499,7 +516,7 @@ def _AssertFrameTickYieldsToTickingDriver():
     from pxr.Usdviewq.qt import QtCore
     from rigExecUsdview import RigExecUsdviewContainer
 
-    class _SweepLibrary:
+    class _SweepLibrary(_ScopedCore):
         def __init__(self):
             self.setTimes = 0
             self.idles = 0

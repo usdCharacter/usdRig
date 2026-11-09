@@ -2756,8 +2756,8 @@ class VolumeWeightPanel(QtWidgets.QWidget):
         if not available:
             self._overlayStatusLabel.setText(
                 "rigExecImaging does not export "
-                "RigExecImaging_SetWeightOverlay -- rebuild the imaging "
-                "library to enable the overlay.")
+                "RigExecImaging_SetWeightOverlayForStage -- rebuild the "
+                "imaging library to enable the overlay.")
         elif not hasTarget:
             self._overlayStatusLabel.setText(
                 "No weight objects on this stage yet. Create one above.")
@@ -2783,7 +2783,8 @@ class VolumeWeightPanel(QtWidgets.QWidget):
             self._setWeightOverlay(path)
             self._lastOverlay = key
         except Exception as err:
-            Tf.Warn("RigExecImaging_SetWeightOverlay failed: %s" % err)
+            Tf.Warn("RigExecImaging_SetWeightOverlayForStage failed: %s"
+                    % err)
             return
         # The scene index change does not itself schedule a repaint.
         self._usdviewApi.UpdateViewport()

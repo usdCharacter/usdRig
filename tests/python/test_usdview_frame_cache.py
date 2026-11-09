@@ -34,9 +34,26 @@ class _Library:
         self.states = {}
         self.stateQueries = 0
         self.cacheIds = set()
+        self.activations = 0
+        self.setTimes = 0
+        self.deactivations = 0
 
     def _note(self, cacheId):
         self.cacheIds.add(cacheId)
+
+    def RigExecImaging_ActivateForStage(self, cacheId, rig, frame):
+        self._note(cacheId)
+        self.activations += 1
+        return 0
+
+    def RigExecImaging_SetTimeForStage(self, cacheId, frame):
+        self._note(cacheId)
+        self.setTimes += 1
+        return 0
+
+    def RigExecImaging_DeactivateForStage(self, cacheId):
+        self._note(cacheId)
+        self.deactivations += 1
 
     def RigExecImaging_WarmRangeForStage(self, cacheId, rig, frames, count):
         self._note(cacheId)

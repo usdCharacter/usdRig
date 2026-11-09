@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 """
 Headless test for plugin/rigExecUsdview/imagingHandle.py and the RigExec
-container's use of it: every per-stage call reaches THIS session's stage.
+container's use of it: every imaging call names THIS session's stage.
 
-rigExecImaging keeps one imaging context per UsdStage and exports every
-per-stage entry point twice (docs/multistage-imaging.md): the legacy
-spelling, which drives the CURRENT context, and `...ForStage(stageCacheId,
-...)`, which drives that stage's own. The handle picks the ForStage
-spelling when the library has it and falls back to the legacy one when it
-does not. The libraries are doubles here, so this runs with no
-rigExecImaging, no display and no usdview.
+rigExecImaging's C surface is stage-scoped (docs/multistage-imaging.md):
+every per-stage entry point is RigExecImaging_<Name>ForStage(stageCacheId,
+...), and the handle's plain C names -- handle.SetTime(frame),
+getattr(handle, "RigExecImaging_SetTime") -- are handle ADAPTERS that
+dispatch only to the scoped symbol with the handle's cache id prepended
+exactly once. There is no fallback to a stage-less spelling: a library
+missing a required scoped entry point is refused at load, and no legacy
+symbol is ever called. The libraries are doubles here, so this runs with
+no rigExecImaging, no display and no usdview.
 
 Two stages opened from the SAME layer -- identical prim paths -- are the
 case that matters: a call keyed by path alone could not tell them apart.
@@ -25,6 +27,7 @@ rigexec_test_env.SetupPluginTest()
 
 from pxr import Sdf, Usd, UsdUtils  # noqa: E402
 
+import rigExecUsdview  # noqa: E402
 import imagingHandle  # noqa: E402
 
 
@@ -33,56 +36,34 @@ def _Check(condition, message):
         raise AssertionError(message)
 
 
-class _LegacyLibrary(object):
-    """A library from before per-stage contexts: legacy spellings only."""
-
-    def __init__(self):
-        self.calls = []
-
-    def RigExecImaging_Activate(self, cacheId, rigPath, frame):
-        self.calls.append(("Activate", cacheId, rigPath, frame))
-        return 0
-
-    def RigExecImaging_SetTime(self, frame):
-        self.calls.append(("SetTime", frame))
-        return 0
-
-    def RigExecImaging_OnIdle(self):
-        self.calls.append(("OnIdle",))
-        return 0
-
-    def RigExecImaging_OnEditCommitted(self):
-        self.calls.append(("OnEditCommitted",))
-        return 0
-
-    def RigExecImaging_Deactivate(self):
-        self.calls.append(("Deactivate",))
-
-    def RigExecImaging_GetGeneration(self):
-        self.calls.append(("GetGeneration",))
-        return 7
-
-    def RigExecImaging_WarmRange(self, rigPath, frames, count):
-        self.calls.append(("WarmRange", bytes(rigPath), count))
-        return 0
+def _Raises(action, message):
+    try:
+        action()
+    except AttributeError:
+        return
+    raise AssertionError(message)
 
 
-class _MultiStageLibrary(_LegacyLibrary):
-    """A per-stage library: the legacy spellings AND the ForStage ones.
+class _ScopedLibrary(object):
+    """A stage-scoped library: every per-stage entry point names its
+    stage, and every call records the cache id it was given, so the test
+    can say which stage's context a call reached.
 
-    Every ForStage call records the cache id it was given, so the test can
-    say which stage's context a call reached.
+    Optional features (the preview, the guide bounds, the repaint-gate
+    counters) are absent on purpose: the handle must report THEM absent,
+    never route them to some other stage. ContextCount is present to
+    prove the directory query still passes through.
     """
 
     def __init__(self):
-        super(_MultiStageLibrary, self).__init__()
+        self.calls = []
         self.generations = {}
         self.active = set()
 
-    def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+    def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
+        self.calls.append(("ActivateForStage", cacheId, rigPath, frame))
         self.active.add(cacheId)
-        return super(_MultiStageLibrary, self).RigExecImaging_Activate(
-            cacheId, rigPath, frame)
+        return 0
 
     def RigExecImaging_SetTimeForStage(self, cacheId, frame):
         self.calls.append(("SetTimeForStage", cacheId, frame))
@@ -113,8 +94,69 @@ class _MultiStageLibrary(_LegacyLibrary):
             statesOut[i] = 2
         return count
 
+    def RigExecImaging_WarmRangeForStage(self, cacheId, rigPath, frames,
+                                         count):
+        self.calls.append(("WarmRangeForStage", cacheId, bytes(rigPath),
+                           count))
+        return 0
+
     def RigExecImaging_IsActiveForStage(self, cacheId):
         return int(cacheId in self.active)
+
+    def RigExecImaging_ContextCount(self):
+        return len(self.active)
+
+
+class _LegacyTrapLibrary(object):
+    """A library from before per-stage contexts: legacy spellings only.
+
+    Every symbol is a tripwire. The library is UNSUPPORTED: BindLibrary
+    and ImagingHandle must refuse it, so no tripwire may ever fire.
+    """
+
+    def __init__(self):
+        self.legacyCalls = []
+
+    def _hit(self, name, *args):
+        self.legacyCalls.append((name,) + args)
+        raise AssertionError("a legacy imaging symbol was called: "
+                             "RigExecImaging_" + name)
+
+    def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+        self._hit("Activate", cacheId, rigPath, frame)
+        return 0
+
+    def RigExecImaging_SetTime(self, frame):
+        self._hit("SetTime", frame)
+        return 0
+
+    def RigExecImaging_OnIdle(self):
+        self._hit("OnIdle")
+        return 0
+
+    def RigExecImaging_OnEditCommitted(self):
+        self._hit("OnEditCommitted")
+        return 0
+
+    def RigExecImaging_Deactivate(self):
+        self._hit("Deactivate")
+
+    def RigExecImaging_GetGeneration(self):
+        self._hit("GetGeneration")
+        return 0
+
+    def RigExecImaging_WarmRange(self, rigPath, frames, count):
+        self._hit("WarmRange", rigPath, frames, count)
+        return 0
+
+
+class _HalfScopedLibrary(_ScopedLibrary):
+    """The scoped surface except the frame change: also unsupported.
+
+    A library that cannot name its stage for SetTime could evaluate
+    another session's stage the moment the timeline moves.
+    """
+    RigExecImaging_SetTimeForStage = None
 
 
 def _TwinStages():
@@ -134,20 +176,26 @@ def _Erase(*stages):
 
 
 def TestForStageRouting():
-    """Each handle reaches its own stage's context, by cache id."""
-    lib = _MultiStageLibrary()
+    """Each handle reaches its own stage's context, by cache id -- in
+    both activation orders."""
+    lib = _ScopedLibrary()
     first, second = _TwinStages()
     try:
         a = imagingHandle.ImagingHandle(lib, first, insert=True)
         b = imagingHandle.ImagingHandle(lib, second, insert=True)
-        _Check(a.IsMultiStage() and b.IsMultiStage(),
-               "a library with DeactivateForStage is per-stage")
         _Check(a.CacheId() >= 0 and b.CacheId() >= 0,
                "insert=True caches both stages")
         _Check(a.CacheId() != b.CacheId(),
                "two stages over one layer are two cache entries")
         _Check(first.GetPrimAtPath("/Rig") and second.GetPrimAtPath("/Rig"),
                "and they do share the prim path")
+
+        # Order one: A activates first.
+        _Check(a.Activate(b"", 1.0) == 0 and b.Activate("", 1.0) == 0,
+               "both stages activate")
+        _Check(("ActivateForStage", a.CacheId(), b"", 1.0) in lib.calls and
+               ("ActivateForStage", b.CacheId(), b"", 1.0) in lib.calls,
+               "activation named each stage: %r" % lib.calls)
 
         a.SetTime(3.0)
         a.SetTime(4.0)
@@ -156,13 +204,18 @@ def TestForStageRouting():
                "A's frame went to A's context: %r" % lib.calls)
         _Check(("SetTimeForStage", b.CacheId(), 1.0) in lib.calls,
                "B's frame went to B's context")
-        _Check(not [c for c in lib.calls if c[0] == "SetTime"],
-               "nothing reached the legacy (current-context) SetTime")
         _Check(a.GetGeneration() == 2 and b.GetGeneration() == 1,
                "each stage's generation moved with its own frames only")
 
-        # The legacy names, looked up by getattr the way cacheStripModel
-        # looks them up on the library.
+        # Order two: B activates again first, then A; both stay separate.
+        b.SetTime(2.0)
+        a.SetTime(5.0)
+        _Check(a.GetGeneration() == 3 and b.GetGeneration() == 2,
+               "reversing the order did not merge the stages")
+
+        # The alias names, looked up by getattr the way cacheStripModel
+        # looks them up on what it is handed: adapters, cache id in front
+        # exactly once.
         entry = getattr(b, "RigExecImaging_GetFrameStates", None)
         _Check(entry is not None, "the handle answers to the C spelling")
         frames = (ctypes.c_double * 3)(1.0, 2.0, 3.0)
@@ -171,7 +224,11 @@ def TestForStageRouting():
                "the C-spelled call returns the library's answer")
         _Check(lib.calls[-1] == ("GetFrameStatesForStage", b.CacheId(),
                                  b"/Rig", 3),
-               "and was routed to B: %r" % (lib.calls[-1],))
+               "and was routed to B with B's id, once: %r" % (lib.calls[-1],))
+        setTime = getattr(b, "RigExecImaging_SetTime")
+        setTime(7.0)
+        _Check(lib.calls[-1] == ("SetTimeForStage", b.CacheId(), 7.0),
+               "the SetTime adapter prepends the cache id exactly once")
 
         a.OnEditCommitted()
         a.OnIdle()
@@ -179,76 +236,66 @@ def TestForStageRouting():
                                   ("OnIdleForStage", a.CacheId())],
                "warming triggers reach A only")
 
+        # Warming: present optional feature, reached by its legacy name.
+        warmFrames = (ctypes.c_double * 2)(1.0, 2.0)
+        _Check(a.WarmRange(b"/Rig", warmFrames, 2) == 0, "warm range")
+        _Check(lib.calls[-1] == ("WarmRangeForStage", a.CacheId(), b"/Rig", 2),
+               "the warm range names A")
+
         # Activation already takes the id; deactivation is per stage.
-        _Check(a.Activate(b"", 1.0) == 0 and b.Activate("", 1.0) == 0,
-               "both stages activate")
         _Check(a.IsActive() and b.IsActive(), "both are active at once")
         a.Deactivate()
         _Check(lib.calls[-1] == ("DeactivateForStage", a.CacheId()),
                "A's deactivation names A")
         _Check(not a.IsActive() and b.IsActive(),
                "deactivating A leaves B active")
-        _Check(not [c for c in lib.calls if c[0] == "Deactivate"],
-               "the legacy global Deactivate was never called")
+
+        # Every recorded call is a scoped one: no stage-less spelling ran.
+        _Check(all(name.endswith("ForStage")
+                   for name, *_rest in lib.calls),
+               "a stage-less imaging symbol was called: %r" % lib.calls)
+
+        # The id-taking entry points keep their library signatures.
+        count = imagingHandle.ContextCount(lib)
+        _Check(count == len(lib.active),
+               "ContextCount stays a directory query")
+        _Check(getattr(b, "RigExecImaging_ActivateForStage") is not None,
+               "the scoped activation name passes through getattr")
     finally:
         _Erase(first, second)
-    print("  ok: ForStage routing keeps two same-path stages apart")
-
-
-def TestLegacyFallback():
-    """An older library gets exactly the old single-stage calls."""
-    lib = _LegacyLibrary()
-    first, _second = _TwinStages()
-    try:
-        handle = imagingHandle.ImagingHandle(lib, first, insert=True)
-        _Check(not handle.IsMultiStage(), "no ForStage symbols: legacy")
-        handle.SetTime(5.0)
-        handle.OnIdle()
-        handle.Deactivate()
-        _Check(handle.GetGeneration() == 7, "legacy generation read")
-        _Check(lib.calls == [("SetTime", 5.0), ("OnIdle",), ("Deactivate",),
-                             ("GetGeneration",)],
-               "legacy symbols, legacy arguments: %r" % lib.calls)
-        _Check(handle.IsActive() is None,
-               "a legacy library cannot say whether ONE stage is active")
-        # The id-taking entry point keeps its own signature either way.
-        _Check(handle.Activate("", 2.0) == 0, "activation")
-        _Check(lib.calls[-1] == ("Activate", handle.CacheId(), b"", 2.0),
-               "Activate carries the stage's cache id")
-    finally:
-        _Erase(first)
-    print("  ok: legacy library falls back to the legacy symbols")
+    print("  ok: ForStage routing keeps two same-path stages apart "
+          "in both orders")
 
 
 def TestMissingEntryPoints():
-    """Neither spelling exported: AttributeError, like a CDLL."""
-    lib = _LegacyLibrary()
+    """No scoped export: AttributeError, like a CDLL, and Has() says so."""
+    lib = _ScopedLibrary()
     handle = imagingHandle.ImagingHandle(lib, None)
     _Check(getattr(handle, "RigExecImaging_BeginPreview", None) is None,
            "getattr with a default answers None for a missing entry point")
     _Check(not handle.Has("BeginPreview"), "Has() says so too")
     _Check(handle.Has("SetTime") and handle.Has("RigExecImaging_WarmRange"),
            "Has() accepts both spellings")
-    try:
-        handle.EndPreview()
-    except AttributeError:
-        pass
-    else:
-        raise AssertionError("a missing entry point must raise AttributeError")
-    try:
-        handle.RigExecImaging_NotAThing
-    except AttributeError:
-        pass
-    else:
-        raise AssertionError("an unknown name must raise AttributeError")
+    _Check(not handle.Has("Activate"),
+           "the stage-less Activate name is not an entry point")
+    _Check(handle.Has("ActivateForStage"),
+           "activation is bound as ActivateForStage")
+    _Check(getattr(handle, "RigExecImaging_Activate", None) is None,
+           "getattr reports the legacy Activate name absent")
+    _Raises(handle.EndPreview,
+            "a missing entry point must raise AttributeError")
+    _Raises(lambda: handle.RigExecImaging_NotAThing,
+            "an unknown name must raise AttributeError")
     _Check(imagingHandle.ImagingHandle(None, None).lib is None,
            "a handle over no library is inert")
+    _Check(imagingHandle.ContextCount(None) is None,
+           "no library, no context count")
     print("  ok: missing entry points raise AttributeError")
 
 
 def TestLazyCacheId():
     """insert=False waits for someone else to cache the stage."""
-    lib = _MultiStageLibrary()
+    lib = _ScopedLibrary()
     stage, _other = _TwinStages()
     try:
         handle = imagingHandle.ImagingHandle(lib, stage)
@@ -266,11 +313,36 @@ def TestLazyCacheId():
     print("  ok: cache id resolves lazily without inserting")
 
 
+def TestLegacyLibraryRefused():
+    """A pre-scoping library is refused, and none of its symbols runs.
+
+    BindLibrary and every ImagingHandle over it raise AttributeError
+    naming the missing scoped entry points. The trap library raises at
+    the first legacy call; reaching this test's final assertions at all
+    means no tripwire fired."""
+    trap = _LegacyTrapLibrary()
+    stage, _other = _TwinStages()
+    try:
+        _Raises(lambda: imagingHandle.BindLibrary(trap),
+                "a legacy-only library must be refused at BindLibrary")
+        _Raises(lambda: imagingHandle.ImagingHandle(trap, stage),
+                "no handle may exist over a legacy-only library")
+        half = _HalfScopedLibrary()
+        _Raises(lambda: imagingHandle.BindLibrary(half),
+                "a library missing a required scoped symbol is refused")
+        _Raises(lambda: imagingHandle.ImagingHandle(half, stage),
+                "and no handle may exist over it either")
+        _Check(not trap.legacyCalls,
+               "a legacy imaging symbol ran: %r" % trap.legacyCalls)
+    finally:
+        _Erase(stage)
+    print("  ok: a library without the scoped surface is refused, "
+          "never used")
+
+
 def _BareContainer(lib, stage):
     """A RigExec container with only what activation reads, as the
     testusdview harness builds them (testUsdviewRigExec.py)."""
-    from rigExecUsdview import RigExecUsdviewContainer
-
     dataModel = type("DataModel", (), {})()
     dataModel.stage = stage
     dataModel.currentFrame = Usd.TimeCode(1)
@@ -279,9 +351,11 @@ def _BareContainer(lib, stage):
     api = type("UsdviewApi", (), {})()
     api.dataModel = dataModel
 
-    container = RigExecUsdviewContainer.__new__(RigExecUsdviewContainer)
+    container = rigExecUsdview.RigExecUsdviewContainer.__new__(
+        rigExecUsdview.RigExecUsdviewContainer)
     container._api = api
     container._lib = lib
+    container._imaging = None
     container._active = False
     container._rigPaths = []
     container._cachedStage = None
@@ -292,8 +366,8 @@ def _BareContainer(lib, stage):
 
 
 def TestContainersNeverTouchEachOther():
-    """Two sessions' containers in one process, one per-stage library."""
-    lib = _MultiStageLibrary()
+    """Two sessions' containers in one process, one scoped-only library."""
+    lib = _ScopedLibrary()
     first, second = _TwinStages()
     a = _BareContainer(lib, first)
     b = _BareContainer(lib, second)
@@ -305,8 +379,9 @@ def TestContainersNeverTouchEachOther():
         _Check(a._active and b._active, "both sessions activated")
         _Check(idA != idB and lib.active == {idA, idB},
                "both stages active at once: %r" % lib.active)
-        _Check(not [c for c in lib.calls if c[0] == "Deactivate"],
-               "no container ran the global Deactivate")
+        _Check((("ActivateForStage", idA, b"", 1.0) in lib.calls) and
+               (("ActivateForStage", idB, b"", 1.0) in lib.calls),
+               "each container activated its own stage: %r" % lib.calls)
 
         # Frame changes drive only their own stage.
         a._OnFrameChanged(3.0)
@@ -317,60 +392,82 @@ def TestContainersNeverTouchEachOther():
         _Check(lib.generations == {idA: 1, idB: 1},
                "one publication each: %r" % lib.generations)
 
-        # Re-activating A deactivates A only.
+        # Re-activating B deactivates B only -- the other activation order.
         del lib.calls[:]
-        a._ActivateCurrentStage()
-        _Check(("DeactivateForStage", idA) in lib.calls,
-               "A's reactivation deactivated A first")
-        _Check(("DeactivateForStage", idB) not in lib.calls,
-               "and never B")
-        _Check(idB in lib.active, "B stayed active throughout")
+        b._ActivateCurrentStage()
+        _Check(("DeactivateForStage", idB) in lib.calls,
+               "B's reactivation deactivated B first")
+        _Check(("DeactivateForStage", idA) not in lib.calls,
+               "and never A")
+        _Check(idA in lib.active, "A stayed active throughout")
 
-        # A's shutdown leaves B evaluating.
-        a._Shutdown()
-        _Check(("DeactivateForStage", idA) in lib.calls and
-               ("DeactivateForStage", idB) not in lib.calls,
-               "A's shutdown deactivated A and not B")
-        _Check(lib.active == {idB}, "B is still active: %r" % lib.active)
-        b._OnFrameChanged(2.0)
-        _Check(lib.generations[idB] == 2, "and B still evaluates")
+        # B's shutdown leaves A evaluating.
+        b._Shutdown()
+        _Check(("DeactivateForStage", idB) in lib.calls and
+               ("DeactivateForStage", idA) not in lib.calls,
+               "B's shutdown deactivated B and not A")
+        _Check(lib.active == {idA}, "A is still active: %r" % lib.active)
+        a._OnFrameChanged(2.0)
+        _Check(lib.generations[idA] == 2, "and A still evaluates")
 
         # A container that never activated deactivates nothing at all.
         idle = _BareContainer(lib, Usd.Stage.CreateInMemory())
         del lib.calls[:]
         idle._Shutdown()
-        _Check(not [c for c in lib.calls if c[0].startswith("Deactivate")],
+        _Check(not lib.calls,
                "a never-activated container deactivates nothing: %r"
                % lib.calls)
     finally:
-        b._Shutdown()
+        a._Shutdown()
         _Erase(first, second)
     print("  ok: containers of two sessions never deactivate each other")
 
 
-def TestContainerLegacyLibrary():
-    """With an older library the container behaves exactly as before."""
-    lib = _LegacyLibrary()
-    stage, _other = _TwinStages()
-    container = _BareContainer(lib, stage)
+def TestUnsupportedLibraryDegradesTheContainer():
+    """A container facing an unsupported library warns and stops.
+
+    The load path reports the refusal; the container then runs with no
+    imaging at all. It must never activate, evaluate, or deactivate
+    anything -- the trap library raises the moment any of its symbols
+    is touched."""
+    trap = _LegacyTrapLibrary()
+    stage = Usd.Stage.CreateInMemory()
+    stage.DefinePrim("/Rig", "RigExecRoot")
+    container = _BareContainer(None, stage)
+
+    load = rigExecUsdview._LoadRigExecImaging
     try:
-        container._ActivateCurrentStage()
-        _Check(lib.calls[0] == ("Deactivate",),
-               "activation starts with the global Deactivate, as before")
-        _Check(lib.calls[1][0] == "Activate", "then activates")
+        rigExecUsdview._LoadRigExecImaging = (
+            lambda: imagingHandle.BindLibrary(trap))
+        try:
+            container._OnStageReplaced()
+        except Exception as error:
+            raise AssertionError(
+                "the unsupported library raised through stage replacement "
+                "instead of degrading: %r" % error)
+        _Check(container._lib is None,
+               "the refusal left no library bound")
+        _Check(not container._active, "no activation claimed")
         container._OnFrameChanged(2.0)
-        _Check(("SetTime", 2.0) in lib.calls, "legacy SetTime per frame")
-    finally:
+        _Check(not trap.legacyCalls,
+               "the unsupported library was used anyway: %r"
+               % trap.legacyCalls)
         container._Shutdown()
+        _Check(not trap.legacyCalls,
+               "shutdown reached the unsupported library: %r"
+               % trap.legacyCalls)
+    finally:
+        rigExecUsdview._LoadRigExecImaging = load
+        container._ReleaseCachedStage()
         _Erase(stage)
-    _Check(lib.calls[-1] == ("Deactivate",), "shutdown: global Deactivate")
-    print("  ok: a legacy library keeps the single-stage behavior")
+    print("  ok: an unsupported library is reported, and the session "
+          "runs with no imaging")
 
 
 def TestFailedActivationEnablesGuides():
-    class FailedLibrary(_MultiStageLibrary):
-        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
-            self.calls.append(("Activate", cacheId, rigPath, frame))
+    class FailedLibrary(_ScopedLibrary):
+        def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
+            self.calls.append(("ActivateForStage", cacheId, rigPath, frame))
             return 3
 
     stage, other = _TwinStages()
@@ -389,11 +486,11 @@ def TestFailedActivationEnablesGuides():
 
 def main():
     TestForStageRouting()
-    TestLegacyFallback()
     TestMissingEntryPoints()
     TestLazyCacheId()
+    TestLegacyLibraryRefused()
     TestContainersNeverTouchEachOther()
-    TestContainerLegacyLibrary()
+    TestUnsupportedLibraryDegradesTheContainer()
     TestFailedActivationEnablesGuides()
     print("IMAGING_HANDLE_OK (7 groups)")
     return 0
