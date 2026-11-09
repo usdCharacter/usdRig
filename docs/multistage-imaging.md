@@ -8,7 +8,8 @@ was one process-global object: one stage, one snapshot store, one chain list,
 and one preview. Only the most recent activation evaluated, and every other
 viewport showed its rest pose.
 
-Code: `libs/rigExecImaging/registry.{h,cpp}`, `sceneIndices.{h,cpp}`,
+Code: `libs/rigExecImaging/registry.h` with the `registry*.cpp` domain
+sources, `sceneIndices.{h,cpp}`,
 `sceneIndexPlugin.cpp`, `rigAdapter.cpp`, `touchPose*.{h,cpp}`; for the usdview
 plugins, `plugin/rigExecUsdview/imagingHandle.py` and `sessionRegistry.py`
 (see "usdview plugins").

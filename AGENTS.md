@@ -112,7 +112,17 @@ starting its workflow, and keep this list current when adding or changing skills
   (set the time first). 2D artwork binds through a `RigExecSkinMover` with
   authored `rigExec:jointIndices`/`rigExec:jointWeights`, like 3D skins;
   `skeleton2dTranslation` in `libs/rigExecScene` translates the 2D
-  skeleton.
+  skeleton. The registry's coordination domains compile into five private
+  object libraries — `rigExecImagingContext` (`registryDirectory.cpp`,
+  `registryLifecycle.cpp`, `registryPublication.cpp`,
+  `registryInvalidation.cpp`, `registryUpstream.cpp`,
+  `registryDiagnostics.cpp`), `rigExecImagingFrames` (`registryWarmWork.cpp`,
+  `registryWarming.cpp`, `registryCache.cpp`, `registryFrameDemand.cpp`),
+  `rigExecImagingInteraction` (`registryPreview.cpp`),
+  `rigExecImagingQueries` (`guideBounds.cpp`, `guideExtent.cpp`) and
+  `rigExecImagingHost` (`registryCapi.cpp`) — composed into the single
+  installed `rigExecImaging` shared library: no new installed library and
+  an unchanged public contract.
 - `libs/rigExecBake`, `libs/rigExecBinary`, `libs/rigExecRuntime`: export,
   binary layout, and playback. Check version compatibility when changing records.
   `rigExecRuntime` links `rigExecBinary` and `rigExecGraph` and no OpenUSD
