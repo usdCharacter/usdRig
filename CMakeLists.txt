@@ -328,6 +328,7 @@ include(cmake/WindowsArchiveLinks.cmake)
 add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
+    libs/rigExecImaging/bridgeMotion.cpp
     libs/rigExecImaging/bridgeWarmPublication.cpp
     libs/rigExecImaging/bridgeFreshness.cpp
     libs/rigExecImaging/bridgeGuideGeometry.cpp

@@ -11,20 +11,14 @@
 #include "sceneIndices.h"
 #include "snapshotStore.h"
 
-#include "rigExec/backgroundScheduler.h"
 #include "rigExec/frameCache.h"
 #include "rigExec/frozenContext.h"
-#include "rigExec/generation.h"
 #include "rigExec/outputAffectedIndex.h"
 #include "rigExec/rigEvaluator.h"
-#include "rigExec/taskListCache.h"
 
-#include "pxr/base/gf/quatf.h"
 #include "pxr/usd/usd/notice.h"
 
-#include <atomic>
-#include <functional>
-#include <map>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -121,7 +115,10 @@ public:
     /// and publishes them under one complete generation fence. Diagnostic
     /// guides use the offset nearest zero. Preflight (capability check and offset
     /// validation) fails before any evaluation; an incomplete sample set
-    /// never publishes.
+    /// never publishes. The workflow lives in bridgeMotion.cpp over the
+    /// facade's own state; it never consults the frame cache and always
+    /// publishes diffs through the store, independent of
+    /// SetPublishesDirtied.
     PublishResult EvaluateAndPublishSamples(
         UsdTimeCode baseTime, const std::vector<float> &shutterOffsets,
         MotionBlurSupport support = MotionBlurSupport::Absent);
@@ -378,6 +375,15 @@ private:
     /// compiled rig when it moved, and the atomic snapshot swap. Shared by the hit
     /// path and the live path so the two cannot publish differently.
     void _PublishPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
+                              PublishResult *result);
+
+    /// Publishes a replacement compiled-rig binding into \p result when the
+    /// compiled rig signature moved since the last published generation:
+    /// the binding names \p snapshot's published prim set, and the
+    /// signature is recorded so the next publication re-announces only
+    /// after another recompile. Shared by the single-frame and render-
+    /// motion paths so both announce before the store swap.
+    void _AnnounceCompiledRig(const RigExecImagingSnapshot &snapshot,
                               PublishResult *result);
 
     /// Publishes the pose a cache lookup served -- a store hit or a
