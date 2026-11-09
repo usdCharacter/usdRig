@@ -316,6 +316,44 @@ to usdRig-owned code. CI's `clang-format` check uses the same pinned version;
 the formatter can be run locally before builds. A failing formatting CI check
 blocks merging alongside the other checks.
 
+### Allocation and ownership
+
+Bare `new` allocation expressions are replaced by `make_unique` for unique
+ownership or `make_shared` for actual shared ownership; `new T[]` becomes
+`make_unique<T[]>(n)`, and the TU includes `<memory>`. Do not pick
+`make_shared` to reach a constructor: keep unique ownership unique. Four
+exceptions are accepted:
+
+- Factory-only construction reaches a private constructor through a private,
+  non-aggregate, non-default-constructible passkey such as
+  `struct _FactoryTag { explicit _FactoryTag(int) {} };`, with a public
+  tagged constructor delegating to the old one. An empty aggregate tag is not
+  a gate in C++17: an outside caller writes `T({}, args...)` and
+  value-initializes the tag. Prove a gate with a compile-time probe that
+  rejects `T({}, args...)` at the constructor's real arity. A tag is still a
+  gate where the constructor stays private. Do not friend `std::make_unique`
+  or `std::make_shared`, and do not change a public factory signature or
+  owning return type to get around the gate.
+- OpenUSD intrusive objects stay `TfRefPtr`-owned: build with `make_unique`
+  and adopt exactly once with `TfCreateRefPtr(candidate.release())`. Never
+  wrap a `TfRefBase` object in `shared_ptr`, and never build a `TfRefPtr`
+  from a raw pointer through its incrementing constructor.
+- An explicit `.release()` is allowed only into a named receiving owner or a
+  documented process-lifetime contract, with a brief comment where it is not
+  obvious: the mover-registry snapshot, the structural-verify exit-hook
+  counts, the golden-suite node adopted by the intrusive list, the GPU
+  executor, and test paths that deliberately keep an evaluator open. Do not
+  replace such a lifetime with a destructing static: that brings in a
+  shutdown-order failure.
+- Generated FlatBuffers headers under `libs/rigExecBinary/generated`,
+  `thirdparty/`, and `plugin/usdNoodles/` are excluded. The C allocator
+  pairing in `libs/rigExecBinary/transport.cpp` (`std::malloc` and
+  `std::free` behind `ISzAlloc` and `FreeBuffer`) is not a `new`
+  expression; leave it alone.
+
+No checker or CI job enforces this rule; review does. Keep the exceptions
+above in sync with the code they describe.
+
 ### Build and test
 
 Use an unchanged OpenUSD 26.08 install with OpenExec, CMake 3.26+, Ninja,
