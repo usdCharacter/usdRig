@@ -331,6 +331,8 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/bridgeWarmPublication.cpp
     libs/rigExecImaging/bridgeFreshness.cpp
     libs/rigExecImaging/bridgeGuideGeometry.cpp
+    libs/rigExecImaging/bridgeGuides.cpp
+    libs/rigExecImaging/bridgeVolumeGuides.cpp
     libs/rigExecImaging/registry.cpp
     libs/rigExecImaging/playback.cpp
     libs/rigExecImaging/sceneIndexPlugin.cpp

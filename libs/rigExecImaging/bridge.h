@@ -18,7 +18,6 @@
 #include "rigExec/outputAffectedIndex.h"
 #include "rigExec/rigEvaluator.h"
 #include "rigExec/taskListCache.h"
-#include "rigExecMath/clothModel.h"
 
 #include "pxr/base/gf/quatf.h"
 #include "pxr/usd/usd/notice.h"
@@ -29,10 +28,11 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace rigExec {
+
+class RigExecBridgeGuides;
 
 /// Drives one rig's evaluation into the imaging chain.
 class RigExecImagingBridge {
@@ -43,6 +43,10 @@ public:
     /// create the store before any scene index or bridge exists).
     RigExecImagingBridge(const UsdStageRefPtr &stage, const SdfPath &rigPath,
                          std::shared_ptr<RigExecSnapshotStore> store);
+
+    /// Out-of-line: the domain components are held by unique_ptr and
+    /// destroyed where their types are complete.
+    ~RigExecImagingBridge();
 
     /// The outcome of one evaluate-and-publish step, for callers that
     /// broadcast notices to multiple filter chains.
@@ -378,16 +382,13 @@ public:
     }
 
 private:
-    /// Publishes guide payloads (joints and aggregate solvers draw as
-    /// guide geometry like OpenExec's IrJointScope) into the snapshot.
+    /// Publishes constraint-driven transforms onto the prims themselves
+    /// (base and revision travel together); guide payloads, control and
+    /// volume guides, cloth links and the weight overlay come from the
+    /// guide component (bridgeGuides.h).
     void _FillProviderXforms(const RigExecRigPose &pose,
                              RigExecImagingSnapshot *snapshot) const;
 
-    void _FillGuides(const RigExecRigPose &pose,
-                     RigExecImagingSnapshot *snapshot) const;
-
-    /// Publishes the single synthesized guide shape each control draws at
-    /// its posed frame.
     /// Records the stage identity and sample time on a generation.
     /// A complete conservative key for operations without a sampled input
     /// contract: time, stage-edit serial, compiled rig, standing overrides and
@@ -499,22 +500,6 @@ private:
     void _StampGeneration(UsdTimeCode time,
                           RigExecImagingSnapshot *snapshot) const;
 
-    void _FillControlGuides(const RigExecRigPose &pose,
-                            RigExecImagingSnapshot *snapshot) const;
-
-    /// Publishes the wire (or solid) falloffMin/falloffMax iso-surfaces
-    /// every placed influence volume draws, so a rigger can see the shape
-    /// being placed rather than infer it from the deformation.
-    void _FillVolumeGuides(const RigExecRigPose &pose,
-                           RigExecImagingSnapshot *snapshot) const;
-
-    void _FillClothConstraintGuides(const RigExecRigPose &pose,
-                                    RigExecImagingSnapshot *snapshot) const;
-    struct _ClothGuideBinding {
-        SdfPath constraint, sourceMesh, targetMesh;
-        std::vector<RigExecClothSample> source, target;
-    };
-    mutable std::vector<_ClothGuideBinding> _clothGuideBindings;
     // Authored resetXformStack prims under the driven provider roots in
     // _xformResetRoots, walked again only when the provider set or the
     // stage edit serial moves. A new bridge (each activation) starts empty.
@@ -522,12 +507,6 @@ private:
     mutable std::set<SdfPath> _xformResetPaths;
     mutable uint64_t _xformResetSerial = 0;
     mutable bool _xformResetsValid = false;
-    mutable uint64_t _clothGuideSerial = ~uint64_t(0);
-
-    /// Copies the selected weight object's resolved field onto the
-    /// geometry prim it weights.
-    void _FillWeightOverlay(const RigExecRigPose &pose,
-                            RigExecImagingSnapshot *snapshot) const;
 
     UsdStageRefPtr _stage;
     SdfPath _rigPath;
@@ -575,70 +554,20 @@ public:
     /// and leaves the rest standing. A pose edit (avars, rest channels,
     /// mover inputs) changes no guide styling and no hierarchy, so it drops
     /// nothing, so a release does not re-read every provider's styling.
-    /// The first call also tells the bridge that notices ARE being
-    /// forwarded, which retires the coarse stage-edit-serial clear in
-    /// _SyncGuideCaches; a bridge driven directly keeps that.
+    /// The first call also tells the guide component that notices ARE being
+    /// forwarded, which retires its coarse stage-edit-serial clear; a
+    /// bridge driven directly keeps that.
     void NoteGuideEdits(const UsdNotice::ObjectsChanged &notice);
 
 private:
-    /// A prim's guide styling, read once and republished every generation.
-    ///
-    /// Rebuilding the guides would otherwise re-read every one of these off
-    /// the stage on EVERY mouse move of a drag. They are authored values that
-    /// do not move while a control is dragged, so each is read once. An
-    /// attribute that CAN move between two generations -- connected (the
-    /// opacity an IK/FK switch drives) or time-varying -- is marked live and
-    /// read every generation.
-    struct _GuideInputs {
-        UsdPrim prim;
-        bool styleReady = false;
-        TfToken purpose;
-        UsdAttribute colorAttr;
-        bool colorLive = false;
-        bool hasColor = false;
-        GfVec3f color;
-        UsdAttribute opacityAttr;
-        bool opacityLive = false;
-        bool hasOpacity = false;
-        float opacity = 1.0f;
-        /// A connected opacity's static half (_ReadGuideStyle's rule), read
-        /// once: the source it reads and the invert and floor applied to
-        /// it. `opacityRuleHeld` is false where any of those can move
-        /// without a notice, and the whole rule is then read every time.
-        bool opacityRuleReady = false;
-        bool opacityRuleHeld = false;
-        UsdAttribute opacitySource;
-        bool opacityInvert = false;
-        double opacityFloor = 0.0;
-        bool controlReady = false;
-        bool controlLive = false;
-        TfToken shape;
-        TfToken drawMode;
-        /// guide:planeNormal -- X, Y or Z; Y is the historical drawing.
-        TfToken planeNormal;
-        GfVec3d scale;
-        double wireWidth = 0.05;
-        GfVec3d offset = GfVec3d(0.0);
-        /// guide:orient -- the shape's rotation in the control's frame.
-        GfQuatf orient = GfQuatf(1.0f);
-        SdfPath guideSource;
-        VtVec3fArray customPoints;
-        VtIntArray customCounts;
-        bool radiusReady = false;
-        bool radiusLive = false;
-        double radius = 1.0;
-    };
-    _GuideInputs &_GuideInputsFor(const SdfPath &path) const;
-    void _ReadGuideStyleCached(_GuideInputs &inputs, const RigExecRigPose &pose,
-                               RigExecPublishedPrim *published) const;
-    double _GuideRadius(_GuideInputs &inputs, UsdTimeCode time) const;
-    void _ReadOpacityRule(_GuideInputs &inputs, UsdTimeCode time) const;
-    float _HeldOpacity(const _GuideInputs &inputs, const RigExecRigPose &pose,
-                       float fallback) const;
-    const std::map<SdfPath, std::vector<SdfPath>> &
-    _JointChildren(const RigExecRigPose &pose) const;
-
     std::unique_ptr<RigExecRigEvaluator> _evaluator;
+    /// Guide rendering (bridgeGuides.h): authored-styling caches, the
+    /// joint-hierarchy cache, cloth guide bindings and the fills. Owned
+    /// here; built after the evaluator and destroyed before it; it holds
+    /// no store, frame cache, scheduler, registry or bridge reference and
+    /// reads the stage, serials, overrides and selection through the call
+    /// passed on each fill.
+    std::unique_ptr<RigExecBridgeGuides> _guides;
     std::shared_ptr<RigExecSnapshotStore> _store;
     RigExecBindingResolvingSceneIndexRefPtr _binding;
     RigExecResultsSceneIndexRefPtr _results;
@@ -748,19 +677,6 @@ private:
     uint64_t _sampleSupportSerial = 0;
     bool _sampleSupportValid = false;
     bool _sampleSupport = false;
-    mutable std::unordered_map<SdfPath, _GuideInputs, SdfPath::Hash>
-        _guideInputs;
-    mutable std::map<SdfPath, std::vector<SdfPath>> _jointChildren;
-    mutable size_t _jointChildrenKey = 0;
-    mutable bool _jointChildrenValid = false;
-    /// The evaluator's stage-edit serial the guide caches were filled under.
-    mutable uint64_t _guideCacheSerial = 0;
-    /// True once NoteGuideEdits has run: the registry forwards every notice
-    /// that reaches the rig, so the serial clear is no longer needed.
-    bool _guideNoticesForwarded = false;
-    /// Drops the guide caches if any stage edit has happened since they
-    /// were filled. Called at the top of every fill that reads them.
-    void _SyncGuideCaches() const;
 };
 
 } // namespace rigExec
