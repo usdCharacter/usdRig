@@ -19,6 +19,7 @@
 #include "pxr/usd/usd/stage.h"
 
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,161 +29,270 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
 
-#define CHECK_ORACLE(x) do { if (!(x)) { std::printf("FAIL %d: %s\n", __LINE__, #x); return 1; } } while (false)
+#define CHECK_ORACLE(x)                                                        \
+    do {                                                                       \
+        if (!(x)) {                                                            \
+            std::printf("FAIL %d: %s\n", __LINE__, #x);                        \
+            return 1;                                                          \
+        }                                                                      \
+    } while (false)
 
-int TestBoundFrameOracleInputs()
+int
+TestBoundFrameOracleInputs()
 {
     RigExecLoadComputations();
     const auto *handler = RigExecFindMoverHandler(TfToken("RigExecCurveMover"));
     CHECK_ORACLE(handler && handler->oracle);
-    const SdfPath mover("/Rig/Guides"), owner("/Rig/Spline"), target("/Geom.points");
+    const SdfPath mover("/Rig/Guides"), owner("/Rig/Spline"),
+        target("/Geom.points");
     const UsdTimeCode time(3);
     RigExecOracleScene scene;
     RigExecOraclePrim prim;
-    prim.exists=true;prim.path=mover;prim.type=TfToken("RigExecCurveMover");
+    prim.exists = true;
+    prim.path = mover;
+    prim.type = TfToken("RigExecCurveMover");
     RigExecOracleRelationship driver;
-    driver.exists=true;driver.targets={owner};
-    prim.relationships[TfToken("rigExec:driverFrames")]=driver;
+    driver.exists = true;
+    driver.targets = {owner};
+    prim.relationships[TfToken("rigExec:driverFrames")] = driver;
     RigExecOracleAttribute mode;
-    mode.exists=true;mode.atTime=VtValue(TfToken("emitGuidePoints"));
-    prim.attributes[TfToken("rigExec:mode")]=mode;
+    mode.exists = true;
+    mode.atTime = VtValue(TfToken("emitGuidePoints"));
+    prim.attributes[TfToken("rigExec:mode")] = mode;
     RigExecOracleFrameInput input;
-    input.owner=owner;input.time=time;input.generation=7;input.available=true;
+    input.owner = owner;
+    input.time = time;
+    input.generation = 7;
+    input.available = true;
     input.value.frames.resize(2);
-    input.value.frames[0].points={{GfVec3d(2,3,4),GfVec3d(4,3,4),
-                                  GfVec3d(2,4,4),GfVec3d(2,3,5)}};
-    input.value.frames[1].points={{GfVec3d(10,8,0),GfVec3d(11,8,0),
-                                  GfVec3d(10,10,0),GfVec3d(10,8,1)}};
-    input.value.rests={{{GfVec3d(0,0,0),GfVec3d(1,0,0),GfVec3d(0,1,0),GfVec3d(0,0,1)}},
-                       {{GfVec3d(10,0,0),GfVec3d(11,0,0),GfVec3d(10,1,0),GfVec3d(10,0,1)}}};
-    const std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
-    const VtVec3fArray base{GfVec3f(1,2,3),GfVec3f(4,5,6)};
-    VtVec3fArray points=base;
+    input.value.frames[0].points = {{GfVec3d(2, 3, 4), GfVec3d(4, 3, 4),
+                                     GfVec3d(2, 4, 4), GfVec3d(2, 3, 5)}};
+    input.value.frames[1].points = {{GfVec3d(10, 8, 0), GfVec3d(11, 8, 0),
+                                     GfVec3d(10, 10, 0), GfVec3d(10, 8, 1)}};
+    input.value.rests = {{{GfVec3d(0, 0, 0), GfVec3d(1, 0, 0), GfVec3d(0, 1, 0),
+                           GfVec3d(0, 0, 1)}},
+                         {{GfVec3d(10, 0, 0), GfVec3d(11, 0, 0),
+                           GfVec3d(10, 1, 0), GfVec3d(10, 0, 1)}}};
+    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> matrices;
+    const VtVec3fArray base{GfVec3f(1, 2, 3), GfVec3f(4, 5, 6)};
+    VtVec3fArray points = base;
     std::vector<std::string> diagnostics;
-    size_t reads=0;
-    bool exactRead=true;
-    bool provide=true;
+    size_t reads = 0;
+    bool exactRead = true;
+    bool provide = true;
     const RigExecMoverOracleContext context{
-        scene,prim,mover,target,time,scene,{},{},matrices,matrices,
-        &diagnostics,&points,base,{},nullptr,nullptr,
-        [&](const SdfPath &reader,const SdfPath &source,UsdTimeCode requested) {
-            ++reads;exactRead=exactRead && reader==mover && source==owner && requested==time;
+        scene,
+        prim,
+        mover,
+        target,
+        time,
+        scene,
+        {},
+        {},
+        matrices,
+        matrices,
+        &diagnostics,
+        &points,
+        base,
+        {},
+        nullptr,
+        nullptr,
+        [&](const SdfPath &reader, const SdfPath &source,
+            UsdTimeCode requested) {
+            ++reads;
+            exactRead = exactRead && reader == mover && source == owner &&
+                        requested == time;
             return provide ? &input : nullptr;
         }};
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-    CHECK_ORACLE(points==VtVec3fArray({GfVec3f(2,3,4),GfVec3f(10,8,0)}));
-    CHECK_ORACLE(reads==1 && exactRead && diagnostics.empty());
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+    CHECK_ORACLE(points == VtVec3fArray({GfVec3f(2, 3, 4), GfVec3f(10, 8, 0)}));
+    CHECK_ORACLE(reads == 1 && exactRead && diagnostics.empty());
     // Upstream input mutation changes the reference, with no expected output
     // or production geometry result supplied to the handler.
-    input.value.frames[0].points[0][0]=6;
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-    CHECK_ORACLE(points[0]==GfVec3f(6,3,4));
-    input.value.frames[0].points[0][0]=2;
-    points=base;input.available=false;
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    CHECK_ORACLE(diagnostics.back()=="MoverFailed /Rig/Guides: driver frame input unavailable");
-    input.available=true;input.time=UsdTimeCode::Default();
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    input.time=time;input.generation=0;
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    input.generation=7;provide=false;
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    provide=true;input.owner=SdfPath("/Rig/Other");
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    input.owner=owner;input.value.rests.pop_back();
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==base);
-    CHECK_ORACLE(diagnostics.back()=="MoverFailed /Rig/Guides: driver frame cardinality mismatch");
-    input.value.rests.push_back({{GfVec3d(10,0,0),GfVec3d(11,0,0),GfVec3d(10,1,0),GfVec3d(10,0,1)}});
-    points=VtVec3fArray{GfVec3f(1,2,3)};
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough);
-    CHECK_ORACLE(points==VtVec3fArray({GfVec3f(1,2,3)}));
-    CHECK_ORACLE(diagnostics.back()=="MoverFailed /Rig/Guides: guide cardinality mismatch");
-    prim.attributes[TfToken("rigExec:mode")].atTime=VtValue(TfToken("ribbon"));
+    input.value.frames[0].points[0][0] = 6;
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+    CHECK_ORACLE(points[0] == GfVec3f(6, 3, 4));
+    input.value.frames[0].points[0][0] = 2;
+    points = base;
+    input.available = false;
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    CHECK_ORACLE(diagnostics.back() ==
+                 "MoverFailed /Rig/Guides: driver frame input unavailable");
+    input.available = true;
+    input.time = UsdTimeCode::Default();
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    input.time = time;
+    input.generation = 0;
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    input.generation = 7;
+    provide = false;
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    provide = true;
+    input.owner = SdfPath("/Rig/Other");
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    input.owner = owner;
+    input.value.rests.pop_back();
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == base);
+    CHECK_ORACLE(diagnostics.back() ==
+                 "MoverFailed /Rig/Guides: driver frame cardinality mismatch");
+    input.value.rests.push_back({{GfVec3d(10, 0, 0), GfVec3d(11, 0, 0),
+                                  GfVec3d(10, 1, 0), GfVec3d(10, 0, 1)}});
+    points = VtVec3fArray{GfVec3f(1, 2, 3)};
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough);
+    CHECK_ORACLE(points == VtVec3fArray({GfVec3f(1, 2, 3)}));
+    CHECK_ORACLE(diagnostics.back() ==
+                 "MoverFailed /Rig/Guides: guide cardinality mismatch");
+    prim.attributes[TfToken("rigExec:mode")].atTime =
+        VtValue(TfToken("ribbon"));
     RigExecOracleRelationship binds;
-    binds.exists=true;binds.targets={SdfPath("/Bind.st")};
-    prim.relationships[TfToken("rigExec:bindCoordinates")]=binds;
+    binds.exists = true;
+    binds.targets = {SdfPath("/Bind.st")};
+    prim.relationships[TfToken("rigExec:bindCoordinates")] = binds;
     RigExecOraclePrim bind;
-    bind.exists=true;bind.path=SdfPath("/Bind");
+    bind.exists = true;
+    bind.path = SdfPath("/Bind");
     RigExecOracleAttribute coordinates;
-    coordinates.exists=true;coordinates.atTime=VtValue(VtVec2fArray{GfVec2f(.25f,0)});
-    bind.attributes[TfToken("st")]=coordinates;scene.prims[bind.path]=bind;
+    coordinates.exists = true;
+    coordinates.atTime = VtValue(VtVec2fArray{GfVec2f(.25f, 0)});
+    bind.attributes[TfToken("st")] = coordinates;
+    scene.prims[bind.path] = bind;
     diagnostics.clear();
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-    CHECK_ORACLE(points==VtVec3fArray({GfVec3f(3.25f,6.75f,6)}));
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+    CHECK_ORACLE(points == VtVec3fArray({GfVec3f(3.25f, 6.75f, 6)}));
     CHECK_ORACLE(diagnostics.empty());
-    scene.prims[bind.path].attributes[TfToken("st")].atTime=VtValue(VtVec2fArray());
-    const auto previous=points;
-    CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::PassThrough && points==previous);
-    CHECK_ORACLE(diagnostics.back()=="MoverFailed /Rig/Guides: ribbon bind cardinality mismatch");
+    scene.prims[bind.path].attributes[TfToken("st")].atTime =
+        VtValue(VtVec2fArray());
+    const auto previous = points;
+    CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::PassThrough &&
+                 points == previous);
+    CHECK_ORACLE(diagnostics.back() ==
+                 "MoverFailed /Rig/Guides: ribbon bind cardinality mismatch");
     return 0;
 }
 
-int TestBlendActivationOracleInput()
+int
+TestBlendActivationOracleInput()
 {
-    const auto *handler=RigExecFindMoverHandler(TfToken("RigExecBlendShapeMover"));
+    const auto *handler =
+        RigExecFindMoverHandler(TfToken("RigExecBlendShapeMover"));
     CHECK_ORACLE(handler && handler->oracle);
-    const SdfPath mover("/Rig/Blend"),channel("/Rig/Channel"),sample("/Rig/Sample"),shape("/Shape");
+    const SdfPath mover("/Rig/Blend"), channel("/Rig/Channel"),
+        sample("/Rig/Sample"), shape("/Shape");
     const UsdTimeCode time(3);
-    RigExecOracleScene scene;scene.resolveFromFacts=true;
-    const auto attribute=[](const SdfPath &path,const VtValue &value,const SdfValueTypeName &type) {
-        RigExecOracleAttribute a;a.exists=true;a.path=path;a.type=type;
-        a.atDefault=a.atTime=value;return a;
+    RigExecOracleScene scene;
+    scene.resolveFromFacts = true;
+    const auto attribute = [](const SdfPath &path, const VtValue &value,
+                              const SdfValueTypeName &type) {
+        RigExecOracleAttribute a;
+        a.exists = true;
+        a.path = path;
+        a.type = type;
+        a.atDefault = a.atTime = value;
+        return a;
     };
-    const auto relationship=[](const SdfPath &path) {
-        RigExecOracleRelationship r;r.exists=true;r.targets={path};return r;
+    const auto relationship = [](const SdfPath &path) {
+        RigExecOracleRelationship r;
+        r.exists = true;
+        r.targets = {path};
+        return r;
     };
-    RigExecOraclePrim prim;prim.exists=true;prim.path=mover;
-    prim.relationships[TfToken("rigExec:blendInputs")]=relationship(channel);
-    RigExecOraclePrim input;input.exists=true;input.path=channel;
-    input.attributes[TfToken("inputs:weight")]=attribute(channel.AppendProperty(TfToken("inputs:weight")),VtValue(.25f),SdfValueTypeNames->Float);
-    input.relationships[TfToken("rigExec:samples")]=relationship(sample);
-    scene.prims[channel]=input;
-    RigExecOraclePrim samplePrim;samplePrim.exists=true;samplePrim.path=sample;
-    const SdfPath activation=sample.AppendProperty(TfToken("rigExec:activation"));
-    samplePrim.attributes[TfToken("rigExec:activation")]=attribute(activation,VtValue(.5f),SdfValueTypeNames->Float);
-    RigExecOraclePrim shapePrim;shapePrim.exists=true;shapePrim.path=shape;
-    const VtValue shapePoints(VtVec3fArray{GfVec3f(4,0,0)});
-    shapePrim.attributes[TfToken("points")]=attribute(shape.AppendProperty(TfToken("points")),shapePoints,SdfValueTypeNames->Point3fArray);
-    shapePrim.attributes[TfToken("offsets")]=attribute(shape.AppendProperty(TfToken("offsets")),shapePoints,SdfValueTypeNames->Vector3fArray);
-    scene.prims[shape]=shapePrim;
-    const std::unordered_map<SdfPath,GfMatrix4d,SdfPath::Hash> matrices;
+    RigExecOraclePrim prim;
+    prim.exists = true;
+    prim.path = mover;
+    prim.relationships[TfToken("rigExec:blendInputs")] = relationship(channel);
+    RigExecOraclePrim input;
+    input.exists = true;
+    input.path = channel;
+    input.attributes[TfToken("inputs:weight")] =
+        attribute(channel.AppendProperty(TfToken("inputs:weight")),
+                  VtValue(.25f), SdfValueTypeNames->Float);
+    input.relationships[TfToken("rigExec:samples")] = relationship(sample);
+    scene.prims[channel] = input;
+    RigExecOraclePrim samplePrim;
+    samplePrim.exists = true;
+    samplePrim.path = sample;
+    const SdfPath activation =
+        sample.AppendProperty(TfToken("rigExec:activation"));
+    samplePrim.attributes[TfToken("rigExec:activation")] =
+        attribute(activation, VtValue(.5f), SdfValueTypeNames->Float);
+    RigExecOraclePrim shapePrim;
+    shapePrim.exists = true;
+    shapePrim.path = shape;
+    const VtValue shapePoints(VtVec3fArray{GfVec3f(4, 0, 0)});
+    shapePrim.attributes[TfToken("points")] =
+        attribute(shape.AppendProperty(TfToken("points")), shapePoints,
+                  SdfValueTypeNames->Point3fArray);
+    shapePrim.attributes[TfToken("offsets")] =
+        attribute(shape.AppendProperty(TfToken("offsets")), shapePoints,
+                  SdfValueTypeNames->Vector3fArray);
+    scene.prims[shape] = shapePrim;
+    const std::unordered_map<SdfPath, GfMatrix4d, SdfPath::Hash> matrices;
     const VtVec3fArray base{GfVec3f(0)};
-    VtVec3fArray points=base;
+    VtVec3fArray points = base;
     std::vector<std::string> diagnostics;
     const RigExecMoverOracleContext context{
-        scene,prim,mover,SdfPath("/Geom.points"),time,scene,{},{},matrices,matrices,
-        &diagnostics,&points,base,
-        [](const SdfPath &,const SdfPath &)->const VtValue* {return nullptr;}};
-    for(bool sparse:{false,true}) {
+        scene,
+        prim,
+        mover,
+        SdfPath("/Geom.points"),
+        time,
+        scene,
+        {},
+        {},
+        matrices,
+        matrices,
+        &diagnostics,
+        &points,
+        base,
+        [](const SdfPath &, const SdfPath &) -> const VtValue * {
+            return nullptr;
+        }};
+    for (bool sparse : {false, true}) {
         samplePrim.relationships.clear();
-        samplePrim.relationships[TfToken(sparse?"rigExec:blendShape":"rigExec:targetPoints")]=
-            relationship(sparse?shape:shape.AppendProperty(TfToken("points")));
-        scene.prims[sample]=samplePrim;
-        if(sparse)scene.blendShapes.insert(shape);
-        points=base;diagnostics.clear();scene.overlay.clear();
-        CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
+        samplePrim.relationships[TfToken(sparse ? "rigExec:blendShape"
+                                                : "rigExec:targetPoints")] =
+            relationship(sparse ? shape
+                                : shape.AppendProperty(TfToken("points")));
+        scene.prims[sample] = samplePrim;
+        if (sparse)
+            scene.blendShapes.insert(shape);
+        points = base;
+        diagnostics.clear();
+        scene.overlay.clear();
+        CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
         // A quarter channel at the authored half activation is half of 4.
-        CHECK_ORACLE(points==VtVec3fArray({GfVec3f(2,0,0)}));
-        points=base;scene.overlay[activation]=VtValue(.25f);
-        CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-        CHECK_ORACLE(points==VtVec3fArray({GfVec3f(4,0,0)}));
-        points=base;scene.overlay[activation]=VtValue(TfToken("wrong type"));
-        CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-        CHECK_ORACLE(points==VtVec3fArray({GfVec3f(2,0,0)}));
-        points=base;scene.overlay[activation]=VtValue(0.0f);
-        CHECK_ORACLE(handler->oracle(context)==RigExecOracleResult::Blend);
-        CHECK_ORACLE(points==base);
-        CHECK_ORACLE(diagnostics.back()=="MoverFailed /Rig/Blend: non-positive activation at /Rig/Sample");
+        CHECK_ORACLE(points == VtVec3fArray({GfVec3f(2, 0, 0)}));
+        points = base;
+        scene.overlay[activation] = VtValue(.25f);
+        CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+        CHECK_ORACLE(points == VtVec3fArray({GfVec3f(4, 0, 0)}));
+        points = base;
+        scene.overlay[activation] = VtValue(TfToken("wrong type"));
+        CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+        CHECK_ORACLE(points == VtVec3fArray({GfVec3f(2, 0, 0)}));
+        points = base;
+        scene.overlay[activation] = VtValue(0.0f);
+        CHECK_ORACLE(handler->oracle(context) == RigExecOracleResult::Blend);
+        CHECK_ORACLE(points == base);
+        CHECK_ORACLE(
+            diagnostics.back() ==
+            "MoverFailed /Rig/Blend: non-positive activation at /Rig/Sample");
     }
     return 0;
 }
@@ -212,8 +322,7 @@ UnbindWeightObjects(const UsdStageRefPtr &stage)
     static const TfToken weightObject("rigExec:weightObject");
     size_t unbound = 0;
     for (const UsdPrim &prim : stage->Traverse()) {
-        const UsdRelationship relationship =
-            prim.GetRelationship(weightObject);
+        const UsdRelationship relationship = prim.GetRelationship(weightObject);
         SdfPathVector targets;
         if (relationship && relationship.GetTargets(&targets) &&
             !targets.empty()) {
@@ -234,7 +343,7 @@ UnbindWeightObjects(const UsdStageRefPtr &stage)
 std::vector<VtValue>
 RunParity(const std::string &where, const UsdStageRefPtr &stage,
           const std::vector<UsdTimeCode> &frames, const SdfPath &watch,
-          RigExecRigEvaluator **keep = nullptr)
+          std::unique_ptr<RigExecRigEvaluator> *keep = nullptr)
 {
     std::vector<VtValue> published;
     const SdfPath rigPath = FindRig(stage);
@@ -242,10 +351,10 @@ RunParity(const std::string &where, const UsdStageRefPtr &stage,
     if (rigPath.IsEmpty()) {
         return published;
     }
-    // Leaked deliberately when the caller asks to keep it: a drag has to run
-    // on the evaluator that already holds the program, and this is a test
-    // binary that exits straight after.
-    RigExecRigEvaluator *rig = new RigExecRigEvaluator(stage, rigPath);
+    // The helper owns the evaluator; a drag caller keeps it, holding the
+    // program that already compiled, and takes ownership on this path only.
+    auto owned = std::make_unique<RigExecRigEvaluator>(stage, rigPath);
+    RigExecRigEvaluator *rig = owned.get();
     // The guides are a compared domain, and the example entries ask for
     // them; a suite that left them off would measure less than its siblings.
     rig->SetSolverGuidesEnabled(true);
@@ -292,15 +401,14 @@ RunParity(const std::string &where, const UsdStageRefPtr &stage,
     if (rig->GetBakedGenerationCount() != frames.size()) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
-                    "program\n", where.c_str(), rig->GetBakedGenerationCount(),
+                    "program\n",
+                    where.c_str(), rig->GetBakedGenerationCount(),
                     frames.size());
     }
     std::printf("  %-42s %2zu frame(s) from the program\n", where.c_str(),
                 frames.size());
     if (keep) {
-        *keep = rig;
-    } else {
-        delete rig;
+        *keep = std::move(owned);
     }
     return published;
 }
@@ -324,7 +432,8 @@ CheckMoves(const std::string &where, const std::vector<VtValue> &published)
     }
     ++failures;
     std::printf("FAIL %s: every frame published the same value; the "
-                "operation is a pass-through here\n", where.c_str());
+                "operation is a pass-through here\n",
+                where.c_str());
 }
 
 // One drag, held across the frames, asserting the override PLACED -- an
@@ -357,8 +466,9 @@ DragOne(const std::string &where, RigExecRigEvaluator *rig,
     if (rig->GetBakedGenerationCount() - before != generations) {
         ++failures;
         std::printf("FAIL %s: %zu of %zu generation(s) came from the "
-                    "program; the drag was not placed\n", where.c_str(),
-                    rig->GetBakedGenerationCount() - before, generations);
+                    "program; the drag was not placed\n",
+                    where.c_str(), rig->GetBakedGenerationCount() - before,
+                    generations);
     }
     rig->ClearInteractiveOverrides();
     std::printf("  %-42s %2zu generation(s) under a drag\n", where.c_str(),
@@ -383,31 +493,29 @@ ExampleFrames()
 void
 TestBlendShape(const std::string &examplesDir)
 {
-    const auto stage =
-        UsdStage::Open(examplesDir + "/04_BlendShapeFace.usda");
+    const auto stage = UsdStage::Open(examplesDir + "/04_BlendShapeFace.usda");
     CHECK(stage);
     if (!stage) {
         return;
     }
     UnbindWeightObjects(stage);
     const SdfPath card("/FaceAsset/Geom/FaceCard.points");
-    RigExecRigEvaluator *rig = nullptr;
+    std::unique_ptr<RigExecRigEvaluator> rig;
     CheckMoves("04 blendShape",
                RunParity("04 blendShape", stage, ExampleFrames(), card, &rig));
     if (!rig) {
         return;
     }
-    DragOne("04 blendShape (channel weight)", rig,
+    DragOne("04 blendShape (channel weight)", rig.get(),
             {RigExecValueOverride{SdfPath("/FaceAsset/Rig/BlendInputs/Smile"),
                                   TfToken(), TfToken("inputs:weight"),
                                   VtValue(0.75f)}},
             ExampleFrames());
-    DragOne("04 blendShape (sample activation)", rig,
+    DragOne("04 blendShape (sample activation)", rig.get(),
             {RigExecValueOverride{
                 SdfPath("/FaceAsset/Rig/BlendInputs/Smile/Half"), TfToken(),
                 TfToken("rigExec:activation"), VtValue(0.35f)}},
             ExampleFrames());
-    delete rig;
 }
 
 // Read phases, all three forms a geometry input can name, on the lattice
@@ -424,13 +532,12 @@ TestReadPhases(const std::string &examplesDir)
     const SdfPath lattice("/ReadPhaseAsset/Rig/Movers/Geometry/SlabLattice");
     const SdfPath slab("/ReadPhaseAsset/Geom/Slab.points");
     std::vector<std::vector<VtValue>> answers;
-    for (const char *phase : {"base", "final",
-                              "/ReadPhaseAsset/Rig/Movers/Cage/CageLift"}) {
+    for (const char *phase :
+         {"base", "final", "/ReadPhaseAsset/Rig/Movers/Cage/CageLift"}) {
         // A fresh stage per phase: the phase is compiled into the chain, and
         // re-authoring it under a live evaluator would test the rebuild
         // rather than the phase.
-        const auto stage =
-            UsdStage::Open(examplesDir + "/13_ReadPhases.usda");
+        const auto stage = UsdStage::Open(examplesDir + "/13_ReadPhases.usda");
         CHECK(stage);
         if (!stage) {
             return;
@@ -438,12 +545,10 @@ TestReadPhases(const std::string &examplesDir)
         UnbindWeightObjects(stage);
         const UsdRelationship input =
             stage->GetPrimAtPath(lattice).GetRelationship(cage);
-        CHECK(input && input.SetMetadata(readPhase,
-                                         VtValue(std::string(phase))));
-        const std::string where =
-            std::string("13 read phase ") + phase;
-        answers.push_back(
-            RunParity(where, stage, ExampleFrames(), slab));
+        CHECK(input &&
+              input.SetMetadata(readPhase, VtValue(std::string(phase))));
+        const std::string where = std::string("13 read phase ") + phase;
+        answers.push_back(RunParity(where, stage, ExampleFrames(), slab));
         // Not "base": the authored cage is what it reads, and the authored
         // cage does not animate -- a slab that stood still under it would be
         // this example working, not a pass-through. The other two read a
@@ -482,12 +587,11 @@ TestCurveModes(const std::string &probeLayer)
     CheckMoves("probe emitGuidePoints",
                RunParity("probe emitGuidePoints", stage, frames,
                          SdfPath("/Biped/SpineGuides.points")));
-    CheckMoves("probe ribbon",
-               RunParity("probe ribbon", stage, frames,
-                         SdfPath("/Biped/SpineStrip.points")));
+    CheckMoves("probe ribbon", RunParity("probe ribbon", stage, frames,
+                                         SdfPath("/Biped/SpineStrip.points")));
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)

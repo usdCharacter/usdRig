@@ -85,8 +85,7 @@ GetEnv(const char *name)
 #ifdef _WIN32
     static char buffer[256];
     size_t needed = 0;
-    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 ||
-        needed == 0) {
+    if (getenv_s(&needed, buffer, sizeof(buffer), name) != 0 || needed == 0) {
         return nullptr;
     }
     return buffer;
@@ -142,10 +141,9 @@ PrintDistribution(const char *label, const std::vector<double> &samples,
                   const char *unit)
 {
     std::printf("  %-22s %10.1f %s  (n=%zu, mean %.1f, max %.1f)\n", label,
-                Percentile(samples, 0.5), unit, samples.size(),
-                Mean(samples), Percentile(samples, 1.0));
-    std::printf("  %-22s %10.1f %s\n", "p95", Percentile(samples, 0.95),
-                unit);
+                Percentile(samples, 0.5), unit, samples.size(), Mean(samples),
+                Percentile(samples, 1.0));
+    std::printf("  %-22s %10.1f %s\n", "p95", Percentile(samples, 0.95), unit);
 }
 
 // One skinned mesh over two animated controls, after the frozen-context
@@ -173,8 +171,8 @@ MakeTinyRig(size_t pointCount, int t0, int t1)
     const UsdPrim prim = stage->DefinePrim(meshPath, TfToken("Mesh"));
     VtVec3fArray points(pointCount);
     for (size_t i = 0; i < pointCount; ++i) {
-        points[i] = GfVec3f(float(i) * 0.5f, float(i) * -0.25f,
-                            -float(i) * 0.125f);
+        points[i] =
+            GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
     }
     prim.GetAttribute(TfToken("points")).Set(points);
 
@@ -186,8 +184,7 @@ MakeTinyRig(size_t pointCount, int t0, int t1)
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({alongX.GetPath(), alongY.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int)
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
         .Set(2);
     VtIntArray indices(pointCount * 2);
     for (size_t i = 0; i < pointCount; ++i) {
@@ -241,7 +238,7 @@ PrepareRig(const char *name, const UsdStageRefPtr &stage, BenchRig *out)
         std::printf("FATAL: %s has no RigExecRoot\n", name);
         return false;
     }
-    out->evaluator.reset(new RigExecRigEvaluator(stage, out->rig));
+    out->evaluator = std::make_unique<RigExecRigEvaluator>(stage, out->rig);
     std::vector<std::string> errors;
     if (!out->evaluator->Compile(&errors)) {
         std::printf("FATAL: %s did not compile\n", name);
@@ -266,9 +263,8 @@ PrepareRig(const char *name, const UsdStageRefPtr &stage, BenchRig *out)
     std::printf("[%s] providers=%zu bound=%zu varying=%zu clusters=%zu "
                 "sampleable=%s%s%s\n",
                 name, program->GetProviderCount(),
-                program->GetBoundInputCount(),
-                program->GetVaryingInputCount(), out->clusters,
-                out->sampleable ? "yes" : "NO",
+                program->GetBoundInputCount(), program->GetVaryingInputCount(),
+                out->clusters, out->sampleable ? "yes" : "NO",
                 out->sampleable ? "" : " (",
                 out->sampleable ? "" : (error + ")").c_str());
     return true;
@@ -304,10 +300,8 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
                     bindError.c_str());
         return true;
     }
-    const auto fail = [](const char *row, double t,
-                         const std::string &error) {
-        std::printf("  %s sample failed at %g (%s)\n", row, t,
-                    error.c_str());
+    const auto fail = [](const char *row, double t, const std::string &error) {
+        std::printf("  %s sample failed at %g (%s)\n", row, t, error.c_str());
         return false;
     };
     size_t misses = 0;
@@ -321,11 +315,10 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         RigExecRigPose served;
         const double start = NowUs();
         const bool sampled = RigExecSampleFrameInputsWithTrustedChainBindings(
-            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs,
-            &error);
-        const bool hit =
-            sampled &&
-            cache->Lookup(KeyFor(rig->compiledRig, inputs, noOverrides), &served);
+            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs, &error);
+        const bool hit = sampled && cache->Lookup(KeyFor(rig->compiledRig,
+                                                         inputs, noOverrides),
+                                                  &served);
         keyHit.push_back(NowUs() - start);
         if (!sampled) {
             return fail("key hit", t, error);
@@ -344,8 +337,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         std::string error;
         const double start = NowUs();
         const bool sampled = RigExecSampleFrameInputsWithTrustedChainBindings(
-            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs,
-            &error);
+            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs, &error);
         trusted.push_back(NowUs() - start);
         if (!sampled) {
             return fail("trusted", t, error);
@@ -360,8 +352,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         std::string error;
         const double start = NowUs();
         const bool sampled = RigExecSampleFrameInputsWithChainBindings(
-            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs,
-            &error);
+            evaluator, UsdTimeCode(t), noOverrides, bindings, &inputs, &error);
         verified.push_back(NowUs() - start);
         if (!sampled) {
             return fail("verified", t, error);
@@ -372,10 +363,10 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
         RigExecBurstSampleCache burst;
         std::string error;
         const RigExecBakedProgram *program = evaluator.GetBakedProgram();
-        if (!program ||
-            !RigExecBuildBurstSampleCache(
-                *program, bindings, noOverrides,
-                RigExecFrameCacheCompiledRigSignature(evaluator), &burst, &error)) {
+        if (!program || !RigExecBuildBurstSampleCache(
+                            *program, bindings, noOverrides,
+                            RigExecFrameCacheCompiledRigSignature(evaluator),
+                            &burst, &error)) {
             std::printf("  sample burst skipped: build declined (%s)\n",
                         error.c_str());
         } else {
@@ -476,8 +467,7 @@ BenchPinnedAnatomy(BenchRig *rig, const std::vector<double> &frames,
 // Scrub throughput: cold (live eval + publish) vs warm (digest + lookup).
 
 bool
-BenchScrub(BenchRig *rig, const char *name,
-           const std::vector<double> &frames)
+BenchScrub(BenchRig *rig, const char *name, const std::vector<double> &frames)
 {
     std::printf("[%s] scrub over %zu frames:\n", name, frames.size());
     if (!rig->sampleable) {
@@ -529,14 +519,12 @@ BenchScrub(BenchRig *rig, const char *name,
     size_t published = 0;
     for (double t : frames) {
         const double start = NowUs();
-        const RigExecRigPose pose =
-            rig->evaluator->Evaluate(UsdTimeCode(t));
+        const RigExecRigPose pose = rig->evaluator->Evaluate(UsdTimeCode(t));
         RigExecFrameInputs inputs;
         std::string error;
         const bool sampled = RigExecSampleFrameInputs(
             *rig->evaluator, UsdTimeCode(t), noOverrides, &inputs, &error);
-        if (sampled && pose.valid &&
-            RigExecControlStateDigestible(inputs)) {
+        if (sampled && pose.valid && RigExecControlStateDigestible(inputs)) {
             published +=
                 cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(t), pose)
@@ -566,9 +554,8 @@ BenchScrub(BenchRig *rig, const char *name,
             RigExecFrameInputs inputs;
             std::string error;
             RigExecFrameCacheKey key;
-            bool ok = RigExecSampleFrameInputs(*rig->evaluator,
-                                               UsdTimeCode(t), noOverrides,
-                                               &inputs, &error);
+            bool ok = RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(t),
+                                               noOverrides, &inputs, &error);
             RigExecRigPose served;
             if (ok) {
                 key = KeyFor(rig->compiledRig, inputs, noOverrides);
@@ -599,8 +586,7 @@ BenchScrub(BenchRig *rig, const char *name,
             std::string error;
             const double sampleStart = NowUs();
             const bool sampled = RigExecSampleFrameInputs(
-                *rig->evaluator, UsdTimeCode(t), noOverrides, &inputs,
-                &error);
+                *rig->evaluator, UsdTimeCode(t), noOverrides, &inputs, &error);
             sampleOnly.push_back(NowUs() - sampleStart);
             if (!sampled) {
                 std::printf("  warm anatomy sample failed at %g\n", t);
@@ -608,17 +594,16 @@ BenchScrub(BenchRig *rig, const char *name,
             }
             const double digestStart = NowUs();
             RigExecRigPose served;
-            const bool hit =
-                cache.Lookup(KeyFor(rig->compiledRig, inputs, noOverrides),
-                             &served);
+            const bool hit = cache.Lookup(
+                KeyFor(rig->compiledRig, inputs, noOverrides), &served);
             digestLookup.push_back(NowUs() - digestStart);
             if (!hit || !served.valid) {
                 std::printf("  warm anatomy lookup missed at %g\n", t);
                 return false;
             }
         }
-        std::printf("  %-22s %10.1f us/frame (median)\n", "warm of which: sample",
-                    Percentile(sampleOnly, 0.5));
+        std::printf("  %-22s %10.1f us/frame (median)\n",
+                    "warm of which: sample", Percentile(sampleOnly, 0.5));
         std::printf("  %-22s %10.1f us/frame (median)\n",
                     "warm of which: digest+lookup",
                     Percentile(digestLookup, 0.5));
@@ -627,10 +612,9 @@ BenchScrub(BenchRig *rig, const char *name,
         PrintDistribution("sample self-binding (fallback)", sampleOnly,
                           "us/frame");
     }
-    const double ratio =
-        Percentile(warm, 0.5) > 0.0
-            ? Percentile(cold, 0.5) / Percentile(warm, 0.5)
-            : 0.0;
+    const double ratio = Percentile(warm, 0.5) > 0.0
+                             ? Percentile(cold, 0.5) / Percentile(warm, 0.5)
+                             : 0.0;
     std::printf("  %-22s %10.1fx (cold median / warm median)\n",
                 "scrub speedup", ratio);
     std::printf("  (Stream F target: warmed scrub >=10x cold on the biped; "
@@ -638,8 +622,8 @@ BenchScrub(BenchRig *rig, const char *name,
     const RigExecFrameCacheStats stats = cache.Stats();
     std::printf("  hits=%zu misses=%zu published=%zu entries=%zu "
                 "bytes=%zu (bench misses=%zu invalid=%zu)\n",
-                stats.hits, stats.misses, stats.published,
-                stats.entryCount, stats.bytes, misses, invalid);
+                stats.hits, stats.misses, stats.published, stats.entryCount,
+                stats.bytes, misses, invalid);
     // After the statistics above, so their counts stay the scrub's own.
     std::printf("  pinned anatomy (production routes, 40 repetitions "
                 "each):\n");
@@ -658,8 +642,8 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
         std::printf("  skipped: %s\n", rig->sampleError.c_str());
         return true;
     }
-    UsdAttribute tx = rig->stage->GetAttributeAtPath(
-        SdfPath("/Asset/Rig/AlongX.avars:tx"));
+    UsdAttribute tx =
+        rig->stage->GetAttributeAtPath(SdfPath("/Asset/Rig/AlongX.avars:tx"));
     if (!tx.IsValid()) {
         std::printf("  skipped: no authored tx to edit\n");
         return true;
@@ -675,11 +659,10 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
             rig->evaluator->Evaluate(UsdTimeCode(frames[i]));
         std::string error;
         if (!pose.valid ||
-            !RigExecSampleFrameInputs(*rig->evaluator,
-                                      UsdTimeCode(frames[i]), noOverrides,
-                                      &warmed[i], &error)) {
-            std::printf("  FATAL: warm pass failed at %g (%s)\n",
-                        frames[i], error.c_str());
+            !RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(frames[i]),
+                                      noOverrides, &warmed[i], &error)) {
+            std::printf("  FATAL: warm pass failed at %g (%s)\n", frames[i],
+                        error.c_str());
             return false;
         }
         digests[i] = RigExecControlStateDigest(warmed[i], noOverrides);
@@ -697,15 +680,13 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
     const double affectedStart = NowUs();
     for (size_t i = 0; i < frames.size(); ++i) {
         std::string error;
-        if (!RigExecSampleFrameInputs(*rig->evaluator,
-                                      UsdTimeCode(frames[i]), noOverrides,
-                                      &edited[i], &error)) {
-            std::printf("  FATAL: re-sample failed at %g (%s)\n",
-                        frames[i], error.c_str());
+        if (!RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(frames[i]),
+                                      noOverrides, &edited[i], &error)) {
+            std::printf("  FATAL: re-sample failed at %g (%s)\n", frames[i],
+                        error.c_str());
             return false;
         }
-        editedDigests[i] =
-            RigExecControlStateDigest(edited[i], noOverrides);
+        editedDigests[i] = RigExecControlStateDigest(edited[i], noOverrides);
     }
     const double affectedUs = NowUs() - affectedStart;
     size_t affected = 0;
@@ -719,11 +700,11 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
     std::printf("  %-22s %10.1f us total, %.1f us/frame (%zu of %zu "
                 "affected)\n",
                 "affected-frame scan", affectedUs,
-                affectedUs / double(frames.size()), affected,
-                frames.size());
+                affectedUs / double(frames.size()), affected, frames.size());
 
     RigExecOutputAffectedIndex index;
-    index.Build(rig->evaluator->GetBakedProgram()->GetStepGraph(), rig->compiledRig);
+    index.Build(rig->evaluator->GetBakedProgram()->GetStepGraph(),
+                rig->compiledRig);
     RigExecRetainedFrameState retained;
     retained.inputs = warmed[affectedIndex];
     retained.compiledRigSignature = rig->compiledRig;
@@ -731,8 +712,9 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
     bool reusable = false;
     const double proofStart = NowUs();
     for (int rep = 0; rep < 200; ++rep) {
-        reusable = RigExecCanReuseRetainedPose(index, retained, rig->compiledRig,
-                                               edited[affectedIndex], noOverrides);
+        reusable =
+            RigExecCanReuseRetainedPose(index, retained, rig->compiledRig,
+                                        edited[affectedIndex], noOverrides);
     }
     std::printf("  whole-pose reuse proof: %.1f us/check; reusable=%s\n",
                 (NowUs() - proofStart) / 200.0, reusable ? "yes" : "no");
@@ -751,11 +733,10 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
     RigExecFrameInputs dragInputs;
     for (size_t i = 0; i < frames.size(); ++i) {
         RigExecFrameInputs at;
-        if (!RigExecSampleFrameInputs(*rig->evaluator,
-                                      UsdTimeCode(frames[i]), dragged, &at,
-                                      &error)) {
-            std::printf("  FATAL: drag sample failed at %g (%s)\n",
-                        frames[i], error.c_str());
+        if (!RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(frames[i]),
+                                      dragged, &at, &error)) {
+            std::printf("  FATAL: drag sample failed at %g (%s)\n", frames[i],
+                        error.c_str());
             return false;
         }
         if (RigExecControlStateDigest(at, dragged) != digests[i]) {
@@ -767,8 +748,9 @@ BenchEdit(BenchRig *rig, const std::vector<double> &frames)
     }
     const bool dragReusable = RigExecCanReuseRetainedPose(
         index, retained, rig->compiledRig, dragInputs, dragged);
-    std::printf("  override drag: %zu of %zu frames affected; whole pose reusable=%s\n",
-                dragAffected, frames.size(), dragReusable ? "yes" : "no");
+    std::printf(
+        "  override drag: %zu of %zu frames affected; whole pose reusable=%s\n",
+        dragAffected, frames.size(), dragReusable ? "yes" : "no");
     return true;
 }
 
@@ -817,12 +799,10 @@ TimeUiEvals(BenchRig *rig, const std::vector<double> &frames, size_t samples)
     for (size_t i = 0; i < samples; ++i) {
         const double t = frames[i % frames.size()];
         const double start = NowUs();
-        const RigExecRigPose pose =
-            rig->evaluator->Evaluate(UsdTimeCode(t));
+        const RigExecRigPose pose = rig->evaluator->Evaluate(UsdTimeCode(t));
         out.push_back(NowUs() - start);
         if (!pose.valid) {
-            std::printf("  UI eval invalid at %g; stopping the series\n",
-                        t);
+            std::printf("  UI eval invalid at %g; stopping the series\n", t);
             break;
         }
     }
@@ -845,8 +825,7 @@ BenchLatency(BenchRig *rig, const std::vector<double> &frames)
     // as a warming effect. The trailing off-repeat exposes any drift the
     // warmup missed (A/B/A).
     TimeUiEvals(rig, frames, kSamples);
-    const std::vector<double> off =
-        TimeUiEvals(rig, frames, kSamples);
+    const std::vector<double> off = TimeUiEvals(rig, frames, kSamples);
     if (off.size() != kSamples) {
         return false;
     }
@@ -868,12 +847,12 @@ BenchLatency(BenchRig *rig, const std::vector<double> &frames)
     {
         RigExecBackgroundScheduler sched(
             kRigExecBackgroundSchedulerDefaultWorkers);
-        const RigExecWarmWork trivial =
-            [](const RigExecWarmRequest &) {
-                return RigExecWarmOutcome::Published;
-            };
-        const RigExecWarmJobFactory factory =
-            [&trivial](UsdTimeCode) { return trivial; };
+        const RigExecWarmWork trivial = [](const RigExecWarmRequest &) {
+            return RigExecWarmOutcome::Published;
+        };
+        const RigExecWarmJobFactory factory = [&trivial](UsdTimeCode) {
+            return trivial;
+        };
         std::vector<UsdTimeCode> sweep;
         for (int t = 100; t < 164; ++t) {
             sweep.push_back(UsdTimeCode(double(t)));
@@ -881,8 +860,7 @@ BenchLatency(BenchRig *rig, const std::vector<double> &frames)
         sched.OnEditCommitted(rig->rig, UsdTimeCode(frames[0]),
                               sched.CurrentGeneration(rig->rig), sweep,
                               factory);
-        const std::vector<double> on =
-            TimeUiEvals(rig, frames, kSamples);
+        const std::vector<double> on = TimeUiEvals(rig, frames, kSamples);
         sched.WaitUntilIdle();
         const RigExecBackgroundSchedulerStats stats = sched.Stats();
         PrintDistribution("warming on (plumbing)", on, "us/eval");
@@ -906,8 +884,9 @@ BenchLatency(BenchRig *rig, const std::vector<double> &frames)
             SpinIters(spin);
             return RigExecWarmOutcome::Published;
         };
-        const RigExecWarmJobFactory factory =
-            [&loaded](UsdTimeCode) { return loaded; };
+        const RigExecWarmJobFactory factory = [&loaded](UsdTimeCode) {
+            return loaded;
+        };
         // Sixteen jobs at ~3.1 ms over two workers: the pool is still
         // draining when the 200 UI evals finish, so every sample is taken
         // under load.
@@ -918,19 +897,16 @@ BenchLatency(BenchRig *rig, const std::vector<double> &frames)
         sched.OnEditCommitted(rig->rig, UsdTimeCode(frames[0]),
                               sched.CurrentGeneration(rig->rig), sweep,
                               factory);
-        const std::vector<double> on =
-            TimeUiEvals(rig, frames, kSamples);
+        const std::vector<double> on = TimeUiEvals(rig, frames, kSamples);
         sched.WaitUntilIdle();
         const RigExecBackgroundSchedulerStats stats = sched.Stats();
         PrintDistribution("warming on (loaded)", on, "us/eval");
         std::printf("  pool: completed=%zu canceled=%zu declined=%zu; "
                     "synthetic job=%.1f ms spin (measured)\n",
-                    stats.completed, stats.canceled, stats.declined,
-                    spinMs);
+                    stats.completed, stats.canceled, stats.declined, spinMs);
     }
 
-    const std::vector<double> offAgain =
-        TimeUiEvals(rig, frames, kSamples);
+    const std::vector<double> offAgain = TimeUiEvals(rig, frames, kSamples);
     PrintDistribution("warming off (repeat)", offAgain, "us/eval");
     return true;
 }
@@ -948,8 +924,7 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
     }
     RigExecFrameCache cache;
     std::printf("  %-22s %10zu bytes (%zu MiB)\n", "default byte cap",
-                cache.GetByteCap(),
-                cache.GetByteCap() / (1024 * 1024));
+                cache.GetByteCap(), cache.GetByteCap() / (1024 * 1024));
 
     // 64 distinct frames: 16 times x 4 drag values, all sampled live.
     const std::vector<RigExecValueOverride> noOverrides;
@@ -966,9 +941,8 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
             RigExecFrameInputs inputs;
             std::string error;
             if (!pose.valid ||
-                !RigExecSampleFrameInputs(*rig->evaluator,
-                                          UsdTimeCode(t), overrides,
-                                          &inputs, &error)) {
+                !RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(t),
+                                          overrides, &inputs, &error)) {
                 std::printf("  FATAL: fill failed (%s)\n", error.c_str());
                 return false;
             }
@@ -1000,9 +974,8 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
             RigExecFrameInputs inputs;
             std::string error;
             if (!pose.valid ||
-                !RigExecSampleFrameInputs(*rig->evaluator,
-                                          UsdTimeCode(t), overrides,
-                                          &inputs, &error)) {
+                !RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(t),
+                                          overrides, &inputs, &error)) {
                 std::printf("  FATAL: squeeze fill failed (%s)\n",
                             error.c_str());
                 return false;
@@ -1019,8 +992,7 @@ BenchMemory(BenchRig *rig, const std::vector<double> &frames)
 
     // The capacity arithmetic, from the Stream 0 constants in code: the
     // report's numbers must match these, and this line is the check.
-    const RigExecSparsityDecision stream0 =
-        RigExecStream0SparsityDecision();
+    const RigExecSparsityDecision stream0 = RigExecStream0SparsityDecision();
     std::printf("  Stream 0 decision in code: %s, %zu full frames at cap\n",
                 stream0.go ? "GO" : "NO-GO", stream0.fullFramesAtCap);
     std::printf("  %s\n", stream0.memo.c_str());
@@ -1044,15 +1016,15 @@ BenchStress(BenchRig *rig, const std::vector<double> &frames, double seconds)
         std::printf("  skipped: fill gate closed by the environment\n");
         return true;
     }
-    RigExecBackgroundScheduler sched(
-        kRigExecBackgroundSchedulerDefaultWorkers);
+    RigExecBackgroundScheduler sched(kRigExecBackgroundSchedulerDefaultWorkers);
     RigExecFrameCache cache;
     const std::vector<RigExecValueOverride> noOverrides;
     const RigExecWarmWork trivial = [](const RigExecWarmRequest &) {
         return RigExecWarmOutcome::Published;
     };
-    const RigExecWarmJobFactory factory =
-        [&trivial](UsdTimeCode) { return trivial; };
+    const RigExecWarmJobFactory factory = [&trivial](UsdTimeCode) {
+        return trivial;
+    };
     std::atomic<bool> stop{false};
     std::atomic<uint64_t> uiEvals{0};
     std::atomic<uint64_t> uiPublishes{0};
@@ -1079,16 +1051,14 @@ BenchStress(BenchRig *rig, const std::vector<double> &frames, double seconds)
     size_t invalid = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         const double t = frames[n % frames.size()];
-        const RigExecRigPose pose =
-            rig->evaluator->Evaluate(UsdTimeCode(t));
+        const RigExecRigPose pose = rig->evaluator->Evaluate(UsdTimeCode(t));
         ++uiEvals;
         if (!pose.valid) {
             ++invalid;
         } else if (n % 8 == 0) {
             RigExecFrameInputs inputs;
-            if (RigExecSampleFrameInputs(*rig->evaluator,
-                                         UsdTimeCode(t), noOverrides,
-                                         &inputs, nullptr) &&
+            if (RigExecSampleFrameInputs(*rig->evaluator, UsdTimeCode(t),
+                                         noOverrides, &inputs, nullptr) &&
                 RigExecControlStateDigestible(inputs)) {
                 cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(t), pose);
@@ -1102,8 +1072,8 @@ BenchStress(BenchRig *rig, const std::vector<double> &frames, double seconds)
                 sweep.push_back(UsdTimeCode(t + 20.0 + double(s)));
             }
             sched.OnEditCommitted(rig->rig, UsdTimeCode(t),
-                                  sched.CurrentGeneration(rig->rig),
-                                  sweep, factory);
+                                  sched.CurrentGeneration(rig->rig), sweep,
+                                  factory);
             ++uiCommits;
         }
         if (n % 512 == 0) {
@@ -1126,14 +1096,13 @@ BenchStress(BenchRig *rig, const std::vector<double> &frames, double seconds)
                 "upgraded=%zu declined=%zu shutdown=%zu\n",
                 schedStats.queuedDepth, schedStats.running,
                 schedStats.completed, schedStats.droppedStale,
-                schedStats.canceled, schedStats.shed,
-                schedStats.coalesced, schedStats.upgraded,
-                schedStats.declined, schedStats.droppedAtShutdown);
+                schedStats.canceled, schedStats.shed, schedStats.coalesced,
+                schedStats.upgraded, schedStats.declined,
+                schedStats.droppedAtShutdown);
     std::printf("  cache: hits=%zu misses=%zu published=%zu evictions=%zu "
                 "entries=%zu bytes=%zu\n",
                 cacheStats.hits, cacheStats.misses, cacheStats.published,
-                cacheStats.evictions, cacheStats.entryCount,
-                cacheStats.bytes);
+                cacheStats.evictions, cacheStats.entryCount, cacheStats.bytes);
     std::printf("  (run a TSAN-instrumented Linux build of this bench to "
                 "race-check the UI/worker surface)\n");
     return true;
@@ -1158,13 +1127,12 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
     {
         RIGEXEC_PROFILE_SCOPE_CAT(profiler, "benchCold", "bench");
         for (size_t i = 0; i < 4 && i < frames.size(); ++i) {
-            const RigExecRigPose pose = rig->evaluator->Evaluate(
-                UsdTimeCode(frames[i]));
+            const RigExecRigPose pose =
+                rig->evaluator->Evaluate(UsdTimeCode(frames[i]));
             RigExecFrameInputs inputs;
-            if (pose.valid &&
-                RigExecSampleFrameInputs(*rig->evaluator,
-                                         UsdTimeCode(frames[i]),
-                                         noOverrides, &inputs, nullptr)) {
+            if (pose.valid && RigExecSampleFrameInputs(
+                                  *rig->evaluator, UsdTimeCode(frames[i]),
+                                  noOverrides, &inputs, nullptr)) {
                 cache.Publish(KeyFor(rig->compiledRig, inputs, noOverrides),
                               UsdTimeCode(frames[i]), pose);
             }
@@ -1176,8 +1144,8 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
             RigExecFrameInputs inputs;
             RigExecRigPose served;
             const bool sampled = RigExecSampleFrameInputs(
-                *rig->evaluator, UsdTimeCode(frames[i]), noOverrides,
-                &inputs, nullptr);
+                *rig->evaluator, UsdTimeCode(frames[i]), noOverrides, &inputs,
+                nullptr);
             const bool hit =
                 sampled &&
                 cache.Lookup(KeyFor(rig->compiledRig, inputs, noOverrides),
@@ -1195,18 +1163,17 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
     {
         RIGEXEC_PROFILE_SCOPE_CAT(profiler, "benchCommit", "bench");
         RigExecBackgroundScheduler sched(0);
-        const RigExecWarmWork trivial =
-            [](const RigExecWarmRequest &) {
-                return RigExecWarmOutcome::Published;
-            };
-        const RigExecWarmJobFactory factory =
-            [&trivial](UsdTimeCode) { return trivial; };
+        const RigExecWarmWork trivial = [](const RigExecWarmRequest &) {
+            return RigExecWarmOutcome::Published;
+        };
+        const RigExecWarmJobFactory factory = [&trivial](UsdTimeCode) {
+            return trivial;
+        };
         std::vector<UsdTimeCode> sweep;
         for (int t = 40; t < 48; ++t) {
             sweep.push_back(UsdTimeCode(double(t)));
         }
-        const RigExecFrameGeneration gen =
-            sched.CurrentGeneration(rig->rig);
+        const RigExecFrameGeneration gen = sched.CurrentGeneration(rig->rig);
         const size_t enqueued = sched.OnEditCommitted(
             rig->rig, UsdTimeCode(frames[0]), gen, sweep, factory);
         const RigExecBackgroundSchedulerStats queued = sched.Stats();
@@ -1214,13 +1181,13 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
                                       queued.canceled);
         sched.CancelGeneration(rig->rig);
         const RigExecBackgroundSchedulerStats canceled = sched.Stats();
-        profiler.RecordSchedulerCancel(
-            canceled.canceled - queued.canceled, "edit");
+        profiler.RecordSchedulerCancel(canceled.canceled - queued.canceled,
+                                       "edit");
         // Draining after the purge runs nothing: the cancel is the story.
         sched.DrainQueueForTesting();
         const RigExecBackgroundSchedulerStats drained = sched.Stats();
-        profiler.RecordSchedulerQueue(drained.queuedDepth,
-                                      drained.running, drained.canceled);
+        profiler.RecordSchedulerQueue(drained.queuedDepth, drained.running,
+                                      drained.canceled);
         std::printf("  commit: enqueued=%zu queued=%zu canceled=%zu\n",
                     enqueued, queued.queuedDepth, canceled.canceled);
     }
@@ -1238,7 +1205,7 @@ BenchTrace(BenchRig *rig, const std::vector<double> &frames)
     return true;
 }
 
-}  // namespace
+} // namespace
 
 std::string
 SchemaResourceDir()
@@ -1276,29 +1243,27 @@ main(int argc, char **argv)
         SetEnv("RIGEXEC_FRAME_CACHE", "on");
         std::printf("RIGEXEC_FRAME_CACHE was unset; set to on for this run\n");
     }
-    std::printf("frame-cache mode: %s\n",
-                GetEnv("RIGEXEC_FRAME_CACHE") ? GetEnv("RIGEXEC_FRAME_CACHE")
+    std::printf("frame-cache mode: %s\n", GetEnv("RIGEXEC_FRAME_CACHE")
+                                              ? GetEnv("RIGEXEC_FRAME_CACHE")
                                               : "(unset)");
     std::printf("parallel eval: %s\n",
                 RigExecParallelEvaluationEnabled() ? "ON" : "OFF (serial)");
     std::printf("background fill: %s\n",
                 RigExecBackgroundWarmingEnabled() ? "OPEN" : "CLOSED");
-    std::printf("priority backend: %s\n",
-                RigExecBackgroundPriorityBackend());
+    std::printf("priority backend: %s\n", RigExecBackgroundPriorityBackend());
     std::printf("sizeof(RigExecPointFrame)=%zu sizeof(GfMatrix4d)=%zu "
                 "sizeof(SdfPath)=%zu sizeof(VtValue)=%zu\n",
-                sizeof(RigExecPointFrame), sizeof(GfMatrix4d),
-                sizeof(SdfPath), sizeof(VtValue));
+                sizeof(RigExecPointFrame), sizeof(GfMatrix4d), sizeof(SdfPath),
+                sizeof(VtValue));
 
-    const bool wantScrub =
-        mode == "all" || mode == "scrub";
+    const bool wantScrub = mode == "all" || mode == "scrub";
     const bool wantEdit = mode == "all" || mode == "edit";
     const bool wantLatency = mode == "all" || mode == "latency";
     const bool wantMemory = mode == "all" || mode == "memory";
     const bool wantStress = mode == "all" || mode == "stress";
     const bool wantTrace = mode == "all" || mode == "trace";
-    if (!wantScrub && !wantEdit && !wantLatency && !wantMemory &&
-        !wantStress && !wantTrace) {
+    if (!wantScrub && !wantEdit && !wantLatency && !wantMemory && !wantStress &&
+        !wantTrace) {
         std::printf("unknown mode '%s' (want all|scrub|edit|latency|memory|"
                     "stress|trace)\n",
                     mode.c_str());

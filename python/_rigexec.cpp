@@ -517,7 +517,8 @@ struct _Rig {
                 "could not extract a UsdStage from the given object");
         }
         rigPath = p;
-        evaluator.reset(new rigExec::RigExecRigEvaluator(stage, rigPath));
+        evaluator =
+            std::make_unique<rigExec::RigExecRigEvaluator>(stage, rigPath);
     }
 
     // Compile and Evaluate run WITHOUT the GIL, and that is load-bearing.
