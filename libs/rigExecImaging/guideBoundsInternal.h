@@ -1,6 +1,7 @@
 // RigExec imaging guide geometry queries: the bounds one published prim
 // draws. Internal to the rigExecImaging target; shared by the extent
-// callback (guideExtent.cpp) and the C guide-bounds surface (registry.cpp).
+// callback (guideExtent.cpp) and the C guide-bounds surface
+// (registryCapi.cpp).
 // Not installed.
 #ifndef RIGEXEC_IMAGING_GUIDE_BOUNDS_INTERNAL_H
 #define RIGEXEC_IMAGING_GUIDE_BOUNDS_INTERNAL_H

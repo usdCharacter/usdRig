@@ -57,7 +57,7 @@ belongs to the scheduler, and is null while no rig is active.
 ## The directory
 
 The directory is a process-level map from stage to context. It lives in
-`registry.cpp` as `RigExecImagingDirectory`.
+`registryDirectory.cpp` as `RigExecImagingDirectory`.
 
 ```cpp
 static Ptr ForStage(const UsdStageRefPtr &stage, bool create = true);

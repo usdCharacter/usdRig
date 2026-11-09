@@ -1,7 +1,20 @@
-// RigExec imaging registry: the imaging contexts and the directory that
-// maps stages to them. The host-facing C surface is in registryCapi.cpp.
+// RigExec imaging directory and chain binding: the process-level map from
+// stage to imaging context, the monotonic context keys, the chain
+// registrations and the legacy current slot. The directory is ONE process
+// object: Get() holds a function-local static and no other TU declares or
+// instantiates it. Its mutex is a leaf lock -- nothing enters or destroys a
+// context while it is held -- so every prune hands the released contexts to
+// a vector declared before the guard, destroyed only after the unlock. A
+// raw-pointer stage match is always re-compared against the weak identity.
+// The legacy handle is declared last and destroyed first at exit; the
+// _directoryAlive atomic (constant-initialized, trivially destructible)
+// keeps a scene index released during static destruction from resurrecting
+// or touching a destroyed directory. SetCurrent replaces the legacy current
+// on an explicit activation; OfferCurrent fills the slot only when no
+// current context is live, so an automatic activation never takes the
+// legacy surface away. Chain registration, rebinding and the automatic
+// last-chain release live here with the directory records they share.
 #include "registry.h"
-#include "registryInternal.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
 
 #include "pxr/base/work/utils.h"

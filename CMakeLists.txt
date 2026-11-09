@@ -328,7 +328,9 @@ include(cmake/WindowsArchiveLinks.cmake)
 add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
-    libs/rigExecImaging/registry.cpp
+    # The imaging directory and chain binding: the process-level stage ->
+    # context map, the chain registrations and the legacy current slot.
+    libs/rigExecImaging/registryDirectory.cpp
     # Upstream inputs: chain-pulled tables, each session's slice, the
     # serial retirement and the live hand-off at a time.
     libs/rigExecImaging/registryUpstream.cpp
