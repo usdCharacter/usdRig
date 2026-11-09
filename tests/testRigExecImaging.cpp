@@ -30,13 +30,18 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/references.h"
 
+#include "rigExec/frameCacheSparsity.h"
+
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/diagnosticMgr.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/setenv.h"
+#include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/usd/notice.h"
 #include "pxr/imaging/hd/basisCurvesSchema.h"
 #include "pxr/imaging/hd/basisCurvesTopologySchema.h"
 #include "pxr/imaging/hd/coneSchema.h"
@@ -97,34 +102,41 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 // Records forwarded notices for assertion.
 class _RecordingObserver : public HdSceneIndexObserver {
 public:
     void PrimsAdded(const HdSceneIndexBase &,
-                    const AddedPrimEntries &entries) override {
-        for (const auto &e : entries) added.push_back(e.primPath);
+                    const AddedPrimEntries &entries) override
+    {
+        for (const auto &e : entries)
+            added.push_back(e.primPath);
     }
     void PrimsRemoved(const HdSceneIndexBase &,
-                      const RemovedPrimEntries &entries) override {
-        for (const auto &e : entries) removed.push_back(e.primPath);
+                      const RemovedPrimEntries &entries) override
+    {
+        for (const auto &e : entries)
+            removed.push_back(e.primPath);
     }
     void PrimsDirtied(const HdSceneIndexBase &,
-                      const DirtiedPrimEntries &entries) override {
+                      const DirtiedPrimEntries &entries) override
+    {
         for (const auto &e : entries) {
             dirtied.push_back(e.primPath);
             dirtiedLocators.push_back(e.dirtyLocators);
         }
     }
     void PrimsRenamed(const HdSceneIndexBase &,
-                      const RenamedPrimEntries &) override {}
+                      const RenamedPrimEntries &) override
+    {
+    }
 
     SdfPathVector added, removed, dirtied;
     std::vector<HdDataSourceLocatorSet> dirtiedLocators;
@@ -210,8 +222,7 @@ _MeshShellWithXform(const SdfPath &path, const GfMatrix4d &world)
     static const TfToken xformName = HdXformSchemaTokens->xform;
     const HdDataSourceBaseHandle xformSource =
         HdXformSchema::Builder()
-            .SetMatrix(
-                HdRetainedTypedSampledDataSource<GfMatrix4d>::New(world))
+            .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(world))
             .SetResetXformStack(
                 HdRetainedTypedSampledDataSource<bool>::New(true))
             .Build();
@@ -260,8 +271,10 @@ TestPrePopulationAttachment()
 
     bool sawMesh = false, sawOwned = false;
     for (const SdfPath &p : observer.added) {
-        if (p == meshPath) sawMesh = true;
-        if (p.HasPrefix(generatedScope)) sawOwned = true;
+        if (p == meshPath)
+            sawMesh = true;
+        if (p.HasPrefix(generatedScope))
+            sawOwned = true;
     }
     CHECK(sawMesh);
     CHECK(!sawOwned);
@@ -293,8 +306,10 @@ TestPopulatedWrappingAndResync()
     _Traverse(chain.results, SdfPath::AbsoluteRootPath(), &traversed);
     bool sawMesh = false, sawOwned = false;
     for (const SdfPath &p : traversed) {
-        if (p == meshPath) sawMesh = true;
-        if (p.HasPrefix(generatedScope)) sawOwned = true;
+        if (p == meshPath)
+            sawMesh = true;
+        if (p.HasPrefix(generatedScope))
+            sawOwned = true;
     }
     CHECK(sawMesh);
     CHECK(!sawOwned);
@@ -306,7 +321,8 @@ TestPopulatedWrappingAndResync()
     upstream->AddPrims(again);
     bool resynced = false;
     for (const SdfPath &p : observer.added) {
-        if (p == meshPath) resynced = true;
+        if (p == meshPath)
+            resynced = true;
     }
     CHECK(resynced);
     chain.results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
@@ -337,7 +353,8 @@ TestLateConsumerTraversal()
     _Traverse(chain.results, SdfPath::AbsoluteRootPath(), &traversed);
     bool sawMesh = false;
     for (const SdfPath &p : traversed) {
-        if (p == meshPath) sawMesh = true;
+        if (p == meshPath)
+            sawMesh = true;
     }
     CHECK(sawMesh);
     CHECK(_GetPointsPrimvar(chain.results->GetPrim(meshPath)) ==
@@ -353,8 +370,7 @@ TestNoticeStreamFiltering()
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
     const SdfPath meshPath("/Asset/Geom/Body");
     const SdfPath generatedScope("/Asset/Rig/__RigExecGenerated");
-    const SdfPath generatedApp =
-        generatedScope.AppendChild(TfToken("App_0"));
+    const SdfPath generatedApp = generatedScope.AppendChild(TfToken("App_0"));
     HdRetainedSceneIndex::AddedPrimEntries entries;
     entries.push_back(_MeshShell(meshPath));
     entries.push_back(_GeneratedShell(generatedApp));
@@ -369,8 +385,7 @@ TestNoticeStreamFiltering()
     // exact locators.
     const HdDataSourceLocator visibility(TfToken("visibility"));
     HdSceneIndexObserver::DirtiedPrimEntries dirtied;
-    dirtied.emplace_back(
-        generatedApp, HdDataSourceLocatorSet::UniversalSet());
+    dirtied.emplace_back(generatedApp, HdDataSourceLocatorSet::UniversalSet());
     dirtied.emplace_back(meshPath, HdDataSourceLocatorSet{visibility});
     upstream->DirtyPrims(dirtied);
     CHECK(observer.dirtied.size() == 1);
@@ -427,12 +442,12 @@ TestNarrowLocators()
     };
     // Non-const: Publish derives hasDrivenXforms into the snapshot, so that
     // the fast path can never disagree with the prims it is guarding.
-    auto publish = [&](const std::shared_ptr<RigExecImagingSnapshot>
-                           &snapshot) {
-        observer.dirtied.clear();
-        observer.dirtiedLocators.clear();
-        chain.results->NotifyGenerationPublished(store->Publish(snapshot));
-    };
+    auto publish =
+        [&](const std::shared_ptr<RigExecImagingSnapshot> &snapshot) {
+            observer.dirtied.clear();
+            observer.dirtiedLocators.clear();
+            chain.results->NotifyGenerationPublished(store->Publish(snapshot));
+        };
 
     const GfMatrix4d identity(1.0);
     const VtVec3fArray basePoints = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)};
@@ -459,11 +474,11 @@ TestNarrowLocators()
             HdPrimvarsSchemaTokens->primvars, HdTokens->velocities)));
         CHECK(locators.Contains(HdDataSourceLocator(
             HdPrimvarsSchemaTokens->primvars, HdTokens->accelerations)));
-        CHECK(locators.Contains(HdDataSourceLocator(
-            HdDataSourceLocatorSentinelTokens->container)));
-        CHECK(locators.Contains(HdDataSourceLocator(
-            HdPrimvarsSchemaTokens->primvars,
-            HdDataSourceLocatorSentinelTokens->container)));
+        CHECK(locators.Contains(
+            HdDataSourceLocator(HdDataSourceLocatorSentinelTokens->container)));
+        CHECK(locators.Contains(
+            HdDataSourceLocator(HdPrimvarsSchemaTokens->primvars,
+                                HdDataSourceLocatorSentinelTokens->container)));
         CHECK(!locators.Intersects(
             HdDataSourceLocator(HdExtentSchemaTokens->extent)));
         CHECK(!locators.Intersects(
@@ -545,7 +560,8 @@ TestMotionCapabilityMatrix(const std::string &examplesDir)
 
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecImagingBridge bridge(stage, SdfPath("/Shot/HeroArm/Rig"));
     CHECK(bridge.Compile());
 
@@ -554,8 +570,8 @@ TestMotionCapabilityMatrix(const std::string &examplesDir)
     HdRetainedSceneIndex::AddedPrimEntries entries;
     entries.push_back(_MeshShell(bodyPath));
     upstream->AddPrims(entries);
-    _Chain chain = _BuildChain(
-        upstream, bridge.GetStore(), {bridge.GetGeneratedScope()});
+    _Chain chain =
+        _BuildChain(upstream, bridge.GetStore(), {bridge.GetGeneratedScope()});
     bridge.SetSceneIndices(chain.binding, chain.results);
 
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
@@ -582,8 +598,8 @@ TestMotionCapabilityMatrix(const std::string &examplesDir)
         CHECK(value);
         if (value) {
             std::vector<HdSampledDataSource::Time> times;
-            CHECK(value->GetContributingSampleTimesForInterval(
-                -0.5f, 0.5f, &times));
+            CHECK(value->GetContributingSampleTimesForInterval(-0.5f, 0.5f,
+                                                               &times));
             CHECK(times.size() == 3);
         }
     }
@@ -602,8 +618,8 @@ TestMotionCapabilityMatrix(const std::string &examplesDir)
         CHECK(value);
         if (value) {
             std::vector<HdSampledDataSource::Time> times;
-            CHECK(!value->GetContributingSampleTimesForInterval(
-                -0.5f, 0.5f, &times));
+            CHECK(!value->GetContributingSampleTimesForInterval(-0.5f, 0.5f,
+                                                                &times));
         }
     }
 }
@@ -611,8 +627,7 @@ TestMotionCapabilityMatrix(const std::string &examplesDir)
 // Recursive container-name audit: no RigExec name crosses the renderer
 // boundary (spec §14.5 terminal enumeration).
 static void
-_AuditContainerNames(const HdContainerDataSourceHandle &container,
-                     int depth)
+_AuditContainerNames(const HdContainerDataSourceHandle &container, int depth)
 {
     if (!container || depth > 4) {
         return;
@@ -637,7 +652,8 @@ TestLegacyRenderIndexPickup(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecImagingBridge bridge(stage, SdfPath("/Shot/HeroArm/Rig"));
     CHECK(bridge.Compile());
 
@@ -648,8 +664,8 @@ TestLegacyRenderIndexPickup(const std::string &examplesDir)
     entries.push_back(_GeneratedShell(
         bridge.GetGeneratedScope().AppendChild(TfToken("App_0"))));
     upstream->AddPrims(entries);
-    _Chain chain = _BuildChain(
-        upstream, bridge.GetStore(), {bridge.GetGeneratedScope()});
+    _Chain chain =
+        _BuildChain(upstream, bridge.GetStore(), {bridge.GetGeneratedScope()});
     bridge.SetSceneIndices(chain.binding, chain.results);
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1024)));
 
@@ -664,14 +680,16 @@ TestLegacyRenderIndexPickup(const std::string &examplesDir)
         HdRenderIndex::New(&renderDelegate, HdDriverVector());
     CHECK(renderIndex);
     if (renderIndex) {
-        renderIndex->InsertSceneIndex(
-            chain.results, SdfPath::AbsoluteRootPath());
+        renderIndex->InsertSceneIndex(chain.results,
+                                      SdfPath::AbsoluteRootPath());
         const SdfPathVector rprims =
             renderIndex->GetRprimSubtree(SdfPath::AbsoluteRootPath());
         bool sawBody = false, sawOwned = false;
         for (const SdfPath &p : rprims) {
-            if (p == bodyPath) sawBody = true;
-            if (p.HasPrefix(bridge.GetGeneratedScope())) sawOwned = true;
+            if (p == bodyPath)
+                sawBody = true;
+            if (p.HasPrefix(bridge.GetGeneratedScope()))
+                sawOwned = true;
         }
         CHECK(sawBody);
         CHECK(!sawOwned);
@@ -688,14 +706,12 @@ TestFilterChainOverRetainedScene()
 
     // Upstream mesh shell with authored points and velocities.
     const SdfPath meshPath("/Asset/Geom/Body");
-    const VtVec3fArray upstreamPoints = {
-        GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)};
-    const VtVec3fArray upstreamVelocities = {
-        GfVec3f(0, 9, 0), GfVec3f(0, 9, 0)};
+    const VtVec3fArray upstreamPoints = {GfVec3f(0, 0, 0), GfVec3f(1, 0, 0)};
+    const VtVec3fArray upstreamVelocities = {GfVec3f(0, 9, 0),
+                                             GfVec3f(0, 9, 0)};
     HdRetainedSceneIndex::AddedPrimEntries entries;
     {
-        TfTokenVector primvarNames = {HdTokens->points,
-                                      HdTokens->velocities};
+        TfTokenVector primvarNames = {HdTokens->points, HdTokens->velocities};
         std::vector<HdDataSourceBaseHandle> primvarValues = {
             HdPrimvarSchema::Builder()
                 .SetPrimvarValue(
@@ -709,9 +725,9 @@ TestFilterChainOverRetainedScene()
                 .Build()};
         const TfToken names[] = {HdPrimvarsSchemaTokens->primvars};
         const HdDataSourceBaseHandle values[] = {
-            HdRetainedContainerDataSource::New(
-                primvarNames.size(), primvarNames.data(),
-                primvarValues.data())};
+            HdRetainedContainerDataSource::New(primvarNames.size(),
+                                               primvarNames.data(),
+                                               primvarValues.data())};
         entries.push_back(
             {meshPath, HdPrimTypeTokens->mesh,
              HdRetainedContainerDataSource::New(1, names, values)});
@@ -754,8 +770,10 @@ TestFilterChainOverRetainedScene()
         upstream->AddPrims(more);
         bool sawOwned = false, sawOther = false;
         for (const SdfPath &p : observer.added) {
-            if (p.HasPrefix(generatedScope)) sawOwned = true;
-            if (p == SdfPath("/Asset/Geom/Other")) sawOther = true;
+            if (p.HasPrefix(generatedScope))
+                sawOwned = true;
+            if (p == SdfPath("/Asset/Geom/Other"))
+                sawOther = true;
         }
         CHECK(!sawOwned);
         CHECK(sawOther);
@@ -784,9 +802,8 @@ TestFilterChainOverRetainedScene()
     // the composed container must expose NO velocities value (the overlay
     // resolves a stronger HdBlockDataSource to null for consumers).
     {
-        HdContainerDataSourceHandle primvars =
-            HdContainerDataSource::Cast(
-                prim.dataSource->Get(HdPrimvarsSchemaTokens->primvars));
+        HdContainerDataSourceHandle primvars = HdContainerDataSource::Cast(
+            prim.dataSource->Get(HdPrimvarsSchemaTokens->primvars));
         CHECK(primvars);
         if (primvars) {
             HdDataSourceBaseHandle velocities =
@@ -799,8 +816,7 @@ TestFilterChainOverRetainedScene()
 
     // Extent overlays as GfVec3d min/max.
     {
-        HdExtentSchema extent =
-            HdExtentSchema::GetFromParent(prim.dataSource);
+        HdExtentSchema extent = HdExtentSchema::GetFromParent(prim.dataSource);
         CHECK(extent.GetMin() &&
               extent.GetMin()->GetTypedValue(0.0f) == GfVec3d(0, 5, 0));
         CHECK(extent.GetMax() &&
@@ -829,7 +845,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/Shot/HeroArm/Rig");
     RigExecImagingBridge bridge(stage, rigPath);
@@ -839,7 +856,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         std::printf("compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     // Minimal upstream shell for the deforming mesh (the full UsdImaging
     // chain supplies this in the application; the filters only need the
@@ -847,9 +865,9 @@ TestBridgeOverShotStage(const std::string &examplesDir)
     const SdfPath bodyPath("/Shot/HeroArm/Geom/ArmBody");
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
     HdRetainedSceneIndex::AddedPrimEntries entries;
-    entries.push_back({bodyPath, HdPrimTypeTokens->mesh,
-                       HdRetainedContainerDataSource::New(0, nullptr,
-                                                          nullptr)});
+    entries.push_back(
+        {bodyPath, HdPrimTypeTokens->mesh,
+         HdRetainedContainerDataSource::New(0, nullptr, nullptr)});
     // Joint/solver prim shells: guides only synthesize beneath parents
     // that exist upstream (UsdImaging supplies these in the application).
     // The wrist is INVISIBLE upstream, as a flattened UsdImaging prim would
@@ -870,15 +888,14 @@ TestBridgeOverShotStage(const std::string &examplesDir)
             .Build(),
         HdRetainedContainerDataSource::New(
             HdPrimOriginSchemaTokens->scenePath,
-            HdRetainedTypedSampledDataSource<
-                HdPrimOriginSchema::OriginPath>::New(
-                    HdPrimOriginSchema::OriginPath(wristStagePath)))};
+            HdRetainedTypedSampledDataSource<HdPrimOriginSchema::OriginPath>::
+                New(HdPrimOriginSchema::OriginPath(wristStagePath)))};
     entries.push_back({wristStagePath, TfToken(),
                        HdRetainedContainerDataSource::New(
                            2, wristInheritedNames, wristInherited)});
-    entries.push_back({SdfPath("/Shot/HeroArm/Rig/Solvers/FK"), TfToken(),
-                       HdRetainedContainerDataSource::New(0, nullptr,
-                                                          nullptr)});
+    entries.push_back(
+        {SdfPath("/Shot/HeroArm/Rig/Solvers/FK"), TfToken(),
+         HdRetainedContainerDataSource::New(0, nullptr, nullptr)});
     upstream->AddPrims(entries);
 
     auto pruning = RigExecInternalPrimPruningSceneIndex::New(upstream);
@@ -903,8 +920,7 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         _GetPointsPrimvar(results->GetPrim(bodyPath));
     CHECK(posedPoints.size() == 4);
     bool moved = false;
-    for (size_t i = 0; i < posedPoints.size() && i < restPoints.size();
-         ++i) {
+    for (size_t i = 0; i < posedPoints.size() && i < restPoints.size(); ++i) {
         if ((GfVec3d(posedPoints[i]) - GfVec3d(restPoints[i])).GetLength() >
             1e-4) {
             moved = true;
@@ -913,7 +929,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
     CHECK(moved);
     bool sawBodyDirty = false;
     for (const SdfPath &p : observer.dirtied) {
-        if (p == bodyPath) sawBodyDirty = true;
+        if (p == bodyPath)
+            sawBodyDirty = true;
     }
     CHECK(sawBodyDirty);
 
@@ -921,15 +938,17 @@ TestBridgeOverShotStage(const std::string &examplesDir)
     // grow synthesized sphere/cone guide children whose xforms follow the
     // posed frames per generation.
     {
-        const SdfPath wristPath("/Shot/HeroArm/Rig/Joints/Shoulder/Elbow/Wrist");
+        const SdfPath wristPath(
+            "/Shot/HeroArm/Rig/Joints/Shoulder/Elbow/Wrist");
         const SdfPath wristSphere =
             wristPath.AppendChild(TfToken("rigGuideSphere_0"));
-        const SdfPathVector wristKids =
-            results->GetChildPrimPaths(wristPath);
+        const SdfPathVector wristKids = results->GetChildPrimPaths(wristPath);
         bool sawSphere = false, sawCone = false;
         for (const SdfPath &p : wristKids) {
-            if (p == wristSphere) sawSphere = true;
-            if (p.GetName() == "rigGuideCone_0") sawCone = true;
+            if (p == wristSphere)
+                sawSphere = true;
+            if (p.GetName() == "rigGuideCone_0")
+                sawCone = true;
         }
         // Wrist is a leaf: hierarchy-derived joint links stop there.
         CHECK(sawSphere && !sawCone);
@@ -957,7 +976,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         CHECK(posed != rest);
         bool sawGuideDirty = false;
         for (const SdfPath &p : observer.dirtied) {
-            if (p == wristSphere) sawGuideDirty = true;
+            if (p == wristSphere)
+                sawGuideDirty = true;
         }
         CHECK(sawGuideDirty);
 
@@ -984,9 +1004,9 @@ TestBridgeOverShotStage(const std::string &examplesDir)
             HdPrimOriginSchema origin = HdPrimOriginSchema::GetFromParent(
                 results->GetPrim(wristSphere).dataSource);
             const SdfPath resolved =
-                origin ? origin.GetOriginPath(
-                             HdPrimOriginSchemaTokens->scenePath)
-                       : SdfPath();
+                origin
+                    ? origin.GetOriginPath(HdPrimOriginSchemaTokens->scenePath)
+                    : SdfPath();
             if (resolved != wristPath) {
                 std::printf("  guide has no primOrigin -- picking it "
                             "resolves to nothing selectable\n");
@@ -995,9 +1015,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         }
 
         // Aggregate solver guides: the FK chain publishes three frames.
-        const SdfPath fkCone2 =
-            SdfPath("/Shot/HeroArm/Rig/Solvers/FK")
-                .AppendChild(TfToken("rigGuideCone_2"));
+        const SdfPath fkCone2 = SdfPath("/Shot/HeroArm/Rig/Solvers/FK")
+                                    .AppendChild(TfToken("rigGuideCone_2"));
         CHECK(results->GetPrim(fkCone2).primType == HdPrimTypeTokens->cone);
 
         // Notice reconciliation: removing the joint shell upstream drops
@@ -1011,7 +1030,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
               HdRetainedContainerDataSource::New(0, nullptr, nullptr)}});
         bool reAnnounced = false;
         for (const SdfPath &p : observer.added) {
-            if (p == wristSphere) reAnnounced = true;
+            if (p == wristSphere)
+                reAnnounced = true;
         }
         CHECK(reAnnounced);
         CHECK(results->GetPrim(wristSphere).dataSource);
@@ -1029,8 +1049,10 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         upstream->RemovePrims({{wristSphere}, {wristCone}});
         int sphereAdds = 0, coneAdds = 0;
         for (const SdfPath &p : observer.added) {
-            if (p == wristSphere) ++sphereAdds;
-            if (p == wristCone) ++coneAdds;
+            if (p == wristSphere)
+                ++sphereAdds;
+            if (p == wristCone)
+                ++coneAdds;
         }
         CHECK(sphereAdds == 1);
         CHECK(coneAdds == 0);
@@ -1053,8 +1075,8 @@ TestBridgeOverShotStage(const std::string &examplesDir)
         CHECK(value);
         if (value) {
             std::vector<HdSampledDataSource::Time> times;
-            CHECK(value->GetContributingSampleTimesForInterval(
-                -0.5f, 0.5f, &times));
+            CHECK(value->GetContributingSampleTimesForInterval(-0.5f, 0.5f,
+                                                               &times));
             CHECK(times.size() == 3);
             const VtValue before = value->GetValue(-0.5f);
             const VtValue after = value->GetValue(0.5f);
@@ -1086,7 +1108,8 @@ TestControlGuides(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmShotAnim.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/Shot/HeroArm/Rig");
     const SdfPath controls("/Shot/HeroArm/Rig/Controls");
@@ -1104,34 +1127,32 @@ TestControlGuides(const std::string &examplesDir)
         std::printf("compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     // Upstream prim shells for the controls: a guide only synthesizes
     // beneath a parent that exists upstream. WristFK is hidden and carries
     // a primOrigin, exactly as a flattened UsdImaging prim would.
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
     HdRetainedSceneIndex::AddedPrimEntries shells;
-    for (const SdfPath &p :
-         {shoulderFk, elbowFk, handIk, elbowPole}) {
-        shells.push_back({p, TfToken(),
-                          HdRetainedContainerDataSource::New(0, nullptr,
-                                                             nullptr)});
+    for (const SdfPath &p : {shoulderFk, elbowFk, handIk, elbowPole}) {
+        shells.push_back(
+            {p, TfToken(),
+             HdRetainedContainerDataSource::New(0, nullptr, nullptr)});
     }
-    static const TfToken wristNames[] = {
-        HdVisibilitySchema::GetSchemaToken(),
-        HdPrimOriginSchema::GetSchemaToken()};
+    static const TfToken wristNames[] = {HdVisibilitySchema::GetSchemaToken(),
+                                         HdPrimOriginSchema::GetSchemaToken()};
     const HdDataSourceBaseHandle wristValues[] = {
         HdVisibilitySchema::Builder()
             .SetVisibility(HdRetainedTypedSampledDataSource<bool>::New(false))
             .Build(),
         HdRetainedContainerDataSource::New(
             HdPrimOriginSchemaTokens->scenePath,
-            HdRetainedTypedSampledDataSource<
-                HdPrimOriginSchema::OriginPath>::New(
-                    HdPrimOriginSchema::OriginPath(wristFk)))};
-    shells.push_back({wristFk, TfToken(),
-                      HdRetainedContainerDataSource::New(2, wristNames,
-                                                         wristValues)});
+            HdRetainedTypedSampledDataSource<HdPrimOriginSchema::OriginPath>::
+                New(HdPrimOriginSchema::OriginPath(wristFk)))};
+    shells.push_back(
+        {wristFk, TfToken(),
+         HdRetainedContainerDataSource::New(2, wristNames, wristValues)});
     upstream->AddPrims(shells);
 
     auto binding = RigExecBindingResolvingSceneIndex::New(upstream);
@@ -1161,14 +1182,16 @@ TestControlGuides(const std::string &examplesDir)
     };
     auto hasGuideChild = [&](const SdfPath &control) {
         for (const SdfPath &p : results->GetChildPrimPaths(control)) {
-            if (p == guidePath(control)) return true;
+            if (p == guidePath(control))
+                return true;
         }
         return false;
     };
     // curveVertexCounts for a wire guide, faceVertexCounts for a mesh one.
     auto topologyCounts = [](const HdSceneIndexPrim &prim) {
         VtIntArray counts;
-        if (!prim.dataSource) return counts;
+        if (!prim.dataSource)
+            return counts;
         if (HdBasisCurvesSchema curves =
                 HdBasisCurvesSchema::GetFromParent(prim.dataSource)) {
             if (HdIntArrayDataSourceHandle ds =
@@ -1233,9 +1256,9 @@ TestControlGuides(const std::string &examplesDir)
         const char *shape;
         const char *drawMode;
         TfToken primType;
-        std::vector<int> counts;    // empty for the implicits
-        size_t points;              // 0 for the implicits
-        std::vector<int> indices;   // faceVertexIndices; empty unless a mesh
+        std::vector<int> counts;  // empty for the implicits
+        size_t points;            // 0 for the implicits
+        std::vector<int> indices; // faceVertexIndices; empty unless a mesh
     };
     // The circle mesh is one n-gon over consecutive vertices.
     std::vector<int> circleFan(32);
@@ -1244,15 +1267,21 @@ TestControlGuides(const std::string &examplesDir)
     }
     const std::vector<_Expected> expectations = {
         {"circle", "wire", HdPrimTypeTokens->basisCurves, {33}, 33, {}},
-        {"sphere", "wire", HdPrimTypeTokens->basisCurves,
-         {33, 33, 33}, 99, {}},
+        {"sphere", "wire", HdPrimTypeTokens->basisCurves, {33, 33, 33}, 99, {}},
         {"box", "wire", HdPrimTypeTokens->basisCurves, {5}, 5, {}},
-        {"cube", "wire", HdPrimTypeTokens->basisCurves,
-         {5, 5, 2, 2, 2, 2}, 18, {}},
-        {"diamond", "wire", HdPrimTypeTokens->basisCurves,
-         {5, 5, 5}, 15, {}},
-        {"pyramid", "wire", HdPrimTypeTokens->basisCurves,
-         {5, 2, 2, 2, 2}, 13, {}},
+        {"cube",
+         "wire",
+         HdPrimTypeTokens->basisCurves,
+         {5, 5, 2, 2, 2, 2},
+         18,
+         {}},
+        {"diamond", "wire", HdPrimTypeTokens->basisCurves, {5, 5, 5}, 15, {}},
+        {"pyramid",
+         "wire",
+         HdPrimTypeTokens->basisCurves,
+         {5, 2, 2, 2, 2},
+         13,
+         {}},
         {"sphere", "geometry", HdPrimTypeTokens->sphere, {}, 0, {}},
         {"cube", "geometry", HdPrimTypeTokens->cube, {}, 0, {}},
         {"circle", "geometry", HdPrimTypeTokens->mesh, {32}, 32, circleFan},
@@ -1262,16 +1291,22 @@ TestControlGuides(const std::string &examplesDir)
         // Octahedron, vertices [+X, -X, +Y, -Y, +Z, -Z]: four faces around
         // +Y then four around -Y, every one wound counter-clockwise seen
         // from outside.
-        {"diamond", "geometry", HdPrimTypeTokens->mesh,
-         {3, 3, 3, 3, 3, 3, 3, 3}, 6,
+        {"diamond",
+         "geometry",
+         HdPrimTypeTokens->mesh,
+         {3, 3, 3, 3, 3, 3, 3, 3},
+         6,
          {0, 2, 4, 4, 2, 1, 1, 2, 5, 5, 2, 0,
           0, 4, 3, 4, 1, 3, 1, 5, 3, 5, 0, 3}},
         // Base corners [0..3] counter-clockwise seen from +Y, apex 4. Each
         // side takes two base corners in ring order then the apex; the base
         // quad takes the ring REVERSED, because it is the one face whose
         // outward direction is -Y.
-        {"pyramid", "geometry", HdPrimTypeTokens->mesh,
-         {3, 3, 3, 3, 4}, 5,
+        {"pyramid",
+         "geometry",
+         HdPrimTypeTokens->mesh,
+         {3, 3, 3, 3, 4},
+         5,
          {0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4, 3, 2, 1, 0}}};
     for (const _Expected &expected : expectations) {
         CHECK(setToken(shoulderFk, "guide:shape", expected.shape));
@@ -1279,8 +1314,7 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
 
         CHECK(hasGuideChild(shoulderFk));
-        const HdSceneIndexPrim guide =
-            results->GetPrim(guidePath(shoulderFk));
+        const HdSceneIndexPrim guide = results->GetPrim(guidePath(shoulderFk));
         if (guide.primType != expected.primType) {
             std::printf("  %s/%s drew a %s, expected %s\n", expected.shape,
                         expected.drawMode, guide.primType.GetText(),
@@ -1288,33 +1322,33 @@ TestControlGuides(const std::string &examplesDir)
         }
         CHECK(guide.primType == expected.primType);
         CHECK(guide.dataSource);
-        if (!guide.dataSource) continue;
+        if (!guide.dataSource)
+            continue;
 
         const VtIntArray counts = topologyCounts(guide);
         const bool countsMatch =
             counts.size() == expected.counts.size() &&
-            std::equal(counts.begin(), counts.end(),
-                       expected.counts.begin());
+            std::equal(counts.begin(), counts.end(), expected.counts.begin());
         if (!countsMatch) {
             std::printf("  %s/%s topology counts: got %zu entries, "
-                        "expected %zu\n", expected.shape, expected.drawMode,
-                        counts.size(), expected.counts.size());
+                        "expected %zu\n",
+                        expected.shape, expected.drawMode, counts.size(),
+                        expected.counts.size());
         }
         CHECK(countsMatch);
         CHECK(_GetPointsPrimvar(guide).size() == expected.points);
 
         const VtIntArray indices = faceVertexIndices(guide);
-        const bool indicesMatch =
-            indices.size() == expected.indices.size() &&
-            std::equal(indices.begin(), indices.end(),
-                       expected.indices.begin());
+        const bool indicesMatch = indices.size() == expected.indices.size() &&
+                                  std::equal(indices.begin(), indices.end(),
+                                             expected.indices.begin());
         if (!indicesMatch) {
             std::printf("  %s/%s faceVertexIndices differ (got %zu, expected "
                         "%zu) -- a reordered face is a flipped winding\n",
                         expected.shape, expected.drawMode, indices.size(),
                         expected.indices.size());
-            for (size_t i = 0; i < indices.size() &&
-                               i < expected.indices.size(); ++i) {
+            for (size_t i = 0;
+                 i < indices.size() && i < expected.indices.size(); ++i) {
                 if (indices[i] != expected.indices[i]) {
                     std::printf("    first difference at %zu: %d != %d\n", i,
                                 indices[i], expected.indices[i]);
@@ -1332,10 +1366,8 @@ TestControlGuides(const std::string &examplesDir)
             CHECK(sphere.GetRadius() &&
                   sphere.GetRadius()->GetTypedValue(0.0f) == 1.0);
         } else if (expected.primType == HdPrimTypeTokens->cube) {
-            HdCubeSchema cube =
-                HdCubeSchema::GetFromParent(guide.dataSource);
-            CHECK(cube.GetSize() &&
-                  cube.GetSize()->GetTypedValue(0.0f) == 2.0);
+            HdCubeSchema cube = HdCubeSchema::GetFromParent(guide.dataSource);
+            CHECK(cube.GetSize() && cube.GetSize()->GetTypedValue(0.0f) == 2.0);
         } else {
             HdExtentSchema extent =
                 HdExtentSchema::GetFromParent(guide.dataSource);
@@ -1354,8 +1386,7 @@ TestControlGuides(const std::string &examplesDir)
         }
         // Meshes are double-sided: a guide is looked at from every side.
         if (expected.primType == HdPrimTypeTokens->mesh) {
-            HdMeshSchema mesh =
-                HdMeshSchema::GetFromParent(guide.dataSource);
+            HdMeshSchema mesh = HdMeshSchema::GetFromParent(guide.dataSource);
             CHECK(mesh.GetDoubleSided() &&
                   mesh.GetDoubleSided()->GetTypedValue(0.0f));
         }
@@ -1376,8 +1407,7 @@ TestControlGuides(const std::string &examplesDir)
                 const VtValue held = v->GetValue(0.0f);
                 CHECK(held.IsHolding<VtFloatArray>());
                 if (held.IsHolding<VtFloatArray>()) {
-                    const VtFloatArray w =
-                        held.UncheckedGet<VtFloatArray>();
+                    const VtFloatArray w = held.UncheckedGet<VtFloatArray>();
                     CHECK(w.size() == 1);
                     // The schema default.
                     if (w.size() == 1) {
@@ -1404,8 +1434,7 @@ TestControlGuides(const std::string &examplesDir)
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
 
     {
-        const HdSceneIndexPrim guide =
-            results->GetPrim(guidePath(shoulderFk));
+        const HdSceneIndexPrim guide = results->GetPrim(guidePath(shoulderFk));
         CHECK(guide.dataSource);
         if (guide.dataSource) {
             // Controls draw as ordinary GEOMETRY, not as diagnostics: an
@@ -1419,8 +1448,7 @@ TestControlGuides(const std::string &examplesDir)
 
             HdPrimvarsSchema primvars =
                 HdPrimvarsSchema::GetFromParent(guide.dataSource);
-            HdPrimvarSchema color =
-                primvars.GetPrimvar(HdTokens->displayColor);
+            HdPrimvarSchema color = primvars.GetPrimvar(HdTokens->displayColor);
             CHECK(color.GetInterpolation() &&
                   color.GetInterpolation()->GetTypedValue(0.0f) ==
                       HdPrimvarSchemaTokens->constant);
@@ -1452,8 +1480,7 @@ TestControlGuides(const std::string &examplesDir)
             HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
                 results->GetPrim(guidePath(control)).dataSource);
             HdSampledDataSourceHandle v =
-                primvars.GetPrimvar(HdTokens->displayOpacity)
-                    .GetPrimvarValue();
+                primvars.GetPrimvar(HdTokens->displayOpacity).GetPrimvarValue();
             const VtValue held = v ? v->GetValue(0.0f) : VtValue();
             if (!held.IsHolding<VtFloatArray>() ||
                 held.UncheckedGet<VtFloatArray>().size() != 1) {
@@ -1487,9 +1514,9 @@ TestControlGuides(const std::string &examplesDir)
         // the doubled value once the attribute declares `final`.
         {
             const TfToken phaseField("rigExecReadPhase");
-            const UsdPrim gain = stage->DefinePrim(
-                SdfPath("/Shot/HeroArm/Rig/DialGain"),
-                TfToken("RigExecFloatMathMover"));
+            const UsdPrim gain =
+                stage->DefinePrim(SdfPath("/Shot/HeroArm/Rig/DialGain"),
+                                  TfToken("RigExecFloatMathMover"));
             CHECK(gain.ApplyAPI(TfToken("RigExecMoverAPI")));
             gain.CreateAttribute(TfToken("rigExec:operation"),
                                  SdfValueTypeNames->Token)
@@ -1501,8 +1528,8 @@ TestControlGuides(const std::string &examplesDir)
                 .SetTargets({dial.GetPath()});
             CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
             CHECK(std::abs(readOpacity(shoulderFk) - 0.3f) < 1e-6f);
-            CHECK(shoulderOpacity.SetMetadata(phaseField,
-                                              std::string("final")));
+            CHECK(
+                shoulderOpacity.SetMetadata(phaseField, std::string("final")));
             CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
             CHECK(std::abs(readOpacity(shoulderFk) - 0.6f) < 1e-6f);
             CHECK(shoulderOpacity.ClearMetadata(phaseField));
@@ -1566,8 +1593,8 @@ TestControlGuides(const std::string &examplesDir)
         return xf && xf.GetMatrix() ? xf.GetMatrix()->GetTypedValue(0.0f)
                                     : GfMatrix4d(1.0);
     };
-    CHECK((guideXform(shoulderFk).ExtractTranslation() -
-           GfVec3d(0, 10, 0)).GetLength() < 1e-6);
+    CHECK((guideXform(shoulderFk).ExtractTranslation() - GfVec3d(0, 10, 0))
+              .GetLength() < 1e-6);
 
     // These fixture controls have identity scale avars, so the authored
     // guide:scaleX/Y/Z values are the effective basis-vector lengths. The
@@ -1580,8 +1607,8 @@ TestControlGuides(const std::string &examplesDir)
             const double length = xform.GetRow3(i).GetLength();
             if (std::abs(length - expectedLengths[i]) > 1e-6) {
                 std::printf("  basis %zu length %g, expected %g -- per-axis "
-                            "guide scale not applied\n", i, length,
-                            expectedLengths[i]);
+                            "guide scale not applied\n",
+                            i, length, expectedLengths[i]);
             }
             CHECK(std::abs(length - expectedLengths[i]) < 1e-6);
         }
@@ -1627,7 +1654,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(rest != posed);
         bool sawGuideDirty = false;
         for (const SdfPath &p : observer.dirtied) {
-            if (p == guidePath(handIk)) sawGuideDirty = true;
+            if (p == guidePath(handIk))
+                sawGuideDirty = true;
         }
         CHECK(sawGuideDirty);
     }
@@ -1649,13 +1677,12 @@ TestControlGuides(const std::string &examplesDir)
         observer.dirtied.clear();
         CHECK(setToken(elbowPole, "guide:shape", "pyramid"));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
-        const HdSceneIndexPrim guide =
-            results->GetPrim(guidePath(elbowPole));
+        const HdSceneIndexPrim guide = results->GetPrim(guidePath(elbowPole));
         CHECK(guide.primType == HdPrimTypeTokens->basisCurves);
         const VtIntArray after = topologyCounts(guide);
-        const bool resynced =
-            after.size() == 5 && after[0] == 5 && after[1] == 2 &&
-            after[2] == 2 && after[3] == 2 && after[4] == 2;
+        const bool resynced = after.size() == 5 && after[0] == 5 &&
+                              after[1] == 2 && after[2] == 2 && after[3] == 2 &&
+                              after[4] == 2;
         if (!resynced) {
             std::printf("  a guide:shape change within one draw mode left "
                         "%zu curve(s), expected the pyramid's 5\n",
@@ -1664,7 +1691,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(resynced);
         bool sawGuideDirty = false;
         for (const SdfPath &p : observer.dirtied) {
-            if (p == guidePath(elbowPole)) sawGuideDirty = true;
+            if (p == guidePath(elbowPole))
+                sawGuideDirty = true;
         }
         if (!sawGuideDirty) {
             std::printf("  a guide:shape change did not dirty the guide -- "
@@ -1685,7 +1713,8 @@ TestControlGuides(const std::string &examplesDir)
               HdPrimTypeTokens->basisCurves);
         bool reAnnounced = false;
         for (const SdfPath &p : observer.added) {
-            if (p == guidePath(handIk)) reAnnounced = true;
+            if (p == guidePath(handIk))
+                reAnnounced = true;
         }
         if (!reAnnounced) {
             std::printf("  a draw-mode change re-typed the guide without "
@@ -1705,7 +1734,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(!results->GetPrim(guidePath(elbowPole)).dataSource);
         bool sawRemoval = false;
         for (const SdfPath &p : observer.removed) {
-            if (p == guidePath(elbowPole)) sawRemoval = true;
+            if (p == guidePath(elbowPole))
+                sawRemoval = true;
         }
         CHECK(sawRemoval);
 
@@ -1716,7 +1746,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(hasGuideChild(elbowPole));
         bool sawAdd = false;
         for (const SdfPath &p : observer.added) {
-            if (p == guidePath(elbowPole)) sawAdd = true;
+            if (p == guidePath(elbowPole))
+                sawAdd = true;
         }
         CHECK(sawAdd);
 
@@ -1742,7 +1773,8 @@ TestControlGuides(const std::string &examplesDir)
             HdPurposeSchema purpose = HdPurposeSchema::GetFromParent(
                 results->GetPrim(guidePath(handIk)).dataSource);
             return purpose.GetPurpose()
-                ? purpose.GetPurpose()->GetTypedValue(0.0f) : TfToken();
+                       ? purpose.GetPurpose()->GetTypedValue(0.0f)
+                       : TfToken();
         };
         CHECK(setToken(handIk, "purpose", "guide"));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1024)));
@@ -1756,7 +1788,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(guidePurpose() == HdRenderTagTokens->geometry);
         bool sawPurposeDirty = false;
         for (const SdfPath &p : observer.dirtied) {
-            if (p == guidePath(handIk)) sawPurposeDirty = true;
+            if (p == guidePath(handIk))
+                sawPurposeDirty = true;
         }
         CHECK(sawPurposeDirty);
     }
@@ -1773,15 +1806,19 @@ TestControlGuides(const std::string &examplesDir)
         auto wireWidth = [&]() -> float {
             const HdSceneIndexPrim guide =
                 results->GetPrim(guidePath(elbowPole));
-            if (!guide.dataSource) return -1.0f;
+            if (!guide.dataSource)
+                return -1.0f;
             HdPrimvarSchema widths =
                 HdPrimvarsSchema::GetFromParent(guide.dataSource)
                     .GetPrimvar(HdTokens->widths);
-            if (!widths) return -1.0f;
+            if (!widths)
+                return -1.0f;
             HdSampledDataSourceHandle value = widths.GetPrimvarValue();
-            if (!value) return -1.0f;
+            if (!value)
+                return -1.0f;
             const VtValue held = value->GetValue(0.0f);
-            if (!held.IsHolding<VtFloatArray>()) return -1.0f;
+            if (!held.IsHolding<VtFloatArray>())
+                return -1.0f;
             const VtFloatArray w = held.UncheckedGet<VtFloatArray>();
             return w.size() == 1 ? w[0] : -1.0f;
         };
@@ -1795,10 +1832,12 @@ TestControlGuides(const std::string &examplesDir)
         auto refineLevel = [&]() -> int {
             const HdSceneIndexPrim guide =
                 results->GetPrim(guidePath(elbowPole));
-            if (!guide.dataSource) return -1;
+            if (!guide.dataSource)
+                return -1;
             HdLegacyDisplayStyleSchema style =
                 HdLegacyDisplayStyleSchema::GetFromParent(guide.dataSource);
-            if (!style || !style.GetRefineLevel()) return -1;
+            if (!style || !style.GetRefineLevel())
+                return -1;
             return style.GetRefineLevel()->GetTypedValue(0.0f);
         };
 
@@ -1820,7 +1859,8 @@ TestControlGuides(const std::string &examplesDir)
         CHECK(std::abs(wireWidth() - 0.4f) < 1e-6f);
         bool sawWidthDirty = false;
         for (const SdfPath &p : observer.dirtied) {
-            if (p == guidePath(elbowPole)) sawWidthDirty = true;
+            if (p == guidePath(elbowPole))
+                sawWidthDirty = true;
         }
         if (!sawWidthDirty) {
             std::printf("  a guide:wireWidth change did not dirty the "
@@ -1907,7 +1947,8 @@ TestControlGuides(const std::string &examplesDir)
         upstream->RemovePrims({{guidePath(elbowFk)}});
         int adds = 0;
         for (const SdfPath &p : observer.added) {
-            if (p == guidePath(elbowFk)) ++adds;
+            if (p == guidePath(elbowFk))
+                ++adds;
         }
         CHECK(adds == 1);
         CHECK(results->GetPrim(guidePath(elbowFk)).primType ==
@@ -1939,8 +1980,7 @@ TestStandaloneControlGuide()
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
     stage->DefinePrim(rigPath.AppendChild(TfToken("Controls")),
                       TfToken("Scope"));
-    const SdfPath control =
-        rigPath.AppendPath(SdfPath("Controls/Control"));
+    const SdfPath control = rigPath.AppendPath(SdfPath("Controls/Control"));
     const UsdPrim controlPrim =
         stage->DefinePrim(control, TfToken("RigExecControl"));
 
@@ -1951,15 +1991,18 @@ TestStandaloneControlGuide()
         std::printf("standalone-control compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
     const RigExecImagingSnapshotConstPtr snapshot = bridge.GetStore()->Get();
     CHECK(snapshot);
-    if (!snapshot) return;
+    if (!snapshot)
+        return;
     const auto published = snapshot->prims.find(control);
     CHECK(published != snapshot->prims.end());
-    if (published == snapshot->prims.end()) return;
+    if (published == snapshot->prims.end())
+        return;
     CHECK(published->second.hasControlGuide);
     CHECK(published->second.controlGuideShape == TfToken("circle"));
     CHECK(published->second.controlGuideDrawMode == TfToken("wire"));
@@ -1967,57 +2010,84 @@ TestStandaloneControlGuide()
 
     // Imported controls carry local wire shapes without authored geometry.
     {
-        const VtVec3fArray vertices{{1,2,3},{4,2,3},{0,0,0},{0,5,0}};
-        CHECK(controlPrim.GetAttribute(TfToken("guide:shape")).Set(TfToken("custom")));
+        const VtVec3fArray vertices{{1, 2, 3}, {4, 2, 3}, {0, 0, 0}, {0, 5, 0}};
+        CHECK(controlPrim.GetAttribute(TfToken("guide:shape"))
+                  .Set(TfToken("custom")));
         CHECK(controlPrim.GetAttribute(TfToken("guide:points")).Set(vertices));
-        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{2,2}));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts"))
+                  .Set(VtIntArray{2, 2}));
         auto upstream = HdRetainedSceneIndex::New();
-        upstream->AddPrims({{control, TfToken(), HdRetainedContainerDataSource::New(
-            HdPrimOriginSchema::GetSchemaToken(), HdRetainedContainerDataSource::New(
-                HdPrimOriginSchemaTokens->scenePath,
-                HdRetainedTypedSampledDataSource<HdPrimOriginSchema::OriginPath>::New(control)))}});
+        upstream->AddPrims(
+            {{control, TfToken(),
+              HdRetainedContainerDataSource::New(
+                  HdPrimOriginSchema::GetSchemaToken(),
+                  HdRetainedContainerDataSource::New(
+                      HdPrimOriginSchemaTokens->scenePath,
+                      HdRetainedTypedSampledDataSource<
+                          HdPrimOriginSchema::OriginPath>::New(control)))}});
         auto binding = RigExecBindingResolvingSceneIndex::New(upstream);
-        auto results = RigExecResultsSceneIndex::New(binding, bridge.GetStore());
+        auto results =
+            RigExecResultsSceneIndex::New(binding, bridge.GetStore());
         bridge.SetSceneIndices(binding, results);
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
-        const SdfPath child=control.AppendChild(TfToken("rigGuideCtrl"));
+        const SdfPath child = control.AppendChild(TfToken("rigGuideCtrl"));
         auto guide = results->GetPrim(child);
         CHECK(guide.primType == HdPrimTypeTokens->basisCurves);
-        CHECK(HdBasisCurvesSchema::GetFromParent(guide.dataSource).GetTopology()
-            .GetCurveVertexCounts()->GetTypedValue(0) == VtIntArray({2,2}));
-        CHECK(HdPrimvarsSchema::GetFromParent(guide.dataSource).GetPrimvar(TfToken("points"))
-            .GetPrimvarValue()->GetValue(0).Get<VtVec3fArray>() == vertices);
+        CHECK(HdBasisCurvesSchema::GetFromParent(guide.dataSource)
+                  .GetTopology()
+                  .GetCurveVertexCounts()
+                  ->GetTypedValue(0) == VtIntArray({2, 2}));
+        CHECK(HdPrimvarsSchema::GetFromParent(guide.dataSource)
+                  .GetPrimvar(TfToken("points"))
+                  .GetPrimvarValue()
+                  ->GetValue(0)
+                  .Get<VtVec3fArray>() == vertices);
         CHECK(controlPrim.GetAttribute(TfToken("avars:tx")).Set(7.0));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         guide = results->GetPrim(child);
-        CHECK(HdXformSchema::GetFromParent(guide.dataSource).GetMatrix()
-            ->GetTypedValue(0).ExtractTranslation() == GfVec3d(7,0,0));
+        CHECK(HdXformSchema::GetFromParent(guide.dataSource)
+                  .GetMatrix()
+                  ->GetTypedValue(0)
+                  .ExtractTranslation() == GfVec3d(7, 0, 0));
         CHECK(controlPrim.GetAttribute(TfToken("avars:sx")).Set(-2.0));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         guide = results->GetPrim(child);
-        CHECK(HdXformSchema::GetFromParent(guide.dataSource).GetMatrix()
-            ->GetTypedValue(0).Transform(GfVec3d(1,2,3)) == GfVec3d(5,2,3));
-        CHECK(controlPrim.GetAttribute(TfToken("guide:orient")).Set(
-            GfQuatf(GfRotation(GfVec3d(0,0,1),90).GetQuat())));
+        CHECK(HdXformSchema::GetFromParent(guide.dataSource)
+                  .GetMatrix()
+                  ->GetTypedValue(0)
+                  .Transform(GfVec3d(1, 2, 3)) == GfVec3d(5, 2, 3));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:orient"))
+                  .Set(GfQuatf(GfRotation(GfVec3d(0, 0, 1), 90).GetQuat())));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         guide = results->GetPrim(child);
-        CHECK(GfIsClose(HdXformSchema::GetFromParent(guide.dataSource).GetMatrix()
-            ->GetTypedValue(0).Transform(GfVec3d(1,2,3)),GfVec3d(11,1,3),1e-5));
+        CHECK(GfIsClose(HdXformSchema::GetFromParent(guide.dataSource)
+                            .GetMatrix()
+                            ->GetTypedValue(0)
+                            .Transform(GfVec3d(1, 2, 3)),
+                        GfVec3d(11, 1, 3), 1e-5));
         CHECK(controlPrim.GetAttribute(TfToken("guide:orient")).Clear());
-        CHECK(controlPrim.GetAttribute(TfToken("guide:points")).Set(VtVec3fArray{{0,0,0},{2,0,0}}));
-        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{2}));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:points"))
+                  .Set(VtVec3fArray{{0, 0, 0}, {2, 0, 0}}));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts"))
+                  .Set(VtIntArray{2}));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         guide = results->GetPrim(child);
-        CHECK(HdBasisCurvesSchema::GetFromParent(guide.dataSource).GetTopology()
-            .GetCurveVertexCounts()->GetTypedValue(0) == VtIntArray({2}));
-        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{3}));
+        CHECK(HdBasisCurvesSchema::GetFromParent(guide.dataSource)
+                  .GetTopology()
+                  .GetCurveVertexCounts()
+                  ->GetTypedValue(0) == VtIntArray({2}));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts"))
+                  .Set(VtIntArray{3}));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         CHECK(!results->GetPrim(child).dataSource);
-        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{2}));
-        CHECK(controlPrim.GetAttribute(TfToken("guide:displayOpacity")).Set(0.0f));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:curveVertexCounts"))
+                  .Set(VtIntArray{2}));
+        CHECK(controlPrim.GetAttribute(TfToken("guide:displayOpacity"))
+                  .Set(0.0f));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         CHECK(!results->GetPrim(child).dataSource);
-        CHECK(controlPrim.GetAttribute(TfToken("guide:displayOpacity")).Clear());
+        CHECK(
+            controlPrim.GetAttribute(TfToken("guide:displayOpacity")).Clear());
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         CHECK(results->GetPrim(child).dataSource);
         CHECK(controlPrim.GetAttribute(TfToken("guide:shape")).Clear());
@@ -2037,8 +2107,8 @@ TestStandaloneControlGuide()
         CHECK(attr && attr.Set(offset));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         const RigExecImagingSnapshotConstPtr moved = bridge.GetStore()->Get();
-        const auto m = moved ? moved->prims.find(control)
-                             : snapshot->prims.end();
+        const auto m =
+            moved ? moved->prims.find(control) : snapshot->prims.end();
         CHECK(moved && m != moved->prims.end());
         if (moved && m != moved->prims.end()) {
             const GfMatrix4d want =
@@ -2057,10 +2127,9 @@ TestStandaloneControlGuide()
     // the guide visible through its evaluated magnitude.
     const GfVec3d avarScale(-2.0, 3.0, 0.5);
     const GfVec3d authoredGuideScale(1.5, 0.5, 4.0);
-    static const char *avarNames[3] = {
-        "avars:sx", "avars:sy", "avars:sz"};
-    static const char *guideScaleNames[3] = {
-        "guide:scaleX", "guide:scaleY", "guide:scaleZ"};
+    static const char *avarNames[3] = {"avars:sx", "avars:sy", "avars:sz"};
+    static const char *guideScaleNames[3] = {"guide:scaleX", "guide:scaleY",
+                                             "guide:scaleZ"};
     for (int axis = 0; axis < 3; ++axis) {
         const UsdAttribute avar =
             controlPrim.GetAttribute(TfToken(avarNames[axis]));
@@ -2074,10 +2143,12 @@ TestStandaloneControlGuide()
     const RigExecImagingSnapshotConstPtr scaledSnapshot =
         bridge.GetStore()->Get();
     CHECK(scaledSnapshot);
-    if (!scaledSnapshot) return;
+    if (!scaledSnapshot)
+        return;
     const auto scaled = scaledSnapshot->prims.find(control);
     CHECK(scaled != scaledSnapshot->prims.end());
-    if (scaled == scaledSnapshot->prims.end()) return;
+    if (scaled == scaledSnapshot->prims.end())
+        return;
     const GfVec3d expectedScale(3.0, 1.5, 2.0);
     CHECK(scaled->second.controlGuideScale == expectedScale);
     for (int axis = 0; axis < 3; ++axis) {
@@ -2089,8 +2160,7 @@ TestStandaloneControlGuide()
     // Zero and signed sub-floor avars are supported transform channels. They
     // normalize to signed 1e-4 in evaluation; guide sizing uses magnitudes, so
     // none of these axes may make the guide disappear.
-    const GfVec3d subfloorScale(
-        0.0, -0.0, -0.5 * RigExecAvarScaleFloor);
+    const GfVec3d subfloorScale(0.0, -0.0, -0.5 * RigExecAvarScaleFloor);
     for (int axis = 0; axis < 3; ++axis) {
         const UsdAttribute avar =
             controlPrim.GetAttribute(TfToken(avarNames[axis]));
@@ -2100,13 +2170,14 @@ TestStandaloneControlGuide()
     const RigExecImagingSnapshotConstPtr floorSnapshot =
         bridge.GetStore()->Get();
     CHECK(floorSnapshot);
-    if (!floorSnapshot) return;
+    if (!floorSnapshot)
+        return;
     const auto floored = floorSnapshot->prims.find(control);
     CHECK(floored != floorSnapshot->prims.end());
-    if (floored == floorSnapshot->prims.end()) return;
+    if (floored == floorSnapshot->prims.end())
+        return;
     CHECK(floored->second.hasControlGuide);
-    const GfVec3d floorExpected =
-        authoredGuideScale * RigExecAvarScaleFloor;
+    const GfVec3d floorExpected = authoredGuideScale * RigExecAvarScaleFloor;
     for (int axis = 0; axis < 3; ++axis) {
         CHECK(std::abs(floored->second.controlGuideScale[axis] -
                        floorExpected[axis]) < 1e-12);
@@ -2119,25 +2190,22 @@ TestStandaloneControlGuide()
     const HdContainerDataSourceHandle origin =
         HdRetainedContainerDataSource::New(
             HdPrimOriginSchemaTokens->scenePath,
-            HdRetainedTypedSampledDataSource<
-                HdPrimOriginSchema::OriginPath>::New(
-                    HdPrimOriginSchema::OriginPath(control)));
-    upstream->AddPrims(
-        {{control, TfToken(),
-          HdRetainedContainerDataSource::New(
-              HdPrimOriginSchema::GetSchemaToken(), origin)}});
+            HdRetainedTypedSampledDataSource<HdPrimOriginSchema::OriginPath>::
+                New(HdPrimOriginSchema::OriginPath(control)));
+    upstream->AddPrims({{control, TfToken(),
+                         HdRetainedContainerDataSource::New(
+                             HdPrimOriginSchema::GetSchemaToken(), origin)}});
     const RigExecResultsSceneIndexRefPtr results =
         RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
-    const HdSceneIndexPrim guide = results->GetPrim(
-        control.AppendChild(TfToken("rigGuideCtrl")));
+    const HdSceneIndexPrim guide =
+        results->GetPrim(control.AppendChild(TfToken("rigGuideCtrl")));
     CHECK(guide.primType == HdPrimTypeTokens->basisCurves);
     CHECK(!_GetPointsPrimvar(guide).empty());
     const HdXformSchema guideXform =
         HdXformSchema::GetFromParent(guide.dataSource);
     CHECK(guideXform && guideXform.GetMatrix());
     if (guideXform && guideXform.GetMatrix()) {
-        const GfMatrix4d matrix =
-            guideXform.GetMatrix()->GetTypedValue(0.0f);
+        const GfMatrix4d matrix = guideXform.GetMatrix()->GetTypedValue(0.0f);
         for (int axis = 0; axis < 3; ++axis) {
             CHECK(std::abs(matrix.GetRow3(axis).GetLength() -
                            floorExpected[axis]) < 1e-12);
@@ -2155,15 +2223,16 @@ TestJointHierarchyGuides(const std::string &examplesDir)
     const UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/components/spider_leg.usd");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/RigRoot");
     const SdfPath jointPath("/RigRoot/Joints/Shoulder");
     const SdfPath childPath("/RigRoot/Joints/Shoulder/ankle");
     CHECK(stage->GetPrimAtPath(jointPath));
     CHECK(stage->GetPrimAtPath(childPath));
-    CHECK(!stage->GetPrimAtPath(jointPath).HasProperty(
-        TfToken("guide:length")));
+    CHECK(
+        !stage->GetPrimAtPath(jointPath).HasProperty(TfToken("guide:length")));
 
     RigExecImagingBridge bridge(stage, rigPath);
     std::vector<std::string> errors;
@@ -2172,29 +2241,31 @@ TestJointHierarchyGuides(const std::string &examplesDir)
         std::printf("joint-hierarchy compile error: %s\n", error.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
 
     const RigExecImagingSnapshotConstPtr snapshot = bridge.GetStore()->Get();
     CHECK(snapshot);
-    if (!snapshot) return;
+    if (!snapshot)
+        return;
     const auto published = snapshot->prims.find(jointPath);
     CHECK(published != snapshot->prims.end());
-    if (published == snapshot->prims.end()) return;
+    if (published == snapshot->prims.end())
+        return;
     CHECK(published->second.hasGuides);
     CHECK(published->second.guideFrames.size() == 1);
     CHECK(published->second.guideLengths.size() == 1);
     CHECK(published->second.guideRadii.size() == 1);
     CHECK(published->second.guideDrawSpheres.size() == 1);
-    const GfVec3d expectedDelta(
-        4.476721406958012, -2.6550437955052333, 0.0);
+    const GfVec3d expectedDelta(4.476721406958012, -2.6550437955052333, 0.0);
     const double expectedLength = expectedDelta.GetLength();
-    CHECK(std::abs(published->second.guideLengths[0] - expectedLength) <
-          1e-9);
+    CHECK(std::abs(published->second.guideLengths[0] - expectedLength) < 1e-9);
     CHECK(published->second.guideRadii[0] == 1.0);
     CHECK(published->second.guideDrawSpheres[0]);
     CHECK((published->second.guideFrames[0].GetRow3(0) -
-           expectedDelta / expectedLength).GetLength() < 1e-9);
+           expectedDelta / expectedLength)
+              .GetLength() < 1e-9);
     CHECK(published->second.guidePurpose == UsdGeomTokens->guide);
 
     const auto childPublished = snapshot->prims.find(childPath);
@@ -2212,8 +2283,8 @@ TestJointHierarchyGuides(const std::string &examplesDir)
             HdRetainedContainerDataSource::New(
                 HdPrimOriginSchemaTokens->scenePath,
                 HdRetainedTypedSampledDataSource<
-                    HdPrimOriginSchema::OriginPath>::New(
-                        HdPrimOriginSchema::OriginPath(path)));
+                    HdPrimOriginSchema::OriginPath>::
+                    New(HdPrimOriginSchema::OriginPath(path)));
         return HdRetainedSceneIndex::AddedPrimEntry{
             path, TfToken(),
             HdRetainedContainerDataSource::New(
@@ -2224,10 +2295,9 @@ TestJointHierarchyGuides(const std::string &examplesDir)
         RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
     const SdfPath spherePath =
         jointPath.AppendChild(TfToken("rigGuideSphere_0"));
-    const SdfPath conePath =
-        jointPath.AppendChild(TfToken("rigGuideCone_0"));
+    const SdfPath conePath = jointPath.AppendChild(TfToken("rigGuideCone_0"));
     const SdfPathVector children = results->GetChildPrimPaths(jointPath);
-    CHECK(children.size() == 3);  // authored ankle plus sphere and cone
+    CHECK(children.size() == 3); // authored ankle plus sphere and cone
     CHECK(std::find(children.begin(), children.end(), spherePath) !=
           children.end());
     CHECK(std::find(children.begin(), children.end(), conePath) !=
@@ -2257,8 +2327,7 @@ TestJointHierarchyGuides(const std::string &examplesDir)
         CHECK(purpose.GetPurpose()->GetTypedValue(0.0f) ==
               HdRenderTagTokens->guide);
     }
-    const HdXformSchema xform = HdXformSchema::GetFromParent(
-        sphere.dataSource);
+    const HdXformSchema xform = HdXformSchema::GetFromParent(sphere.dataSource);
     CHECK(xform.GetMatrix());
     CHECK(xform.GetResetXformStack());
     if (xform.GetResetXformStack()) {
@@ -2267,8 +2336,7 @@ TestJointHierarchyGuides(const std::string &examplesDir)
 
     const SdfPath childSphere =
         childPath.AppendChild(TfToken("rigGuideSphere_0"));
-    const SdfPath childCone =
-        childPath.AppendChild(TfToken("rigGuideCone_0"));
+    const SdfPath childCone = childPath.AppendChild(TfToken("rigGuideCone_0"));
     CHECK(results->GetPrim(childSphere).primType == HdPrimTypeTokens->sphere);
     CHECK(!results->GetPrim(childCone).dataSource);
 
@@ -2293,14 +2361,14 @@ TestJointHierarchyGuides(const std::string &examplesDir)
     CHECK(moved != movedSnapshot->prims.end());
     if (moved != movedSnapshot->prims.end()) {
         const GfVec3d movedDelta(6.0, -2.6550437955052333, 0.0);
-        CHECK(std::abs(moved->second.guideLengths[0] -
-                       movedDelta.GetLength()) < 1e-9);
+        CHECK(std::abs(moved->second.guideLengths[0] - movedDelta.GetLength()) <
+              1e-9);
     }
 
     // Branching adds a second cone but not a duplicate parent sphere.
     const SdfPath branchPath = jointPath.AppendChild(TfToken("knee"));
-    const UsdPrim branch = stage->DefinePrim(branchPath,
-                                              TfToken("RigExecJoint"));
+    const UsdPrim branch =
+        stage->DefinePrim(branchPath, TfToken("RigExecJoint"));
     CHECK(branch.GetAttribute(TfToken("rest:tx")).Set(-3.0));
     CHECK(branch.GetAttribute(TfToken("rest:ty")).Set(1.0));
     errors.clear();
@@ -2308,8 +2376,7 @@ TestJointHierarchyGuides(const std::string &examplesDir)
     update = bridge.EvaluateAndPublishResult(UsdTimeCode::Default());
     CHECK(update.ok);
     results->NotifyGenerationPublished(update.dirtied);
-    const SdfPath branchCone =
-        jointPath.AppendChild(TfToken("rigGuideCone_1"));
+    const SdfPath branchCone = jointPath.AppendChild(TfToken("rigGuideCone_1"));
     const SdfPath duplicateSphere =
         jointPath.AppendChild(TfToken("rigGuideSphere_1"));
     CHECK(results->GetPrim(branchCone).primType == HdPrimTypeTokens->cone);
@@ -2328,16 +2395,14 @@ TestSimpleRigControlAndDeformation(const std::string &examplesDir)
     const UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/simple_rig.usd");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/World/RigExecRoot");
-    const SdfPath controlPath(
-        "/World/RigExecRoot/Controllers/Root");
-    const SdfPath moverPath(
-        "/World/RigExecRoot/Movers/RigExecMatrixMover1");
+    const SdfPath controlPath("/World/RigExecRoot/Controllers/Root");
+    const SdfPath moverPath("/World/RigExecRoot/Movers/RigExecMatrixMover1");
     const SdfPath spherePath("/World/Geom/Sphere");
-    const SdfPath guidePath =
-        controlPath.AppendChild(TfToken("rigGuideCtrl"));
+    const SdfPath guidePath = controlPath.AppendChild(TfToken("rigGuideCtrl"));
 
     const UsdPrim mover = stage->GetPrimAtPath(moverPath);
     CHECK(mover);
@@ -2355,21 +2420,23 @@ TestSimpleRigControlAndDeformation(const std::string &examplesDir)
         std::printf("simple-rig compile error: %s\n", error.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     const UsdPrim control = stage->GetPrimAtPath(controlPath);
     CHECK(control);
-    const UsdAttribute ry =
-        control.GetAttribute(TfToken("avars:ry"));
+    const UsdAttribute ry = control.GetAttribute(TfToken("avars:ry"));
     CHECK(ry);
-    if (!control || !ry) return;
+    if (!control || !ry)
+        return;
 
     CHECK(ry.Set(0.0));
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
     const RigExecImagingSnapshotConstPtr restSnapshot =
         bridge.GetStore()->Get();
     CHECK(restSnapshot);
-    if (!restSnapshot) return;
+    if (!restSnapshot)
+        return;
     const auto restSphere = restSnapshot->prims.find(spherePath);
     CHECK(restSphere != restSnapshot->prims.end());
     CHECK(restSphere != restSnapshot->prims.end() &&
@@ -2385,13 +2452,11 @@ TestSimpleRigControlAndDeformation(const std::string &examplesDir)
     const HdContainerDataSourceHandle origin =
         HdRetainedContainerDataSource::New(
             HdPrimOriginSchemaTokens->scenePath,
-            HdRetainedTypedSampledDataSource<
-                HdPrimOriginSchema::OriginPath>::New(
-                    HdPrimOriginSchema::OriginPath(controlPath)));
-    upstream->AddPrims(
-        {{controlPath, TfToken(),
-          HdRetainedContainerDataSource::New(
-              HdPrimOriginSchema::GetSchemaToken(), origin)}});
+            HdRetainedTypedSampledDataSource<HdPrimOriginSchema::OriginPath>::
+                New(HdPrimOriginSchema::OriginPath(controlPath)));
+    upstream->AddPrims({{controlPath, TfToken(),
+                         HdRetainedContainerDataSource::New(
+                             HdPrimOriginSchema::GetSchemaToken(), origin)}});
     const RigExecResultsSceneIndexRefPtr results =
         RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
     const HdSceneIndexPrim guide = results->GetPrim(guidePath);
@@ -2403,7 +2468,8 @@ TestSimpleRigControlAndDeformation(const std::string &examplesDir)
     const RigExecImagingSnapshotConstPtr posedSnapshot =
         bridge.GetStore()->Get();
     CHECK(posedSnapshot);
-    if (!posedSnapshot) return;
+    if (!posedSnapshot)
+        return;
     const auto posedSphere = posedSnapshot->prims.find(spherePath);
     CHECK(posedSphere != posedSnapshot->prims.end());
     CHECK(posedSphere != posedSnapshot->prims.end() &&
@@ -2415,8 +2481,7 @@ TestSimpleRigControlAndDeformation(const std::string &examplesDir)
     const VtVec3fArray &posedPoints = posedSphere->second.points;
     CHECK(posedPoints.size() == restPoints.size());
     double maxDisplacement = 0.0;
-    for (size_t i = 0;
-         i < posedPoints.size() && i < restPoints.size(); ++i) {
+    for (size_t i = 0; i < posedPoints.size() && i < restPoints.size(); ++i) {
         maxDisplacement = std::max(
             maxDisplacement,
             (GfVec3d(posedPoints[i]) - GfVec3d(restPoints[i])).GetLength());
@@ -2482,7 +2547,8 @@ TestShaderMatrixPrimvars()
                       HdPrimvarSchemaTokens->constant);
             const HdSampledDataSourceHandle value = pv.GetPrimvarValue();
             CHECK(value);
-            if (!value) continue;
+            if (!value)
+                continue;
             const VtValue v = value->GetValue(0.0f);
             CHECK(v.IsHolding<GfMatrix4f>());
             CHECK(!v.IsHolding<GfMatrix4d>());
@@ -2494,10 +2560,14 @@ TestShaderMatrixPrimvars()
             }
             // Only the GPU-facing value is narrowed. The authoritative
             // evaluated snapshot and the upstream authored value stay double.
-            CHECK(store->Get()->prims.at(eyePath).shaderMatrices.at(name) == matrix);
-            const VtValue upstreamValue = HdPrimvarsSchema::GetFromParent(
-                upstream->GetPrim(eyePath).dataSource).GetPrimvar(name)
-                    .GetPrimvarValue()->GetValue(0.0f);
+            CHECK(store->Get()->prims.at(eyePath).shaderMatrices.at(name) ==
+                  matrix);
+            const VtValue upstreamValue =
+                HdPrimvarsSchema::GetFromParent(
+                    upstream->GetPrim(eyePath).dataSource)
+                    .GetPrimvar(name)
+                    .GetPrimvarValue()
+                    ->GetValue(0.0f);
             CHECK(upstreamValue.IsHolding<GfMatrix4d>());
         }
     };
@@ -2522,9 +2592,10 @@ TestShaderMatrixPrimvars()
     CHECK(observer.dirtied.size() == 1);
     if (observer.dirtied.size() == 1) {
         CHECK(observer.dirtied[0] == eyePath);
-        CHECK(observer.dirtiedLocators[0] ==
-              HdContainerDataSourceEditor::ComputeDirtyLocators(
-                  HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
+        CHECK(
+            observer.dirtiedLocators[0] ==
+            HdContainerDataSourceEditor::ComputeDirtyLocators(
+                HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
     }
     CHECK(store->Publish(generation()).empty());
     GfMatrix4d authoredAfter(0.0);
@@ -2579,7 +2650,8 @@ TestAnimatedMapPrimvars()
                       HdPrimvarSchemaTokens->constant);
             const HdSampledDataSourceHandle value = pv.GetPrimvarValue();
             CHECK(value);
-            if (!value) continue;
+            if (!value)
+                continue;
             const VtValue v = value->GetValue(0.0f);
             CHECK(v.IsHolding<float>() && v.UncheckedGet<float>() == expected);
         }
@@ -2603,9 +2675,10 @@ TestAnimatedMapPrimvars()
     CHECK(observer.added.empty() && observer.removed.empty());
     CHECK(observer.dirtied.size() == 1);
     if (observer.dirtied.size() == 1) {
-        CHECK(observer.dirtiedLocators[0] ==
-              HdContainerDataSourceEditor::ComputeDirtyLocators(
-                  HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
+        CHECK(
+            observer.dirtiedLocators[0] ==
+            HdContainerDataSourceEditor::ComputeDirtyLocators(
+                HdDataSourceLocatorSet{HdPrimvarsSchema::GetDefaultLocator()}));
     }
     CHECK(store->Publish(generation()).empty());
     // A map appearing or going away is structural, as a matrix's is.
@@ -2654,7 +2727,8 @@ TestControlGuidePoseDirtiness()
     CHECK(initial.dataSource);
     const VtVec3fArray initialPoints = _GetPointsPrimvar(initial);
     const VtIntArray initialCounts = _GuideTopologyCounts(initial);
-    const auto initialExtent = HdExtentSchema::GetFromParent(initial.dataSource);
+    const auto initialExtent =
+        HdExtentSchema::GetFromParent(initial.dataSource);
     CHECK(initialExtent.GetMin() && initialExtent.GetMax());
     const GfVec3d extentMin = initialExtent.GetMin()->GetTypedValue(0.0f);
     const GfVec3d extentMax = initialExtent.GetMax()->GetTypedValue(0.0f);
@@ -2679,22 +2753,31 @@ TestControlGuidePoseDirtiness()
         CHECK(observer.removed.empty());
         size_t guideDirties = 0;
         for (size_t i = 0; i < observer.dirtied.size(); ++i) {
-            if (observer.dirtied[i] != guide) continue;
+            if (observer.dirtied[i] != guide)
+                continue;
             ++guideDirties;
-            const HdDataSourceLocatorSet &locators = observer.dirtiedLocators[i];
+            const HdDataSourceLocatorSet &locators =
+                observer.dirtiedLocators[i];
             CHECK(locators == (universal
-                ? HdDataSourceLocatorSet::UniversalSet() : xformLocators));
+                                   ? HdDataSourceLocatorSet::UniversalSet()
+                                   : xformLocators));
             if (!universal) {
                 CHECK(locators.Intersects(HdXformSchema::GetDefaultLocator()));
-                CHECK(!locators.Intersects(HdPrimvarsSchema::GetDefaultLocator()));
-                CHECK(!locators.Intersects(HdBasisCurvesSchema::GetDefaultLocator()));
-                CHECK(!locators.Intersects(HdExtentSchema::GetDefaultLocator()));
-                CHECK(!locators.Intersects(HdDataSourceLocator(TfToken("materialBindings"))));
-                CHECK(!locators.Intersects(HdLegacyDisplayStyleSchema::GetDefaultLocator()));
+                CHECK(!locators.Intersects(
+                    HdPrimvarsSchema::GetDefaultLocator()));
+                CHECK(!locators.Intersects(
+                    HdBasisCurvesSchema::GetDefaultLocator()));
+                CHECK(
+                    !locators.Intersects(HdExtentSchema::GetDefaultLocator()));
+                CHECK(!locators.Intersects(
+                    HdDataSourceLocator(TfToken("materialBindings"))));
+                CHECK(!locators.Intersects(
+                    HdLegacyDisplayStyleSchema::GetDefaultLocator()));
                 const HdSceneIndexPrim current = results->GetPrim(guide);
                 CHECK(_GetPointsPrimvar(current) == initialPoints);
                 CHECK(_GuideTopologyCounts(current) == initialCounts);
-                const auto extent = HdExtentSchema::GetFromParent(current.dataSource);
+                const auto extent =
+                    HdExtentSchema::GetFromParent(current.dataSource);
                 CHECK(extent.GetMin()->GetTypedValue(0.0f) == extentMin);
                 CHECK(extent.GetMax()->GetTypedValue(0.0f) == extentMax);
             }
@@ -2703,7 +2786,8 @@ TestControlGuidePoseDirtiness()
     };
     auto guideMatrix = [&]() {
         return HdXformSchema::GetFromParent(results->GetPrim(guide).dataSource)
-            .GetMatrix()->GetTypedValue(0.0f);
+            .GetMatrix()
+            ->GetTypedValue(0.0f);
     };
 
     published.controlFrame.SetTranslate(GfVec3d(3, 0, 0));
@@ -2727,7 +2811,8 @@ TestControlGuidePoseDirtiness()
     // curve dirtiness when the drawing frame itself stays unchanged.
     published.controlFrame.SetTranslate(GfVec3d(4, 0, 0));
     publish(RigExecChangeControlGuideXform, false);
-    CHECK(store->Get()->prims.at(control).controlFrame == published.controlFrame);
+    CHECK(store->Get()->prims.at(control).controlFrame ==
+          published.controlFrame);
     CHECK(guideMatrix() == scale * published.controlGuideFrame);
 
     published.guideOpacity = 0.25f;
@@ -2742,7 +2827,7 @@ TestControlGuidePoseDirtiness()
     published.controlGuideWireWidth = 0.0;
     publish(RigExecChangeGuides, true);
     CHECK(!HdPrimvarsSchema::GetFromParent(results->GetPrim(guide).dataSource)
-        .GetPrimvar(HdTokens->widths));
+               .GetPrimvar(HdTokens->widths));
 
     // A same-type shape change is still structural: its points and local
     // extent differ, even though the existing child needs no add/remove.
@@ -2816,11 +2901,11 @@ TestGuidesFollowDrivenAssetRoot()
         results->NotifyGenerationPublished(store->Publish(snapshot));
     };
     auto guideTranslation = [&]() {
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(guide).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(guide).dataSource);
         return xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0f).ExtractTranslation()
-            : GfVec3d(0);
+                   ? xf.GetMatrix()->GetTypedValue(0.0f).ExtractTranslation()
+                   : GfVec3d(0);
     };
 
     publish(0.0);
@@ -2834,14 +2919,16 @@ TestGuidesFollowDrivenAssetRoot()
     const GfVec3d moved = guideTranslation();
     if ((moved - GfVec3d(5, 0, 0)).GetLength() >= 1e-6) {
         std::printf("  guide at (%g, %g, %g), expected the asset root's "
-                    "(5, 0, 0)\n", moved[0], moved[1], moved[2]);
+                    "(5, 0, 0)\n",
+                    moved[0], moved[1], moved[2]);
     }
     CHECK((moved - GfVec3d(5, 0, 0)).GetLength() < 1e-6);
 
     // ...and the renderer was told to take it.
     bool sawGuideDirty = false;
     for (const SdfPath &p : observer.dirtied) {
-        if (p == guide) sawGuideDirty = true;
+        if (p == guide)
+            sawGuideDirty = true;
     }
     if (!sawGuideDirty) {
         std::printf("  a driven asset root moved the guide without dirtying "
@@ -2863,10 +2950,10 @@ TestGuidesFollowDrivenAssetRoot()
 static void
 TestSolverGuideRadius(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rig("/TailAsset/Rig");
     const SdfPath solver("/TailAsset/Rig/Solvers/TailFK");
@@ -2877,7 +2964,8 @@ TestSolverGuideRadius(const std::string &examplesDir)
         std::printf("  compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     // Guides only synthesize under a parent the upstream index knows.
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
@@ -2892,15 +2980,16 @@ TestSolverGuideRadius(const std::string &examplesDir)
     };
     auto announced = [&]() {
         for (const SdfPath &p : results->GetChildPrimPaths(solver)) {
-            if (p == sphere) return true;
+            if (p == sphere)
+                return true;
         }
         return false;
     };
 
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1001)));
     CHECK(announced());
-    CHECK(radius() == 1.0);  // the schema default: unchanged for every
-                             // rig that authors nothing
+    CHECK(radius() == 1.0); // the schema default: unchanged for every
+                            // rig that authors nothing
 
     UsdPrim solverPrim = stage->GetPrimAtPath(solver);
     CHECK(solverPrim);
@@ -2927,8 +3016,8 @@ TestExampleControlGuides(const std::string &examplesDir)
     struct _Case {
         const char *control;
         TfToken primType;
-        std::vector<int> counts;    // empty for the implicits
-        GfVec3d scale;              // authored guide:scaleX/Y/Z
+        std::vector<int> counts; // empty for the implicits
+        GfVec3d scale;           // authored guide:scaleX/Y/Z
     };
     const GfVec3d unit(1, 1, 1);
     const struct {
@@ -2947,29 +3036,38 @@ TestExampleControlGuides(const std::string &examplesDir)
         // view, so they read as bare lines there. Their topology is
         // asserted exhaustively in TestControlGuides, and again in memory
         // at the end of this function.
-        {"/01_FkChainTail.usda", "/TailAsset/Rig", "/TailAsset/Rig/Controls",
+        {"/01_FkChainTail.usda",
+         "/TailAsset/Rig",
+         "/TailAsset/Rig/Controls",
          {// diamond wire: three orthogonal rings through the ±axis vertices
-          {"Tail1", HdPrimTypeTokens->basisCurves, {5, 5, 5},
+          {"Tail1",
+           HdPrimTypeTokens->basisCurves,
+           {5, 5, 5},
            GfVec3d(1.6, 1.6, 1.6)},
           // cube geometry: Hydra's implicit, sized by the xform alone
           {"Tail2", HdPrimTypeTokens->cube, {}, GfVec3d(1.2, 1.2, 1.2)},
           // sphere wire: three orthogonal 33-point rings, squashed in Y
-          {"Tail3", HdPrimTypeTokens->basisCurves, {33, 33, 33},
+          {"Tail3",
+           HdPrimTypeTokens->basisCurves,
+           {33, 33, 33},
            GfVec3d(1.8, 0.6, 1.8)},
           // pyramid wire: base ring plus four apex edges
-          {"Tail4", HdPrimTypeTokens->basisCurves, {5, 2, 2, 2, 2},
+          {"Tail4",
+           HdPrimTypeTokens->basisCurves,
+           {5, 2, 2, 2, 2},
            GfVec3d(1.5, 1.5, 1.5)}}},
-        {"/02_TwoBoneIkLeg.usda", "/LegAsset/Rig", "/LegAsset/Rig/Controls",
+        {"/02_TwoBoneIkLeg.usda",
+         "/LegAsset/Rig",
+         "/LegAsset/Rig/Controls",
          {{"HipRoot", HdPrimTypeTokens->cube, {}, GfVec3d(0.6, 0.6, 0.6)},
           {"FootIK", HdPrimTypeTokens->basisCurves, {33, 33, 33}, unit},
-          {"KneePole", HdPrimTypeTokens->sphere, {},
-           GfVec3d(0.4, 0.4, 0.4)}}}};
+          {"KneePole", HdPrimTypeTokens->sphere, {}, GfVec3d(0.4, 0.4, 0.4)}}}};
 
     for (const auto &example : examples) {
-        UsdStageRefPtr stage =
-            UsdStage::Open(examplesDir + example.file);
+        UsdStageRefPtr stage = UsdStage::Open(examplesDir + example.file);
         CHECK(stage);
-        if (!stage) continue;
+        if (!stage)
+            continue;
         RigExecImagingBridge bridge(stage, SdfPath(example.rig));
         std::vector<std::string> errors;
         const bool compiled = bridge.Compile(&errors);
@@ -2977,7 +3075,8 @@ TestExampleControlGuides(const std::string &examplesDir)
             std::printf("%s compile error: %s\n", example.file, e.c_str());
         }
         CHECK(compiled);
-        if (!compiled) continue;
+        if (!compiled)
+            continue;
 
         // Shells carrying a primOrigin, as flattened UsdImaging prims do:
         // picking a guide has to resolve back to the control it draws.
@@ -2993,8 +3092,8 @@ TestExampleControlGuides(const std::string &examplesDir)
                      HdRetainedContainerDataSource::New(
                          HdPrimOriginSchemaTokens->scenePath,
                          HdRetainedTypedSampledDataSource<
-                             HdPrimOriginSchema::OriginPath>::New(
-                                 HdPrimOriginSchema::OriginPath(control))))});
+                             HdPrimOriginSchema::OriginPath>::
+                             New(HdPrimOriginSchema::OriginPath(control))))});
         }
         upstream->AddPrims(shells);
         auto results =
@@ -3004,12 +3103,12 @@ TestExampleControlGuides(const std::string &examplesDir)
         for (const _Case &c : example.cases) {
             const SdfPath control =
                 SdfPath(example.controls).AppendChild(TfToken(c.control));
-            const SdfPath guide =
-                control.AppendChild(TfToken("rigGuideCtrl"));
+            const SdfPath guide = control.AppendChild(TfToken("rigGuideCtrl"));
 
             bool announced = false;
             for (const SdfPath &p : results->GetChildPrimPaths(control)) {
-                if (p == guide) announced = true;
+                if (p == guide)
+                    announced = true;
             }
             CHECK(announced);
 
@@ -3017,12 +3116,14 @@ TestExampleControlGuides(const std::string &examplesDir)
             if (prim.primType != c.primType) {
                 std::printf("  %s %s: guide is a '%s', expected '%s' -- an "
                             "unrecognized guide:shape/drawMode draws "
-                            "nothing\n", example.file, c.control,
-                            prim.primType.GetText(), c.primType.GetText());
+                            "nothing\n",
+                            example.file, c.control, prim.primType.GetText(),
+                            c.primType.GetText());
             }
             CHECK(prim.primType == c.primType);
             CHECK(prim.dataSource);
-            if (!prim.dataSource) continue;
+            if (!prim.dataSource)
+                continue;
 
             // Topology, for the shapes that carry their own.
             const VtIntArray counts = _GuideTopologyCounts(prim);
@@ -3056,8 +3157,7 @@ TestExampleControlGuides(const std::string &examplesDir)
             // The authored per-axis scale, as the xform's basis lengths.
             // Nothing upstream places the asset root, so it resolves to
             // identity and the guide's transform is scale * posed frame.
-            HdXformSchema xf =
-                HdXformSchema::GetFromParent(prim.dataSource);
+            HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource);
             CHECK(xf && xf.GetMatrix());
             if (xf && xf.GetMatrix()) {
                 const GfMatrix4d xform = xf.GetMatrix()->GetTypedValue(0.0f);
@@ -3065,8 +3165,9 @@ TestExampleControlGuides(const std::string &examplesDir)
                     const double length = xform.GetRow3(i).GetLength();
                     if (std::abs(length - c.scale[i]) > 1e-6) {
                         std::printf("  %s %s: basis %zu length %g, expected "
-                                    "%g\n", example.file, c.control, i,
-                                    length, c.scale[i]);
+                                    "%g\n",
+                                    example.file, c.control, i, length,
+                                    c.scale[i]);
                     }
                     CHECK(std::abs(length - c.scale[i]) < 1e-6);
                 }
@@ -3093,14 +3194,13 @@ TestExampleControlGuides(const std::string &examplesDir)
             HdPrimOriginSchema origin =
                 HdPrimOriginSchema::GetFromParent(prim.dataSource);
             const SdfPath resolved =
-                origin ? origin.GetOriginPath(
-                             HdPrimOriginSchemaTokens->scenePath)
-                       : SdfPath();
+                origin
+                    ? origin.GetOriginPath(HdPrimOriginSchemaTokens->scenePath)
+                    : SdfPath();
             if (resolved != control) {
                 std::printf("  %s %s: guide primOrigin resolves to '%s' -- "
                             "picking it does not select the control\n",
-                            example.file, c.control,
-                            resolved.GetText());
+                            example.file, c.control, resolved.GetText());
             }
             CHECK(resolved == control);
         }
@@ -3116,8 +3216,7 @@ TestExampleControlGuides(const std::string &examplesDir)
         const SdfPath probe =
             SdfPath(example.controls)
                 .AppendChild(TfToken(example.cases.front().control));
-        const SdfPath probeGuide =
-            probe.AppendChild(TfToken("rigGuideCtrl"));
+        const SdfPath probeGuide = probe.AppendChild(TfToken("rigGuideCtrl"));
         struct _Planar {
             const char *shape;
             const char *drawMode;
@@ -3142,23 +3241,24 @@ TestExampleControlGuides(const std::string &examplesDir)
             const HdSceneIndexPrim guide = results->GetPrim(probeGuide);
             if (guide.primType != planar.primType) {
                 std::printf("  %s in-memory %s/%s drew a '%s', expected "
-                            "'%s'\n", example.file, planar.shape,
-                            planar.drawMode, guide.primType.GetText(),
+                            "'%s'\n",
+                            example.file, planar.shape, planar.drawMode,
+                            guide.primType.GetText(),
                             planar.primType.GetText());
             }
             CHECK(guide.primType == planar.primType);
             CHECK(guide.dataSource);
-            if (!guide.dataSource) continue;
+            if (!guide.dataSource)
+                continue;
             const VtIntArray counts = _GuideTopologyCounts(guide);
             const bool countsMatch =
                 counts.size() == planar.counts.size() &&
-                std::equal(counts.begin(), counts.end(),
-                           planar.counts.begin());
+                std::equal(counts.begin(), counts.end(), planar.counts.begin());
             if (!countsMatch) {
                 std::printf("  %s in-memory %s/%s: %zu topology entries, "
-                            "expected %zu\n", example.file, planar.shape,
-                            planar.drawMode, counts.size(),
-                            planar.counts.size());
+                            "expected %zu\n",
+                            example.file, planar.shape, planar.drawMode,
+                            counts.size(), planar.counts.size());
             }
             CHECK(countsMatch);
             CHECK(_GetPointsPrimvar(guide).size() == planar.points);
@@ -3179,7 +3279,8 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     // keeping the fixture small and identical to the single-rig goldens.
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const std::string asset = TfAbsPath(examplesDir + "/ArmRig.usda");
     const UsdPrim armA = stage->DefinePrim(SdfPath("/ArmA"), TfToken("Xform"));
     const UsdPrim armB = stage->DefinePrim(SdfPath("/ArmB"), TfToken("Xform"));
@@ -3189,12 +3290,13 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     CHECK(stage->GetPrimAtPath(SdfPath("/ArmB/Rig")));
     // Create the local property opinion before observing edits: first-time
     // authoring may send separate property-creation and value notices.
-    CHECK(stage->GetAttributeAtPath(
-              SdfPath("/ArmA/Rig/Controls/ShoulderFK.avars:tx")).Set(0.0));
+    CHECK(stage
+              ->GetAttributeAtPath(
+                  SdfPath("/ArmA/Rig/Controls/ShoulderFK.avars:tx"))
+              .Set(0.0));
 
     std::vector<std::string> errors;
-    CHECK(registry.Activate(
-        stage, SdfPath(), UsdTimeCode(1001.0), &errors));
+    CHECK(registry.Activate(stage, SdfPath(), UsdTimeCode(1001.0), &errors));
     for (const std::string &error : errors) {
         std::printf("  multi-rig activation: %s\n", error.c_str());
     }
@@ -3207,10 +3309,10 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     CHECK(snapshot->Describes(stage, UsdTimeCode(1001.0)));
     CHECK(snapshot->prims.count(SdfPath("/ArmA/Geom/ArmBody")) != 0);
     CHECK(snapshot->prims.count(SdfPath("/ArmB/Geom/ArmBody")) != 0);
-    const auto guideA = snapshot->prims.find(
-        SdfPath("/ArmA/Rig/Controls/ShoulderFK"));
-    const auto guideB = snapshot->prims.find(
-        SdfPath("/ArmB/Rig/Controls/ShoulderFK"));
+    const auto guideA =
+        snapshot->prims.find(SdfPath("/ArmA/Rig/Controls/ShoulderFK"));
+    const auto guideB =
+        snapshot->prims.find(SdfPath("/ArmB/Rig/Controls/ShoulderFK"));
     CHECK(guideA != snapshot->prims.end());
     CHECK(guideB != snapshot->prims.end());
     if (guideA != snapshot->prims.end()) {
@@ -3228,18 +3330,20 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     CHECK(registry.SetTime(UsdTimeCode(1024.0)));
     snapshot = registry.GetStore()->Get();
     CHECK(snapshot && snapshot->generation == generation + 1);
-    CHECK(snapshot && snapshot->prims.count(
-                           SdfPath("/ArmA/Geom/ArmBody")) != 0);
-    CHECK(snapshot && snapshot->prims.count(
-                           SdfPath("/ArmB/Geom/ArmBody")) != 0);
+    CHECK(snapshot &&
+          snapshot->prims.count(SdfPath("/ArmA/Geom/ArmBody")) != 0);
+    CHECK(snapshot &&
+          snapshot->prims.count(SdfPath("/ArmB/Geom/ArmBody")) != 0);
 
     // Same-frame edits evaluate only the affected character session; the
     // atomic combined publication reuses the other character's snapshot.
     const SdfPath rigA("/ArmA/Rig"), rigB("/ArmB/Rig");
     const size_t pullsA = registry.GetSessionEvaluationCount(rigA);
     const size_t pullsB = registry.GetSessionEvaluationCount(rigB);
-    CHECK(stage->GetAttributeAtPath(
-              SdfPath("/ArmA/Rig/Controls/ShoulderFK.avars:tx")).Set(1.0));
+    CHECK(stage
+              ->GetAttributeAtPath(
+                  SdfPath("/ArmA/Rig/Controls/ShoulderFK.avars:tx"))
+              .Set(1.0));
     CHECK(registry.GetSessionEvaluationCount(rigA) == pullsA + 1);
     CHECK(registry.GetSessionEvaluationCount(rigB) == pullsB);
     CHECK(registry.SetTime(UsdTimeCode(1024.0)));
@@ -3255,8 +3359,7 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     const RigExecImagingSnapshotConstPtr beforeFailure = snapshot;
     const UsdStageRefPtr noRig = UsdStage::CreateInMemory();
     errors.clear();
-    CHECK(!registry.Activate(
-        noRig, SdfPath(), UsdTimeCode(1.0), &errors));
+    CHECK(!registry.Activate(noRig, SdfPath(), UsdTimeCode(1.0), &errors));
     CHECK(!errors.empty());
     CHECK(registry.IsActive());
     CHECK(registry.GetStore()->Get() == beforeFailure);
@@ -3270,30 +3373,32 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
 {
     UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/ArmRig.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(
-        stage, SdfPath("/ArmAsset/Rig"), UsdTimeCode(1.0), &errors);
+    const bool activated = registry.Activate(stage, SdfPath("/ArmAsset/Rig"),
+                                             UsdTimeCode(1.0), &errors);
     for (const std::string &e : errors) {
         std::printf("activate error: %s\n", e.c_str());
     }
     CHECK(activated);
-    if (!activated) return;
+    if (!activated)
+        return;
     const uint64_t generation0 = registry.GetStore()->Get()->generation;
 
     // A value edit on a solver input that factors into the final frame
     // republishes without any timeline change.
-    stage->GetAttributeAtPath(
-             SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
+    stage
+        ->GetAttributeAtPath(
+            SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
         .Set(0.75f);
     RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
     CHECK(snapshot && snapshot->generation > generation0);
 
     // A joint guide-styling edit republishes too.
     const uint64_t generation1 = snapshot->generation;
-    stage->GetPrimAtPath(
-             SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"))
+    stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"))
         .GetAttribute(TfToken("guide:radius"))
         .Set(0.75);
     snapshot = registry.GetStore()->Get();
@@ -3333,14 +3438,25 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
 class _TestMotionMatrix final : public HdTypedSampledDataSource<GfMatrix4d> {
 public:
     HD_DECLARE_DATASOURCE(_TestMotionMatrix);
-    GfMatrix4d GetTypedValue(Time offset) override { return offset < 0 ? _a : _b; }
-    VtValue GetValue(Time offset) override { return VtValue(GetTypedValue(offset)); }
-    bool GetContributingSampleTimesForInterval(Time, Time, std::vector<Time> *out) override {
+    GfMatrix4d GetTypedValue(Time offset) override
+    {
+        return offset < 0 ? _a : _b;
+    }
+    VtValue GetValue(Time offset) override
+    {
+        return VtValue(GetTypedValue(offset));
+    }
+    bool GetContributingSampleTimesForInterval(Time, Time,
+                                               std::vector<Time> *out) override
+    {
         *out = {-11.5f, 11.5f};
         return true;
     }
+
 private:
-    _TestMotionMatrix(GfMatrix4d a, GfMatrix4d b) : _a(a), _b(b) {}
+    _TestMotionMatrix(GfMatrix4d a, GfMatrix4d b) : _a(a), _b(b)
+    {
+    }
     GfMatrix4d _a, _b;
 };
 
@@ -3369,10 +3485,14 @@ TestShaderMatrixWorldSpace()
     CHECK(assetOp.Set(assetWorld));
     CHECK(eyeOp.Set(eyeLocal));
     UsdGeomPrimvarsAPI primvars(eye);
-    CHECK(primvars.CreatePrimvar(projector, SdfValueTypeNames->Matrix4d,
-                                UsdGeomTokens->constant).Set(GfMatrix4d(1)));
-    CHECK(primvars.CreatePrimvar(dials, SdfValueTypeNames->Matrix4d,
-                                UsdGeomTokens->constant).Set(GfMatrix4d(0.0)));
+    CHECK(primvars
+              .CreatePrimvar(projector, SdfValueTypeNames->Matrix4d,
+                             UsdGeomTokens->constant)
+              .Set(GfMatrix4d(1)));
+    CHECK(primvars
+              .CreatePrimvar(dials, SdfValueTypeNames->Matrix4d,
+                             UsdGeomTokens->constant)
+              .Set(GfMatrix4d(0.0)));
 
     auto stageIndex = UsdImagingStageSceneIndex::New();
     stageIndex->SetStage(stage);
@@ -3388,10 +3508,8 @@ TestShaderMatrixWorldSpace()
     GfMatrix4d localProjector(1);
     localProjector.SetRotate(GfRotation(GfVec3d(0, 0, 1), -17));
     localProjector.SetTranslateOnly(GfVec3d(0.25, 0.5, -0.75));
-    const GfMatrix4d packed(0.375, 0.51, 0.73, 1.1,
-                            2.2, 3.3, 4.4, 5.5,
-                            6.6, 7.7, 8.8, 9.9,
-                            10.1, 11.2, 12.3, 13.4);
+    const GfMatrix4d packed(0.375, 0.51, 0.73, 1.1, 2.2, 3.3, 4.4, 5.5, 6.6,
+                            7.7, 8.8, 9.9, 10.1, 11.2, 12.3, 13.4);
     published.shaderMatrices[projector] = localProjector;
     published.shaderMatrices[dials] = packed;
     published.targetLocalShaderMatrices.insert(projector);
@@ -3402,8 +3520,10 @@ TestShaderMatrixWorldSpace()
         auto snapshot = std::make_shared<RigExecImagingSnapshot>();
         snapshot->stage = stage;
         snapshot->prims[eyePath] = published;
-        if (publishAsset) snapshot->prims[assetPath] = drivenAsset;
-        if (resetEyeStack) snapshot->xformResetPaths.insert(eyePath);
+        if (publishAsset)
+            snapshot->prims[assetPath] = drivenAsset;
+        if (resetEyeStack)
+            snapshot->xformResetPaths.insert(eyePath);
         return snapshot;
     };
     auto clearNotices = [&]() {
@@ -3415,12 +3535,13 @@ TestShaderMatrixWorldSpace()
     auto checkDrawn = [&](const GfMatrix4d &targetWorld) {
         const HdPrimvarsSchema drawn = HdPrimvarsSchema::GetFromParent(
             results->GetPrim(eyePath).dataSource);
-        const VtValue value = drawn.GetPrimvar(projector).GetPrimvarValue()->GetValue(0);
+        const VtValue value =
+            drawn.GetPrimvar(projector).GetPrimvarValue()->GetValue(0);
         CHECK(value.IsHolding<GfMatrix4f>());
         if (value.IsHolding<GfMatrix4f>()) {
-            CHECK(GfIsClose(GfMatrix4d(value.UncheckedGet<GfMatrix4f>()),
-                            GfMatrix4d(GfMatrix4f(localProjector * targetWorld)),
-                            1e-5));
+            CHECK(GfIsClose(
+                GfMatrix4d(value.UncheckedGet<GfMatrix4f>()),
+                GfMatrix4d(GfMatrix4f(localProjector * targetWorld)), 1e-5));
         }
         CHECK(drawn.GetPrimvar(dials).GetPrimvarValue()->GetValue(0) ==
               VtValue(GfMatrix4f(packed)));
@@ -3430,7 +3551,8 @@ TestShaderMatrixWorldSpace()
     auto checkSpatialDirty = [&]() {
         bool primvarsDirty = false, xformDirty = false;
         for (size_t i = 0; i < observer.dirtied.size(); ++i) {
-            if (observer.dirtied[i] != eyePath) continue;
+            if (observer.dirtied[i] != eyePath)
+                continue;
             primvarsDirty |= observer.dirtiedLocators[i].Intersects(
                 HdPrimvarsSchema::GetDefaultLocator());
             xformDirty |= observer.dirtiedLocators[i].Intersects(
@@ -3447,7 +3569,8 @@ TestShaderMatrixWorldSpace()
     std::string sourceInitialAfter, sessionInitialAfter;
     CHECK(stage->GetRootLayer()->ExportToString(&sourceInitialAfter));
     CHECK(stage->GetSessionLayer()->ExportToString(&sessionInitialAfter));
-    CHECK(sourceInitialAfter == sourceBefore && sessionInitialAfter == sessionBefore);
+    CHECK(sourceInitialAfter == sourceBefore &&
+          sessionInitialAfter == sessionBefore);
 
     // An ordinary authored ancestor edit changes the world frame, while the
     // rig's local projector and its snapshot generation stay identical.
@@ -3515,14 +3638,18 @@ TestShaderMatrixWorldSpace()
     worldA.SetTranslate(GfVec3d(2, 3, 4));
     worldB.SetTranslate(GfVec3d(-5, 6, 7));
     const TfToken xformName = HdXformSchemaTokens->xform;
-    const HdDataSourceBaseHandle xformSource = HdXformSchema::Builder()
-        .SetMatrix(_TestMotionMatrix::New(worldA, worldB))
-        .SetResetXformStack(HdRetainedTypedSampledDataSource<bool>::New(true))
-        .Build();
-    motionInput->AddPrims({{eyePath, HdPrimTypeTokens->mesh,
-        HdRetainedContainerDataSource::New(1, &xformName, &xformSource)}});
+    const HdDataSourceBaseHandle xformSource =
+        HdXformSchema::Builder()
+            .SetMatrix(_TestMotionMatrix::New(worldA, worldB))
+            .SetResetXformStack(
+                HdRetainedTypedSampledDataSource<bool>::New(true))
+            .Build();
+    motionInput->AddPrims(
+        {{eyePath, HdPrimTypeTokens->mesh,
+          HdRetainedContainerDataSource::New(1, &xformName, &xformSource)}});
     auto motionStore = std::make_shared<RigExecSnapshotStore>();
-    auto motionResults = RigExecResultsSceneIndex::New(motionInput, motionStore);
+    auto motionResults =
+        RigExecResultsSceneIndex::New(motionInput, motionStore);
     auto motionSnapshot = std::make_shared<RigExecImagingSnapshot>();
     published.hasXform = false;
     motionSnapshot->prims[eyePath] = published;
@@ -3532,25 +3659,30 @@ TestShaderMatrixWorldSpace()
             motionResults->GetPrim(eyePath).dataSource);
         const auto value = drawn.GetPrimvar(projector).GetPrimvarValue();
         std::vector<float> samples;
-        CHECK(value->GetContributingSampleTimesForInterval(-11.5f, 11.5f, &samples));
+        CHECK(value->GetContributingSampleTimesForInterval(-11.5f, 11.5f,
+                                                           &samples));
         CHECK(samples == std::vector<float>({-11.5f, 11.5f}));
-        CHECK(value->GetValue(-11.5f) == VtValue(GfMatrix4f(localProjector * a)));
-        CHECK(value->GetValue(11.5f) == VtValue(GfMatrix4f(localProjector * b)));
+        CHECK(value->GetValue(-11.5f) ==
+              VtValue(GfMatrix4f(localProjector * a)));
+        CHECK(value->GetValue(11.5f) ==
+              VtValue(GfMatrix4f(localProjector * b)));
         const auto packedValue = drawn.GetPrimvar(dials).GetPrimvarValue();
-        CHECK(!packedValue->GetContributingSampleTimesForInterval(-11.5f, 11.5f, &samples));
+        CHECK(!packedValue->GetContributingSampleTimesForInterval(-11.5f, 11.5f,
+                                                                  &samples));
         CHECK(packedValue->GetValue(-11.5f) == VtValue(GfMatrix4f(packed)));
         CHECK(packedValue->GetValue(11.5f) == VtValue(GfMatrix4f(packed)));
     };
     checkMotion(worldA, worldB);
-    auto drivenMotion = std::make_shared<RigExecImagingSnapshot>(*motionStore->Get());
+    auto drivenMotion =
+        std::make_shared<RigExecImagingSnapshot>(*motionStore->Get());
     auto &motionPrim = drivenMotion->prims[eyePath];
     motionPrim.hasXform = true;
     motionPrim.xformBase = worldB;
     motionPrim.xform = GfMatrix4d(1).SetTranslate(GfVec3d(11, 12, 13));
     motionPrim.sampleOffsets = {-11.5f, 11.5f};
     motionPrim.xformBaseSamples = {worldA, worldB};
-    motionPrim.xformSamples = {
-        GfMatrix4d(1).SetTranslate(GfVec3d(8, 9, 10)), motionPrim.xform};
+    motionPrim.xformSamples = {GfMatrix4d(1).SetTranslate(GfVec3d(8, 9, 10)),
+                               motionPrim.xform};
     motionStore->Publish(drivenMotion);
     checkMotion(motionPrim.xformSamples[0], motionPrim.xformSamples[1]);
 }
@@ -3575,18 +3707,22 @@ TestCompleteMotionPublication(const std::string &examplesDir)
     auto results = RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
     const auto data = results->GetPrim(body).dataSource;
     const auto normals = HdPrimvarsSchema::GetFromParent(data)
-        .GetPrimvar(HdTokens->normals).GetPrimvarValue();
+                             .GetPrimvar(HdTokens->normals)
+                             .GetPrimvarValue();
     const auto extent = HdExtentSchema::GetFromParent(data);
     CHECK(normals && extent.GetMin() && extent.GetMax());
     if (normals && extent.GetMin() && extent.GetMax()) {
         std::vector<float> samples;
-        CHECK(normals->GetContributingSampleTimesForInterval(-0.5f, 0.5f, &samples));
+        CHECK(normals->GetContributingSampleTimesForInterval(-0.5f, 0.5f,
+                                                             &samples));
         CHECK(samples == offsets);
         for (size_t i = 0; i < offsets.size(); ++i) {
             const auto &expected = reference[i]->prims.at(body);
             CHECK(normals->GetValue(offsets[i]) == VtValue(expected.normals));
-            CHECK(extent.GetMin()->GetTypedValue(offsets[i]) == expected.extentMin);
-            CHECK(extent.GetMax()->GetTypedValue(offsets[i]) == expected.extentMax);
+            CHECK(extent.GetMin()->GetTypedValue(offsets[i]) ==
+                  expected.extentMin);
+            CHECK(extent.GetMax()->GetTypedValue(offsets[i]) ==
+                  expected.extentMax);
         }
     }
 
@@ -3595,42 +3731,52 @@ TestCompleteMotionPublication(const std::string &examplesDir)
     stage = UsdStage::Open(examplesDir + "/10_AimXformTurret.usda");
     RigExecImagingBridge turretBridge(stage, SdfPath("/TurretAsset/Rig"));
     CHECK(turretBridge.Compile());
-    CHECK(turretBridge.EvaluateAndPublishSamples(
-        UsdTimeCode(1012.5), {-11.5f, 11.5f}).ok);
+    CHECK(turretBridge
+              .EvaluateAndPublishSamples(UsdTimeCode(1012.5), {-11.5f, 11.5f})
+              .ok);
     const SdfPath turret("/TurretAsset/Geom/Turret");
     const SdfPath child = turret.AppendChild(TfToken("Barrel"));
     const auto &published = turretBridge.GetStore()->Get()->prims.at(turret);
     CHECK(published.xformSamples.size() == 2);
-    if (published.xformSamples.size() != 2) return;
+    if (published.xformSamples.size() != 2)
+        return;
     CHECK(published.xformSamples[0] != published.xformSamples[1]);
     const GfMatrix4d parentA = GfMatrix4d(1).SetTranslate(GfVec3d(100, 0, 0));
     const GfMatrix4d parentB = GfMatrix4d(1).SetTranslate(GfVec3d(200, 0, 0));
     const GfMatrix4d childLocal = GfMatrix4d(1).SetTranslate(GfVec3d(0, 0, 4));
-    const auto shell = [](const SdfPath &path, const GfMatrix4d &a, const GfMatrix4d &b) {
+    const auto shell = [](const SdfPath &path, const GfMatrix4d &a,
+                          const GfMatrix4d &b) {
         return HdRetainedSceneIndex::AddedPrimEntry{
             path, HdPrimTypeTokens->mesh,
-            HdRetainedContainerDataSource::New(HdXformSchemaTokens->xform,
-                HdXformSchema::Builder().SetMatrix(_TestMotionMatrix::New(a, b)).Build())};
+            HdRetainedContainerDataSource::New(
+                HdXformSchemaTokens->xform,
+                HdXformSchema::Builder()
+                    .SetMatrix(_TestMotionMatrix::New(a, b))
+                    .Build())};
     };
     upstream = HdRetainedSceneIndex::New();
     const GfMatrix4d oldA = published.xformBaseSamples[0] * parentA;
     const GfMatrix4d oldB = published.xformBaseSamples[1] * parentB;
     upstream->AddPrims({shell(turret, oldA, oldB),
-                       shell(child, childLocal * oldA, childLocal * oldB)});
+                        shell(child, childLocal * oldA, childLocal * oldB)});
     results = RigExecResultsSceneIndex::New(upstream, turretBridge.GetStore());
-    const auto transform = HdXformSchema::GetFromParent(results->GetPrim(child).dataSource)
-        .GetMatrix();
+    const auto transform =
+        HdXformSchema::GetFromParent(results->GetPrim(child).dataSource)
+            .GetMatrix();
     CHECK(transform);
     if (transform) {
         std::vector<float> samples;
-        CHECK(transform->GetContributingSampleTimesForInterval(-11.5f, 11.5f, &samples));
+        CHECK(transform->GetContributingSampleTimesForInterval(-11.5f, 11.5f,
+                                                               &samples));
         CHECK(samples == std::vector<float>({-11.5f, 11.5f}));
         for (size_t i = 0; i < 2; ++i) {
             const GfMatrix4d expected = childLocal * published.xformSamples[i] *
-                (i ? parentB : parentA);
-            const GfMatrix4d actual = transform->GetTypedValue(i ? 11.5f : -11.5f);
-            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c)
-                CHECK(std::abs(actual[r][c] - expected[r][c]) < 1e-8);
+                                        (i ? parentB : parentA);
+            const GfMatrix4d actual =
+                transform->GetTypedValue(i ? 11.5f : -11.5f);
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    CHECK(std::abs(actual[r][c] - expected[r][c]) < 1e-8);
         }
     }
 }
@@ -3655,11 +3801,14 @@ TestDrivenXformResetBoundaries(const std::string &examplesDir)
     results->AddObserver(HdSceneIndexObserverPtr(&observer));
     const auto matrix = [&](const SdfPath &path) {
         return HdXformSchema::GetFromParent(results->GetPrim(path).dataSource)
-            .GetMatrix()->GetTypedValue(0);
+            .GetMatrix()
+            ->GetTypedValue(0);
     };
     const auto close = [](const GfMatrix4d &a, const GfMatrix4d &b) {
-        for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c)
-            if (std::abs(a[r][c] - b[r][c]) > 1e-8) return false;
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                if (std::abs(a[r][c] - b[r][c]) > 1e-8)
+                    return false;
         return true;
     };
     for (double time : {1001.0, 1024.0}) {
@@ -3669,43 +3818,56 @@ TestDrivenXformResetBoundaries(const std::string &examplesDir)
         UsdGeomXformCache cache{UsdTimeCode(time)};
         HdRetainedSceneIndex::AddedPrimEntries entries;
         for (const auto &path : {turret, detached, leaf}) {
-            entries.push_back({path, TfToken("xform"),
-                HdRetainedContainerDataSource::New(HdXformSchemaTokens->xform,
-                    HdXformSchema::Builder()
-                        .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
-                            cache.GetLocalToWorldTransform(stage->GetPrimAtPath(path))))
-                        // Like Hydra flattening, EVERY prim advertises reset.
-                        .SetResetXformStack(HdRetainedTypedSampledDataSource<bool>::New(true))
-                        .Build())});
+            entries.push_back(
+                {path, TfToken("xform"),
+                 HdRetainedContainerDataSource::New(
+                     HdXformSchemaTokens->xform,
+                     HdXformSchema::Builder()
+                         .SetMatrix(
+                             HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
+                                 cache.GetLocalToWorldTransform(
+                                     stage->GetPrimAtPath(path))))
+                         // Like Hydra flattening, EVERY prim advertises reset.
+                         .SetResetXformStack(
+                             HdRetainedTypedSampledDataSource<bool>::New(true))
+                         .Build())});
         }
         upstream->AddPrims(entries);
         results->NotifyGenerationPublished(update.dirtied);
-        CHECK(close(matrix(detached), cache.GetLocalToWorldTransform(boundary.GetPrim())));
-        CHECK(close(matrix(leaf), cache.GetLocalToWorldTransform(child.GetPrim())));
+        CHECK(close(matrix(detached),
+                    cache.GetLocalToWorldTransform(boundary.GetPrim())));
+        CHECK(close(matrix(leaf),
+                    cache.GetLocalToWorldTransform(child.GetPrim())));
     }
     const auto resetWorld = matrix(leaf);
     for (bool reset : {false, true}) {
         CHECK(boundary.SetResetXformStack(reset));
         const auto update = bridge.EvaluateAndPublishResult(UsdTimeCode(1024));
         CHECK(update.ok);
-        CHECK(bool(bridge.GetStore()->Get()->xformResetPaths.count(detached)) == reset);
+        CHECK(bool(bridge.GetStore()->Get()->xformResetPaths.count(detached)) ==
+              reset);
         observer.dirtied.clear();
         results->NotifyGenerationPublished(update.dirtied);
-        CHECK(std::find(observer.dirtied.begin(), observer.dirtied.end(), leaf) != observer.dirtied.end());
+        CHECK(std::find(observer.dirtied.begin(), observer.dirtied.end(),
+                        leaf) != observer.dirtied.end());
         const auto &published = bridge.GetStore()->Get()->prims.at(turret);
         // The incoming world matrix is intentionally unchanged: the only
         // changing input to this pull is the captured reset boundary.
         UsdGeomXformCache cache{UsdTimeCode(1024)};
-        const auto oldWorld = cache.GetLocalToWorldTransform(stage->GetPrimAtPath(turret));
-        const auto expected = reset ? resetWorld
-            : resetWorld * oldWorld.GetInverse() * published.xform *
-                published.xformBase.GetInverse() * oldWorld;
+        const auto oldWorld =
+            cache.GetLocalToWorldTransform(stage->GetPrimAtPath(turret));
+        const auto expected =
+            reset ? resetWorld
+                  : resetWorld * oldWorld.GetInverse() * published.xform *
+                        published.xformBase.GetInverse() * oldWorld;
         CHECK(close(matrix(leaf), expected));
-        if (!reset) CHECK(!close(matrix(leaf), resetWorld));
+        if (!reset)
+            CHECK(!close(matrix(leaf), resetWorld));
     }
     // A boundary can itself be driven. Apply its own revision, then stop
     // before applying any driven namespace ancestor.
-    auto snapshot = std::make_shared<RigExecImagingSnapshot>(*bridge.GetStore()->Get());
+    auto snapshot =
+        std::make_shared<RigExecImagingSnapshot>(*bridge.GetStore()->Get());
     auto &own = snapshot->prims[detached];
     own.hasXform = true;
     own.xformBase = GfMatrix4d(1).SetTranslate(GfVec3d(7, 8, 9));
@@ -3771,13 +3933,18 @@ def Xform "Asset" {
     const auto context = RigExecImagingRegistry::ForStage(stage);
     auto upstream = HdRetainedSceneIndex::New();
     const auto data = HdRetainedContainerDataSource::New(
-        HdXformSchemaTokens->xform, HdRetainedContainerDataSource::New(
+        HdXformSchemaTokens->xform,
+        HdRetainedContainerDataSource::New(
             HdXformSchemaTokens->matrix,
-            HdRetainedTypedSampledDataSource<GfMatrix4d>::New(GfMatrix4d(1.0))));
-    upstream->AddPrims({{control, TfToken(), data}, {joint, TfToken(), data},
-        {tip, TfToken(), data}, {joint.AppendChild(TfToken("Sphere")), TfToken(), data},
-        {joint.AppendChild(TfToken("Plane")), TfToken(), data},
-        {joint.AppendChild(TfToken("Curve")), TfToken(), data}});
+            HdRetainedTypedSampledDataSource<GfMatrix4d>::New(
+                GfMatrix4d(1.0))));
+    upstream->AddPrims(
+        {{control, TfToken(), data},
+         {joint, TfToken(), data},
+         {tip, TfToken(), data},
+         {joint.AppendChild(TfToken("Sphere")), TfToken(), data},
+         {joint.AppendChild(TfToken("Plane")), TfToken(), data},
+         {joint.AppendChild(TfToken("Curve")), TfToken(), data}});
     auto results = RigExecResultsSceneIndex::New(upstream, context->GetStore());
     context->RegisterChain(nullptr, nullptr, results);
     _RecordingObserver observer;
@@ -3791,31 +3958,39 @@ def Xform "Asset" {
     CHECK(!context->IsActiveRigRoot(root) && context->IsDisplayedRigRoot(root));
     auto snapshot = context->GetStore()->Get();
     CHECK(snapshot && snapshot->Describes(stage, UsdTimeCode(1)));
-    if (!snapshot) return;
+    if (!snapshot)
+        return;
     CHECK(snapshot->assetRoot == SdfPath("/Asset"));
     CHECK(snapshot->prims.at(control).hasControlGuide);
-    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() == GfVec3d(2, 0, 0));
+    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() ==
+          GfVec3d(2, 0, 0));
     CHECK(snapshot->prims.at(joint).hasGuides);
     CHECK(snapshot->prims.at(joint).guideLengths == std::vector<double>{2.0});
-    CHECK(snapshot->prims.at(joint).guideFrames[0].ExtractTranslation() == GfVec3d(2, 3, 0));
+    CHECK(snapshot->prims.at(joint).guideFrames[0].ExtractTranslation() ==
+          GfVec3d(2, 3, 0));
     CHECK(snapshot->prims.at(SdfPath("/Asset/Rig/ReaderJoint")).hasGuides);
     for (const char *name : {"Sphere", "Plane", "Curve"}) {
         const SdfPath path = joint.AppendChild(TfToken(name));
         CHECK(snapshot->prims.at(path).hasVolumeGuides);
         const auto children = results->GetChildPrimPaths(path);
         CHECK(!children.empty());
-        for (const SdfPath &child : children) CHECK(!results->GetPrim(child).primType.IsEmpty());
+        for (const SdfPath &child : children)
+            CHECK(!results->GetPrim(child).primType.IsEmpty());
     }
-    CHECK(results->GetPrim(control.AppendChild(TfToken("rigGuideCtrl"))).primType == HdPrimTypeTokens->basisCurves);
-    CHECK(results->GetPrim(joint.AppendChild(TfToken("rigGuideCone_0"))).primType == HdPrimTypeTokens->cone);
+    CHECK(results->GetPrim(control.AppendChild(TfToken("rigGuideCtrl")))
+              .primType == HdPrimTypeTokens->basisCurves);
+    CHECK(results->GetPrim(joint.AppendChild(TfToken("rigGuideCone_0")))
+              .primType == HdPrimTypeTokens->cone);
     for (const auto &[path, prim] : snapshot->prims) {
-        CHECK(!prim.hasControlFrame && !prim.hasXform && !prim.hasPoints && !prim.hasWeightOverlay);
+        CHECK(!prim.hasControlFrame && !prim.hasXform && !prim.hasPoints &&
+              !prim.hasWeightOverlay);
         CHECK(prim.shaderMatrices.empty() && prim.shaderFloats.empty());
     }
     double unpublishedFrame[16] = {};
     unpublishedFrame[0] = -99.0;
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
-        "/Asset/Rig/ReaderJoint", 1.0, 0, unpublishedFrame) == 0);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(
+              stageId.ToLongInt(), "/Asset/Rig/ReaderJoint", 1.0, 0,
+              unpublishedFrame) == 0);
     CHECK(unpublishedFrame[0] == -99.0);
     std::string after, sessionAfter;
     stage->GetRootLayer()->ExportToString(&after);
@@ -3823,28 +3998,34 @@ def Xform "Asset" {
     CHECK(before == after && sessionBefore == sessionAfter);
     CHECK(!context->SetTime(UsdTimeCode(2)));
     snapshot = context->GetStore()->Get();
-    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() == GfVec3d(4, 0, 0));
+    CHECK(snapshot->prims.at(control).controlGuideFrame.ExtractTranslation() ==
+          GfVec3d(4, 0, 0));
     const uint64_t generation = snapshot->generation;
     CHECK(!context->SetTime(UsdTimeCode(2)));
     CHECK(context->GetStore()->Get()->generation == generation);
     CHECK(context->GetSessionEvaluationCount(root) == 0);
     CHECK(context->GetBackgroundStats().running == 0);
-    const auto color = stage->GetPrimAtPath(control).GetAttribute(TfToken("guide:displayColor"));
+    const auto color = stage->GetPrimAtPath(control).GetAttribute(
+        TfToken("guide:displayColor"));
     CHECK(color.Set(GfVec3f(0, 1, 0)));
-    CHECK(context->GetStore()->Get()->prims.at(control).guideColor == GfVec3f(0, 1, 0));
+    CHECK(context->GetStore()->Get()->prims.at(control).guideColor ==
+          GfVec3f(0, 1, 0));
     CHECK(!context->IsActive());
     // Complete the endpoint and repair the invalid weight sampling binding.
-    const auto points = stage->DefinePrim(SdfPath("/Asset/Missing"), TfToken("Points"));
+    const auto points =
+        stage->DefinePrim(SdfPath("/Asset/Missing"), TfToken("Points"));
     CHECK(points.GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)}));
-    const auto sampling = stage->GetPrimAtPath(joint.AppendChild(TfToken("Sphere")))
-        .GetRelationship(TfToken("rigExec:sampleSource"));
+    const auto sampling =
+        stage->GetPrimAtPath(joint.AppendChild(TfToken("Sphere")))
+            .GetRelationship(TfToken("rigExec:sampleSource"));
     CHECK(sampling.SetTargets({}));
     CHECK(context->IsActive());
     CHECK(context->SetTime(UsdTimeCode(2)));
     CHECK(context->GetStore()->Get()->prims.at(control).hasControlFrame);
     CHECK(context->GetStore()->Get()->prims.count(SdfPath("/Asset/Missing")));
     // A later evaluation failure removes driven data but retains rest guides.
-    CHECK(sampling.SetTargets({SdfPath("/Asset/Curve"), SdfPath("/Asset/Curve.points")}));
+    CHECK(sampling.SetTargets(
+        {SdfPath("/Asset/Curve"), SdfPath("/Asset/Curve.points")}));
     CHECK(!context->SetTime(UsdTimeCode(2)));
     snapshot = context->GetStore()->Get();
     CHECK(snapshot && snapshot->prims.at(control).hasControlGuide);
@@ -3897,16 +4078,16 @@ def Xform "Asset" {
     const size_t evaluations = context->GetSessionEvaluationCount(root);
     for (const SdfPath &path : {parent, driver}) {
         double matrix[16] = {};
-        CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
-            path.GetText(), 1.0, 0, matrix) == 1);
+        CHECK(RigExecImaging_GetControlFrameAssetSpace(
+                  stageId.ToLongInt(), path.GetText(), 1.0, 0, matrix) == 1);
         CHECK(matrix[12] == 5.0 && matrix[13] == (path == driver ? 3.0 : 0.0));
         CHECK(matrix[0] == 1.0 && matrix[5] == 1.0 && matrix[10] == 1.0);
     }
     // A volume answers the frame getter from its guide placement.
     {
         double matrix[16] = {};
-        CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
-            volume.GetText(), 1.0, 0, matrix) == 1);
+        CHECK(RigExecImaging_GetControlFrameAssetSpace(
+                  stageId.ToLongInt(), volume.GetText(), 1.0, 0, matrix) == 1);
         const auto published = context->GetStore()->Get()->prims.at(volume);
         CHECK(!published.hasControlFrame && published.hasVolumeGuideFrame);
         for (int r = 0; r < 4; ++r) {
@@ -3948,14 +4129,18 @@ TestFailedActivationKeepsLiveNoticeOrdering()
     double fullFrame[16];
     std::fill(std::begin(fullFrame), std::end(fullFrame), -99.0);
     CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
-        controlPath.GetText(), 1.0, 0, fullFrame) == 1);
-    CHECK(std::abs(fullFrame[0] - 3.0) < 1e-9); // full scale, not the rigid guide
+                                                   controlPath.GetText(), 1.0,
+                                                   0, fullFrame) == 1);
+    CHECK(std::abs(fullFrame[0] - 3.0) <
+          1e-9); // full scale, not the rigid guide
     CHECK(RigExecImaging_GetControlFrameAssetSpace(stageId.ToLongInt(),
-        controlPath.GetText(), 2.0, 0, fullFrame) == 0);
+                                                   controlPath.GetText(), 2.0,
+                                                   0, fullFrame) == 0);
     const auto otherStage = UsdStage::CreateInMemory();
     const auto otherId = UsdUtilsStageCache::Get().Insert(otherStage);
     CHECK(RigExecImaging_GetControlFrameAssetSpace(otherId.ToLongInt(),
-        controlPath.GetText(), 1.0, 0, fullFrame) == 0);
+                                                   controlPath.GetText(), 1.0,
+                                                   0, fullFrame) == 0);
     UsdUtilsStageCache::Get().Erase(otherId);
 
     // An explicit invalid path reaches the rollback after its candidate
@@ -3970,13 +4155,15 @@ TestFailedActivationKeepsLiveNoticeOrdering()
         const RigExecImagingSnapshotConstPtr snapshot =
             registry.GetStore()->Get();
         CHECK(snapshot && snapshot->generation > before->generation);
-        if (!snapshot) continue;
+        if (!snapshot)
+            continue;
         const auto it = snapshot->prims.find(controlPath);
         CHECK(it != snapshot->prims.end());
         if (it != snapshot->prims.end()) {
             CHECK(it->second.hasControlGuide);
-            CHECK(std::abs(it->second.controlGuideFrame
-                               .ExtractTranslation()[0] - value) < 1e-9);
+            CHECK(
+                std::abs(it->second.controlGuideFrame.ExtractTranslation()[0] -
+                         value) < 1e-9);
         }
     }
     registry.Deactivate();
@@ -3994,22 +4181,21 @@ TestExternalReadEditsRepublish()
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
     const UsdPrim mesh =
         stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Points"));
-    CHECK(mesh.GetAttribute(TfToken("points"))
-              .Set(VtVec3fArray{GfVec3f(0)}));
-    const UsdPrim driver = stage->DefinePrim(
-        SdfPath("/External/Driver"), TfToken("RigExecControl"));
+    CHECK(mesh.GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)}));
+    const UsdPrim driver = stage->DefinePrim(SdfPath("/External/Driver"),
+                                             TfToken("RigExecControl"));
     const UsdAttribute tx = driver.GetAttribute(TfToken("avars:tx"));
     CHECK(tx.Set(0.0));
     // Dependency collection must terminate even for an unrelated authored
     // relationship cycle in an external provider's subtree.
     CHECK(driver.CreateRelationship(TfToken("dependencyLoop"))
               .SetTargets({driver.GetPath()}));
-    const UsdAttribute source = stage->DefinePrim(
-        SdfPath("/Inputs/Source"), TfToken("Scope"))
-        .CreateAttribute(TfToken("value"), SdfValueTypeNames->Double);
+    const UsdAttribute source =
+        stage->DefinePrim(SdfPath("/Inputs/Source"), TfToken("Scope"))
+            .CreateAttribute(TfToken("value"), SdfValueTypeNames->Double);
     CHECK(source.Set(8.0));
-    const UsdPrim mover = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/M"), TfToken("RigExecMatrixMover"));
+    const UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
+                                            TfToken("RigExecMatrixMover"));
     CHECK(mover.ApplyAPI(TfToken("RigExecMoverAPI")));
     CHECK(mover.GetRelationship(TfToken("rigExec:moves"))
               .SetTargets({SdfPath("/Asset/Geom.points")}));
@@ -4018,12 +4204,15 @@ TestExternalReadEditsRepublish()
     std::vector<std::string> errors;
     CHECK(registry.Activate(stage, rigPath, UsdTimeCode(1), &errors));
     const auto expect = [&](float x) {
-        const RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
+        const RigExecImagingSnapshotConstPtr snapshot =
+            registry.GetStore()->Get();
         CHECK(snapshot);
-        if (!snapshot) return;
+        if (!snapshot)
+            return;
         const auto it = snapshot->prims.find(mesh.GetPath());
         CHECK(it != snapshot->prims.end());
-        if (it == snapshot->prims.end()) return;
+        if (it == snapshot->prims.end())
+            return;
         CHECK(it->second.points.size() == 1);
         if (it->second.points.size() == 1) {
             CHECK(std::abs(it->second.points[0][0] - x) < 1e-5f);
@@ -4040,7 +4229,8 @@ TestExternalReadEditsRepublish()
     expect(9.0f);
     CHECK(tx.ClearConnections());
     expect(5.0f);
-    const RigExecImagingSnapshotConstPtr disconnected = registry.GetStore()->Get();
+    const RigExecImagingSnapshotConstPtr disconnected =
+        registry.GetStore()->Get();
     CHECK(source.Set(11.0));
     CHECK(registry.GetStore()->Get() == disconnected);
     registry.Deactivate();
@@ -4070,7 +4260,8 @@ TestDisconnectingAConstraintClearsTheDrivenXform(const std::string &examplesDir)
     UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/10_AimXformTurret.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
     auto store = std::make_shared<RigExecSnapshotStore>();
@@ -4080,10 +4271,12 @@ TestDisconnectingAConstraintClearsTheDrivenXform(const std::string &examplesDir)
 
     RigExecImagingSnapshotConstPtr snap = store->Get();
     CHECK(snap != nullptr);
-    if (!snap) return;
+    if (!snap)
+        return;
     const auto driven = snap->prims.find(turret);
     CHECK(driven != snap->prims.end());
-    if (driven == snap->prims.end()) return;
+    if (driven == snap->prims.end())
+        return;
     CHECK(driven->second.hasXform);
 
     // Disconnect: exactly what removing the link in the node editor does.
@@ -4091,7 +4284,8 @@ TestDisconnectingAConstraintClearsTheDrivenXform(const std::string &examplesDir)
     const UsdPrim mover =
         stage->GetPrimAtPath(SdfPath("/TurretAsset/Rig/Movers/AimBarrel"));
     CHECK(mover);
-    if (!mover) return;
+    if (!mover)
+        return;
     mover.GetRelationship(TfToken("rigExec:moves")).SetTargets({});
 
     const RigExecImagingBridge::PublishResult after =
@@ -4127,10 +4321,10 @@ TestDisconnectingAConstraintClearsTheDrivenXform(const std::string &examplesDir)
 static void
 TestJointFreeRigPublishes(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/rigexec_flat.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/rigexec_flat.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     auto store = std::make_shared<RigExecSnapshotStore>();
     RigExecImagingBridge bridge(stage, SdfPath("/World/RigRoot"), store);
@@ -4140,13 +4334,15 @@ TestJointFreeRigPublishes(const std::string &examplesDir)
         std::printf("  compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     const SdfPath sphere("/World/Geom/Sphere");
     CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(0)).ok);
     RigExecImagingSnapshotConstPtr snap = store->Get();
     CHECK(snap != nullptr);
-    if (!snap) return;
+    if (!snap)
+        return;
     const auto it = snap->prims.find(sphere);
     CHECK(it != snap->prims.end());
     if (it == snap->prims.end()) {
@@ -4161,7 +4357,8 @@ TestJointFreeRigPublishes(const std::string &examplesDir)
     CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(50)).ok);
     snap = store->Get();
     CHECK(snap != nullptr);
-    if (!snap) return;
+    if (!snap)
+        return;
     const auto later = snap->prims.find(sphere);
     CHECK(later != snap->prims.end());
     if (later != snap->prims.end()) {
@@ -4182,7 +4379,8 @@ TestPropertyResultsDoNotPublishPrims(const std::string &examplesDir)
     UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/09_PropertyMathMovers.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     auto store = std::make_shared<RigExecSnapshotStore>();
     RigExecImagingBridge bridge(stage, SdfPath("/PropMathAsset/Rig"), store);
@@ -4190,7 +4388,8 @@ TestPropertyResultsDoNotPublishPrims(const std::string &examplesDir)
     CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode::Default()).ok);
     RigExecImagingSnapshotConstPtr snap = store->Get();
     CHECK(snap != nullptr);
-    if (!snap) return;
+    if (!snap)
+        return;
 
     // The Scope owning the three dials owns no geometry and no guide.
     const SdfPath dials("/PropMathAsset/Rig/Channels/Dials");
@@ -4218,18 +4417,20 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
     UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/10_AimXformTurret.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(
-        stage, SdfPath("/TurretAsset/Rig"), UsdTimeCode(1024), &errors);
+    const bool activated = registry.Activate(stage, SdfPath("/TurretAsset/Rig"),
+                                             UsdTimeCode(1024), &errors);
     for (const std::string &e : errors) {
         std::printf("  activate error: %s\n", e.c_str());
     }
     CHECK(activated);
-    if (!activated) return;
+    if (!activated)
+        return;
 
     RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
     CHECK(snapshot != nullptr);
@@ -4275,7 +4476,8 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     UsdStageRefPtr stage =
         UsdStage::Open(examplesDir + "/10_AimXformTurret.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     auto store = std::make_shared<RigExecSnapshotStore>();
     RigExecImagingBridge bridge(stage, SdfPath("/TurretAsset/Rig"), store);
@@ -4285,14 +4487,16 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
         std::printf("  compile error: %s\n", e.c_str());
     }
     CHECK(compiled);
-    if (!compiled) return;
+    if (!compiled)
+        return;
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
 
     CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(1001)).ok);
     RigExecImagingSnapshotConstPtr snap = store->Get();
     CHECK(snap != nullptr);
-    if (!snap) return;
+    if (!snap)
+        return;
     const auto it = snap->prims.find(turret);
     CHECK(it != snap->prims.end());
     if (it == snap->prims.end()) {
@@ -4308,10 +4512,12 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     CHECK(second.ok);
     snap = store->Get();
     CHECK(snap);
-    if (!snap) return;
+    if (!snap)
+        return;
     const auto it2 = snap->prims.find(turret);
     CHECK(it2 != snap->prims.end());
-    if (it2 == snap->prims.end()) return;
+    if (it2 == snap->prims.end())
+        return;
     CHECK(it2->second.hasXform);
     if (it2->second.xform == first) {
         std::printf("  turret xform identical at 1001 and 1024 -- "
@@ -4322,8 +4528,7 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     // The change must be announced, or the viewer keeps the stale matrix.
     bool announced = false;
     for (const auto &entry : second.dirtied) {
-        if (entry.path == turret &&
-            (entry.changes & RigExecChangeXform)) {
+        if (entry.path == turret && (entry.changes & RigExecChangeXform)) {
             announced = true;
         }
     }
@@ -4348,8 +4553,7 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
         static const TfToken xformName("xform");
         auto xformDs = [](const GfMatrix4d &m) -> HdDataSourceBaseHandle {
             return HdXformSchema::Builder()
-                .SetMatrix(
-                    HdRetainedTypedSampledDataSource<GfMatrix4d>::New(m))
+                .SetMatrix(HdRetainedTypedSampledDataSource<GfMatrix4d>::New(m))
                 .Build();
         };
         auto shell = [&](const SdfPath &p, const TfToken &type,
@@ -4374,14 +4578,14 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
         shells.push_back(shell(SdfPath("/TurretAsset/Geom"), TfToken("scope"),
                                xformDs(GfMatrix4d(1.0))));
         // The turret's own authored local transform, matching the example.
-        shells.push_back(shell(turret, TfToken("xform"),
-                               xformDs(GfMatrix4d(1.0).SetTranslate(
-                                   GfVec3d(0, 2, 0)))));
+        shells.push_back(
+            shell(turret, TfToken("xform"),
+                  xformDs(GfMatrix4d(1.0).SetTranslate(GfVec3d(0, 2, 0)))));
         // The child carries a real identity xform, as UsdImaging emits for
         // any Xformable. An empty container has nothing to flatten into and
         // would make this assertion measure nothing.
-        shells.push_back(shell(barrel, HdPrimTypeTokens->mesh,
-                               xformDs(GfMatrix4d(1.0))));
+        shells.push_back(
+            shell(barrel, HdPrimTypeTokens->mesh, xformDs(GfMatrix4d(1.0))));
         // A sibling with a NON-identity local, and a grandchild beneath it.
         // Identity-local children make "just copy the parent's matrix onto
         // every descendant" indistinguishable from composing correctly, and
@@ -4389,12 +4593,12 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
         // working one. These two make both mistakes fail.
         siblingLocal = GfMatrix4d(1.0).SetTranslate(GfVec3d(0, 0, 7));
         grandchildLocal = GfMatrix4d(1.0).SetTranslate(GfVec3d(3, 0, 0));
-        shells.push_back(shell(sight, HdPrimTypeTokens->mesh,
-                               xformDs(siblingLocal)));
+        shells.push_back(
+            shell(sight, HdPrimTypeTokens->mesh, xformDs(siblingLocal)));
         // A LOCAL, like every other entry here -- the flattening index below
         // is what composes it with the chain above.
-        shells.push_back(shell(scope, HdPrimTypeTokens->mesh,
-                               xformDs(grandchildLocal)));
+        shells.push_back(
+            shell(scope, HdPrimTypeTokens->mesh, xformDs(grandchildLocal)));
         upstream->AddPrims(shells);
     }
     // ORDER MATTERS, and it is the opposite of what one would choose.
@@ -4408,29 +4612,35 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     // (Null inputArgs would mean ZERO flattened data source providers -- an
     // index that flattens nothing, where every child reads back identity
     // forever, which looks exactly like the bug this test exists to catch.)
-    auto flattened = HdFlatteningSceneIndex::New(
-        upstream, HdFlattenedDataSourceProviders());
+    auto flattened =
+        HdFlatteningSceneIndex::New(upstream, HdFlattenedDataSourceProviders());
     auto results = RigExecResultsSceneIndex::New(flattened, store);
 
     auto flatOf = [&](const SdfPath &p) -> GfMatrix4d {
         const HdSceneIndexPrim prim = results->GetPrim(p);
-        if (!prim.dataSource) return GfMatrix4d(1.0);
+        if (!prim.dataSource)
+            return GfMatrix4d(1.0);
         HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource);
-        if (!xf || !xf.GetMatrix()) return GfMatrix4d(1.0);
+        if (!xf || !xf.GetMatrix())
+            return GfMatrix4d(1.0);
         return xf.GetMatrix()->GetTypedValue(0.0);
     };
     auto flatMatrix = [&](const SdfPath &p) -> GfMatrix4d {
         const HdSceneIndexPrim prim = results->GetPrim(p);
-        if (!prim.dataSource) return GfMatrix4d(1.0);
+        if (!prim.dataSource)
+            return GfMatrix4d(1.0);
         HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource);
-        if (!xf || !xf.GetMatrix()) return GfMatrix4d(1.0);
+        if (!xf || !xf.GetMatrix())
+            return GfMatrix4d(1.0);
         return xf.GetMatrix()->GetTypedValue(0.0);
     };
     auto childMatrix = [&]() -> GfMatrix4d {
         const HdSceneIndexPrim prim = results->GetPrim(barrel);
-        if (!prim.dataSource) return GfMatrix4d(1.0);
+        if (!prim.dataSource)
+            return GfMatrix4d(1.0);
         HdXformSchema xf = HdXformSchema::GetFromParent(prim.dataSource);
-        if (!xf || !xf.GetMatrix()) return GfMatrix4d(1.0);
+        if (!xf || !xf.GetMatrix())
+            return GfMatrix4d(1.0);
         return xf.GetMatrix()->GetTypedValue(0.0);
     };
 
@@ -4585,7 +4795,8 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
 
     bool childDirtiedOnClear = false;
     for (const SdfPath &p : onClear.dirtied) {
-        if (p == barrel) childDirtiedOnClear = true;
+        if (p == barrel)
+            childDirtiedOnClear = true;
     }
     if (!childDirtiedOnClear) {
         std::printf("  clearing the driven xform left its subtree "
@@ -4605,7 +4816,7 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
     // at all. Unless the constructor seeds it, the first loss finds
     // "wasDriven == false" and silently leaves the subtree stale.
     {
-        publish(1024);  // store holds a driven generation again
+        publish(1024); // store holds a driven generation again
         auto lateResults = RigExecResultsSceneIndex::New(flattened, store);
         // Pull once, as a real consumer would, so there is cached state to
         // go stale.
@@ -4619,7 +4830,8 @@ TestConstraintDrivenXformPublishes(const std::string &examplesDir)
 
         bool lateChildDirtied = false;
         for (const SdfPath &p : lateObserver.dirtied) {
-            if (p == barrel) lateChildDirtied = true;
+            if (p == barrel)
+                lateChildDirtied = true;
         }
         if (!lateChildDirtied) {
             std::printf("  late consumer never told its driven subtree was "
@@ -4658,18 +4870,19 @@ TestDrivenXformConditioning()
     };
 
     // Publishes a driven transform for `path`, revising `base` to `revised`.
-    auto publishDriven = [&](const std::shared_ptr<RigExecSnapshotStore> &store,
-                             const std::vector<std::tuple<SdfPath, GfMatrix4d,
-                                                          GfMatrix4d>> &driven) {
-        auto snapshot = std::make_shared<RigExecImagingSnapshot>();
-        for (const auto &[path, base, revised] : driven) {
-            RigExecPublishedPrim &p = snapshot->prims[path];
-            p.hasXform = true;
-            p.xformBase = base;
-            p.xform = revised;
-        }
-        store->Publish(snapshot);
-    };
+    auto publishDriven =
+        [&](const std::shared_ptr<RigExecSnapshotStore> &store,
+            const std::vector<std::tuple<SdfPath, GfMatrix4d, GfMatrix4d>>
+                &driven) {
+            auto snapshot = std::make_shared<RigExecImagingSnapshot>();
+            for (const auto &[path, base, revised] : driven) {
+                RigExecPublishedPrim &p = snapshot->prims[path];
+                p.hasXform = true;
+                p.xformBase = base;
+                p.xform = revised;
+            }
+            store->Publish(snapshot);
+        };
 
     // --- 1. A uniform scale of 1e-5 has determinant 1e-15 but condition
     // number 1. It is perfectly invertible and MUST still resolve; a
@@ -4689,10 +4902,11 @@ TestDrivenXformConditioning()
         revised.SetTranslateOnly(GfVec3d(5, 0, 0));
         publishDriven(store, {{outer, tiny, revised}});
 
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(outer).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(outer).dataSource);
         const GfMatrix4d out = xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0) : GfMatrix4d(1.0);
+                                   ? xf.GetMatrix()->GetTypedValue(0.0)
+                                   : GfMatrix4d(1.0);
         const bool moved = out.ExtractTranslation()[0] > 1.0;
         if (!moved) {
             std::printf("  a uniform 1e-5 scale was rejected -- the guard is "
@@ -4717,10 +4931,11 @@ TestDrivenXformConditioning()
         revised.SetTranslateOnly(GfVec3d(5, 0, 0));
         publishDriven(store, {{outer, skewed, revised}});
 
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(outer).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(outer).dataSource);
         const GfMatrix4d out = xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0) : GfMatrix4d(1.0);
+                                   ? xf.GetMatrix()->GetTypedValue(0.0)
+                                   : GfMatrix4d(1.0);
         if (out != skewed) {
             std::printf("  an ill-conditioned base (det 1, cond ~1e14) was "
                         "accepted -- the guard is testing determinant\n");
@@ -4739,10 +4954,11 @@ TestDrivenXformConditioning()
 
         publishDriven(store, {{outer, flat, flat}});
 
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(outer).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(outer).dataSource);
         const GfMatrix4d out = xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0) : GfMatrix4d(1.0);
+                                   ? xf.GetMatrix()->GetTypedValue(0.0)
+                                   : GfMatrix4d(1.0);
         bool finite = true;
         double biggest = 0.0;
         for (int r = 0; r < 4; ++r) {
@@ -4753,7 +4969,8 @@ TestDrivenXformConditioning()
         }
         if (!finite || biggest > 1e6) {
             std::printf("  singular base produced a matrix with components up "
-                        "to %g -- unchecked GetInverse()\n", biggest);
+                        "to %g -- unchecked GetInverse()\n",
+                        biggest);
         }
         CHECK(finite);
         CHECK(biggest <= 1e6);
@@ -4776,10 +4993,11 @@ TestDrivenXformConditioning()
 
         publishDriven(store, {{outer, tinyFlat, tinyFlat}});
 
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(outer).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(outer).dataSource);
         const GfMatrix4d out = xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0) : GfMatrix4d(1.0);
+                                   ? xf.GetMatrix()->GetTypedValue(0.0)
+                                   : GfMatrix4d(1.0);
         if (out != tinyFlat) {
             std::printf("  a tiny singular base was accepted -- the FLT_MAX "
                         "failure sentinel slipped under the magnitude "
@@ -4806,10 +5024,11 @@ TestDrivenXformConditioning()
         publishDriven(store, {{outer, GfMatrix4d(1.0), outerRevised},
                               {inner, flat, flat}});
 
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            results->GetPrim(leaf).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(results->GetPrim(leaf).dataSource);
         const GfMatrix4d out = xf && xf.GetMatrix()
-            ? xf.GetMatrix()->GetTypedValue(0.0) : GfMatrix4d(1.0);
+                                   ? xf.GetMatrix()->GetTypedValue(0.0)
+                                   : GfMatrix4d(1.0);
         const bool followedOuter =
             std::abs(out.ExtractTranslation()[0] - 9.0) < 1e-6;
         if (!followedOuter) {
@@ -4892,17 +5111,17 @@ TestGuideBoundsExport()
 
     double b[6] = {0, 0, 0, 0, 0, 0};
     auto bounds = [&b](const SdfPath &path) {
-        return RigExecImaging_GetGuideBoundsAssetSpace(
-            path.GetString().c_str(), b);
+        return RigExecImaging_GetGuideBoundsAssetSpace(path.GetString().c_str(),
+                                                       b);
     };
     auto matches = [&b](const GfVec3d &min, const GfVec3d &max) {
         for (size_t i = 0; i < 3; ++i) {
             if (std::abs(b[i] - min[i]) > 1e-9 ||
                 std::abs(b[i + 3] - max[i]) > 1e-9) {
                 std::printf("  bounds (%g %g %g)..(%g %g %g), expected "
-                            "(%g %g %g)..(%g %g %g)\n", b[0], b[1], b[2],
-                            b[3], b[4], b[5], min[0], min[1], min[2],
-                            max[0], max[1], max[2]);
+                            "(%g %g %g)..(%g %g %g)\n",
+                            b[0], b[1], b[2], b[3], b[4], b[5], min[0], min[1],
+                            min[2], max[0], max[1], max[2]);
                 return false;
             }
         }
@@ -4937,14 +5156,14 @@ TestGuideBoundsExport()
     custom.controlGuideShape = TfToken("custom");
     custom.controlGuideDrawMode = TfToken("wire");
     custom.controlGuideWireWidth = 0.0;
-    custom.controlGuidePoints = VtVec3fArray{{2,3,-1},{4,5,1}};
+    custom.controlGuidePoints = VtVec3fArray{{2, 3, -1}, {4, 5, 1}};
     custom.controlGuideCounts = VtIntArray{2};
-    custom.controlGuideScale = GfVec3d(2,1,1);
-    custom.controlGuideFrame = GfMatrix4d(1.0).SetScale(GfVec3d(-1,1,1));
-    custom.controlGuideFrame.SetTranslateOnly(GfVec3d(10,0,0));
+    custom.controlGuideScale = GfVec3d(2, 1, 1);
+    custom.controlGuideFrame = GfMatrix4d(1.0).SetScale(GfVec3d(-1, 1, 1));
+    custom.controlGuideFrame.SetTranslateOnly(GfVec3d(10, 0, 0));
     store->Publish(snapshot);
     CHECK(bounds(SdfPath("/R/Custom")) == 1);
-    CHECK(matches(GfVec3d(2,3,-1), GfVec3d(6,5,1)));
+    CHECK(matches(GfVec3d(2, 3, -1), GfVec3d(6, 5, 1)));
     custom.guideOpacity = 0.0f;
     store->Publish(snapshot);
     CHECK(bounds(SdfPath("/R/Custom")) == 0);
@@ -4962,26 +5181,33 @@ TestGuideBoundsExport()
 static void
 TestControlGuideSource()
 {
-    const auto stage=UsdStage::CreateInMemory();
-    stage->DefinePrim(SdfPath("/Rig"),TfToken("RigExecRoot"));
-    const auto control=stage->DefinePrim(SdfPath("/Rig/Control"),TfToken("RigExecControl"));
-    const auto source=stage->DefinePrim(SdfPath("/Rig/Source"),TfToken("RigExecJoint"));
+    const auto stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
+    const auto control =
+        stage->DefinePrim(SdfPath("/Rig/Control"), TfToken("RigExecControl"));
+    const auto source =
+        stage->DefinePrim(SdfPath("/Rig/Source"), TfToken("RigExecJoint"));
     CHECK(control.GetAttribute(TfToken("guide:shape")).Set(TfToken("custom")));
-    CHECK(control.GetAttribute(TfToken("guide:points")).Set(VtVec3fArray{{0,0,0},{1,0,0}}));
-    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{2}));
-    CHECK(control.GetRelationship(TfToken("guide:source")).SetTargets({source.GetPath()}));
-    RigExecImagingBridge bridge(stage,SdfPath("/Rig"));
-    std::vector<std::string> errors; CHECK(bridge.Compile(&errors));
-    for(double x:{2.0,5.0,-1.0}) {
+    CHECK(control.GetAttribute(TfToken("guide:points"))
+              .Set(VtVec3fArray{{0, 0, 0}, {1, 0, 0}}));
+    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts"))
+              .Set(VtIntArray{2}));
+    CHECK(control.GetRelationship(TfToken("guide:source"))
+              .SetTargets({source.GetPath()}));
+    RigExecImagingBridge bridge(stage, SdfPath("/Rig"));
+    std::vector<std::string> errors;
+    CHECK(bridge.Compile(&errors));
+    for (double x : {2.0, 5.0, -1.0}) {
         CHECK(source.GetAttribute(TfToken("avars:tx")).Set(x));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
-        const auto snapshot=bridge.GetStore()->Get();
-        const auto &published=snapshot->prims.at(control.GetPath());
+        const auto snapshot = bridge.GetStore()->Get();
+        const auto &published = snapshot->prims.at(control.GetPath());
         CHECK(published.hasControlGuide);
-        CHECK(published.controlGuideFrame.ExtractTranslation()==GfVec3d(x,0,0));
-        CHECK(published.controlFrame.ExtractTranslation()==GfVec3d(0));
+        CHECK(published.controlGuideFrame.ExtractTranslation() ==
+              GfVec3d(x, 0, 0));
+        CHECK(published.controlFrame.ExtractTranslation() == GfVec3d(0));
         // The guide stays under the editable owner in the scene index.
-        CHECK(snapshot->prims.count(control.GetPath())==1);
+        CHECK(snapshot->prims.count(control.GetPath()) == 1);
     }
 }
 
@@ -4990,36 +5216,46 @@ TestCustomControlRestExtent()
 {
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Rig"), TfToken("RigExecRoot"));
-    const UsdPrim control = stage->DefinePrim(SdfPath("/Rig/Ctrl"), TfToken("RigExecControl"));
+    const UsdPrim control =
+        stage->DefinePrim(SdfPath("/Rig/Ctrl"), TfToken("RigExecControl"));
     CHECK(control.GetAttribute(TfToken("guide:shape")).Set(TfToken("custom")));
-    CHECK(control.GetAttribute(TfToken("guide:points")).Set(VtVec3fArray{{2,3,-1},{4,5,1}}));
-    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{2}));
+    CHECK(control.GetAttribute(TfToken("guide:points"))
+              .Set(VtVec3fArray{{2, 3, -1}, {4, 5, 1}}));
+    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts"))
+              .Set(VtIntArray{2}));
     CHECK(control.GetAttribute(TfToken("guide:wireWidth")).Set(0.0));
     GfMatrix4d rest(1.0);
-    rest.SetScale(GfVec3d(-2,1,1));
-    rest.SetTranslateOnly(GfVec3d(10,0,0));
+    rest.SetScale(GfVec3d(-2, 1, 1));
+    rest.SetTranslateOnly(GfVec3d(10, 0, 0));
     CHECK(control.GetAttribute(TfToken("rest:space")).Set(rest));
     VtVec3fArray extent;
     const UsdGeomBoundable boundable(control);
-    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(boundable, UsdTimeCode::Default(), &extent));
+    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
+        boundable, UsdTimeCode::Default(), &extent));
     // Rest spaces are rigidized by evaluation, preserving the reflection.
-    CHECK(extent == VtVec3fArray({GfVec3f(6,3,-1),GfVec3f(8,5,1)}));
+    CHECK(extent == VtVec3fArray({GfVec3f(6, 3, -1), GfVec3f(8, 5, 1)}));
     RigExecImagingBridge bridge(stage, SdfPath("/Rig"));
     std::vector<std::string> errors;
     CHECK(bridge.Compile(&errors));
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
     const auto published = bridge.GetStore()->Get();
-    CHECK(published->prims.at(control.GetPath()).controlGuideFrame.Transform(GfVec3d(2,3,-1)) == GfVec3d(8,3,-1));
-    CHECK(control.GetAttribute(TfToken("guide:offset")).Set(GfVec3d(1,0,0)));
+    CHECK(published->prims.at(control.GetPath())
+              .controlGuideFrame.Transform(GfVec3d(2, 3, -1)) ==
+          GfVec3d(8, 3, -1));
+    CHECK(control.GetAttribute(TfToken("guide:offset")).Set(GfVec3d(1, 0, 0)));
     CHECK(control.GetAttribute(TfToken("guide:scaleX")).Set(3.0));
     CHECK(control.GetAttribute(TfToken("avars:sx")).Set(2.0));
-    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(boundable, UsdTimeCode::Default(), &extent));
-    CHECK(extent == VtVec3fArray({GfVec3f(-16,3,-1),GfVec3f(-4,5,1)}));
+    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
+        boundable, UsdTimeCode::Default(), &extent));
+    CHECK(extent == VtVec3fArray({GfVec3f(-16, 3, -1), GfVec3f(-4, 5, 1)}));
     CHECK(control.GetAttribute(TfToken("guide:displayOpacity")).Set(0.0f));
-    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(boundable, UsdTimeCode::Default(), &extent));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        boundable, UsdTimeCode::Default(), &extent));
     CHECK(control.GetAttribute(TfToken("guide:displayOpacity")).Set(0.5f));
-    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts")).Set(VtIntArray{3}));
-    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(boundable, UsdTimeCode::Default(), &extent));
+    CHECK(control.GetAttribute(TfToken("guide:curveVertexCounts"))
+              .Set(VtIntArray{3}));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        boundable, UsdTimeCode::Default(), &extent));
 }
 
 // The codeless schema's resource directory.
@@ -5059,10 +5295,10 @@ _ImagingResourceDir()
 static void
 TestTransformAuthorityWarnings(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/TailAsset/Rig");
     const SdfPath tail1("/TailAsset/Rig/Controls/Tail1");
@@ -5186,16 +5422,17 @@ TestTransformAuthorityWarnings(const std::string &examplesDir)
 static void
 TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     const SdfPath rigPath("/TailAsset/Rig");
     const SdfPath control("/TailAsset/Rig/Controls/Tail4");
     UsdGeomBoundable boundable(stage->GetPrimAtPath(control));
     CHECK(boundable);
-    if (!boundable) return;
+    if (!boundable)
+        return;
 
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     std::vector<std::string> errors;
@@ -5208,9 +5445,8 @@ TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
     // ancestor by making one. The rig root stays where it is, so the asset
     // root does too, and the only thing that changes is a transform BETWEEN
     // them.
-    UsdGeomXformable intervening(
-        stage->DefinePrim(SdfPath("/TailAsset/Rig/Controls"),
-                          TfToken("Xform")));
+    UsdGeomXformable intervening(stage->DefinePrim(
+        SdfPath("/TailAsset/Rig/Controls"), TfToken("Xform")));
     CHECK(intervening);
     intervening.AddTranslateOp().Set(GfVec3d(0, 13, 0));
 
@@ -5229,10 +5465,9 @@ TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
             std::printf("  the local extent moved with the intervening "
                         "Xform: (%g %g %g)-(%g %g %g) became "
                         "(%g %g %g)-(%g %g %g)\n",
-                        before[0][0], before[0][1], before[0][2],
-                        before[1][0], before[1][1], before[1][2],
-                        after[0][0], after[0][1], after[0][2],
-                        after[1][0], after[1][1], after[1][2]);
+                        before[0][0], before[0][1], before[0][2], before[1][0],
+                        before[1][1], before[1][2], after[0][0], after[0][1],
+                        after[0][2], after[1][0], after[1][1], after[1][2]);
         }
         CHECK(same);
     }
@@ -5245,10 +5480,10 @@ TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
 static void
 TestSnapshotBackedExtent(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath tail4("/TailAsset/Rig/Controls/Tail4");
     UsdGeomBoundable boundable(stage->GetPrimAtPath(tail4));
     CHECK(boundable);
@@ -5267,19 +5502,19 @@ TestSnapshotBackedExtent(const std::string &examplesDir)
     // control's posed frame is not its rest frame.
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(
-        stage, SdfPath("/TailAsset/Rig"), UsdTimeCode(1024), &errors);
+    const bool activated = registry.Activate(stage, SdfPath("/TailAsset/Rig"),
+                                             UsdTimeCode(1024), &errors);
     CHECK(activated);
-    if (!activated) return;
+    if (!activated)
+        return;
 
     VtVec3fArray posed;
     CHECK(extentAt(1024, &posed));
     CHECK(posed.size() == 2);
     if (posed.size() == 2 && rest.size() == 2) {
-        const bool moved = !GfIsClose(GfVec3d(posed[0]), GfVec3d(rest[0]),
-                                      1e-4) ||
-                           !GfIsClose(GfVec3d(posed[1]), GfVec3d(rest[1]),
-                                      1e-4);
+        const bool moved =
+            !GfIsClose(GfVec3d(posed[0]), GfVec3d(rest[0]), 1e-4) ||
+            !GfIsClose(GfVec3d(posed[1]), GfVec3d(rest[1]), 1e-4);
         if (!moved) {
             std::printf("  posed extent equals the rest extent -- the "
                         "snapshot is not reaching ComputeExtent\n");
@@ -5307,7 +5542,8 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
     const std::string file = examplesDir + "/01_FkChainTail.usda";
     UsdStageRefPtr stage = UsdStage::Open(file);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath control("/TailAsset/Rig/Controls/Tail4");
     UsdGeomBoundable boundable(stage->GetPrimAtPath(control));
     CHECK(boundable);
@@ -5315,7 +5551,8 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
     auto extent = [](const UsdGeomBoundable &b, double frame) {
         VtVec3fArray out;
         return b.ComputeExtent(UsdTimeCode(frame), &out) && out.size() == 2
-            ? GfVec3d(out[0]) : GfVec3d(1e9);
+                   ? GfVec3d(out[0])
+                   : GfVec3d(1e9);
     };
 
     RigExecImaging_Deactivate();
@@ -5323,10 +5560,11 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
 
     RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(
-        stage, SdfPath("/TailAsset/Rig"), UsdTimeCode(1024), &errors);
+    const bool activated = registry.Activate(stage, SdfPath("/TailAsset/Rig"),
+                                             UsdTimeCode(1024), &errors);
     CHECK(activated);
-    if (!activated) return;
+    if (!activated)
+        return;
 
     // The generation describes frame 1024, so 1024 is answered from it...
     const GfVec3d posed = extent(boundable, 1024);
@@ -5408,10 +5646,10 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
 static void
 TestPurposeScopedBounds(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
 
     // A default-purpose control parented under a guide-purpose joint.
     const SdfPath joint("/TailAsset/Rig/Joints/Seg1");
@@ -5452,8 +5690,7 @@ TestPurposeScopedBounds(const std::string &examplesDir)
         CHECK(bridge.Compile(&errors));
         bool warned = false;
         for (const std::string &e : errors) {
-            if (e.find("one extent carries one purpose") !=
-                std::string::npos) {
+            if (e.find("one extent carries one purpose") != std::string::npos) {
                 warned = true;
             }
         }
@@ -5469,10 +5706,10 @@ TestPurposeScopedBounds(const std::string &examplesDir)
 static void
 TestAllPurposeRenderTags(const std::string &examplesDir)
 {
-    UsdStageRefPtr stage =
-        UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
+    UsdStageRefPtr stage = UsdStage::Open(examplesDir + "/01_FkChainTail.usda");
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     const SdfPath control("/TailAsset/Rig/Controls/Tail1");
     const SdfPath guidePath = control.AppendChild(TfToken("rigGuideCtrl"));
 
@@ -5483,8 +5720,7 @@ TestAllPurposeRenderTags(const std::string &examplesDir)
     upstream->AddPrims(
         {{control, TfToken(),
           HdRetainedContainerDataSource::New(0, nullptr, nullptr)}});
-    auto results =
-        RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
+    auto results = RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
 
     const struct {
         TfToken purpose;
@@ -5501,10 +5737,12 @@ TestAllPurposeRenderTags(const std::string &examplesDir)
         HdPurposeSchema purpose = HdPurposeSchema::GetFromParent(
             results->GetPrim(guidePath).dataSource);
         const TfToken drawn = purpose.GetPurpose()
-            ? purpose.GetPurpose()->GetTypedValue(0.0f) : TfToken();
+                                  ? purpose.GetPurpose()->GetTypedValue(0.0f)
+                                  : TfToken();
         if (drawn != c.renderTag) {
             std::printf("  purpose '%s' drew render tag '%s', expected "
-                        "'%s'\n", c.purpose.GetText(), drawn.GetText(),
+                        "'%s'\n",
+                        c.purpose.GetText(), drawn.GetText(),
                         c.renderTag.GetText());
         }
         CHECK(drawn == c.renderTag);
@@ -5587,9 +5825,12 @@ TestXformPreviewDelta()
     // matrix changed without the child being mentioned in the call.
     bool dirtiedBody = false, dirtiedHand = false, dirtiedOther = false;
     for (const SdfPath &path : observer.dirtied) {
-        if (path == bodyPath) dirtiedBody = true;
-        if (path == handPath) dirtiedHand = true;
-        if (path == otherPath) dirtiedOther = true;
+        if (path == bodyPath)
+            dirtiedBody = true;
+        if (path == handPath)
+            dirtiedHand = true;
+        if (path == otherPath)
+            dirtiedOther = true;
     }
     CHECK(dirtiedBody);
     CHECK(dirtiedHand);
@@ -5669,10 +5910,10 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
     auto worldOf = [&](const SdfPath &p) {
-        HdXformSchema xf = HdXformSchema::GetFromParent(
-            terminal->GetPrim(p).dataSource);
+        HdXformSchema xf =
+            HdXformSchema::GetFromParent(terminal->GetPrim(p).dataSource);
         return xf && xf.GetMatrix() ? xf.GetMatrix()->GetTypedValue(0.0f)
-                                   : GfMatrix4d(1.0);
+                                    : GfMatrix4d(1.0);
     };
     _RecordingObserver observer;
     terminal->AddObserver(HdSceneIndexObserverPtr(&observer));
@@ -5708,8 +5949,7 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
     CHECK(RigExecImaging_SetTime(1024.0) == 0);
     CHECK(worldOf(turret) == at1024);
     const long long genExplicit = RigExecImaging_GetGeneration();
-    const size_t countExplicit =
-        registry.GetSessionEvaluationCount(rigPath);
+    const size_t countExplicit = registry.GetSessionEvaluationCount(rigPath);
     sceneIndices.stageSceneIndex->SetTime(UsdTimeCode(1024));
     CHECK(RigExecImaging_GetGeneration() == genExplicit);
     CHECK(registry.GetSessionEvaluationCount(rigPath) == countExplicit);
@@ -5728,8 +5968,7 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
 // session layer. (The derived values themselves are pinned by
 // test_rigexec_biped_hand.py; this test pins activation.)
 static void
-TestPolicyRigActivationSurvivesItsOwnDerivation(
-    const std::string &examplesDir)
+TestPolicyRigActivationSurvivesItsOwnDerivation(const std::string &examplesDir)
 {
     const char *files[] = {
         "/biped/Biped.usda",
@@ -5743,8 +5982,8 @@ TestPolicyRigActivationSurvivesItsOwnDerivation(
             continue;
         }
         std::vector<std::string> errors;
-        CHECK(registry.Activate(stage, SdfPath("/Biped/Rig"),
-                                UsdTimeCode(1.0), &errors));
+        CHECK(registry.Activate(stage, SdfPath("/Biped/Rig"), UsdTimeCode(1.0),
+                                &errors));
         CHECK(registry.GetStore()->Get());
         CHECK(registry.SetTime(UsdTimeCode(2.0)));
         CHECK(registry.GetStore()->Get());
@@ -5768,22 +6007,26 @@ static std::vector<RigExecOpGraphNode>
 HeadGraphForTesting(const RigExecBakedProgramImpl &B)
 {
     auto graph = RigExecBakedOpGraph(B);
-    graph.erase(std::remove_if(graph.begin(),graph.end(),
-        [&B](const auto &node) { return !B.steps[node.step].isHead; }),graph.end());
+    graph.erase(std::remove_if(graph.begin(), graph.end(),
+                               [&B](const auto &node) {
+                                   return !B.steps[node.step].isHead;
+                               }),
+                graph.end());
     return graph;
 }
-
 
 // Head entries are part of the ordinary execution trace.
 static std::vector<RigExecOpTraceEntry>
 ExecutedHeads(const RigExecBakedProgramImpl &B)
 {
     auto trace = RigExecBakedLastRunTrace(B);
-    trace.erase(std::remove_if(trace.begin(),trace.end(),
-        [&B](const auto &entry) { return !B.steps[entry.step].isHead; }),trace.end());
+    trace.erase(std::remove_if(trace.begin(), trace.end(),
+                               [&B](const auto &entry) {
+                                   return !B.steps[entry.step].isHead;
+                               }),
+                trace.end());
     return trace;
 }
-
 
 // Calls into the test sources: how many, how many off a sample time, and
 // how many from a thread other than the one that built the scene index.
@@ -5825,8 +6068,8 @@ public:
         return VtValue();
     }
 
-    bool GetContributingSampleTimesForInterval(
-        Time startTime, Time endTime, std::vector<Time> *out) override
+    bool GetContributingSampleTimesForInterval(Time startTime, Time endTime,
+                                               std::vector<Time> *out) override
     {
         if (_kind == Kind::Uniform) {
             return false;
@@ -5890,8 +6133,7 @@ public:
 
     TfTokenVector GetNames() override
     {
-        TfTokenVector names =
-            _input ? _input->GetNames() : TfTokenVector();
+        TfTokenVector names = _input ? _input->GetNames() : TfTokenVector();
         if (_Inputs()) {
             names.push_back(RigExecUpstreamInputsToken());
         }
@@ -5940,8 +6182,8 @@ private:
 // the dirty a value change owes.
 class _UpstreamInputsSceneIndex : public HdSingleInputFilteringSceneIndexBase {
 public:
-    static TfRefPtr<_UpstreamInputsSceneIndex> New(
-        const HdSceneIndexBaseRefPtr &input)
+    static TfRefPtr<_UpstreamInputsSceneIndex>
+    New(const HdSceneIndexBaseRefPtr &input)
     {
         return TfCreateRefPtr(new _UpstreamInputsSceneIndex(input));
     }
@@ -5953,21 +6195,19 @@ public:
                             std::map<double, VtValue>(), _time, calls));
     }
 
-    void SetSampled(const SdfPath &attribute,
-                    std::function<VtValue(double)> f)
+    void SetSampled(const SdfPath &attribute, std::function<VtValue(double)> f)
     {
-        _Put(attribute, _UpstreamSource::New(
-                            _UpstreamSource::Kind::Sampled, VtValue(),
-                            std::move(f), std::map<double, VtValue>(), _time,
-                            calls));
+        _Put(attribute,
+             _UpstreamSource::New(_UpstreamSource::Kind::Sampled, VtValue(),
+                                  std::move(f), std::map<double, VtValue>(),
+                                  _time, calls));
     }
 
-    void SetSparse(const SdfPath &attribute,
-                   std::map<double, VtValue> samples)
+    void SetSparse(const SdfPath &attribute, std::map<double, VtValue> samples)
     {
-        _Put(attribute, _UpstreamSource::New(
-                            _UpstreamSource::Kind::Sparse, VtValue(), nullptr,
-                            std::move(samples), _time, calls));
+        _Put(attribute,
+             _UpstreamSource::New(_UpstreamSource::Kind::Sparse, VtValue(),
+                                  nullptr, std::move(samples), _time, calls));
     }
 
     void Clear(const SdfPath &attribute)
@@ -5975,14 +6215,17 @@ public:
         _Put(attribute, nullptr);
     }
 
-    void SetTime(double t) { _time->store(t); }
+    void SetTime(double t)
+    {
+        _time->store(t);
+    }
 
     HdSceneIndexPrim GetPrim(const SdfPath &primPath) const override
     {
         HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(primPath);
         if (prim.dataSource) {
-            prim.dataSource = _UpstreamPrimSource::New(prim.dataSource,
-                                                       _sources, primPath);
+            prim.dataSource =
+                _UpstreamPrimSource::New(prim.dataSource, _sources, primPath);
         }
         return prim;
     }
@@ -5992,13 +6235,12 @@ public:
         return _GetInputSceneIndex()->GetChildPrimPaths(primPath);
     }
 
-    std::shared_ptr<_UpstreamCalls> calls =
-        std::make_shared<_UpstreamCalls>();
+    std::shared_ptr<_UpstreamCalls> calls = std::make_shared<_UpstreamCalls>();
 
 protected:
-    void _PrimsAdded(const HdSceneIndexBase &,
-                     const HdSceneIndexObserver::AddedPrimEntries &entries)
-        override
+    void
+    _PrimsAdded(const HdSceneIndexBase &,
+                const HdSceneIndexObserver::AddedPrimEntries &entries) override
     {
         _SendPrimsAdded(entries);
     }
@@ -6033,8 +6275,7 @@ private:
         HdSceneIndexObserver::DirtiedPrimEntries dirtied;
         dirtied.emplace_back(
             prim, HdDataSourceLocatorSet{HdDataSourceLocator(
-                      RigExecUpstreamInputsToken(),
-                      attribute.GetNameToken())});
+                      RigExecUpstreamInputsToken(), attribute.GetNameToken())});
         _SendPrimsDirtied(dirtied);
     }
 
@@ -6051,7 +6292,10 @@ struct _UpstreamPose {
     std::map<SdfPath, GfMatrix4d> xforms;
     std::map<SdfPath, std::vector<GfMatrix4d>> guides;
 
-    bool Empty() const { return points.empty() && guides.empty(); }
+    bool Empty() const
+    {
+        return points.empty() && guides.empty();
+    }
 };
 
 _UpstreamPose
@@ -6077,8 +6321,7 @@ _CaptureUpstreamPose(const RigExecImagingSnapshotConstPtr &snapshot)
 
 // The entries whose path names any of \p names.
 _UpstreamPose
-_UpstreamPart(const _UpstreamPose &pose,
-              const std::vector<std::string> &names)
+_UpstreamPart(const _UpstreamPose &pose, const std::vector<std::string> &names)
 {
     const auto named = [&](const SdfPath &path) {
         for (const std::string &name : names) {
@@ -6166,8 +6409,7 @@ _UpstreamReference(const std::string &stagePath, const SdfPath &rig,
     {
         UsdEditContext context(stage, stage->GetSessionLayer());
         for (const _UpstreamAuthored &edit : edits) {
-            const UsdAttribute attribute =
-                stage->GetAttributeAtPath(edit.path);
+            const UsdAttribute attribute = stage->GetAttributeAtPath(edit.path);
             CHECK(attribute);
             if (!attribute) {
                 continue;
@@ -6260,8 +6502,8 @@ _OpenUpstreamImaging(
     UsdImagingCreateSceneIndicesInfo info;
     info.stage = imaging->stage;
     info.overridesSceneIndexCallback =
-        [raw, &seed, t](const HdSceneIndexBaseRefPtr &input)
-        -> HdSceneIndexBaseRefPtr {
+        [raw, &seed,
+         t](const HdSceneIndexBaseRefPtr &input) -> HdSceneIndexBaseRefPtr {
         raw->upstream = _UpstreamInputsSceneIndex::New(input);
         // Sources standing before population reach RigExec as adds.
         if (seed) {
@@ -6272,8 +6514,7 @@ _OpenUpstreamImaging(
     };
     imaging->indices = UsdImagingCreateSceneIndices(info);
     CHECK(imaging->upstream);
-    imaging->context =
-        RigExecImagingRegistry::ForStage(imaging->stage, false);
+    imaging->context = RigExecImagingRegistry::ForStage(imaging->stage, false);
     CHECK(imaging->context && imaging->context->IsActive());
     if (!imaging->upstream || !imaging->context ||
         !imaging->context->IsActive()) {
@@ -6308,11 +6549,11 @@ const SdfPath kUpLimbsRig("/LimbsAsset/Rig");
 const SdfPath kUpA0Rz("/LimbsAsset/Rig/Controls/A0.avars:rz");
 const SdfPath kUpSpace("/LimbsAsset/Upstream.inputs:space");
 const SdfPath kUpBRootRestSpace("/LimbsAsset/Rig/Controls/BRoot.rest:space");
-const SdfPath kUpJointWeights(
-    "/LimbsAsset/Rig/Movers/MeshASkin.rigExec:jointWeights");
+const SdfPath
+    kUpJointWeights("/LimbsAsset/Rig/Movers/MeshASkin.rigExec:jointWeights");
 const std::vector<std::string> kUpLimbA{"LimbA", "MeshA", "/A0", "/A1"};
-const std::vector<std::string> kUpLimbB{"LimbB", "MeshB", "BRoot",
-                                        "BEffector", "BPole"};
+const std::vector<std::string> kUpLimbB{"LimbB", "MeshB", "BRoot", "BEffector",
+                                        "BPole"};
 
 GfMatrix4d
 _UpTranslate(double x, double y, double z)
@@ -6372,8 +6613,8 @@ void
 _CheckUpstreamCone(const _UpstreamImaging &imaging,
                    const std::vector<std::string> &own,
                    const std::vector<std::string> &other,
-                   const std::string &regionSeed,
-                   const std::string &headSeed, const std::string &what)
+                   const std::string &regionSeed, const std::string &headSeed,
+                   const std::string &what)
 {
     const RigExecRigEvaluator *evaluator = imaging.Evaluator();
     const RigExecBakedProgram *program = imaging.Program();
@@ -6384,22 +6625,20 @@ _CheckUpstreamCone(const _UpstreamImaging &imaging,
     for (size_t i = 0; i < B.steps.size(); ++i) {
         CHECK(!B.cones.alwaysSteps.Test(int(i)));
     }
-    const std::vector<RigExecOpTraceEntry> region =
-        evaluator->GetLastOpTrace();
-    const std::vector<RigExecOpTraceEntry> head =
-        ExecutedHeads(B);
+    const std::vector<RigExecOpTraceEntry> region = evaluator->GetLastOpTrace();
+    const std::vector<RigExecOpTraceEntry> head = ExecutedHeads(B);
     const std::set<size_t> regionClosure =
-        regionSeed.empty() ? std::set<size_t>()
-                           : _ForwardClosure(evaluator->GetOpGraph(),
-                                             regionSeed);
+        regionSeed.empty()
+            ? std::set<size_t>()
+            : _ForwardClosure(evaluator->GetOpGraph(), regionSeed);
     const std::set<size_t> headClosure =
         headSeed.empty() ? std::set<size_t>()
-                         : _ForwardClosure(HeadGraphForTesting(B),
-                                           headSeed);
+                         : _ForwardClosure(HeadGraphForTesting(B), headSeed);
     size_t outside = 0;
     size_t ran = 0;
     for (const RigExecOpTraceEntry &entry : region) {
-        if (B.steps[entry.step].isHead) continue;
+        if (B.steps[entry.step].isHead)
+            continue;
         if (entry.step < B.steps.size() && B.steps[entry.step].isSource) {
             continue;
         }
@@ -6514,8 +6753,8 @@ _CheckUpstreamFrozen(const _UpstreamImaging &imaging,
     context.frozen = frozen.get();
     RigExecFrozenRunReport report;
     const RigExecRigPose job = RigExecEvaluateFrozen(
-        context, inputs, RigExecMakeProductionStepRunner(), nullptr,
-        SdfPath(), &report);
+        context, inputs, RigExecMakeProductionStepRunner(), nullptr, SdfPath(),
+        &report);
     CHECK(job.valid);
     CHECK(report.ran);
     // The reference: a baked evaluator over a stage authoring the values.
@@ -6595,16 +6834,15 @@ _ScopeCount(RigExecProfiler *profiler, const char *name)
     return 0;
 }
 
-}  // namespace
+} // namespace
 
 // Steps 1-5 and 7 for one value, at time 1, with the frame cache off.
 static void
 _UpstreamValueSteps(const std::string &fixture, const SdfPath &attribute,
-                    const VtValue &value,
-                    const std::vector<std::string> &own,
+                    const VtValue &value, const std::vector<std::string> &own,
                     const std::vector<std::string> &other,
-                    const std::string &regionSeed,
-                    const std::string &headSeed, const std::string &what)
+                    const std::string &regionSeed, const std::string &headSeed,
+                    const std::string &what)
 {
     std::printf("  upstream steps: %s\n", what.c_str());
     std::unique_ptr<_UpstreamImaging> imaging =
@@ -6614,9 +6852,8 @@ _UpstreamValueSteps(const std::string &fixture, const SdfPath &attribute,
     }
     const _UpstreamPose authored = imaging->Pose();
     CHECK(!authored.Empty());
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig, {}, 1.0), authored,
-        what + ": authored"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig, {}, 1.0),
+                            authored, what + ": authored"));
     const size_t before = imaging->Evaluations();
 
     // 1. The Set evaluates once.
@@ -6628,8 +6865,7 @@ _UpstreamValueSteps(const std::string &fixture, const SdfPath &attribute,
     // is unchanged.
     const _UpstreamPose standing = imaging->Pose();
     CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig, {{attribute, value, {}}},
-                           1.0),
+        _UpstreamReference(fixture, kUpLimbsRig, {{attribute, value, {}}}, 1.0),
         standing, what + ": standing"));
     CHECK(!_SameUpstreamPose(authored, standing, what, false));
     CHECK(_SameUpstreamPose(_UpstreamPart(authored, other),
@@ -6718,8 +6954,7 @@ _UpstreamPlaybackSteps(const std::string &fixture)
     CHECK(reader->FindInput(kUpA0Rz.GetString(), &rz));
     CHECK(reader->FindInput(kUpSpace.GetString(), &spaceInput));
     const RigExecRuntimeInputInfo &rzInfo = reader->GetInputInfo(rz);
-    const RigExecRuntimeInputInfo &spaceInfo =
-        reader->GetInputInfo(spaceInput);
+    const RigExecRuntimeInputInfo &spaceInfo = reader->GetInputInfo(spaceInput);
     CHECK(rzInfo.type == RrInputTag::Double && !rzInfo.animated);
     CHECK(rzInfo.defaultValue.f64 == 0.0);
     CHECK(spaceInfo.type == RrInputTag::Matrix4d && !spaceInfo.animated);
@@ -6739,8 +6974,7 @@ _UpstreamPlaybackSteps(const std::string &fixture)
     RrInputValue value;
     CHECK(RigExecInputValueFrom(VtValue(30.0), RrInputTag::Double, &value));
     CHECK(reader->SetSampledInputAt(rz, value, &error));
-    CHECK(RigExecInputValueFrom(VtValue(space), RrInputTag::Matrix4d,
-                                &value));
+    CHECK(RigExecInputValueFrom(VtValue(space), RrInputTag::Matrix4d, &value));
     CHECK(reader->SetSampledInputAt(spaceInput, value, &error));
     CHECK(reader->Execute(&error));
     const bool same = RigExecCompareRuntimeOutputs(live, *reader, &diffs);
@@ -6779,21 +7013,18 @@ _UpstreamPlaybackSteps(const std::string &fixture)
             CHECK(!imaging->context->GetBridge(kUpLimbsRig));
             const _UpstreamPose playAuthored = imaging->Pose();
             CHECK(!playAuthored.points.empty());
-            CHECK(_SameUpstreamPose(
-                _UpstreamGeometry(
-                    _UpstreamReference(fixture, kUpLimbsRig, {}, t)),
-                playAuthored, "playback: authored"));
+            CHECK(_SameUpstreamPose(_UpstreamGeometry(_UpstreamReference(
+                                        fixture, kUpLimbsRig, {}, t)),
+                                    playAuthored, "playback: authored"));
             for (const auto &[attribute, value] :
                  std::vector<std::pair<SdfPath, VtValue>>{
                      {kUpA0Rz, VtValue(30.0)}, {kUpSpace, VtValue(space)}}) {
-                const std::string what =
-                    "playback " + attribute.GetString();
+                const std::string what = "playback " + attribute.GetString();
                 const size_t before = imaging->Evaluations();
                 imaging->upstream->Set(attribute, value);
                 CHECK(imaging->Evaluations() == before + 1);
-                CHECK(playback &&
-                      playback->GetUpstreamInputPaths() ==
-                          std::vector<SdfPath>{attribute});
+                CHECK(playback && playback->GetUpstreamInputPaths() ==
+                                      std::vector<SdfPath>{attribute});
                 CHECK(_SameUpstreamPose(
                     _UpstreamGeometry(_UpstreamReference(
                         fixture, kUpLimbsRig, {{attribute, value, {}}}, t)),
@@ -6809,13 +7040,13 @@ _UpstreamPlaybackSteps(const std::string &fixture)
             // Both at once, as the binary leg above.
             imaging->upstream->Set(kUpA0Rz, VtValue(30.0));
             imaging->upstream->Set(kUpSpace, VtValue(space));
-            CHECK(_SameUpstreamPose(
-                _UpstreamGeometry(_UpstreamReference(
-                    fixture, kUpLimbsRig,
-                    {{kUpA0Rz, VtValue(30.0), {}},
-                     {kUpSpace, VtValue(space), {}}},
-                    t)),
-                imaging->Pose(), "playback: both standing"));
+            CHECK(_SameUpstreamPose(_UpstreamGeometry(_UpstreamReference(
+                                        fixture, kUpLimbsRig,
+                                        {{kUpA0Rz, VtValue(30.0), {}},
+                                         {kUpSpace, VtValue(space), {}}},
+                                        t)),
+                                    imaging->Pose(),
+                                    "playback: both standing"));
             imaging->upstream->Clear(kUpA0Rz);
             imaging->upstream->Clear(kUpSpace);
             // A dropped key: live's line, the authored pose.
@@ -6855,13 +7086,16 @@ TestABakeExposesUpstreamAsInputs(const std::string &fixture)
     CHECK(RigExecBakeToBinary(evaluator, opts, &baseline, &error));
     const GfMatrix4d space = _UpTranslate(1, 0, 10);
     const std::vector<RigExecValueOverride> inputs = {
-        {kUpA0Rz.GetPrimPath(), TfToken(), kUpA0Rz.GetNameToken(), VtValue(30.0)},
-        {kUpSpace.GetPrimPath(), TfToken(), kUpSpace.GetNameToken(), VtValue(space)}};
+        {kUpA0Rz.GetPrimPath(), TfToken(), kUpA0Rz.GetNameToken(),
+         VtValue(30.0)},
+        {kUpSpace.GetPrimPath(), TfToken(), kUpSpace.GetNameToken(),
+         VtValue(space)}};
     evaluator.SetUpstreamInputs(inputs);
     const auto standing = evaluator.Evaluate(time);
     CHECK(RigExecBakeToBinary(evaluator, opts, &result, &error));
     CHECK(result.bytes == baseline.bytes);
-    std::vector<std::string> names = {kUpA0Rz.GetString(), kUpSpace.GetString()};
+    std::vector<std::string> names = {kUpA0Rz.GetString(),
+                                      kUpSpace.GetString()};
     std::sort(names.begin(), names.end());
     CHECK(result.upstreamInputs == names);
     CHECK(evaluator.GetUpstreamInputs() == inputs);
@@ -6897,7 +7131,8 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
 {
     const auto stage = UsdStage::Open(fixture);
     CHECK(stage);
-    if (!stage) return;
+    if (!stage)
+        return;
     RigExecRigEvaluator evaluator(stage, kUpLimbsRig);
     CHECK(evaluator.Compile());
 
@@ -6908,7 +7143,8 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
     std::unique_ptr<fb::RigExecWireFile> file;
     CHECK(RigExecFormatOpen(bytes.data(), bytes.size(), &file, &error));
     CHECK(file);
-    if (!file) return;
+    if (!file)
+        return;
     const bool fine = file->clustering->grainUs == 0.0;
     if (TfGetenv("RIGEXEC_BAKED_GRAIN_US", "") == "0") {
         CHECK(fine);
@@ -6931,18 +7167,22 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
     // Serialization must retain every actual head's identity and body mapping.
     const auto *nativeProgram = evaluator.GetBakedProgram();
     CHECK(nativeProgram);
-    if (!nativeProgram) return;
+    if (!nativeProgram)
+        return;
     const auto &native = nativeProgram->GetStepGraph();
     CHECK(file->steps.size() == native.steps.size());
     CHECK(file->commonGraph);
-    if (!file->commonGraph || file->steps.size() != native.steps.size()) return;
+    if (!file->commonGraph || file->steps.size() != native.steps.size())
+        return;
     CHECK(file->commonGraph->ops.size() == file->steps.size());
-    if (file->commonGraph->ops.size() != file->steps.size()) return;
+    if (file->commonGraph->ops.size() != file->steps.size())
+        return;
     std::set<size_t> nativeHeads, exportedHeads;
     for (size_t i = 0; i < file->steps.size(); ++i) {
         const auto &step = file->steps[i];
         const auto &body = native.steps[i];
-        if (body.isHead) nativeHeads.insert(i);
+        if (body.isHead)
+            nativeHeads.insert(i);
         if (step.isHead) {
             exportedHeads.insert(i);
             CHECK(!step.isSource);
@@ -6955,18 +7195,30 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
     CHECK(!nativeHeads.empty());
     CHECK(exportedHeads == nativeHeads);
     // The actual static fixture owes no volatile ordinary work.
-    CHECK(std::all_of(file->cones->always->words.begin(), file->cones->always->words.end(),
-        [](uint64_t word){return word == 0;}));
-    const auto binary = std::filesystem::temp_directory_path() /
-        ("rigexec-d2-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".rigexec");
-    { std::ofstream out(binary, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()),
-        std::streamsize(bytes.size())); }
+    CHECK(std::all_of(file->cones->always->words.begin(),
+                      file->cones->always->words.end(),
+                      [](uint64_t word) { return word == 0; }));
+    const auto binary =
+        std::filesystem::temp_directory_path() /
+        ("rigexec-d2-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()) +
+         ".rigexec");
     {
-        auto imaging = _OpenUpstreamImaging(fixture, kUpLimbsRig, 1.0, nullptr, [&](const UsdStageRefPtr &opened) {
-            UsdEditContext context(opened, opened->GetSessionLayer());
-            CHECK(opened->GetPrimAtPath(kUpLimbsRig).CreateAttribute(TfToken("rigExec:asset"),
-                SdfValueTypeNames->Asset).Set(SdfAssetPath(binary.generic_string())));
-        });
+        std::ofstream out(binary, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(bytes.data()),
+                  std::streamsize(bytes.size()));
+    }
+    {
+        auto imaging = _OpenUpstreamImaging(
+            fixture, kUpLimbsRig, 1.0, nullptr,
+            [&](const UsdStageRefPtr &opened) {
+                UsdEditContext context(opened, opened->GetSessionLayer());
+                CHECK(opened->GetPrimAtPath(kUpLimbsRig)
+                          .CreateAttribute(TfToken("rigExec:asset"),
+                                           SdfValueTypeNames->Asset)
+                          .Set(SdfAssetPath(binary.generic_string())));
+            });
         CHECK(imaging);
         if (imaging) {
             auto *playback = imaging->context->GetPlayback(kUpLimbsRig);
@@ -6974,46 +7226,64 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
             if (playback) {
                 const auto *reader = playback->GetReaderForTesting();
                 CHECK(reader);
-                if (!reader) return;
+                if (!reader)
+                    return;
                 const auto authored = imaging->Pose();
-                const auto compareNativeGraph = [&](const std::vector<_UpstreamAuthored> &edits) {
+                const auto compareNativeGraph = [&](const std::vector<
+                                                    _UpstreamAuthored> &edits) {
                     { // Native graph versus independently serialized runtime outputs.
                         const auto reference = UsdStage::Open(fixture);
                         CHECK(reference);
-                        UsdEditContext editContext(reference, reference->GetSessionLayer());
-                        for (const auto &edit:edits) CHECK(reference->GetAttributeAtPath(edit.path).Set(edit.value));
+                        UsdEditContext editContext(
+                            reference, reference->GetSessionLayer());
+                        for (const auto &edit : edits)
+                            CHECK(reference->GetAttributeAtPath(edit.path).Set(
+                                edit.value));
                         RigExecRigEvaluator live(reference, kUpLimbsRig);
 
                         CHECK(live.Compile());
                         const auto pose = live.Evaluate(UsdTimeCode(1.0));
                         std::vector<std::string> diffs;
-                        CHECK(RigExecCompareRuntimeOutputs(pose, *reader, &diffs));
+                        CHECK(RigExecCompareRuntimeOutputs(pose, *reader,
+                                                           &diffs));
                     }
                 };
                 compareNativeGraph({});
                 const auto coneFor = [&](const SdfPath &path) {
                     size_t slot = 0;
                     CHECK(reader->FindInput(path.GetString(), &slot));
-                    CHECK(slot<file->listedInputs && (file->inputs[slot].flags() & 4));
+                    CHECK(slot < file->listedInputs &&
+                          (file->inputs[slot].flags() & 4));
                     const auto &info = reader->GetInputInfo(slot);
                     CHECK(!info.animated);
-                    if (path == kUpA0Rz) CHECK(info.type == RrInputTag::Double && info.defaultValue.f64 == 0.0);
-                    else CHECK(info.type == RrInputTag::Matrix4d &&
-                               info.defaultValue.matrix[3][0] == 0.0 &&
-                               info.defaultValue.matrix[3][2] == 10.0);
+                    if (path == kUpA0Rz)
+                        CHECK(info.type == RrInputTag::Double &&
+                              info.defaultValue.f64 == 0.0);
+                    else
+                        CHECK(info.type == RrInputTag::Matrix4d &&
+                              info.defaultValue.matrix[3][0] == 0.0 &&
+                              info.defaultValue.matrix[3][2] == 10.0);
                     std::vector<char> cone(file->steps.size(), 0);
-                    for (size_t i = 0;i<file->steps.size();++i) {
+                    for (size_t i = 0; i < file->steps.size(); ++i) {
                         const auto &step = file->steps[i];
-                        if (std::find(step.headInputSlots.begin(), step.headInputSlots.end(),
-                            uint32_t(slot)) != step.headInputSlots.end()) cone[i] = 1;
+                        if (std::find(step.headInputSlots.begin(),
+                                      step.headInputSlots.end(),
+                                      uint32_t(slot)) !=
+                            step.headInputSlots.end())
+                            cone[i] = 1;
                         for (const auto &read : step.headInputReads) {
                             const auto reaches = [&](const auto &candidates) {
-                                return std::any_of(candidates.begin(), candidates.end(),
-                                    [&](const auto &candidate) { return candidate.slot == slot; });
+                                return std::any_of(
+                                    candidates.begin(), candidates.end(),
+                                    [&](const auto &candidate) {
+                                        return candidate.slot == slot;
+                                    });
                             };
-                            if (std::find(read.walk.begin(), read.walk.end(), uint32_t(slot)) != read.walk.end() ||
+                            if (std::find(read.walk.begin(), read.walk.end(),
+                                          uint32_t(slot)) != read.walk.end() ||
                                 read.rawFallbackSlot == int32_t(slot) ||
-                                reaches(read.propertyCandidates) || reaches(read.doubleCandidates)) {
+                                reaches(read.propertyCandidates) ||
+                                reaches(read.doubleCandidates)) {
                                 cone[i] = 1;
                             }
                         }
@@ -7022,45 +7292,65 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                         // publishes that provider's typed Avars value; its
                         // successors then cover Compose and geometry readers.
                         for (const auto &avar : file->pose->avarBindings) {
-                            if (std::find(avar.read->walk.begin(), avar.read->walk.end(),
-                                          uint32_t(slot)) == avar.read->walk.end()) continue;
+                            if (std::find(avar.read->walk.begin(),
+                                          avar.read->walk.end(),
+                                          uint32_t(slot)) ==
+                                avar.read->walk.end())
+                                continue;
                             const uint32_t provider = avar.flat / 11;
                             if (step.kind != fb::StepKind::AvarInputs ||
-                                step.object != int32_t(provider)) continue;
-                            CHECK(std::any_of(step.writes.begin(), step.writes.end(),
+                                step.object != int32_t(provider))
+                                continue;
+                            CHECK(std::any_of(
+                                step.writes.begin(), step.writes.end(),
                                 [&](const auto &write) {
-                                    return write.domain() == fb::SlotDomain::Avars &&
-                                           write.begin() == provider && write.end() == provider + 1;
+                                    return write.domain() ==
+                                               fb::SlotDomain::Avars &&
+                                           write.begin() == provider &&
+                                           write.end() == provider + 1;
                                 }));
                             cone[i] = 1;
                         }
                     }
                     for (const auto &avar : file->pose->avarBindings) {
-                        if (std::find(avar.read->walk.begin(), avar.read->walk.end(),
-                                      uint32_t(slot)) == avar.read->walk.end()) continue;
+                        if (std::find(avar.read->walk.begin(),
+                                      avar.read->walk.end(),
+                                      uint32_t(slot)) == avar.read->walk.end())
+                            continue;
                         const uint32_t provider = avar.flat / 11;
-                        CHECK(std::count_if(file->steps.begin(), file->steps.end(),
-                            [&](const auto &step) {
-                                return step.kind == fb::StepKind::AvarInputs &&
-                                       step.object == int32_t(provider);
-                            }) == 1);
+                        CHECK(std::count_if(
+                                  file->steps.begin(), file->steps.end(),
+                                  [&](const auto &step) {
+                                      return step.kind ==
+                                                 fb::StepKind::AvarInputs &&
+                                             step.object == int32_t(provider);
+                                  }) == 1);
                     }
                     // Provider raw sampling enters through a typed SpaceLeaf,
                     // rather than a head input memo or an avar binding.
                     CHECK(file->providerProgram);
                     bool providerSource = false;
                     if (file->providerProgram) {
-                        for (size_t leaf = 0; leaf < file->providerProgram->sampled.size(); ++leaf) {
-                            if (file->providerProgram->sampled[leaf].inputSlot != int32_t(slot)) continue;
+                        for (size_t leaf = 0;
+                             leaf < file->providerProgram->sampled.size();
+                             ++leaf) {
+                            if (file->providerProgram->sampled[leaf]
+                                    .inputSlot != int32_t(slot))
+                                continue;
                             providerSource = true;
                             size_t readers = 0;
                             for (size_t i = 0; i < file->steps.size(); ++i) {
                                 const auto &step = file->steps[i];
                                 for (const auto &read : step.reads) {
-                                    if (read.domain() != fb::SlotDomain::SpaceLeaf ||
-                                        read.begin() > leaf || leaf >= read.end()) continue;
-                                    CHECK(step.kind == fb::StepKind::SpaceExpression);
-                                    CHECK(step.part == 2 && step.object == int32_t(leaf));
+                                    if (read.domain() !=
+                                            fb::SlotDomain::SpaceLeaf ||
+                                        read.begin() > leaf ||
+                                        leaf >= read.end())
+                                        continue;
+                                    CHECK(step.kind ==
+                                          fb::StepKind::SpaceExpression);
+                                    CHECK(step.part == 2 &&
+                                          step.object == int32_t(leaf));
                                     cone[i] = 1;
                                     ++readers;
                                 }
@@ -7071,10 +7361,12 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                     // Build prunes an avar's provider leaf, which no step
                     // reads: the ladder and AvarInputs bind avars directly.
                     CHECK(providerSource == (path != kUpA0Rz));
-                    CHECK(std::find(cone.begin(), cone.end(), char(1)) != cone.end());
+                    CHECK(std::find(cone.begin(), cone.end(), char(1)) !=
+                          cone.end());
                     for (size_t n = 0; n < cone.size(); ++n) {
                         for (size_t i = 0; i < cone.size(); ++i) {
-                            if (!cone[i]) continue;
+                            if (!cone[i])
+                                continue;
                             for (int next : file->steps[i].succs) {
                                 cone[size_t(next)] = 1;
                             }
@@ -7083,77 +7375,110 @@ TestTheRuntimeUpstreamCone(const std::string &fixture)
                     return cone;
                 };
                 const auto a = coneFor(kUpA0Rz), b = coneFor(kUpSpace);
-                const auto checkTrace = [&](const std::vector<char> &cone, bool idle) {
+                const auto checkTrace = [&](const std::vector<char> &cone,
+                                            bool idle) {
                     size_t body = 0;
-                    for (int32_t index:reader->GetLastRunTraceForTesting()) {
-                        CHECK(index>=0 && size_t(index)<file->steps.size());
-                        if (index<0 || size_t(index)>=file->steps.size()) continue;
+                    for (int32_t index : reader->GetLastRunTraceForTesting()) {
+                        CHECK(index >= 0 && size_t(index) < file->steps.size());
+                        if (index < 0 || size_t(index) >= file->steps.size())
+                            continue;
                         const auto &step = file->steps[size_t(index)];
-                        if (idle) CHECK(!step.isHead && step.isSource);
-                        else if (!step.isSource) { CHECK(cone[size_t(index)]); ++body; }
+                        if (idle)
+                            CHECK(!step.isHead && step.isSource);
+                        else if (!step.isSource) {
+                            CHECK(cone[size_t(index)]);
+                            ++body;
+                        }
                     }
-                    if (!idle) CHECK(body>0);
+                    if (!idle)
+                        CHECK(body > 0);
                 };
                 const GfMatrix4d space = _UpTranslate(1, 0, 10);
-                for (const auto &key:std::vector<std::pair<SdfPath, VtValue>>{{kUpA0Rz, VtValue(30.0)}, {kUpSpace,
-                    VtValue(space)}}) {
-                    const auto &cone = key.first == kUpA0Rz?a:b;
-                    const auto &other = key.first == kUpA0Rz?kUpLimbB:kUpLimbA;
+                for (const auto &key : std::vector<std::pair<SdfPath, VtValue>>{
+                         {kUpA0Rz, VtValue(30.0)},
+                         {kUpSpace, VtValue(space)}}) {
+                    const auto &cone = key.first == kUpA0Rz ? a : b;
+                    const auto &other =
+                        key.first == kUpA0Rz ? kUpLimbB : kUpLimbA;
                     imaging->upstream->Set(key.first, key.second);
                     checkTrace(cone, false);
                     for (int32_t index : reader->GetLastRunTraceForTesting()) {
                         if (index < 0 || size_t(index) >= file->steps.size() ||
-                            file->steps[size_t(index)].isSource) continue;
-                        const std::string label = reader->GetStepLabelForTesting(size_t(index));
-                        const auto &own = key.first == kUpA0Rz ? kUpLimbA : kUpLimbB;
-                        const bool foreign = _Names(label, other) && !_Names(label, own);
+                            file->steps[size_t(index)].isSource)
+                            continue;
+                        const std::string label =
+                            reader->GetStepLabelForTesting(size_t(index));
+                        const auto &own =
+                            key.first == kUpA0Rz ? kUpLimbA : kUpLimbB;
+                        const bool foreign =
+                            _Names(label, other) && !_Names(label, own);
                         if (foreign) {
-                            std::printf("    D2 %s %s: %s names only the other limb\n",
-                                        fine ? "fine" : "default",
-                                        key.first.GetText(), label.c_str());
+                            std::printf(
+                                "    D2 %s %s: %s names only the other limb\n",
+                                fine ? "fine" : "default", key.first.GetText(),
+                                label.c_str());
                         }
                         CHECK(!foreign);
                     }
                     const auto standing = imaging->Pose();
                     compareNativeGraph({{key.first, key.second, {}}});
-                    CHECK(_SameUpstreamPose(_UpstreamGeometry(_UpstreamReference(fixture, kUpLimbsRig,
-                        {{key.first, key.second, {}}}, 1.0)), standing, "D2 placed"));
-                    CHECK(!_SameUpstreamPose(authored, standing, "D2 nonvacuity", false));
-                    CHECK(_SameUpstreamPose(_UpstreamPart(authored, other), _UpstreamPart(standing, other),
-                        "D2 opposite limb"));
+                    CHECK(_SameUpstreamPose(
+                        _UpstreamGeometry(_UpstreamReference(
+                            fixture, kUpLimbsRig, {{key.first, key.second, {}}},
+                            1.0)),
+                        standing, "D2 placed"));
+                    CHECK(!_SameUpstreamPose(authored, standing,
+                                             "D2 nonvacuity", false));
+                    CHECK(_SameUpstreamPose(_UpstreamPart(authored, other),
+                                            _UpstreamPart(standing, other),
+                                            "D2 opposite limb"));
                     const size_t count = imaging->Evaluations();
                     imaging->upstream->Set(key.first, key.second);
                     CHECK(imaging->Evaluations() == count);
-                    CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0)).ok);
+                    CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0))
+                              .ok);
                     checkTrace(cone, true);
                     compareNativeGraph({{key.first, key.second, {}}});
                     CHECK(_SameUpstreamPose(standing, imaging->Pose(),
                                             "D2 held standing"));
                     imaging->upstream->Clear(key.first);
                     checkTrace(cone, false);
-                    CHECK(_SameUpstreamPose(authored, imaging->Pose(), "D2 lifted"));
+                    CHECK(_SameUpstreamPose(authored, imaging->Pose(),
+                                            "D2 lifted"));
                     compareNativeGraph({});
-                    CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0)).ok);
+                    CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0))
+                              .ok);
                     checkTrace(cone, true);
                 }
                 std::vector<char> both = a;
-                for (size_t i = 0;i<both.size();++i) both[i] = both[i] || b[i];
+                for (size_t i = 0; i < both.size(); ++i)
+                    both[i] = both[i] || b[i];
                 imaging->upstream->Set(kUpA0Rz, VtValue(30.0));
                 imaging->upstream->Set(kUpSpace, VtValue(space));
                 checkTrace(both, false);
-                compareNativeGraph({{kUpA0Rz, VtValue(30.0), {}}, {kUpSpace, VtValue(space), {}}});
-                CHECK(_SameUpstreamPose(_UpstreamGeometry(_UpstreamReference(fixture, kUpLimbsRig, {{kUpA0Rz,
-                    VtValue(30.0), {}}, {kUpSpace, VtValue(space), {}}}, 1.0)), imaging->Pose(), "D2 both"));
-                CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0)).ok); checkTrace(both, true);
                 compareNativeGraph({{kUpA0Rz, VtValue(30.0), {}},
-                              {kUpSpace, VtValue(space), {}}});
-                imaging->upstream->Clear(kUpA0Rz); checkTrace(both, false);
-                imaging->upstream->Clear(kUpSpace); checkTrace(both, false);
-                CHECK(_SameUpstreamPose(authored, imaging->Pose(), "D2 both lifted"));
+                                    {kUpSpace, VtValue(space), {}}});
+                CHECK(_SameUpstreamPose(_UpstreamGeometry(_UpstreamReference(
+                                            fixture, kUpLimbsRig,
+                                            {{kUpA0Rz, VtValue(30.0), {}},
+                                             {kUpSpace, VtValue(space), {}}},
+                                            1.0)),
+                                        imaging->Pose(), "D2 both"));
+                CHECK(playback->EvaluateAndPublishResult(UsdTimeCode(1.0)).ok);
+                checkTrace(both, true);
+                compareNativeGraph({{kUpA0Rz, VtValue(30.0), {}},
+                                    {kUpSpace, VtValue(space), {}}});
+                imaging->upstream->Clear(kUpA0Rz);
+                checkTrace(both, false);
+                imaging->upstream->Clear(kUpSpace);
+                checkTrace(both, false);
+                CHECK(_SameUpstreamPose(authored, imaging->Pose(),
+                                        "D2 both lifted"));
             }
         }
     }
-    std::error_code removed; std::filesystem::remove(binary, removed);
+    std::error_code removed;
+    std::filesystem::remove(binary, removed);
     std::printf("  runtime upstream cone and no-change-no-work (%s): checked\n",
                 fine ? "fine" : "default");
 }
@@ -7171,13 +7496,11 @@ _UpstreamAdmissionNegatives(const std::string &fixture)
     const _UpstreamPose authored = imaging->Pose();
     // A value on BRoot's connected rest:space itself, and a float on a
     // double avar.
-    imaging->upstream->Set(kUpBRootRestSpace,
-                           VtValue(_UpTranslate(1, 0, 10)));
+    imaging->upstream->Set(kUpBRootRestSpace, VtValue(_UpTranslate(1, 0, 10)));
     imaging->upstream->Set(kUpA0Rz, VtValue(30.0f));
     CHECK(imaging->Evaluator()->HasUpstreamInputs());
     CHECK(imaging->Evaluator()->GetUpstreamInputPaths().empty());
-    CHECK(_SameUpstreamPose(authored, imaging->Pose(),
-                            "admission negatives"));
+    CHECK(_SameUpstreamPose(authored, imaging->Pose(), "admission negatives"));
 }
 
 // Sources present at population are noted from the add, and a second
@@ -7186,7 +7509,9 @@ _UpstreamAdmissionNegatives(const std::string &fixture)
 namespace {
 class _UpstreamConflictCounter : public TfDiagnosticMgr::Delegate {
 public:
-    void IssueStatus(TfStatus const &) override {}
+    void IssueStatus(TfStatus const &) override
+    {
+    }
     void IssueWarning(TfWarning const &warning) override
     {
         if (warning.GetCommentary().find("two scene-index chains") !=
@@ -7194,13 +7519,15 @@ public:
             count.fetch_add(1);
         }
     }
-    void IssueError(TfError const &) override {}
+    void IssueError(TfError const &) override
+    {
+    }
     void IssueFatalError(TfCallContext const &, std::string const &) override
     {
     }
     std::atomic<size_t> count{0};
 };
-}  // namespace
+} // namespace
 
 static void
 _UpstreamAddsAndChains(const std::string &fixture)
@@ -7222,8 +7549,8 @@ _UpstreamAddsAndChains(const std::string &fixture)
     UsdImagingCreateSceneIndicesInfo info;
     info.stage = first->stage;
     info.overridesSceneIndexCallback =
-        [&secondUpstream](const HdSceneIndexBaseRefPtr &input)
-        -> HdSceneIndexBaseRefPtr {
+        [&secondUpstream](
+            const HdSceneIndexBaseRefPtr &input) -> HdSceneIndexBaseRefPtr {
         secondUpstream = _UpstreamInputsSceneIndex::New(input);
         return secondUpstream;
     };
@@ -7241,16 +7568,16 @@ _UpstreamAddsAndChains(const std::string &fixture)
     CHECK(_SameUpstreamPose(at10, first->Pose(), "second chain supplies"));
     // The chain that delivers the trigger supplies the values.
     first->SetTime(2.0);
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig,
-                           {{kUpA0Rz, VtValue(30.0), {}}}, 2.0),
-        first->Pose(), "first chain's trigger"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig,
+                                               {{kUpA0Rz, VtValue(30.0), {}}},
+                                               2.0),
+                            first->Pose(), "first chain's trigger"));
     secondUpstream->SetTime(3.0);
     second.stageSceneIndex->SetTime(UsdTimeCode(3.0));
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig,
-                           {{kUpA0Rz, VtValue(10.0), {}}}, 3.0),
-        first->Pose(), "second chain's trigger"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig,
+                                               {{kUpA0Rz, VtValue(10.0), {}}},
+                                               3.0),
+                            first->Pose(), "second chain's trigger"));
 }
 
 // A chain's last anchor does not change the signal it publishes. Compare
@@ -7259,10 +7586,10 @@ static void
 _UpstreamChainConflictTimes(const std::string &fixture)
 {
     std::printf("  upstream chain conflict times\n");
-    const std::map<double, VtValue> curve = {
-        {1.0, VtValue(1.0)}, {3.0, VtValue(3.0)}};
-    std::unique_ptr<_UpstreamImaging> first = _OpenUpstreamImaging(
-        fixture, kUpLimbsRig, 1.0, [&](auto &upstream) {
+    const std::map<double, VtValue> curve = {{1.0, VtValue(1.0)},
+                                             {3.0, VtValue(3.0)}};
+    std::unique_ptr<_UpstreamImaging> first =
+        _OpenUpstreamImaging(fixture, kUpLimbsRig, 1.0, [&](auto &upstream) {
             upstream.SetSparse(kUpA0Rz, curve);
         });
     if (!first) {
@@ -7272,8 +7599,8 @@ _UpstreamChainConflictTimes(const std::string &fixture)
     UsdImagingCreateSceneIndicesInfo info;
     info.stage = first->stage;
     info.overridesSceneIndexCallback =
-        [&secondUpstream](const HdSceneIndexBaseRefPtr &input)
-        -> HdSceneIndexBaseRefPtr {
+        [&secondUpstream](
+            const HdSceneIndexBaseRefPtr &input) -> HdSceneIndexBaseRefPtr {
         secondUpstream = _UpstreamInputsSceneIndex::New(input);
         return secondUpstream;
     };
@@ -7288,24 +7615,24 @@ _UpstreamChainConflictTimes(const std::string &fixture)
     secondUpstream->SetTime(2.0);
     second.stageSceneIndex->SetTime(UsdTimeCode(2.0));
     CHECK(conflicts.count.load() == 0);
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig,
-                           {{kUpA0Rz, VtValue(2.0), {}}}, 2.0),
-        first->Pose(), "equal curves at second trigger"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig,
+                                               {{kUpA0Rz, VtValue(2.0), {}}},
+                                               2.0),
+                            first->Pose(), "equal curves at second trigger"));
     first->SetTime(3.0);
     CHECK(conflicts.count.load() == 0);
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig,
-                           {{kUpA0Rz, VtValue(3.0), {}}}, 3.0),
-        first->Pose(), "equal curves at first trigger"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig,
+                                               {{kUpA0Rz, VtValue(3.0), {}}},
+                                               3.0),
+                            first->Pose(), "equal curves at first trigger"));
     TfDiagnosticMgr::GetInstance().RemoveDelegate(&conflicts);
     CHECK(first->upstream->calls->getValue.load() == firstCalls);
     CHECK(secondUpstream->calls->getValue.load() == secondCalls);
 
     // A is anchored at 1 with A(1)=1. B's new value at 2 is also 1,
     // but A(2)=2: comparing stored atT0 values would miss the conflict.
-    secondUpstream->SetSparse(kUpA0Rz, {
-        {1.0, VtValue(0.0)}, {3.0, VtValue(2.0)}});
+    secondUpstream->SetSparse(kUpA0Rz,
+                              {{1.0, VtValue(0.0)}, {3.0, VtValue(2.0)}});
     secondUpstream->SetTime(1.0);
     second.stageSceneIndex->SetTime(UsdTimeCode(1.0));
     first->SetTime(1.0);
@@ -7316,10 +7643,10 @@ _UpstreamChainConflictTimes(const std::string &fixture)
     second.stageSceneIndex->SetTime(UsdTimeCode(2.0));
     CHECK(conflicts.count.load() >= 1);
     TfDiagnosticMgr::GetInstance().RemoveDelegate(&conflicts);
-    CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig,
-                           {{kUpA0Rz, VtValue(1.0), {}}}, 2.0),
-        first->Pose(), "different incoming curve wins"));
+    CHECK(_SameUpstreamPose(_UpstreamReference(fixture, kUpLimbsRig,
+                                               {{kUpA0Rz, VtValue(1.0), {}}},
+                                               2.0),
+                            first->Pose(), "different incoming curve wins"));
     CHECK(first->upstream->calls->getValue.load() == firstCalls);
     CHECK(secondUpstream->calls->getValue.load() == changedCalls);
 }
@@ -7373,8 +7700,7 @@ _UpstreamAddedOutsideRoots(const std::string &fixture)
     const _UpstreamPose pose = imaging->Pose();
     CHECK(!_SameUpstreamPose(reference(_UpTranslate(0, 0, 10)), pose,
                              "outside roots: authored", false));
-    CHECK(_SameUpstreamPose(reference(pulled), pose,
-                            "outside roots: pulled"));
+    CHECK(_SameUpstreamPose(reference(pulled), pose, "outside roots: pulled"));
 }
 
 // A connected posed space is an ordinary bound input in the sole graph.
@@ -7384,21 +7710,25 @@ _CheckConnectedPosedSourceGraph(const _UpstreamImaging &imaging)
 {
     const RigExecBakedProgram *program = imaging.Program();
     CHECK(program != nullptr);
-    if (!program) return;
+    if (!program)
+        return;
     const auto &B = program->GetStepGraph();
     std::string error;
     CHECK(RigExecBakedValidateStepGraph(B, &error));
     const SdfPath owner("/LimbsAsset/Rig/Controls/BRoot");
     const auto found = B.index.find(owner);
     CHECK(found != B.index.end());
-    if (found == B.index.end()) return;
+    if (found == B.index.end())
+        return;
     CHECK(found->second >= 0 && size_t(found->second) < B.ladders.size());
-    if (found->second < 0 || size_t(found->second) >= B.ladders.size()) return;
+    if (found->second < 0 || size_t(found->second) >= B.ladders.size())
+        return;
     CHECK(B.ladders[size_t(found->second)].posedSpaceConnected);
     CHECK(B.GetProviderProgram().rawInputs.count(kUpSpace) == 1);
     SdfPathVector connections;
-    CHECK(imaging.stage->GetAttributeAtPath(
-        owner.AppendProperty(TfToken("posed:space"))).GetConnections(&connections));
+    CHECK(imaging.stage
+              ->GetAttributeAtPath(owner.AppendProperty(TfToken("posed:space")))
+              .GetConnections(&connections));
     CHECK(connections == SdfPathVector{kUpSpace});
 }
 
@@ -7433,15 +7763,15 @@ _UpstreamCacheSteps(const std::string &fixture, const SdfPath &attribute,
         _CheckConnectedPosedSourceGraph(*imaging);
     }
     VtValue sourceBefore;
-    const UsdAttribute rawSource = imaging->stage->GetAttributeAtPath(attribute);
+    const UsdAttribute rawSource =
+        imaging->stage->GetAttributeAtPath(attribute);
     CHECK(rawSource && rawSource.Get(&sourceBefore, UsdTimeCode(1.0)));
     const size_t evaluations0 = imaging->Evaluations();
     imaging->upstream->Set(attribute, value);
     const _UpstreamPose p1 = imaging->Pose();
     CHECK(!_SameUpstreamPose(p0, p1, what, false));
     CHECK(_SameUpstreamPose(
-        _UpstreamReference(fixture, kUpLimbsRig, {{attribute, value, {}}},
-                           1.0),
+        _UpstreamReference(fixture, kUpLimbsRig, {{attribute, value, {}}}, 1.0),
         p1, what + ": set"));
     // A miss: evaluated, not served (the plan's base lookup may count as
     // a store hit; the evaluation is what a miss is).
@@ -7479,8 +7809,8 @@ _UpstreamWarmSteps(const std::string &fixture)
     const std::vector<double> range{1, 2, 3, 4, 5, 6};
     const std::vector<double> later{2, 3, 4, 5, 6};
     CHECK(context.SetWarmRange(rig, range));
-    imaging->upstream->SetSampled(
-        kUpA0Rz, [](double t) { return VtValue(5.0 * t); });
+    imaging->upstream->SetSampled(kUpA0Rz,
+                                  [](double t) { return VtValue(5.0 * t); });
     const std::shared_ptr<_UpstreamCalls> calls = imaging->upstream->calls;
     const auto samples = [](double k, double lo, double hi) {
         _UpstreamAuthored authored{kUpA0Rz, VtValue(), {}};
@@ -7528,8 +7858,8 @@ _UpstreamWarmSteps(const std::string &fixture)
 
     // f = 7t: a dirty cancels the generation; the old rows no longer serve.
     const uint64_t serial = context.GetUpstreamSerial(rig);
-    imaging->upstream->SetSampled(
-        kUpA0Rz, [](double t) { return VtValue(7.0 * t); });
+    imaging->upstream->SetSampled(kUpA0Rz,
+                                  [](double t) { return VtValue(7.0 * t); });
     CHECK(context.GetUpstreamSerial(rig) != serial);
     CHECK(context.CurrentFrameGeneration(rig) != generation);
     for (const RigExecWarmFrameState state :
@@ -7668,8 +7998,7 @@ _UpstreamArraySteps(const std::string &fixture)
                 imaging->upstream->SetSparse(kUpJointWeights, arraySamples);
                 const std::shared_ptr<const RigExecUpstreamTable> table =
                     context.GetUpstreamTable(kUpLimbsRig);
-                CHECK(table &&
-                      RigExecUpstreamTableBufferCount(*table) == 3);
+                CHECK(table && RigExecUpstreamTableBufferCount(*table) == 3);
                 CHECK(_WarmRange(*imaging, later));
                 const size_t evaluations = imaging->Evaluations();
                 for (const double t : {2.0, 4.0, 6.0}) {
@@ -7704,8 +8033,8 @@ _UpstreamArraySteps(const std::string &fixture)
 // warms again: that job's key and pose are the authored ones.
 static void
 _UpstreamLiftSteps(const std::string &stagePath, const SdfPath &rig,
-                   const SdfPath &attribute, const VtValue &value,
-                   double t, double later, const std::string &what)
+                   const SdfPath &attribute, const VtValue &value, double t,
+                   double later, const std::string &what)
 {
     std::printf("  upstream lift: %s\n", what.c_str());
     if (!RigExecBackgroundWarmingEnabled()) {
@@ -7778,11 +8107,11 @@ TestUpstreamSceneIndexDrivesRigInputs(const std::string &examplesDir)
         _UpstreamCacheMode cache("off");
         // A0's ComposeSubtree seeds the control case; BRoot's rest group
         // seeds the space case in the head tier.
-        _UpstreamValueSteps(fixture, kUpA0Rz, VtValue(30.0), kUpLimbA,
-                            kUpLimbB, "A0", "", "A0 avars:rz");
-        _UpstreamValueSteps(fixture, kUpSpace,
-                            VtValue(_UpTranslate(1, 0, 10)), kUpLimbB,
-                            kUpLimbA, "", "BRoot", "Upstream inputs:space");
+        _UpstreamValueSteps(fixture, kUpA0Rz, VtValue(30.0), kUpLimbA, kUpLimbB,
+                            "A0", "", "A0 avars:rz");
+        _UpstreamValueSteps(fixture, kUpSpace, VtValue(_UpTranslate(1, 0, 10)),
+                            kUpLimbB, kUpLimbA, "", "BRoot",
+                            "Upstream inputs:space");
         _UpstreamPlaybackSteps(fixture);
         TestABakeExposesUpstreamAsInputs(fixture);
         TestTheRuntimeUpstreamCone(fixture);
@@ -7798,7 +8127,8 @@ TestUpstreamSceneIndexDrivesRigInputs(const std::string &examplesDir)
             _CheckConnectedPosedSourceGraph(*imaging);
             const auto authored = imaging->Pose();
             VtValue sourceBefore;
-            const UsdAttribute rawSource = imaging->stage->GetAttributeAtPath(kUpSpace);
+            const UsdAttribute rawSource =
+                imaging->stage->GetAttributeAtPath(kUpSpace);
             CHECK(rawSource && rawSource.Get(&sourceBefore, UsdTimeCode(1.0)));
             imaging->upstream->Set(kUpSpace, VtValue(_UpTranslate(1, 0, 10)));
             CHECK(_SameUpstreamPose(
@@ -7808,10 +8138,12 @@ TestUpstreamSceneIndexDrivesRigInputs(const std::string &examplesDir)
                 imaging->Pose(), "posed: standing"));
             CHECK(imaging->Evaluator()->GetUpstreamInputPaths() ==
                   std::vector<SdfPath>{kUpSpace});
-            CHECK(!_SameUpstreamPose(authored, imaging->Pose(), "posed: sensitivity", false));
+            CHECK(!_SameUpstreamPose(authored, imaging->Pose(),
+                                     "posed: sensitivity", false));
             imaging->upstream->Clear(kUpSpace);
             CHECK(imaging->Evaluator()->GetUpstreamInputPaths().empty());
-            CHECK(_SameUpstreamPose(authored, imaging->Pose(), "posed: lifted"));
+            CHECK(
+                _SameUpstreamPose(authored, imaging->Pose(), "posed: lifted"));
             VtValue sourceAfter;
             CHECK(rawSource.Get(&sourceAfter, UsdTimeCode(1.0)));
             CHECK(sourceAfter == sourceBefore);
@@ -7855,18 +8187,21 @@ TestClothConstraintGuides()
 {
     using namespace rigExecClothStage;
     auto stage = MakeStage(true, "uniform int rigExec:windowFrames = 1\n"
-                                "uniform int rigExec:maxWindowFrames = 1\n");
+                                 "uniform int rigExec:maxWindowFrames = 1\n");
     auto cloth = stage->GetPrimAtPath(kCurtain.GetPrimPath());
     VtVec3fArray rest;
     cloth.GetAttribute(TfToken("points")).Get(&rest);
     VtVec2fArray uv;
-    for (const auto &p : rest) uv.push_back(GfVec2f(p[0], p[1]));
-    auto st = cloth.CreateAttribute(TfToken("primvars:st"), SdfValueTypeNames->TexCoord2fArray);
+    for (const auto &p : rest)
+        uv.push_back(GfVec2f(p[0], p[1]));
+    auto st = cloth.CreateAttribute(TfToken("primvars:st"),
+                                    SdfValueTypeNames->TexCoord2fArray);
     st.Set(uv);
     st.SetMetadata(TfToken("interpolation"), VtValue(TfToken("vertex")));
     const auto binding = [&](const char *name, const char *mode, int index,
                              const VtVec3fArray &coordinates) {
-        auto prim = stage->DefinePrim(kCloth.AppendChild(TfToken(name)), TfToken("RigExecClothBinding"));
+        auto prim = stage->DefinePrim(kCloth.AppendChild(TfToken(name)),
+                                      TfToken("RigExecClothBinding"));
         prim.GetAttribute(TfToken("rigExec:mode")).Set(TfToken(mode));
         prim.GetAttribute(TfToken("rigExec:indices")).Set(VtIntArray{index});
         prim.GetAttribute(TfToken("rigExec:coordinates")).Set(coordinates);
@@ -7880,26 +8215,34 @@ TestClothConstraintGuides()
     const auto externalTarget = binding("ExternalTarget", "vertex", 0, {});
     SdfPathVector constraints;
     for (int i = 0; i < 4; ++i) {
-        const auto path = kCloth.AppendChild(TfToken("Link" + std::to_string(i)));
-        const auto prim = stage->DefinePrim(path, TfToken("RigExecClothConstraintSet"));
+        const auto path =
+            kCloth.AppendChild(TfToken("Link" + std::to_string(i)));
+        const auto prim =
+            stage->DefinePrim(path, TfToken("RigExecClothConstraintSet"));
         prim.GetAttribute(TfToken("rigExec:kind")).Set(TfToken("attachment"));
         prim.GetAttribute(TfToken("inputs:restLength")).Set(1.0f);
         prim.GetAttribute(TfToken("inputs:minStrength")).Set(0.0f);
         prim.GetAttribute(TfToken("inputs:maxStrength")).Set(0.0f);
-        prim.GetRelationship(TfToken("rigExec:sourceBinding")).SetTargets({sources[i % 3]});
-        prim.GetRelationship(TfToken("rigExec:targetBinding")).SetTargets({i == 3 ? externalTarget : target});
-        if (i == 3) prim.GetRelationship(TfToken("rigExec:targetMesh")).SetTargets({kBox.GetPrimPath()});
+        prim.GetRelationship(TfToken("rigExec:sourceBinding"))
+            .SetTargets({sources[i % 3]});
+        prim.GetRelationship(TfToken("rigExec:targetBinding"))
+            .SetTargets({i == 3 ? externalTarget : target});
+        if (i == 3)
+            prim.GetRelationship(TfToken("rigExec:targetMesh"))
+                .SetTargets({kBox.GetPrimPath()});
         constraints.push_back(path);
     }
     const auto mover = stage->GetPrimAtPath(kCloth);
-    mover.GetRelationship(TfToken("rigExec:constraints")).SetTargets(constraints);
+    mover.GetRelationship(TfToken("rigExec:constraints"))
+        .SetTargets(constraints);
     std::string authored;
     stage->GetRootLayer()->ExportToString(&authored);
     RigExecImagingBridge bridge(stage, kRig);
     CHECK(bridge.Compile());
     auto upstream = HdRetainedSceneIndex::New();
     for (const auto &path : constraints)
-        upstream->AddPrims({{path, TfToken(), HdRetainedContainerDataSource::New()}});
+        upstream->AddPrims(
+            {{path, TfToken(), HdRetainedContainerDataSource::New()}});
     auto results = RigExecResultsSceneIndex::New(upstream, bridge.GetStore());
     for (double time : {1.0, 9.0, 1.0}) {
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode(time)));
@@ -7909,25 +8252,33 @@ TestClothConstraintGuides()
         for (size_t i = 0; i < constraints.size(); ++i) {
             const auto found = snapshot->prims.find(constraints[i]);
             CHECK(found != snapshot->prims.end());
-            if (found == snapshot->prims.end()) continue;
+            if (found == snapshot->prims.end())
+                continue;
             const auto &guide = found->second;
             CHECK(guide.hasControlGuide);
             CHECK(guide.guidePurpose == UsdGeomTokens->guide);
             CHECK(guide.controlGuideCounts == VtIntArray{2});
             CHECK(guide.controlGuidePoints.size() == 2);
-            if (guide.controlGuidePoints.size() != 2) continue;
-            const auto expected = i == 1 ? points[0] * 0.25f + points[1] * 0.5f +
-                points[1 + kColumns] * 0.25f : points[0];
+            if (guide.controlGuidePoints.size() != 2)
+                continue;
+            const auto expected = i == 1
+                                      ? points[0] * 0.25f + points[1] * 0.5f +
+                                            points[1 + kColumns] * 0.25f
+                                      : points[0];
             CHECK((guide.controlGuidePoints[0] - expected).GetLength() < 1e-4f);
-            CHECK((guide.controlGuidePoints[1] - (i == 3 ? box[0] : points[6])).GetLength() < 1e-4f);
-            const auto drawn = results->GetPrim(constraints[i].AppendChild(TfToken("rigGuideCtrl")));
+            CHECK((guide.controlGuidePoints[1] - (i == 3 ? box[0] : points[6]))
+                      .GetLength() < 1e-4f);
+            const auto drawn = results->GetPrim(
+                constraints[i].AppendChild(TfToken("rigGuideCtrl")));
             CHECK(drawn.primType == HdPrimTypeTokens->basisCurves);
         }
     }
     std::string after;
     stage->GetRootLayer()->ExportToString(&after);
     CHECK(authored == after);
-    CHECK(stage->GetPrimAtPath(sources[0]).GetAttribute(TfToken("rigExec:indices")).Set(VtIntArray{1}));
+    CHECK(stage->GetPrimAtPath(sources[0])
+              .GetAttribute(TfToken("rigExec:indices"))
+              .Set(VtIntArray{1}));
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
     auto snapshot = bridge.GetStore()->Get();
     CHECK(snapshot->prims.at(constraints[0]).controlGuidePoints[0] ==
@@ -7935,21 +8286,507 @@ TestClothConstraintGuides()
     // Mesh-local placement is included once; asset placement stays in the
     // guide transform supplied by the scene index.
     const GfVec3d offset(3, 4, 5);
-    cloth.CreateAttribute(TfToken("xformOp:translate"), SdfValueTypeNames->Double3).Set(offset);
-    cloth.CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
+    cloth
+        .CreateAttribute(TfToken("xformOp:translate"),
+                         SdfValueTypeNames->Double3)
+        .Set(offset);
+    cloth
+        .CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
         .Set(VtTokenArray{TfToken("xformOp:translate")});
     const auto asset = stage->GetPrimAtPath(SdfPath("/Asset"));
-    asset.CreateAttribute(TfToken("xformOp:translate"), SdfValueTypeNames->Double3).Set(GfVec3d(100, 0, 0));
-    asset.CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
+    asset
+        .CreateAttribute(TfToken("xformOp:translate"),
+                         SdfValueTypeNames->Double3)
+        .Set(GfVec3d(100, 0, 0));
+    asset
+        .CreateAttribute(TfToken("xformOpOrder"), SdfValueTypeNames->TokenArray)
         .Set(VtTokenArray{TfToken("xformOp:translate")});
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
     snapshot = bridge.GetStore()->Get();
     CHECK((snapshot->prims.at(constraints[0]).controlGuidePoints[0] -
-          snapshot->prims.at(kCurtain.GetPrimPath()).points[1] - GfVec3f(offset)).GetLength() < 1e-4f);
+           snapshot->prims.at(kCurtain.GetPrimPath()).points[1] -
+           GfVec3f(offset))
+              .GetLength() < 1e-4f);
     mover.GetRelationship(TfToken("rigExec:constraints")).SetTargets({});
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode(1)));
     CHECK(!bridge.GetStore()->Get()->prims.count(constraints[0]));
-    CHECK(results->GetPrim(constraints[0].AppendChild(TfToken("rigGuideCtrl"))).primType.IsEmpty());
+    CHECK(results->GetPrim(constraints[0].AppendChild(TfToken("rigGuideCtrl")))
+              .primType.IsEmpty());
+}
+
+// QUERY CONTRACT. SnapshotAtTimeWithoutPublishing (frames on demand,
+// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT
+// publishing it: the store keeps the generation it had, the generation
+// counter is not consumed, the results index delivers no notice, the GPU
+// deform history is not touched, and the query's own snapshot carries no
+// generation stamp (its Describes() is false -- stamping is the
+// publisher's, and the query's miss on it is a preserved quirk). The
+// 'evaluated' flag says truthfully whether the evaluator ran: false on a
+// cache serve, true on the live query, and a miss with evaluate=false
+// answers false without evaluating. Interactive overrides refuse the
+// query outright. These pins run through the public surface only, so the
+// bridge decomposition must keep them green.
+static UsdStageRefPtr
+_MakeQueryRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
+    UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
+    UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
+    for (int t = 1; t <= 4; ++t) {
+        tx.Set(10.0 + 0.1 * double(t), UsdTimeCode(double(t)));
+        ty.Set(20.0 - 0.05 * double(t), UsdTimeCode(double(t)));
+    }
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+
+    const SdfPath meshPath("/Asset/Geom/Mesh_0");
+    const UsdPrim prim = stage->DefinePrim(meshPath, TfToken("Mesh"));
+    VtVec3fArray points(8);
+    for (size_t i = 0; i < points.size(); ++i) {
+        points[i] =
+            GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
+    }
+    prim.GetAttribute(TfToken("points")).Set(points);
+
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin_0"),
+                                           TfToken("RigExecSkinMover"));
+    skin.ApplyAPI(TfToken("RigExecMoverAPI"));
+    skin.GetRelationship(TfToken("rigExec:moves"))
+        .SetTargets({meshPath.AppendProperty(TfToken("points"))});
+    skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    skin.CreateRelationship(TfToken("rigExec:influences"))
+        .SetTargets({alongX.GetPath(), alongY.GetPath()});
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
+    VtIntArray indices(points.size() * 2);
+    for (size_t i = 0; i < points.size(); ++i) {
+        indices[i * 2] = 0;
+        indices[i * 2 + 1] = 1;
+    }
+    skin.CreateAttribute(TfToken("rigExec:jointIndices"),
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
+    VtFloatArray weights(points.size() * 2);
+    for (size_t i = 0; i < points.size(); ++i) {
+        weights[i * 2] = 0.1f;
+        weights[i * 2 + 1] = 0.9f;
+    }
+    skin.CreateAttribute(TfToken("rigExec:jointWeights"),
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
+    return stage;
+}
+
+static bool
+_SamePoints(const VtVec3fArray &a, const VtVec3fArray &b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void
+TestQuerySnapshotPublicationIsolation()
+{
+    std::printf("progress: TestQuerySnapshotPublicationIsolation\n");
+    const SdfPath meshPath("/Asset/Geom/Mesh_0");
+    const SdfPath control("/Asset/Rig/AlongX");
+    UsdStageRefPtr stage = _MakeQueryRig();
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+
+    auto upstream = HdRetainedSceneIndex::New();
+    upstream->AddPrims({_MeshShell(meshPath)});
+    auto binding = RigExecBindingResolvingSceneIndex::New(upstream);
+    auto results = RigExecResultsSceneIndex::New(binding, bridge.GetStore());
+    bridge.SetSceneIndices(binding, results);
+    _RecordingObserver observer;
+    results->AddObserver(HdSceneIndexObserverPtr(&observer));
+
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(2.0)));
+    const RigExecImagingSnapshotConstPtr displayed = bridge.GetStore()->Get();
+    CHECK(displayed != nullptr);
+    CHECK(displayed && displayed->generation > 0);
+    if (!displayed) {
+        return;
+    }
+    const size_t addedBefore = observer.added.size();
+    const size_t removedBefore = observer.removed.size();
+    const size_t dirtiedBefore = observer.dirtied.size();
+    const size_t locatorsBefore = observer.dirtiedLocators.size();
+    CHECK(displayed->prims.count(meshPath) == 1);
+    CHECK(displayed->prims.count(control) == 1);
+    CHECK(displayed->prims.at(control).hasControlGuide);
+    // The displayed generation's values, captured as independent copies:
+    // comparing through a later alias of the SAME store object cannot
+    // see an accidental in-place rewrite.
+    const VtVec3fArray shownPoints = displayed->prims.at(meshPath).points;
+    const decltype(displayed->generation) shownGeneration =
+        displayed->generation;
+
+    bridge.MutableProfiler()->SetEnabled(true);
+    const auto scopeCount = [](RigExecProfiler *profiler, const char *name) {
+        for (const RigExecProfileSummaryRow &row : profiler->Summarize()) {
+            if (row.name == name) {
+                return row.count;
+            }
+        }
+        return size_t(0);
+    };
+    static const char *const kPublishScopes[] = {"Imaging.EvaluateAndPublish",
+                                                 "Imaging.Evaluate",
+                                                 "Imaging.WarmEvaluate",
+                                                 "Imaging.FrameCacheLookup",
+                                                 "Imaging.LookupSampleDigest",
+                                                 "Imaging.StorePublish",
+                                                 "Imaging.Guides"};
+    std::map<std::string, size_t> scopesBefore;
+    for (const char *name : kPublishScopes) {
+        scopesBefore[name] = scopeCount(bridge.MutableProfiler(), name);
+    }
+    const auto publishedIntact = [&]() {
+        const RigExecImagingSnapshotConstPtr pub = bridge.GetStore()->Get();
+        CHECK(pub == displayed);
+        CHECK(pub->generation == shownGeneration);
+        CHECK(pub->prims.count(meshPath) == 1);
+        CHECK(pub->prims.count(control) == 1);
+        CHECK(pub->prims.at(meshPath).points.size() == shownPoints.size());
+        CHECK(_SamePoints(pub->prims.at(meshPath).points, shownPoints));
+        CHECK(pub->prims.at(control).hasControlGuide);
+        CHECK(observer.added.size() == addedBefore);
+        CHECK(observer.removed.size() == removedBefore);
+        CHECK(observer.dirtied.size() == dirtiedBefore);
+        CHECK(observer.dirtiedLocators.size() == locatorsBefore);
+    };
+
+    RigExecImagingSnapshotConstPtr snap;
+    std::string diagnostic;
+    bool evaluated = true;
+
+    // A miss with evaluate=false: false, no evaluation, nothing moved.
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+        UsdTimeCode(4.0), false, &snap, &diagnostic, &evaluated));
+    CHECK(!evaluated);
+    CHECK(snap == nullptr);
+    CHECK(bridge.GetStore()->Get() == displayed);
+
+    // Live query at another frame: evaluated says the evaluator ran, and
+    // the answer is that frame's geometry, not the displayed one.
+    evaluated = false;
+    CHECK(bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(3.0), true, &snap,
+                                                 &diagnostic, &evaluated));
+    CHECK(evaluated);
+    CHECK(snap != nullptr);
+    if (snap) {
+        // No generation is minted or stamped for a query; the published
+        // generation counter is untouched, so the query snapshot carries
+        // generation 0 and Describes() nothing (preserved quirk).
+        CHECK(snap->generation == 0);
+        CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
+        CHECK(snap->prims.count(meshPath) == 1);
+        // Query mode leaves the guide payloads alone: geometry only.
+        CHECK(snap->prims.count(control) == 0);
+        if (snap->prims.count(meshPath) == 1 &&
+            displayed->prims.count(meshPath) == 1) {
+            CHECK(!_SamePoints(snap->prims.at(meshPath).points,
+                               displayed->prims.at(meshPath).points));
+        }
+    }
+
+    // The publication surface is untouched across both queries: the store
+    // still answers with the captured values, the results index delivered
+    // no notice of any category, and no publish/lookup/sample profiler
+    // scope ran.
+    publishedIntact();
+    for (const char *name : kPublishScopes) {
+        CHECK(scopeCount(bridge.MutableProfiler(), name) == scopesBefore[name]);
+    }
+
+    // The live query memoized its pose, so the next query at the same
+    // frame serves without running the evaluator (the flag stays false
+    // except under the RIGEXEC_FRAME_CACHE_VERIFY combo, which evaluates
+    // to cross-check the serve).
+    if (bridge.GetFrameCacheMode() != RigExecFrameCacheMode::Off) {
+        const bool verify = RigExecFrameCacheVerifyRequested();
+        evaluated = true;
+        snap.reset();
+        CHECK(bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode(3.0), false, &snap, &diagnostic, &evaluated));
+        CHECK(snap != nullptr);
+        CHECK(evaluated == verify);
+        if (snap) {
+            CHECK(snap->generation == 0);
+            CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
+        }
+        // The hit query records no lookup/sample scope either.
+        CHECK(
+            scopeCount(bridge.MutableProfiler(), "Imaging.FrameCacheLookup") ==
+            scopesBefore["Imaging.FrameCacheLookup"]);
+        CHECK(scopeCount(bridge.MutableProfiler(),
+                         "Imaging.LookupSampleDigest") ==
+              scopesBefore["Imaging.LookupSampleDigest"]);
+        publishedIntact();
+    }
+
+    // Interactive overrides refuse the query while they stand -- even at a
+    // frame the store already answers.
+    bridge.SetInteractiveOverrides({RigExecValueOverride{
+        control, TfToken(), TfToken("avars:tx"), VtValue(999.0)}});
+    evaluated = true;
+    snap.reset();
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(2.0), true, &snap,
+                                                  &diagnostic, &evaluated));
+    CHECK(!evaluated);
+    CHECK(snap == nullptr);
+    publishedIntact();
+    bridge.ClearInteractiveOverrides();
+
+    // Publication after the queries still works and consumes the next
+    // generation, with notices delivered as usual.
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(3.0)));
+    const RigExecImagingSnapshotConstPtr now = bridge.GetStore()->Get();
+    CHECK(now != displayed);
+    CHECK(now->generation == displayed->generation + 1);
+    CHECK(observer.dirtied.size() > dirtiedBefore);
+    results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
+// GUIDE-CACHE ROUTES. A bare bridge gets no ObjectsChanged forwarding, so
+// its guide caches are dropped by the coarse stage-edit-serial check in
+// _SyncGuideCaches: any edit -- even one no notice ever mentions -- makes
+// the next publication re-read authored styling. Once NoteGuideEdits has
+// run (the registry forwards every notice that reaches the rig), the
+// serial clear is retired and only the routed drops apply: pose edits
+// drop nothing, and a guide:* edit drops exactly its prim. The manual
+// forwarder pins the bridge-side routing rules (it is the same call the
+// registry makes); the registry branch pins the production wiring end to
+// end: real activation, real notice routing, styling read from the
+// registry's store. Under the registry every stage notice reaches both
+// the evaluator's serial and the bridge, so the cached-versus-re-read
+// discriminator is staged by suppressing the forwarder, which the real
+// registry never does; the registry branch therefore pins routing
+// correctness, not the serial contrast.
+struct _GuideNoticeForward : public TfWeakBase {
+    RigExecImagingBridge *bridge = nullptr;
+    bool forward = false;
+    int seen = 0;
+    void OnChanged(const UsdNotice::ObjectsChanged &notice,
+                   const UsdStageWeakPtr &)
+    {
+        ++seen;
+        if (forward) {
+            bridge->NoteGuideEdits(notice);
+        }
+    }
+};
+
+static UsdStageRefPtr
+_MakeGuideStyleRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    for (const char *name : {"AlongX", "AlongY"}) {
+        const UsdPrim control =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/") + name),
+                              TfToken("RigExecControl"));
+        control
+            .CreateAttribute(TfToken("guide:displayColor"),
+                             SdfValueTypeNames->Float3)
+            .Set(GfVec3f(1.0f, 0.0f, 0.0f));
+    }
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+        .CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(2.0);
+    return stage;
+}
+
+static GfVec3f
+_PublishedGuideColor(const RigExecImagingBridge &bridge, const SdfPath &prim)
+{
+    const RigExecImagingSnapshotConstPtr snap = bridge.GetStore()->Get();
+    if (!snap) {
+        return GfVec3f(-1.0f, -1.0f, -1.0f);
+    }
+    const auto found = snap->prims.find(prim);
+    if (found == snap->prims.end()) {
+        return GfVec3f(-1.0f, -1.0f, -1.0f);
+    }
+    return found->second.guideColor;
+}
+
+static void
+TestGuideCacheInvalidationBareVersusForwarded()
+{
+    std::printf("progress: TestGuideCacheInvalidationBareVersusForwarded\n");
+    const SdfPath x("/Asset/Rig/AlongX");
+    const SdfPath y("/Asset/Rig/AlongY");
+    const TfToken colorName("guide:displayColor");
+
+    // BARE: no notice ever reaches the bridge. A silent styling edit moves
+    // the evaluator's stage-edit serial, and the serial check drops every
+    // cached guide input: the next publication reads the new color.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(0.0f, 1.0f, 0.0f));
+    }
+
+    // FORWARDING: the first NoteGuideEdits call retires the coarse serial
+    // clear. From then on only routed drops apply.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        _GuideNoticeForward forwarder;
+        forwarder.bridge = &bridge;
+        TfNotice::Key key =
+            TfNotice::Register(TfCreateWeakPtr(&forwarder),
+                               &_GuideNoticeForward::OnChanged, stage);
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A forwarded pose edit drops nothing: a release does not re-read
+        // every provider's styling.
+        forwarder.forward = true;
+        CHECK(
+            stage->GetPrimAtPath(x).GetAttribute(TfToken("avars:tx")).Set(3.0));
+        CHECK(forwarder.seen > 0);
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // Two silent styling edits: the stage-edit serial moves, but the
+        // coarse clear is retired, so BOTH cached colors stand. A bare
+        // bridge (above) would have re-read them.
+        forwarder.forward = false;
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f)));
+        CHECK(stage->GetPrimAtPath(y).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // Routing only X's notice updates only X: the guide:* drop is
+        // per-prim. X's edit (a NEW value, so the notice is real) is
+        // forwarded; Y's edit stays silent and keeps its cached styling.
+        forwarder.forward = true;
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        forwarder.forward = false;
+        CHECK(stage->GetPrimAtPath(y).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(0.0f, 0.0f, 1.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+        TfNotice::Revoke(key);
+    }
+
+    // REGISTRY-DRIVEN: the production wiring. The registry forwards every
+    // notice that reaches the rig through NoteGuideEdits, so a real
+    // registry session runs the bridge in forwarded mode and the routed
+    // rules decide through the registry's own store.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingRegistry &registry =
+            RigExecImagingRegistry::GetInstance();
+        std::vector<std::string> errors;
+        CHECK(registry.Activate(stage, SdfPath("/Asset/Rig"),
+                                UsdTimeCode::Default(), &errors));
+        CHECK(registry.GetBridge(SdfPath("/Asset/Rig")) != nullptr);
+        const auto colorAt = [&](const SdfPath &prim) {
+            const RigExecImagingSnapshotConstPtr snap =
+                registry.GetStore()->Get();
+            if (!snap) {
+                return GfVec3f(-1.0f, -1.0f, -1.0f);
+            }
+            const auto found = snap->prims.find(prim);
+            return found == snap->prims.end() ? GfVec3f(-1.0f, -1.0f, -1.0f)
+                                              : found->second.guideColor;
+        };
+        CHECK(colorAt(x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(colorAt(y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A pose edit through the registry's routing drops nothing: the
+        // next published generation keeps the cached styling.
+        CHECK(
+            stage->GetPrimAtPath(x).GetAttribute(TfToken("avars:tx")).Set(3.0));
+        CHECK(registry.SetTime(UsdTimeCode(2.0)));
+        CHECK(colorAt(x) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A guide edit routed by the registry updates exactly its prim:
+        // X publishes the new color, Y's cached styling stands.
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f)));
+        CHECK(registry.SetTime(UsdTimeCode(3.0)));
+        CHECK(colorAt(x) == GfVec3f(0.0f, 1.0f, 0.0f));
+        CHECK(colorAt(y) == GfVec3f(1.0f, 0.0f, 0.0f));
+        registry.Deactivate();
+    }
+}
+
+// STORE OWNERSHIP. Both constructors publish through GetStore(): the
+// default creates its own store; the external one publishes into the
+// caller's store (the application may create the store before any scene
+// index or bridge exists), and a sibling default bridge cannot disturb
+// it. The SetPublishesDirtied(false) route (the registry's combined-
+// generation caller) swaps the same store and reports no dirtied leaves.
+static void
+TestExternallyOwnedStoreConstructor()
+{
+    std::printf("progress: TestExternallyOwnedStoreConstructor\n");
+    UsdStageRefPtr stage = _MakeGuideStyleRig();
+    const SdfPath rig("/Asset/Rig");
+    auto store = std::make_shared<RigExecSnapshotStore>();
+    RigExecImagingBridge bridge(stage, rig, store);
+    CHECK(bridge.GetStore() == store);
+    CHECK(store->Get() == nullptr);
+    CHECK(bridge.Compile());
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+    const RigExecImagingSnapshotConstPtr first = store->Get();
+    CHECK(first != nullptr);
+    CHECK(first && first->generation > 0 && !first->prims.empty());
+    CHECK(bridge.GetStore()->Get() == first);
+
+    // The Replace route (no diffing publisher) still swaps the SAME
+    // external store and reports no dirtied leaves.
+    bridge.SetPublishesDirtied(false);
+    const RigExecImagingBridge::PublishResult replaced =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(replaced.ok);
+    CHECK(replaced.dirtied.empty());
+    const RigExecImagingSnapshotConstPtr second = store->Get();
+    CHECK(second != nullptr);
+    CHECK(second != first);
+    CHECK(second->generation > first->generation);
+    bridge.SetPublishesDirtied(true);
+
+    // A default-constructed bridge over the same stage owns a different
+    // store; publishing through it leaves the external one alone.
+    RigExecImagingBridge other(stage, rig);
+    CHECK(other.GetStore() != store);
+    CHECK(other.Compile());
+    CHECK(other.EvaluateAndPublish(UsdTimeCode(3.0)));
+    CHECK(other.GetStore()->Get() != nullptr);
+    CHECK(store->Get() == second);
 }
 
 int
@@ -7962,8 +8799,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = _SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
     // The rig adapter's keyless registration, before any test builds a
@@ -7972,8 +8808,7 @@ main(int argc, char **argv)
     // not provide the generated plugInfo.
     const std::string imagingResources = _ImagingResourceDir();
     if (!imagingResources.empty() &&
-        PlugRegistry::GetInstance().RegisterPlugins(
-            imagingResources).empty()) {
+        PlugRegistry::GetInstance().RegisterPlugins(imagingResources).empty()) {
         std::printf("FATAL: no imaging plugin found at %s\n",
                     imagingResources.c_str());
         return 2;
@@ -8032,6 +8867,12 @@ main(int argc, char **argv)
     // The real chain with an upstream scene index installed; every session
     // it opens is deactivated on the way out.
     TestUpstreamSceneIndexDrivesRigInputs(examplesDir);
+
+    // The published-versus-query contract, the guide-cache invalidation
+    // routes, and the store-ownership constructors, pinned directly.
+    TestQuerySnapshotPublicationIsolation();
+    TestGuideCacheInvalidationBareVersusForwarded();
+    TestExternallyOwnedStoreConstructor();
 
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);
