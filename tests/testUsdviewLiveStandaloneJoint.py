@@ -5,8 +5,16 @@
 import ctypes
 import os
 
-from pxr import Gf, Sdf, UsdGeom
+from pxr import Gf, Sdf, UsdGeom, UsdUtils
 from pxr.Usdviewq.qt import QtWidgets
+
+
+def _StageCacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read per call. While the
+    blank stage is uncached (-1) the read answers like an inactive
+    context: generation 0."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
 
 
 def _Observer():
@@ -34,24 +42,28 @@ def testUsdviewInputFunction(appController):
     from rigExecUsdview import ImagingLibraryPath
 
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
+    dll.RigExecImaging_GetGenerationForStage.argtypes = [ctypes.c_longlong]
+    dll.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
 
     model = appController._dataModel
     stage = model.stage
     model.viewSettings.showHUD = False
     if any(prim.GetTypeName() == "RigExecRoot" for prim in stage.Traverse()):
         raise AssertionError("live-authoring fixture is not blank")
-    generation0 = dll.RigExecImaging_GetGeneration()
+    generation0 = dll.RigExecImaging_GetGenerationForStage(
+        _StageCacheId(stage))
 
     root = stage.DefinePrim("/RigExecRoot1", "RigExecRoot")
     stage.DefinePrim("/RigExecRoot1/Joints", "Scope")
-    if dll.RigExecImaging_GetGeneration() != generation0:
+    if dll.RigExecImaging_GetGenerationForStage(
+            _StageCacheId(stage)) != generation0:
         raise AssertionError("empty intermediate rig activated too early")
 
     joint = stage.DefinePrim(
         "/RigExecRoot1/Joints/RigExecJoint1", "RigExecJoint")
     appController._processEvents()
-    generation1 = dll.RigExecImaging_GetGeneration()
+    generation1 = dll.RigExecImaging_GetGenerationForStage(
+        _StageCacheId(stage))
     if generation1 <= generation0:
         raise AssertionError(
             "live-authored joint did not activate RigExec: %d -> %d" %

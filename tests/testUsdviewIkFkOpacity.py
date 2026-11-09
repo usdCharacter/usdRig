@@ -28,7 +28,7 @@ import ctypes
 import os
 import sys
 
-from pxr import Sdf, Usd
+from pxr import Sdf, Usd, UsdUtils
 
 RIG = "/Biped/Rig"
 GUIDE_CHILD = "rigGuideCtrl"
@@ -62,10 +62,22 @@ def _Check(condition, message):
         raise AssertionError(message)
 
 
+def _StageCacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read per call (-1 while it
+    is not in the cache, which answers like an inactive context)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
+
+
+def _Generation(dll, stage):
+    return dll.RigExecImaging_GetGenerationForStage(_StageCacheId(stage))
+
+
 def _LoadDll():
     from rigExecUsdview import ImagingLibraryPath
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
+    dll.RigExecImaging_GetGenerationForStage.argtypes = [ctypes.c_longlong]
+    dll.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
     return dll
 
 
@@ -142,7 +154,7 @@ def testUsdviewInputFunction(appController):
     api = appController._usdviewApi
     stage = api.stage
     dll = _LoadDll()
-    _Check(dll.RigExecImaging_GetGeneration() >= 1,
+    _Check(_Generation(dll, stage) >= 1,
            "RigExec activated on the biped")
 
     # Every edit goes to the session layer; the checked-in rig is never
@@ -176,10 +188,10 @@ def testUsdviewInputFunction(appController):
 
     # --- 1. the wiring alone republishes, and fades the parked sets -------
     # arm_l is parked at 0 (FK) in the file, leg_l at 1 (IK).
-    generation0 = dll.RigExecImaging_GetGeneration()
+    generation0 = _Generation(dll, stage)
     wired = params.wire_ikfk_opacity(stage, verbose=False)
     appController._processEvents()
-    generation1 = dll.RigExecImaging_GetGeneration()
+    generation1 = _Generation(dll, stage)
     _Check(generation1 > generation0,
            "authoring the connections republished: generation %d -> %d"
            % (generation0, generation1))
@@ -240,10 +252,10 @@ def testUsdviewInputFunction(appController):
              (0.9, 0.9, FLOOR), (0.0, FLOOR, 1.0))
     trace = []
     for value, ikExpected, fkExpected in steps:
-        before = dll.RigExecImaging_GetGeneration()
+        before = _Generation(dll, stage)
         dialArm.Set(value)
         appController._processEvents()
-        after = dll.RigExecImaging_GetGeneration()
+        after = _Generation(dll, stage)
         _Check(after > before,
                "ikfk = %g republished: generation %d -> %d"
                % (value, before, after))
@@ -322,5 +334,5 @@ def testUsdviewInputFunction(appController):
           "floor %.2f authorable; generation %d -> %d; si=%s"
           % (len(wired),
              ", ".join("%g -> (%.2f, %.2f)" % t for t in trace),
-             FLOOR, generation0, dll.RigExecImaging_GetGeneration(),
+             FLOOR, generation0, _Generation(dll, stage),
              sceneIndexName))
