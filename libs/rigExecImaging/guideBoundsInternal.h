@@ -9,17 +9,25 @@
 #include "snapshotStore.h"
 
 #include "pxr/base/gf/range3d.h"
+#include "pxr/base/gf/vec3d.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
 
+#include <cmath>
+
 namespace rigExec {
 
-// Weight guide draw-mode tokens. Defined once with the bounds helpers in
-// guideBounds.cpp; the rest-pose fallback in guideExtent.cpp compares
-// against them.
-extern const TfToken _tWeightCage, _tWeightBrackets, _tWeightShell,
-    _tWeightWire, _tWeightGeometry, _tWeightFalloff;
+// Bounds are allowed to be too big and are never allowed to be too small,
+// but never to a NaN or an infinity: a reader thread framing a camera needs
+// a representable box, and one overflowing authored value must not poison
+// the whole range.
+template <typename Vec>
+inline bool
+_AllFinite(const Vec &v)
+{
+    return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]);
+}
 
 PXR_NS::GfRange3d _CustomControlRange(const PXR_NS::VtVec3fArray &points,
                                       const PXR_NS::VtIntArray &counts);

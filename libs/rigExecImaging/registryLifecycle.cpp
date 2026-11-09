@@ -16,6 +16,7 @@
 
 #include "rigExec/backgroundScheduler.h"
 #include "rigExec/frameCache.h"
+#include "rigExecSchema/schemaTokens.h"
 
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/token.h"
@@ -38,7 +39,7 @@ namespace rigExec {
 
 namespace {
 
-const TfToken _tRigRootType("RigExecRoot");
+const TfToken &_tRigRootType = SchemaType::RigExecRoot;
 
 // The warming pool a context owns while it has an active rig. The hook holds
 // the index shared: transitions record into shared state past whatever the
@@ -182,7 +183,7 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
         rigPaths.push_back(rigPath);
     } else {
         for (const UsdPrim &prim : stage->Traverse()) {
-            if (prim.GetTypeName() == "RigExecRoot") {
+            if (prim.GetTypeName() == _tRigRootType) {
                 rigPaths.push_back(prim.GetPath());
             }
         }
@@ -294,7 +295,7 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
     // scene-index scopes, or published store.
     for (const SdfPath &path : rigPaths) {
         const UsdPrim rig = stage->GetPrimAtPath(path);
-        if (!rig || rig.GetTypeName() != "RigExecRoot") {
+        if (!rig || rig.GetTypeName() != _tRigRootType) {
             if (errors) {
                 errors->push_back("activation path is not a RigExecRoot: " +
                                   path.GetString());
@@ -380,14 +381,14 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
             session.upstream = _UpstreamShare(
                 found != _upstreamTables.end() ? found->second : nullptr,
                 {session.assetRoot});
-            _HandOffUpstreamLocked(&session, initialTime);
+            _HandOffUpstreamLocked(session, initialTime);
         }
     }
     std::shared_ptr<RigExecImagingSnapshot> initialSnapshot;
     RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
         initialCompiledRig;
-    if (!_EvaluateSessions(&candidate, stage, initialTime, &initialSnapshot,
-                           &initialCompiledRig, errors)) {
+    if (!_EvaluateSessions(candidate, stage, initialTime, initialSnapshot,
+                           initialCompiledRig, errors)) {
         abandon(true);
         return false;
     }

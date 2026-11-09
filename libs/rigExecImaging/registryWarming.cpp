@@ -489,12 +489,9 @@ RigExecImagingRegistry::GetWarmingProgressCount()
 }
 
 void
-RigExecImagingRegistry::_NotePendingRewarm(RigSession *session,
+RigExecImagingRegistry::_NotePendingRewarm(RigSession &session,
                                            const std::vector<double> &times)
 {
-    if (!session) {
-        return;
-    }
     // De-duplicated against the standing list; capped past which the
     // overflow is dropped (dirtied frames stay visitable, so the cursor
     // sweep covers them when a range is set, and every frame still
@@ -504,13 +501,13 @@ RigExecImagingRegistry::_NotePendingRewarm(RigSession *session,
         if (!std::isfinite(time)) {
             continue;
         }
-        if (session->pendingRewarm.size() >= kPendingRewarmCap) {
+        if (session.pendingRewarm.size() >= kPendingRewarmCap) {
             break;
         }
-        if (std::find(session->pendingRewarm.begin(),
-                      session->pendingRewarm.end(),
-                      time) == session->pendingRewarm.end()) {
-            session->pendingRewarm.push_back(time);
+        if (std::find(session.pendingRewarm.begin(),
+                      session.pendingRewarm.end(),
+                      time) == session.pendingRewarm.end()) {
+            session.pendingRewarm.push_back(time);
         }
     }
 }

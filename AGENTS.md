@@ -195,6 +195,15 @@ cycle handling, and native/frozen/runtime parity. See
   than replaying them.
 - Core code never names an external mover. Plugin movers go through the
   generic contract in [external movers](docs/concepts/external-movers.md).
+- Name schema types, prim-role names, attribute names, and repeated tokens
+  through the schema libraries' codified constants (`UsdGeomTokens->guide`,
+  `libs/rigExecSchema/schemaTokens.h` for the codeless RigExec schema,
+  `TF_DEFINE_PRIVATE_TOKENS`), never through string literals at the use
+  site. Declare each token once at namespace scope and reuse it.
+- Avoid raw pointers. Owned objects go through `std::unique_ptr` /
+  `std::shared_ptr`; a required non-null parameter takes a reference (or a
+  const reference for a read-only borrow); a raw pointer appears only as
+  optional or borrowed access, is null-checked before use, and never owns.
 - Never write back to the stage. Compile, evaluation, activation, caching,
   playback and imaging author nothing: no session-layer or edit-target
   opinions, no derived relationship targets or defaults, no cached results.

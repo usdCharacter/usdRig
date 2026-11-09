@@ -11,7 +11,6 @@
 #include "pxr/usd/usdUtils/stageCache.h"
 
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -47,6 +46,11 @@ _Generation(const RigExecImagingRegistry &registry)
     return snapshot ? static_cast<long long>(snapshot->generation) : 0;
 }
 
+// Reads the current generation's published scalar mover outputs
+// (RigExecImagingSnapshot::movedFloats) for caller-supplied property
+// paths, newline-packed; an empty, malformed, or unpublished path leaves
+// its slot zero. With no generation published nothing is read and the
+// return is 0; otherwise the return counts the slots filled.
 int
 _MovedFloats(const RigExecImagingRegistry &registry, const char *packedPaths,
              float *out, int count)
@@ -411,9 +415,9 @@ RigExecImaging_GetControlFrameAssetSpace(long long stageCacheId,
         found = &it->second.volumeGuideFrame;
     if (!found)
         return 0;
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            outMatrix[r * 4 + c] = (*found)[r][c];
+    // GfMatrix4d stores contiguous row-major components (gf/matrix4d.h),
+    // exactly the outMatrix contract, so the whole matrix copies at once.
+    std::memcpy(outMatrix, found->data(), 16 * sizeof(double));
     return 1;
 }
 

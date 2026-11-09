@@ -127,7 +127,7 @@ RigExecImagingRegistry::_RefreshReadRoots()
     _readRootsDirty = false;
     if (!_upstreamTables.empty()) {
         for (RigSession &session : _sessions) {
-            _UpdateSessionUpstreamLocked(&session);
+            _UpdateSessionUpstreamLocked(session);
         }
     }
 }
@@ -200,57 +200,38 @@ RigExecImagingRegistry::_CancelGenerationTimesLocked(const SdfPath &rig)
     }
 }
 
+// No-oracle retirement: every completed time is affected. In-flight
+// times retire (their provenance publishes later); proofs retire by
+// the notice's paths.
 void
-RigExecImagingRegistry::_RetireAffectedTimesLocked(
-    RigSession *session, const UsdNotice::ObjectsChanged &notice,
-    RigExecNoticeDisposition disposition,
-    const std::vector<SdfPath> &patchedPaths)
+RigExecImagingRegistry::_RetireAllTimesLocked(
+    RigSession &session, const UsdNotice::ObjectsChanged &notice,
+    const std::vector<UsdTimeCode> &inFlight)
 {
-    if (!session || !session->bridge || session->playback || !_scheduler ||
-        !_warmIndex) {
-        return;
+    const SdfPath &rig = session.rigPath;
+    _CancelGenerationTimesLocked(rig);
+    const std::vector<UsdTimeCode> completed = _warmIndex->CompletedTimes(rig);
+    std::vector<double> rewarm;
+    for (const UsdTimeCode &time : inFlight) {
+        rewarm.push_back(time.GetValue());
     }
-    const SdfPath &rig = session->rigPath;
-    RigExecProfileScope retireScope(session->bridge->MutableProfiler(),
-                                    "Notice.RetireAffectedTimes", "notice");
-    _warmIndex->InvalidateRequest(rig);
-    RigExecImagingBridge *bridge = session->bridge.get();
-    // Snapshot in-flight work before completions: a first-fill job that
-    // finishes between the reads must be covered by at least one set.
-    const std::vector<UsdTimeCode> inFlight = _scheduler->InFlightTimes(rig);
-    const RigExecBakedProgram *program =
-        bridge->GetEvaluator().GetBakedProgram();
-    const RigExecOutputAffectedIndex *index = [&]() {
-        RigExecProfileScope scope(bridge->MutableProfiler(),
-                                  "Notice.AffectedIndex", "notice");
-        return bridge->GetAffectedIndex();
-    }();
-    if (!program || !index || index->Empty()) {
-        // No oracle: every completed time is affected, as before. In-flight
-        // times retire (their provenance publishes later); proofs retire
-        // by the notice's paths.
-        _CancelGenerationTimesLocked(rig);
-        const std::vector<UsdTimeCode> completed =
-            _warmIndex->CompletedTimes(rig);
-        std::vector<double> rewarm;
-        for (const UsdTimeCode &time : inFlight) {
-            rewarm.push_back(time.GetValue());
-        }
-        for (const UsdTimeCode &time : completed) {
-            rewarm.push_back(time.IsDefault() ? 0.0 : time.GetValue());
-        }
-        _NotePendingRewarm(session, rewarm);
-        bridge->RetireProofsForControls(RigExecNoticeControlIds(notice));
-        return;
+    for (const UsdTimeCode &time : completed) {
+        rewarm.push_back(time.IsDefault() ? 0.0 : time.GetValue());
     }
-    // The edit's controls: the evaluator's exact patched set for a
-    // patch (no notice noise -- a Patched notice carries nothing but
-    // patchable values and their ancestors), the full adapter for a
-    // stamp bump. A routed edit names only the properties the program
-    // reads, so a property nothing reads retires nothing; each named one
-    // stands for itself where the index knows it -- an overridable input,
-    // seeded as an override on it is -- and brings its prim along where
-    // it does not, which is the adapter's own answer for it.
+    _NotePendingRewarm(session, rewarm);
+    session.bridge->RetireProofsForControls(RigExecNoticeControlIds(notice));
+}
+
+// The edit's controls: the evaluator's exact patched set for a patch (a
+// Patched notice carries only patchable values and ancestors), the full
+// adapter for a stamp bump. Each named property stands for itself where
+// the index knows it, and brings its prim along where it does not.
+std::vector<RigExecControlId>
+_NoticeEditControls(const UsdNotice::ObjectsChanged &notice,
+                    RigExecNoticeDisposition disposition,
+                    const std::vector<SdfPath> &patchedPaths,
+                    const RigExecOutputAffectedIndex &index)
+{
     std::vector<RigExecControlId> controls;
     if (disposition == RigExecNoticeDisposition::Edited) {
         std::set<RigExecControlId> ids;
@@ -260,7 +241,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
             }
             const RigExecControlId id = RigExecControlIdForPath(path);
             ids.insert(id);
-            if (path.IsPropertyPath() && !index->IsKnownControl(id)) {
+            if (path.IsPropertyPath() && !index.IsKnownControl(id)) {
                 ids.insert(RigExecControlIdForPath(path.GetPrimPath()));
             }
         }
@@ -280,10 +261,14 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
     } else {
         controls = RigExecNoticeControlIds(notice);
     }
-    const RigExecBakedClusterSet dirty = index->AffectedByControls(controls);
-    // Weight-object edits: a notice path at or under a weight object an
-    // entry read (WeightPacket steps resolve through step.object, outside
-    // the avar-only index, so the provenance read set is the oracle).
+    return controls;
+}
+
+// Every path an edit could reach: resynced and changed paths, each
+// property also standing for its prim, plus resolved asset paths.
+std::vector<SdfPath>
+_NoticeEditPaths(const UsdNotice::ObjectsChanged &notice)
+{
     std::vector<SdfPath> noticePaths;
     for (const SdfPath &path : notice.GetResyncedPaths()) {
         noticePaths.push_back(path);
@@ -297,12 +282,82 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
     for (const SdfPath &path : notice.GetResolvedAssetPathsResyncedPaths()) {
         noticePaths.push_back(path);
     }
+    return noticePaths;
+}
+
+// Whether a warmed entry's recorded provenance reaches the edit, by the
+// executor's own dirtiness rule (bakedSchedule). Constant regions are
+// recorded but deliberately NOT consulted: the patchable binding's
+// compose-cluster cone is the exact oracle.
+bool
+_EntryAffectedByEdit(const RigExecEntryProvenance &provenance,
+                     const RigExecBakedClusterSet &dirty,
+                     const std::vector<SdfPath> &noticePaths)
+{
+    for (const int cluster : provenance.clusters) {
+        // Bounded by hand: ClusterSet::Test guards negative
+        // only, and provenance is publisher-controlled.
+        if (cluster >= 0 && size_t(cluster) < dirty.words.size() * 64 &&
+            dirty.Test(cluster)) {
+            return true;
+        }
+    }
+    for (size_t i = 0; i < provenance.weightReads.size(); ++i) {
+        const SdfPath weight(provenance.weightReads[i]);
+        if (weight.IsEmpty()) {
+            continue;
+        }
+        for (const SdfPath &path : noticePaths) {
+            if (path == weight || path.HasPrefix(weight)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void
+RigExecImagingRegistry::_RetireAffectedTimesLocked(
+    RigSession &session, const UsdNotice::ObjectsChanged &notice,
+    RigExecNoticeDisposition disposition,
+    const std::vector<SdfPath> &patchedPaths)
+{
+    if (!session.bridge || session.playback || !_scheduler || !_warmIndex) {
+        return;
+    }
+    const SdfPath &rig = session.rigPath;
+    RigExecProfileScope retireScope(session.bridge->MutableProfiler(),
+                                    "Notice.RetireAffectedTimes", "notice");
+    _warmIndex->InvalidateRequest(rig);
+    RigExecImagingBridge &bridge = *session.bridge;
+    // Snapshot in-flight work before completions: a first-fill job that
+    // finishes between the reads must be covered by at least one set.
+    const std::vector<UsdTimeCode> inFlight = _scheduler->InFlightTimes(rig);
+    const RigExecBakedProgram *program =
+        bridge.GetEvaluator().GetBakedProgram();
+    const RigExecOutputAffectedIndex *index = [&]() {
+        RigExecProfileScope scope(bridge.MutableProfiler(),
+                                  "Notice.AffectedIndex", "notice");
+        return bridge.GetAffectedIndex();
+    }();
+    if (!program || !index || index->Empty()) {
+        // No oracle: every completed time is affected, as before.
+        _RetireAllTimesLocked(session, notice, inFlight);
+        return;
+    }
+    const std::vector<RigExecControlId> controls =
+        _NoticeEditControls(notice, disposition, patchedPaths, *index);
+    const RigExecBakedClusterSet dirty = index->AffectedByControls(controls);
+    // Weight-object edits: a notice path at or under a weight object an
+    // entry read (WeightPacket steps resolve through step.object, outside
+    // the avar-only index, so the provenance read set is the oracle).
+    const std::vector<SdfPath> noticePaths = _NoticeEditPaths(notice);
     const uint64_t newConstants = [&]() {
-        RigExecProfileScope scope(bridge->MutableProfiler(),
+        RigExecProfileScope scope(bridge.MutableProfiler(),
                                   "Notice.ConstantDigest", "notice");
         return RigExecCompiledRigConstantDigest(*program);
     }();
-    const std::shared_ptr<RigExecFrameCache> cache = bridge->GetFrameCache();
+    const std::shared_ptr<RigExecFrameCache> cache = bridge.GetFrameCache();
     const std::vector<std::pair<UsdTimeCode, RigExecFrameCacheKey>> done =
         _warmIndex->CompletedKeys(rig);
     std::vector<UsdTimeCode> purge = inFlight;
@@ -311,7 +366,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         rewarm.push_back(time.GetValue());
     }
     for (const auto &entry : done) {
-        RigExecProfileScope entryScope(bridge->MutableProfiler(),
+        RigExecProfileScope entryScope(bridge.MutableProfiler(),
                                        "Notice.RetireEntry", "notice");
         const UsdTimeCode time = entry.first;
         const RigExecFrameCacheKey &oldKey = entry.second;
@@ -320,37 +375,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
         bool affected = true;
         if (cache && cache->LookupProvenance(oldKey, &provenance) &&
             provenance.unfoldedControlDigest != 0) {
-            // The affected test is the executor's own dirtiness rule
-            // (bakedSchedule): an entry's pose moved exactly when a
-            // dirty cluster reaches its computation, or an edited weight
-            // object feeds it. Constant regions are recorded in the
-            // provenance but deliberately NOT consulted: the patchable
-            // binding's compose-cluster cone is the exact oracle (a
-            // seedless binding dirties nothing and carries), while
-            // regions over-approximate by stride.
-            affected = false;
-            for (const int cluster : provenance.clusters) {
-                // Bounded by hand: ClusterSet::Test guards negative
-                // only, and provenance is publisher-controlled.
-                if (cluster >= 0 && size_t(cluster) < dirty.words.size() * 64 &&
-                    dirty.Test(cluster)) {
-                    affected = true;
-                    break;
-                }
-            }
-            for (size_t i = 0; !affected && i < provenance.weightReads.size();
-                 ++i) {
-                const SdfPath weight(provenance.weightReads[i]);
-                if (weight.IsEmpty()) {
-                    continue;
-                }
-                for (const SdfPath &path : noticePaths) {
-                    if (path == weight || path.HasPrefix(weight)) {
-                        affected = true;
-                        break;
-                    }
-                }
-            }
+            affected = _EntryAffectedByEdit(provenance, dirty, noticePaths);
         }
         if (!affected) {
             // Lane a/b: the entry's computation touches nothing dirty.
@@ -358,7 +383,7 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
             // zero recompute); otherwise it stands untouched -- no purge,
             // no dirty flag, no requeue. A failed carry degrades to
             // lane c rather than stranding the frame.
-            if (cache && bridge->CarryEntry(time, oldKey, newConstants)) {
+            if (cache && bridge.CarryEntry(time, oldKey, newConstants)) {
                 // The new key holds the row now: old-key jobs queued or
                 // running for this time must drop, not resurrect it.
                 purge.push_back(time);
@@ -397,9 +422,9 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
     // published yet, so it cannot safely be classified as unaffected.
     _scheduler->CancelGenerationTimes(rig, purge);
     _NotePendingRewarm(session, rewarm);
-    RigExecProfileScope proofScope(bridge->MutableProfiler(),
+    RigExecProfileScope proofScope(bridge.MutableProfiler(),
                                    "Notice.RetireProofs", "notice");
-    bridge->RetireProofsForControls(controls);
+    bridge.RetireProofsForControls(controls);
 }
 
 void
@@ -737,8 +762,8 @@ RigExecImagingRegistry::_OnObjectsChanged(
                                    RigExecNoticeDisposition::Edited ||
                                disposition ==
                                    RigExecNoticeDisposition::StampBumped) {
-                        _RetireAffectedTimesLocked(&session, notice,
-                                                   disposition, patchedPaths);
+                        _RetireAffectedTimesLocked(session, notice, disposition,
+                                                   patchedPaths);
                     } else {
                         // A new edit bumps the warming generation and
                         // cancels in-flight jobs for the rig; the commit

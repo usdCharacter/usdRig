@@ -10,6 +10,7 @@
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/hash.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/base/vt/array.h"
@@ -31,6 +32,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -182,74 +184,157 @@ _ParsePreviewElementCount(const std::string &text, size_t *count)
     return true;
 }
 
-// How many doubles a value of this type takes, and the token naming how to
-// rebuild it. An unsupported type returns an empty token: a manipulation
-// cannot preview a value it cannot reconstruct, and saying so at declaration
-// time is better than guessing per sample. An element count is required for,
-// and only accepted on, an array slot: float[], float2[], or any type held
-// as a VtVec3fArray (point3f[], float3[], vector3f[], normal3f[], ...).
+// Doubles per element and the builder-kind token for each declared type;
+// an empty token means the type cannot be previewed. An element count is
+// required for, and only accepted on, an array slot. The rule table keys
+// on the codified SdfValueTypeNames tokens; unlisted types are checked
+// against their stored representation, which admits custom vec3f-array-
+// backed types.
+const TfToken kPreviewDouble("double"), kPreviewFloat("float"),
+    kPreviewVec3d("vec3d"), kPreviewVec3f("vec3f"),
+    kPreviewMatrix4d("matrix4d"), kPreviewFloat2Array("float2[]"),
+    kPreviewVec3fArray("vec3f[]");
+
+VtValue
+_BuildFloatArrayValue(const double *v, size_t arity)
+{
+    VtFloatArray array(arity);
+    float *out = array.data();
+    for (size_t i = 0; i < arity; ++i)
+        out[i] = float(v[i]);
+    return VtValue(std::move(array));
+}
+
+VtValue
+_BuildFloat2ArrayValue(const double *v, size_t arity)
+{
+    VtVec2fArray array(arity / 2);
+    GfVec2f *out = array.data();
+    for (size_t i = 0; i < array.size(); ++i) {
+        out[i] = GfVec2f(float(v[2 * i]), float(v[2 * i + 1]));
+    }
+    return VtValue(std::move(array));
+}
+
+VtValue
+_BuildVec3fArrayValue(const double *v, size_t arity)
+{
+    VtVec3fArray array(arity / 3);
+    GfVec3f *out = array.data();
+    for (size_t i = 0; i < array.size(); ++i) {
+        out[i] =
+            GfVec3f(float(v[3 * i]), float(v[3 * i + 1]), float(v[3 * i + 2]));
+    }
+    return VtValue(std::move(array));
+}
+
+VtValue
+_BuildDoubleValue(const double *v, size_t)
+{
+    return VtValue(v[0]);
+}
+
+VtValue
+_BuildFloatValue(const double *v, size_t)
+{
+    return VtValue(float(v[0]));
+}
+
+VtValue
+_BuildVec3dValue(const double *v, size_t)
+{
+    return VtValue(GfVec3d(v[0], v[1], v[2]));
+}
+
+VtValue
+_BuildVec3fValue(const double *v, size_t)
+{
+    return VtValue(GfVec3f(float(v[0]), float(v[1]), float(v[2])));
+}
+
+VtValue
+_BuildMatrix4dValue(const double *v, size_t)
+{
+    return VtValue(GfMatrix4d(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                              v[8], v[9], v[10], v[11], v[12], v[13], v[14],
+                              v[15]));
+}
+
+// Declared type token -> (value kind, doubles per element, array kind).
+struct PreviewTypeRule {
+    TfToken kind;
+    size_t perElement;
+    bool arrayKind;
+};
+
+const std::unordered_map<TfToken, PreviewTypeRule, TfHash> kPreviewTypeRules = {
+    {SdfValueTypeNames->FloatArray.GetAsToken(), {kPreviewFloatArray, 1, true}},
+    {SdfValueTypeNames->Float2Array.GetAsToken(),
+     {kPreviewFloat2Array, 2, true}},
+    {SdfValueTypeNames->Point3fArray.GetAsToken(),
+     {kPreviewVec3fArray, 3, true}},
+    {SdfValueTypeNames->Float3Array.GetAsToken(),
+     {kPreviewVec3fArray, 3, true}},
+    {SdfValueTypeNames->Vector3fArray.GetAsToken(),
+     {kPreviewVec3fArray, 3, true}},
+    {SdfValueTypeNames->Normal3fArray.GetAsToken(),
+     {kPreviewVec3fArray, 3, true}},
+    {SdfValueTypeNames->Double.GetAsToken(), {kPreviewDouble, 1, false}},
+    {SdfValueTypeNames->Float.GetAsToken(), {kPreviewFloat, 1, false}},
+    {SdfValueTypeNames->Double3.GetAsToken(), {kPreviewVec3d, 3, false}},
+    {SdfValueTypeNames->Vector3d.GetAsToken(), {kPreviewVec3d, 3, false}},
+    {SdfValueTypeNames->Point3d.GetAsToken(), {kPreviewVec3d, 3, false}},
+    {SdfValueTypeNames->Normal3d.GetAsToken(), {kPreviewVec3d, 3, false}},
+    {SdfValueTypeNames->Float3.GetAsToken(), {kPreviewVec3f, 3, false}},
+    {SdfValueTypeNames->Vector3f.GetAsToken(), {kPreviewVec3f, 3, false}},
+    {SdfValueTypeNames->Point3f.GetAsToken(), {kPreviewVec3f, 3, false}},
+    {SdfValueTypeNames->Normal3f.GetAsToken(), {kPreviewVec3f, 3, false}},
+    {SdfValueTypeNames->Matrix4d.GetAsToken(), {kPreviewMatrix4d, 16, false}},
+};
+
+// Value kind -> the builder that reconstructs one sample from the slot's
+// doubles.
+const std::unordered_map<TfToken, VtValue (*)(const double *, size_t), TfHash>
+    kPreviewValueBuilders = {
+        {kPreviewFloatArray, &_BuildFloatArrayValue},
+        {kPreviewFloat2Array, &_BuildFloat2ArrayValue},
+        {kPreviewVec3fArray, &_BuildVec3fArrayValue},
+        {kPreviewDouble, &_BuildDoubleValue},
+        {kPreviewFloat, &_BuildFloatValue},
+        {kPreviewVec3d, &_BuildVec3dValue},
+        {kPreviewVec3f, &_BuildVec3fValue},
+        {kPreviewMatrix4d, &_BuildMatrix4dValue},
+};
+
+// A custom type held as a VtVec3fArray previews as a vec3f[].
+const PreviewTypeRule kVec3fBackedRule{kPreviewVec3fArray, 3, true};
+
 TfToken
 _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
                   size_t elementCount, size_t *arity)
 {
-    static const TfToken kDouble("double");
-    static const TfToken kFloat("float");
-    static const TfToken kVec3d("vec3d");
-    static const TfToken kVec3f("vec3f");
-    static const TfToken kMatrix4d("matrix4d");
-    static const TfToken kFloat2Array("float2[]");
-    static const TfToken kVec3fArray("vec3f[]");
     *arity = 0;
-    if (type == SdfValueTypeNames->FloatArray) {
-        if (!hasElementCount)
-            return TfToken();
-        *arity = elementCount;
-        return kPreviewFloatArray;
-    }
-    if (type == SdfValueTypeNames->Float2Array) {
-        if (!hasElementCount) {
-            return TfToken();
-        }
-        *arity = 2 * elementCount;
-        return kFloat2Array;
-    }
-    if (type.GetType() == TfType::Find<VtVec3fArray>()) {
-        if (!hasElementCount) {
-            return TfToken();
-        }
-        *arity = 3 * elementCount;
-        return kVec3fArray;
-    }
-    if (hasElementCount) {
+    const auto rule = kPreviewTypeRules.find(type.GetAsToken());
+    const PreviewTypeRule *matched = nullptr;
+    if (rule != kPreviewTypeRules.end()) {
+        matched = &rule->second;
+    } else if (type.GetType() == TfType::Find<VtVec3fArray>()) {
+        matched = &kVec3fBackedRule;
+    } else {
         return TfToken();
     }
-    if (type == SdfValueTypeNames->Double) {
-        *arity = 1;
-        return kDouble;
+    if (matched->arrayKind) {
+        if (!hasElementCount) {
+            return TfToken();
+        }
+        *arity = matched->perElement * elementCount;
+    } else {
+        if (hasElementCount) {
+            return TfToken();
+        }
+        *arity = matched->perElement;
     }
-    if (type == SdfValueTypeNames->Float) {
-        *arity = 1;
-        return kFloat;
-    }
-    if (type == SdfValueTypeNames->Double3 ||
-        type == SdfValueTypeNames->Vector3d ||
-        type == SdfValueTypeNames->Point3d ||
-        type == SdfValueTypeNames->Normal3d) {
-        *arity = 3;
-        return kVec3d;
-    }
-    if (type == SdfValueTypeNames->Float3 ||
-        type == SdfValueTypeNames->Vector3f ||
-        type == SdfValueTypeNames->Point3f ||
-        type == SdfValueTypeNames->Normal3f) {
-        *arity = 3;
-        return kVec3f;
-    }
-    if (type == SdfValueTypeNames->Matrix4d) {
-        *arity = 16;
-        return kMatrix4d;
-    }
-    return TfToken();
+    return matched->kind;
 }
 
 // \p arity is the slot's double count; a float2[] slot reads it as
@@ -257,48 +342,11 @@ _PreviewValueKind(const SdfValueTypeName &type, bool hasElementCount,
 VtValue
 _PreviewValue(const TfToken &kind, const double *v, size_t arity)
 {
-    if (kind == kPreviewFloatArray) {
-        VtFloatArray array(arity);
-        float *out = array.data();
-        for (size_t i = 0; i < arity; ++i)
-            out[i] = float(v[i]);
-        return VtValue(std::move(array));
+    const auto builder = kPreviewValueBuilders.find(kind);
+    if (builder == kPreviewValueBuilders.end()) {
+        return VtValue();
     }
-    if (kind == "float2[]") {
-        VtVec2fArray array(arity / 2);
-        GfVec2f *out = array.data();
-        for (size_t i = 0; i < array.size(); ++i) {
-            out[i] = GfVec2f(float(v[2 * i]), float(v[2 * i + 1]));
-        }
-        return VtValue(std::move(array));
-    }
-    if (kind == "vec3f[]") {
-        VtVec3fArray array(arity / 3);
-        GfVec3f *out = array.data();
-        for (size_t i = 0; i < array.size(); ++i) {
-            out[i] = GfVec3f(float(v[3 * i]), float(v[3 * i + 1]),
-                             float(v[3 * i + 2]));
-        }
-        return VtValue(std::move(array));
-    }
-    if (kind == "double") {
-        return VtValue(v[0]);
-    }
-    if (kind == "float") {
-        return VtValue(float(v[0]));
-    }
-    if (kind == "vec3d") {
-        return VtValue(GfVec3d(v[0], v[1], v[2]));
-    }
-    if (kind == "vec3f") {
-        return VtValue(GfVec3f(float(v[0]), float(v[1]), float(v[2])));
-    }
-    if (kind == "matrix4d") {
-        return VtValue(GfMatrix4d(v[0], v[1], v[2], v[3], v[4], v[5], v[6],
-                                  v[7], v[8], v[9], v[10], v[11], v[12], v[13],
-                                  v[14], v[15]));
-    }
-    return VtValue();
+    return builder->second(v, arity);
 }
 
 std::vector<std::string>

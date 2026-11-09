@@ -2,6 +2,7 @@
 // subtree accumulation an ancestor's extent answers with.
 #include "guideBoundsInternal.h"
 
+#include "rigExecSchema/schemaTokens.h"
 #include "sceneIndices.h"
 
 #include "pxr/base/gf/bbox3d.h"
@@ -17,10 +18,6 @@
 #include <cstddef>
 
 namespace rigExec {
-
-const TfToken _tWeightCage("cage"), _tWeightBrackets("brackets"),
-    _tWeightShell("shell"), _tWeightWire("wire"), _tWeightGeometry("geometry"),
-    _tWeightFalloff("falloff");
 
 PXR_NS::GfRange3d
 _CustomControlRange(const PXR_NS::VtVec3fArray &points,
@@ -53,34 +50,58 @@ bool
 _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
                        PXR_NS::GfRange3d *range)
 {
+    if (!range) {
+        return false;
+    }
     bool any = false;
 
-    // Joint and solver guides: a sphere where requested plus a cone reaching
-    // guideLength along that frame's +X axis. Joint link frames and lengths
-    // are derived from evaluated parent/child origins; solver elements derive
-    // them from frame landmarks. Bounding the cone by spheres at both ends is
-    // conservative by design and also covers sphere-less branch links.
+    // Joint and solver guides: a sphere at each frame origin plus a cone
+    // of guideLength along the frame's +X axis (row-vector row 0), bounded
+    // conservatively by spheres at both ends.
     for (size_t i = 0; i < published.guideFrames.size(); ++i) {
         const PXR_NS::GfMatrix4d &frame = published.guideFrames[i];
         const double radius =
             i < published.guideRadii.size() ? published.guideRadii[i] : 1.0;
         const double length =
             i < published.guideLengths.size() ? published.guideLengths[i] : 0.0;
+        // Producer contract (bridge.cpp _AppendGuideFrame): finite rigid
+        // frames, finite non-negative radius and length; a zero radius is
+        // a legal degenerate element. Anything else is a malformed
+        // snapshot: skip the element rather than poison the caller's range.
+        if (!std::isfinite(radius) || radius < 0.0 || !std::isfinite(length) ||
+            length < 0.0) {
+            continue;
+        }
         const PXR_NS::GfVec3d origin = frame.ExtractTranslation();
         // Row-vector convention: row 0 is the frame's X basis, and the
         // frame is orthonormalized upstream, so it is already unit length.
-        const PXR_NS::GfVec3d tip = origin + length * frame.GetRow3(0);
+        const PXR_NS::GfVec3d xAxis = frame.GetRow3(0);
+        if (!_AllFinite(origin) || !_AllFinite(xAxis)) {
+            continue;
+        }
+        const PXR_NS::GfVec3d tip = origin + length * xAxis;
         const PXR_NS::GfVec3d extent(radius, radius, radius);
-        range->UnionWith(origin - extent);
-        range->UnionWith(origin + extent);
-        range->UnionWith(tip - extent);
-        range->UnionWith(tip + extent);
+        // Apply each element whole or not at all: keeping the corners that
+        // did not overflow would frame an invented box whose far side is
+        // wherever the overflow happened to land.
+        const PXR_NS::GfVec3d corners[4] = {origin - extent, origin + extent,
+                                            tip - extent, tip + extent};
+        bool complete = _AllFinite(tip);
+        for (const PXR_NS::GfVec3d &corner : corners) {
+            complete = complete && _AllFinite(corner);
+        }
+        if (!complete) {
+            continue;
+        }
+        for (const PXR_NS::GfVec3d &corner : corners) {
+            range->UnionWith(corner);
+        }
         any = true;
     }
 
-    // Built-in control guides are documented as unit-sized and
-    // centred on the frame origin with half-extent 1
-    // extension), so the unit cube bounds all six of them. Deliberately
+    // Built-in control guides are documented as unit-sized: centred on the
+    // frame origin with half-extent 1, so the unit cube bounds all six of
+    // them. Deliberately
     // NOT the exact per-shape extent: that table lives in the scene index,
     // which this registry must not depend on, and using it would make the
     // framing distance jump around as an author retypes guide:shape
@@ -96,13 +117,13 @@ _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
         // pre-scale units, so the drawn geometry reaches half a width
         // past the unit shape BEFORE the per-axis scale applies.
         double halfWidth = 0.0;
-        if (published.controlGuideDrawMode == PXR_NS::TfToken("wire") &&
+        if (published.controlGuideDrawMode == SchemaValue::drawModeWire &&
             std::isfinite(published.controlGuideWireWidth) &&
             published.controlGuideWireWidth > 0.0) {
             halfWidth = published.controlGuideWireWidth * 0.5;
         }
         PXR_NS::GfRange3d local =
-            published.controlGuideShape == PXR_NS::TfToken("custom")
+            published.controlGuideShape == SchemaValue::shapeCustom
                 ? _CustomControlRange(published.controlGuidePoints,
                                       published.controlGuideCounts)
                 : PXR_NS::GfRange3d(PXR_NS::GfVec3d(-1), PXR_NS::GfVec3d(1));
@@ -112,10 +133,13 @@ _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
                 PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
             PXR_NS::GfMatrix4d scale(1.0);
             scale.SetScale(published.controlGuideScale);
-            range->UnionWith(
+            const PXR_NS::GfRange3d drawn =
                 PXR_NS::GfBBox3d(local, scale * published.controlGuideFrame)
-                    .ComputeAlignedRange());
-            any = true;
+                    .ComputeAlignedRange();
+            if (_AllFinite(drawn.GetMin()) && _AllFinite(drawn.GetMax())) {
+                range->UnionWith(drawn);
+                any = true;
+            }
         }
     }
 
@@ -129,7 +153,11 @@ _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
          published.volumeGuides) {
         PXR_NS::GfRange3d local;
         for (const PXR_NS::GfVec3f &p : element.points) {
-            local.UnionWith(PXR_NS::GfVec3d(p));
+            // A non-finite point is a malformed snapshot, not geometry:
+            // drop it rather than let one NaN frame the whole rig.
+            if (_AllFinite(p)) {
+                local.UnionWith(PXR_NS::GfVec3d(p));
+            }
         }
         if (local.IsEmpty()) {
             local = PXR_NS::GfRange3d(PXR_NS::GfVec3d(-1, -1, -1),
@@ -143,9 +171,12 @@ _AccumulateGuideBounds(const rigExec::RigExecPublishedPrim &published,
             local =
                 PXR_NS::GfRange3d(local.GetMin() - pad, local.GetMax() + pad);
         }
-        range->UnionWith(
-            PXR_NS::GfBBox3d(local, element.xform).ComputeAlignedRange());
-        any = true;
+        const PXR_NS::GfRange3d drawn =
+            PXR_NS::GfBBox3d(local, element.xform).ComputeAlignedRange();
+        if (_AllFinite(drawn.GetMin()) && _AllFinite(drawn.GetMax())) {
+            range->UnionWith(drawn);
+            any = true;
+        }
     }
     return any;
 }
@@ -185,10 +216,14 @@ _AccumulateSubtreeGuideBounds(const rigExec::RigExecImagingSnapshot &snapshot,
     return any;
 }
 
-// Writes \p range out as min xyz then max xyz.
+// Writes \p range out as min xyz then max xyz; a null output buffer
+// writes nothing.
 void
 _WriteBounds(const PXR_NS::GfRange3d &range, double outMinMax[6])
 {
+    if (!outMinMax) {
+        return;
+    }
     const PXR_NS::GfVec3d min = range.GetMin();
     const PXR_NS::GfVec3d max = range.GetMax();
     for (int i = 0; i < 3; ++i) {

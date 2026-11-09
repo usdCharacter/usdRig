@@ -149,7 +149,7 @@ RigExecImagingRegistry::SetUpstreamTable(
     }
     _upstreamChain = chain;
     for (RigSession &session : _sessions) {
-        _UpdateSessionUpstreamLocked(&session);
+        _UpdateSessionUpstreamLocked(session);
     }
 }
 
@@ -167,7 +167,7 @@ RigExecImagingRegistry::DropUpstreamTable(const RigExecResultsSceneIndex *chain)
     }
     if (held) {
         for (RigSession &session : _sessions) {
-            _UpdateSessionUpstreamLocked(&session);
+            _UpdateSessionUpstreamLocked(session);
         }
     }
 }
@@ -222,47 +222,47 @@ RigExecImagingRegistry::GetUpstreamSerial(const SdfPath &rig)
 }
 
 void
-RigExecImagingRegistry::_UpdateSessionUpstreamLocked(RigSession *session)
+RigExecImagingRegistry::_UpdateSessionUpstreamLocked(RigSession &session)
 {
-    if (!session || (!session->bridge && !session->playback)) {
+    if (!session.bridge && !session.playback) {
         return;
     }
     const auto found = _upstreamTables.find(_upstreamChain);
-    std::set<SdfPath> roots{session->assetRoot};
-    if (!session->readRootsDirty) {
-        roots.insert(session->readRoots.begin(), session->readRoots.end());
+    std::set<SdfPath> roots{session.assetRoot};
+    if (!session.readRootsDirty) {
+        roots.insert(session.readRoots.begin(), session.readRoots.end());
     }
     std::shared_ptr<const RigExecUpstreamTable> share = _UpstreamShare(
         found != _upstreamTables.end() ? found->second : nullptr, roots);
-    const bool same = share == session->upstream ||
-                      (share && session->upstream &&
-                       RigExecSameUpstreamSources(*share, *session->upstream));
-    session->upstream = std::move(share);
+    const bool same = share == session.upstream ||
+                      (share && session.upstream &&
+                       RigExecSameUpstreamSources(*share, *session.upstream));
+    session.upstream = std::move(share);
     if (!same) {
         // The sources, the window or a frame value moved: rows warmed under
         // the old ones must not serve (FindCachedKey compares no digest). A
         // playback rig never warms.
-        ++session->upstreamSerial;
-        if (session->bridge) {
-            _CancelGenerationLocked(session->rigPath);
+        ++session.upstreamSerial;
+        if (session.bridge) {
+            _CancelGenerationLocked(session.rigPath);
         }
     }
 }
 
 void
-RigExecImagingRegistry::_HandOffUpstreamLocked(RigSession *session,
+RigExecImagingRegistry::_HandOffUpstreamLocked(RigSession &session,
                                                UsdTimeCode time)
 {
-    if (!session || (!session->bridge && !session->playback)) {
+    if (!session.bridge && !session.playback) {
         return;
     }
     std::vector<RigExecUpstreamValue> values;
-    if (session->upstream) {
+    if (session.upstream) {
         if (time.IsNumeric()) {
-            session->upstream->ValuesAt(time.GetValue(), &values);
+            session.upstream->ValuesAt(time.GetValue(), &values);
         } else {
             // At Default only uniform sources have a value.
-            for (const auto &[path, entry] : session->upstream->entries) {
+            for (const auto &[path, entry] : session.upstream->entries) {
                 if (!entry.varies) {
                     values.push_back(
                         RigExecUpstreamValue{path, entry.atT0, entry.hashAtT0});
@@ -272,14 +272,14 @@ RigExecImagingRegistry::_HandOffUpstreamLocked(RigSession *session,
     }
     // A playback session applies them to the binary's inputs at its next
     // generation (RigExecBakedPlayback::SetUpstreamInputs).
-    if (session->playback) {
-        if (values != session->playback->GetUpstreamInputs()) {
-            session->playback->SetUpstreamInputs(std::move(values));
-            session->dirty = true;
+    if (session.playback) {
+        if (values != session.playback->GetUpstreamInputs()) {
+            session.playback->SetUpstreamInputs(std::move(values));
+            session.dirty = true;
         }
-    } else if (values != session->bridge->GetUpstreamInputs()) {
-        session->bridge->SetUpstreamInputs(std::move(values));
-        session->dirty = true;
+    } else if (values != session.bridge->GetUpstreamInputs()) {
+        session.bridge->SetUpstreamInputs(std::move(values));
+        session.dirty = true;
     }
 }
 

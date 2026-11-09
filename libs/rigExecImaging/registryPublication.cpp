@@ -41,9 +41,9 @@ _HashCompiledRigPart(uint64_t hash, const std::string &value)
 
 bool
 RigExecImagingRegistry::_EvaluateSessions(
-    RigSessions *sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
-    std::shared_ptr<RigExecImagingSnapshot> *snapshot,
-    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr *compiledRig,
+    RigSessions &sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
+    std::shared_ptr<RigExecImagingSnapshot> &snapshot,
+    RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr &compiledRig,
     std::vector<std::string> *errors)
 {
     auto combined = std::make_shared<RigExecImagingSnapshot>();
@@ -57,7 +57,7 @@ RigExecImagingRegistry::_EvaluateSessions(
     SdfPath commonAssetRoot;
     bool firstRoot = true;
 
-    for (RigSession &session : *sessions) {
+    for (RigSession &session : sessions) {
         RigExecImagingSnapshotConstPtr rigSnapshot = session.store->Get();
         if (session.dirty || !rigSnapshot ||
             !rigSnapshot->Describes(stage, time)) {
@@ -167,8 +167,8 @@ RigExecImagingRegistry::_EvaluateSessions(
     // Reserve zero for the registry's no-published-compiled rig state.
     combinedCompiledRig->id = compiledRigId ? compiledRigId : 1;
     combined->assetRoot = commonAssetRoot;
-    *snapshot = std::move(combined);
-    *compiledRig = std::move(combinedCompiledRig);
+    snapshot = std::move(combined);
+    compiledRig = std::move(combinedCompiledRig);
     return true;
 }
 
@@ -207,62 +207,16 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
     // index's time trigger.
     std::unique_lock<std::mutex> lock(_mutex);
     if (_sessions.empty() || !_stage) {
-        if (_stage && !_authoredGuides.empty()) {
-            const auto current = _store->Get();
-            if (!_authoredGuidesDirty && current &&
-                current->Describes(_stage, time)) {
-                return false;
-            }
-            std::vector<SdfPath> roots;
-            for (const auto &entry : _authoredGuides)
-                roots.push_back(entry.first);
-            auto snapshot = _BuildAuthoredGuides(_stage, roots, time);
-            _lastTime = time;
-            const auto published = _Publish(std::move(snapshot), nullptr);
-            if (_authoredGuides.empty()) {
-                TfNotice::Revoke(_changeKey);
-                _changeKey = TfNotice::Key();
-                _stage.Reset();
-                _autoActivated = false;
-            }
-            lock.unlock();
-            _Broadcast(published);
-            return false;
-        }
-        // A plain stage has no evaluator, but its xform previews still
-        // compose against the host's displayed frame.
-        _lastTime = time;
-        return false;
+        return _SetTimeAuthoredGuidesLocked(lock, time);
     }
     // Live hand-off: each session's upstream values at this time. A moved
     // value dirties the session; a time move alone cancels no warming (the
     // warm rows fold each frame's own values).
     for (RigSession &session : _sessions) {
-        _HandOffUpstreamLocked(&session, time);
+        _HandOffUpstreamLocked(session, time);
     }
-    // A publish still dirties every prim in the generation through
-    // _Broadcast, even when it republishes content nothing changed -- so a
-    // redundant SetTime cost a full Hydra redraw for nothing. In usdview the
-    // generation was observed advancing by 2 per frame change while the
-    // plugin's Python _OnFrameChanged fired once, which means a second
-    // SetTime arrives from somewhere else (UpdatePreview/EndPreview,
-    // SetWeightOverlay and _OnObjectsChanged all republish at _lastTime).
-    // Rather than chase which, make the redundant one free: nothing dirty
-    // plus the same stage/time already published means there is nothing to
-    // say. Headless, generation advanced by exactly 1 per SetTime, so this
-    // guard is what closes the gap the usdview session showed.
-    if (!_readRootsDirty && _publishedCompiledRigId != 0) {
-        bool anyDirty = false;
-        for (const RigSession &session : _sessions) {
-            anyDirty = anyDirty || session.dirty || session.readRootsDirty;
-        }
-        if (!anyDirty) {
-            const RigExecImagingSnapshotConstPtr current = _store->Get();
-            if (current && current->Describes(UsdStageWeakPtr(_stage), time)) {
-                _lastTime = time;
-                return true;
-            }
-        }
+    if (_SetTimeIsRedundantLocked(time)) {
+        return true;
     }
     for (RigSession &session : _sessions) {
         session.settleOverrides.clear();
@@ -271,39 +225,14 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         _RefreshReadRoots();
         // Wider read roots may widen a session's upstream share.
         for (RigSession &session : _sessions) {
-            _HandOffUpstreamLocked(&session, time);
+            _HandOffUpstreamLocked(session, time);
         }
     }
     std::shared_ptr<RigExecImagingSnapshot> snapshot;
     RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr compiledRig;
-    if (!_EvaluateSessions(&_sessions, _stage, time, &snapshot, &compiledRig,
+    if (!_EvaluateSessions(_sessions, _stage, time, snapshot, compiledRig,
                            nullptr)) {
-        // A rig that can no longer evaluate stops driving the scene.
-        // The per-session bridge already cleared its own store on the way
-        // out, but this COMBINED generation is the one the scene indices
-        // read, and returning here left the last good one current: remove a
-        // mover's rigExec:moves and the recompile fails, so the mesh under
-        // the driven Xform stayed where the constraint had put it through
-        // every later edit and frame change.
-        // Replace driven results with authored guides and notify observers.
-        _lastTime = time;
-        RigExecImagingBridge::PublishResult cleared;
-        cleared.ok = true;
-        std::vector<SdfPath> roots;
-        for (const RigSession &session : _sessions)
-            roots.push_back(session.rigPath);
-        auto guides = _BuildAuthoredGuides(_stage, roots, time);
-        guides->generation = ++_generation;
-        RigExecImagingSnapshotConstPtr replaced = _store->Get();
-        cleared.dirtied = _store->Publish(std::move(guides));
-        WorkMoveDestroyAsync(replaced);
-        // The next good generation must re-announce its compiled rig; the one the
-        // binding index holds names prims this clear just removed.
-        _publishedCompiledRigId = 0;
-        _publishedCompiledRig.reset();
-        lock.unlock();
-        _Broadcast(cleared);
-        return false;
+        return _ClearDrivenResultsLocked(lock, time);
     }
     const UsdTimeCode previousTime = _lastTime;
     _lastTime = time;
@@ -349,6 +278,91 @@ RigExecImagingRegistry::SetTime(UsdTimeCode time)
         _BroadcastFramesChanged();
     }
     return true;
+}
+
+// SetTime with no live rig session driving the stage: republish the
+// authored guides at the new time, or just record the time for a plain
+// stage whose xform previews still compose against the host's displayed
+// frame. Returns SetTime's result.
+bool
+RigExecImagingRegistry::_SetTimeAuthoredGuidesLocked(
+    std::unique_lock<std::mutex> &lock, UsdTimeCode time)
+{
+    if (_stage && !_authoredGuides.empty()) {
+        const auto current = _store->Get();
+        if (!_authoredGuidesDirty && current &&
+            current->Describes(_stage, time)) {
+            return false;
+        }
+        std::vector<SdfPath> roots;
+        for (const auto &entry : _authoredGuides)
+            roots.push_back(entry.first);
+        auto snapshot = _BuildAuthoredGuides(_stage, roots, time);
+        _lastTime = time;
+        const auto published = _Publish(std::move(snapshot), nullptr);
+        if (_authoredGuides.empty()) {
+            TfNotice::Revoke(_changeKey);
+            _changeKey = TfNotice::Key();
+            _stage.Reset();
+            _autoActivated = false;
+        }
+        lock.unlock();
+        _Broadcast(published);
+        return false;
+    }
+    // A plain stage has no evaluator, but its xform previews still
+    // compose against the host's displayed frame.
+    _lastTime = time;
+    return false;
+}
+
+// Nothing dirty and the same stage/time already published: a redundant
+// SetTime must not cost a full Hydra redraw, because _Broadcast dirties
+// every prim of whatever it publishes.
+bool
+RigExecImagingRegistry::_SetTimeIsRedundantLocked(UsdTimeCode time)
+{
+    if (!_readRootsDirty && _publishedCompiledRigId != 0) {
+        bool anyDirty = false;
+        for (const RigSession &session : _sessions) {
+            anyDirty = anyDirty || session.dirty || session.readRootsDirty;
+        }
+        if (!anyDirty) {
+            const RigExecImagingSnapshotConstPtr current = _store->Get();
+            if (current && current->Describes(UsdStageWeakPtr(_stage), time)) {
+                _lastTime = time;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// A rig that can no longer evaluate stops driving the scene: the combined
+// generation is what the scene indices read, so clear it back to authored
+// guides and notify observers.
+bool
+RigExecImagingRegistry::_ClearDrivenResultsLocked(
+    std::unique_lock<std::mutex> &lock, UsdTimeCode time)
+{
+    _lastTime = time;
+    RigExecImagingBridge::PublishResult cleared;
+    cleared.ok = true;
+    std::vector<SdfPath> roots;
+    for (const RigSession &session : _sessions)
+        roots.push_back(session.rigPath);
+    auto guides = _BuildAuthoredGuides(_stage, roots, time);
+    guides->generation = ++_generation;
+    RigExecImagingSnapshotConstPtr replaced = _store->Get();
+    cleared.dirtied = _store->Publish(std::move(guides));
+    WorkMoveDestroyAsync(replaced);
+    // The next good generation must re-announce its compiled rig; the one the
+    // binding index holds names prims this clear just removed.
+    _publishedCompiledRigId = 0;
+    _publishedCompiledRig.reset();
+    lock.unlock();
+    _Broadcast(cleared);
+    return false;
 }
 
 void

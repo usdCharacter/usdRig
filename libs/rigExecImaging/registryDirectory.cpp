@@ -344,6 +344,9 @@ RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
 {
     // RIGEXEC_GPU_DEFORM=readback deforms on the GPU executor; the device
     // starts on its first run, not here.
+    // TODO: investigate whether these runner registrations belong at
+    // activation, so a context that never deforms or solves on the GPU
+    // pays nothing at construction.
     RigExecGpuRegisterDeformRunner();
     // Cloth solves on the GPU by default (RIGEXEC_GPU_CLOTH=0 keeps it on
     // the CPU); the device starts on the first solve.
@@ -448,6 +451,28 @@ RigExecImagingRegistry::RegisterChain(
     _AdoptChain(chain);
 }
 
+// Seeds a chain that just bound to no live context: fresh, not
+// stage-specific state, with every handle null-checked before use.
+void
+RigExecImagingRegistry::_UpdateChainUnbound(const Chain &chain, uint64_t key)
+{
+    if (chain.results) {
+        chain.results->SetContextKey(key);
+    }
+    if (chain.pruning) {
+        chain.pruning->SetOwnedScopes({});
+    }
+    if (chain.xforms) {
+        chain.xforms->SetWorldDeltas({});
+    }
+    if (chain.binding) {
+        chain.binding->SetCompiledRigBinding(nullptr);
+    }
+    if (chain.results) {
+        chain.results->SetStore(std::make_shared<RigExecSnapshotStore>());
+    }
+}
+
 void
 RigExecImagingRegistry::BindChain(const RigExecResultsSceneIndex *results,
                                   uint64_t key)
@@ -463,21 +488,7 @@ RigExecImagingRegistry::BindChain(const RigExecResultsSceneIndex *results,
     } else {
         // Unbound (or bound to a context whose stage is gone): nothing
         // stage-specific. Seeded as a fresh chain is.
-        if (chain.results) {
-            chain.results->SetContextKey(key);
-        }
-        if (chain.pruning) {
-            chain.pruning->SetOwnedScopes({});
-        }
-        if (chain.xforms) {
-            chain.xforms->SetWorldDeltas({});
-        }
-        if (chain.binding) {
-            chain.binding->SetCompiledRigBinding(nullptr);
-        }
-        if (chain.results) {
-            chain.results->SetStore(std::make_shared<RigExecSnapshotStore>());
-        }
+        _UpdateChainUnbound(chain, key);
     }
     // Its upstream sources described the old stage.
     if (const Ptr old = ForKey(previous)) {

@@ -8,9 +8,11 @@
 
 #include "rigExec/backgroundScheduler.h"
 #include "rigExec/frameCache.h"
+#include "rigExecSchema/schemaTokens.h"
 
 #include "warmIndex.h"
 
+#include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usd/timeCode.h"
 
@@ -165,8 +167,15 @@ RigExecImagingRegistry::GetFrameStates(const SdfPath &rig,
         return routed->GetFrameStates(rig, frames);
     }
     std::lock_guard<std::mutex> lock(_mutex);
-    if (frames.empty() || frames.size() > 100000) {
+    if (rig.IsEmpty() || frames.empty() || frames.size() > 100000) {
         return {};
+    }
+    // The states are positional per frame, so an unfinal frame is a
+    // malformed request rather than a row to skip.
+    for (const double frame : frames) {
+        if (!std::isfinite(frame)) {
+            return {};
+        }
     }
     const RigSession *session = nullptr;
     for (const RigSession &candidate : _sessions) {
@@ -176,7 +185,12 @@ RigExecImagingRegistry::GetFrameStates(const SdfPath &rig,
             break;
         }
     }
-    if (!session || !_scheduler || !_warmIndex) {
+    // Sessions are keyed by path alone: re-check the schema type that
+    // activation required before reporting that rig's frame states.
+    const UsdPrim rigPrim =
+        (_stage && session) ? _stage->GetPrimAtPath(rig) : UsdPrim();
+    if (!session || !_scheduler || !_warmIndex || !rigPrim ||
+        rigPrim.GetTypeName() != SchemaType::RigExecRoot) {
         return {};
     }
     const RigExecFrameGeneration generation =

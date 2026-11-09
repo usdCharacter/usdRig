@@ -68,7 +68,7 @@ RigExecImagingRegistry::_CachedFrameLocked(
         std::vector<RigExecUpstreamValue> held =
             session.playback ? session.playback->GetUpstreamInputs()
                              : session.bridge->GetUpstreamInputs();
-        _HandOffUpstreamLocked(&session, at);
+        _HandOffUpstreamLocked(session, at);
         RigExecImagingSnapshotConstPtr part;
         bool ok = false;
         if (session.playback) {
