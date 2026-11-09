@@ -329,6 +329,7 @@ add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
     libs/rigExecImaging/bridgeWarmPublication.cpp
+    libs/rigExecImaging/bridgeFreshness.cpp
     libs/rigExecImaging/registry.cpp
     libs/rigExecImaging/playback.cpp
     libs/rigExecImaging/sceneIndexPlugin.cpp
