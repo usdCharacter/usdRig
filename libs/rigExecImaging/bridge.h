@@ -31,9 +31,11 @@
 
 namespace rigExec {
 
+class RigExecBridgeFrameCache;
 class RigExecBridgeGuides;
 class RigExecBridgeSampling;
 class RigExecBridgeSnapshotBuilder;
+struct RigExecCacheServe;
 
 /// Drives one rig's evaluation into the imaging chain.
 class RigExecImagingBridge {
@@ -202,10 +204,7 @@ public:
     /// UI thread memoizes live results into and background completions warm
     /// behind the generation fence. Shared (not unique) so worker closures
     /// can hold it past the session that sampled them.
-    const std::shared_ptr<RigExecFrameCache> &GetFrameCache() const
-    {
-        return _frameCache;
-    }
+    const std::shared_ptr<RigExecFrameCache> &GetFrameCache() const;
 
     /// Re-reads RIGEXEC_FRAME_CACHE and RIGEXEC_FRAME_CACHE_VERIFY. The
     /// bridge reads both once at construction and keeps them: the frame,
@@ -214,10 +213,7 @@ public:
     void RefreshFrameCacheSettings();
 
     /// The stored RIGEXEC_FRAME_CACHE mode (see RefreshFrameCacheSettings).
-    RigExecFrameCacheMode GetFrameCacheMode() const
-    {
-        return _frameCacheMode;
-    }
+    RigExecFrameCacheMode GetFrameCacheMode() const;
 
     /// Drops every cached frame and every freshness proof. The next
     /// publication evaluates live. Called when the overlay selection moves
@@ -297,10 +293,7 @@ public:
     /// For tests pinning proof scoping; production serves through the
     /// lookup path, never through this.
     bool GetFreshProof(UsdTimeCode time, RigExecFreshProof *proof) const;
-    size_t GetFreshProofCount() const
-    {
-        return _freshDigests.size();
-    }
+    size_t GetFreshProofCount() const;
 
     /// Carries the entry published for \p time under \p oldKey into the
     /// constant namespace \p newConstants: re-publishes
@@ -380,13 +373,6 @@ public:
     }
 
 private:
-    /// Records the stage identity and sample time on a generation.
-    /// A complete conservative key for operations without a sampled input
-    /// contract: time, stage-edit serial, compiled rig, standing overrides and
-    /// upstream values.
-    bool _ComputePoseOnlyCacheKey(UsdTimeCode time,
-                                  RigExecFrameCacheKey *key) const;
-
     /// Publishes \p pose -- live or cached, already stamped for \p time --
     /// as one complete immutable generation: geometry, guides, the binding
     /// compiled rig when it moved, and the atomic snapshot swap. Shared by the hit
@@ -394,64 +380,17 @@ private:
     void _PublishPoseSnapshot(UsdTimeCode time, const RigExecRigPose &pose,
                               PublishResult *result);
 
-    /// Retires the freshness proofs when a stage edit moved the serial and
-    /// no registry does it. Returns the evaluator's current edit serial.
-    uint64_t _NoteCacheEditSerial();
-
-    /// What a lookup sampled on its way to a miss, for the sparse lane.
-    struct _CacheMiss {
-        bool sampled = false;
-        bool haveBase = false;
-        RigExecFrameInputs inputs;
-        RigExecFrameCacheKey key;
-        uint64_t unfolded = 0;
-    };
-
-    /// The frame-cache lanes shared by publication and pose queries: the
-    /// pose-only proof, the warm-index row, then the sampled proof compare.
-    /// True with \p pose and \p key filled on a hit. With \p publishing
-    /// false it records no profiler scope or lane count; either way it
-    /// takes the frame-cache shard and warm-index locks (in their existing
-    /// order) and writes nothing to the stage. A miss fills
-    /// \p miss with the sample the sparse lane plans on.
-    bool _LookupCachedPose(UsdTimeCode time, bool publishing,
-                           RigExecRigPose *pose, RigExecFrameCacheKey *key,
-                           _CacheMiss *miss);
-
-    /// Serves \p time from the frame cache when a proven entry exists, or
-    /// false to fall through to live evaluation. A hit never runs the
-    /// evaluator (result.cacheHit); under RIGEXEC_FRAME_CACHE_VERIFY=1 the
-    /// hit is shadow-proven against a live evaluation and counts as one.
-    bool _TryPublishCachedResult(UsdTimeCode time, PublishResult *result);
-
-    /// Serves \p time from its same-time retained base when the sparse
-    /// planner proves the retained pose is still the answer:
-    /// the digest missed (values moved, or the proof was retired) but
-    /// nothing the entry's computation reaches did. Re-keys the entry
-    /// under \p key (the fresh sample's key) and serves it with zero
-    /// evaluator pulls; false falls through to live evaluation. The base
-    /// is ALWAYS this time's own completion -- a cross-time base could
-    /// alias one frame's pose onto another's through stale chain values.
-    /// \p unfolded is the fresh sample's pre-fold digest, recorded into
-    /// the re-pointed proof. UI thread only.
-    bool _TrySparseServe(UsdTimeCode time, const RigExecFrameInputs &inputs,
-                         const RigExecFrameCacheKey &key, uint64_t unfolded,
-                         PublishResult *result);
-
-    /// Publishes an already-servable cached \p pose -- a store hit or a
-    /// sparse-serve -- as the generation for \p time: the alias record,
-    /// the shadow verify under RIGEXEC_FRAME_CACHE_VERIFY=1 (a mismatch
-    /// serves live and repairs the entry), and the snapshot publication
-    /// with result.cacheHit set. Shared by the hit path and the sparse
-    /// path so the two cannot publish differently.
-    void _ServeCachedPose(UsdTimeCode time, const RigExecRigPose &pose,
-                          const RigExecFrameCacheKey &key,
-                          PublishResult *result);
-
-    /// Memoizes a just-evaluated pose into the frame cache and records its
-    /// digest as its time's freshness proof. Sampled after the evaluation,
-    /// so the proof names fresh inputs.
-    bool _MemoizeLiveResult(UsdTimeCode time, const RigExecRigPose &pose);
+    /// Publishes the pose a cache lookup served -- a store hit or a
+    /// sparse-serve -- as the generation for \p time: the shadow verify
+    /// under RIGEXEC_FRAME_CACHE_VERIFY=1 (a mismatch serves the live
+    /// pose and asks the cache to repair the entry), and the snapshot
+    /// publication through the single _PublishPoseSnapshot path, with
+    /// result.cacheHit set only when the evaluator never ran. The cache
+    /// owns the alias record and the re-stamp; the facade owns
+    /// publication and the cacheHit accounting, so a shadow-verified
+    /// serve still reports false.
+    void _PublishServedPose(UsdTimeCode time, const RigExecCacheServe &serve,
+                            PublishResult *result);
 
     void _StampGeneration(UsdTimeCode time,
                           RigExecImagingSnapshot *snapshot) const;
@@ -535,31 +474,27 @@ private:
     /// sampling call, and keeps SetUpstreamInputs, the display/evaluation
     /// override storage and the evaluator override translation.
     std::unique_ptr<RigExecBridgeSampling> _sampling;
+    /// Frame-cache state and policy (bridgeFrameCache.h): the shared frame
+    /// cache, its mode/verify switches, the warm-index handle, the
+    /// task-list memo, the freshness-proof map, the affected index, the
+    /// cache edit serial, and the serve/lookup/carry/memoize lanes. Owned
+    /// here; constructed with the rig path; it holds no store, snapshot,
+    /// evaluator-override storage or bridge back-pointer: the facade
+    /// passes one borrowed RigExecCacheCall record (evaluator, sampling
+    /// component, time, overrides, upstream values) on every cache call,
+    /// and keeps the edit-here gate, the interactive-drag and cache-off
+    /// bypasses, the RIGEXEC_FRAME_CACHE_VERIFY shadow verification,
+    /// publication through _PublishPoseSnapshot, and memoization after a
+    /// live evaluation. Background completions stay in the bridge-free
+    /// bridgeWarmPublication free functions over the shared cache, so
+    /// destroying the components cannot invalidate a running worker.
+    std::unique_ptr<RigExecBridgeFrameCache> _cache;
     std::shared_ptr<RigExecSnapshotStore> _store;
     RigExecBindingResolvingSceneIndexRefPtr _binding;
     RigExecResultsSceneIndexRefPtr _results;
-    static constexpr size_t _kFreshDigestCap = 1024;
     uint64_t _generation = 0;
     size_t _publishedCompiledRigSignature = 0;
-    /// This rig's frame cache, held shared so background completions can
-    /// publish into it after the session that sampled them is gone.
-    std::shared_ptr<RigExecFrameCache> _frameCache;
-    /// Frame-cache switches, read at construction and on
-    /// RefreshFrameCacheSettings only.
-    RigExecFrameCacheMode _frameCacheMode = RigExecFrameCacheMode::On;
-    bool _frameCacheVerify = false;
-    /// The shared warm-frame index, or null for a bare bridge.
-    std::shared_ptr<RigExecWarmFrameIndex> _warmIndex;
     bool _publishesDirtied = true;
-    /// The memoized affected-set table for sparse planning: the
-    /// capture index retires its compiled rig versions here, beside the frames.
-    RigExecTaskListCache _taskListMemo;
-    /// The compiled rig half of the last memoized key. Atomic for bare bridges,
-    /// which serialize on no lock (registry callers hold its mutex on both
-    /// the memoizing and the notice paths). A notice that finds it drifted
-    /// from the current compiled rig evicts the old half eagerly -- its frames are
-    /// unreachable by construction -- instead of waiting for LRU.
-    std::atomic<uint64_t> _lastPublishedCompiledRig{0};
     /// Owner-thread manipulation values, including display-only styling.
     std::vector<RigExecValueOverride> _interactiveOverrides;
     // Display inputs never enter the numerical graph or its cache key.
@@ -567,34 +502,6 @@ private:
     /// The upstream values as handed to SetUpstreamInputs: the live sampler
     /// carries them and the pose-only key folds them.
     std::vector<RigExecUpstreamValue> _upstreamInputs;
-    /// Freshness proofs: (isDefault, timeValue) -> the proof recorded for
-    /// a sample taken right after a live evaluation AT that time, when
-    /// every chain-resolved input was fresh. A lookup serves a cached pose
-    /// only when its pre-evaluation sample digests to the recorded proof,
-    /// which is what makes a hit bit-identical to a live evaluation:
-    /// chain inputs sampled for a time the evaluator has not run come from
-    /// the standing (stale) resolved state, and without the proof a scrub
-    /// forth and back over animated chains could alias one frame's pose
-    /// onto another's. Scoped by _freshCompiledRig:
-    /// either moving clears the map (entries stay in the cache,
-    /// unreachable, for LRU). Bounded: past _kFreshDigestCap entries the
-    /// map clears wholesale, which only costs misses, never correctness.
-    /// Path-scoped retirement drops intersecting proofs via
-    /// RetireProofsForControls instead of clearing wholesale.
-    std::map<std::pair<bool, double>, RigExecFreshProof> _freshDigests;
-    /// The compiled rig's output-affected index, built for
-    /// _affectedCompiledRig by _SyncAffectedIndex and re-admitted per compiled rig.
-    /// UI thread only: no worker consults it, so no lock guards it.
-    std::unique_ptr<RigExecOutputAffectedIndex> _affectedIndex;
-    const RigExecBakedProgram *_affectedProgram = nullptr;
-    uint64_t _affectedCompiledRig = 0;
-    bool _affectedValid = false;
-    /// Rebuilds the compiled rig index when the program or compiled rig moved.
-    /// Answers the synced index, or null with no baked program.
-    const RigExecOutputAffectedIndex *_SyncAffectedIndex();
-    uint64_t _freshCompiledRig = 0;
-    bool _freshCompiledRigValid = false;
-    uint64_t _cacheEditSerial = 0;
     /// The time and stage edit serial of the last publication: the same
     /// time under a newer serial is the frame an edit was just made at.
     UsdTimeCode _publishedTime = UsdTimeCode::Default();

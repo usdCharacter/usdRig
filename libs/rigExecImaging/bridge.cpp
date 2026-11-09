@@ -1,6 +1,7 @@
 // RigExec Hydra publication bridge implementation.
 #include "bridge.h"
 
+#include "bridgeFrameCache.h"
 #include "bridgeGuideGeometry.h"
 #include "bridgeGuides.h"
 #include "bridgeSampling.h"
@@ -65,6 +66,26 @@ _MakeSnapshotCall(const UsdStageRefPtr &stage,
     return call;
 }
 
+// The state the frame-cache component borrows on every call: the evaluator
+// it digests and samples against, the sampling component the lookup and
+// memoize lanes sample through, the frame, and the facade's standing
+// numerical overrides and upstream values. Borrowed for one synchronous
+// call; nothing is retained and no closure captures the bridge.
+RigExecCacheCall
+_MakeCacheCall(const RigExecRigEvaluator &evaluator,
+               RigExecBridgeSampling &sampling, UsdTimeCode time,
+               const std::vector<RigExecValueOverride> &overrides,
+               const std::vector<RigExecUpstreamValue> &upstream)
+{
+    RigExecCacheCall call;
+    call.evaluator = &evaluator;
+    call.sampling = &sampling;
+    call.time = time;
+    call.overrides = &overrides;
+    call.upstream = &upstream;
+    return call;
+}
+
 } // namespace
 
 RigExecImagingBridge::RigExecImagingBridge(const UsdStageRefPtr &stage,
@@ -82,8 +103,8 @@ RigExecImagingBridge::RigExecImagingBridge(
       _guides(std::make_unique<RigExecBridgeGuides>(rigPath)),
       _snapshot(std::make_unique<RigExecBridgeSnapshotBuilder>()),
       _sampling(std::make_unique<RigExecBridgeSampling>(*_evaluator)),
-      _store(std::move(store)),
-      _frameCache(std::make_shared<RigExecFrameCache>())
+      _cache(std::make_unique<RigExecBridgeFrameCache>(rigPath)),
+      _store(std::move(store))
 {
     // No overlay is selected yet, so nothing consumes the per-point influence
     // field. SetWeightOverlay turns it back on the moment one is.
@@ -107,8 +128,130 @@ RigExecImagingBridge::~RigExecImagingBridge() = default;
 void
 RigExecImagingBridge::RefreshFrameCacheSettings()
 {
-    _frameCacheMode = RigExecFrameCacheModeFromEnvironment();
-    _frameCacheVerify = RigExecFrameCacheVerifyRequested();
+    _cache->RefreshFrameCacheSettings();
+}
+
+const std::shared_ptr<RigExecFrameCache> &
+RigExecImagingBridge::GetFrameCache() const
+{
+    return _cache->GetFrameCache();
+}
+
+RigExecFrameCacheMode
+RigExecImagingBridge::GetFrameCacheMode() const
+{
+    return _cache->mode();
+}
+
+void
+RigExecImagingBridge::SetWarmFrameIndex(
+    std::shared_ptr<RigExecWarmFrameIndex> index)
+{
+    _cache->SetWarmFrameIndex(std::move(index));
+}
+
+void
+RigExecImagingBridge::ClearFrameCache()
+{
+    _cache->ClearFrameCache();
+    _sampling->InvalidateSampleSupport();
+}
+
+void
+RigExecImagingBridge::RetirePoseOnlyCacheEntries()
+{
+    _cache->RetirePoseOnlyCacheEntries();
+}
+
+void
+RigExecImagingBridge::NoteWarmingEnqueued(UsdTimeCode time,
+                                          uint64_t controlDigest,
+                                          uint64_t unfoldedDigest,
+                                          const RigExecFrameInputs &inputs)
+{
+    _cache->NoteWarmingEnqueued(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                               _evaluationOverrides,
+                                               _upstreamInputs),
+                                controlDigest, unfoldedDigest, inputs);
+}
+
+const RigExecOutputAffectedIndex *
+RigExecImagingBridge::GetAffectedIndex()
+{
+    return _cache->GetAffectedIndex(
+        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                       _evaluationOverrides, _upstreamInputs));
+}
+
+void
+RigExecImagingBridge::AdmitOverrideControls(
+    const std::vector<RigExecValueOverride> &overrides)
+{
+    _cache->AdmitOverrideControls(
+        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                       _evaluationOverrides, _upstreamInputs),
+        overrides);
+}
+
+size_t
+RigExecImagingBridge::RetireProofsForControls(
+    const std::vector<RigExecControlId> &controls)
+{
+    return _cache->RetireProofsForControls(controls);
+}
+
+bool
+RigExecImagingBridge::RepointProof(UsdTimeCode time, uint64_t newDigest)
+{
+    return _cache->RepointProof(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                               _evaluationOverrides,
+                                               _upstreamInputs),
+                                newDigest);
+}
+
+bool
+RigExecImagingBridge::GetFreshProof(UsdTimeCode time,
+                                    RigExecFreshProof *proof) const
+{
+    return _cache->GetFreshProof(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                                _evaluationOverrides,
+                                                _upstreamInputs),
+                                 proof);
+}
+
+size_t
+RigExecImagingBridge::GetFreshProofCount() const
+{
+    return _cache->GetFreshProofCount();
+}
+
+bool
+RigExecImagingBridge::CarryEntry(UsdTimeCode time,
+                                 const RigExecFrameCacheKey &oldKey,
+                                 uint64_t newConstants)
+{
+    return _cache->CarryEntry(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                             _evaluationOverrides,
+                                             _upstreamInputs),
+                              oldKey, newConstants);
+}
+
+bool
+RigExecImagingBridge::NoteCaptureIndex(const UsdNotice::ObjectsChanged &notice)
+{
+    // First and unconditionally: the pinned bindings serve every live
+    // sample, with or without a frame cache.
+    _sampling->NoteChainEdits(notice);
+    return _cache->NoteCaptureIndex(
+        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                       _evaluationOverrides, _upstreamInputs),
+        notice);
+}
+
+RigExecFrameCacheStats
+RigExecImagingBridge::GetFrameCacheStats() const
+{
+    return _cache->GetFrameCacheStats();
 }
 
 bool
@@ -299,19 +442,23 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
 bool
 RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
 {
-    if (!RigExecBackgroundWarmingEnabled(_frameCacheMode,
+    if (!RigExecBackgroundWarmingEnabled(_cache->mode(),
                                          RigExecParallelEvaluationEnabled()) ||
         !_evaluationOverrides.empty()) {
         return false;
     }
-    _NoteCacheEditSerial();
+    _cache->NoteEditSerial(*_evaluator);
     RigExecRigPose pose;
     {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.WarmEvaluate",
                                   "imaging");
         pose = _evaluator->Evaluate(time);
     }
-    return pose.valid && _MemoizeLiveResult(time, pose);
+    return pose.valid &&
+           _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                              _evaluationOverrides,
+                                              _upstreamInputs),
+                               pose);
 }
 
 bool
@@ -326,18 +473,17 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
         return false;
     }
     snapshot->reset();
-    _NoteCacheEditSerial();
-    const bool useCache = _frameCache && !_evaluator->cpuReference &&
-                          _frameCacheMode != RigExecFrameCacheMode::Off;
+    _cache->NoteEditSerial(*_evaluator);
+    const bool useCache = !_evaluator->cpuReference &&
+                          _cache->mode() != RigExecFrameCacheMode::Off;
+    const RigExecCacheCall cacheCall = _MakeCacheCall(
+        *_evaluator, *_sampling, time, _evaluationOverrides, _upstreamInputs);
     RigExecRigPose pose;
-    RigExecFrameCacheKey key{0, 0};
-    _CacheMiss miss;
-    if (useCache &&
-        _LookupCachedPose(time, /* publishing = */ false, &pose, &key, &miss) &&
-        pose.valid) {
-        // Stored for an earlier visit: re-stamped as _ServeCachedPose does.
+    if (useCache && _cache->QueryLookup(cacheCall, &pose)) {
+        // Stored for an earlier visit: re-stamped as the published serve
+        // restamps through the cache's typed outcome.
         pose.time = time;
-        if (_frameCacheVerify) {
+        if (_cache->verifyRequested()) {
             // RIGEXEC_FRAME_CACHE_VERIFY=1: proven against a live
             // evaluation, and a mismatch answers (and repairs the entry
             // with) the live pose.
@@ -356,7 +502,7 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
                             : std::to_string(time.GetValue()).c_str(),
                         verdict.report.c_str());
                 pose = verdict.poseToServe;
-                _MemoizeLiveResult(time, pose);
+                _cache->MemoizeLive(cacheCall, pose);
             }
         }
     } else {
@@ -374,7 +520,7 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
             return false;
         }
         if (useCache) {
-            _MemoizeLiveResult(time, pose);
+            _cache->MemoizeLive(cacheCall, pose);
         }
     }
     auto querySnapshot = std::make_shared<RigExecImagingSnapshot>();
@@ -415,7 +561,7 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // unproven all fall through to the live path, which is the historical
     // behavior plus one memoization. Off disables both halves: the cache
     // is neither read nor written -- as does an active drag (below).
-    const RigExecFrameCacheMode cacheMode = _frameCacheMode;
+    const RigExecFrameCacheMode cacheMode = _cache->mode();
     // Interactive bypass: every drag tick carries unique overrides, so a
     // lookup would always miss after paying a full sample+digest, and
     // memoization would store single-use entries no scrub can reach --
@@ -423,7 +569,7 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // While overrides stand the cache is neither read nor written, exactly
     // as when off; proofs and entries are left untouched, so releasing the
     // drag resumes hitting the authored frames.
-    const uint64_t serial = _NoteCacheEditSerial();
+    const uint64_t serial = _cache->NoteEditSerial(*_evaluator);
     // The frame an edit was just made at is not looked up: the evaluator
     // re-runs only the edit's cone from the generation it just published,
     // which no lookup beats -- one that misses first re-samples every input
@@ -435,8 +581,15 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     _publishedTimeValid = true;
     const bool useCache =
         cacheMode != RigExecFrameCacheMode::Off && _evaluationOverrides.empty();
-    if (useCache && !editedHere && _TryPublishCachedResult(time, &result)) {
-        return result;
+    if (useCache && !editedHere) {
+        RigExecCacheServe serve;
+        if (_cache->TryServe(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                            _evaluationOverrides,
+                                            _upstreamInputs),
+                             &serve)) {
+            _PublishServedPose(time, serve, &result);
+            return result;
+        }
     }
     // 1. Evaluation always completes before publication.
     const RigExecRigPose pose = [&] {
@@ -470,9 +623,59 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // on and no drag -- see step 0).
     _PublishPoseSnapshot(time, pose, &result);
     if (useCache) {
-        _MemoizeLiveResult(time, pose);
+        _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling, time,
+                                           _evaluationOverrides,
+                                           _upstreamInputs),
+                            pose);
     }
     return result;
+}
+
+void
+RigExecImagingBridge::_PublishServedPose(UsdTimeCode time,
+                                         const RigExecCacheServe &serve,
+                                         PublishResult *result)
+{
+    if (serve.liveEvaluationRequested) {
+        // RIGEXEC_FRAME_CACHE_VERIFY=1: prove the cached pose against a
+        // live evaluation. This evaluator pull counts as a live
+        // publication regardless of its verdict.
+        RigExecRigPose live;
+        {
+            RigExecProfileScope scope(MutableProfiler(), "Imaging.Evaluate",
+                                      "imaging");
+            live = _evaluator->Evaluate(time);
+        }
+        const RigExecShadowVerdict verdict =
+            RigExecVerifyHitWithLive(serve.pose, [&live]() { return live; });
+        if (!verdict.match && verdict.mismatches > 0) {
+            TF_WARN("rigExec: frame-cache hit at %s mismatches live "
+                    "evaluation; serving live and repairing the entry:\n%s",
+                    time.IsDefault() ? "default"
+                                     : std::to_string(time.GetValue()).c_str(),
+                    verdict.report.c_str());
+            _PublishPoseSnapshot(time, verdict.poseToServe, result);
+            if (serve.needsRepairMemoization) {
+                _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling,
+                                                   time, _evaluationOverrides,
+                                                   _upstreamInputs),
+                                    verdict.poseToServe);
+            }
+            result->cacheHit = false;
+            return;
+        }
+        // A match serves the cached pose (proven identical); an unverified
+        // shadow (live failed) serves it too, advisory-only. Either way the
+        // evaluator ran, so cacheHit stays false.
+        _PublishPoseSnapshot(time, serve.pose, result);
+        result->cacheHit = false;
+        return;
+    }
+    // The cache already recorded the provenance alias and re-stamped the
+    // pose for this frame; publication runs through the single snapshot
+    // path, and no evaluator ran.
+    _PublishPoseSnapshot(time, serve.pose, result);
+    result->cacheHit = true;
 }
 
 bool
