@@ -95,7 +95,7 @@
 
   <text x="465" y="730" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">fence → context → noted</text>
   <text x="465" y="748" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">→ cache / directory</text>
-  <text x="465" y="800" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">registry.h / .cpp</text>
+  <text x="465" y="800" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">registry.h / registry*.cpp</text>
   <text x="465" y="818" font-size="12" font-style="italic" fill="#64748b" text-anchor="middle">warmIndex.h</text>
 
   <!-- ===== Column 3: Bridge ===== -->

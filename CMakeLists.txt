@@ -325,10 +325,96 @@ target_link_libraries(rigExecGpu PRIVATE garch)
 include(cmake/WindowsArchiveLinks.cmake)
 
 # rigExecImaging: Hydra 2.0 scene-index publication (spec §10).
+# The registry coordination domains compile into private object libraries
+# below and compose into the one shared library. The domain translation
+# units share a single RigExecImagingRegistry context, so these are build
+# boundaries, not shipped libraries: none links rigExecImaging or another
+# object library, and none is installed or exported. Each object is
+# composed into the shared target exactly once.
+add_library(rigExecImagingContext OBJECT
+    # The imaging directory and chain binding: the process-level stage ->
+    # context map, the chain registrations and the legacy current slot.
+    libs/rigExecImaging/registryDirectory.cpp
+    # Session lifecycle: explicit and automatic activation with the
+    # transactional commit, the authored-guide display on initial failure,
+    # rig-root noting and the teardown that stops the warming pool.
+    libs/rigExecImaging/registryLifecycle.cpp
+    # Publication: session evaluation into one combined generation, the
+    # store publish with its generation and frame table, and the broadcast
+    # to the bound chains.
+    libs/rigExecImaging/registryPublication.cpp
+    # Edit response: the guide-only and rig stage-notice handlers, the
+    # read-root collection and refresh, and the generation cancel plus the
+    # per-time retirement lanes.
+    libs/rigExecImaging/registryInvalidation.cpp
+    # Upstream inputs: chain-pulled tables, each session's slice, the
+    # serial retirement and the live hand-off at a time.
+    libs/rigExecImaging/registryUpstream.cpp
+    # Diagnostics facade: read-only queries over the scheduler, bridge and
+    # warm-index owners; no counters of its own.
+    libs/rigExecImaging/registryDiagnostics.cpp)
+add_library(rigExecImagingFrames OBJECT
+    # Warm work: the frozen-work job factory, the lazy frozen refresh, the
+    # standing burst sample cache and the per-lane workspace pool.
+    libs/rigExecImaging/registryWarmWork.cpp
+    # Warming triggers: the commit and idle enqueues with the sampling
+    # budgets, the cursor sweep, the rewarm queue and the fallback fill.
+    libs/rigExecImaging/registryWarming.cpp
+    # Frame-cache control: settings refresh, the scheduler-fenced clear, a
+    # rig's warm range and the warm-index frame states.
+    libs/rigExecImaging/registryCache.cpp
+    # Frames on demand: the frame-table stamp, the cached-frame read and the
+    # demand service call (docs/specs/frames-on-demand.md).
+    libs/rigExecImaging/registryFrameDemand.cpp)
+add_library(rigExecImagingInteraction OBJECT
+    # Weight overlay and manipulation preview: declared slots sampled as
+    # evaluator overrides and chain xform deltas.
+    libs/rigExecImaging/registryPreview.cpp)
+add_library(rigExecImagingQueries OBJECT
+    # Guide geometry queries: published/subtree bounds and the
+    # UsdGeomBoundable extent callback.
+    libs/rigExecImaging/guideBounds.cpp
+    libs/rigExecImaging/guideExtent.cpp)
+add_library(rigExecImagingHost OBJECT
+    # Host-facing C surface: the extern "C" activation and query exports.
+    libs/rigExecImaging/registryCapi.cpp)
+
+# The object libraries compile against the usage requirements the shared
+# target compiles its own sources against; a shared target's requirements
+# do not propagate backwards into linked object libraries. PIC because
+# the objects become part of a shared library; the export define because
+# the C API headers must compile dllexport, not dllimport, on Windows.
+# rigExecScene enters as link-only: its INTERFACE link anchor is a source,
+# and every target that links the scene library compiles its own copy.
+# The shared target links rigExecScene plainly and carries the one anchor
+# into the DSO, as before.
+foreach(_rigexec_imaging_obj IN ITEMS
+        rigExecImagingContext rigExecImagingFrames
+        rigExecImagingInteraction rigExecImagingQueries
+        rigExecImagingHost)
+    target_include_directories(${_rigexec_imaging_obj} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>)
+    target_link_libraries(${_rigexec_imaging_obj} PUBLIC
+        rigExec
+        hd
+        usdImaging
+        usdUtils
+        # TouchPose: the wrapped terminal shader is generated through Sdr from
+        hio
+        sdr
+        work
+    )
+    target_link_libraries(${_rigexec_imaging_obj} PRIVATE
+        rigExecRuntime rigExecSampler $<LINK_ONLY:rigExecScene> rigExecGpu)
+    target_compile_definitions(${_rigexec_imaging_obj}
+        PRIVATE RIGEXEC_IMAGING_EXPORTS)
+    set_target_properties(${_rigexec_imaging_obj} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endforeach()
+
 add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
-    libs/rigExecImaging/registry.cpp
     libs/rigExecImaging/playback.cpp
     libs/rigExecImaging/sceneIndexPlugin.cpp
     libs/rigExecImaging/rigAdapter.cpp
@@ -348,6 +434,14 @@ add_library(rigExecImaging SHARED
 target_include_directories(rigExecImaging PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libs>
     $<INSTALL_INTERFACE:${RIGEXEC_INSTALL_INCLUDEDIR}>)
+# Compose the domain object libraries into the shared library first: CMake
+# adds their objects to this target only, never to its consumers, and
+# composing first keeps their link order over the scene library ahead of
+# the dependency archives, as it was when one target compiled every
+# imaging source.
+target_link_libraries(rigExecImaging PRIVATE
+    rigExecImagingContext rigExecImagingFrames rigExecImagingInteraction
+    rigExecImagingQueries rigExecImagingHost)
 target_link_libraries(rigExecImaging PUBLIC
     rigExec
     hd
@@ -574,6 +668,14 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME testRigExecMoverSchemaGen COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/testRigExecMoverSchemaGen.py"
     "${RIGEXEC_TEST_USD_DIR}")
+
+# The test selector must attribute an OBJECT library's sources to the
+# targets that compose it, or an imaging domain edit would select no
+# test at all. The self-check runs the selector's parse()/select()
+# against synthetic CMake text and this repository's imaging inventory.
+add_test(NAME testRigExecTestSelectorObjectSources
+    COMMAND ${Python3_EXECUTABLE}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/select_affected_tests.py" --self-test)
 
 add_executable(testRigExecMath tests/testRigExecMath.cpp)
 add_executable(testRigExecWrinkleMath tests/testRigExecWrinkleMath.cpp)
@@ -2657,8 +2759,13 @@ if (MSVC AND NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
     target_precompile_headers(rigExecRuntime PRIVATE ${_rigexec_pch_std})
 
     # The libraries, and every test, bench or probe executable linking one
-    # of the USD-facing libraries.
-    set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecImaging rigExecBake)
+    # of the USD-facing libraries. The imaging object libraries carry the
+    # same compile options and definitions as rigExecImaging, so they
+    # reuse the same PCH as their sources did before the split.
+    set(_rigexec_pch_users rigExec rigExecScene rigExecOracle rigExecImaging
+        rigExecImagingContext rigExecImagingFrames
+        rigExecImagingInteraction rigExecImagingQueries rigExecImagingHost
+        rigExecBake)
     get_property(_rigexec_pch_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_target IN LISTS _rigexec_pch_targets)
         get_target_property(_type ${_target} TYPE)
@@ -2751,6 +2858,8 @@ foreach(_lib rigExecGraph rigExecScene rigExecMath rigExec rigExecStandalone rig
         FILES_MATCHING
             PATTERN ".*" EXCLUDE
             PATTERN "__pycache__" EXCLUDE
+            PATTERN "guideBoundsInternal.h" EXCLUDE
+            PATTERN "registryInternal.h" EXCLUDE
             PATTERN "*.h")
 endforeach()
 # The FlatBuffers runtime headers the generated rigExecBinary headers

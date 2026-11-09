@@ -243,7 +243,7 @@ Paths are relative to the repository root.
 | | Time change, overrides, compute and extraction | `libs/rigExec/tapSet.cpp:316`, `:319-340`, `:344-346`, `:350-357` |
 | | `RIGEXEC_TAP_TIMING` | `libs/rigExec/debugCodes.h:19`, `libs/rigExec/tapSet.cpp:44-50` |
 | | The only tap-set creator under `libs` | `libs/rigExecOracle/bakedExecCrossCheck.cpp:50` |
-| Invalidation | Registry stage-notice hook | `libs/rigExecImaging/registry.cpp:4324` |
+| Invalidation | Registry stage-notice hook | `libs/rigExecImaging/registryInvalidation.cpp:499` |
 | | Prim-removal workaround and its defect | `libs/rigExec/tapSet.cpp:111-113`, `:118-136`, `tests/python/test_rigexec_stage_edits.py:7-12` |
 | Reference check | Row construction | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:441-608` |
 | | Constraint rows and their independent witness | `libs/rigExecOracle/bakedExecCrossCheckRows.cpp:505-542`, `libs/rigExec/independentConstraintCheck.h` |
