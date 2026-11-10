@@ -2788,7 +2788,8 @@ event.""",
             "push part of a painted ramp to fully followed while the rest of it "
             "still fades.",
             # bakedGeometry.cpp:5618-5620 publishes pose.weightFields under the
-            # BOUND weight object; bridge.cpp:2217 looks the overlay up there.
+            # BOUND weight object; bridgeVolumeGuides.cpp:304 looks the
+            # overlay up there.
             "The influence overlay paints the field a mover consumed, so point "
             "it at the dynamic weight, not the base it wraps: an unbound base "
             "has no resolved field of its own to show.",

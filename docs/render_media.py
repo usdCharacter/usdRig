@@ -181,7 +181,7 @@ GUIDE_XRAY = 0.78
 # geometry it weights, the same picture usdview's volume-weight tool draws:
 # RigExecImaging_SetWeightOverlayForStage (registry.h) hands the selection
 # to that stage's imaging context and its chains, _FillWeightOverlay
-# (bridge.cpp) copies the weights the
+# (bridgeVolumeGuides.cpp) copies the
 # MOVER ACTUALLY CONSUMED onto the field's own target prim, and
 # RigExecResultsSceneIndex turns them into a per-vertex displayColor ramp
 # (sceneIndices.cpp, _WeightOverlayColor). Nothing is re-derived here: a

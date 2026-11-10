@@ -649,6 +649,10 @@ private:
     /// run unlocked (they re-enter through the results index's trigger).
     void _AdoptChain(const Chain &chain);
 
+    /// Seeds a chain that bound to no live context: fresh, not-
+    /// stage-specific state, with every handle null-checked.
+    static void _UpdateChainUnbound(const Chain &chain, uint64_t key);
+
     /// The stage a preview resolves attributes on: the active stage, else
     /// the bound one (a stage with no rig still previews its Xforms).
     UsdStageRefPtr _PreviewStageLocked() const;
@@ -789,19 +793,19 @@ private:
     /// Recomputes \p session's share of the supplying chain's table; moves
     /// its serial, and cancels its warming generation, when the sources
     /// differ from the share it held. _mutex held.
-    void _UpdateSessionUpstreamLocked(RigSession *session);
+    void _UpdateSessionUpstreamLocked(RigSession &session);
 
     /// Hands \p session's bridge the values at \p time when they differ
     /// from the ones it holds, and marks the session dirty. A varying key
     /// with no value at \p time (outside the window) is left out. _mutex
     /// held.
-    void _HandOffUpstreamLocked(RigSession *session, UsdTimeCode time);
+    void _HandOffUpstreamLocked(RigSession &session, UsdTimeCode time);
 
     bool _EvaluateSessions(
-        RigSessions *sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
-        std::shared_ptr<RigExecImagingSnapshot> *snapshot,
+        RigSessions &sessions, const UsdStageRefPtr &stage, UsdTimeCode time,
+        std::shared_ptr<RigExecImagingSnapshot> &snapshot,
         RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
-            *compiledRig,
+            &compiledRig,
         std::vector<std::string> *errors);
 
     /// Brings one session's frozen snapshot cache current: re-freezes when
@@ -843,7 +847,11 @@ private:
     /// evaluator's exact patched set (Patched only; empty otherwise).
     /// Falls back to _CancelGenerationTimesLocked when the session has no
     /// program or no usable index. Call with _mutex held.
-    void _RetireAffectedTimesLocked(RigSession *session,
+    void _RetireAllTimesLocked(RigSession &session,
+                               const UsdNotice::ObjectsChanged &notice,
+                               const std::vector<UsdTimeCode> &inFlight);
+
+    void _RetireAffectedTimesLocked(RigSession &session,
                                     const UsdNotice::ObjectsChanged &notice,
                                     RigExecNoticeDisposition disposition,
                                     const std::vector<SdfPath> &patchedPaths);
@@ -852,7 +860,7 @@ private:
     /// next trigger, de-duplicated and capped. Past the cap the overflow
     /// is dropped: dirtied frames stay visitable, so the cursor sweep
     /// covers them. Call with _mutex held.
-    void _NotePendingRewarm(RigSession *session,
+    void _NotePendingRewarm(RigSession &session,
                             const std::vector<double> &times);
 
     /// Moves the session's pending re-warm times that still need work
@@ -892,6 +900,14 @@ private:
     _Publish(std::shared_ptr<RigExecImagingSnapshot> snapshot,
              const RigExecBindingResolvingSceneIndex::CompiledRigBindingConstPtr
                  &compiledRig);
+
+    /// SetTime processors, split by the state that drives the stage. The
+    /// authored-guides and clear paths unlock and broadcast internally.
+    bool _SetTimeAuthoredGuidesLocked(std::unique_lock<std::mutex> &lock,
+                                      UsdTimeCode time);
+    bool _SetTimeIsRedundantLocked(UsdTimeCode time);
+    bool _ClearDrivenResultsLocked(std::unique_lock<std::mutex> &lock,
+                                   UsdTimeCode time);
 
     /// Broadcasts a publication to every chain. Call WITHOUT _mutex held:
     /// the sends re-enter this registry (the results index's time trigger),

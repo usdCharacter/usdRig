@@ -114,6 +114,7 @@
 
 #include "pxr/base/ts/knot.h"
 #include "pxr/base/ts/spline.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/weakBase.h"
 #include "pxr/usd/sdf/types.h"
@@ -2390,6 +2391,16 @@ TestCachedServeSkipsLookupSample()
             CHECK(states[1] == RigExecWarmFrameState::Cached);
         }
     }
+    // Entry validation: states are positional per frame, so a non-finite
+    // frame is a malformed request; an empty path, an unactivated path,
+    // and a scope that is not a RigExecRoot all decline.
+    CHECK(registry
+              ->GetFrameStates(rig,
+                               {1.0, std::numeric_limits<double>::quiet_NaN()})
+              .empty());
+    CHECK(registry->GetFrameStates(SdfPath(), {1.0}).empty());
+    CHECK(
+        registry->GetFrameStates(SdfPath("/Asset/Rig/Movers"), {1.0}).empty());
     RigExecProfiler *profiler = registry->MutableBridgeProfiler(rig);
     CHECK(profiler != nullptr);
     if (profiler) {
@@ -5379,6 +5390,670 @@ TestLiveChainBindingsFollowNotices()
     TfNotice::Revoke(key);
 }
 
+// QUERY CONTRACT (frame-cache half). SnapshotAtTimeWithoutPublishing must
+// answer a proven cache entry without evaluating, must answer false on a
+// miss with evaluate=false (no evaluation, no memoization), and must
+// leave the displayed generation exactly as it was. The memoized proof
+// recorded by a live publication is what the query proves against -- the
+// same proofs EvaluateAndPublishResult serves with.
+void
+TestQuerySnapshotServesProvenHitsWithoutPublishing()
+{
+    std::printf(
+        "progress: TestQuerySnapshotServesProvenHitsWithoutPublishing\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    const bool verify = RigExecFrameCacheVerifyRequested();
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    UsdStageRefPtr stage = MakeTinyRig();
+    const SdfPath mesh("/Asset/Geom/Mesh_0");
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+    const RigExecImagingBridge::PublishResult live =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(live.ok && !live.cacheHit);
+    const RigExecImagingSnapshotConstPtr displayed = bridge.GetStore()->Get();
+    const _GenerationGeometry shown = _CaptureGeometry(displayed);
+    CHECK(!shown.points.empty());
+
+    // Hit with evaluate=false: served without the evaluator, and the
+    // answer is the cached frame while the store still shows frame 2.
+    RigExecImagingSnapshotConstPtr snap;
+    std::string diagnostic;
+    bool evaluated = true;
+    const size_t hitsBefore = bridge.GetFrameCacheStats().hits;
+    CHECK(bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(2.0), false, &snap,
+                                                 &diagnostic, &evaluated));
+    CHECK(snap != nullptr);
+    CHECK(evaluated == verify); // verify evaluates to cross-check the serve
+    CHECK(bridge.GetFrameCacheStats().hits == hitsBefore + 1);
+    if (snap) {
+        CHECK(snap->generation == 0);
+        CHECK(!snap->Describes(stage, UsdTimeCode(2.0)));
+        if (!_SameGeometry(_CaptureGeometry(snap), shown)) {
+            std::printf("query snapshot differs from the cached pose\n");
+            CHECK(false);
+        }
+    }
+    // The store still holds the SAME displayed generation.
+    CHECK(bridge.GetStore()->Get() == displayed);
+
+    // A cold time with evaluate=false: false, no evaluation, and no
+    // memoization happened for it.
+    const size_t publishedBefore = bridge.GetFrameCacheStats().published;
+    evaluated = true;
+    snap.reset();
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+        UsdTimeCode(4.0), false, &snap, &diagnostic, &evaluated));
+    CHECK(!evaluated);
+    CHECK(snap == nullptr);
+    CHECK(bridge.GetFrameCacheStats().published == publishedBefore);
+    CHECK(bridge.GetStore()->Get() == displayed);
+
+    // The same time with evaluate=true: one live evaluation, memoized like
+    // WarmFrameOnCallingThread, and the frame differs from frame 2.
+    evaluated = false;
+    CHECK(bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(4.0), true, &snap,
+                                                 &diagnostic, &evaluated));
+    CHECK(evaluated);
+    CHECK(snap != nullptr);
+    CHECK(bridge.GetFrameCacheStats().published == publishedBefore + 1);
+    if (snap) {
+        const _GenerationGeometry other = _CaptureGeometry(snap);
+        if (_SameGeometry(other, shown)) {
+            std::printf("query at frame 4 equals the frame-2 pose\n");
+            CHECK(false);
+        }
+    }
+    CHECK(bridge.GetStore()->Get() == displayed);
+    CHECK(displayed->prims.count(mesh) == 1);
+}
+
+// PROOF KEYS. Freshness proofs key by (isDefault, timeValue): the default
+// time and numeric zero are DIFFERENT keys and never serve each other,
+// even where the sampled values (hence the digest, hence the cache entry)
+// agree. This is the pose.time IsDefault-vs-0 boundary _ServeCachedPose
+// restamps against.
+void
+TestDefaultTimeAndNumericZeroAreDistinctProofKeys()
+{
+    std::printf(
+        "progress: TestDefaultTimeAndNumericZeroAreDistinctProofKeys\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    {
+        UsdStageRefPtr stage = MakeTinyRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(0.0)).ok);
+        RigExecFreshProof proof;
+        CHECK(bridge.GetFreshProof(UsdTimeCode(0.0), &proof));
+        CHECK(!bridge.GetFreshProof(UsdTimeCode::Default(), &proof));
+
+        // The default time has no proof: evaluate=false refuses, even
+        // though numeric zero's entry digests the same values here.
+        RigExecImagingSnapshotConstPtr snap;
+        std::string diagnostic;
+        bool evaluated = true;
+        CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode::Default(), false, &snap, &diagnostic, &evaluated));
+        CHECK(!evaluated);
+        CHECK(snap == nullptr);
+
+        // With evaluation the default frame runs live and records its OWN
+        // proof, beside zero's.
+        evaluated = false;
+        CHECK(bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode::Default(), true, &snap, &diagnostic, &evaluated));
+        CHECK(evaluated);
+        CHECK(snap != nullptr);
+        CHECK(bridge.GetFreshProof(UsdTimeCode(0.0), &proof));
+        CHECK(bridge.GetFreshProof(UsdTimeCode::Default(), &proof));
+        CHECK(bridge.GetFreshProofCount() == 2);
+    }
+    {
+        // The mirror order: a published default frame proves nothing for
+        // numeric zero.
+        UsdStageRefPtr stage = MakeTinyRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode::Default()).ok);
+        RigExecFreshProof proof;
+        CHECK(bridge.GetFreshProof(UsdTimeCode::Default(), &proof));
+        CHECK(!bridge.GetFreshProof(UsdTimeCode(0.0), &proof));
+        RigExecImagingSnapshotConstPtr snap;
+        std::string diagnostic;
+        bool evaluated = true;
+        CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode(0.0), false, &snap, &diagnostic, &evaluated));
+        CHECK(!evaluated);
+    }
+}
+
+// CACHEHIT. cacheHit is true only for a serve that ran no evaluation.
+// Under RIGEXEC_FRAME_CACHE_VERIFY=1 a store hit is shadow-proven against
+// a live evaluation: the lookup hit is recorded, the serve is still the
+// cached pose (the verdict matches here), and cacheHit stays FALSE because
+// the evaluator pulled.
+void
+TestShadowVerifiedHitKeepsCacheHitFalse()
+{
+    std::printf("progress: TestShadowVerifiedHitKeepsCacheHitFalse\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    UsdStageRefPtr stage = MakeTinyRig();
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+    const RigExecImagingBridge::PublishResult first =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(first.ok && !first.cacheHit);
+
+    // Shadow verification on: the hit serves the cached pose, the cache
+    // records the hit, and cacheHit stays false (the verifier evaluated).
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "1");
+    bridge.RefreshFrameCacheSettings();
+    const size_t hitsBefore = bridge.GetFrameCacheStats().hits;
+    const _GenerationGeometry cached =
+        _CaptureGeometry(bridge.GetStore()->Get());
+    const RigExecImagingBridge::PublishResult shadowed =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(shadowed.ok);
+    CHECK(!shadowed.cacheHit);
+    CHECK(bridge.GetFrameCacheStats().hits == hitsBefore + 1);
+    if (!_SameGeometry(cached, _CaptureGeometry(bridge.GetStore()->Get()))) {
+        std::printf("shadow-verified hit served a different pose\n");
+        CHECK(false);
+    }
+
+    // Verification off: the same second look now serves with no evaluator
+    // pull -- cacheHit true.
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    bridge.RefreshFrameCacheSettings();
+    const RigExecImagingBridge::PublishResult served =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(served.ok);
+    CHECK(served.cacheHit);
+    if (!_SameGeometry(cached, _CaptureGeometry(bridge.GetStore()->Get()))) {
+        std::printf("cacheHit serve differs from the memoized pose\n");
+        CHECK(false);
+    }
+}
+
+// RESTAMP. A cached pose stores the time it was EVALUATED at. Two frames
+// whose sampled inputs agree share one digest and one entry, so serving
+// an earlier frame from the later evaluation's entry must re-stamp
+// pose.time to the served frame: guide styling that reads pose.time (a
+// time-varying guide:scaleX here) draws the SERVED frame, not the stored
+// one.
+void
+TestCachedServeRestampsPoseTime()
+{
+    std::printf("progress: TestCachedServeRestampsPoseTime\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    UsdStageRefPtr stage = MakeTinyRig();
+    // Frames 2 and 3 sample identical control values: one digest, one
+    // entry for both. The pose differs only in its time.
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+        .GetAttribute(TfToken("avars:tx"))
+        .Set(10.2, UsdTimeCode(3.0));
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongY"))
+        .GetAttribute(TfToken("avars:ty"))
+        .Set(19.9, UsdTimeCode(3.0));
+    // A time-varying guide multiplier: read live at pose.time.
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+        .CreateAttribute(TfToken("guide:scaleX"), SdfValueTypeNames->Double)
+        .Set(1.0, UsdTimeCode(2.0));
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+        .GetAttribute(TfToken("guide:scaleX"))
+        .Set(4.0, UsdTimeCode(3.0));
+
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+    const auto publishedScale = [&](double *out) {
+        const RigExecImagingSnapshotConstPtr snap = bridge.GetStore()->Get();
+        if (!snap) {
+            return false;
+        }
+        const auto found = snap->prims.find(SdfPath("/Asset/Rig/AlongX"));
+        if (found == snap->prims.end() || !found->second.hasControlGuide) {
+            return false;
+        }
+        *out = found->second.controlGuideScale[0];
+        return true;
+    };
+    double scale = 0.0;
+    const RigExecImagingBridge::PublishResult at2 =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(at2.ok && !at2.cacheHit);
+    CHECK(publishedScale(&scale));
+    CHECK(scale == 1.0);
+    const RigExecImagingBridge::PublishResult at3 =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(3.0));
+    CHECK(at3.ok && !at3.cacheHit);
+    CHECK(publishedScale(&scale));
+    CHECK(scale == 4.0);
+
+    // Back to frame 2: the entry (last written by frame 3's evaluation)
+    // serves with zero pulls, and the published guide multiplier is
+    // frame 2's -- the stored pose.time was re-stamped to the served
+    // frame before anything read it.
+    const RigExecImagingBridge::PublishResult back2 =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(back2.ok);
+    CHECK(back2.cacheHit);
+    CHECK(publishedScale(&scale));
+    CHECK(scale == 1.0);
+}
+
+// QUERY vs SPARSE. Two states, one entry. First the WARM-lane state: the
+// frame is memoized (entry + retained state + warm-index row) and its
+// freshness proof retired, so the warm row carries both a query and a
+// publication, and the sparse lane never runs -- the proof staying
+// retired is the observable. Then the SPARSE-ONLY state: the warming
+// generation is pushed, so FindCachedKey (generation-gated) can no
+// longer serve while FindKey (not gated) still names the retained
+// entry. That is the one lane left, and it REWRITES: a publication then
+// serves with zero pulls and HEALS the proof, while the query in the
+// same state refuses outright -- no evaluation, no snapshot, and the
+// proof stays retired.
+void
+TestQueryNeverRunsTheSparseRekeyLane()
+{
+    std::printf("progress: TestQueryNeverRunsTheSparseRekeyLane\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    UsdStageRefPtr stage = MakeTinyRig();
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    auto warmIndex = std::make_shared<RigExecWarmFrameIndex>();
+    bridge.SetWarmFrameIndex(warmIndex);
+    CHECK(bridge.Compile());
+    const RigExecImagingBridge::PublishResult live =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(3.0));
+    CHECK(live.ok && !live.cacheHit);
+    const RigExecImagingSnapshotConstPtr displayed = bridge.GetStore()->Get();
+    const _GenerationGeometry shown = _CaptureGeometry(displayed);
+    RigExecFreshProof proof;
+    CHECK(bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+
+    // Retire the frame's proof (paths from a fresh plain sample of the
+    // same inputs the memoization digested). The entry, its retained
+    // state and the warm-index row all stand.
+    RigExecFrameInputs inputs;
+    const std::vector<RigExecValueOverride> none;
+    CHECK(RigExecSampleFrameInputs(bridge.GetEvaluator(), UsdTimeCode(3.0),
+                                   none, &inputs));
+    std::vector<RigExecControlId> ids;
+    for (const RigExecSampledInput &sample : inputs.values) {
+        if (!sample.path.IsEmpty()) {
+            ids.push_back(sample.path.GetString());
+        }
+    }
+    CHECK(!ids.empty());
+    CHECK(bridge.RetireProofsForControls(ids) == 1);
+    CHECK(!bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+
+    // The query answers the cached frame (the warm row + retained entry
+    // carry it) without evaluating, and heals NOTHING: the proof stays
+    // retired, so no sparse lane -- which always re-points or heals the
+    // proof -- ran for the query.
+    RigExecImagingSnapshotConstPtr snap;
+    std::string diagnostic;
+    const bool verify = RigExecFrameCacheVerifyRequested();
+    bool evaluated = true;
+    CHECK(bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(3.0), false, &snap,
+                                                 &diagnostic, &evaluated));
+    CHECK(snap != nullptr);
+    CHECK(evaluated == verify);
+    if (snap) {
+        CHECK(snap->generation == 0);
+        if (!_SameGeometry(_CaptureGeometry(snap), shown)) {
+            std::printf("sparse-lane query served a different pose\n");
+            CHECK(false);
+        }
+    }
+    CHECK(bridge.GetStore()->Get() == displayed);
+    CHECK(!bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+
+    // A publication under the same state still serves the SAME entry with
+    // zero pulls (warm row, no re-key), and still proves nothing after.
+    const RigExecImagingBridge::PublishResult served =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(3.0));
+    CHECK(served.ok);
+    CHECK(served.cacheHit);
+    CHECK(!bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+    if (!_SameGeometry(shown, _CaptureGeometry(bridge.GetStore()->Get()))) {
+        std::printf("warm-row serve differs from the memoized pose\n");
+        CHECK(false);
+    }
+
+    // SPARSE-ONLY state. Push the rig's warming generation (as an edit
+    // does): the row no longer matches the current generation, so the
+    // warm lane cannot serve, and with the proof retired only the
+    // sparse lane can reach the retained entry.
+    const RigExecImagingSnapshotConstPtr afterWarm = bridge.GetStore()->Get();
+    warmIndex->NoteGeneration(SdfPath("/Asset/Rig"), 1);
+
+    // The query in that state refuses outright: no evaluation, no
+    // snapshot, and it rewrites nothing -- the store keeps the same
+    // generation and the proof stays retired (no heal, no re-point).
+    RigExecImagingSnapshotConstPtr coldSnap;
+    std::string coldDiagnostic;
+    bool coldEvaluated = true;
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+        UsdTimeCode(3.0), false, &coldSnap, &coldDiagnostic, &coldEvaluated));
+    CHECK(!coldEvaluated);
+    CHECK(coldSnap == nullptr);
+    CHECK(bridge.GetStore()->Get() == afterWarm);
+    CHECK(!bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+
+    // A publication in the same state takes the sparse lane: it serves
+    // the retained entry with zero pulls (cacheHit) and heals the proof
+    // -- the rewrite the query above never ran.
+    const RigExecImagingBridge::PublishResult sparse =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(3.0));
+    CHECK(sparse.ok);
+    CHECK(sparse.cacheHit);
+    CHECK(bridge.GetFreshProof(UsdTimeCode(3.0), &proof));
+    if (!_SameGeometry(shown, _CaptureGeometry(bridge.GetStore()->Get()))) {
+        std::printf("sparse-lane serve differs from the memoized pose\n");
+        CHECK(false);
+    }
+}
+
+// GPU HISTORY. The deform publication history (_gpuDeformLast) feeds the
+// velocities the renderer reads: `previousFrame` names the frame the
+// history last recorded. A non-publishing query must not touch it: the
+// sequence with an intervening far-time query publishes the SAME frame
+// and previousFrame as the same sequence without the query.
+void
+TestQuerySnapshotLeavesGpuDeformHistoryAlone()
+{
+    std::printf("progress: TestQuerySnapshotLeavesGpuDeformHistoryAlone\n");
+    std::fflush(stdout);
+    SetEnv("RIGEXEC_FRAME_CACHE", "on");
+    SetEnv("RIGEXEC_FRAME_CACHE_VERIFY", "0");
+    if (RigExecFrameCacheModeFromEnvironment() == RigExecFrameCacheMode::Off) {
+        return;
+    }
+    const std::string priorGpu = TfGetenv("RIGEXEC_GPU_DEFORM");
+    SetEnv("RIGEXEC_GPU_DEFORM", "shader");
+    const SdfPath mesh("/Asset/Geom/Mesh_0");
+    VtFloatArray controlFrame3, controlPrevious3, replayFrame3, replayPrevious3;
+
+    // Control sequence: 2, 3, then a republication of 3 (a cache serve).
+    {
+        UsdStageRefPtr stage = MakeTinyRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(2.0)).ok);
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(3.0)).ok);
+        const RigExecPublishedPrim *pub = nullptr;
+        if (const auto snap = bridge.GetStore()->Get()) {
+            const auto found = snap->prims.find(mesh);
+            if (found != snap->prims.end()) {
+                pub = &found->second;
+            }
+        }
+        CHECK(pub != nullptr);
+        if (!pub || !pub->gpuDeform) {
+            std::printf("shader-mode publication absent; GPU history pin "
+                        "could not run\n");
+            CHECK(false);
+        } else {
+            CHECK(pub->gpuDeformStatic != nullptr);
+            CHECK(!pub->gpuDeformFrame.empty());
+            CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(3.0)).cacheHit);
+            const auto snap = bridge.GetStore()->Get();
+            const auto found = snap->prims.find(mesh);
+            CHECK(found != snap->prims.end());
+            if (found != snap->prims.end()) {
+                controlFrame3 = found->second.gpuDeformFrame;
+                controlPrevious3 = found->second.gpuDeformPreviousFrame;
+                CHECK(!controlFrame3.empty());
+                // Frame 3 followed frame 2: the history carries frame 2's
+                // values as the previous frame (non-zero velocities).
+                CHECK(controlPrevious3 != controlFrame3);
+            }
+        }
+    }
+
+    // Same sequence with an intervening live query at a far frame. The
+    // query snapshot carries the deform publication but NO history fields,
+    // and the store never moved.
+    if (!controlFrame3.empty()) {
+        UsdStageRefPtr stage = MakeTinyRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(2.0)).ok);
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(3.0)).ok);
+        const RigExecImagingSnapshotConstPtr displayed =
+            bridge.GetStore()->Get();
+        RigExecImagingSnapshotConstPtr snap;
+        std::string diagnostic;
+        bool evaluated = false;
+        CHECK(bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode(100.0), true, &snap, &diagnostic, &evaluated));
+        CHECK(evaluated);
+        CHECK(snap != nullptr);
+        if (snap) {
+            const auto found = snap->prims.find(mesh);
+            CHECK(found != snap->prims.end());
+            if (found != snap->prims.end()) {
+                // Query mode: the publication rides, the history fields
+                // stay empty.
+                CHECK(found->second.gpuDeform != nullptr);
+                CHECK(found->second.gpuDeformFrame.empty());
+                CHECK(found->second.gpuDeformPreviousFrame.empty());
+            }
+        }
+        CHECK(bridge.GetStore()->Get() == displayed);
+        CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(3.0)).cacheHit);
+        const auto after = bridge.GetStore()->Get();
+        const auto found = after->prims.find(mesh);
+        CHECK(found != after->prims.end());
+        if (found != after->prims.end()) {
+            replayFrame3 = found->second.gpuDeformFrame;
+            replayPrevious3 = found->second.gpuDeformPreviousFrame;
+            // Identical to the control sequence: the query left the GPU
+            // display history exactly as it was.
+            CHECK(replayFrame3 == controlFrame3);
+            CHECK(replayPrevious3 == controlPrevious3);
+        }
+    }
+    SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
+}
+
+// \p chains skinned meshes, one skin mover each: enough separate GPU deform
+// layouts to cross the snapshot builder's static-table cache limit.
+UsdStageRefPtr
+MakeSkinChainRig(int chains)
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
+    UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
+    UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
+    for (int t = 1; t <= 4; ++t) {
+        tx.Set(10.0 + 0.1 * double(t), UsdTimeCode(double(t)));
+        ty.Set(20.0 - 0.05 * double(t), UsdTimeCode(double(t)));
+    }
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+
+    VtIntArray indices(kTinyPointCount * 2);
+    VtFloatArray weights(kTinyPointCount * 2);
+    for (size_t i = 0; i < kTinyPointCount; ++i) {
+        indices[i * 2] = 0;
+        indices[i * 2 + 1] = 1;
+        weights[i * 2] = 0.1f;
+        weights[i * 2 + 1] = 0.9f;
+    }
+    for (int chain = 0; chain < chains; ++chain) {
+        const SdfPath meshPath("/Asset/Geom/Mesh_" + std::to_string(chain));
+        const UsdPrim mesh = stage->DefinePrim(meshPath, TfToken("Mesh"));
+        VtVec3fArray points(kTinyPointCount);
+        for (size_t i = 0; i < kTinyPointCount; ++i) {
+            points[i] =
+                GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
+        }
+        mesh.GetAttribute(TfToken("points")).Set(points);
+
+        const SdfPath skinPath("/Asset/Rig/Movers/Skin_" +
+                               std::to_string(chain));
+        const UsdPrim skin =
+            stage->DefinePrim(skinPath, TfToken("RigExecSkinMover"));
+        skin.ApplyAPI(TfToken("RigExecMoverAPI"));
+        skin.GetRelationship(TfToken("rigExec:moves"))
+            .SetTargets({meshPath.AppendProperty(TfToken("points"))});
+        skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+        skin.CreateRelationship(TfToken("rigExec:influences"))
+            .SetTargets({alongX.GetPath(), alongY.GetPath()});
+        skin.CreateAttribute(TfToken("rigExec:elementSize"),
+                             SdfValueTypeNames->Int)
+            .Set(2);
+        skin.CreateAttribute(TfToken("rigExec:jointIndices"),
+                             SdfValueTypeNames->IntArray)
+            .Set(indices);
+        skin.CreateAttribute(TfToken("rigExec:jointWeights"),
+                             SdfValueTypeNames->FloatArray)
+            .Set(weights);
+    }
+    return stage;
+}
+
+// GPU STATIC TABLES. The snapshot builder keeps one static table per layout
+// serial and clears that cache when it would grow past a handful. Author
+// enough chains to cross the limit, then check every published prim carries
+// the table of its own layout, and that a generation captured before the
+// clear still holds the values it was handed.
+void
+TestGpuDeformStaticEvictionKeepsPublicationTables()
+{
+    std::printf(
+        "progress: TestGpuDeformStaticEvictionKeepsPublicationTables\n");
+    std::fflush(stdout);
+    const std::string priorGpu = TfGetenv("RIGEXEC_GPU_DEFORM");
+    SetEnv("RIGEXEC_GPU_DEFORM", "shader");
+
+    // One chain more than the cache holds before it clears, so the eviction
+    // runs while this very generation is built.
+    constexpr int kChainCount = 34;
+    UsdStageRefPtr stage = MakeSkinChainRig(kChainCount);
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+    CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(1.0)).ok);
+
+    const RigExecImagingSnapshotConstPtr first = bridge.GetStore()->Get();
+    CHECK(first != nullptr);
+    if (!first) {
+        SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
+        return;
+    }
+
+    struct _TableCopy {
+        uint64_t serial = 0;
+        int opCount = 0;
+        size_t pointCount = 0;
+        VtIntArray ops;
+        VtFloatArray staticF;
+        VtIntArray staticI;
+    };
+    std::map<SdfPath, _TableCopy> tables;
+    std::set<uint64_t> layoutSerials;
+    for (const auto &[primPath, prim] : first->prims) {
+        if (!prim.gpuDeform || !prim.gpuDeform->layout) {
+            continue;
+        }
+        const RigExecGpuDeformLayout &layout = *prim.gpuDeform->layout;
+        layoutSerials.insert(layout.serial);
+        CHECK(prim.gpuDeformStatic != nullptr);
+        if (!prim.gpuDeformStatic) {
+            continue;
+        }
+        CHECK(prim.gpuDeformStatic->serial == layout.serial);
+        CHECK(prim.gpuDeformStatic->pointCount == layout.pointCount);
+        CHECK(prim.gpuDeformStatic->opCount == int(layout.OpCount()));
+        CHECK(prim.gpuDeformStatic->ops ==
+              VtIntArray(layout.ops.begin(), layout.ops.end()));
+        CHECK(prim.gpuDeformStatic->staticF ==
+              VtFloatArray(layout.staticF.begin(), layout.staticF.end()));
+        CHECK(prim.gpuDeformStatic->staticI ==
+              VtIntArray(layout.staticI.begin(), layout.staticI.end()));
+        _TableCopy copy;
+        copy.serial = prim.gpuDeformStatic->serial;
+        copy.opCount = prim.gpuDeformStatic->opCount;
+        copy.pointCount = prim.gpuDeformStatic->pointCount;
+        copy.ops = prim.gpuDeformStatic->ops;
+        copy.staticF = prim.gpuDeformStatic->staticF;
+        copy.staticI = prim.gpuDeformStatic->staticI;
+        tables[primPath] = copy;
+    }
+    // Every chain built its own layout, so the cache crossed its limit.
+    CHECK(int(layoutSerials.size()) == kChainCount);
+    CHECK(int(tables.size()) == kChainCount);
+
+    // The next publish rebuilds the tables the clear dropped. The retained
+    // generation still holds the exact tables it was given.
+    CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(2.0)).ok);
+    const RigExecImagingSnapshotConstPtr second = bridge.GetStore()->Get();
+    CHECK(second != nullptr && second != first);
+    for (const auto &[primPath, copy] : tables) {
+        const auto kept = first->prims.find(primPath);
+        CHECK(kept != first->prims.end() && kept->second.gpuDeformStatic);
+        if (kept == first->prims.end() || !kept->second.gpuDeformStatic) {
+            continue;
+        }
+        const RigExecPublishedPrim::GpuDeformStatic &statics =
+            *kept->second.gpuDeformStatic;
+        CHECK(statics.serial == copy.serial);
+        CHECK(statics.opCount == copy.opCount);
+        CHECK(statics.pointCount == copy.pointCount);
+        CHECK(statics.ops == copy.ops);
+        CHECK(statics.staticF == copy.staticF);
+        CHECK(statics.staticI == copy.staticI);
+
+        const auto rebuilt = second->prims.find(primPath);
+        CHECK(rebuilt != second->prims.end() &&
+              rebuilt->second.gpuDeformStatic);
+        if (rebuilt == second->prims.end() ||
+            !rebuilt->second.gpuDeformStatic) {
+            continue;
+        }
+        const RigExecPublishedPrim::GpuDeformStatic &fresh =
+            *rebuilt->second.gpuDeformStatic;
+        CHECK(fresh.serial == copy.serial);
+        CHECK(fresh.opCount == copy.opCount);
+        CHECK(fresh.pointCount == copy.pointCount);
+        CHECK(fresh.ops == copy.ops);
+        CHECK(fresh.staticF == copy.staticF);
+        CHECK(fresh.staticI == copy.staticI);
+    }
+    SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5461,6 +6136,14 @@ main(int argc, char **argv)
     TestInSessionWeightSamplesKeyFramesApart();
     TestLiveChainBindingsFollowNotices();
     TestProofsShareTheDigestOrder();
+    // Published-versus-query and cacheHit contracts, pinned directly.
+    TestQuerySnapshotServesProvenHitsWithoutPublishing();
+    TestDefaultTimeAndNumericZeroAreDistinctProofKeys();
+    TestShadowVerifiedHitKeepsCacheHitFalse();
+    TestCachedServeRestampsPoseTime();
+    TestQueryNeverRunsTheSparseRekeyLane();
+    TestQuerySnapshotLeavesGpuDeformHistoryAlone();
+    TestGpuDeformStaticEvictionKeepsPublicationTables();
     if (failures == 0) {
         std::printf("testRigExecImagingFrameCache: all tests passed\n");
     } else {

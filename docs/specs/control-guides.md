@@ -116,7 +116,15 @@ USD python layout themselves).
   are inputs, or its revised frame when a pose constraint names the control
   in `rigExec:moves`.
 
-## Bridge (`libs/rigExecImaging/bridge.cpp`, `snapshotStore.h`)
+## Bridge (`libs/rigExecImaging/bridgeGuides.cpp`, `bridgeVolumeGuides.cpp`, `bridgeGuideGeometry.cpp`, `bridgeSnapshot.cpp`, `snapshotStore.h`)
+
+The guide fills are `RigExecBridgeGuides` members: control and joint guides
+in `bridgeGuides.cpp`, the falloff-volume and weight-overlay fills in its
+second TU `bridgeVolumeGuides.cpp`. The guide tokens, unit shape tables and
+rigid placement helpers they call are in `bridgeGuideGeometry.cpp`. The rest
+of the payload comes from `RigExecBridgeSnapshotBuilder` (`bridgeSnapshot.cpp`);
+`bridge.cpp` builds the per-call records, calls the fills, stamps the
+generation and publishes through `RigExecSnapshotStore` (`snapshotStore.h`).
 
 `RigExecPublishedPrim` additions:
 
@@ -128,14 +136,15 @@ TfToken controlGuideDrawMode;   // wire|geometry
 GfVec3d controlGuideScale;      // |evaluated axes| * authored guide multipliers
 ```
 
-`_FillControlGuides(pose, snapshot)` (called from both `Evaluate` snapshot
-paths, like `_FillGuides`): for each `pose.controlFrames` entry, rigidize the
-frame (`_RigidGuideMatrix`, the orthonormalize/determinant/finite-check
-helper `_AppendGuideFrame` shares) while retaining its three axis
-magnitudes. Read `guide:shape/drawMode/scaleX/scaleY/scaleZ` at `pose.time`,
-reject invalid authored multipliers, and publish their product with those
-evaluated magnitudes as `controlGuideScale`; `_ReadGuideStyleCached` reads
-color/opacity. `snapshot->assetRoot` must be set on this path too.
+`_FillControlGuides(call, pose, snapshot)` (called from both `Evaluate`
+snapshot paths, like `_FillGuides`): for each `pose.controlFrames` entry,
+rigidize the frame (`_RigidGuideMatrix`, the orthonormalize/determinant/
+finite-check helper `_AppendGuideFrame` shares) while retaining its three
+axis magnitudes. Read `guide:shape/drawMode/scaleX/scaleY/scaleZ` at
+`pose.time`, reject invalid authored multipliers, and publish their product
+with those evaluated magnitudes as `controlGuideScale`;
+`_ReadGuideStyleCached` reads color/opacity. `snapshot->assetRoot` must be
+set on this path too.
 
 Snapshot diff (`RigExecSnapshotStore::_Diff` in `snapshotStore.h`): fold the
 new fields into the existing guide comparisons — `hasControlGuide`, shape,
