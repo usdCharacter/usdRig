@@ -415,6 +415,16 @@ endforeach()
 add_library(rigExecImaging SHARED
     libs/rigExecImaging/sceneIndices.cpp
     libs/rigExecImaging/bridge.cpp
+    libs/rigExecImaging/bridgeMotion.cpp
+    libs/rigExecImaging/bridgeWarmPublication.cpp
+    libs/rigExecImaging/bridgeFreshness.cpp
+    libs/rigExecImaging/bridgeGuideGeometry.cpp
+    libs/rigExecImaging/bridgeGuides.cpp
+    libs/rigExecImaging/bridgeVolumeGuides.cpp
+    libs/rigExecImaging/bridgeSnapshot.cpp
+    libs/rigExecImaging/bridgeSampling.cpp
+    libs/rigExecImaging/bridgeFrameCache.cpp
+    libs/rigExecImaging/bridgeCacheFreshness.cpp
     libs/rigExecImaging/playback.cpp
     libs/rigExecImaging/sceneIndexPlugin.cpp
     libs/rigExecImaging/rigAdapter.cpp

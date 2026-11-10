@@ -31,13 +31,18 @@
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/references.h"
 
+#include "rigExec/frameCacheSparsity.h"
+
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/diagnosticMgr.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/notice.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/setenv.h"
+#include "pxr/base/tf/weakBase.h"
+#include "pxr/usd/usd/notice.h"
 #include "pxr/imaging/hd/basisCurvesSchema.h"
 #include "pxr/imaging/hd/basisCurvesTopologySchema.h"
 #include "pxr/imaging/hd/coneSchema.h"
@@ -8475,6 +8480,481 @@ TestClothConstraintGuides()
               .primType.IsEmpty());
 }
 
+// QUERY CONTRACT. SnapshotAtTimeWithoutPublishing (frames on demand,
+// docs/specs/frames-on-demand.md) answers one frame's pose WITHOUT
+// publishing it: the store keeps the generation it had, the generation
+// counter is not consumed, the results index delivers no notice, the GPU
+// deform history is not touched, and the query's own snapshot carries no
+// generation stamp (its Describes() is false -- stamping is the
+// publisher's, and the query's miss on it is a preserved quirk). The
+// 'evaluated' flag says truthfully whether the evaluator ran: false on a
+// cache serve, true on the live query, and a miss with evaluate=false
+// answers false without evaluating. Interactive overrides refuse the
+// query outright. These pins run through the public surface only, so the
+// bridge decomposition must keep them green.
+static UsdStageRefPtr
+_MakeQueryRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
+    UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
+    UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
+    for (int t = 1; t <= 4; ++t) {
+        tx.Set(10.0 + 0.1 * double(t), UsdTimeCode(double(t)));
+        ty.Set(20.0 - 0.05 * double(t), UsdTimeCode(double(t)));
+    }
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+
+    const SdfPath meshPath("/Asset/Geom/Mesh_0");
+    const UsdPrim prim = stage->DefinePrim(meshPath, TfToken("Mesh"));
+    VtVec3fArray points(8);
+    for (size_t i = 0; i < points.size(); ++i) {
+        points[i] =
+            GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
+    }
+    prim.GetAttribute(TfToken("points")).Set(points);
+
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin_0"),
+                                           TfToken("RigExecSkinMover"));
+    skin.ApplyAPI(TfToken("RigExecMoverAPI"));
+    skin.GetRelationship(TfToken("rigExec:moves"))
+        .SetTargets({meshPath.AppendProperty(TfToken("points"))});
+    skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+    skin.CreateRelationship(TfToken("rigExec:influences"))
+        .SetTargets({alongX.GetPath(), alongY.GetPath()});
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
+    VtIntArray indices(points.size() * 2);
+    for (size_t i = 0; i < points.size(); ++i) {
+        indices[i * 2] = 0;
+        indices[i * 2 + 1] = 1;
+    }
+    skin.CreateAttribute(TfToken("rigExec:jointIndices"),
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
+    VtFloatArray weights(points.size() * 2);
+    for (size_t i = 0; i < points.size(); ++i) {
+        weights[i * 2] = 0.1f;
+        weights[i * 2 + 1] = 0.9f;
+    }
+    skin.CreateAttribute(TfToken("rigExec:jointWeights"),
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
+    return stage;
+}
+
+static bool
+_SamePoints(const VtVec3fArray &a, const VtVec3fArray &b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void
+TestQuerySnapshotPublicationIsolation()
+{
+    std::printf("progress: TestQuerySnapshotPublicationIsolation\n");
+    const SdfPath meshPath("/Asset/Geom/Mesh_0");
+    const SdfPath control("/Asset/Rig/AlongX");
+    UsdStageRefPtr stage = _MakeQueryRig();
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+
+    auto upstream = HdRetainedSceneIndex::New();
+    upstream->AddPrims({_MeshShell(meshPath)});
+    auto binding = RigExecBindingResolvingSceneIndex::New(upstream);
+    auto results = RigExecResultsSceneIndex::New(binding, bridge.GetStore());
+    bridge.SetSceneIndices(binding, results);
+    _RecordingObserver observer;
+    results->AddObserver(HdSceneIndexObserverPtr(&observer));
+
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(2.0)));
+    const RigExecImagingSnapshotConstPtr displayed = bridge.GetStore()->Get();
+    CHECK(displayed != nullptr);
+    CHECK(displayed && displayed->generation > 0);
+    if (!displayed) {
+        return;
+    }
+    const size_t addedBefore = observer.added.size();
+    const size_t removedBefore = observer.removed.size();
+    const size_t dirtiedBefore = observer.dirtied.size();
+    const size_t locatorsBefore = observer.dirtiedLocators.size();
+    CHECK(displayed->prims.count(meshPath) == 1);
+    CHECK(displayed->prims.count(control) == 1);
+    CHECK(displayed->prims.at(control).hasControlGuide);
+    // The displayed generation's values, captured as independent copies:
+    // comparing through a later alias of the SAME store object cannot
+    // see an accidental in-place rewrite.
+    const VtVec3fArray shownPoints = displayed->prims.at(meshPath).points;
+    const decltype(displayed->generation) shownGeneration =
+        displayed->generation;
+
+    bridge.MutableProfiler()->SetEnabled(true);
+    const auto scopeCount = [](RigExecProfiler *profiler, const char *name) {
+        for (const RigExecProfileSummaryRow &row : profiler->Summarize()) {
+            if (row.name == name) {
+                return row.count;
+            }
+        }
+        return size_t(0);
+    };
+    static const char *const kPublishScopes[] = {"Imaging.EvaluateAndPublish",
+                                                 "Imaging.Evaluate",
+                                                 "Imaging.WarmEvaluate",
+                                                 "Imaging.FrameCacheLookup",
+                                                 "Imaging.LookupSampleDigest",
+                                                 "Imaging.StorePublish",
+                                                 "Imaging.Guides"};
+    std::map<std::string, size_t> scopesBefore;
+    for (const char *name : kPublishScopes) {
+        scopesBefore[name] = scopeCount(bridge.MutableProfiler(), name);
+    }
+    const auto publishedIntact = [&]() {
+        const RigExecImagingSnapshotConstPtr pub = bridge.GetStore()->Get();
+        CHECK(pub == displayed);
+        CHECK(pub->generation == shownGeneration);
+        CHECK(pub->prims.count(meshPath) == 1);
+        CHECK(pub->prims.count(control) == 1);
+        CHECK(pub->prims.at(meshPath).points.size() == shownPoints.size());
+        CHECK(_SamePoints(pub->prims.at(meshPath).points, shownPoints));
+        CHECK(pub->prims.at(control).hasControlGuide);
+        CHECK(observer.added.size() == addedBefore);
+        CHECK(observer.removed.size() == removedBefore);
+        CHECK(observer.dirtied.size() == dirtiedBefore);
+        CHECK(observer.dirtiedLocators.size() == locatorsBefore);
+    };
+
+    RigExecImagingSnapshotConstPtr snap;
+    std::string diagnostic;
+    bool evaluated = true;
+
+    // A miss with evaluate=false: false, no evaluation, nothing moved.
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(
+        UsdTimeCode(4.0), false, &snap, &diagnostic, &evaluated));
+    CHECK(!evaluated);
+    CHECK(snap == nullptr);
+    CHECK(bridge.GetStore()->Get() == displayed);
+
+    // Live query at another frame: evaluated says the evaluator ran, and
+    // the answer is that frame's geometry, not the displayed one.
+    evaluated = false;
+    CHECK(bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(3.0), true, &snap,
+                                                 &diagnostic, &evaluated));
+    CHECK(evaluated);
+    CHECK(snap != nullptr);
+    if (snap) {
+        // No generation is minted or stamped for a query; the published
+        // generation counter is untouched, so the query snapshot carries
+        // generation 0 and Describes() nothing (preserved quirk).
+        CHECK(snap->generation == 0);
+        CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
+        CHECK(snap->prims.count(meshPath) == 1);
+        // Query mode leaves the guide payloads alone: geometry only.
+        CHECK(snap->prims.count(control) == 0);
+        if (snap->prims.count(meshPath) == 1 &&
+            displayed->prims.count(meshPath) == 1) {
+            CHECK(!_SamePoints(snap->prims.at(meshPath).points,
+                               displayed->prims.at(meshPath).points));
+        }
+    }
+
+    // The publication surface is untouched across both queries: the store
+    // still answers with the captured values, the results index delivered
+    // no notice of any category, and no publish/lookup/sample profiler
+    // scope ran.
+    publishedIntact();
+    for (const char *name : kPublishScopes) {
+        CHECK(scopeCount(bridge.MutableProfiler(), name) == scopesBefore[name]);
+    }
+
+    // The live query memoized its pose, so the next query at the same
+    // frame serves without running the evaluator (the flag stays false
+    // except under the RIGEXEC_FRAME_CACHE_VERIFY combo, which evaluates
+    // to cross-check the serve).
+    if (bridge.GetFrameCacheMode() != RigExecFrameCacheMode::Off) {
+        const bool verify = RigExecFrameCacheVerifyRequested();
+        evaluated = true;
+        snap.reset();
+        CHECK(bridge.SnapshotAtTimeWithoutPublishing(
+            UsdTimeCode(3.0), false, &snap, &diagnostic, &evaluated));
+        CHECK(snap != nullptr);
+        CHECK(evaluated == verify);
+        if (snap) {
+            CHECK(snap->generation == 0);
+            CHECK(!snap->Describes(stage, UsdTimeCode(3.0)));
+        }
+        // The hit query records no lookup/sample scope either.
+        CHECK(
+            scopeCount(bridge.MutableProfiler(), "Imaging.FrameCacheLookup") ==
+            scopesBefore["Imaging.FrameCacheLookup"]);
+        CHECK(scopeCount(bridge.MutableProfiler(),
+                         "Imaging.LookupSampleDigest") ==
+              scopesBefore["Imaging.LookupSampleDigest"]);
+        publishedIntact();
+    }
+
+    // Interactive overrides refuse the query while they stand -- even at a
+    // frame the store already answers.
+    bridge.SetInteractiveOverrides({RigExecValueOverride{
+        control, TfToken(), TfToken("avars:tx"), VtValue(999.0)}});
+    evaluated = true;
+    snap.reset();
+    CHECK(!bridge.SnapshotAtTimeWithoutPublishing(UsdTimeCode(2.0), true, &snap,
+                                                  &diagnostic, &evaluated));
+    CHECK(!evaluated);
+    CHECK(snap == nullptr);
+    publishedIntact();
+    bridge.ClearInteractiveOverrides();
+
+    // Publication after the queries still works and consumes the next
+    // generation, with notices delivered as usual.
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode(3.0)));
+    const RigExecImagingSnapshotConstPtr now = bridge.GetStore()->Get();
+    CHECK(now != displayed);
+    CHECK(now->generation == displayed->generation + 1);
+    CHECK(observer.dirtied.size() > dirtiedBefore);
+    results->RemoveObserver(HdSceneIndexObserverPtr(&observer));
+}
+
+// GUIDE-CACHE ROUTES. A bare bridge gets no ObjectsChanged forwarding, so
+// its guide caches are dropped by the coarse stage-edit-serial check in
+// _SyncGuideCaches: any edit -- even one no notice ever mentions -- makes
+// the next publication re-read authored styling. Once NoteGuideEdits has
+// run (the registry forwards every notice that reaches the rig), the
+// serial clear is retired and only the routed drops apply: pose edits
+// drop nothing, and a guide:* edit drops exactly its prim. The manual
+// forwarder pins the bridge-side routing rules (it is the same call the
+// registry makes); the registry branch pins the production wiring end to
+// end: real activation, real notice routing, styling read from the
+// registry's store. Under the registry every stage notice reaches both
+// the evaluator's serial and the bridge, so the cached-versus-re-read
+// discriminator is staged by suppressing the forwarder, which the real
+// registry never does; the registry branch therefore pins routing
+// correctness, not the serial contrast.
+struct _GuideNoticeForward : public TfWeakBase {
+    RigExecImagingBridge *bridge = nullptr;
+    bool forward = false;
+    int seen = 0;
+    void OnChanged(const UsdNotice::ObjectsChanged &notice,
+                   const UsdStageWeakPtr &)
+    {
+        ++seen;
+        if (forward) {
+            bridge->NoteGuideEdits(notice);
+        }
+    }
+};
+
+static UsdStageRefPtr
+_MakeGuideStyleRig()
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    for (const char *name : {"AlongX", "AlongY"}) {
+        const UsdPrim control =
+            stage->DefinePrim(SdfPath(std::string("/Asset/Rig/") + name),
+                              TfToken("RigExecControl"));
+        control
+            .CreateAttribute(TfToken("guide:displayColor"),
+                             SdfValueTypeNames->Float3)
+            .Set(GfVec3f(1.0f, 0.0f, 0.0f));
+    }
+    stage->GetPrimAtPath(SdfPath("/Asset/Rig/AlongX"))
+        .CreateAttribute(TfToken("avars:tx"), SdfValueTypeNames->Double)
+        .Set(2.0);
+    return stage;
+}
+
+static GfVec3f
+_PublishedGuideColor(const RigExecImagingBridge &bridge, const SdfPath &prim)
+{
+    const RigExecImagingSnapshotConstPtr snap = bridge.GetStore()->Get();
+    if (!snap) {
+        return GfVec3f(-1.0f, -1.0f, -1.0f);
+    }
+    const auto found = snap->prims.find(prim);
+    if (found == snap->prims.end()) {
+        return GfVec3f(-1.0f, -1.0f, -1.0f);
+    }
+    return found->second.guideColor;
+}
+
+static void
+TestGuideCacheInvalidationBareVersusForwarded()
+{
+    std::printf("progress: TestGuideCacheInvalidationBareVersusForwarded\n");
+    const SdfPath x("/Asset/Rig/AlongX");
+    const SdfPath y("/Asset/Rig/AlongY");
+    const TfToken colorName("guide:displayColor");
+
+    // BARE: no notice ever reaches the bridge. A silent styling edit moves
+    // the evaluator's stage-edit serial, and the serial check drops every
+    // cached guide input: the next publication reads the new color.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(0.0f, 1.0f, 0.0f));
+    }
+
+    // FORWARDING: the first NoteGuideEdits call retires the coarse serial
+    // clear. From then on only routed drops apply.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+        CHECK(bridge.Compile());
+        _GuideNoticeForward forwarder;
+        forwarder.bridge = &bridge;
+        TfNotice::Key key =
+            TfNotice::Register(TfCreateWeakPtr(&forwarder),
+                               &_GuideNoticeForward::OnChanged, stage);
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A forwarded pose edit drops nothing: a release does not re-read
+        // every provider's styling.
+        forwarder.forward = true;
+        CHECK(
+            stage->GetPrimAtPath(x).GetAttribute(TfToken("avars:tx")).Set(3.0));
+        CHECK(forwarder.seen > 0);
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // Two silent styling edits: the stage-edit serial moves, but the
+        // coarse clear is retired, so BOTH cached colors stand. A bare
+        // bridge (above) would have re-read them.
+        forwarder.forward = false;
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f)));
+        CHECK(stage->GetPrimAtPath(y).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // Routing only X's notice updates only X: the guide:* drop is
+        // per-prim. X's edit (a NEW value, so the notice is real) is
+        // forwarded; Y's edit stays silent and keeps its cached styling.
+        forwarder.forward = true;
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        forwarder.forward = false;
+        CHECK(stage->GetPrimAtPath(y).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 0.0f, 1.0f)));
+        CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+        CHECK(_PublishedGuideColor(bridge, x) == GfVec3f(0.0f, 0.0f, 1.0f));
+        CHECK(_PublishedGuideColor(bridge, y) == GfVec3f(1.0f, 0.0f, 0.0f));
+        TfNotice::Revoke(key);
+    }
+
+    // REGISTRY-DRIVEN: the production wiring. The registry forwards every
+    // notice that reaches the rig through NoteGuideEdits, so a real
+    // registry session runs the bridge in forwarded mode and the routed
+    // rules decide through the registry's own store.
+    {
+        UsdStageRefPtr stage = _MakeGuideStyleRig();
+        RigExecImagingRegistry &registry =
+            RigExecImagingRegistry::GetInstance();
+        std::vector<std::string> errors;
+        CHECK(registry.Activate(stage, SdfPath("/Asset/Rig"),
+                                UsdTimeCode::Default(), &errors));
+        CHECK(registry.GetBridge(SdfPath("/Asset/Rig")) != nullptr);
+        const auto colorAt = [&](const SdfPath &prim) {
+            const RigExecImagingSnapshotConstPtr snap =
+                registry.GetStore()->Get();
+            if (!snap) {
+                return GfVec3f(-1.0f, -1.0f, -1.0f);
+            }
+            const auto found = snap->prims.find(prim);
+            return found == snap->prims.end() ? GfVec3f(-1.0f, -1.0f, -1.0f)
+                                              : found->second.guideColor;
+        };
+        CHECK(colorAt(x) == GfVec3f(1.0f, 0.0f, 0.0f));
+        CHECK(colorAt(y) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A pose edit through the registry's routing drops nothing: the
+        // next published generation keeps the cached styling.
+        CHECK(
+            stage->GetPrimAtPath(x).GetAttribute(TfToken("avars:tx")).Set(3.0));
+        CHECK(registry.SetTime(UsdTimeCode(2.0)));
+        CHECK(colorAt(x) == GfVec3f(1.0f, 0.0f, 0.0f));
+
+        // A guide edit routed by the registry updates exactly its prim:
+        // X publishes the new color, Y's cached styling stands.
+        CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
+            GfVec3f(0.0f, 1.0f, 0.0f)));
+        CHECK(registry.SetTime(UsdTimeCode(3.0)));
+        CHECK(colorAt(x) == GfVec3f(0.0f, 1.0f, 0.0f));
+        CHECK(colorAt(y) == GfVec3f(1.0f, 0.0f, 0.0f));
+        registry.Deactivate();
+    }
+}
+
+// STORE OWNERSHIP. Both constructors publish through GetStore(): the
+// default creates its own store; the external one publishes into the
+// caller's store (the application may create the store before any scene
+// index or bridge exists), and a sibling default bridge cannot disturb
+// it. The SetPublishesDirtied(false) route (the registry's combined-
+// generation caller) swaps the same store and reports no dirtied leaves.
+static void
+TestExternallyOwnedStoreConstructor()
+{
+    std::printf("progress: TestExternallyOwnedStoreConstructor\n");
+    UsdStageRefPtr stage = _MakeGuideStyleRig();
+    const SdfPath rig("/Asset/Rig");
+    auto store = std::make_shared<RigExecSnapshotStore>();
+    RigExecImagingBridge bridge(stage, rig, store);
+    CHECK(bridge.GetStore() == store);
+    CHECK(store->Get() == nullptr);
+    CHECK(bridge.Compile());
+    CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
+    const RigExecImagingSnapshotConstPtr first = store->Get();
+    CHECK(first != nullptr);
+    CHECK(first && first->generation > 0 && !first->prims.empty());
+    CHECK(bridge.GetStore()->Get() == first);
+
+    // The Replace route (no diffing publisher) still swaps the SAME
+    // external store and reports no dirtied leaves.
+    bridge.SetPublishesDirtied(false);
+    const RigExecImagingBridge::PublishResult replaced =
+        bridge.EvaluateAndPublishResult(UsdTimeCode(2.0));
+    CHECK(replaced.ok);
+    CHECK(replaced.dirtied.empty());
+    const RigExecImagingSnapshotConstPtr second = store->Get();
+    CHECK(second != nullptr);
+    CHECK(second != first);
+    CHECK(second->generation > first->generation);
+    bridge.SetPublishesDirtied(true);
+
+    // A default-constructed bridge over the same stage owns a different
+    // store; publishing through it leaves the external one alone.
+    RigExecImagingBridge other(stage, rig);
+    CHECK(other.GetStore() != store);
+    CHECK(other.Compile());
+    CHECK(other.EvaluateAndPublish(UsdTimeCode(3.0)));
+    CHECK(other.GetStore()->Get() != nullptr);
+    CHECK(store->Get() == second);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -8554,6 +9034,12 @@ main(int argc, char **argv)
     // The real chain with an upstream scene index installed; every session
     // it opens is deactivated on the way out.
     TestUpstreamSceneIndexDrivesRigInputs(examplesDir);
+
+    // The published-versus-query contract, the guide-cache invalidation
+    // routes, and the store-ownership constructors, pinned directly.
+    TestQuerySnapshotPublicationIsolation();
+    TestGuideCacheInvalidationBareVersusForwarded();
+    TestExternallyOwnedStoreConstructor();
 
     if (failures) {
         std::printf("%d FAILURE(S)\n", failures);

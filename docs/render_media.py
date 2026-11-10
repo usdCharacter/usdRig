@@ -180,7 +180,7 @@ GUIDE_XRAY = 0.78
 # A page whose documented node IS a weight object paints that field onto the
 # geometry it weights, the same picture usdview's volume-weight tool draws:
 # RigExecImaging_SetWeightOverlay (registry.h) hands the selection to every
-# active bridge, _FillWeightOverlay (bridge.cpp) copies the weights the
+# active bridge, _FillWeightOverlay (bridgeVolumeGuides.cpp) copies the
 # MOVER ACTUALLY CONSUMED onto the field's own target prim, and
 # RigExecResultsSceneIndex turns them into a per-vertex displayColor ramp
 # (sceneIndices.cpp, _WeightOverlayColor). Nothing is re-derived here: a

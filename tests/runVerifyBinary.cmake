@@ -77,9 +77,10 @@ endif()
 if (NOT _conformance_out MATCHES "binary conformance: .* failures=0")
     message(FATAL_ERROR "binary conformance printed no successful ledger")
 endif()
+set(_pose_command "${POSE}" "${STAGE}" --verify-binary "${OUT}"
+                  --frames "${_verify_frames}" ${_drag_args})
 execute_process(
-    COMMAND "${POSE}" "${STAGE}" --verify-binary "${OUT}"
-            --frames "${_verify_frames}" ${_drag_args}
+    COMMAND ${_pose_command}
     RESULT_VARIABLE _pose_rc
     OUTPUT_VARIABLE _pose_out
     ERROR_VARIABLE _pose_err)
@@ -98,10 +99,14 @@ math(EXPR _drag_values "${_drag_count} * 2")
 if (NOT _pose_out MATCHES
         "verify-binary: ${_frame_count} of ${_frame_count} frame\\(s\\) match")
     message(FATAL_ERROR "verify-binary printed no ledger matching "
-                        "${_frame_count} frame(s)")
+                        "${_frame_count} frame(s) (exit ${_pose_rc}):"
+                        "\ncommand: ${_pose_command}"
+                        "\nstderr: ${_pose_err}")
 endif()
 if (NOT _pose_out MATCHES
         "verify-binary: ${_drag_values} of ${_drag_values} drag\\(s\\) match")
     message(FATAL_ERROR "verify-binary printed no ledger matching "
-                        "${_drag_values} drag(s)")
+                        "${_drag_values} drag(s) (exit ${_pose_rc}):"
+                        "\ncommand: ${_pose_command}"
+                        "\nstderr: ${_pose_err}")
 endif()
