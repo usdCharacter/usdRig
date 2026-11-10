@@ -27,7 +27,7 @@ RigExecBridgeFrameCache::NoteWarmingEnqueued(const RigExecCacheCall &call,
     // Scope check, as on the lookup and memoization paths: the evaluation
     // compiled rig may have moved since the last proof was recorded.
     const uint64_t compiledRig =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -38,7 +38,7 @@ RigExecBridgeFrameCache::NoteWarmingEnqueued(const RigExecCacheCall &call,
     }
     const double stamped = call.time.IsDefault() ? 0.0 : call.time.GetValue();
     _freshDigests[{call.time.IsDefault(), stamped}] = RigExecFreshProof(
-        controlDigest, unfoldedDigest, &inputs, call.overrides);
+        controlDigest, unfoldedDigest, &inputs, &call.overrides);
 }
 
 void
@@ -49,7 +49,7 @@ RigExecBridgeFrameCache::AdmitOverrideControls(
     if (overrides.empty()) {
         return;
     }
-    const RigExecBakedProgram *program = call.evaluator->GetBakedProgram();
+    const RigExecBakedProgram *program = call.evaluator.GetBakedProgram();
     if (!program) {
         return;
     }
@@ -157,12 +157,12 @@ bool
 RigExecBridgeFrameCache::NoteCaptureIndex(
     const RigExecCacheCall &call, const UsdNotice::ObjectsChanged &notice)
 {
-    const RigExecBakedProgram *program = call.evaluator->GetBakedProgram();
+    const RigExecBakedProgram *program = call.evaluator.GetBakedProgram();
     if (!program || !_frameCache) {
         return false;
     }
     const uint64_t compiledRig =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     const bool hit = RigExecNoteCaptureIndex(*_frameCache, _taskListMemo,
                                              compiledRig, *program, notice);
     if (hit && _freshCompiledRigValid && _freshCompiledRig == compiledRig) {

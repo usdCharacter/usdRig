@@ -35,13 +35,26 @@ struct RigExecValueOverride;
 
 /// The bridge-owned state a guide fill reads, built at the call site and
 /// borrowed for the duration of the call. The component keeps no copy: an
-/// override or selection that moves takes effect on the next call.
+/// override or selection that moves takes effect on the next call. The
+/// mover order and the display overrides are required borrows: references,
+/// non-null by construction.
 struct RigExecGuideCall {
+    RigExecGuideCall(const UsdStageRefPtr &stage, uint64_t stageEditSerial,
+                     size_t compiledRigSignature,
+                     const std::vector<RigExecMoverRecord> &moverOrder,
+                     const std::vector<RigExecValueOverride> &displayOverrides,
+                     const SdfPath &weightOverlay)
+        : stage(stage), stageEditSerial(stageEditSerial),
+          compiledRigSignature(compiledRigSignature), moverOrder(moverOrder),
+          displayOverrides(displayOverrides), weightOverlay(weightOverlay)
+    {
+    }
+
     UsdStageRefPtr stage;
     uint64_t stageEditSerial = 0;
     size_t compiledRigSignature = 0;
-    const std::vector<RigExecMoverRecord> *moverOrder = nullptr;
-    const std::vector<RigExecValueOverride> *displayOverrides = nullptr;
+    const std::vector<RigExecMoverRecord> &moverOrder;
+    const std::vector<RigExecValueOverride> &displayOverrides;
     SdfPath weightOverlay;
 };
 

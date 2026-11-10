@@ -17,6 +17,7 @@ PXR_NAMESPACE_USING_DIRECTIVE
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace rigExec {
@@ -27,8 +28,23 @@ struct RigExecRigPose;
 /// and borrowed for the call only; the component keeps no copy, so a
 /// recompile or stage edit takes effect on the next call.
 /// \p scalarPrimvarTargets and \p scalarPrimvarNames are compiled scalar
-/// chains paired by index; \p projectorTargets' matrices stay target-local.
+/// chains paired by index; required borrows, non-null by construction.
+/// \p projectorTargets' matrices stay target-local.
 struct RigExecSnapshotCall {
+    RigExecSnapshotCall(const UsdStageRefPtr &stage, UsdTimeCode time,
+                        uint64_t stageEditSerial,
+                        std::vector<SdfPath> projectorTargets,
+                        std::vector<SdfPath> animatedMapPrimvars,
+                        const std::vector<SdfPath> &scalarPrimvarTargets,
+                        const std::vector<TfToken> &scalarPrimvarNames)
+        : stage(stage), time(time), stageEditSerial(stageEditSerial),
+          projectorTargets(std::move(projectorTargets)),
+          animatedMapPrimvars(std::move(animatedMapPrimvars)),
+          scalarPrimvarTargets(scalarPrimvarTargets),
+          scalarPrimvarNames(scalarPrimvarNames)
+    {
+    }
+
     UsdStageRefPtr stage;
     UsdTimeCode time;
     /// The evaluator's stage-edit serial: the authored reset walk reruns
@@ -36,8 +52,16 @@ struct RigExecSnapshotCall {
     uint64_t stageEditSerial = 0;
     std::vector<SdfPath> projectorTargets;
     std::vector<SdfPath> animatedMapPrimvars;
-    const std::vector<SdfPath> *scalarPrimvarTargets = nullptr;
-    const std::vector<TfToken> *scalarPrimvarNames = nullptr;
+    const std::vector<SdfPath> &scalarPrimvarTargets;
+    const std::vector<TfToken> &scalarPrimvarNames;
+};
+
+/// The render-motion path's provider-transform publish reads only the
+/// stage, the time and the edit serial: no compiled publication lists.
+struct RigExecProviderXformCall {
+    UsdStageRefPtr stage;
+    UsdTimeCode time;
+    uint64_t stageEditSerial = 0;
 };
 
 /// Which generation a build is for. Displayed: the complete viewport
@@ -60,7 +84,7 @@ public:
     /// Publishes constraint-driven transforms onto the prims themselves
     /// (base and revision travel together); the render-motion path calls
     /// this directly at the base offset.
-    void _FillProviderXforms(const RigExecSnapshotCall &call,
+    void _FillProviderXforms(const RigExecProviderXformCall &call,
                              const RigExecRigPose &pose,
                              RigExecImagingSnapshot *snapshot);
 

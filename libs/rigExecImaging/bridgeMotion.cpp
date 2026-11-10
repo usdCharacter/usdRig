@@ -90,14 +90,11 @@ RigExecImagingBridge::EvaluateAndPublishSamples(
         }
         if (i == baseIndex) {
             // Guides are single-sampled at the base offset.
-            RigExecGuideCall call;
-            call.stage = _stage;
-            call.stageEditSerial = _evaluator->GetStageEditSerial();
-            call.compiledRigSignature = _evaluator->GetCompiledRigSignature();
-            call.moverOrder = &_evaluator->GetMoverOrder();
-            call.displayOverrides = &_interactiveOverrides;
-            call.weightOverlay = _weightOverlay;
-            RigExecSnapshotCall xformCall;
+            RigExecGuideCall call(_stage, _evaluator->GetStageEditSerial(),
+                                  _evaluator->GetCompiledRigSignature(),
+                                  _evaluator->GetMoverOrder(),
+                                  _interactiveOverrides, _weightOverlay);
+            RigExecProviderXformCall xformCall;
             xformCall.stage = _stage;
             xformCall.time = sampleTime;
             xformCall.stageEditSerial = _evaluator->GetStageEditSerial();

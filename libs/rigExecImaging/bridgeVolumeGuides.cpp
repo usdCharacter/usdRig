@@ -80,7 +80,7 @@ RigExecBridgeGuides::_FillVolumeGuides(const RigExecGuideCall &call,
                     moved->second.IsHolding<float>()) {
                     return moved->second.UncheckedGet<float>();
                 }
-                for (const auto &override : *call.displayOverrides) {
+                for (const auto &override : call.displayOverrides) {
                     if (override.prim == weightPath &&
                         override.attribute == a.GetName()) {
                         if (override.value.IsHolding<float>())

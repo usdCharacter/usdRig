@@ -27,7 +27,7 @@ namespace {
 RigExecProfiler *
 _Profiler(const RigExecCacheCall &call)
 {
-    return const_cast<RigExecProfiler *>(&call.evaluator->GetProfiler());
+    return const_cast<RigExecProfiler *>(&call.evaluator.GetProfiler());
 }
 
 } // namespace
@@ -100,7 +100,7 @@ RigExecBridgeFrameCache::NoteEditSerial(const RigExecRigEvaluator &evaluator)
 const RigExecOutputAffectedIndex *
 RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
 {
-    const RigExecBakedProgram *program = call.evaluator->GetBakedProgram();
+    const RigExecBakedProgram *program = call.evaluator.GetBakedProgram();
     if (!program) {
         _affectedIndex.reset();
         _affectedValid = false;
@@ -108,7 +108,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
     }
     const RigExecBakedProgramImpl &impl = program->GetStepGraph();
     const uint64_t compiledRig =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     // The program object test matters as much as the compiled rig: a rebuild can
     // answer a colliding compiled rig for wholly new clustering, and an index
     // built for the old shape would retire against the wrong cones.
@@ -126,7 +126,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
     // A rebuild drops every admission with the old index: the standing
     // overrides re-admit against the new shape, so a drag straddling a
     // rebuild keeps its exact seeds.
-    AdmitOverrideControls(call, *call.overrides);
+    AdmitOverrideControls(call, call.overrides);
     return _affectedIndex.get();
 }
 
@@ -150,17 +150,17 @@ RigExecBridgeFrameCache::_ComputePoseOnlyCacheKey(
     const RigExecCacheCall &call, RigExecFrameCacheKey *key) const
 {
     if (!key || !_frameCache ||
-        !RigExecRefusalControlDigestible(*call.overrides, *call.upstream)) {
+        !RigExecRefusalControlDigestible(call.overrides, call.upstream)) {
         return false;
     }
     // Complete live results remain cacheable when an operation has no
     // frozen input contract. Every stage edit moves this namespace; no
     // per-operation input list or partial retained-state proof is needed.
     key->compiledRigSignature =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     key->controlDigest = RigExecRefusalControlDigest(
-        call.time, call.evaluator->GetStageEditSerial(), *call.overrides,
-        *call.upstream);
+        call.time, call.evaluator.GetStageEditSerial(), call.overrides,
+        call.upstream);
     return true;
 }
 
@@ -252,7 +252,7 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
     if (!time.IsNumeric()) {
         return false;
     }
-    const RigExecBakedProgram *program = call.evaluator->GetBakedProgram();
+    const RigExecBakedProgram *program = call.evaluator.GetBakedProgram();
     if (!program) {
         return false;
     }
@@ -277,7 +277,7 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
             return false;
         }
         _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
-            key.controlDigest, unfolded, &inputs, call.overrides);
+            key.controlDigest, unfolded, &inputs, &call.overrides);
         _warmIndex->NoteCompleted(_rigPath, stamped, key,
                                   _warmIndex->CurrentGeneration(_rigPath));
         _CompleteServe(call, cached, key, serve);
@@ -318,7 +318,7 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
     }
     if (!RigExecCanReuseRetainedPose(*index, *retained,
                                      key.compiledRigSignature, inputs,
-                                     *call.overrides)) {
+                                     call.overrides)) {
         _Profiler(call)->RecordCacheLookup(false, stamped);
         return false;
     }
@@ -338,8 +338,8 @@ RigExecBridgeFrameCache::_TrySparseServe(const RigExecCacheCall &call,
         _warmIndex->NoteCompleted(_rigPath, stamped, key,
                                   _warmIndex->CurrentGeneration(_rigPath));
     }
-    _freshDigests[{time.IsDefault(), stamped}] =
-        RigExecFreshProof(key.controlDigest, unfolded, &inputs, call.overrides);
+    _freshDigests[{time.IsDefault(), stamped}] = RigExecFreshProof(
+        key.controlDigest, unfolded, &inputs, &call.overrides);
     _Profiler(call)->RecordCacheLookup(true, stamped);
     _CompleteServe(call, served, key, serve);
     return true;
@@ -356,7 +356,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
     // Profiler scopes and lane records belong to the publishing lookup
     // only; a query that publishes nothing leaves the profiler alone.
     *miss = _CacheMiss();
-    if (!_frameCache || call.evaluator->cpuReference) {
+    if (!_frameCache || call.evaluator.cpuReference) {
         return false;
     }
     // Scope check: a new compiled rig retires every
@@ -364,7 +364,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
     // reachability); proofs name the old scope's inputs and must not be
     // consulted. No proof can exist yet, so this is a miss either way.
     const uint64_t compiledRig =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -388,7 +388,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
     // A row miss, a store miss under the row (concurrent eviction), or a rig
     // with no baked program falls through to the proof/sparse paths below.
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
-    const RigExecBakedProgram *program = call.evaluator->GetBakedProgram();
+    const RigExecBakedProgram *program = call.evaluator.GetBakedProgram();
     const auto proof = _freshDigests.find({time.IsDefault(), stamped});
     const bool haveProof = proof != _freshDigests.end();
     if (haveProof && !proof->second.sampledInputs) {
@@ -449,7 +449,7 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
     if (!haveProof && !miss->haveBase) {
         return false;
     }
-    if (!program || !call.sampling->CanSampleCacheInputs()) {
+    if (!program || !call.sampling.CanSampleCacheInputs()) {
         return false;
     }
     // One sample serves the proof compare and the sparse plan.
@@ -459,13 +459,13 @@ RigExecBridgeFrameCache::_LookupCachedPose(const RigExecCacheCall &call,
             sampleScope.emplace(_Profiler(call), "Imaging.LookupSampleDigest",
                                 "imaging");
         }
-        if (!call.sampling->SampleLive(time, *call.overrides, *call.upstream,
-                                       &miss->inputs) ||
-            !RigExecControlStateDigestible(miss->inputs, *call.overrides)) {
+        if (!call.sampling.SampleLive(time, call.overrides, call.upstream,
+                                      &miss->inputs) ||
+            !RigExecControlStateDigestible(miss->inputs, call.overrides)) {
             return false;
         }
         miss->unfolded =
-            RigExecControlStateDigest(miss->inputs, *call.overrides);
+            RigExecControlStateDigest(miss->inputs, call.overrides);
     }
     miss->sampled = true;
     miss->key.compiledRigSignature = compiledRig;
@@ -494,7 +494,7 @@ bool
 RigExecBridgeFrameCache::TryServe(const RigExecCacheCall &call,
                                   RigExecCacheServe *serve)
 {
-    if (!call.evaluator || !call.sampling || !serve) {
+    if (!serve) {
         return false;
     }
     *serve = RigExecCacheServe();
@@ -522,7 +522,7 @@ bool
 RigExecBridgeFrameCache::QueryLookup(const RigExecCacheCall &call,
                                      RigExecRigPose *pose)
 {
-    if (!call.evaluator || !pose) {
+    if (!pose) {
         return false;
     }
     RigExecFrameCacheKey key{0, 0};
@@ -541,7 +541,7 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
     // Scope check, as on the lookup path: the evaluation above may have
     // settled a new compiled rig.
     const uint64_t compiledRig =
-        RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+        RigExecFrameCacheCompiledRigSignature(call.evaluator);
     if (!_freshCompiledRigValid || _freshCompiledRig != compiledRig) {
         _freshDigests.clear();
         _freshCompiledRig = compiledRig;
@@ -558,18 +558,18 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
     {
         RigExecProfileScope scope(_Profiler(call),
                                   "Imaging.MemoizeSampleDigest", "imaging");
-        if (call.sampling->CanSampleCacheInputs() &&
-            call.sampling->SampleLive(time, *call.overrides, *call.upstream,
-                                      &memoInputs) &&
+        if (call.sampling.CanSampleCacheInputs() &&
+            call.sampling.SampleLive(time, call.overrides, call.upstream,
+                                     &memoInputs) &&
             !memoInputs.HasChainResolvedInputs() &&
-            RigExecControlStateDigestible(memoInputs, *call.overrides)) {
+            RigExecControlStateDigestible(memoInputs, call.overrides)) {
             key.compiledRigSignature =
-                RigExecFrameCacheCompiledRigSignature(*call.evaluator);
+                RigExecFrameCacheCompiledRigSignature(call.evaluator);
             const uint64_t unfolded =
-                RigExecControlStateDigest(memoInputs, *call.overrides);
+                RigExecControlStateDigest(memoInputs, call.overrides);
             key.controlDigest = RigExecFoldConstantDigest(
                 unfolded, RigExecCompiledRigConstantDigest(
-                              *call.evaluator->GetBakedProgram()));
+                              *call.evaluator.GetBakedProgram()));
             memoUnfolded = unfolded;
             haveInputs = true;
         } else if (!_ComputePoseOnlyCacheKey(call, &key)) {
@@ -585,13 +585,13 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
             // the dependency record ride with the pose, so a later edit
             // retains the source snapshot used to validate cache reuse.
             const RigExecBakedProgramImpl &impl =
-                call.evaluator->GetBakedProgram()->GetStepGraph();
+                call.evaluator.GetBakedProgram()->GetStepGraph();
             RigExecRetainedFrameState retainedState =
                 RigExecCaptureRetainedState(
-                    memoInputs, *call.overrides, key.compiledRigSignature,
+                    memoInputs, call.overrides, key.compiledRigSignature,
                     impl.clustering.clusters.size(),
                     RigExecCompiledRigConstantDigest(
-                        *call.evaluator->GetBakedProgram()));
+                        *call.evaluator.GetBakedProgram()));
             auto retained = std::make_shared<RigExecRetainedFrameState>(
                 std::move(retainedState));
             const size_t retainedBytes = retained->RetainedBytes();
@@ -622,7 +622,7 @@ RigExecBridgeFrameCache::MemoizeLive(const RigExecCacheCall &call,
     const double stamped = time.IsDefault() ? 0.0 : time.GetValue();
     _freshDigests[{time.IsDefault(), stamped}] =
         RigExecFreshProof(key.controlDigest, memoUnfolded,
-                          haveInputs ? &memoInputs : nullptr, call.overrides);
+                          haveInputs ? &memoInputs : nullptr, &call.overrides);
     // No override admission here: memoization runs only when no overrides
     // stand (the drag bypass), so the list is always empty. Admission
     // lives on the warming path, which samples under standing overrides.

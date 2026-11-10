@@ -25,62 +25,21 @@ namespace rigExec {
 
 namespace {
 
-// The state the guide component borrows on every call: the bridge owns the
-// stage, the evaluator's serials and mover order, the standing display
-// overrides and the weight-overlay selection.
-RigExecGuideCall
-_MakeGuideCall(const UsdStageRefPtr &stage,
-               const RigExecRigEvaluator &evaluator,
-               const std::vector<RigExecValueOverride> &displayOverrides,
-               const SdfPath &weightOverlay)
-{
-    RigExecGuideCall call;
-    call.stage = stage;
-    call.stageEditSerial = evaluator.GetStageEditSerial();
-    call.compiledRigSignature = evaluator.GetCompiledRigSignature();
-    call.moverOrder = &evaluator.GetMoverOrder();
-    call.displayOverrides = &displayOverrides;
-    call.weightOverlay = weightOverlay;
-    return call;
-}
-
-// The state the snapshot builder borrows on every call: the bridge owns the
-// stage and the time, and the evaluator's stage-edit serial and compiled
-// publication metadata (projector targets, animated-map and scalar primvar
-// targets/names) are fetched here so the builder never sees the evaluator.
+// The evaluator-owned publication metadata the snapshot builder borrows
+// (projector targets, animated-map and scalar primvar targets/names) is
+// fetched here so the builder never sees the evaluator. The guide and
+// cache call records are constructed directly at their call sites: the
+// bridge owns the evaluator, sampling component and standing lists for
+// the whole call.
 RigExecSnapshotCall
 _MakeSnapshotCall(const UsdStageRefPtr &stage,
                   const RigExecRigEvaluator &evaluator, UsdTimeCode time)
 {
-    RigExecSnapshotCall call;
-    call.stage = stage;
-    call.time = time;
-    call.stageEditSerial = evaluator.GetStageEditSerial();
-    call.projectorTargets = evaluator.GetSurfaceProjectorTargets();
-    call.animatedMapPrimvars = evaluator.GetAnimatedMapPrimvars();
-    call.scalarPrimvarTargets = &evaluator.GetScalarPrimvarTargets();
-    call.scalarPrimvarNames = &evaluator.GetScalarPrimvarNames();
-    return call;
-}
-
-// The state the frame-cache component borrows on every call: the evaluator
-// it digests and samples against, the sampling component the lookup and
-// memoize lanes sample through, the frame, and the facade's standing
-// numerical overrides and upstream values. Borrowed for one synchronous
-// call; nothing is retained and no closure captures the bridge.
-RigExecCacheCall
-_MakeCacheCall(const RigExecRigEvaluator &evaluator,
-               RigExecBridgeSampling &sampling, UsdTimeCode time,
-               const std::vector<RigExecValueOverride> &overrides,
-               const std::vector<RigExecUpstreamValue> &upstream)
-{
-    RigExecCacheCall call;
-    call.evaluator = &evaluator;
-    call.sampling = &sampling;
-    call.time = time;
-    call.overrides = &overrides;
-    call.upstream = &upstream;
-    return call;
+    return RigExecSnapshotCall(stage, time, evaluator.GetStageEditSerial(),
+                               evaluator.GetSurfaceProjectorTargets(),
+                               evaluator.GetAnimatedMapPrimvars(),
+                               evaluator.GetScalarPrimvarTargets(),
+                               evaluator.GetScalarPrimvarNames());
 }
 
 } // namespace
@@ -166,9 +125,9 @@ RigExecImagingBridge::NoteWarmingEnqueued(UsdTimeCode time,
                                           uint64_t unfoldedDigest,
                                           const RigExecFrameInputs &inputs)
 {
-    _cache->NoteWarmingEnqueued(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                               _evaluationOverrides,
-                                               _upstreamInputs),
+    _cache->NoteWarmingEnqueued(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                                 _evaluationOverrides,
+                                                 _upstreamInputs),
                                 controlDigest, unfoldedDigest, inputs);
 }
 
@@ -176,8 +135,8 @@ const RigExecOutputAffectedIndex *
 RigExecImagingBridge::GetAffectedIndex()
 {
     return _cache->GetAffectedIndex(
-        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
-                       _evaluationOverrides, _upstreamInputs));
+        RigExecCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                         _evaluationOverrides, _upstreamInputs));
 }
 
 void
@@ -185,8 +144,8 @@ RigExecImagingBridge::AdmitOverrideControls(
     const std::vector<RigExecValueOverride> &overrides)
 {
     _cache->AdmitOverrideControls(
-        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
-                       _evaluationOverrides, _upstreamInputs),
+        RigExecCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                         _evaluationOverrides, _upstreamInputs),
         overrides);
 }
 
@@ -200,9 +159,9 @@ RigExecImagingBridge::RetireProofsForControls(
 bool
 RigExecImagingBridge::RepointProof(UsdTimeCode time, uint64_t newDigest)
 {
-    return _cache->RepointProof(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                               _evaluationOverrides,
-                                               _upstreamInputs),
+    return _cache->RepointProof(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                                 _evaluationOverrides,
+                                                 _upstreamInputs),
                                 newDigest);
 }
 
@@ -210,9 +169,9 @@ bool
 RigExecImagingBridge::GetFreshProof(UsdTimeCode time,
                                     RigExecFreshProof *proof) const
 {
-    return _cache->GetFreshProof(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                                _evaluationOverrides,
-                                                _upstreamInputs),
+    return _cache->GetFreshProof(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                                  _evaluationOverrides,
+                                                  _upstreamInputs),
                                  proof);
 }
 
@@ -227,9 +186,9 @@ RigExecImagingBridge::CarryEntry(UsdTimeCode time,
                                  const RigExecFrameCacheKey &oldKey,
                                  uint64_t newConstants)
 {
-    return _cache->CarryEntry(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                             _evaluationOverrides,
-                                             _upstreamInputs),
+    return _cache->CarryEntry(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                               _evaluationOverrides,
+                                               _upstreamInputs),
                               oldKey, newConstants);
 }
 
@@ -240,8 +199,8 @@ RigExecImagingBridge::NoteCaptureIndex(const UsdNotice::ObjectsChanged &notice)
     // sample, with or without a frame cache.
     _sampling->NoteChainEdits(notice);
     return _cache->NoteCaptureIndex(
-        _MakeCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
-                       _evaluationOverrides, _upstreamInputs),
+        RigExecCacheCall(*_evaluator, *_sampling, UsdTimeCode::Default(),
+                         _evaluationOverrides, _upstreamInputs),
         notice);
 }
 
@@ -297,8 +256,10 @@ RigExecImagingBridge::AppendAuthoredGuides(UsdTimeCode time,
             }
         }
     }
-    const RigExecGuideCall call = _MakeGuideCall(
-        _stage, *_evaluator, _interactiveOverrides, _weightOverlay);
+    const RigExecGuideCall call(_stage, _evaluator->GetStageEditSerial(),
+                                _evaluator->GetCompiledRigSignature(),
+                                _evaluator->GetMoverOrder(),
+                                _interactiveOverrides, _weightOverlay);
     _guides->_FillGuides(call, authored, snapshot);
     _guides->_FillControlGuides(call, authored, snapshot);
     _guides->_FillVolumeGuides(call, authored, snapshot);
@@ -398,8 +359,10 @@ RigExecImagingBridge::_PublishPoseSnapshot(UsdTimeCode time,
     {
         RigExecProfileScope scope(MutableProfiler(), "Imaging.Guides",
                                   "imaging");
-        const RigExecGuideCall call = _MakeGuideCall(
-            _stage, *_evaluator, _interactiveOverrides, _weightOverlay);
+        const RigExecGuideCall call(_stage, _evaluator->GetStageEditSerial(),
+                                    _evaluator->GetCompiledRigSignature(),
+                                    _evaluator->GetMoverOrder(),
+                                    _interactiveOverrides, _weightOverlay);
         _guides->_FillGuides(call, pose, snapshot.get());
         _guides->_FillControlGuides(call, pose, snapshot.get());
         _guides->_FillVolumeGuides(call, pose, snapshot.get());
@@ -460,9 +423,9 @@ RigExecImagingBridge::WarmFrameOnCallingThread(UsdTimeCode time)
         pose = _evaluator->Evaluate(time);
     }
     return pose.valid &&
-           _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                              _evaluationOverrides,
-                                              _upstreamInputs),
+           _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                                _evaluationOverrides,
+                                                _upstreamInputs),
                                pose);
 }
 
@@ -481,8 +444,8 @@ RigExecImagingBridge::SnapshotAtTimeWithoutPublishing(
     _cache->NoteEditSerial(*_evaluator);
     const bool useCache = !_evaluator->cpuReference &&
                           _cache->mode() != RigExecFrameCacheMode::Off;
-    const RigExecCacheCall cacheCall = _MakeCacheCall(
-        *_evaluator, *_sampling, time, _evaluationOverrides, _upstreamInputs);
+    const RigExecCacheCall cacheCall(*_evaluator, *_sampling, time,
+                                     _evaluationOverrides, _upstreamInputs);
     RigExecRigPose pose;
     if (useCache && _cache->QueryLookup(cacheCall, &pose)) {
         // Stored for an earlier visit: re-stamped as the published serve
@@ -588,9 +551,9 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
         cacheMode != RigExecFrameCacheMode::Off && _evaluationOverrides.empty();
     if (useCache && !editedHere) {
         RigExecCacheServe serve;
-        if (_cache->TryServe(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                            _evaluationOverrides,
-                                            _upstreamInputs),
+        if (_cache->TryServe(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                              _evaluationOverrides,
+                                              _upstreamInputs),
                              &serve)) {
             _PublishServedPose(time, serve, &result);
             return result;
@@ -628,9 +591,9 @@ RigExecImagingBridge::EvaluateAndPublishResult(UsdTimeCode time)
     // on and no drag -- see step 0).
     _PublishPoseSnapshot(time, pose, &result);
     if (useCache) {
-        _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling, time,
-                                           _evaluationOverrides,
-                                           _upstreamInputs),
+        _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling, time,
+                                             _evaluationOverrides,
+                                             _upstreamInputs),
                             pose);
     }
     return result;
@@ -661,9 +624,9 @@ RigExecImagingBridge::_PublishServedPose(UsdTimeCode time,
                     verdict.report.c_str());
             _PublishPoseSnapshot(time, verdict.poseToServe, result);
             if (serve.needsRepairMemoization) {
-                _cache->MemoizeLive(_MakeCacheCall(*_evaluator, *_sampling,
-                                                   time, _evaluationOverrides,
-                                                   _upstreamInputs),
+                _cache->MemoizeLive(RigExecCacheCall(*_evaluator, *_sampling,
+                                                     time, _evaluationOverrides,
+                                                     _upstreamInputs),
                                     verdict.poseToServe);
             }
             result->cacheHit = false;

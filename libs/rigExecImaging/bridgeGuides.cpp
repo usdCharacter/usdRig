@@ -314,7 +314,7 @@ RigExecBridgeGuides::_FillClothConstraintGuides(
     const uint64_t serial = call.stageEditSerial;
     if (_clothGuideSerial != serial) {
         _clothGuideBindings.clear();
-        for (const auto &mover : *call.moverOrder) {
+        for (const auto &mover : call.moverOrder) {
             if (mover.schemaType != "RigExecClothMover")
                 continue;
             const UsdPrim moverPrim =

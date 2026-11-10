@@ -35,15 +35,26 @@ class RigExecRigEvaluator;
 class RigExecWarmFrameIndex;
 
 /// Everything a cache operation reads outside its own state, built fresh
-/// per call and borrowed for its duration; nothing here is retained.
+/// per call and borrowed for its duration; nothing here is retained. The
+/// evaluator, sampling component and the facade's standing lists are
+/// required borrows: references, non-null by construction.
 struct RigExecCacheCall {
-    const RigExecRigEvaluator *evaluator = nullptr;
-    RigExecBridgeSampling *sampling = nullptr;
+    RigExecCacheCall(const RigExecRigEvaluator &evaluator,
+                     RigExecBridgeSampling &sampling, UsdTimeCode time,
+                     const std::vector<RigExecValueOverride> &overrides,
+                     const std::vector<RigExecUpstreamValue> &upstream)
+        : evaluator(evaluator), sampling(sampling), time(time),
+          overrides(overrides), upstream(upstream)
+    {
+    }
+
+    const RigExecRigEvaluator &evaluator;
+    RigExecBridgeSampling &sampling;
     UsdTimeCode time = UsdTimeCode::Default();
     /// Numerical evaluation overrides (display-only values never reach
     /// the cache) and the standing upstream values.
-    const std::vector<RigExecValueOverride> *overrides = nullptr;
-    const std::vector<RigExecUpstreamValue> *upstream = nullptr;
+    const std::vector<RigExecValueOverride> &overrides;
+    const std::vector<RigExecUpstreamValue> &upstream;
 };
 
 /// The typed outcome of a publishing cache lookup: the facade publishes

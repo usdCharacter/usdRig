@@ -56,8 +56,8 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
     }
     // Property chains' scalar primvars, from the compiled list only; a
     // double publishes as the float the chain computed.
-    const std::vector<SdfPath> &scalarTargets = *call.scalarPrimvarTargets;
-    const std::vector<TfToken> &scalarNames = *call.scalarPrimvarNames;
+    const std::vector<SdfPath> &scalarTargets = call.scalarPrimvarTargets;
+    const std::vector<TfToken> &scalarNames = call.scalarPrimvarNames;
     for (size_t scalar = 0; scalar < scalarTargets.size(); ++scalar) {
         const SdfPath &propertyPath = scalarTargets[scalar];
         const auto found = pose.movedProperties.find(propertyPath);
@@ -154,7 +154,9 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
             }
         }
     }
-    _FillProviderXforms(call, pose, snapshot);
+    _FillProviderXforms(
+        RigExecProviderXformCall{call.stage, call.time, call.stageEditSerial},
+        pose, snapshot);
 }
 
 // Constraint-driven transforms, published onto the prim itself so parented
@@ -163,7 +165,7 @@ RigExecBridgeSnapshotBuilder::_Build(const RigExecSnapshotCall &call,
 // delta (see RigExecPublishedPrim::xformBase).
 void
 RigExecBridgeSnapshotBuilder::_FillProviderXforms(
-    const RigExecSnapshotCall &call, const RigExecRigPose &pose,
+    const RigExecProviderXformCall &call, const RigExecRigPose &pose,
     RigExecImagingSnapshot *snapshot)
 {
     for (const auto &[providerPath, matrix] : pose.providerXforms) {
