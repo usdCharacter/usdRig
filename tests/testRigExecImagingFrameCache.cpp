@@ -5605,6 +5605,177 @@ TestQuerySnapshotLeavesGpuDeformHistoryAlone()
     SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
 }
 
+// \p chains skinned meshes, one skin mover each: enough separate GPU deform
+// layouts to cross the snapshot builder's static-table cache limit.
+UsdStageRefPtr
+MakeSkinChainRig(int chains)
+{
+    UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Asset"), TfToken("Scope"));
+    stage->DefinePrim(SdfPath("/Asset/Rig"), TfToken("RigExecRoot"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
+    UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
+    UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
+    for (int t = 1; t <= 4; ++t) {
+        tx.Set(10.0 + 0.1 * double(t), UsdTimeCode(double(t)));
+        ty.Set(20.0 - 0.05 * double(t), UsdTimeCode(double(t)));
+    }
+    stage->DefinePrim(SdfPath("/Asset/Rig/Movers"), TfToken("Scope"));
+
+    VtIntArray indices(kTinyPointCount * 2);
+    VtFloatArray weights(kTinyPointCount * 2);
+    for (size_t i = 0; i < kTinyPointCount; ++i) {
+        indices[i * 2] = 0;
+        indices[i * 2 + 1] = 1;
+        weights[i * 2] = 0.1f;
+        weights[i * 2 + 1] = 0.9f;
+    }
+    for (int chain = 0; chain < chains; ++chain) {
+        const SdfPath meshPath("/Asset/Geom/Mesh_" + std::to_string(chain));
+        const UsdPrim mesh = stage->DefinePrim(meshPath, TfToken("Mesh"));
+        VtVec3fArray points(kTinyPointCount);
+        for (size_t i = 0; i < kTinyPointCount; ++i) {
+            points[i] =
+                GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
+        }
+        mesh.GetAttribute(TfToken("points")).Set(points);
+
+        const SdfPath skinPath("/Asset/Rig/Movers/Skin_" +
+                               std::to_string(chain));
+        const UsdPrim skin =
+            stage->DefinePrim(skinPath, TfToken("RigExecSkinMover"));
+        skin.ApplyAPI(TfToken("RigExecMoverAPI"));
+        skin.GetRelationship(TfToken("rigExec:moves"))
+            .SetTargets({meshPath.AppendProperty(TfToken("points"))});
+        skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
+        skin.CreateRelationship(TfToken("rigExec:influences"))
+            .SetTargets({alongX.GetPath(), alongY.GetPath()});
+        skin.CreateAttribute(TfToken("rigExec:elementSize"),
+                             SdfValueTypeNames->Int)
+            .Set(2);
+        skin.CreateAttribute(TfToken("rigExec:jointIndices"),
+                             SdfValueTypeNames->IntArray)
+            .Set(indices);
+        skin.CreateAttribute(TfToken("rigExec:jointWeights"),
+                             SdfValueTypeNames->FloatArray)
+            .Set(weights);
+    }
+    return stage;
+}
+
+// GPU STATIC TABLES. The snapshot builder keeps one static table per layout
+// serial and clears that cache when it would grow past a handful. Author
+// enough chains to cross the limit, then check every published prim carries
+// the table of its own layout, and that a generation captured before the
+// clear still holds the values it was handed.
+void
+TestGpuDeformStaticEvictionKeepsPublicationTables()
+{
+    std::printf(
+        "progress: TestGpuDeformStaticEvictionKeepsPublicationTables\n");
+    std::fflush(stdout);
+    const std::string priorGpu = TfGetenv("RIGEXEC_GPU_DEFORM");
+    SetEnv("RIGEXEC_GPU_DEFORM", "shader");
+
+    // One chain more than the cache holds before it clears, so the eviction
+    // runs while this very generation is built.
+    constexpr int kChainCount = 34;
+    UsdStageRefPtr stage = MakeSkinChainRig(kChainCount);
+    RigExecImagingBridge bridge(stage, SdfPath("/Asset/Rig"));
+    CHECK(bridge.Compile());
+    CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(1.0)).ok);
+
+    const RigExecImagingSnapshotConstPtr first = bridge.GetStore()->Get();
+    CHECK(first != nullptr);
+    if (!first) {
+        SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
+        return;
+    }
+
+    struct _TableCopy {
+        uint64_t serial = 0;
+        int opCount = 0;
+        size_t pointCount = 0;
+        VtIntArray ops;
+        VtFloatArray staticF;
+        VtIntArray staticI;
+    };
+    std::map<SdfPath, _TableCopy> tables;
+    std::set<uint64_t> layoutSerials;
+    for (const auto &[primPath, prim] : first->prims) {
+        if (!prim.gpuDeform || !prim.gpuDeform->layout) {
+            continue;
+        }
+        const RigExecGpuDeformLayout &layout = *prim.gpuDeform->layout;
+        layoutSerials.insert(layout.serial);
+        CHECK(prim.gpuDeformStatic != nullptr);
+        if (!prim.gpuDeformStatic) {
+            continue;
+        }
+        CHECK(prim.gpuDeformStatic->serial == layout.serial);
+        CHECK(prim.gpuDeformStatic->pointCount == layout.pointCount);
+        CHECK(prim.gpuDeformStatic->opCount == int(layout.OpCount()));
+        CHECK(prim.gpuDeformStatic->ops ==
+              VtIntArray(layout.ops.begin(), layout.ops.end()));
+        CHECK(prim.gpuDeformStatic->staticF ==
+              VtFloatArray(layout.staticF.begin(), layout.staticF.end()));
+        CHECK(prim.gpuDeformStatic->staticI ==
+              VtIntArray(layout.staticI.begin(), layout.staticI.end()));
+        _TableCopy copy;
+        copy.serial = prim.gpuDeformStatic->serial;
+        copy.opCount = prim.gpuDeformStatic->opCount;
+        copy.pointCount = prim.gpuDeformStatic->pointCount;
+        copy.ops = prim.gpuDeformStatic->ops;
+        copy.staticF = prim.gpuDeformStatic->staticF;
+        copy.staticI = prim.gpuDeformStatic->staticI;
+        tables[primPath] = copy;
+    }
+    // Every chain built its own layout, so the cache crossed its limit.
+    CHECK(int(layoutSerials.size()) == kChainCount);
+    CHECK(int(tables.size()) == kChainCount);
+
+    // The next publish rebuilds the tables the clear dropped. The retained
+    // generation still holds the exact tables it was given.
+    CHECK(bridge.EvaluateAndPublishResult(UsdTimeCode(2.0)).ok);
+    const RigExecImagingSnapshotConstPtr second = bridge.GetStore()->Get();
+    CHECK(second != nullptr && second != first);
+    for (const auto &[primPath, copy] : tables) {
+        const auto kept = first->prims.find(primPath);
+        CHECK(kept != first->prims.end() && kept->second.gpuDeformStatic);
+        if (kept == first->prims.end() || !kept->second.gpuDeformStatic) {
+            continue;
+        }
+        const RigExecPublishedPrim::GpuDeformStatic &statics =
+            *kept->second.gpuDeformStatic;
+        CHECK(statics.serial == copy.serial);
+        CHECK(statics.opCount == copy.opCount);
+        CHECK(statics.pointCount == copy.pointCount);
+        CHECK(statics.ops == copy.ops);
+        CHECK(statics.staticF == copy.staticF);
+        CHECK(statics.staticI == copy.staticI);
+
+        const auto rebuilt = second->prims.find(primPath);
+        CHECK(rebuilt != second->prims.end() &&
+              rebuilt->second.gpuDeformStatic);
+        if (rebuilt == second->prims.end() ||
+            !rebuilt->second.gpuDeformStatic) {
+            continue;
+        }
+        const RigExecPublishedPrim::GpuDeformStatic &fresh =
+            *rebuilt->second.gpuDeformStatic;
+        CHECK(fresh.serial == copy.serial);
+        CHECK(fresh.opCount == copy.opCount);
+        CHECK(fresh.pointCount == copy.pointCount);
+        CHECK(fresh.ops == copy.ops);
+        CHECK(fresh.staticF == copy.staticF);
+        CHECK(fresh.staticI == copy.staticI);
+    }
+    SetEnv("RIGEXEC_GPU_DEFORM", priorGpu.c_str());
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5694,6 +5865,7 @@ main(int argc, char **argv)
     TestCachedServeRestampsPoseTime();
     TestQueryNeverRunsTheSparseRekeyLane();
     TestQuerySnapshotLeavesGpuDeformHistoryAlone();
+    TestGpuDeformStaticEvictionKeepsPublicationTables();
     if (failures == 0) {
         std::printf("testRigExecImagingFrameCache: all tests passed\n");
     } else {

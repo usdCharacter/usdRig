@@ -232,12 +232,13 @@ RigExecBridgeSnapshotBuilder::_PublishGpuDeform(
     const UsdTimeCode time = call.time;
     const RigExecGpuDeformLayout &layout = *publication.layout;
     // The tables once per layout; a layout no publication names any more is
-    // dropped when the cache would otherwise grow past a handful.
+    // dropped when the cache would otherwise grow past a handful. Evict first:
+    // a reference into the map does not survive the clear.
+    if (_gpuDeformStatics.size() > 32) {
+        _gpuDeformStatics.clear();
+    }
     auto &statics = _gpuDeformStatics[layout.serial];
     if (!statics) {
-        if (_gpuDeformStatics.size() > 32) {
-            _gpuDeformStatics.clear();
-        }
         auto built = std::make_shared<RigExecPublishedPrim::GpuDeformStatic>();
         built->serial = layout.serial;
         built->ops.assign(layout.ops.begin(), layout.ops.end());
@@ -245,8 +246,7 @@ RigExecBridgeSnapshotBuilder::_PublishGpuDeform(
         built->staticI.assign(layout.staticI.begin(), layout.staticI.end());
         built->opCount = int(layout.OpCount());
         built->pointCount = layout.pointCount;
-        statics = built;
-        _gpuDeformStatics[layout.serial] = statics;
+        statics = std::move(built);
     }
     published->gpuDeform =
         std::make_shared<const RigExecGpuDeformPublication>(publication);
