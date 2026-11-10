@@ -57,9 +57,6 @@ _AddSchedulerStats(RigExecBackgroundSchedulerStats *into,
 size_t
 RigExecImagingRegistry::GetSessionEvaluationCount(const SdfPath &rigPath)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetSessionEvaluationCount(rigPath);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rigPath)
@@ -71,9 +68,6 @@ RigExecImagingRegistry::GetSessionEvaluationCount(const SdfPath &rigPath)
 RigExecProfiler *
 RigExecImagingRegistry::MutableSchedulerProfiler()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->MutableSchedulerProfiler();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     return _scheduler ? _scheduler->MutableProfiler() : nullptr;
 }
@@ -81,9 +75,6 @@ RigExecImagingRegistry::MutableSchedulerProfiler()
 RigExecProfiler *
 RigExecImagingRegistry::MutableBridgeProfiler(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->MutableBridgeProfiler(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (RigSession &session : _sessions) {
         if (session.rigPath == rig && !session.playback && session.bridge) {
@@ -96,9 +87,6 @@ RigExecImagingRegistry::MutableBridgeProfiler(const SdfPath &rig)
 RigExecBackgroundSchedulerStats
 RigExecImagingRegistry::GetBackgroundStats()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetBackgroundStats();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     RigExecBackgroundSchedulerStats stats = _retiredStats;
     if (_scheduler) {
@@ -110,10 +98,6 @@ RigExecImagingRegistry::GetBackgroundStats()
 void
 RigExecImagingRegistry::WaitUntilBackgroundIdle()
 {
-    if (const Ptr routed = _Routed()) {
-        routed->WaitUntilBackgroundIdle();
-        return;
-    }
     std::shared_ptr<RigExecBackgroundScheduler> scheduler;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -129,9 +113,6 @@ RigExecImagingRegistry::WaitUntilBackgroundIdle()
 RigExecFrameCacheStats
 RigExecImagingRegistry::GetFrameCacheStats(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetFrameCacheStats(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig && session.bridge) {
@@ -144,9 +125,6 @@ RigExecImagingRegistry::GetFrameCacheStats(const SdfPath &rig)
 RigExecImagingBridge *
 RigExecImagingRegistry::GetBridge(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetBridge(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (RigSession &session : _sessions) {
         if (session.rigPath == rig && !session.playback && session.bridge) {
@@ -159,9 +137,6 @@ RigExecImagingRegistry::GetBridge(const SdfPath &rig)
 RigExecBakedPlayback *
 RigExecImagingRegistry::GetPlayback(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetPlayback(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (RigSession &session : _sessions) {
         if (session.rigPath == rig && session.playback) {
@@ -174,9 +149,6 @@ RigExecImagingRegistry::GetPlayback(const SdfPath &rig)
 std::vector<std::pair<UsdTimeCode, RigExecFrameCacheKey>>
 RigExecImagingRegistry::GetCompletedKeys(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetCompletedKeys(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig && !session.playback && session.bridge &&
@@ -190,9 +162,6 @@ RigExecImagingRegistry::GetCompletedKeys(const SdfPath &rig)
 bool
 RigExecImagingRegistry::WriteProfileSummary(const std::string &path)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->WriteProfileSummary(path);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     std::ofstream out(path);
     if (!out) {

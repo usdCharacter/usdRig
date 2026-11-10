@@ -27,19 +27,19 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
 
 // Everything about the stage that authoring could possibly disturb.
 struct StageSnapshot {
-    std::string flattened;      ///< the entire composed scene
+    std::string flattened; ///< the entire composed scene
     std::string rootLayer;
     std::string sessionLayer;
     bool rootDirty = false;
@@ -77,18 +77,18 @@ Compare(const char *what, const StageSnapshot &a, const StageSnapshot &b)
     // localises the problem far faster than "the flattened scene changed".
     if (a.primCount != b.primCount) {
         ++failures;
-        std::printf("FAIL %s: prim count %zu -> %zu\n",
-                    what, a.primCount, b.primCount);
+        std::printf("FAIL %s: prim count %zu -> %zu\n", what, a.primCount,
+                    b.primCount);
     }
     if (a.propertyCount != b.propertyCount) {
         ++failures;
-        std::printf("FAIL %s: property count %zu -> %zu\n",
-                    what, a.propertyCount, b.propertyCount);
+        std::printf("FAIL %s: property count %zu -> %zu\n", what,
+                    a.propertyCount, b.propertyCount);
     }
     if (a.usedLayers != b.usedLayers) {
         ++failures;
-        std::printf("FAIL %s: used layer count %zu -> %zu\n",
-                    what, a.usedLayers, b.usedLayers);
+        std::printf("FAIL %s: used layer count %zu -> %zu\n", what,
+                    a.usedLayers, b.usedLayers);
     }
     if (b.rootDirty && !a.rootDirty) {
         ++failures;
@@ -174,10 +174,15 @@ TestImagingPublicationAuthorsNothing(const std::string &examplesDir)
     const SdfPath rigPath("/Shot/HeroArm/Rig");
     const StageSnapshot before = Capture(stage);
 
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
     std::vector<std::string> errors;
     const bool activated =
-        registry.Activate(stage, rigPath, UsdTimeCode(1001.0), &errors);
+        registry->Activate(stage, rigPath, UsdTimeCode(1001.0), &errors);
     CHECK(activated);
     for (const std::string &e : errors) {
         std::printf("  activate error: %s\n", e.c_str());
@@ -186,13 +191,13 @@ TestImagingPublicationAuthorsNothing(const std::string &examplesDir)
 
     if (activated) {
         for (const UsdTimeCode &t : Frames()) {
-            registry.SetTime(t);
+            registry->SetTime(t);
         }
-        CHECK(registry.GetStore() != nullptr);
+        CHECK(registry->GetStore() != nullptr);
         Compare("after imaging SetTime x6", before, Capture(stage));
     }
 
-    registry.Deactivate();
+    registry->Deactivate();
     Compare("after imaging Deactivate", before, Capture(stage));
 }
 
@@ -209,15 +214,21 @@ TestEveryExampleAuthorsNothing(const std::string &examplesDir)
 {
     // Rig paths discovered by type, so a new example cannot silently skip.
     const char *files[] = {
-        "/01_FkChainTail.usda",   "/02_TwoBoneIkLeg.usda",
-        "/03_IkFkBlendClamp.usda", "/04_BlendShapeFace.usda",
-        "/05_TwistRibbonSpine.usda", "/06_LatticeBulge.usda",
-        "/07_SurfaceDrape.usda",  "/08_AimEyes.usda",
-        "/09_PropertyMathMovers.usda", "/10_AimXformTurret.usda",
+        "/01_FkChainTail.usda",
+        "/02_TwoBoneIkLeg.usda",
+        "/03_IkFkBlendClamp.usda",
+        "/04_BlendShapeFace.usda",
+        "/05_TwistRibbonSpine.usda",
+        "/06_LatticeBulge.usda",
+        "/07_SurfaceDrape.usda",
+        "/08_AimEyes.usda",
+        "/09_PropertyMathMovers.usda",
+        "/10_AimXformTurret.usda",
         "/11_VolumeWeights.usda",
         "/13_ReadPhases.usda",
         "/16_ConnectionReadPhases.usda",
-        "/ArmRig.usda",           "/rigexec_flat.usda",
+        "/ArmRig.usda",
+        "/rigexec_flat.usda",
     };
 
     for (const char *file : files) {
@@ -315,7 +326,8 @@ TestPropertyMoverDoesNotWriteBack(const std::string &examplesDir)
         CHECK(gain.Get(&authored, t));
         if (std::abs(authored - 2.5f) > 1e-6f) {
             std::printf("  rigExec:gain is %f on the stage; evaluation wrote "
-                        "its result back\n", double(authored));
+                        "its result back\n",
+                        double(authored));
         }
         CHECK(std::abs(authored - 2.5f) < 1e-6f);
         // No opinion appeared anywhere, in any layer.
@@ -337,7 +349,8 @@ TestPropertyMoverDoesNotWriteBack(const std::string &examplesDir)
     if (!weight) {
         return;
     }
-    const size_t stackBefore = weight.GetPropertyStack(UsdTimeCode(1001)).size();
+    const size_t stackBefore =
+        weight.GetPropertyStack(UsdTimeCode(1001)).size();
     RigExecRigEvaluator blendEval(blend, SdfPath("/BlendArmAsset/Rig"));
     CHECK(blendEval.Compile(nullptr));
     for (double t : {1001.0, 1024.0, 1030.0}) {
@@ -349,13 +362,14 @@ TestPropertyMoverDoesNotWriteBack(const std::string &examplesDir)
     CHECK(weight.Get(&authoredWeight, UsdTimeCode(1001)));
     if (std::abs(authoredWeight + 0.25f) > 1e-6f) {
         std::printf("  inputs:weight is %f at 1001; the exec override leaked "
-                    "into the stage\n", double(authoredWeight));
+                    "into the stage\n",
+                    double(authoredWeight));
     }
     CHECK(std::abs(authoredWeight + 0.25f) < 1e-6f);
     CHECK(weight.GetPropertyStack(UsdTimeCode(1001)).size() == stackBefore);
 }
 
-}  // namespace
+} // namespace
 
 // The codeless schema's resource directory.
 // The GENERATED one when the build supplied it: only that copy carries the
@@ -382,8 +396,7 @@ main(int argc, char **argv)
     }
     const std::string examplesDir = argv[1];
 
-    const std::string resources =
-        _SchemaResourceDir(examplesDir);
+    const std::string resources = _SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
         std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;

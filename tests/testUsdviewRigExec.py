@@ -7,10 +7,33 @@
 import ctypes
 import os
 
-from pxr import Usd, UsdGeom, Sdf
+from pxr import Usd, UsdGeom, Sdf, UsdUtils
 
 
 MESH = "/Shot/HeroArm/Geom/ArmBody"
+
+
+def _CacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read (-1 while uncached)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
+
+
+class _ScopedCore:
+    """The required stage-scoped entry points every imaging double carries.
+
+    An imagingHandle over a library missing one of these fails at load, so
+    a container double that skips the call still has to answer it.
+    """
+
+    def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
+        return 0
+
+    def RigExecImaging_SetTimeForStage(self, cacheId, frame):
+        return 0
+
+    def RigExecImaging_DeactivateForStage(self, cacheId):
+        pass
 
 
 def _Observer():
@@ -46,15 +69,18 @@ def _AssertActivationFailureKeepsStageAlive():
     stage = Usd.Stage.CreateInMemory()
     stage.DefinePrim("/Rig", "RigExecRoot")
 
-    class _FailureLibrary:
+    class _FailureLibrary(_ScopedCore):
         def __init__(self):
             self.activations = 0
+            self.activationCacheIds = []
+            self.deactivationCacheIds = []
 
-        def RigExecImaging_Deactivate(self):
-            pass
+        def RigExecImaging_DeactivateForStage(self, cacheId):
+            self.deactivationCacheIds.append(cacheId)
 
-        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+        def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
             self.activations += 1
+            self.activationCacheIds.append(cacheId)
             return 3
 
     dataModel = type("DataModel", (), {})()
@@ -74,6 +100,11 @@ def _AssertActivationFailureKeepsStageAlive():
         container._OnStageReplaced()
         if container._lib.activations != 1:
             raise AssertionError("activation-failure branch was not reached")
+        cacheId = _CacheId(stage)
+        if container._lib.activationCacheIds != [cacheId]:
+            raise AssertionError(
+                "activation did not name this stage's cache id: %r != [%d]"
+                % (container._lib.activationCacheIds, cacheId))
         if container._active:
             raise AssertionError("failed activation remained active")
         if container._cachedStage is not stage:
@@ -82,6 +113,10 @@ def _AssertActivationFailureKeepsStageAlive():
             raise AssertionError("failed activation invalidated usdview's stage")
     finally:
         container._Shutdown()
+    if container._lib.deactivationCacheIds != [cacheId]:
+        raise AssertionError(
+            "shutdown did not deactivate this stage by its cache id: %r != %r"
+            % (container._lib.deactivationCacheIds, [cacheId]))
 
 
 def _AssertLiveRootAutoActivation():
@@ -94,16 +129,20 @@ def _AssertLiveRootAutoActivation():
     # Match usdview's initially unmapped, 24 fps session edit target.
     stage.SetEditTarget(stage.GetSessionLayer())
 
-    class _SuccessLibrary:
+    class _SuccessLibrary(_ScopedCore):
         def __init__(self):
             self.activations = 0
+            self.activationCacheIds = []
             self.deactivations = 0
+            self.deactivationCacheIds = []
 
-        def RigExecImaging_Deactivate(self):
+        def RigExecImaging_DeactivateForStage(self, cacheId):
             self.deactivations += 1
+            self.deactivationCacheIds.append(cacheId)
 
-        def RigExecImaging_Activate(self, cacheId, rigPath, frame):
+        def RigExecImaging_ActivateForStage(self, cacheId, rigPath, frame):
             self.activations += 1
+            self.activationCacheIds.append(cacheId)
             return 0
 
     viewSettings = type("ViewSettings", (), {})()
@@ -153,6 +192,10 @@ def _AssertLiveRootAutoActivation():
         stage.DefinePrim("/Rig/Joints/J", "RigExecJoint")
         if container._lib.activations != 1 or not container._active:
             raise AssertionError("first live-authored joint did not activate")
+        if container._lib.activationCacheIds != [_CacheId(stage)]:
+            raise AssertionError(
+                "activation did not name this stage's cache id: %r != [%d]"
+                % (container._lib.activationCacheIds, _CacheId(stage)))
         if container._rigPaths != [Sdf.Path("/Rig")]:
             raise AssertionError("live root set was not recorded")
         if not viewSettings.displayGuide:
@@ -161,26 +204,39 @@ def _AssertLiveRootAutoActivation():
         stage.RemovePrim("/Rig")
         if container._active or container._rigPaths:
             raise AssertionError("removing the last live root stayed active")
+        stageCacheId = _CacheId(stage)
     finally:
         container._Shutdown()
+    if (not container._lib.deactivationCacheIds or
+            any(one != stageCacheId
+                for one in container._lib.deactivationCacheIds)):
+        raise AssertionError(
+            "a deactivation did not name this stage's cache id: %r != all [%d]"
+            % (container._lib.deactivationCacheIds, stageCacheId))
 
 
 def _AssertWarmingFlushOnRelease():
     """A pending edit-commit flushes at the held playhead, once per burst."""
     from rigExecUsdview import RigExecUsdviewContainer
 
-    class _CommitLibrary:
+    class _CommitLibrary(_ScopedCore):
         def __init__(self):
             self.commits = 0
+            self.commitCacheIds = []
 
-        def RigExecImaging_OnEditCommitted(self):
+        def RigExecImaging_OnEditCommittedForStage(self, cacheId):
             self.commits += 1
+            self.commitCacheIds.append(cacheId)
 
+    stage = Usd.Stage.CreateInMemory()
+    UsdUtils.StageCache.Get().Insert(stage)
     container = RigExecUsdviewContainer.__new__(RigExecUsdviewContainer)
     container._warmingCommitPending = True
     container._warmingFlushArmed = True
     container._active = True
     container._lib = _CommitLibrary()
+    container._cachedStage = stage
+    container._rigPaths = []
 
     # The release path consumes the pending commit and calls through once.
     container._FlushWarmingCommit()
@@ -188,6 +244,10 @@ def _AssertWarmingFlushOnRelease():
         raise AssertionError("flush did not consume the pending commit")
     if container._lib.commits != 1:
         raise AssertionError("flush did not commit exactly once")
+    if container._lib.commitCacheIds != [_CacheId(stage)]:
+        raise AssertionError(
+            "the commit did not name this stage's cache id: %r" %
+            (container._lib.commitCacheIds,))
 
     # An idle flush is a no-op: nothing pending, no C-API call.
     container._FlushWarmingCommit()
@@ -232,19 +292,25 @@ def _AssertWarmingCommitDeferred():
             "the commit delay is not positive: the sampling burst runs "
             "inside the gesture again")
 
-    class _CommitLibrary:
+    class _CommitLibrary(_ScopedCore):
         def __init__(self):
             self.commits = 0
+            self.commitCacheIds = []
 
-        def RigExecImaging_OnEditCommitted(self):
+        def RigExecImaging_OnEditCommittedForStage(self, cacheId):
             self.commits += 1
+            self.commitCacheIds.append(cacheId)
 
+    stage = Usd.Stage.CreateInMemory()
+    UsdUtils.StageCache.Get().Insert(stage)
     container = RigExecUsdviewContainer.__new__(RigExecUsdviewContainer)
     container._warmingCommitPending = True
     container._warmingFlushArmed = False
     container._warmingTimer = None
     container._active = True
     container._lib = _CommitLibrary()
+    container._cachedStage = stage
+    container._rigPaths = []
 
     try:
         # Scheduling arms the idle timer and commits nothing: the release's
@@ -286,6 +352,10 @@ def _AssertWarmingCommitDeferred():
         container._FlushWarmingCommit()
         if container._lib.commits != 1:
             raise AssertionError("flush did not commit exactly once")
+        if container._lib.commitCacheIds != [_CacheId(stage)]:
+            raise AssertionError(
+                "the commit did not name this stage's cache id: %r" %
+                (container._lib.commitCacheIds,))
         if container._warmingFlushArmed:
             raise AssertionError("flush left the timer armed")
     finally:
@@ -300,18 +370,23 @@ def _AssertWarmRangeRepushOnRangeChange():
     stage = Usd.Stage.CreateInMemory()
     stage.SetStartTimeCode(1.0)
     stage.SetEndTimeCode(4.0)
+    UsdUtils.StageCache.Get().Insert(stage)
+    cacheId = _CacheId(stage)
 
-    class _WarmLibrary:
+    class _WarmLibrary(_ScopedCore):
         def __init__(self):
             self.warmCalls = []
+            self.stateCacheIds = []
 
-        def RigExecImaging_WarmRange(self, rigPath, frames, count):
-            self.warmCalls.append((bytes(rigPath),
+        def RigExecImaging_WarmRangeForStage(self, cacheId, rigPath, frames,
+                                             count):
+            self.warmCalls.append((cacheId, bytes(rigPath),
                                    [frames[i] for i in range(count)]))
             return 0
 
-        def RigExecImaging_GetFrameStates(
-                self, rigPath, frames, statesOut, count):
+        def RigExecImaging_GetFrameStatesForStage(
+                self, cacheId, rigPath, frames, statesOut, count):
+            self.stateCacheIds.append(cacheId)
             for i in range(count):
                 statesOut[i] = 2  # cached: the tick sleeps on states alone
             return count
@@ -329,7 +404,8 @@ def _AssertWarmRangeRepushOnRangeChange():
         # A wake with a drifted range re-pushes first: the stale
         # [1, 2] becomes the stage's [1, 4], then the timer starts.
         container._WakeWarmingDriver()
-        if container._lib.warmCalls != [(b"/Rig", [1.0, 2.0, 3.0, 4.0])]:
+        if container._lib.warmCalls != [(cacheId, b"/Rig",
+                                         [1.0, 2.0, 3.0, 4.0])]:
             raise AssertionError("wake did not re-push the drifted range")
         if container._warmRangeFrames != [1.0, 2.0, 3.0, 4.0]:
             raise AssertionError("re-push did not refresh the cached range")
@@ -353,11 +429,15 @@ def _AssertWarmRangeRepushOnRangeChange():
         if len(container._lib.warmCalls) != 2:
             raise AssertionError("tick did not re-push the edited range")
         if container._lib.warmCalls[1] != (
-                b"/Rig", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]):
+                cacheId, b"/Rig", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]):
             raise AssertionError("tick pushed the wrong range: %r"
                                  % (container._lib.warmCalls[1],))
         if timer.isActive():
             raise AssertionError("all-cached tick did not sleep")
+        if container._lib.stateCacheIds != [cacheId]:
+            raise AssertionError(
+                "the state query did not name this stage's cache id: %r"
+                % (container._lib.stateCacheIds,))
 
         # A wake with no drift pushes nothing further.
         container._WakeWarmingDriver()
@@ -436,25 +516,33 @@ def _AssertFrameTickYieldsToTickingDriver():
     from pxr.Usdviewq.qt import QtCore
     from rigExecUsdview import RigExecUsdviewContainer
 
-    class _SweepLibrary:
+    class _SweepLibrary(_ScopedCore):
         def __init__(self):
             self.setTimes = 0
             self.idles = 0
             self.commits = 0
+            self.cacheIds = set()
 
-        def RigExecImaging_SetTime(self, frame):
+        def RigExecImaging_SetTimeForStage(self, cacheId, frame):
             self.setTimes += 1
+            self.cacheIds.add(cacheId)
 
-        def RigExecImaging_OnIdle(self):
+        def RigExecImaging_OnIdleForStage(self, cacheId):
             self.idles += 1
+            self.cacheIds.add(cacheId)
 
-        def RigExecImaging_OnEditCommitted(self):
+        def RigExecImaging_OnEditCommittedForStage(self, cacheId):
             self.commits += 1
+            self.cacheIds.add(cacheId)
 
+    stage = Usd.Stage.CreateInMemory()
+    UsdUtils.StageCache.Get().Insert(stage)
     container = RigExecUsdviewContainer.__new__(RigExecUsdviewContainer)
     container._active = True
     container._lib = _SweepLibrary()
     container._warmingCommitPending = False
+    container._cachedStage = stage
+    container._rigPaths = []
     # No GetFrameStates on the double, so the wake at the end of each
     # frame tick never arms a real driver: the timer below is the only
     # ticking driver, planted by hand.
@@ -486,6 +574,10 @@ def _AssertFrameTickYieldsToTickingDriver():
             raise AssertionError("the tick left the commit pending")
         if container._lib.idles != 1:
             raise AssertionError("the commit tick swept idle too")
+        if container._lib.cacheIds != {_CacheId(stage)}:
+            raise AssertionError(
+                "a frame-tick call reached another stage: %r" %
+                (sorted(container._lib.cacheIds),))
     finally:
         timer.stop()
 
@@ -645,11 +737,16 @@ def testUsdviewInputFunction(appController):
     from rigExecUsdview import ImagingLibraryPath
 
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
+    dll.RigExecImaging_GetGenerationForStage.argtypes = [ctypes.c_longlong]
+    dll.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
+    dll.RigExecImaging_SetTimeForStage.argtypes = [ctypes.c_longlong,
+                                                   ctypes.c_double]
+    dll.RigExecImaging_SetTimeForStage.restype = ctypes.c_int
 
     dataModel = appController._dataModel
+    stage = dataModel.stage
 
-    generation0 = dll.RigExecImaging_GetGeneration()
+    generation0 = dll.RigExecImaging_GetGenerationForStage(_CacheId(stage))
     if generation0 < 1:
         raise AssertionError(
             "rigExec did not activate: generation=%d" % generation0)
@@ -658,7 +755,7 @@ def testUsdviewInputFunction(appController):
     for frame in frames:
         dataModel.currentFrame = Usd.TimeCode(frame)
 
-    generation1 = dll.RigExecImaging_GetGeneration()
+    generation1 = dll.RigExecImaging_GetGenerationForStage(_CacheId(stage))
     if generation1 < generation0 + len(frames):
         raise AssertionError(
             "timeline changes did not publish: %d -> %d"
@@ -674,16 +771,16 @@ def testUsdviewInputFunction(appController):
     # in order, with the wrong pose in it -- and a drag hides that almost
     # perfectly because each step draws the step before it.
     #
-    # RigExecImaging_SetTime(frame) is unambiguous by construction, so
-    # driving the same frame both ways and comparing the POINTS is what
-    # separates "published" from "published the right thing".
+    # RigExecImaging_SetTimeForStage(cacheId, frame) is unambiguous by
+    # construction, so driving the same frame both ways and comparing the
+    # POINTS is what separates "published" from "published the right thing".
     observer = _Observer()
 
     dataModel.currentFrame = Usd.TimeCode(1001)
     viaSignalEarly = _Points(observer)
     dataModel.currentFrame = Usd.TimeCode(1024)
     viaSignal = _Points(observer)
-    dll.RigExecImaging_SetTime(ctypes.c_double(1024.0))
+    dll.RigExecImaging_SetTimeForStage(_CacheId(stage), 1024.0)
     viaDirect = _Points(observer)
 
     if viaSignalEarly == viaDirect:
@@ -693,7 +790,8 @@ def testUsdviewInputFunction(appController):
     if viaSignal != viaDirect:
         raise AssertionError(
             "the timeline published the WRONG FRAME: setting "
-            "currentFrame = 1024 gave %s, RigExecImaging_SetTime(1024) "
+            "currentFrame = 1024 gave %s, RigExecImaging_SetTimeForStage"
+            "(this stage, 1024) "
             "gives %s (use the frame the signal carries, never "
             "dataModel.currentFrame, inside currentFrameChanged)"
             % (viaSignal[0], viaDirect[0]))

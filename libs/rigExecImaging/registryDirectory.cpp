@@ -1,18 +1,14 @@
 // RigExec imaging directory and chain binding: the process-level map from
-// stage to imaging context, the monotonic context keys, the chain
-// registrations and the legacy current slot. The directory is ONE process
-// object: Get() holds a function-local static and no other TU declares or
-// instantiates it. Its mutex is a leaf lock -- nothing enters or destroys a
-// context while it is held -- so every prune hands the released contexts to
-// a vector declared before the guard, destroyed only after the unlock. A
-// raw-pointer stage match is always re-compared against the weak identity.
-// The legacy handle is declared last and destroyed first at exit; the
-// _directoryAlive atomic (constant-initialized, trivially destructible)
-// keeps a scene index released during static destruction from resurrecting
-// or touching a destroyed directory. SetCurrent replaces the legacy current
-// on an explicit activation; OfferCurrent fills the slot only when no
-// current context is live, so an automatic activation never takes the
-// legacy surface away. Chain registration, rebinding and the automatic
+// stage to imaging context, the monotonic context keys, and the chain
+// registrations. The directory is ONE process object: Get() holds a
+// function-local static and no other TU declares or instantiates it. Its
+// mutex is a leaf lock -- nothing enters or destroys a context while it is
+// held -- so every prune hands the released contexts to a vector declared
+// before the guard, destroyed only after the unlock. A raw-pointer stage
+// match is always re-compared against the weak identity. The _directoryAlive
+// atomic (constant-initialized, trivially destructible) keeps a scene index
+// released during static destruction from resurrecting or touching a
+// destroyed directory. Chain registration, rebinding and the automatic
 // last-chain release live here with the directory records they share.
 #include "registry.h"
 #include "rigExecGpu/gpuDeformExecutor.h"
@@ -64,7 +60,7 @@ std::atomic<bool> _directoryAlive{false};
 } // namespace
 
 /// Process-level map from a stage to its imaging context, the chain
-/// registrations, and the legacy current context.
+/// registrations.
 ///
 /// Its mutex is a LEAF (registry.h, LOCK ORDER): it may be taken while a
 /// context holds its own _mutex, and while it is held nothing calls into a
@@ -80,11 +76,6 @@ public:
     {
         static RigExecImagingDirectory directory;
         return directory;
-    }
-
-    Ctx &LegacyHandle()
-    {
-        return _legacyHandle;
     }
 
     Ptr ForStage(const UsdStageRefPtr &stage, bool create)
@@ -140,35 +131,6 @@ public:
         std::lock_guard<std::mutex> lock(_mutex);
         _PruneLocked(&released);
         return _entries.size();
-    }
-
-    Ptr Current()
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _current;
-    }
-
-    /// A legacy activation succeeded on \p context: it is current now.
-    void SetCurrent(const Ptr &context)
-    {
-        Ptr previous;
-        std::lock_guard<std::mutex> lock(_mutex);
-        previous = std::move(_current);
-        _current = context;
-    }
-
-    /// An automatic activation succeeded on \p context: it becomes current
-    /// only when no current context is live, so it never takes the legacy
-    /// surface away from an explicit activation.
-    void OfferCurrent(const Ptr &context)
-    {
-        Ptr previous;
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_current && _current->_active.load()) {
-            return;
-        }
-        previous = std::move(_current);
-        _current = context;
     }
 
     void RegisterChain(const Chain &chain, uint64_t key)
@@ -242,7 +204,7 @@ public:
     }
 
 private:
-    RigExecImagingDirectory() : _legacyHandle(Ctx::_LegacyHandleTag{})
+    RigExecImagingDirectory()
     {
         _directoryAlive.store(true);
     }
@@ -289,20 +251,7 @@ private:
     std::map<uint64_t, Entry> _entries;
     std::map<const UsdStage *, uint64_t> _keyByStage;
     std::vector<ChainRecord> _chains;
-    /// The legacy current context, held STRONGLY: the legacy handle hands
-    /// out references into it (GetStore), exactly as the old singleton
-    /// lived for the process. Replaced only by the next legacy (or, when
-    /// none is live, automatic) activation.
-    Ptr _current;
-    /// Declared last: destroyed first at exit, while the map still stands.
-    Ctx _legacyHandle;
 };
-
-RigExecImagingRegistry &
-RigExecImagingRegistry::GetInstance()
-{
-    return RigExecImagingDirectory::Get().LegacyHandle();
-}
 
 RigExecImagingRegistry::Ptr
 RigExecImagingRegistry::ForStage(const UsdStageRefPtr &stage, bool create)
@@ -324,12 +273,6 @@ RigExecImagingRegistry::ForKey(uint64_t key)
     return RigExecImagingDirectory::Get().ForKey(key);
 }
 
-RigExecImagingRegistry::Ptr
-RigExecImagingRegistry::Current()
-{
-    return RigExecImagingDirectory::Get().Current();
-}
-
 size_t
 RigExecImagingRegistry::ContextCount()
 {
@@ -338,7 +281,7 @@ RigExecImagingRegistry::ContextCount()
 
 RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
                                                const UsdStageRefPtr &stage)
-    : _key(key), _boundStage(stage), _legacyHandle(false),
+    : _key(key), _boundStage(stage),
       _store(std::make_shared<RigExecSnapshotStore>()),
       _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
 {
@@ -355,38 +298,17 @@ RigExecImagingRegistry::RigExecImagingRegistry(uint64_t key,
     // first activation starts one (see Activate).
 }
 
-RigExecImagingRegistry::RigExecImagingRegistry(_LegacyHandleTag)
-    : _key(0), _legacyHandle(true),
-      _store(std::make_shared<RigExecSnapshotStore>()),
-      _warmIndex(std::make_shared<RigExecWarmFrameIndex>())
-{
-}
-
 RigExecImagingRegistry::~RigExecImagingRegistry() = default;
-
-RigExecImagingRegistry::Ptr
-RigExecImagingRegistry::_Routed() const
-{
-    return _legacyHandle ? RigExecImagingDirectory::Get().Current() : nullptr;
-}
 
 const std::shared_ptr<RigExecSnapshotStore> &
 RigExecImagingRegistry::GetStore() const
 {
-    if (const Ptr routed = _Routed()) {
-        // The directory holds the current context strongly, so the member
-        // reference stays valid after `routed` goes out of scope.
-        return routed->_store;
-    }
     return _store;
 }
 
 bool
 RigExecImagingRegistry::IsActive() const
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsActive();
-    }
     return _active.load();
 }
 
@@ -399,10 +321,6 @@ RigExecImagingRegistry::GetBoundStage() const
 std::vector<RigExecImagingRegistry::Chain>
 RigExecImagingRegistry::_BoundChains() const
 {
-    if (_legacyHandle) {
-        // The handle owns no stage, so no chain is ever bound to it.
-        return {};
-    }
     return RigExecImagingDirectory::Get().ChainsFor(_key);
 }
 
@@ -431,14 +349,6 @@ RigExecImagingRegistry::RegisterChain(
     const RigExecResultsSceneIndexRefPtr &results,
     const RigExecXformOverrideSceneIndexRefPtr &xforms)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->RegisterChain(pruning, binding, results, xforms);
-        return;
-    }
-    if (_legacyHandle) {
-        RegisterUnboundChain(pruning, binding, results, xforms);
-        return;
-    }
     const Chain chain{
         TfWeakPtr<RigExecInternalPrimPruningSceneIndex>(get_pointer(pruning)),
         TfWeakPtr<RigExecBindingResolvingSceneIndex>(get_pointer(binding)),
@@ -550,68 +460,6 @@ RigExecImagingRegistry::_AdoptChain(const Chain &chain)
     if (chain.results) {
         chain.results->SetStore(_store);
     }
-}
-
-bool
-RigExecImagingRegistry::_LegacyActivate(const UsdStageRefPtr &stage,
-                                        const SdfPath &rigPath,
-                                        UsdTimeCode initialTime,
-                                        std::vector<std::string> *errors)
-{
-    if (!stage) {
-        if (errors) {
-            errors->push_back("no stage to activate");
-        }
-        return false;
-    }
-    RigExecImagingRegistry &handle =
-        RigExecImagingDirectory::Get().LegacyHandle();
-    const Ptr target = ForStage(stage, /* create = */ true);
-    if (!target) {
-        if (errors) {
-            errors->push_back("no imaging context for the stage");
-        }
-        return false;
-    }
-    // The legacy overlay selection is the old singleton's process-wide
-    // viewer mode: a legacy activation carries it into its target, before
-    // the first evaluation when the target is inactive (so the initial
-    // generation already has it), through SetWeightOverlay otherwise.
-    SdfPath overlay;
-    bool overlaySet = false;
-    {
-        std::lock_guard<std::mutex> lock(handle._mutex);
-        overlay = handle._weightOverlay;
-        overlaySet = handle._legacyOverlaySet;
-    }
-    if (overlaySet && !target->IsActive()) {
-        std::lock_guard<std::mutex> lock(target->_mutex);
-        target->_weightOverlay = overlay;
-    }
-    if (!target->Activate(stage, rigPath, initialTime, errors)) {
-        if (target->GetStore()->Get()) {
-            RigExecImagingDirectory::Get().OfferCurrent(target);
-        }
-        return false;
-    }
-    RigExecImagingDirectory::Get().SetCurrent(target);
-    if (overlaySet) {
-        bool differs = false;
-        {
-            std::lock_guard<std::mutex> lock(target->_mutex);
-            differs = target->_weightOverlay != overlay;
-        }
-        if (differs) {
-            target->SetWeightOverlay(overlay.GetString());
-        }
-    }
-    return true;
-}
-
-void
-RigExecImagingRegistry::_OfferCurrent()
-{
-    RigExecImagingDirectory::Get().OfferCurrent(ForKey(_key));
 }
 
 } // namespace rigExec

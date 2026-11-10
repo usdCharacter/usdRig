@@ -307,9 +307,6 @@ RigExecImagingRegistry::BuildWarmWork(const SdfPath &rig, UsdTimeCode time,
                                       RigExecFrozenStepRunner runner,
                                       RigExecBurstSampleCache *burst)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->BuildWarmWork(rig, time, generation, runner, burst);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     // Production-ness is read BEFORE the runner resolves: a null runner
     // means "warm for real", and real execution needs the session's
@@ -617,10 +614,6 @@ void
 RigExecImagingRegistry::SetWarmPublishObserverForTesting(
     WarmPublishObserver observer)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->SetWarmPublishObserverForTesting(std::move(observer));
-        return;
-    }
     _warmPublishObserver = std::move(observer);
 }
 

@@ -2,7 +2,7 @@
 import ctypes
 import math
 import time
-from pxr import Gf, Sdf, Usd, UsdGeom
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdUtils
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 from pxr.Usdviewq._usdviewq import HydraObserver
 import volumeWeightUI as ui
@@ -31,9 +31,15 @@ def testUsdviewInputFunction(app):
     app._dataModel.selection.setPrimPath(weight.GetPath())
     undo = rigExecUndo.UndoStack()
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_SetWeightOverlay.argtypes = [ctypes.c_char_p]
+    dll.RigExecImaging_SetWeightOverlayForStage.argtypes = [ctypes.c_longlong,
+                                                            ctypes.c_char_p]
     def overlay(path):
-        return dll.RigExecImaging_SetWeightOverlay(path.encode()) == 0
+        # Re-read the id per call: the container caches the stage when it
+        # activates the example's rig.
+        stageId = UsdUtils.StageCache.Get().GetId(stage)
+        cacheId = stageId.ToLongInt() if stageId.IsValid() else -1
+        return dll.RigExecImaging_SetWeightOverlayForStage(
+            cacheId, path.encode()) == 0
     panel = ui.OpenVolumeWeightPanel(api, overlay, lambda: True, undo)
     panel._overlayCheckBox.setChecked(True)
     def pump():

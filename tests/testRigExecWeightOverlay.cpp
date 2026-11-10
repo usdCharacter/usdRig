@@ -55,12 +55,12 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -86,33 +86,42 @@ struct Fixture {
         base = VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(0.5f, 0, 0),
                             GfVec3f(1, 0, 0), GfVec3f(2, 0, 0)};
         UsdPrim mesh = stage->DefinePrim(_kMeshPath, TfToken("Points"));
-        mesh.CreateAttribute(TfToken("points"),
-                             SdfValueTypeNames->Point3fArray).Set(base);
+        mesh.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
+            .Set(base);
         stage->DefinePrim(_kRigPath, TfToken("RigExecRoot"));
         UsdPrim joint = stage->DefinePrim(SdfPath("/Asset/Rig/Joints/J"),
                                           TfToken("RigExecJoint"));
         GfMatrix4d posed(1.0);
         posed.SetTranslate(GfVec3d(0, 2, 0));
-        joint.CreateAttribute(TfToken("posed:space"),
-                              SdfValueTypeNames->Matrix4d).Set(posed);
+        joint
+            .CreateAttribute(TfToken("posed:space"),
+                             SdfValueTypeNames->Matrix4d)
+            .Set(posed);
 
         UsdPrim volume =
             stage->DefinePrim(_kVolumePath, TfToken("RigExecSphereWeight"));
         GfMatrix4d at(1.0);
         at.SetTranslate(GfVec3d(0, 0, 0));
-        volume.CreateAttribute(TfToken("posed:space"),
-                               SdfValueTypeNames->Matrix4d).Set(at);
+        volume
+            .CreateAttribute(TfToken("posed:space"),
+                             SdfValueTypeNames->Matrix4d)
+            .Set(at);
         volume.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({_kTarget});
-        volume.CreateAttribute(TfToken("inputs:falloffMin"),
-                               SdfValueTypeNames->Float).Set(0.0f);
-        volume.CreateAttribute(TfToken("inputs:falloffMax"),
-                               SdfValueTypeNames->Float).Set(2.0f);
+        volume
+            .CreateAttribute(TfToken("inputs:falloffMin"),
+                             SdfValueTypeNames->Float)
+            .Set(0.0f);
+        volume
+            .CreateAttribute(TfToken("inputs:falloffMax"),
+                             SdfValueTypeNames->Float)
+            .Set(2.0f);
         volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
         // Linear keeps the expected weights arithmetic rather than
         // smoothstep evaluations.
-        volume.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                               SdfValueTypeNames->Token)
+        volume
+            .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("linear"));
 
         UsdPrim mover = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/M"),
@@ -170,8 +179,7 @@ _CheckDottedSphereWire(const HdSceneIndexPrim &guide)
     if (!curves) {
         return;
     }
-    HdIntArrayDataSourceHandle ds =
-        curves.GetTopology().GetCurveVertexCounts();
+    HdIntArrayDataSourceHandle ds = curves.GetTopology().GetCurveVertexCounts();
     CHECK(static_cast<bool>(ds));
     if (!ds) {
         return;
@@ -244,19 +252,25 @@ _GetDisplayColorPrimvar(const HdSceneIndexPrim &prim, TfToken *interpolation)
 // a test can assert Hydra was told rather than that the snapshot changed.
 class _OverlayRecordingObserver : public HdSceneIndexObserver {
 public:
-    void PrimsAdded(const HdSceneIndexBase &,
-                    const AddedPrimEntries &) override {}
+    void PrimsAdded(const HdSceneIndexBase &, const AddedPrimEntries &) override
+    {
+    }
     void PrimsRemoved(const HdSceneIndexBase &,
-                      const RemovedPrimEntries &) override {}
+                      const RemovedPrimEntries &) override
+    {
+    }
     void PrimsDirtied(const HdSceneIndexBase &,
-                      const DirtiedPrimEntries &entries) override {
+                      const DirtiedPrimEntries &entries) override
+    {
         for (const auto &e : entries) {
             dirtied.push_back(e.primPath);
             dirtiedLocators.push_back(e.dirtyLocators);
         }
     }
     void PrimsRenamed(const HdSceneIndexBase &,
-                      const RenamedPrimEntries &) override {}
+                      const RenamedPrimEntries &) override
+    {
+    }
 
     SdfPathVector dirtied;
     std::vector<HdDataSourceLocatorSet> dirtiedLocators;
@@ -279,7 +293,7 @@ Near(const GfVec3f &a, const GfVec3f &b, float tol = 1e-4f)
 // linear band.
 const float _kExpectedWeights[4] = {1.0f, 0.75f, 0.5f, 0.0f};
 
-}  // namespace
+} // namespace
 
 // The contract this whole feature is built on: the evaluator publishes the
 // field a mover actually consumed, keyed by the WEIGHT OBJECT and carrying
@@ -383,8 +397,8 @@ TestOverlayPublishesDisplayColor()
         CHECK(Near(colors[0], GfVec3f(1.0f, 0.05f, 0.05f)));
         CHECK(Near(colors[3], GfVec3f(0.55f, 0.55f, 0.55f)));
         for (size_t i = 1; i < 4; ++i) {
-            CHECK(colors[i][0] < colors[i - 1][0]);  // less red
-            CHECK(colors[i][1] > colors[i - 1][1]);  // more grey
+            CHECK(colors[i][0] < colors[i - 1][0]); // less red
+            CHECK(colors[i][1] > colors[i - 1][1]); // more grey
         }
         // ...and it TRACKS the weights rather than merely being ordered
         // like them: each colour is the ramp evaluated at that point's
@@ -491,7 +505,8 @@ TestSphereVolumeGuides()
     // falloffMin non-zero so BOTH iso-surfaces are drawable: a zero inner
     // radius is a point, and the bridge correctly declines to draw it.
     f.stage->GetPrimAtPath(_kVolumePath)
-        .GetAttribute(TfToken("inputs:falloffMin")).Set(1.0f);
+        .GetAttribute(TfToken("inputs:falloffMin"))
+        .Set(1.0f);
 
     HdRetainedSceneIndexRefPtr upstream = _BuildUpstream();
     auto store = std::make_shared<RigExecSnapshotStore>();
@@ -568,7 +583,8 @@ TestSphereVolumeGuides()
     CHECK(sphere.GetAttribute(TfToken("inputs:scaleXNeg")).Set(0.5f));
     for (const char *mode : {"wire", "geometry"}) {
         const bool wireMode = std::string(mode) == "wire";
-        CHECK(sphere.GetAttribute(TfToken("guide:drawMode")).Set(TfToken(mode)));
+        CHECK(
+            sphere.GetAttribute(TfToken("guide:drawMode")).Set(TfToken(mode)));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         const SdfPathVector shaped = results->GetChildPrimPaths(_kVolumePath);
         const size_t expectedChildren = wireMode ? 3 : 2;
@@ -597,15 +613,18 @@ TestSphereVolumeGuides()
             CHECK(Near(low, -0.5f));
             CHECK(Near(high, 2.0f));
             if (guide.primType == HdPrimTypeTokens->mesh) {
-                auto topology = HdMeshSchema::GetFromParent(guide.dataSource).GetTopology();
-                const auto counts = topology.GetFaceVertexCounts()->GetTypedValue(0);
-                const auto indices = topology.GetFaceVertexIndices()->GetTypedValue(0);
+                auto topology =
+                    HdMeshSchema::GetFromParent(guide.dataSource).GetTopology();
+                const auto counts =
+                    topology.GetFaceVertexCounts()->GetTypedValue(0);
+                const auto indices =
+                    topology.GetFaceVertexIndices()->GetTypedValue(0);
                 size_t offset = 0;
                 for (int count : counts) {
                     const GfVec3f a = points[indices[offset]];
-                    const GfVec3f b = points[indices[offset+1]];
-                    const GfVec3f c = points[indices[offset+2]];
-                    CHECK(GfDot(GfCross(b-a, c-a), a+b+c) > 0);
+                    const GfVec3f b = points[indices[offset + 1]];
+                    const GfVec3f c = points[indices[offset + 2]];
+                    CHECK(GfDot(GfCross(b - a, c - a), a + b + c) > 0);
                     offset += count;
                 }
                 CHECK(offset == indices.size());
@@ -623,8 +642,7 @@ TestSphereVolumeGuides()
         .Set(TfToken("none"));
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
     CHECK(results->GetChildPrimPaths(_kVolumePath).empty());
-    CHECK(!results->GetPrim(_kVolumePath.AppendChild(
-                                TfToken("rigGuideVol_0")))
+    CHECK(!results->GetPrim(_kVolumePath.AppendChild(TfToken("rigGuideVol_0")))
                .dataSource);
     // The mesh still moved: drawing is a viewer concern and the field is
     // untouched by it.
@@ -646,26 +664,35 @@ TestVolumeGuidesFollowPropertyMovers()
         radiusMover.GetAttribute(TfToken("inputs:value"));
     CHECK(factor.Set(2.0f));
     CHECK(radiusMover.GetRelationship(TfToken("rigExec:moves"))
-              .SetTargets({_kVolumePath.AppendProperty(
-                  TfToken("inputs:falloffMax"))}));
+              .SetTargets(
+                  {_kVolumePath.AppendProperty(TfToken("inputs:falloffMax"))}));
 
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
-    registry.Deactivate();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(f.stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    registry->Deactivate();
     std::vector<std::string> errors;
-    CHECK(registry.Activate(f.stage, _kRigPath, UsdTimeCode(1), &errors));
+    CHECK(registry->Activate(f.stage, _kRigPath, UsdTimeCode(1), &errors));
     for (float scale : {2.0f, 3.0f}) {
-        if (scale != 2.0f) CHECK(factor.Set(scale));
+        if (scale != 2.0f)
+            CHECK(factor.Set(scale));
         const RigExecImagingSnapshotConstPtr snapshot =
-            registry.GetStore()->Get();
+            registry->GetStore()->Get();
         CHECK(snapshot);
-        if (!snapshot) continue;
+        if (!snapshot)
+            continue;
         const auto volume = snapshot->prims.find(_kVolumePath);
         CHECK(volume != snapshot->prims.end());
-        if (volume == snapshot->prims.end()) continue;
+        if (volume == snapshot->prims.end())
+            continue;
         CHECK(volume->second.volumeGuides.size() == 1);
-        if (volume->second.volumeGuides.size() != 1) continue;
-        const float radius = float(volume->second.volumeGuides[0]
-                                       .xform.GetRow3(0).GetLength());
+        if (volume->second.volumeGuides.size() != 1)
+            continue;
+        const float radius =
+            float(volume->second.volumeGuides[0].xform.GetRow3(0).GetLength());
         CHECK(Near(radius, 2.0f * scale));
         const auto mesh = snapshot->prims.find(_kMeshPath);
         CHECK(mesh != snapshot->prims.end());
@@ -677,7 +704,7 @@ TestVolumeGuidesFollowPropertyMovers()
             }
         }
     }
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 // A placed volume is useful while it is being authored, before any mover has
@@ -691,8 +718,8 @@ TestStandaloneVolumeGuides()
     // Each fallback-only primitive is independently enough to make a rig
     // nonempty; neither relies on the other (or on the valid CurveWeight case
     // below) to sneak through the output gate.
-    for (const TfToken &type : {TfToken("RigExecSphereWeight"),
-                                TfToken("RigExecPlaneWeight")}) {
+    for (const TfToken &type :
+         {TfToken("RigExecSphereWeight"), TfToken("RigExecPlaneWeight")}) {
         UsdStageRefPtr one = UsdStage::CreateInMemory();
         const SdfPath oneRig("/Only/Rig");
         const SdfPath oneWeight = oneRig.AppendChild(TfToken("Weight"));
@@ -701,8 +728,7 @@ TestStandaloneVolumeGuides()
         RigExecRigEvaluator evaluator(one, oneRig);
         std::vector<std::string> oneErrors;
         CHECK(evaluator.Compile(&oneErrors));
-        const RigExecRigPose pose =
-            evaluator.Evaluate(UsdTimeCode::Default());
+        const RigExecRigPose pose = evaluator.Evaluate(UsdTimeCode::Default());
         CHECK(pose.valid);
         CHECK(pose.weightFrames.count(oneWeight) == 1);
     }
@@ -717,21 +743,21 @@ TestStandaloneVolumeGuides()
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
     UsdPrim sphere =
         stage->DefinePrim(spherePath, TfToken("RigExecSphereWeight"));
-    sphere.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float).Set(0.5f);
-    UsdPrim plane =
-        stage->DefinePrim(planePath, TfToken("RigExecPlaneWeight"));
+    sphere
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
+        .Set(0.5f);
+    UsdPrim plane = stage->DefinePrim(planePath, TfToken("RigExecPlaneWeight"));
     UsdPrim curve = stage->DefinePrim(curvePath, TfToken("BasisCurves"));
-    curve.CreateAttribute(TfToken("points"),
-                          SdfValueTypeNames->Point3fArray)
+    curve.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
         .Set(VtVec3fArray{GfVec3f(-2, 0, 0), GfVec3f(0, 1, 0),
                           GfVec3f(2, 0, 0)});
-    UsdPrim curveWeight = stage->DefinePrim(
-        curveWeightPath, TfToken("RigExecCurveWeight"));
+    UsdPrim curveWeight =
+        stage->DefinePrim(curveWeightPath, TfToken("RigExecCurveWeight"));
     curveWeight.CreateRelationship(TfToken("rigExec:curve"))
         .SetTargets({curvePath.AppendProperty(TfToken("points"))});
-    curveWeight.CreateAttribute(TfToken("inputs:falloffMin"),
-                                SdfValueTypeNames->Float).Set(0.5f);
+    curveWeight
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
+        .Set(0.5f);
 
     HdRetainedSceneIndexRefPtr upstream = HdRetainedSceneIndex::New();
     upstream->AddPrims(
@@ -789,9 +815,8 @@ TestStandaloneVolumeGuides()
     UsdStageRefPtr invalidStage = UsdStage::CreateInMemory();
     const SdfPath invalidRig("/Invalid/Rig");
     invalidStage->DefinePrim(invalidRig, TfToken("RigExecRoot"));
-    invalidStage->DefinePrim(
-        invalidRig.AppendChild(TfToken("BadCurve")),
-        TfToken("RigExecCurveWeight"));
+    invalidStage->DefinePrim(invalidRig.AppendChild(TfToken("BadCurve")),
+                             TfToken("RigExecCurveWeight"));
     RigExecRigEvaluator invalid(invalidStage, invalidRig);
     errors.clear();
     CHECK(!invalid.Compile(&errors));
@@ -839,22 +864,30 @@ TestPlaneAndCurveVolumeGuides()
         volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
         GfMatrix4d at(1.0);
         at.SetTranslate(GfVec3d(0, 0, 0));
-        volume.CreateAttribute(TfToken("posed:space"),
-                               SdfValueTypeNames->Matrix4d).Set(at);
+        volume
+            .CreateAttribute(TfToken("posed:space"),
+                             SdfValueTypeNames->Matrix4d)
+            .Set(at);
         volume.CreateRelationship(TfToken("rigExec:weightTarget"))
             .SetTargets({_kTarget});
-        volume.CreateAttribute(TfToken("inputs:falloffMin"),
-                               SdfValueTypeNames->Float).Set(c.falloffMin);
-        volume.CreateAttribute(TfToken("inputs:falloffMax"),
-                               SdfValueTypeNames->Float).Set(c.falloffMax);
-        volume.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                               SdfValueTypeNames->Token)
+        volume
+            .CreateAttribute(TfToken("inputs:falloffMin"),
+                             SdfValueTypeNames->Float)
+            .Set(c.falloffMin);
+        volume
+            .CreateAttribute(TfToken("inputs:falloffMax"),
+                             SdfValueTypeNames->Float)
+            .Set(c.falloffMax);
+        volume
+            .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                             SdfValueTypeNames->Token)
             .Set(TfToken("linear"));
         if (c.type == "RigExecCurveWeight") {
             UsdPrim curve = f.stage->DefinePrim(SdfPath("/Asset/Rig/Curve"),
                                                 TfToken("BasisCurves"));
-            curve.CreateAttribute(TfToken("points"),
-                                  SdfValueTypeNames->Point3fArray)
+            curve
+                .CreateAttribute(TfToken("points"),
+                                 SdfValueTypeNames->Point3fArray)
                 .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(5, 0, 0),
                                   GfVec3f(10, 0, 0)});
             volume.CreateRelationship(TfToken("rigExec:curve"))
@@ -890,8 +923,7 @@ TestPlaneAndCurveVolumeGuides()
             continue;
         }
 
-        const SdfPathVector children =
-            results->GetChildPrimPaths(_kVolumePath);
+        const SdfPathVector children = results->GetChildPrimPaths(_kVolumePath);
         if (children.size() != c.children) {
             std::printf("%s: %zu guide children, expected %zu\n", c.label,
                         children.size(), c.children);
@@ -939,8 +971,7 @@ TestPlaneAndCurveVolumeGuides()
                 const VtValue v = value->GetValue(0.0f);
                 CHECK(v.IsHolding<VtVec3fArray>());
                 if (v.IsHolding<VtVec3fArray>()) {
-                    CHECK(int(v.UncheckedGet<VtVec3fArray>().size()) ==
-                          total);
+                    CHECK(int(v.UncheckedGet<VtVec3fArray>().size()) == total);
                 }
             }
         }
@@ -962,35 +993,39 @@ TestCurveGeometryVolumeGuides()
     f.stage->RemovePrim(_kVolumePath);
     UsdPrim volume =
         f.stage->DefinePrim(_kVolumePath, TfToken("RigExecCurveWeight"));
-    volume.CreateAttribute(TfToken("posed:space"),
-                           SdfValueTypeNames->Matrix4d)
+    volume.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
         .Set(GfMatrix4d(1.0));
     volume.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({_kTarget});
-    volume.CreateAttribute(TfToken("inputs:falloffMin"),
-                           SdfValueTypeNames->Float).Set(0.5f);
-    volume.CreateAttribute(TfToken("inputs:falloffMax"),
-                           SdfValueTypeNames->Float).Set(2.0f);
-    volume.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token).Set(TfToken("linear"));
-    volume.CreateAttribute(TfToken("guide:drawMode"),
-                           SdfValueTypeNames->Token).Set(TfToken("geometry"));
+    volume
+        .CreateAttribute(TfToken("inputs:falloffMin"), SdfValueTypeNames->Float)
+        .Set(0.5f);
+    volume
+        .CreateAttribute(TfToken("inputs:falloffMax"), SdfValueTypeNames->Float)
+        .Set(2.0f);
+    volume
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("linear"));
+    volume.CreateAttribute(TfToken("guide:drawMode"), SdfValueTypeNames->Token)
+        .Set(TfToken("geometry"));
     // Exercise the same split as the field: the curve is divided into local
     // space while this scale rides in the synthesized child's transform.
     const double axisScale[3] = {2.0, 3.0, 4.0};
-    const char *scaleNames[3] = {
-        "inputs:scaleX", "inputs:scaleY", "inputs:scaleZ"};
+    const char *scaleNames[3] = {"inputs:scaleX", "inputs:scaleY",
+                                 "inputs:scaleZ"};
     for (int axis = 0; axis < 3; ++axis) {
-        volume.CreateAttribute(TfToken(scaleNames[axis]),
-                               SdfValueTypeNames->Float)
+        volume
+            .CreateAttribute(TfToken(scaleNames[axis]),
+                             SdfValueTypeNames->Float)
             .Set(float(axisScale[axis]));
     }
 
     UsdPrim curve = f.stage->DefinePrim(SdfPath("/Asset/Rig/Curve"),
                                         TfToken("BasisCurves"));
     curve.CreateAttribute(TfToken("points"), SdfValueTypeNames->Point3fArray)
-        .Set(VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(4, 3, 0),
-                          GfVec3f(8, 3, 4)});
+        .Set(
+            VtVec3fArray{GfVec3f(0, 0, 0), GfVec3f(4, 3, 0), GfVec3f(8, 3, 4)});
     volume.CreateRelationship(TfToken("rigExec:curve"))
         .SetTargets({SdfPath("/Asset/Rig/Curve.points")});
 
@@ -1020,7 +1055,7 @@ TestCurveGeometryVolumeGuides()
     CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
 
     const SdfPathVector children = results->GetChildPrimPaths(_kVolumePath);
-    CHECK(children.size() == 2);  // both falloff iso-surfaces
+    CHECK(children.size() == 2); // both falloff iso-surfaces
     if (children.size() != 2) {
         return;
     }
@@ -1056,8 +1091,7 @@ TestCurveGeometryVolumeGuides()
         const VtIntArray counts = countsSource->GetTypedValue(0.0f);
         const VtIntArray indices = indicesSource->GetTypedValue(0.0f);
         CHECK(counts.size() == size_t(sideFaces + 2));
-        CHECK(indices.size() ==
-              size_t(sideFaces * 4 + 2 * kSegments));
+        CHECK(indices.size() == size_t(sideFaces * 4 + 2 * kSegments));
         if (counts.size() != size_t(sideFaces + 2)) {
             continue;
         }
@@ -1108,8 +1142,7 @@ TestCurveGeometryVolumeGuides()
 
         HdPrimvarsSchema primvars =
             HdPrimvarsSchema::GetFromParent(guide.dataSource);
-        HdPrimvarSchema normalsPrimvar =
-            primvars.GetPrimvar(HdTokens->normals);
+        HdPrimvarSchema normalsPrimvar = primvars.GetPrimvar(HdTokens->normals);
         CHECK(static_cast<bool>(normalsPrimvar));
         CHECK(normalsPrimvar.GetInterpolation() &&
               normalsPrimvar.GetInterpolation()->GetTypedValue(0.0f) ==
@@ -1126,8 +1159,8 @@ TestCurveGeometryVolumeGuides()
         CHECK(normals.size() == indices.size());
 
         // Ring centers recover the transported centerline from the points.
-        GfVec3f ringCenters[kRings] = {
-            GfVec3f(0.0f), GfVec3f(0.0f), GfVec3f(0.0f)};
+        GfVec3f ringCenters[kRings] = {GfVec3f(0.0f), GfVec3f(0.0f),
+                                       GfVec3f(0.0f)};
         for (int ring = 0; ring < kRings; ++ring) {
             for (int j = 0; j < kSegments; ++j) {
                 ringCenters[ring] += points[ring * kSegments + j];
@@ -1144,9 +1177,9 @@ TestCurveGeometryVolumeGuides()
             for (int corner = 0; corner < count; ++corner) {
                 center += points[indices[cursor + corner]];
                 if (corner > 0 && corner + 1 < count) {
-                    geometricNormal += GfCross(
-                        points[indices[cursor + corner]] - origin,
-                        points[indices[cursor + corner + 1]] - origin);
+                    geometricNormal +=
+                        GfCross(points[indices[cursor + corner]] - origin,
+                                points[indices[cursor + corner + 1]] - origin);
                 }
             }
             center /= float(count);
@@ -1158,13 +1191,12 @@ TestCurveGeometryVolumeGuides()
             GfVec3f outward(0.0f);
             if (int(face) < sideFaces) {
                 const int span = int(face) / kSegments;
-                outward = center -
-                    0.5f * (ringCenters[span] + ringCenters[span + 1]);
+                outward =
+                    center - 0.5f * (ringCenters[span] + ringCenters[span + 1]);
             } else if (int(face) == sideFaces) {
                 outward = ringCenters[0] - ringCenters[1];
             } else {
-                outward = ringCenters[kRings - 1] -
-                           ringCenters[kRings - 2];
+                outward = ringCenters[kRings - 1] - ringCenters[kRings - 2];
             }
             CHECK(GfDot(geometricNormal, outward) > 0.0f);
             if (normals.size() == indices.size()) {
@@ -1181,8 +1213,7 @@ TestCurveGeometryVolumeGuides()
         for (const GfVec3f &point : points) {
             expectedExtent.UnionWith(GfVec3d(point));
         }
-        HdExtentSchema extent =
-            HdExtentSchema::GetFromParent(guide.dataSource);
+        HdExtentSchema extent = HdExtentSchema::GetFromParent(guide.dataSource);
         CHECK(extent.GetMin() && extent.GetMax());
         if (extent.GetMin() && extent.GetMax()) {
             const GfVec3d min = extent.GetMin()->GetTypedValue(0.0f);
@@ -1198,12 +1229,10 @@ TestCurveGeometryVolumeGuides()
             previousDiagonal = diagonal;
         }
 
-        HdXformSchema xform =
-            HdXformSchema::GetFromParent(guide.dataSource);
+        HdXformSchema xform = HdXformSchema::GetFromParent(guide.dataSource);
         CHECK(xform.GetMatrix());
         if (xform.GetMatrix()) {
-            const GfMatrix4d matrix =
-                xform.GetMatrix()->GetTypedValue(0.0f);
+            const GfMatrix4d matrix = xform.GetMatrix()->GetTypedValue(0.0f);
             for (int axis = 0; axis < 3; ++axis) {
                 CHECK(Near(float(matrix.GetRow3(axis).GetLength()),
                            float(axisScale[axis])));
@@ -1231,12 +1260,14 @@ TestPlaneGuideSizeIsExtentsNotBand()
         f.stage->DefinePrim(_kVolumePath, TfToken("RigExecPlaneWeight"));
     volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken("wire"));
     GfMatrix4d at(1.0);
-    volume.CreateAttribute(TfToken("posed:space"),
-                           SdfValueTypeNames->Matrix4d).Set(at);
+    volume.CreateAttribute(TfToken("posed:space"), SdfValueTypeNames->Matrix4d)
+        .Set(at);
     volume.CreateRelationship(TfToken("rigExec:weightTarget"))
         .SetTargets({_kTarget});
-    volume.CreateAttribute(TfToken("rigExec:falloffProfile"),
-                           SdfValueTypeNames->Token).Set(TfToken("linear"));
+    volume
+        .CreateAttribute(TfToken("rigExec:falloffProfile"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("linear"));
     UsdAttribute falloffMin = volume.CreateAttribute(
         TfToken("inputs:falloffMin"), SdfValueTypeNames->Float);
     UsdAttribute falloffMax = volume.CreateAttribute(
@@ -1245,10 +1276,10 @@ TestPlaneGuideSizeIsExtentsNotBand()
     falloffMax.Set(1.0f);
     // planeAxis defaults to y, so U = z and V = x. Deliberately unequal:
     // a square would pass even if the two extents were swapped.
-    UsdAttribute extentU = volume.CreateAttribute(
-        TfToken("inputs:extentU"), SdfValueTypeNames->Float);
-    UsdAttribute extentV = volume.CreateAttribute(
-        TfToken("inputs:extentV"), SdfValueTypeNames->Float);
+    UsdAttribute extentU = volume.CreateAttribute(TfToken("inputs:extentU"),
+                                                  SdfValueTypeNames->Float);
+    UsdAttribute extentV = volume.CreateAttribute(TfToken("inputs:extentV"),
+                                                  SdfValueTypeNames->Float);
     extentU.Set(3.0f);
     extentV.Set(2.0f);
 
@@ -1279,7 +1310,7 @@ TestPlaneGuideSizeIsExtentsNotBand()
     // What one publication drew: the rectangles' half-extents in x and z,
     // their offsets along y, and how many tick elements came with them.
     struct Drawn {
-        std::vector<double> offsets;   // sorted, along planeAxis y
+        std::vector<double> offsets; // sorted, along planeAxis y
         double halfX = -1.0;
         double halfZ = -1.0;
         size_t rectangles = 0;
@@ -1303,7 +1334,7 @@ TestPlaneGuideSizeIsExtentsNotBand()
             }
             const VtVec3fArray points = _GetPointsPrimvar(guide);
             if (ds->GetTypedValue(0.0f).size() != 1) {
-                ++drawn.tickSets;  // the four 2-vertex continuation marks
+                ++drawn.tickSets; // the four 2-vertex continuation marks
                 continue;
             }
             ++drawn.rectangles;
@@ -1311,7 +1342,7 @@ TestPlaneGuideSizeIsExtentsNotBand()
             for (const GfVec3f &p : points) {
                 halfX = std::max(halfX, double(std::abs(p[0])));
                 halfZ = std::max(halfZ, double(std::abs(p[2])));
-                offset = double(p[1]);  // constant over one rectangle
+                offset = double(p[1]); // constant over one rectangle
             }
             drawn.offsets.push_back(offset);
             // Every rectangle in one publication is the same size; take
@@ -1330,9 +1361,9 @@ TestPlaneGuideSizeIsExtentsNotBand()
 
     const Drawn narrow = measure("band 0..1");
     CHECK(narrow.rectangles == 2);
-    CHECK(narrow.tickSets == 2);  // unbounded: ticks say "this continues"
-    CHECK(Near(float(narrow.halfZ), 3.0f));  // U = z
-    CHECK(Near(float(narrow.halfX), 2.0f));  // V = x
+    CHECK(narrow.tickSets == 2); // unbounded: ticks say "this continues"
+    CHECK(Near(float(narrow.halfZ), 3.0f)); // U = z
+    CHECK(Near(float(narrow.halfX), 2.0f)); // V = x
     CHECK(narrow.offsets.size() == 2);
     if (narrow.offsets.size() == 2) {
         CHECK(Near(float(narrow.offsets[0]), 0.0f));
@@ -1367,8 +1398,10 @@ TestPlaneGuideSizeIsExtentsNotBand()
     // bounded draws the closed rectangle ALONE: with the field stopping
     // at the edge there is nothing continuing, and the missing ticks are
     // what tells the two modes apart at a glance.
-    volume.CreateAttribute(TfToken("rigExec:planeBounds"),
-                           SdfValueTypeNames->Token).Set(TfToken("bounded"));
+    volume
+        .CreateAttribute(TfToken("rigExec:planeBounds"),
+                         SdfValueTypeNames->Token)
+        .Set(TfToken("bounded"));
     const Drawn bounded = measure("bounded");
     CHECK(bounded.rectangles == 2);
     CHECK(bounded.tickSets == 0);
@@ -1387,10 +1420,15 @@ static void
 TestRegistrySetWeightOverlay()
 {
     Fixture f;
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(f.stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
     std::vector<std::string> errors;
-    if (!registry.Activate(f.stage, _kRigPath, UsdTimeCode::Default(),
-                           &errors)) {
+    if (!registry->Activate(f.stage, _kRigPath, UsdTimeCode::Default(),
+                            &errors)) {
         for (const std::string &e : errors) {
             std::printf("registry-overlay: activate error: %s\n", e.c_str());
         }
@@ -1400,7 +1438,7 @@ TestRegistrySetWeightOverlay()
 
     auto meshOverlay = [&registry]() -> const RigExecPublishedPrim * {
         const RigExecImagingSnapshotConstPtr snapshot =
-            registry.GetStore()->Get();
+            registry->GetStore()->Get();
         if (!snapshot) {
             return nullptr;
         }
@@ -1413,10 +1451,10 @@ TestRegistrySetWeightOverlay()
     if (published) {
         CHECK(!published->hasWeightOverlay);
     }
-    const uint64_t before = registry.GetStore()->Get()->generation;
+    const uint64_t before = registry->GetStore()->Get()->generation;
 
-    CHECK(registry.SetWeightOverlay(_kVolumePath.GetString()));
-    CHECK(registry.GetStore()->Get()->generation > before);
+    CHECK(registry->SetWeightOverlay(_kVolumePath.GetString()));
+    CHECK(registry->GetStore()->Get()->generation > before);
     published = meshOverlay();
     CHECK(published != nullptr);
     if (published) {
@@ -1424,13 +1462,12 @@ TestRegistrySetWeightOverlay()
         CHECK(published->weightOverlay.size() == 4);
         if (published->weightOverlay.size() == 4) {
             for (size_t i = 0; i < 4; ++i) {
-                CHECK(Near(published->weightOverlay[i],
-                           _kExpectedWeights[i]));
+                CHECK(Near(published->weightOverlay[i], _kExpectedWeights[i]));
             }
         }
     }
 
-    CHECK(registry.SetWeightOverlay(std::string()));
+    CHECK(registry->SetWeightOverlay(std::string()));
     published = meshOverlay();
     CHECK(published != nullptr);
     if (published) {
@@ -1440,23 +1477,25 @@ TestRegistrySetWeightOverlay()
     // Re-enable at the same time after a clean off generation, then hold.
     // Publication policy is a declared assembly input even when geometry
     // and all sampled leaves are unchanged.
-    CHECK(registry.SetWeightOverlay(_kVolumePath.GetString()));
-    CHECK(registry.SetTime(UsdTimeCode::Default()));
+    CHECK(registry->SetWeightOverlay(_kVolumePath.GetString()));
+    CHECK(registry->SetTime(UsdTimeCode::Default()));
     published = meshOverlay();
-    CHECK(published && published->hasWeightOverlay && published->weightOverlay.size()==4);
-    if(published && published->weightOverlay.size()==4)
-        for(size_t i=0;i<4;++i)CHECK(Near(published->weightOverlay[i],_kExpectedWeights[i]));
-    CHECK(registry.SetWeightOverlay(std::string()));
+    CHECK(published && published->hasWeightOverlay &&
+          published->weightOverlay.size() == 4);
+    if (published && published->weightOverlay.size() == 4)
+        for (size_t i = 0; i < 4; ++i)
+            CHECK(Near(published->weightOverlay[i], _kExpectedWeights[i]));
+    CHECK(registry->SetWeightOverlay(std::string()));
     published = meshOverlay();
     CHECK(published && !published->hasWeightOverlay);
 
     // A malformed path is rejected rather than reaching SdfPath's loud
     // constructor, and leaves the selection alone.
-    CHECK(!registry.SetWeightOverlay("not a path"));
+    CHECK(!registry->SetWeightOverlay("not a path"));
 
-    // The registry is a process-global singleton: leave it as it was found
-    // or the next case in this binary inherits an activated rig.
-    registry.Deactivate();
+    // The stage's imaging context keeps its activation: leave it as it was
+    // found or the next case in this binary inherits an activated rig.
+    registry->Deactivate();
 }
 
 // An authored edit republishes the field THAT EDIT produced, not the one
@@ -1484,24 +1523,29 @@ static void
 TestAuthoredEditRepublishesFreshField()
 {
     Fixture f;
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(f.stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
     std::vector<std::string> errors;
     // A real time code, not Default(): a spline knot is authored at a
     // frame, and an evaluator sitting at Default() would never read one.
-    if (!registry.Activate(f.stage, _kRigPath, UsdTimeCode(0.0), &errors)) {
+    if (!registry->Activate(f.stage, _kRigPath, UsdTimeCode(0.0), &errors)) {
         for (const std::string &e : errors) {
             std::printf("edit-republish: activate error: %s\n", e.c_str());
         }
         ++failures;
         return;
     }
-    CHECK(registry.SetWeightOverlay(_kVolumePath.GetString()));
+    CHECK(registry->SetWeightOverlay(_kVolumePath.GetString()));
 
     // The published field, and the generation it arrived in.
     auto overlay = [&registry](std::vector<float> *out) -> uint64_t {
         out->clear();
         const RigExecImagingSnapshotConstPtr snapshot =
-            registry.GetStore()->Get();
+            registry->GetStore()->Get();
         if (!snapshot) {
             return 0;
         }
@@ -1512,7 +1556,7 @@ TestAuthoredEditRepublishesFreshField()
         }
         return snapshot->generation;
     };
-    auto expect = [](const std::vector<float> &got, const float (&want)[4],
+    auto expect = [](const std::vector<float> &got, const float(&want)[4],
                      const char *what) {
         if (got.size() != 4) {
             ++failures;
@@ -1542,7 +1586,7 @@ TestAuthoredEditRepublishesFreshField()
 
     falloffMax.Set(4.0f);
     const uint64_t afterDefaultEdit = overlay(&field);
-    CHECK(afterDefaultEdit > generation);  // the notice republished at all
+    CHECK(afterDefaultEdit > generation); // the notice republished at all
     const float wideBand[4] = {1.0f, 0.875f, 0.75f, 0.5f};
     expect(field, wideBand, "after inputs:falloffMax = 4 (default)");
     generation = afterDefaultEdit;
@@ -1561,7 +1605,7 @@ TestAuthoredEditRepublishesFreshField()
     const float narrowBand[4] = {1.0f, 0.5f, 0.0f, 0.0f};
     expect(field, narrowBand, "after inputs:falloffMax knot = 1 (spline)");
 
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 // The overlay staying ON while the field underneath it CHANGES -- which is
@@ -1775,12 +1819,10 @@ TestUntappedVolumeSourceBakesWithTheWalksKeys(const std::string &examplesDir)
     if (!outside || !sweep) {
         return;
     }
-    sweep.GetRelationship(TfToken("rigExec:sources"))
-        .SetTargets({outsidePath});
+    sweep.GetRelationship(TfToken("rigExec:sources")).SetTargets({outsidePath});
 
     const std::map<SdfPath, GfMatrix4d> walkFrames =
-        CheckBakedWeightFramesMatchTheWalk(stage,
-                                           path + " (untapped source)");
+        CheckBakedWeightFramesMatchTheWalk(stage, path + " (untapped source)");
     CHECK(!walkFrames.count(outsidePath));
 
     // The scenario: the outside volume holds a volume slot the walk does not
@@ -1850,16 +1892,20 @@ TestWeightDisplayStyles()
     const VtFloatArray weights = retained->prims.at(_kMeshPath).weightOverlay;
     const auto originalGuides = retained->prims.at(_kVolumePath).volumeGuides;
 
-    for (const char *style : {"falloff", "cage", "brackets", "shell", "none", "wire"}) {
+    for (const char *style :
+         {"falloff", "cage", "brackets", "shell", "none", "wire"}) {
         volume.GetAttribute(TfToken("guide:drawMode")).Set(TfToken(style));
         CHECK(bridge.EvaluateAndPublish(UsdTimeCode::Default()));
         const auto snapshot = store->Get();
         CHECK(snapshot->prims.at(_kMeshPath).weightOverlay == weights);
         const auto children = results->GetChildPrimPaths(_kVolumePath);
         const std::string mode(style);
-        CHECK(children.size() == (mode == "none" ? 0 :
-            mode == "wire" || mode == "shell" || mode == "falloff" ? 3 : 2));
-        for (const SdfPath &child : children) CHECK(results->GetPrim(child).dataSource);
+        CHECK(children.size() ==
+              (mode == "none"                                           ? 0
+               : mode == "wire" || mode == "shell" || mode == "falloff" ? 3
+                                                                        : 2));
+        for (const SdfPath &child : children)
+            CHECK(results->GetPrim(child).dataSource);
         CHECK(retained->prims.at(_kVolumePath).volumeGuides == originalGuides);
         if (mode == "falloff") {
             const auto &guides = snapshot->prims.at(_kVolumePath).volumeGuides;
@@ -1870,7 +1916,8 @@ TestWeightDisplayStyles()
             CHECK(guides[1].counts == VtIntArray({65, 65, 65}));
             CHECK(guides[2].primType == HdPrimTypeTokens->basisCurves);
             CHECK(Near(float(guides[2].xform.GetRow3(0).GetLength()), 2.0f));
-            for (int count : guides[2].counts) CHECK(count == 2);
+            for (int count : guides[2].counts)
+                CHECK(count == 2);
         }
         if (mode == "cage" || mode == "brackets") {
             const auto &guides = snapshot->prims.at(_kVolumePath).volumeGuides;
@@ -1881,12 +1928,14 @@ TestWeightDisplayStyles()
             }
         }
     }
-    VtVec3fArray previous = _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
+    VtVec3fArray previous =
+        _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
     for (const char *style : {"heatmap", "bands", "tint"}) {
         volume.GetAttribute(TfToken("guide:weightDisplay")).Set(TfToken(style));
         std::string before;
         f.stage->GetRootLayer()->ExportToString(&before);
-        const auto publication = bridge.EvaluateAndPublishResult(UsdTimeCode::Default());
+        const auto publication =
+            bridge.EvaluateAndPublishResult(UsdTimeCode::Default());
         CHECK(publication.ok);
         results->NotifyGenerationPublished(publication.dirtied);
         bool dirty = false;
@@ -1894,7 +1943,8 @@ TestWeightDisplayStyles()
             if (entry.path == _kMeshPath)
                 dirty |= (entry.changes & RigExecChangeWeightOverlay) != 0;
         CHECK(dirty);
-        const auto colors = _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
+        const auto colors =
+            _GetDisplayColorPrimvar(results->GetPrim(_kMeshPath), nullptr);
         CHECK(colors.size() == weights.size());
         CHECK(colors != previous);
         previous = colors;

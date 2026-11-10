@@ -199,9 +199,6 @@ RigExecImagingRegistry::_Publish(
 bool
 RigExecImagingRegistry::SetTime(UsdTimeCode time)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->SetTime(time);
-    }
     // unique_lock: both broadcasts below run unlocked (see Activate), because
     // the notices they send re-enter this registry through the results
     // index's time trigger.

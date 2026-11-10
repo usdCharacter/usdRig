@@ -24,7 +24,7 @@ import ctypes
 import math
 import os
 
-from pxr import Gf, Sdf, Usd
+from pxr import Gf, Sdf, Usd, UsdUtils
 
 # The DELIVERED paths. The FK arm hangs off the body in namespace -- the
 # scratch stage this was written against had it flat under Controls -- and
@@ -59,10 +59,22 @@ def _Check(condition, message):
         raise AssertionError(message)
 
 
+def _StageCacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read per call (-1 while it
+    is not in the cache, which answers like an inactive context)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
+
+
+def _Generation(dll, stage):
+    return dll.RigExecImaging_GetGenerationForStage(_StageCacheId(stage))
+
+
 def _LoadDll():
     from rigExecUsdview import ImagingLibraryPath
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
+    dll.RigExecImaging_GetGenerationForStage.argtypes = [ctypes.c_longlong]
+    dll.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
     return dll
 
 
@@ -206,7 +218,7 @@ def testUsdviewInputFunction(appController):
     api = appController._usdviewApi
     stage = api.stage
     dll = _LoadDll()
-    _Check(dll.RigExecImaging_GetGeneration() >= 1,
+    _Check(_Generation(dll, stage) >= 1,
            "RigExec activated on the biped")
 
     # Every edit goes to the session layer; the checked-in file is never
@@ -305,7 +317,7 @@ def testUsdviewInputFunction(appController):
     _Check(hydraElbow0 is not None,
            "the terminal scene index (%s) has the elbow's guide sphere"
            % sceneIndexName)
-    generation0 = dll.RigExecImaging_GetGeneration()
+    generation0 = _Generation(dll, stage)
     depth0 = _UndoDepth(undo)
 
     rz = panel.Row("rz")
@@ -336,7 +348,7 @@ def testUsdviewInputFunction(appController):
     _Check((shoulder1 - shoulder0).GetLength() < 1e-9,
            "the shoulder itself stayed put")
 
-    generation1 = dll.RigExecImaging_GetGeneration()
+    generation1 = _Generation(dll, stage)
     _Check(generation1 > generation0,
            "the imaging library republished: generation %d -> %d"
            % (generation0, generation1))

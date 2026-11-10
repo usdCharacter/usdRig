@@ -90,9 +90,6 @@ _PullWindow(const std::vector<std::pair<double, double>> &ranges,
 RigExecUpstreamPullWindow
 RigExecImagingRegistry::GetUpstreamPullWindow()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetUpstreamPullWindow();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     std::vector<std::pair<double, double>> ranges;
     for (const RigSession &session : _sessions) {
@@ -109,10 +106,6 @@ RigExecImagingRegistry::SetUpstreamTable(
     const RigExecResultsSceneIndex *chain,
     std::shared_ptr<const RigExecUpstreamTable> table)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->SetUpstreamTable(chain, std::move(table));
-        return;
-    }
     if (!chain) {
         return;
     }
@@ -156,10 +149,6 @@ RigExecImagingRegistry::SetUpstreamTable(
 void
 RigExecImagingRegistry::DropUpstreamTable(const RigExecResultsSceneIndex *chain)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->DropUpstreamTable(chain);
-        return;
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     const bool held = _upstreamTables.erase(chain) != 0;
     if (_upstreamChain == chain) {
@@ -175,9 +164,6 @@ RigExecImagingRegistry::DropUpstreamTable(const RigExecResultsSceneIndex *chain)
 bool
 RigExecImagingRegistry::RefreshUpstreamInputs()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->RefreshUpstreamInputs();
-    }
     UsdTimeCode time;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -194,9 +180,6 @@ RigExecImagingRegistry::RefreshUpstreamInputs()
 std::shared_ptr<const RigExecUpstreamTable>
 RigExecImagingRegistry::GetUpstreamTable(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetUpstreamTable(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig) {
@@ -209,9 +192,6 @@ RigExecImagingRegistry::GetUpstreamTable(const SdfPath &rig)
 uint64_t
 RigExecImagingRegistry::GetUpstreamSerial(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetUpstreamSerial(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig) {

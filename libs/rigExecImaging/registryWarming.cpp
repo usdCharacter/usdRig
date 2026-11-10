@@ -53,9 +53,6 @@ _SweepTimes(UsdTimeCode playhead)
 bool
 RigExecImagingRegistry::GetWarmBurstUsable(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetWarmBurstUsable(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig) {
@@ -68,10 +65,6 @@ RigExecImagingRegistry::GetWarmBurstUsable(const SdfPath &rig)
 void
 RigExecImagingRegistry::SetWarmBurstPrepSliceMs(double ms)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->SetWarmBurstPrepSliceMs(ms);
-        return;
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     _warmBurstPrepSliceMs = ms;
     // A new slice re-times every verdict: an overrun latched under the
@@ -86,9 +79,6 @@ RigExecImagingRegistry::SetWarmBurstPrepSliceMs(double ms)
 double
 RigExecImagingRegistry::GetWarmBurstPrepSliceMs()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetWarmBurstPrepSliceMs();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     return _warmBurstPrepSliceMs;
 }
@@ -96,9 +86,6 @@ RigExecImagingRegistry::GetWarmBurstPrepSliceMs()
 RigExecWarmSkipReason
 RigExecImagingRegistry::GetLastWarmSkipReason(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetLastWarmSkipReason(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig) {
@@ -111,9 +98,6 @@ RigExecImagingRegistry::GetLastWarmSkipReason(const SdfPath &rig)
 std::string
 RigExecImagingRegistry::GetLastWarmSkipDetail(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetLastWarmSkipDetail(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == rig) {
@@ -127,10 +111,6 @@ void
 RigExecImagingRegistry::SetWarmSamplingBudget(size_t maxFactoryInvocations,
                                               double maxMs)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->SetWarmSamplingBudget(maxFactoryInvocations, maxMs);
-        return;
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     _warmSamplingMaxInvocations = maxFactoryInvocations;
     _warmSamplingMaxMs = maxMs;
@@ -139,9 +119,6 @@ RigExecImagingRegistry::SetWarmSamplingBudget(size_t maxFactoryInvocations,
 size_t
 RigExecImagingRegistry::GetWarmSamplingMaxInvocations()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetWarmSamplingMaxInvocations();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     return _warmSamplingMaxInvocations;
 }
@@ -149,9 +126,6 @@ RigExecImagingRegistry::GetWarmSamplingMaxInvocations()
 double
 RigExecImagingRegistry::GetWarmSamplingMaxMs()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetWarmSamplingMaxMs();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     return _warmSamplingMaxMs;
 }
@@ -202,9 +176,6 @@ RigExecImagingRegistry::_CursorSweepTimes(const RigSession &session,
 size_t
 RigExecImagingRegistry::OnEditCommitted(RigExecFrozenStepRunner runner)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->OnEditCommitted(runner);
-    }
     // Snapshot the rigs and the playhead under a short lock; the triggers
     // below sample outside it (their factories re-resolve each session, so
     // a Deactivate mid-trigger only skips frames, never dangles).
@@ -365,9 +336,6 @@ RigExecImagingRegistry::_WarmOneFallbackFrame(RigSession *session,
 size_t
 RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->OnIdle(runner);
-    }
     // Frames on demand first: cached frames become entries, the rest join
     // the rewarm lane the sweep below enqueues before anything else.
     ServiceFrameDemand(8, /* allowFallback = */ true);
@@ -477,9 +445,6 @@ RigExecImagingRegistry::OnIdle(RigExecFrozenStepRunner runner)
 size_t
 RigExecImagingRegistry::GetWarmingProgressCount()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetWarmingProgressCount();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     size_t progress = _scheduler ? _scheduler->Stats().factoryInvocations : 0;
     for (const RigSession &session : _sessions) {

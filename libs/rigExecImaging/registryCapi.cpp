@@ -1,5 +1,5 @@
 // RigExec imaging C activation surface: the host-facing extern "C" exports
-// over the legacy handle and the per-stage contexts.
+// over the per-stage contexts.
 #include "registry.h"
 #include "guideBoundsInternal.h"
 
@@ -21,14 +21,6 @@ using rigExec::RigExecImagingRegistry;
 namespace {
 
 using RegistryPtr = RigExecImagingRegistry::Ptr;
-
-// The legacy surface: the stage-less C functions route through the legacy
-// handle, i.e. to the current context (registry.h, "LEGACY SURFACE").
-RigExecImagingRegistry &
-_Legacy()
-{
-    return RigExecImagingRegistry::GetInstance();
-}
 
 // A stage-scoped call's context: the one of the stage the stage cache holds
 // under \p id. Never created here except where the call documents it.
@@ -238,13 +230,10 @@ _UpdatePreview(RigExecImagingRegistry &registry, const double *values,
     return registry.UpdatePreview(values, size_t(count)) ? 0 : 1;
 }
 
-// RigExecImaging_Activate and RigExecImaging_ActivateForStage: the same
-// arguments and return codes; \p legacy picks the legacy activation (THAT
-// stage's context, made current, carrying the legacy overlay selection)
-// over the stage-scoped one (that context only).
+// RigExecImaging_ActivateForStage: activation of THAT stage's context;
+// each failure prints its reason.
 int
-_ActivateC(long long stageCacheId, const char *rigPath, double initialFrame,
-           bool legacy)
+_ActivateC(long long stageCacheId, const char *rigPath, double initialFrame)
 {
     PXR_NS::UsdStageRefPtr stage = PXR_NS::UsdUtilsStageCache::Get().Find(
         PXR_NS::UsdStageCache::Id::FromLongInt(
@@ -264,22 +253,16 @@ _ActivateC(long long stageCacheId, const char *rigPath, double initialFrame,
         path = PXR_NS::SdfPath(rigPath);
     }
 
-    // THAT stage's context (created on demand). The legacy activation also
-    // makes it the current context. Other stages' contexts are untouched.
+    // THAT stage's context (created on demand); other stages' contexts are
+    // untouched.
     std::vector<std::string> errors;
-    bool activated = false;
-    if (legacy) {
-        activated = _Legacy().Activate(
-            stage, path, PXR_NS::UsdTimeCode(initialFrame), &errors);
-    } else {
-        const RegistryPtr context =
-            RigExecImagingRegistry::ForStage(stage, /* create = */ true);
-        activated = context && context->Activate(
-                                   stage, path,
-                                   PXR_NS::UsdTimeCode(initialFrame), &errors);
-        if (!context) {
-            errors.push_back("no imaging context for the stage");
-        }
+    const RegistryPtr context =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    const bool activated =
+        context && context->Activate(
+                       stage, path, PXR_NS::UsdTimeCode(initialFrame), &errors);
+    if (!context) {
+        errors.push_back("no imaging context for the stage");
     }
     if (!activated) {
         for (const std::string &e : errors) {
@@ -300,84 +283,10 @@ _ActivateC(long long stageCacheId, const char *rigPath, double initialFrame,
 extern "C" {
 
 int
-RigExecImaging_Activate(long long stageCacheId, const char *rigPath,
-                        double initialFrame)
-{
-    return _ActivateC(stageCacheId, rigPath, initialFrame, /* legacy = */ true);
-}
-
-int
 RigExecImaging_ActivateForStage(long long stageCacheId, const char *rigPath,
                                 double initialFrame)
 {
-    return _ActivateC(stageCacheId, rigPath, initialFrame,
-                      /* legacy = */ false);
-}
-
-int
-RigExecImaging_SetTime(double frame)
-{
-    return _Legacy().SetTime(PXR_NS::UsdTimeCode(frame)) ? 0 : 1;
-}
-
-void
-RigExecImaging_Deactivate()
-{
-    _Legacy().Deactivate();
-}
-
-int
-RigExecImaging_OnEditCommitted()
-{
-    RigExecImagingRegistry &registry = _Legacy();
-    if (!registry.IsActive()) {
-        return 1;
-    }
-    registry.OnEditCommitted();
-    return 0;
-}
-
-int
-RigExecImaging_OnIdle()
-{
-    RigExecImagingRegistry &registry = _Legacy();
-    if (!registry.IsActive()) {
-        return 1;
-    }
-    registry.OnIdle();
-    return 0;
-}
-
-int
-RigExecImaging_ServiceFrameDemand()
-{
-    RigExecImagingRegistry &registry = _Legacy();
-    if (!registry.IsActive()) {
-        return -1;
-    }
-    return int(registry.ServiceFrameDemand());
-}
-
-int
-RigExecImaging_HasFrameDemand()
-{
-    RigExecImagingRegistry &registry = _Legacy();
-    if (!registry.IsActive()) {
-        return -1;
-    }
-    return registry.HasFrameDemand() ? 1 : 0;
-}
-
-long long
-RigExecImaging_GetGeneration()
-{
-    return _Generation(_Legacy());
-}
-
-int
-RigExecImaging_GetMovedFloats(const char *packedPaths, float *out, int count)
-{
-    return _MovedFloats(_Legacy(), packedPaths, out, count);
+    return _ActivateC(stageCacheId, rigPath, initialFrame);
 }
 
 int
@@ -421,103 +330,7 @@ RigExecImaging_GetControlFrameAssetSpace(long long stageCacheId,
     return 1;
 }
 
-int
-RigExecImaging_GetGuideBoundsAssetSpace(const char *primPath,
-                                        double outMinMax[6])
-{
-    return _GuideBounds(_Legacy(), primPath, outMinMax);
-}
-
-// Viewport profiling. With RIGEXEC_IMAGING_PROFILE set, every active rig's
-// evaluator records its own phases and the imaging layer's publish phases;
-// this writes the per-phase totals as tab-separated text and clears them,
-// so a caller can bracket exactly the interaction it wants to measure.
-int
-RigExecImaging_WriteProfileSummary(const char *path)
-{
-    return _Legacy().WriteProfileSummary(path ? std::string(path)
-                                              : std::string())
-               ? 0
-               : 1;
-}
-
-int
-RigExecImaging_SetWeightOverlay(const char *weightPrimPath)
-{
-    return _Legacy().SetWeightOverlay(
-               weightPrimPath ? std::string(weightPrimPath) : std::string())
-               ? 0
-               : 1;
-}
-
-int
-RigExecImaging_GetFrameStates(const char *rigPath, const double *frames,
-                              int *statesOut, int count)
-{
-    return _FrameStates(_Legacy(), rigPath, frames, statesOut, count);
-}
-
-int
-RigExecImaging_ClearFrameCache(const char *rigPath)
-{
-    return _ClearFrameCache(_Legacy(), rigPath);
-}
-
-int
-RigExecImaging_WarmRange(const char *rigPath, const double *frames, int count)
-{
-    return _WarmRange(_Legacy(), rigPath, frames, count);
-}
-
-long long
-RigExecImaging_GetWarmingCompletedCount()
-{
-    return static_cast<long long>(_Legacy().GetBackgroundStats().completed);
-}
-
-long long
-RigExecImaging_GetWarmingProgressCount()
-{
-    return static_cast<long long>(_Legacy().GetWarmingProgressCount());
-}
-
-// Manipulation preview. Three calls, and only the
-// middle one runs per mouse sample: strings are marshalled once per drag and
-// every sample after that is an array of doubles.
-int
-RigExecImaging_BeginPreview(const char *packedAttributePaths)
-{
-    return _Legacy().BeginPreview(packedAttributePaths
-                                      ? std::string(packedAttributePaths)
-                                      : std::string());
-}
-
-int
-RigExecImaging_UpdatePreview(const double *values, int count)
-{
-    return _UpdatePreview(_Legacy(), values, count);
-}
-
-int
-RigExecImaging_EndPreview()
-{
-    return _Legacy().EndPreview() ? 0 : 1;
-}
-
-int
-RigExecImaging_EndPreviewWithoutPublish()
-{
-    return _Legacy().EndPreview(/* publish = */ false) ? 0 : 1;
-}
-
-int
-RigExecImaging_GetAllGuideBoundsAssetSpace(double outMinMax[6])
-{
-    return _AllGuideBounds(_Legacy(), outMinMax);
-}
-
-// Stage-scoped surface: each twin acts on its stage's context only and never
-// moves the legacy current context (registry.h).
+// Stage-scoped surface: each call acts on its stage's context only.
 
 int
 RigExecImaging_SetTimeForStage(long long stageCacheId, double frame)
@@ -766,7 +579,7 @@ RigExecImaging_SetWeightOverlayForStage(long long stageCacheId,
                                         const char *weightPrimPath)
 {
     // Created on demand: a selection made before the stage's rig activates
-    // is remembered for its first generation, as the legacy one is.
+    // is remembered for its first generation.
     const RegistryPtr context = _ForStage(stageCacheId, /* create = */ true);
     if (!context) {
         return 1;
@@ -795,8 +608,8 @@ RigExecImaging_ClearFrameCacheForStage(long long stageCacheId,
 {
     const RegistryPtr context = _ForStage(stageCacheId);
     if (!context) {
-        // Nothing to drop is still dropped (the legacy convention), but a
-        // malformed path is still refused.
+        // Nothing to drop is still dropped; a malformed path is
+        // still refused.
         return rigPath && SdfPath::IsValidPathString(rigPath) ? 0 : -1;
     }
     return _ClearFrameCache(*context, rigPath);

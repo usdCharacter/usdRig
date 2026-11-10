@@ -14,7 +14,7 @@
 import ctypes
 import os
 
-from pxr import Usd, Sdf
+from pxr import Usd, Sdf, UsdUtils
 from pxr.Usdviewq.qt import QtWidgets
 
 
@@ -47,12 +47,22 @@ def _LoadDll():
     from rigExecUsdview import ImagingLibraryPath
 
     dll = ctypes.CDLL(ImagingLibraryPath())
-    dll.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
-    dll.RigExecImaging_SetTime.argtypes = [ctypes.c_double]
-    dll.RigExecImaging_SetTime.restype = ctypes.c_int
-    dll.RigExecImaging_SetWeightOverlay.argtypes = [ctypes.c_char_p]
-    dll.RigExecImaging_SetWeightOverlay.restype = ctypes.c_int
+    dll.RigExecImaging_GetGenerationForStage.argtypes = [ctypes.c_longlong]
+    dll.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
+    dll.RigExecImaging_SetTimeForStage.argtypes = [ctypes.c_longlong,
+                                                   ctypes.c_double]
+    dll.RigExecImaging_SetTimeForStage.restype = ctypes.c_int
+    dll.RigExecImaging_SetWeightOverlayForStage.argtypes = [ctypes.c_longlong,
+                                                            ctypes.c_char_p]
+    dll.RigExecImaging_SetWeightOverlayForStage.restype = ctypes.c_int
     return dll
+
+
+def _StageCacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read per call (-1 while it
+    is not in the cache, which answers like an inactive context)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
 
 
 def _Observer():
@@ -110,8 +120,9 @@ def _CheckCurveGeometry(appController, dll, observer, sceneIndexName):
         # Session-only: the checked-in example remains the ordinary wire case.
         with Usd.EditContext(stage, stage.GetSessionLayer()):
             drawMode.Set(value)
-        if dll.RigExecImaging_SetTime(1024.0) != 0:
-            raise AssertionError("RigExecImaging_SetTime failed")
+        if dll.RigExecImaging_SetTimeForStage(_StageCacheId(stage),
+                                              1024.0) != 0:
+            raise AssertionError("RigExecImaging_SetTimeForStage failed")
         appController._processEvents()
         QtWidgets.QApplication.processEvents()
 
@@ -170,8 +181,9 @@ def _CheckCurveGeometry(appController, dll, observer, sceneIndexName):
 
 def testUsdviewInputFunction(appController):
     dll = _LoadDll()
+    stage = appController._dataModel.stage
 
-    if dll.RigExecImaging_GetGeneration() < 1:
+    if dll.RigExecImaging_GetGenerationForStage(_StageCacheId(stage)) < 1:
         raise AssertionError("rigExec did not activate")
 
     # Move off the rest frame so the field is not uniformly zero.
@@ -185,7 +197,7 @@ def testUsdviewInputFunction(appController):
     _CheckCurveGeometry(appController, dll, observer, sceneIndexName)
 
     # --- overlay OFF: the mesh must carry no displayColor of ours ---
-    dll.RigExecImaging_SetWeightOverlay(b"")
+    dll.RigExecImaging_SetWeightOverlayForStage(_StageCacheId(stage), b"")
     before = _TerminalPrimvar(observer, MESH, "displayColor")
     if before is not None and before[0] is not None:
         # An authored displayColor would be legitimate; this example has
@@ -194,10 +206,11 @@ def testUsdviewInputFunction(appController):
             "displayColor present with the overlay off: %r" % (before,))
 
     # --- overlay ON ---
-    status = dll.RigExecImaging_SetWeightOverlay(VOLUME.encode("utf-8"))
+    status = dll.RigExecImaging_SetWeightOverlayForStage(
+        _StageCacheId(stage), VOLUME.encode("utf-8"))
     if status != 0:
         raise AssertionError(
-            "RigExecImaging_SetWeightOverlay failed: %d" % status)
+            "RigExecImaging_SetWeightOverlayForStage failed: %d" % status)
 
     after = _TerminalPrimvar(observer, MESH, "displayColor")
     if after is None or after[0] is None:
@@ -209,7 +222,6 @@ def testUsdviewInputFunction(appController):
             "displayColor interpolation is %r, expected vertex"
             % (interpolation,))
 
-    stage = appController._dataModel.stage
     points = stage.GetAttributeAtPath(MESH + ".points").Get(1024)
     if len(colors) != len(points):
         raise AssertionError(
@@ -231,7 +243,7 @@ def testUsdviewInputFunction(appController):
             % (near, far))
 
     # --- and it must go away again ---
-    dll.RigExecImaging_SetWeightOverlay(b"")
+    dll.RigExecImaging_SetWeightOverlayForStage(_StageCacheId(stage), b"")
     cleared = _TerminalPrimvar(observer, MESH, "displayColor")
     if cleared is not None and cleared[0] is not None:
         raise AssertionError("displayColor survived turning the overlay off")
@@ -258,9 +270,10 @@ def testUsdviewInputFunction(appController):
                  for x in range(0, img.width(), 2)]
                 for y in range(0, img.height(), 2)]
 
-    dll.RigExecImaging_SetWeightOverlay(b"")
+    dll.RigExecImaging_SetWeightOverlayForStage(_StageCacheId(stage), b"")
     grey = capture()
-    dll.RigExecImaging_SetWeightOverlay(VOLUME.encode("utf-8"))
+    dll.RigExecImaging_SetWeightOverlayForStage(
+        _StageCacheId(stage), VOLUME.encode("utf-8"))
     lit = capture()
 
     # Compare the two frames pixel for pixel rather than counting red in each.

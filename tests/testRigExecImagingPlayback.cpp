@@ -45,12 +45,12 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 static int failures = 0;
 
-#define CHECK(cond)                                                     \
-    do {                                                                \
-        if (!(cond)) {                                                  \
-            ++failures;                                                 \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-        }                                                               \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 static SdfPath
@@ -120,8 +120,10 @@ _GeometryBytes(const RigExecImagingSnapshot &snapshot)
         const size_t count = array.size();
         const auto *sizeBytes = reinterpret_cast<const unsigned char *>(&count);
         bytes.insert(bytes.end(), sizeBytes, sizeBytes + sizeof(count));
-        if (array.empty()) return;
-        const auto *data = reinterpret_cast<const unsigned char *>(array.cdata());
+        if (array.empty())
+            return;
+        const auto *data =
+            reinterpret_cast<const unsigned char *>(array.cdata());
         bytes.insert(bytes.end(), data, data + count * sizeof(array[0]));
     };
     for (const auto &[path, prim] : snapshot.prims) {
@@ -140,10 +142,13 @@ _CheckSharedGeometry(const RigExecImagingSnapshot &before,
     for (const auto &[path, prim] : before.prims) {
         const auto found = after.prims.find(path);
         CHECK(found != after.prims.end());
-        if (found == after.prims.end()) continue;
+        if (found == after.prims.end())
+            continue;
         const auto &next = found->second;
-        if (!prim.points.empty()) CHECK(prim.points.cdata() == next.points.cdata());
-        if (!prim.normals.empty()) CHECK(prim.normals.cdata() == next.normals.cdata());
+        if (!prim.points.empty())
+            CHECK(prim.points.cdata() == next.points.cdata());
+        if (!prim.normals.empty())
+            CHECK(prim.normals.cdata() == next.normals.cdata());
         if (!prim.weightOverlay.empty())
             CHECK(prim.weightOverlay.cdata() == next.weightOverlay.cdata());
     }
@@ -153,14 +158,12 @@ _CheckSharedGeometry(const RigExecImagingSnapshot &before,
 // Synthesized guide geometry remains specific to the live bridge.
 static void
 _CompareGenerations(const RigExecImagingSnapshot &live,
-                    const RigExecImagingSnapshot &play,
-                    const std::string &what)
+                    const RigExecImagingSnapshot &play, const std::string &what)
 {
     for (const auto &[path, expected] : live.prims) {
-        const bool liveOutput = expected.hasPoints ||
-                                  expected.hasNormals ||
-                                  expected.hasExtent || expected.hasXform ||
-                                  expected.hasControlFrame;
+        const bool liveOutput = expected.hasPoints || expected.hasNormals ||
+                                expected.hasExtent || expected.hasXform ||
+                                expected.hasControlFrame;
         if (!liveOutput) {
             continue;
         }
@@ -180,33 +183,31 @@ _CompareGenerations(const RigExecImagingSnapshot &live,
             CHECK(false);
         }
         if (expected.hasPoints != got.hasPoints ||
-            (expected.hasPoints &&
-             !_SamePoints(expected.points, got.points))) {
-            std::printf("points differ on %s [%s]\n",
-                        path.GetString().c_str(), what.c_str());
+            (expected.hasPoints && !_SamePoints(expected.points, got.points))) {
+            std::printf("points differ on %s [%s]\n", path.GetString().c_str(),
+                        what.c_str());
             CHECK(false);
         }
         if (expected.hasNormals != got.hasNormals ||
             (expected.hasNormals &&
              !_SamePoints(expected.normals, got.normals))) {
-            std::printf("normals differ on %s [%s]\n",
-                        path.GetString().c_str(), what.c_str());
+            std::printf("normals differ on %s [%s]\n", path.GetString().c_str(),
+                        what.c_str());
             CHECK(false);
         }
         if (expected.hasExtent != got.hasExtent ||
-            (expected.hasExtent &&
-             (expected.extentMin != got.extentMin ||
-              expected.extentMax != got.extentMax))) {
-            std::printf("extent differs on %s [%s]\n",
-                        path.GetString().c_str(), what.c_str());
+            (expected.hasExtent && (expected.extentMin != got.extentMin ||
+                                    expected.extentMax != got.extentMax))) {
+            std::printf("extent differs on %s [%s]\n", path.GetString().c_str(),
+                        what.c_str());
             CHECK(false);
         }
         if (expected.hasXform != got.hasXform ||
             (expected.hasXform &&
              (!_SameMatrices(expected.xform, got.xform) ||
               !_SameMatrices(expected.xformBase, got.xformBase)))) {
-            std::printf("xform differs on %s [%s]\n",
-                        path.GetString().c_str(), what.c_str());
+            std::printf("xform differs on %s [%s]\n", path.GetString().c_str(),
+                        what.c_str());
             CHECK(false);
         }
         if (expected.hasWeightOverlay != got.hasWeightOverlay ||
@@ -219,7 +220,8 @@ _CompareGenerations(const RigExecImagingSnapshot &live,
     }
     for (const auto &[path, got] : play.prims) {
         const bool playOutput = got.hasPoints || got.hasNormals ||
-                                  got.hasExtent || got.hasXform || got.hasControlFrame;
+                                got.hasExtent || got.hasXform ||
+                                got.hasControlFrame;
         if (!playOutput) {
             continue;
         }
@@ -259,8 +261,8 @@ _SameGenerations(const RigExecImagingSnapshot &a,
             x.hasExtent != y.hasExtent || x.hasXform != y.hasXform ||
             (x.hasPoints && !_SamePoints(x.points, y.points)) ||
             (x.hasNormals && !_SamePoints(x.normals, y.normals)) ||
-            (x.hasExtent && (x.extentMin != y.extentMin ||
-                             x.extentMax != y.extentMax)) ||
+            (x.hasExtent &&
+             (x.extentMin != y.extentMin || x.extentMax != y.extentMax)) ||
             (x.hasXform && (!_SameMatrices(x.xform, y.xform) ||
                             !_SameMatrices(x.xformBase, y.xformBase)))) {
             return false;
@@ -328,8 +330,7 @@ _TestFixture(const std::string &stagePath, const std::string &frameText,
             c = '_';
         }
     }
-    const std::string binary =
-        (scratch / (flat + ".rigexec")).string();
+    const std::string binary = (scratch / (flat + ".rigexec")).string();
     {
         std::ofstream stream(binary, std::ios::binary);
         stream.write(reinterpret_cast<const char *>(baked.bytes.data()),
@@ -384,7 +385,8 @@ _TestFixture(const std::string &stagePath, const std::string &frameText,
             CHECK(repeated.ok && repeated.dirtied.empty());
             const auto next = playStore->Get();
             CHECK(next);
-            if (next) _CheckSharedGeometry(*b, *next);
+            if (next)
+                _CheckSharedGeometry(*b, *next);
         }
         ++comparedTimes;
     }
@@ -443,13 +445,16 @@ _TestSelection(const std::string &stagePath, const std::string &frameText,
         if (!stage) {
             return;
         }
-        RigExecImagingRegistry &registry =
-            RigExecImagingRegistry::GetInstance();
+        const RigExecImagingRegistry::Ptr registry =
+            RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+        CHECK(registry);
+        if (!registry) {
+            return;
+        }
         std::vector<std::string> errors;
-        CHECK(registry.Activate(stage, _FindRig(stage),
-                                UsdTimeCode(frames.front()), &errors));
-        RigExecImagingSnapshotConstPtr current =
-            registry.GetStore()->Get();
+        CHECK(registry->Activate(stage, _FindRig(stage),
+                                 UsdTimeCode(frames.front()), &errors));
+        RigExecImagingSnapshotConstPtr current = registry->GetStore()->Get();
         CHECK(current && hasGeometry(*current));
         if (!current || !hasGuides(*current)) {
             std::printf("live leg of %s drew no guides; the selection "
@@ -457,7 +462,7 @@ _TestSelection(const std::string &stagePath, const std::string &frameText,
                         stagePath.c_str());
         }
         CHECK(current && hasGuides(*current));
-        registry.Deactivate();
+        registry->Deactivate();
     }
 
     // Then playback, with the attribute authored in the session layer.
@@ -481,23 +486,27 @@ _TestSelection(const std::string &stagePath, const std::string &frameText,
     if (baked.bytes.empty()) {
         return;
     }
-    const std::string binary =
-        (scratch / "selection.rigexec").string();
+    const std::string binary = (scratch / "selection.rigexec").string();
     {
         std::ofstream stream(binary, std::ios::binary);
         stream.write(reinterpret_cast<const char *>(baked.bytes.data()),
                      std::streamsize(baked.bytes.size()));
     }
     UsdPrim rig = stage->GetPrimAtPath(rigPath);
-    const UsdAttribute asset = rig.CreateAttribute(
-        TfToken("rigExec:asset"), SdfValueTypeNames->Asset);
+    const UsdAttribute asset =
+        rig.CreateAttribute(TfToken("rigExec:asset"), SdfValueTypeNames->Asset);
     CHECK(asset);
     asset.Set(SdfAssetPath(binary));
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(frames.front()),
-                            &errors));
-    RigExecImagingSnapshotConstPtr current = registry.GetStore()->Get();
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(frames.front()),
+                             &errors));
+    RigExecImagingSnapshotConstPtr current = registry->GetStore()->Get();
     CHECK(current && hasGeometry(*current));
     if (current && hasGuides(*current)) {
         std::printf("playback leg of %s drew guides; the asset was not "
@@ -505,7 +514,7 @@ _TestSelection(const std::string &stagePath, const std::string &frameText,
                     stagePath.c_str());
     }
     CHECK(!current || !hasGuides(*current));
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 // A registry playback session reads its static inputs (not Animated, not
@@ -558,8 +567,7 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
                                 &error));
         if (file) {
             for (const auto &input : file->inputs) {
-                if (!(input.flags() &
-                      uint8_t(fb::InputSlotFlags::Animated))) {
+                if (!(input.flags() & uint8_t(fb::InputSlotFlags::Animated))) {
                     staticSlots.insert(
                         RigExecFormatPathText(*file, input.name()));
                 }
@@ -592,23 +600,28 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
                 TfToken("rigExec:asset"), SdfValueTypeNames->Asset);
         CHECK(asset && asset.Set(SdfAssetPath(binary)));
     }
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(bakeTime), &errors));
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(bakeTime), &errors));
     for (const std::string &line : errors) {
         std::printf("static edit: activation: %s\n", line.c_str());
     }
-    CHECK(registry.GetPlayback(rigPath) != nullptr);
-    if (!registry.GetPlayback(rigPath) || candidates.empty()) {
-        registry.Deactivate();
+    CHECK(registry->GetPlayback(rigPath) != nullptr);
+    if (!registry->GetPlayback(rigPath) || candidates.empty()) {
+        registry->Deactivate();
         return;
     }
     // The registry's generation at \p frame.
     const auto published = [&](double frame) {
-        CHECK(registry.SetTime(UsdTimeCode(frame)));
-        RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
-        CHECK(snapshot && snapshot->Describes(UsdStageWeakPtr(stage),
-                                              UsdTimeCode(frame)));
+        CHECK(registry->SetTime(UsdTimeCode(frame)));
+        RigExecImagingSnapshotConstPtr snapshot = registry->GetStore()->Get();
+        CHECK(snapshot &&
+              snapshot->Describes(UsdStageWeakPtr(stage), UsdTimeCode(frame)));
         return snapshot;
     };
     // A playback outside the registry, opened over the stage as it is now,
@@ -620,8 +633,8 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
     const auto outside = [&]() {
         _Outside out;
         out.store = std::make_shared<RigExecSnapshotStore>();
-        out.play = std::make_unique<RigExecBakedPlayback>(stage, rigPath,
-                                                          out.store);
+        out.play =
+            std::make_unique<RigExecBakedPlayback>(stage, rigPath, out.store);
         std::string why;
         const bool opened = out.play->Open(binary, &why);
         if (!opened) {
@@ -633,8 +646,8 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
     const auto at = [&](_Outside &out, double frame) {
         CHECK(out.play->EvaluateAndPublishResult(UsdTimeCode(frame)).ok);
         RigExecImagingSnapshotConstPtr snapshot = out.store->Get();
-        CHECK(snapshot && snapshot->Describes(UsdStageWeakPtr(stage),
-                                              UsdTimeCode(frame)));
+        CHECK(snapshot &&
+              snapshot->Describes(UsdStageWeakPtr(stage), UsdTimeCode(frame)));
         return snapshot;
     };
 
@@ -644,7 +657,7 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
     const RigExecImagingSnapshotConstPtr b1 = at(before, t1);
     const RigExecImagingSnapshotConstPtr b2 = at(before, t2);
     if (!g1 || !b1 || !b2) {
-        registry.Deactivate();
+        registry->Deactivate();
         return;
     }
     _CompareGenerations(*g1, *b1, "static edit, unedited");
@@ -681,7 +694,7 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
                 edited ? edited.GetPath().GetText() : "none");
     CHECK(edited);
     if (!edited) {
-        registry.Deactivate();
+        registry->Deactivate();
         return;
     }
     // At t2 the session plays the edit as a playback opened after it.
@@ -711,12 +724,11 @@ _TestPlaybackSeesAStaticProviderEdit(const std::string &examples,
         const RigExecImagingSnapshotConstPtr g = published(frame);
         const RigExecImagingSnapshotConstPtr &want = frame == t3 ? k3 : k4;
         if (g && want) {
-            _CompareGenerations(*g, *want,
-                                "static edit, keyed, at " +
-                                    std::to_string(frame));
+            _CompareGenerations(
+                *g, *want, "static edit, keyed, at " + std::to_string(frame));
         }
     }
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 int
@@ -741,8 +753,7 @@ main(int argc, char **argv)
         RigExecBakedPlayback play(UsdStageRefPtr(), SdfPath::EmptyPath(),
                                   store);
         std::string error;
-        CHECK(!play.Open(
-            (scratch / "missing.rigexec").string(), &error));
+        CHECK(!play.Open((scratch / "missing.rigexec").string(), &error));
         CHECK(!error.empty());
     }
     bool selectionDone = false;

@@ -179,8 +179,9 @@ GUIDE_XRAY = 0.78
 # --- the influence overlay -------------------------------------------------
 # A page whose documented node IS a weight object paints that field onto the
 # geometry it weights, the same picture usdview's volume-weight tool draws:
-# RigExecImaging_SetWeightOverlay (registry.h) hands the selection to every
-# active bridge, _FillWeightOverlay (bridgeVolumeGuides.cpp) copies the
+# RigExecImaging_SetWeightOverlayForStage (registry.h) hands the selection
+# to that stage's imaging context and its chains, _FillWeightOverlay
+# (bridgeVolumeGuides.cpp) copies the
 # MOVER ACTUALLY CONSUMED onto the field's own target prim, and
 # RigExecResultsSceneIndex turns them into a per-vertex displayColor ramp
 # (sceneIndices.cpp, _WeightOverlayColor). Nothing is re-derived here: a
@@ -354,13 +355,15 @@ _plugin_path()
 
 
 class ImagingBridge(object):
-    """Release the process-global RigExec imaging registry between stages.
+    """Stage-scoped control of the rendered stage's RigExec imaging context.
 
-    The registry activates ONE stage (registry.h, EnsureActivated: a no-op
-    when already active on that stage), so a second example rendered in the
-    same process draws with the first example's rig still evaluating -- the
-    lattice stage came out showing the IK arm. A fresh UsdImagingGL engine
-    does not clear that; only Deactivate does.
+    rigExecImaging keeps one context per stage, and the stage-scoped C
+    surface names the stage through UsdUtilsStageCache. A rendered
+    example's context keeps evaluating after its engine is gone, so a
+    second example rendered in the same process draws with the first
+    example's rig still evaluating -- the lattice stage came out showing
+    the IK arm. A fresh UsdImagingGL engine does not clear that; only
+    DeactivateForStage on the named stage does.
     """
 
     def __init__(self):
@@ -371,18 +374,22 @@ class ImagingBridge(object):
             if os.path.isdir(directory) and hasattr(os, "add_dll_directory"):
                 os.add_dll_directory(directory)
         self._lib = ctypes.CDLL(self._library())
-        self._lib.RigExecImaging_Deactivate.argtypes = []
-        self._lib.RigExecImaging_Deactivate.restype = None
-        # Same signature plugin/rigExecUsdview/rigExecUsdview.py binds:
-        # one path in, 0 out on success. Looked up rather than assumed,
-        # because a docs run against an older build should lose the
-        # overlay and say so, not die on an AttributeError.
+        self._lib.RigExecImaging_DeactivateForStage.argtypes = [
+            ctypes.c_longlong]
+        self._lib.RigExecImaging_DeactivateForStage.restype = None
+        # Same signature plugin/rigExecUsdview/imagingHandle.py binds:
+        # stage cache id and one path in, 0 out on success. Looked up
+        # rather than assumed, because a docs run against an older build
+        # should lose the overlay and say so, not die on an AttributeError.
         self._overlay = getattr(self._lib,
-                                "RigExecImaging_SetWeightOverlay", None)
+                                "RigExecImaging_SetWeightOverlayForStage",
+                                None)
         if self._overlay is not None:
-            self._overlay.argtypes = [ctypes.c_char_p]
+            self._overlay.argtypes = [ctypes.c_longlong, ctypes.c_char_p]
             self._overlay.restype = ctypes.c_int
         self._said = False
+        self._stage = None
+        self._stageId = -1
 
     @staticmethod
     def _library():
@@ -399,27 +406,51 @@ class ImagingBridge(object):
                 "librigExecImaging.so")
         return os.path.join(RIG, "build", name)
 
+    def track(self, stage):
+        """Route the scoped calls below to `stage`'s imaging context.
+
+        The scoped C surface resolves the stage through UsdUtilsStageCache,
+        so put the rendered stage there (inserting it if needed) and hold
+        one entry: release() deactivates the last tracked stage, and the
+        cache entry is released once the next stage takes over.
+        """
+        from pxr import UsdUtils
+        cache = UsdUtils.StageCache.Get()
+        stageId = cache.GetId(stage)
+        if not stageId.IsValid():
+            stageId = cache.Insert(stage)
+        if self._stage is not None and self._stage is not stage:
+            try:
+                cache.Erase(self._stage)
+            except Exception:
+                pass
+        self._stage = stage
+        self._stageId = stageId.ToLongInt() if stageId.IsValid() else -1
+
     def release(self):
-        self._lib.RigExecImaging_Deactivate()
+        """Stop evaluating the last tracked stage; a no-op before any."""
+        if self._stageId >= 0:
+            self._lib.RigExecImaging_DeactivateForStage(self._stageId)
 
     def weight_overlay(self, path):
-        """Select the weight object to paint, or "" to paint none.
+        """Select the weight object to paint on the tracked stage, or ""
+        to paint none.
 
-        A viewer mode on the process-global registry, not a property of
-        one bridge: it is remembered across activations and republishes at
-        the current time, so setting it BEFORE the first render is what
-        makes the rig's very first generation already carry the field.
+        A selection remembered on that stage's context, not process-wide:
+        set it BEFORE the stage's first render and its very first
+        generation already carries the field.
         """
         if self._overlay is None:
             if not self._said:
                 self._said = True
                 print("note: this build exports no "
-                      "RigExecImaging_SetWeightOverlay; weight pages "
-                      "render without the influence overlay")
+                      "RigExecImaging_SetWeightOverlayForStage; weight "
+                      "pages render without the influence overlay")
             return False
-        code = self._overlay((path or "").encode("utf-8"))
+        code = self._overlay(self._stageId, (path or "").encode("utf-8"))
         if code != 0:
-            print("note: SetWeightOverlay(%r) returned %d" % (path, code))
+            print("note: SetWeightOverlayForStage(%r) returned %d"
+                  % (path, code))
         return code == 0
 
 
@@ -2601,13 +2632,14 @@ def render_one(src, viewport, bridge, out_dir, sheet=False,
     picture is about the borrowing page and has to be written under *its*
     key, or the second page would overwrite the first one's GIF.
     """
-    # Before anything opens the stage: the imaging registry still holds
-    # whichever stage was rendered last, and would keep evaluating that one.
+    # Before anything opens the stage: the imaging context of the stage
+    # rendered last is still active, and would keep evaluating that one.
     bridge.release()
     name = os.path.splitext(os.path.basename(src))[0]
     _key, notes = page_notes(name, page)
     name = out_name or name
     scene = prepare_stage(src, samples=samples, schema=notes.get("schema"))
+    bridge.track(scene.stage)
 
     roots = [str(p.GetPath()) for p in scene.stage.Traverse()
              if p.GetTypeName() == "RigExecRoot"]

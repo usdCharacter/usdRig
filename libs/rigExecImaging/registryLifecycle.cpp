@@ -5,9 +5,8 @@
 // stage listener only at the commit, and broadcasts once after unlocking.
 // An initial failure still publishes the authored guides; a failed
 // reactivation keeps the previous active publication. EnsureActivated is
-// the adapter's automatic path: it never revives a host-deactivated stage
-// and offers the context to the legacy current slot only when no current
-// context is live. Deactivate stops the warming pool: the scheduler is
+// the adapter's automatic path: it never revives a host-deactivated
+// stage. Deactivate stops the warming pool: the scheduler is
 // moved out under _mutex and destroyed (joining its workers) after every
 // lock is released. Rig-root noting takes _notedMutex, never _mutex.
 #include "registry.h"
@@ -134,9 +133,6 @@ RigExecImagingRegistry::_Activate(const UsdStageRefPtr &stage,
                                   std::vector<std::string> *errors,
                                   bool automatic)
 {
-    if (_legacyHandle) {
-        return _LegacyActivate(stage, rigPath, initialTime, errors);
-    }
     if (stage && UsdStageWeakPtr(stage) != _boundStage) {
         // A context only ever evaluates its own stage. Another stage is
         // forwarded to ITS context (created when it has none), which is
@@ -462,7 +458,7 @@ RigExecImagingRegistry::EnsureActivated(const UsdStageRefPtr &stage,
     if (!stage) {
         return false;
     }
-    if (_legacyHandle || UsdStageWeakPtr(stage) != _boundStage) {
+    if (UsdStageWeakPtr(stage) != _boundStage) {
         // The stage's own context decides; there is no other stage to
         // refuse on account of.
         const Ptr target = ForStage(stage, /* create = */ true);
@@ -492,9 +488,6 @@ RigExecImagingRegistry::EnsureActivated(const UsdStageRefPtr &stage,
     std::vector<std::string> errors;
     if (!_Activate(stage, SdfPath::EmptyPath(), time, &errors,
                    /* automatic = */ true)) {
-        if (_store->Get()) {
-            _OfferCurrent();
-        }
         // One line, not silent: a broken rig in a batch host (usdrecord)
         // otherwise renders its rest pose with no explanation. During live
         // authoring this fires at most once per root definition -- defining
@@ -507,20 +500,12 @@ RigExecImagingRegistry::EnsureActivated(const UsdStageRefPtr &stage,
                 errors.empty() ? "unknown error" : errors.front().c_str());
         return false;
     }
-    // A host with no explicit activation (usdrecord, a test driving the
-    // real chain) reaches the legacy surface through this context -- but
-    // only when no current context is live, so the automatic path never
-    // takes the legacy surface away from an explicit activation.
-    _OfferCurrent();
     return true;
 }
 
 bool
 RigExecImagingRegistry::IsActiveRigRoot(const SdfPath &path)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsActiveRigRoot(path);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (const RigSession &session : _sessions) {
         if (session.rigPath == path) {
@@ -533,9 +518,6 @@ RigExecImagingRegistry::IsActiveRigRoot(const SdfPath &path)
 bool
 RigExecImagingRegistry::IsDisplayedRigRoot(const SdfPath &path)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsDisplayedRigRoot(path);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     if (_authoredGuides.count(path))
         return true;
@@ -549,10 +531,6 @@ RigExecImagingRegistry::IsDisplayedRigRoot(const SdfPath &path)
 void
 RigExecImagingRegistry::NoteRigRoot(const SdfPath &rigPath)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->NoteRigRoot(rigPath);
-        return;
-    }
     if (rigPath.IsEmpty()) {
         return;
     }
@@ -565,9 +543,6 @@ RigExecImagingRegistry::NoteRigRoot(const SdfPath &rigPath)
 bool
 RigExecImagingRegistry::IsNotedRigRoot(const SdfPath &path)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsNotedRigRoot(path);
-    }
     std::lock_guard<std::mutex> lock(_notedMutex);
     return _notedRigRoots.count(path) != 0;
 }
@@ -575,19 +550,12 @@ RigExecImagingRegistry::IsNotedRigRoot(const SdfPath &path)
 void
 RigExecImagingRegistry::Deactivate()
 {
-    if (const Ptr routed = _Routed()) {
-        routed->Deactivate();
-        return;
-    }
     _Deactivate(/* byHost = */ true);
 }
 
 bool
 RigExecImagingRegistry::IsAutoActivated() const
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsAutoActivated();
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     return _autoActivated && (!_sessions.empty() || !_authoredGuides.empty());
 }
@@ -595,9 +563,6 @@ RigExecImagingRegistry::IsAutoActivated() const
 void
 RigExecImagingRegistry::_Deactivate(bool byHost)
 {
-    if (_legacyHandle) {
-        return;
-    }
     // Stopped outside every lock, below: the scheduler's destructor joins
     // its workers, and a fenced clear may be holding its fence while it
     // waits for _mutex.

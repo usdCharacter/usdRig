@@ -140,18 +140,14 @@ ProbeSpiderJointLink(const std::string &examples)
 
     const long long cacheId =
         UsdUtilsStageCache::Get().Insert(stage).ToLongInt();
-    Check(RigExecImaging_Activate(cacheId, "", 0.0) == 0,
-          "spider-joint RigExec activation");
+    Check(RigExecImaging_ActivateForStage(cacheId, "", 0.0) == 0,
+          "spider-joint stage-scoped RigExec activation");
 
-    const SdfPath sphere =
-        joint.AppendChild(TfToken("rigGuideSphere_0"));
-    const SdfPath cone =
-        joint.AppendChild(TfToken("rigGuideCone_0"));
-    const SdfPath childSphere =
-        child.AppendChild(TfToken("rigGuideSphere_0"));
+    const SdfPath sphere = joint.AppendChild(TfToken("rigGuideSphere_0"));
+    const SdfPath cone = joint.AppendChild(TfToken("rigGuideCone_0"));
+    const SdfPath childSphere = child.AppendChild(TfToken("rigGuideSphere_0"));
     const SdfPathVector children = terminal->GetChildPrimPaths(joint);
-    Check(std::find(children.begin(), children.end(), sphere) !=
-              children.end(),
+    Check(std::find(children.begin(), children.end(), sphere) != children.end(),
           "spider parent announces its sphere guide");
     Check(std::find(children.begin(), children.end(), cone) != children.end(),
           "spider parent announces its child-link cone");
@@ -162,16 +158,15 @@ ProbeSpiderJointLink(const std::string &examples)
           "spider child-link cone exists in the real chain");
     Check(ReadXform(terminal, childSphere, &childXform),
           "spider child sphere exists in the real chain");
-    const GfVec3d midpoint =
-        0.5 * (parentXform.ExtractTranslation() +
-               childXform.ExtractTranslation());
+    const GfVec3d midpoint = 0.5 * (parentXform.ExtractTranslation() +
+                                    childXform.ExtractTranslation());
     Check(GfIsClose(coneXform.ExtractTranslation(), midpoint, 1e-6),
           "spider child-link cone spans parent and child origins");
 
-    RigExecImaging_Deactivate();
+    RigExecImaging_DeactivateForStage(cacheId);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -205,8 +200,8 @@ main(int argc, char **argv)
     // empty rig path so the registry discovers the rig itself.
     const long long cacheId =
         UsdUtilsStageCache::Get().Insert(stage).ToLongInt();
-    Check(RigExecImaging_Activate(cacheId, "", 1001.0) == 0,
-          "RigExecImaging_Activate(empty rig path)");
+    Check(RigExecImaging_ActivateForStage(cacheId, "", 1001.0) == 0,
+          "RigExecImaging_ActivateForStage(empty rig path)");
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
     const SdfPath barrel("/TurretAsset/Geom/Turret/Barrel");
@@ -217,7 +212,7 @@ main(int argc, char **argv)
     Check(ReadXform(terminal, barrel, &barrelAt1001), "barrel xform present");
     Check(ReadXform(terminal, sight, &sightAt1001), "sight xform present");
 
-    RigExecImaging_SetTime(1024.0);
+    RigExecImaging_SetTimeForStage(cacheId, 1024.0);
 
     GfMatrix4d turretAt1024(1.0), barrelAt1024(1.0), sightAt1024(1.0);
     Check(ReadXform(terminal, turret, &turretAt1024),
@@ -285,8 +280,8 @@ main(int argc, char **argv)
     const GfVec3d aimAt1024 =
         turretAt1024.TransformDir(GfVec3d(0, 0, 1)).GetNormalized();
     std::printf("  aim z-axis 1001=(%.3f,%.3f,%.3f) 1024=(%.3f,%.3f,%.3f)\n",
-                aimAt1001[0], aimAt1001[1], aimAt1001[2],
-                aimAt1024[0], aimAt1024[1], aimAt1024[2]);
+                aimAt1001[0], aimAt1001[1], aimAt1001[2], aimAt1024[0],
+                aimAt1024[1], aimAt1024[2]);
     std::printf("  expected  1024=(%.3f,%.3f,%.3f) from stage world origins\n",
                 expectedAim[0], expectedAim[1], expectedAim[2]);
     Check(aimAt1001[0] < 0.0 && aimAt1024[0] > 0.0,
@@ -297,15 +292,13 @@ main(int argc, char **argv)
     // An aim constraint rotates; it must not move the prim. Checking only a
     // normalized direction would accept a result with the right orientation
     // and a wrong origin, scale, or shear.
-    Check(GfIsClose(turretAt1024.ExtractTranslation(), turretWorldOrigin,
-                    1e-6),
+    Check(GfIsClose(turretAt1024.ExtractTranslation(), turretWorldOrigin, 1e-6),
           "driven Xform keeps its authored world origin");
 
     // GUIDE PLACEMENT. The Base joint sits at the asset's origin in rig
     // space, and the asset itself is placed at x=+100, so its guide must be
     // drawn there too -- not back at the world origin.
-    const SdfPath baseGuide(
-        "/TurretAsset/Rig/Joints/Base/rigGuideSphere_0");
+    const SdfPath baseGuide("/TurretAsset/Rig/Joints/Base/rigGuideSphere_0");
     GfMatrix4d guideXform(1.0);
     // MANDATORY, not conditional: a regression that stopped synthesizing
     // guides entirely would otherwise print a note and pass.
@@ -314,15 +307,15 @@ main(int argc, char **argv)
     const GfVec3d g = guideXform.ExtractTranslation();
     const GfVec3d assetOrigin = assetRootWorld.ExtractTranslation();
     std::printf("  guide origin=(%.3f,%.3f,%.3f) asset=(%.3f,%.3f,%.3f)\n",
-                g[0], g[1], g[2],
-                assetOrigin[0], assetOrigin[1], assetOrigin[2]);
+                g[0], g[1], g[2], assetOrigin[0], assetOrigin[1],
+                assetOrigin[2]);
     // The Base joint's rest:space is identity, so its guide's world origin
     // must equal the asset placement EXACTLY -- all three axes, not an
     // "within one unit" check on X that a wrong Y or Z would survive.
     Check(GfIsClose(g, assetOrigin, 1e-6),
           "joint guide sits exactly at the asset's placement");
 
-    RigExecImaging_Deactivate();
+    RigExecImaging_DeactivateForStage(cacheId);
 
     ProbeSpiderJointLink(examples);
 

@@ -56,10 +56,11 @@ that a rig produced it.
   (`_TickFrameDemand` in `plugin/rigExecUsdview/rigExecUsdview.py`). Each
   tick makes one `HasFrameDemand` check, then calls `OnIdle` (which services
   first and then sweeps), or only `ServiceFrameDemand` during playback.
-- C surface:
-  - `RigExecImaging_ServiceFrameDemand[ForStage]` (the playback path, no
+- C surface (stage-scoped: the stage's `UsdUtilsStageCache` id comes first,
+  see [multi-stage imaging](../multistage-imaging.md)):
+  - `RigExecImaging_ServiceFrameDemandForStage` (the playback path, no
     fallback) returns the entries added, or -1 when inactive.
-  - `RigExecImaging_HasFrameDemand[ForStage]` returns 1, 0, or -1 when
+  - `RigExecImaging_HasFrameDemandForStage` returns 1, 0, or -1 when
     inactive.
 
 - Without a Hydra chain (tools, headless tests): set the context's time,

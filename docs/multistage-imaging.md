@@ -44,7 +44,7 @@ own context, so equal paths on two stages never share a queue, generation or
 fence.
 
 **Warming counters outlive the scheduler.** `GetBackgroundStats` and
-`GetWarmingCompletedCount[ForStage]` count over the context's lifetime, not
+`GetWarmingCompletedCountForStage` count over the context's lifetime, not
 one activation's. A deactivation adds the stopped scheduler's totals, read
 when it deactivates, to a per-context accumulator, and the running
 scheduler's counts are added on top. Completions of jobs that were still
@@ -64,7 +64,6 @@ The directory is a process-level map from stage to context. It lives in
 static Ptr ForStage(const UsdStageRefPtr &stage, bool create = true);
 static Ptr ForStageCacheId(long long id, bool create);  // UsdUtilsStageCache::Get()
 static Ptr ForKey(uint64_t key);
-static Ptr Current();                                   // legacy current context
 static size_t ContextCount();
 uint64_t GetKey() const;
 UsdStageRefPtr GetBoundStage() const;
@@ -83,7 +82,7 @@ UsdStageRefPtr GetBoundStage() const;
   who started it; see "Activation lifetimes".
 - **Contexts are created on demand.** The rig adapter creates one for every
   stage it images, and so do `RigExecTouchPose_Open`, `SetWeightOverlayForStage`,
-  `BeginPreviewForStage` and a legacy activation. A context with no rig is
+  `BeginPreviewForStage` and `ActivateForStage`. A context with no rig is
   cheap: a store, an index and a mutex.
 
 ## Chain to context binding
@@ -144,13 +143,12 @@ fails during evaluation, its driven results are replaced with authored guides.
 A context is activated in one of two ways, and the way it was activated
 decides who deactivates it.
 
-- **Explicit**: `Activate`, `RigExecImaging_Activate`,
-  `RigExecImaging_ActivateForStage`, or the legacy handle. The host owns the
-  activation, and it lasts until the host calls `Deactivate` /
-  `DeactivateForStage` (or the legacy `RigExecImaging_Deactivate` on the
-  current context). An explicit activation outlives its engines. usdview's
-  plugin relies on this: it activates once and keeps evaluating while
-  usdview rebuilds its renderer.
+- **Explicit**: `ForStage(stage, true)->Activate(...)`, or
+  `RigExecImaging_ActivateForStage`. The host owns the activation, and it
+  lasts until the host calls `Deactivate` /
+  `RigExecImaging_DeactivateForStage`. An explicit activation outlives its
+  engines. usdview's plugin relies on this: it activates once and keeps
+  evaluating while usdview rebuilds its renderer.
 - **Automatic**: the rig adapter's `EnsureActivated` activates a stage when
   its rig root is first imaged, which is how usdrecord and a plain Hydra host
   evaluate. The library owns this activation. When the last chain bound to
@@ -172,6 +170,10 @@ Rules:
 - An explicit activation of an automatically active context takes the
   lifetime over (`IsAutoActivated()` turns false). After that, only the host
   deactivates it.
+- A context only ever evaluates its own stage: `Activate` or `EnsureActivated`
+  called with another stage is forwarded to that stage's context (created
+  when it has none), and never re-activates or deactivates the caller. A
+  context never refuses a stage on account of a different stage being active.
 - A context activated automatically that no chain ever binds to is not
   released. This happens with a hand-built pipeline that never registers
   with the directory. It lasts until its stage's host deactivates it.
@@ -180,101 +182,66 @@ Rules:
   index destroyed during static destruction, after the directory, does
   nothing.
 
-## Legacy surface
-
-`GetInstance()` and every stage-less C function keep their signatures.
-`GetInstance()` returns the **legacy handle**: an unbound context object that
-owns no stage and routes every call to the **current context**. The current
-context is the one most recently activated through `RigExecImaging_Activate`
-or `GetInstance().Activate`. If no current context is live, the rig adapter's
-automatic activation (`EnsureActivated`) also claims it; this is the usdrecord
-case. An automatic activation never takes the current designation from a live
-explicit one. With no current context, the handle answers as an inactive
-registry: an empty store, `SetTime` returns false, and so on.
-
-- `GetInstance().Activate(stage)` and `RigExecImaging_Activate(id)` forward to
-  that stage's context. If the stage has no context, one is created, seeded
-  with the legacy overlay selection (the old singleton's process-wide viewer
-  mode). On success the target becomes current. **Nothing is replaced:**
-  other stages keep evaluating.
-- `RigExecImaging_ActivateForStage(id)` activates that stage's context the
-  same way, but it does not make the context current and does not apply the
-  legacy overlay. A stage's own overlay is set with `SetWeightOverlayForStage`.
-- `RigExecImaging_Deactivate()` deactivates the current context only.
-- `EnsureActivated` never refuses on account of another stage. Each stage
-  activates its own context. It also never revives a context that its host
-  explicitly `Deactivate`d; only an explicit `Activate` does that. Without
-  this rule, a stray rig-root pull could re-activate a closed stage, and the
-  context would then pin that stage for the life of the process. One such
-  pull: UsdImaging traverses the old stage while a stage scene index
-  announces a `SetStage`.
-- A context's own `Activate` or `EnsureActivated` called with a different
-  stage forwards to that stage's context.
-
-A host that activates one stage at a time and deactivates before switching
-behaves as it did with the singleton. usdview's plugin, usdrecord and every
-pre-existing test are hosts of this kind. A legacy caller can still observe
-these differences:
-
-- **Re-activation does not replace.** With the singleton,
-  `RigExecImaging_Activate(B)` released A. Now A keeps evaluating, and keeps
-  its stage and threads, until something deactivates it. The stage-less
-  `RigExecImaging_Deactivate()` reaches only the current context (B), so a
-  legacy-only host that switches stages without deactivating first must
-  release A with `RigExecImaging_DeactivateForStage(idA)`. Replacing on
-  re-activation is not an option, because a multi-session host activates
-  every session's stage through `RigExecImaging_Activate`.
-- **Automatic activation evaluates every imaged stage.** The singleton's
-  `EnsureActivated` refused a second stage. Now each stage's rigs activate
-  on first sight, and the activation is released with its last chain.
-- **The legacy overlay applies to every legacy activation.** The legacy
-  `SetWeightOverlay` selection is the old process-wide viewer mode. Every
-  stage activated through the legacy path afterwards inherits it, not only
-  the current one.
-- **Warming counters are per context.** They survive re-activation (as the
-  singleton's did), but switching the current context switches which
-  counters the legacy `GetWarmingCompletedCount` reads.
-
 ## C API
 
-Every per-stage entry point has a `...ForStage` twin. The twin takes the
-stage's `UsdUtilsStageCache` id **first**, then the legacy arguments, and
-returns what the legacy function returns. A twin acts on that stage's context
-only and never moves the current context. An unknown id, or a stage with no
-context, answers exactly as an inactive registry would.
+Every entry point names its stage: the stage's `UsdUtilsStageCache` id comes
+**first**, and the call acts on **that** stage's context only. An unknown id,
+or a stage with no context, answers exactly as an inactive registry would.
+Every name below carries the `RigExecImaging_` prefix.
 
-| legacy (routes to the current context) | stage-scoped twin |
+| stage-scoped entry point | notes |
 |---|---|
-| `int Activate(long long id, const char *rig, double frame)` (also makes the stage current) | `int ActivateForStage(long long id, const char *rig, double frame)` (current untouched) |
-| `int SetTime(double frame)` | `int SetTimeForStage(long long id, double frame)` |
-| `int OnEditCommitted()` | `int OnEditCommittedForStage(long long id)` |
-| `int OnIdle()` | `int OnIdleForStage(long long id)` |
-| `int WriteProfileSummary(const char *path)` | `int WriteProfileSummaryForStage(long long id, const char *path)` |
-| `void Deactivate()` | `void DeactivateForStage(long long id)` |
-| `long long GetGeneration()` | `long long GetGenerationForStage(long long id)` |
-| `int GetMovedFloats(const char *paths, float *out, int count)` | `int GetMovedFloatsForStage(long long id, const char *paths, float *out, int count)` |
-| `int GetGuideBoundsAssetSpace(const char *prim, double out[6])` | `int GetGuideBoundsAssetSpaceForStage(long long id, const char *prim, double out[6])` |
-| `int GetAllGuideBoundsAssetSpace(double out[6])` | `int GetAllGuideBoundsAssetSpaceForStage(long long id, double out[6])` |
-| `int SetWeightOverlay(const char *prim)` | `int SetWeightOverlayForStage(long long id, const char *prim)` (creates the context) |
-| `int GetFrameStates(const char *rig, const double *frames, int *states, int count)` | `int GetFrameStatesForStage(long long id, const char *rig, const double *frames, int *states, int count)` |
-| `int ClearFrameCache(const char *rig)` | `int ClearFrameCacheForStage(long long id, const char *rig)` |
-| `int WarmRange(const char *rig, const double *frames, int count)` | `int WarmRangeForStage(long long id, const char *rig, const double *frames, int count)` |
-| `long long GetWarmingCompletedCount()` | `long long GetWarmingCompletedCountForStage(long long id)` |
-| `long long GetWarmingProgressCount()` | `long long GetWarmingProgressCountForStage(long long id)` |
-| `int BeginPreview(const char *paths)` | `int BeginPreviewForStage(long long id, const char *paths)` (creates the context) |
-| `int UpdatePreview(const double *values, int count)` | `int UpdatePreviewForStage(long long id, const double *values, int count)` |
-| `int EndPreview()` | `int EndPreviewForStage(long long id)` |
-| `int EndPreviewWithoutPublish()` | `int EndPreviewWithoutPublishForStage(long long id)` |
+| `int ActivateForStage(long long id, const char *rig, double frame)` | creates the context; an explicit activation. 0 on success, 1 with no stage for `id`, 2 for a malformed rig path, 3 for a failed activation |
+| `int SetTimeForStage(long long id, double frame)` | |
+| `int OnEditCommittedForStage(long long id)` | the primary warming trigger |
+| `int OnIdleForStage(long long id)` | the secondary warming trigger |
+| `int ServiceFrameDemandForStage(long long id)` | frames on demand: the entries added, -1 when inactive |
+| `int HasFrameDemandForStage(long long id)` | 1 while demand waits, 0 when none, -1 when inactive |
+| `int WriteProfileSummaryForStage(long long id, const char *path)` | |
+| `void DeactivateForStage(long long id)` | a HOST deactivation: `EnsureActivated` never revives the context afterwards |
+| `long long GetGenerationForStage(long long id)` | 0 before this context's first publication, and with no context |
+| `int GetMovedFloatsForStage(long long id, const char *paths, float *out, int count)` | how many paths this generation published |
+| `int GetGuideBoundsAssetSpaceForStage(long long id, const char *prim, double out[6])` | 1 when the prim draws something, 0 otherwise |
+| `int GetAllGuideBoundsAssetSpaceForStage(long long id, double out[6])` | the union over every prim; 0 when the guides belong to multiple asset roots |
+| `int SetWeightOverlayForStage(long long id, const char *prim)` | creates the context; the selection belongs to this context and is remembered before activation |
+| `int GetFrameStatesForStage(long long id, const char *rig, const double *frames, int *states, int count)` | one state per frame (0 uncached, 1 warming, 2 cached, 3 dirty) |
+| `int ClearFrameCacheForStage(long long id, const char *rig)` | |
+| `int WarmRangeForStage(long long id, const char *rig, const double *frames, int count)` | |
+| `long long GetWarmingCompletedCountForStage(long long id)` | completions over this context's lifetime, surviving deactivation and re-activation |
+| `long long GetWarmingProgressCountForStage(long long id)` | |
+| `int BeginPreviewForStage(long long id, const char *paths)` | creates the context; returns the value count `UpdatePreviewForStage` expects, or -1 |
+| `int UpdatePreviewForStage(long long id, const double *values, int count)` | |
+| `int EndPreviewForStage(long long id)` | |
+| `int EndPreviewWithoutPublishForStage(long long id)` | |
+| `int GetPublishedPointsForStage(long long id, const char *prim, float *xyz, int capacity)` | the point count, -1 when the prim publishes no points, -2 with no context |
+| `int GetPublishedScalarPrimvarForStage(long long id, const char *prim, const char *primvarName, float *out)` | 1 published, 0 not published, -2 with no context |
+| `int GetPublishedXformRevisionForStage(long long id, const char *prim, double out[16])` | 1 with the revised * base^-1 map, 0 when the rig drives no transform there, -2 with no context |
 
-Every name above carries the `RigExecImaging_` prefix. The following functions
-already take the id and use **that** stage's context:
+`ActivateForStage`, `SetWeightOverlayForStage` and `BeginPreviewForStage`
+create the stage's context when it has none (an activation creates it first;
+a selection is remembered before activation, and a stage with no rig still
+previews its Xforms); no other entry point creates one. These reads already
+carry the id in their own signature rather than as a
+`ForStage` suffix, and use **that** stage's context:
 
-- `int RigExecImaging_Activate(long long id, const char *rig, double frame)`
-  also makes the target the current context. Its twin
-  `RigExecImaging_ActivateForStage` does not.
 - `int RigExecImaging_GetControlFrameAssetSpace(long long id, const char *prim, double frame, int isDefault, double out[16])`.
-- `int RigExecImaging_GetMovedDoublesForStage(long long id, const char *property, double frame, int isDefault, double *out, int capacity)`,
-  which has no legacy spelling.
+- `int RigExecImaging_GetMovedDoublesForStage(long long id, const char *property, double frame, int isDefault, double *out, int capacity)`.
+
+**Migration.** The stage-less spelling has been removed: `Activate`,
+`SetTime`, `Deactivate`, `OnEditCommitted`, `OnIdle`, `ServiceFrameDemand`,
+`HasFrameDemand`, `GetGeneration`, `GetMovedFloats`,
+`GetGuideBoundsAssetSpace`, `GetAllGuideBoundsAssetSpace`,
+`WriteProfileSummary`, `SetWeightOverlay`, `GetFrameStates`,
+`ClearFrameCache`, `WarmRange`, `GetWarmingCompletedCount`,
+`GetWarmingProgressCount`, `BeginPreview`, `UpdatePreview`, `EndPreview` and
+`EndPreviewWithoutPublish` without the `ForStage` suffix, and on the C++ side
+`RigExecImagingRegistry::GetInstance()` and `Current()`. The break is
+intentional and no compatibility shim is retained: an external C or Python
+host rebuilds against `ForStage` / `...ForStage` and names its own stage on
+every call. A host that activates one stage at a time and deactivates before
+switching behaves as it did with the singleton, with one difference worth
+naming: activating another stage never releases the first one, so a
+single-stage-at-a-time host deactivates the old stage itself.
 
 Two functions exist for diagnostics and tests:
 
@@ -312,20 +279,26 @@ its windows, and the plugins keep their state per session.
 - **Imaging handle** (`plugin/rigExecUsdview/imagingHandle.py`). Every call a
   plugin makes into rigExecImaging goes through an `ImagingHandle(lib, stage)`
   bound to its own session's stage, found by the stage's `UsdUtilsStageCache`
-  id. The handle takes the legacy names (`SetTime`, `OnIdle`, `GetGeneration`,
-  ...), and `getattr` also resolves the `RigExecImaging_<Name>` spellings
-  (`cacheStripModel` looks them up that way). It calls the `...ForStage` twin
-  when the library exports one. Otherwise it calls the legacy function, which
-  is the old single-stage behaviour, and warns once.
-- **Activation** goes through `RigExecImaging_Activate(id, ...)`, not
-  `RigExecImaging_ActivateForStage`. It activates that stage's own context and
-  also makes it the legacy current context. In a plain usdview the stage-less
-  API therefore still reaches the one session's stage, exactly as before, for
-  callers outside the plugins such as a script in usdview's interpreter or
-  another plugin. In a host, the current context is the stage activated last,
-  and no usdRig plugin code reads it. Deactivation is `DeactivateForStage` for
-  the container's own stage only; a container never deactivates another
-  session's stage.
+  id, and the handle calls the stage-scoped surface only. It also answers to
+  the plain names (`SetTime`, `OnIdle`, `GetGeneration`, ...) and to the
+  `RigExecImaging_<Name>` spellings (`cacheStripModel` looks entry points up
+  that way) as **handle adapters**: each one resolves to
+  `<Name>ForStage(handle.CacheId(), ...)` with the id prepended once, never to
+  a library symbol of that name. A name the library does not export raises
+  `AttributeError` from both the method and `getattr`, exactly like a `CDLL`,
+  so `handle.Has(name)` and the `except AttributeError` fallbacks say
+  "absent" for it.
+- **Activation** goes through `RigExecImaging_ActivateForStage(id, ...)`; the
+  handle's `Activate()` is that call with this session's own id. A library
+  that does not export the required scoped symbols (`ActivateForStage`,
+  `SetTimeForStage`, `DeactivateForStage`) cannot keep this session's calls on
+  this session's stage, so `BindLibrary` fails at load and the container
+  warns and runs with no imaging rather than acting on whichever stage
+  another session activated last. Optional scoped features (the warming
+  triggers, the frame-cache queries, the preview, the influence overlay) are
+  still probed for at their call sites. Deactivation is `DeactivateForStage`
+  for the container's own stage only; a container never deactivates another
+  session's stage, and a session holding no cached stage deactivates nothing.
 - **Per-session state** (`plugin/rigExecUsdview/sessionRegistry.py`). A
   `SessionRegistry` files one value per session. Its key is the session's main
   window (`usdviewApi.qMainWindow`), held weakly, and the entry is dropped when
@@ -371,8 +344,6 @@ scheduler fence mutex          (ClearFrameCache / SetWeightOverlay only)
   `ForKey`. `_SetChainXformDeltas` sends under `_mutex`, as it always did,
   because the xform dirties never intersect `rigExec/time`. The results index
   tests the trigger locator before it looks up the context.
-- Legacy routing adds one directory lookup per call and no context lock
-  beyond the target's own.
 - An automatic release (`ReleaseChain`, or a rebind in `BindChain`) resolves
   the context through the directory with no lock held. It then takes that
   context's `_mutex`, checks the bound chains under the directory leaf, and
@@ -395,8 +366,13 @@ scheduler fence mutex          (ClearFrameCache / SetWeightOverlay only)
   `ReleaseChain`). A chain that outlives its context keeps the stale key,
   `ForKey` resolves that key to nothing, and the chain keeps working and can
   rebind.
-- The legacy current context is held strongly until the next legacy
-  activation (or, with no live current context, an automatic one) takes the
-  designation. Taking the designation does not deactivate the context that
-  held it (see "Legacy surface"). A current context that was released or
-  deactivated answers as an inactive registry.
+- Nothing in the library holds a context just because it was activated last.
+  What ends with the activation -- a host deactivation, or an automatic
+  release when the last bound chain goes away (see "Activation lifetimes")
+  -- is the active context's own hold on its stage, its rig sessions, and
+  its worker threads. The directory keeps the context itself strongly for as
+  long as the stage lives, including after a host deactivation: a later
+  re-activation sees the same context, with its warming counters surviving
+  deactivation and re-activation (see "The directory" and the
+  `ForStage` table). The context is released only when its stage expires and
+  the next directory call prunes it.

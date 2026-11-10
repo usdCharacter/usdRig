@@ -71,101 +71,38 @@ def ImagingLibraryPath():
 
 
 def _LoadRigExecImaging():
+    # Every imaging call names its own stage through an imagingHandle, so
+    # the whole ctypes surface is bound through BindLibrary: it signs every
+    # scoped symbol the library exports and enforces the required stage-
+    # scoped surface. A library predating it raises AttributeError naming
+    # the missing symbols -- caught by _EnsureLibrary, which degrades this
+    # session to no imaging -- rather than letting the plugin act on
+    # whichever stage another session activated last.
+    #
+    # Optional scoped features (the warming triggers, the frame-cache
+    # queries and repaint gate, the manipulation preview, the control-
+    # frame gizmo read) are probed for by absence at their call sites,
+    # exactly as before: a session without them behaves the way it always
+    # did.
     lib = ctypes.CDLL(ImagingLibraryPath())
-    lib.RigExecImaging_Activate.argtypes = [
-        ctypes.c_longlong, ctypes.c_char_p, ctypes.c_double]
-    lib.RigExecImaging_Activate.restype = ctypes.c_int
-    lib.RigExecImaging_SetTime.argtypes = [ctypes.c_double]
-    lib.RigExecImaging_SetTime.restype = ctypes.c_int
-    # Frame-cache warming is optional like the preview below: a session
-    # without it evaluates live on every frame change exactly as before.
-    try:
-        lib.RigExecImaging_OnEditCommitted.argtypes = []
-        lib.RigExecImaging_OnEditCommitted.restype = ctypes.c_int
-        lib.RigExecImaging_OnIdle.argtypes = []
-        lib.RigExecImaging_OnIdle.restype = ctypes.c_int
-    except AttributeError:
-        pass
-    # The frame-cache strip and its driver are optional the same way:
-    # WarmRange sets the persistent warm range, GetFrameStates reports
-    # per-frame cached/warming/dirty/uncached, and ClearFrameCache
-    # drops one rig's cached frames. An older library without them
-    # warms on frame changes only, exactly as before.
-    try:
-        lib.RigExecImaging_WarmRange.argtypes = [
-            ctypes.c_char_p, ctypes.POINTER(ctypes.c_double),
-            ctypes.c_int]
-        lib.RigExecImaging_WarmRange.restype = ctypes.c_int
-        lib.RigExecImaging_GetFrameStates.argtypes = [
-            ctypes.c_char_p, ctypes.POINTER(ctypes.c_double),
-            ctypes.POINTER(ctypes.c_int), ctypes.c_int]
-        lib.RigExecImaging_GetFrameStates.restype = ctypes.c_int
-        lib.RigExecImaging_ClearFrameCache.argtypes = [
-            ctypes.c_char_p]
-        lib.RigExecImaging_ClearFrameCache.restype = ctypes.c_int
-    except AttributeError:
-        pass
-    # The strip's repaint gate is optional with them: without the
-    # completions counter the panel repaints on states alone.
-    try:
-        lib.RigExecImaging_GetWarmingCompletedCount.argtypes = []
-        lib.RigExecImaging_GetWarmingCompletedCount.restype = (
-            ctypes.c_longlong)
-    except AttributeError:
-        pass
-    try:
-        lib.RigExecImaging_GetWarmingProgressCount.argtypes = []
-        lib.RigExecImaging_GetWarmingProgressCount.restype = ctypes.c_longlong
-    except AttributeError:
-        pass
-    lib.RigExecImaging_Deactivate.argtypes = []
-    lib.RigExecImaging_Deactivate.restype = None
-    try:
-        lib.RigExecImaging_GetControlFrameAssetSpace.argtypes = [
-            ctypes.c_longlong, ctypes.c_char_p, ctypes.c_double, ctypes.c_int,
-            ctypes.POINTER(ctypes.c_double)]
-        lib.RigExecImaging_GetControlFrameAssetSpace.restype = ctypes.c_int
-    except AttributeError:
-        pass  # Older libraries cannot supply deformation-relative gizmos.
+    imagingHandle.BindLibrary(lib)
     try:
         lib.RigExecImaging_GetMovedDoublesForStage.argtypes = [
             ctypes.c_longlong, ctypes.c_char_p, ctypes.c_double,
             ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
         lib.RigExecImaging_GetMovedDoublesForStage.restype = ctypes.c_int
     except AttributeError:
-        pass  # Older libraries publish no IK/FK match values.
+        pass  # Libraries without it publish no IK/FK match values.
 
-    # The manipulation preview is optional in exactly the same way, and its
-    # absence is not worth a warning: a session without it authors on release
-    # as usual, and simply does not redraw until then.
-    try:
-        lib.RigExecImaging_BeginPreview.argtypes = [ctypes.c_char_p]
-        lib.RigExecImaging_BeginPreview.restype = ctypes.c_int
-        lib.RigExecImaging_UpdatePreview.argtypes = [
-            ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-        lib.RigExecImaging_UpdatePreview.restype = ctypes.c_int
-        lib.RigExecImaging_EndPreview.argtypes = []
-        lib.RigExecImaging_EndPreview.restype = ctypes.c_int
-    except AttributeError:
-        pass
-
-    # The influence overlay is optional: an older rigExecImaging.dll
-    # does not export it, and touching a missing symbol on a CDLL raises
-    # AttributeError at *bind* time. Binding it here rather than at the
-    # call site means the whole plugin's load path stays a single
-    # try/except, and the panel just disables its checkbox.
-    try:
-        lib.RigExecImaging_SetWeightOverlay.argtypes = [ctypes.c_char_p]
-        lib.RigExecImaging_SetWeightOverlay.restype = ctypes.c_int
-    except AttributeError:
+    # The influence overlay is optional: binding it here rather than at
+    # the call site keeps the whole plugin's load path one try/except, and
+    # the panel just disables its checkbox -- with the reason in the log.
+    if getattr(lib, "RigExecImaging_SetWeightOverlayForStage",
+               None) is None:
         Tf.Warn("rigExecUsdview: rigExecImaging does not export "
-                "RigExecImaging_SetWeightOverlay; the volume weight "
-                "influence overlay will be unavailable.")
-
-    # The per-stage (...ForStage) spellings of all of the above, where the
-    # library has them. Every call goes through an imagingHandle bound to
-    # this session's stage, which picks the spelling.
-    return imagingHandle.BindLibrary(lib)
+                "RigExecImaging_SetWeightOverlayForStage; the volume "
+                "weight influence overlay will be unavailable.")
+    return lib
 
 
 # The RigExec menu layout: three ranked submenus, and every entry carries
@@ -503,6 +440,15 @@ class RigExecUsdviewContainer(PluginContainer):
             Tf.Warn("rigExecUsdview: failed to load rigExecImaging.dll: %s"
                     % error)
             self._lib = None
+        except AttributeError as error:
+            # A library predating the stage-scoped surface: there is no
+            # way to keep this session's calls on this session's stage,
+            # so this session runs with no imaging at all rather than
+            # with another session's context.
+            Tf.Warn("rigExecUsdview: rigExecImaging is unsupported (%s); "
+                    "RigExec imaging is disabled for this session."
+                    % error)
+            self._lib = None
         return self._lib
 
     def _Imaging(self):
@@ -538,19 +484,16 @@ class RigExecUsdviewContainer(PluginContainer):
         """
         Stop evaluating THIS session's stage -- never another session's.
 
-        A per-stage library deactivates only the stage this container
-        activated (and nothing when it activated none). An older library
-        has one process-wide context, and gets the unconditional global
-        Deactivate it always got.
+        Deactivation names the stage this container holds in the StageCache
+        (activation, shutdown, and layer mutes all go through it). A
+        session that cached no stage deactivates nothing.
         """
         try:
-            lib = getattr(self, "_lib", None)
-            if not lib:
+            if getattr(self, "_cachedStage", None) is None:
                 return
-            if imagingHandle.SupportsMultiStage(lib):
-                if getattr(self, "_cachedStage", None) is None:
-                    return
-            self._Imaging().Deactivate()
+            handle = self._Imaging()
+            if handle is not None:
+                handle.Deactivate()
         finally:
             self._RestorePlayback()
 
@@ -566,9 +509,7 @@ class RigExecUsdviewContainer(PluginContainer):
             Tf.Warn("rigExecUsdview: playback timer not restored: %s" % error)
 
     def _HasWeightOverlay(self):
-        """
-        True when rigExecImaging exports RigExecImaging_SetWeightOverlay.
-        """
+        """True when the library exports the scoped influence overlay."""
         lib = self._EnsureLibrary()
         if lib is None:
             return False
@@ -582,13 +523,12 @@ class RigExecUsdviewContainer(PluginContainer):
         lib = self._EnsureLibrary()
         if lib is None:
             return False
-        if (imagingHandle.SupportsMultiStage(lib) and
-                getattr(self, "_cachedStage", None) is None):
+        if getattr(self, "_cachedStage", None) is None:
             # The overlay can be chosen before the stage has a rig (that is
-            # how a rig gets built), and a per-stage library remembers it on
-            # THIS stage's context -- which it can only find through the
-            # cache. Cache the stage the way activation does; replacement
-            # and _Shutdown release it the same way.
+            # how a rig gets built), and the imaging context remembers it on
+            # THIS stage -- which it can only find through the cache. Cache
+            # the stage the way activation does; replacement and _Shutdown
+            # release it the same way.
             stage = self._api.dataModel.stage
             if stage:
                 UsdUtils.StageCache.Get().Insert(stage)
@@ -666,8 +606,11 @@ class RigExecUsdviewContainer(PluginContainer):
         wasActive = self._active
         self._activating = True
         try:
-            if self._lib:
-                self._lib.RigExecImaging_Deactivate()
+            if (getattr(self, "_lib", None) is not None
+                    and getattr(self, "_cachedStage", None) is not None):
+                # Deactivate THIS session's stage by name; the reactivation
+                # below compiles the recomposed stage fresh.
+                self._Imaging().Deactivate()
             self._active = False
             result = change(stage)
         finally:

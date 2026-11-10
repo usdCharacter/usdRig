@@ -143,9 +143,6 @@ RigExecImagingRegistry::_CachedFrameLocked(
 size_t
 RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames, bool allowFallback)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->ServiceFrameDemand(maxFrames, allowFallback);
-    }
     size_t added = 0;
     bool reset = false;
     {
@@ -221,9 +218,6 @@ RigExecImagingRegistry::ServiceFrameDemand(size_t maxFrames, bool allowFallback)
 bool
 RigExecImagingRegistry::HasFrameDemand()
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->HasFrameDemand();
-    }
     if (_frameTable->HasDemand()) {
         return true;
     }

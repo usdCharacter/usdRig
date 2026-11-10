@@ -10,7 +10,7 @@ import rigexec_test_env
 
 rigexec_test_env.SetupPluginTest()
 
-from pxr import Sdf, Usd  # noqa: E402
+from pxr import Sdf, Usd, UsdUtils  # noqa: E402
 from pxr.Usdviewq.qt import QtWidgets  # noqa: E402
 
 import cacheStripModel  # noqa: E402
@@ -23,39 +23,78 @@ _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
 
 
 class _Library:
+    """Stage-scoped imaging double: every entry point takes the stage's
+    UsdUtilsStageCache id and records it, so the assertions can prove the
+    container routed through this stage's handle."""
+
     def __init__(self):
         self.ranges = []
         self.commits = 0
         self.idles = 0
         self.states = {}
         self.stateQueries = 0
+        self.cacheIds = set()
+        self.activations = 0
+        self.setTimes = 0
+        self.deactivations = 0
 
-    def RigExecImaging_WarmRange(self, rig, frames, count):
-        self.ranges.append((rig, [frames[i] for i in range(count)]))
+    def _note(self, cacheId):
+        self.cacheIds.add(cacheId)
+
+    def RigExecImaging_ActivateForStage(self, cacheId, rig, frame):
+        self._note(cacheId)
+        self.activations += 1
         return 0
 
-    def RigExecImaging_GetFrameStates(self, rig, frames, states, count):
+    def RigExecImaging_SetTimeForStage(self, cacheId, frame):
+        self._note(cacheId)
+        self.setTimes += 1
+        return 0
+
+    def RigExecImaging_DeactivateForStage(self, cacheId):
+        self._note(cacheId)
+        self.deactivations += 1
+
+    def RigExecImaging_WarmRangeForStage(self, cacheId, rig, frames, count):
+        self._note(cacheId)
+        self.ranges.append((cacheId, rig, [frames[i] for i in range(count)]))
+        return 0
+
+    def RigExecImaging_GetFrameStatesForStage(self, cacheId, rig, frames,
+                                              states, count):
+        self._note(cacheId)
         self.stateQueries += 1
         for i in range(count):
             states[i] = self.states.get(frames[i], cacheStripModel.UNCACHED)
         return count
 
-    def RigExecImaging_OnEditCommitted(self):
+    def RigExecImaging_OnEditCommittedForStage(self, cacheId):
+        self._note(cacheId)
         self.commits += 1
         return 0
 
-    def RigExecImaging_OnIdle(self):
+    def RigExecImaging_OnIdleForStage(self, cacheId):
+        self._note(cacheId)
         self.idles += 1
         return 0
 
-    def RigExecImaging_SetWeightOverlay(self, path):
+    def RigExecImaging_SetWeightOverlayForStage(self, cacheId, path):
+        self._note(cacheId)
         return 0
 
-    def RigExecImaging_BeginPreview(self, paths):
+    def RigExecImaging_BeginPreviewForStage(self, cacheId, paths):
+        self._note(cacheId)
         return 1
 
-    def RigExecImaging_EndPreview(self):
+    def RigExecImaging_EndPreviewForStage(self, cacheId):
+        self._note(cacheId)
         return 0
+
+
+def _CacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read (-1 while uncached)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
 
 
 def _Container():
@@ -63,6 +102,7 @@ def _Container():
     stage.SetStartTimeCode(1)
     stage.SetEndTimeCode(4)
     stage.DefinePrim("/Rig", "RigExecRoot")
+    UsdUtils.StageCache.Get().Insert(stage)
     container = RigExecUsdviewContainer.__new__(RigExecUsdviewContainer)
     container._api = SimpleNamespace(dataModel=SimpleNamespace(
         stage=stage, currentFrame=Usd.TimeCode(1)))
@@ -111,20 +151,24 @@ def TestNoticeDebouncesEveryEdit():
             assert container._lib.commits == index + 1
             assert not container._warmingCommitPending
             assert container._WarmingDriverTicking()
+        assert container._lib.cacheIds == {_CacheId(stage)}, (
+            "a container call reached another stage's context")
     finally:
         _Stop(container)
 
 
 def TestEmptyRangeReplacesNativeRange():
     container, stage = _Container()
+    cacheId = _CacheId(stage)
     try:
         container._PushWarmRangeFromStage()
-        assert container._lib.ranges[-1] == (b"/Rig", [1., 2., 3., 4.])
+        assert container._lib.ranges[-1] == (cacheId, b"/Rig",
+                                             [1., 2., 3., 4.])
         stage.SetStartTimeCode(1.2)
         stage.SetEndTimeCode(1.8)
         container._RepushWarmRangeIfChanged()
         assert container._warmRangeFrames == []
-        assert container._lib.ranges[-1] == (b"/Rig", []), (
+        assert container._lib.ranges[-1] == (cacheId, b"/Rig", []), (
             "An empty timeline retained the native rig's previous range")
     finally:
         _Stop(container)
@@ -138,7 +182,11 @@ def TestDirtyDisplayRefreshesBeforeWarming():
     container._lib.states = dict.fromkeys(frames, cacheStripModel.CACHED)
     # A display refresh must also work with an older native library whose
     # completion count does not move when entries are retired.
-    container._lib.RigExecImaging_GetWarmingCompletedCount = lambda: 4
+    def completedCount(cacheId):
+        container._lib._note(cacheId)
+        return 4
+    container._lib.RigExecImaging_GetWarmingCompletedCountForStage = (
+        completedCount)
     overlayStates = []
     container._timelineOverlay = SimpleNamespace(
         Update=lambda states, frames: overlayStates.__setitem__(slice(None), states),
@@ -178,6 +226,8 @@ def TestDirtyDisplayRefreshesBeforeWarming():
         container._FlushWarmingCommit()
         assert container._lib.commits == 1
         assert container._WarmingDriverTicking()
+        assert container._lib.cacheIds == {_CacheId(stage)}, (
+            "the display refresh read another stage's completion counter")
     finally:
         panel.close()
         window.close()
@@ -235,15 +285,22 @@ def TestDeferredSamplingGetsRetried():
 
 def TestNativeAttemptProgressKeepsDriverAwake():
     container, stage = _Container()
+
+    def progressCount(cacheId):
+        container._lib._note(cacheId)
+        return container._lib.idles
+
     try:
-        container._lib.RigExecImaging_GetWarmingProgressCount = (
-            lambda: container._lib.idles)
+        container._lib.RigExecImaging_GetWarmingProgressCountForStage = (
+            progressCount)
         container._WakeWarmingDriver()
         for _ in range(10):
             container._TickWarmingDriver()
         assert container._lib.idles == 10
         assert container._WarmingDriverTicking(), (
             "Failed early frames prevented later valid frames from warming")
+        assert container._lib.cacheIds == {_CacheId(stage)}, (
+            "the attempt-progress read reached another stage's context")
     finally:
         _Stop(container)
 
@@ -262,7 +319,8 @@ def TestStripFollowsRangeAndRootEdits():
         # A click before a driver tick must still send the latest range.
         stage.SetEndTimeCode(2)
         panel.WarmRange()
-        assert container._lib.ranges[-1] == (b"/Rig", [1., 2.])
+        assert container._lib.ranges[-1] == (_CacheId(stage), b"/Rig",
+                                             [1., 2.])
         stage.DefinePrim("/OtherRig", "RigExecRoot")
         container._rigPaths = [Sdf.Path("/OtherRig"), Sdf.Path("/Rig")]
         panel.PollTick()
@@ -323,7 +381,10 @@ def TestNonAuthoringActionsWakeCache():
         # Clear in an older native library discarded its configured range.
         container._lib.ranges.clear()
         container.StripWakeDriver()
-        assert container._lib.ranges[-1] == (b"/Rig", [1., 2., 3., 4.])
+        assert container._lib.ranges[-1] == (_CacheId(stage), b"/Rig",
+                                             [1., 2., 3., 4.])
+        assert container._lib.cacheIds == {_CacheId(stage)}, (
+            "an overlay or preview call reached another stage's context")
     finally:
         _Stop(container)
 

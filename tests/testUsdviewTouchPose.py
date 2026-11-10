@@ -56,7 +56,7 @@ import os
 import sys
 import time
 
-from pxr import Gf, Sdf, UsdGeom, UsdShade
+from pxr import Gf, Sdf, UsdGeom, UsdShade, UsdUtils
 from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
 
 MESH = "/Biped/Geom/body_geo"
@@ -86,6 +86,17 @@ if _PLUGIN and _PLUGIN not in sys.path:
 def _Check(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def _StageCacheId(stage):
+    """The stage's UsdUtils.StageCache id, re-read per call (-1 while it
+    is not in the cache, which answers like an inactive context)."""
+    stageId = UsdUtils.StageCache.Get().GetId(stage)
+    return stageId.ToLongInt() if stageId.IsValid() else -1
+
+
+def _Generation(lib, stage):
+    return lib.RigExecImaging_GetGenerationForStage(_StageCacheId(stage))
 
 
 def _RigExecMenu(appController):
@@ -1287,10 +1298,12 @@ def testUsdviewInputFunction(appController):
         import ctypes
         from rigExecUsdview import ImagingLibraryPath
         lib = ctypes.CDLL(ImagingLibraryPath())
-        lib.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
+        lib.RigExecImaging_GetGenerationForStage.argtypes = [
+            ctypes.c_longlong]
+        lib.RigExecImaging_GetGenerationForStage.restype = ctypes.c_longlong
     except Exception:
         pass
-    generationBefore = lib.RigExecImaging_GetGeneration() if lib else None
+    generationBefore = _Generation(lib, stage) if lib else None
 
     sizesBefore = {r.index: len(r.faces) for r in touchModel.regions}
     covered = int((touchModel.region_of >= 0).sum())
@@ -1365,11 +1378,11 @@ def testUsdviewInputFunction(appController):
            % strokeMoved)
 
     if lib is not None:
-        _Check(lib.RigExecImaging_GetGeneration() == generationBefore,
+        _Check(_Generation(lib, stage) == generationBefore,
                "the rig's generation counter did NOT move across the "
                "stroke (%s -> %s) -- nothing was authored inside the rig, "
                "so nothing recompiled"
-               % (generationBefore, lib.RigExecImaging_GetGeneration()))
+               % (generationBefore, _Generation(lib, stage)))
 
     # A stroke has to fit in a frame like a hover does.
     strokeStart = time.perf_counter()

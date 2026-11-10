@@ -14,9 +14,13 @@
 //   (d) deactivating one leaves the others active and evaluated;
 //   (e) a stage with no rig: its chain binds, and a plain Xform preview
 //       reaches only its chain;
-//   (f) the legacy surface routes to the current context, and
-//       GetInstance().Activate with a stage that already has a context
-//       forwards to it;
+//   (f) Activate/EnsureActivated on a real context with a stage other
+//       than its own forwards to THAT stage's context without creating
+//       a second one and leaves the caller untouched; a fresh stage's
+//       context is created by an activation for it; a deactivation
+//       reaches only the named stage; a failed activation of a third
+//       stage leaves the live publications and their activation modes
+//       untouched;
 //   (g) a destroyed stage releases its context, and the chain left behind
 //       dangles nowhere -- with no manual Deactivate: an AUTOMATIC
 //       activation is released with the last chain bound to it, a later
@@ -76,12 +80,12 @@ using namespace rigExec;
 
 static int failures = 0;
 
-#define CHECK(cond)                                                        \
-    do {                                                                   \
-        if (!(cond)) {                                                     \
-            ++failures;                                                    \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);    \
-        }                                                                  \
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            ++failures;                                                        \
+            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);        \
+        }                                                                      \
     } while (0)
 
 namespace {
@@ -118,21 +122,30 @@ _ImagingResourceDir()
 class _RecordingObserver : public HdSceneIndexObserver {
 public:
     void PrimsAdded(const HdSceneIndexBase &,
-                    const AddedPrimEntries &entries) override {
-        for (const auto &e : entries) added.push_back(e.primPath);
+                    const AddedPrimEntries &entries) override
+    {
+        for (const auto &e : entries)
+            added.push_back(e.primPath);
     }
     void PrimsRemoved(const HdSceneIndexBase &,
-                      const RemovedPrimEntries &entries) override {
-        for (const auto &e : entries) removed.push_back(e.primPath);
+                      const RemovedPrimEntries &entries) override
+    {
+        for (const auto &e : entries)
+            removed.push_back(e.primPath);
     }
     void PrimsDirtied(const HdSceneIndexBase &,
-                      const DirtiedPrimEntries &entries) override {
-        for (const auto &e : entries) dirtied.push_back(e.primPath);
+                      const DirtiedPrimEntries &entries) override
+    {
+        for (const auto &e : entries)
+            dirtied.push_back(e.primPath);
     }
     void PrimsRenamed(const HdSceneIndexBase &,
-                      const RenamedPrimEntries &) override {}
+                      const RenamedPrimEntries &) override
+    {
+    }
 
-    bool DirtiedUnder(const SdfPath &root) const {
+    bool DirtiedUnder(const SdfPath &root) const
+    {
         for (const SdfPath &path : dirtied) {
             if (path.HasPrefix(root)) {
                 return true;
@@ -176,7 +189,8 @@ struct _Viewport {
     UsdImagingSceneIndices indices;
     TfWeakPtr<RigExecResultsSceneIndex> results;
 
-    HdSceneIndexBaseRefPtr Terminal() const {
+    HdSceneIndexBaseRefPtr Terminal() const
+    {
         return indices.finalSceneIndex;
     }
 };
@@ -245,8 +259,7 @@ _ContextOf(const UsdStageRefPtr &stage)
 bool
 _ReadsOn()
 {
-    return RigExecFrameCacheModeFromEnvironment() !=
-        RigExecFrameCacheMode::Off;
+    return RigExecFrameCacheModeFromEnvironment() != RigExecFrameCacheMode::Off;
 }
 
 // Whether warming runs at all in this environment (the frame-cache tests
@@ -256,7 +269,7 @@ _WarmingRuns()
 {
     return RigExecFrameCacheModeFromEnvironment() !=
                RigExecFrameCacheMode::Off &&
-        RigExecBackgroundWarmingEnabled();
+           RigExecBackgroundWarmingEnabled();
 }
 
 // The real UsdImaging chain over \p stage (one engine's worth), and its
@@ -298,13 +311,12 @@ _PlainStage()
 {
     // No rig at all: one Xform with a translate op, one child mesh.
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-    const UsdGeomXform plain =
-        UsdGeomXform::Define(stage, SdfPath("/Plain"));
+    const UsdGeomXform plain = UsdGeomXform::Define(stage, SdfPath("/Plain"));
     plain.AddTranslateOp().Set(GfVec3d(1, 2, 3));
     const UsdGeomMesh child =
         UsdGeomMesh::Define(stage, SdfPath("/Plain/Child"));
-    child.CreatePointsAttr(VtValue(VtVec3fArray{
-        GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)}));
+    child.CreatePointsAttr(
+        VtValue(VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)}));
     child.CreateFaceVertexCountsAttr(VtValue(VtIntArray{3}));
     child.CreateFaceVertexIndicesAttr(VtValue(VtIntArray{0, 1, 2}));
     return stage;
@@ -327,10 +339,10 @@ _WarmableRig()
     root.CreateAttribute(TfToken("rigExec:baked"), SdfValueTypeNames->Bool,
                          /* custom = */ false, SdfVariabilityUniform)
         .Set(true);
-    const UsdPrim alongX = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongX"), TfToken("RigExecControl"));
-    const UsdPrim alongY = stage->DefinePrim(
-        SdfPath("/Asset/Rig/AlongY"), TfToken("RigExecControl"));
+    const UsdPrim alongX = stage->DefinePrim(SdfPath("/Asset/Rig/AlongX"),
+                                             TfToken("RigExecControl"));
+    const UsdPrim alongY = stage->DefinePrim(SdfPath("/Asset/Rig/AlongY"),
+                                             TfToken("RigExecControl"));
     UsdAttribute tx = alongX.GetAttribute(TfToken("avars:tx"));
     UsdAttribute ty = alongY.GetAttribute(TfToken("avars:ty"));
     for (int t = 1; t <= 4; ++t) {
@@ -342,20 +354,20 @@ _WarmableRig()
     const UsdPrim mesh = stage->DefinePrim(meshPath, TfToken("Mesh"));
     VtVec3fArray points(pointCount);
     for (size_t i = 0; i < pointCount; ++i) {
-        points[i] = GfVec3f(float(i) * 0.5f, float(i) * -0.25f,
-                            -float(i) * 0.125f);
+        points[i] =
+            GfVec3f(float(i) * 0.5f, float(i) * -0.25f, -float(i) * 0.125f);
     }
     mesh.GetAttribute(TfToken("points")).Set(points);
-    const UsdPrim skin = stage->DefinePrim(
-        SdfPath("/Asset/Rig/Movers/Skin_0"), TfToken("RigExecSkinMover"));
+    const UsdPrim skin = stage->DefinePrim(SdfPath("/Asset/Rig/Movers/Skin_0"),
+                                           TfToken("RigExecSkinMover"));
     skin.ApplyAPI(TfToken("RigExecMoverAPI"));
     skin.GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({meshPath.AppendProperty(TfToken("points"))});
     skin.GetAttribute(TfToken("inputs:defaultWeight")).Set(1.0f);
     skin.CreateRelationship(TfToken("rigExec:influences"))
         .SetTargets({alongX.GetPath(), alongY.GetPath()});
-    skin.CreateAttribute(TfToken("rigExec:elementSize"),
-                         SdfValueTypeNames->Int).Set(2);
+    skin.CreateAttribute(TfToken("rigExec:elementSize"), SdfValueTypeNames->Int)
+        .Set(2);
     VtIntArray indices(pointCount * 2);
     VtFloatArray weights(pointCount * 2);
     for (size_t i = 0; i < pointCount; ++i) {
@@ -365,9 +377,11 @@ _WarmableRig()
         weights[i * 2 + 1] = 0.9f;
     }
     skin.CreateAttribute(TfToken("rigExec:jointIndices"),
-                         SdfValueTypeNames->IntArray).Set(indices);
+                         SdfValueTypeNames->IntArray)
+        .Set(indices);
     skin.CreateAttribute(TfToken("rigExec:jointWeights"),
-                         SdfValueTypeNames->FloatArray).Set(weights);
+                         SdfValueTypeNames->FloatArray)
+        .Set(weights);
     return stage;
 }
 
@@ -384,9 +398,11 @@ _CurveRig()
     stage->DefinePrim(SdfPath("/CurveAsset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/CurveAsset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/CurveAsset/Rig/Joints"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/CurveAsset/Rig/Joints/Root"),
-                      TfToken("RigExecJoint"))
-        .GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    stage
+        ->DefinePrim(SdfPath("/CurveAsset/Rig/Joints/Root"),
+                     TfToken("RigExecJoint"))
+        .GetAttribute(TfToken("rest:space"))
+        .Set(GfMatrix4d(1.0));
     stage->DefinePrim(SdfPath("/CurveAsset/Rig/Controls"), TfToken("Scope"));
     const UsdPrim dial =
         stage->DefinePrim(SdfPath(kDial), TfToken("RigExecControl"));
@@ -394,12 +410,11 @@ _CurveRig()
     const UsdAttribute tx = dial.GetAttribute(TfToken("avars:tx"));
     tx.Set(5.0);
     stage->DefinePrim(SdfPath("/CurveAsset/Rig/Movers"), TfToken("Scope"));
-    const UsdPrim curve = stage->DefinePrim(
-        SdfPath("/CurveAsset/Rig/Movers/Curve"),
-        TfToken("RigExecFloatMathMover"));
+    const UsdPrim curve =
+        stage->DefinePrim(SdfPath("/CurveAsset/Rig/Movers/Curve"),
+                          TfToken("RigExecFloatMathMover"));
     curve.ApplyAPI(TfToken("RigExecMoverAPI"));
-    curve.GetRelationship(TfToken("rigExec:moves"))
-        .SetTargets({tx.GetPath()});
+    curve.GetRelationship(TfToken("rigExec:moves")).SetTargets({tx.GetPath()});
     curve.GetAttribute(TfToken("rigExec:operation")).Set(TfToken("curve"));
     curve.GetAttribute(TfToken("inputs:keys"))
         .Set(VtVec2fArray{GfVec2f(0, 0), GfVec2f(10, 20)});
@@ -417,8 +432,7 @@ bool
 _ControlFrame(long long id, const char *control, GfMatrix4d *out)
 {
     double m[16];
-    if (RigExecImaging_GetControlFrameAssetSpace(id, control, 1.0, 0, m) !=
-        1) {
+    if (RigExecImaging_GetControlFrameAssetSpace(id, control, 1.0, 0, m) != 1) {
         return false;
     }
     for (int r = 0; r < 4; ++r) {
@@ -498,12 +512,11 @@ TestFloat2ArrayPreview()
     // else, and must be a plain decimal of at most 1,048,576 elements.
     const std::string weights = "/CurveAsset/Rig/Channels.weights";
     const std::string pairs = "/CurveAsset/Rig/Channels.pairs";
-    for (const std::string &bad : {
-             keys, keys + "\t", keys + "\t-1", keys + "\t+2", keys + "\t 2",
-             keys + "\t2 ", keys + "\t2.0", keys + "\t0x2", keys + "\tabc",
-             keys + "\t2\t2", keys + "\t1048577",
-             keys + "\t99999999999999999999", dialTx + "\t1",
-             dialTx + "\t0", weights, pairs, pairs + "\t1"}) {
+    for (const std::string &bad :
+         {keys, keys + "\t", keys + "\t-1", keys + "\t+2", keys + "\t 2",
+          keys + "\t2 ", keys + "\t2.0", keys + "\t0x2", keys + "\tabc",
+          keys + "\t2\t2", keys + "\t1048577", keys + "\t99999999999999999999",
+          dialTx + "\t1", dialTx + "\t0", weights, pairs, pairs + "\t1"}) {
         const int answer = begin(bad);
         if (answer != -1) {
             std::printf("  accepted (%d): %s\n", answer, bad.c_str());
@@ -562,9 +575,11 @@ _PathRig()
     stage->DefinePrim(SdfPath("/PathAsset"), TfToken("Scope"));
     stage->DefinePrim(SdfPath("/PathAsset/Rig"), TfToken("RigExecRoot"));
     stage->DefinePrim(SdfPath("/PathAsset/Rig/Joints"), TfToken("Scope"));
-    stage->DefinePrim(SdfPath("/PathAsset/Rig/Joints/Root"),
-                      TfToken("RigExecJoint"))
-        .GetAttribute(TfToken("rest:space")).Set(GfMatrix4d(1.0));
+    stage
+        ->DefinePrim(SdfPath("/PathAsset/Rig/Joints/Root"),
+                     TfToken("RigExecJoint"))
+        .GetAttribute(TfToken("rest:space"))
+        .Set(GfMatrix4d(1.0));
     stage->DefinePrim(SdfPath("/PathAsset/Rig/Controls"), TfToken("Scope"));
     const UsdPrim walker =
         stage->DefinePrim(SdfPath(kWalker), TfToken("RigExecControl"));
@@ -580,8 +595,8 @@ _PathRig()
     stage->DefinePrim(SdfPath("/PathAsset/Rig/Movers"), TfToken("Scope"));
     for (const auto &[name, component] :
          {std::make_pair("X", "x"), std::make_pair("Z", "z")}) {
-        const UsdAttribute avar = walker.GetAttribute(
-            TfToken(std::string("avars:t") + component));
+        const UsdAttribute avar =
+            walker.GetAttribute(TfToken(std::string("avars:t") + component));
         avar.Set(1.5);
         const UsdPrim mover = stage->DefinePrim(
             SdfPath("/PathAsset/Rig/Movers").AppendChild(TfToken(name)),
@@ -590,18 +605,17 @@ _PathRig()
         mover.GetRelationship(TfToken("rigExec:moves"))
             .SetTargets({avar.GetPath()});
         mover.GetAttribute(TfToken("rigExec:operation")).Set(TfToken("path"));
-        mover.GetRelationship(TfToken("rigExec:path"))
-            .SetTargets({curvePath});
+        mover.GetRelationship(TfToken("rigExec:path")).SetTargets({curvePath});
         mover.GetAttribute(TfToken("rigExec:pathComponent"))
             .Set(TfToken(component));
         mover.GetAttribute(TfToken("inputs:value")).Set(0.25f);
     }
-    const UsdPrim channels = stage->DefinePrim(
-        SdfPath("/PathAsset/Rig/Channels"), TfToken("Scope"));
+    const UsdPrim channels =
+        stage->DefinePrim(SdfPath("/PathAsset/Rig/Channels"), TfToken("Scope"));
     channels.CreateAttribute(TfToken("offsets"), SdfValueTypeNames->Float3Array)
         .Set(VtVec3fArray{GfVec3f(1, 2, 3), GfVec3f(4, 5, 6)});
-    channels.CreateAttribute(TfToken("doubles"),
-                             SdfValueTypeNames->Double3Array)
+    channels
+        .CreateAttribute(TfToken("doubles"), SdfValueTypeNames->Double3Array)
         .Set(VtVec3dArray{GfVec3d(0, 1, 2)});
     channels.CreateAttribute(TfToken("weights"), SdfValueTypeNames->FloatArray)
         .Set(VtFloatArray{1.0f, 2.0f});
@@ -653,12 +667,10 @@ TestPointArrayPreview()
     std::vector<double> longer = flat;
     longer.insert(longer.end(), {1.0, 0.0, 5.0});
     CHECK(RigExecImaging_UpdatePreviewForStage(v->id, flat.data(), 14) != 0);
-    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, longer.data(), 18) !=
-          0);
+    CHECK(RigExecImaging_UpdatePreviewForStage(v->id, longer.data(), 18) != 0);
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
     GfMatrix4d restored(0.0);
-    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
-          restored == authored);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) && restored == authored);
 
     // A scalar slot and the points, flattened in declaration order: tx
     // walks further along the moved curve, tz stays at 1.5.
@@ -671,18 +683,17 @@ TestPointArrayPreview()
     CHECK(both.ExtractTranslation()[0] != pointsOnly.ExtractTranslation()[0]);
     CHECK(both.ExtractTranslation()[2] == pointsOnly.ExtractTranslation()[2]);
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
-    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
-          restored == authored);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) && restored == authored);
 
     // A count is required on every VtVec3fArray type and on float[],
     // and refused on other arrays; float3[] is accepted like point3f[].
     const std::string offsets = "/PathAsset/Rig/Channels.offsets";
     const std::string doubles = "/PathAsset/Rig/Channels.doubles";
     const std::string weights = "/PathAsset/Rig/Channels.weights";
-    for (const std::string &bad : {
-             points, points + "\t", points + "\t-5", points + "\t5.0",
-             points + "\t 5", points + "\t1048577", offsets, doubles,
-             doubles + "\t1", walkerTx + "\t1"}) {
+    for (const std::string &bad :
+         {points, points + "\t", points + "\t-5", points + "\t5.0",
+          points + "\t 5", points + "\t1048577", offsets, doubles,
+          doubles + "\t1", walkerTx + "\t1"}) {
         const int answer = begin(bad);
         if (answer != -1) {
             std::printf("  accepted (%d): %s\n", answer, bad.c_str());
@@ -693,19 +704,16 @@ TestPointArrayPreview()
     CHECK(begin(weights + "\t2") == 2);
     CHECK(begin(points + "\t1048576") == 3 * 1048576);
     CHECK(RigExecImaging_EndPreviewForStage(v->id) == 0);
-    CHECK(_ControlFrame(v->id, kWalker, &restored) &&
-          restored == authored);
+    CHECK(_ControlFrame(v->id, kWalker, &restored) && restored == authored);
 
     // Authored, the same values land on the same frames, exactly.
     const UsdAttribute pointsAttr =
         v->stage->GetAttributeAtPath(SdfPath(points));
-    const UsdAttribute txAttr =
-        v->stage->GetAttributeAtPath(SdfPath(walkerTx));
+    const UsdAttribute txAttr = v->stage->GetAttributeAtPath(SdfPath(walkerTx));
     GfMatrix4d committed(0.0);
     CHECK(pointsAttr.Set(moved));
     CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
-    CHECK(_ControlFrame(v->id, kWalker, &committed) &&
-          committed == pointsOnly);
+    CHECK(_ControlFrame(v->id, kWalker, &committed) && committed == pointsOnly);
     CHECK(txAttr.Set(2.0));
     CHECK(RigExecImaging_SetTimeForStage(v->id, 1.0) == 0);
     CHECK(_ControlFrame(v->id, kWalker, &committed) && committed == both);
@@ -715,8 +723,8 @@ TestPointArrayPreview()
 
     // A mesh's points with no rig: there is no xform-lane array.
     std::unique_ptr<_Viewport> plain = _Open(_PlainStage());
-    CHECK(RigExecImaging_BeginPreviewForStage(
-              plain->id, "/Plain/Child.points\t3") == -1);
+    CHECK(RigExecImaging_BeginPreviewForStage(plain->id,
+                                              "/Plain/Child.points\t3") == -1);
     _Close(plain);
 }
 
@@ -726,8 +734,9 @@ TestMultiStage(const std::string &examplesDir)
     const std::string turretFile = examplesDir + "/10_AimXformTurret.usda";
     const std::string tailFile = examplesDir + "/01_FkChainTail.usda";
 
-    // Isolated from whatever an earlier activation left current.
-    RigExecImaging_Deactivate();
+    // Isolation is structural: every read and write below names its own
+    // stage's context, so nothing an earlier activation left can reach
+    // these fixtures.
 
     std::unique_ptr<_Viewport> a = _Open(UsdStage::Open(turretFile));
     std::unique_ptr<_Viewport> b = _Open(UsdStage::Open(turretFile));
@@ -761,10 +770,11 @@ TestMultiStage(const std::string &examplesDir)
     CHECK(RigExecImaging_IsActiveForStage(b->id) == 1);
     CHECK(RigExecImaging_IsActiveForStage(c->id) == 1);
 
-    // ...and all three activate explicitly through the id-taking C surface.
-    CHECK(RigExecImaging_Activate(a->id, "", 1001.0) == 0);
-    CHECK(RigExecImaging_Activate(b->id, "", 1001.0) == 0);
-    CHECK(RigExecImaging_Activate(c->id, "", 1001.0) == 0);
+    // ...and all three activate explicitly through the stage-scoped C
+    // surface.
+    CHECK(RigExecImaging_ActivateForStage(a->id, "", 1001.0) == 0);
+    CHECK(RigExecImaging_ActivateForStage(b->id, "", 1001.0) == 0);
+    CHECK(RigExecImaging_ActivateForStage(c->id, "", 1001.0) == 0);
     CHECK(RigExecImaging_IsActiveForStage(a->id) == 1);
     CHECK(RigExecImaging_IsActiveForStage(b->id) == 1);
     CHECK(RigExecImaging_IsActiveForStage(c->id) == 1);
@@ -784,26 +794,26 @@ TestMultiStage(const std::string &examplesDir)
 
     // A's published control frame is A's frame 1024; B still publishes 1001.
     double frameA[16], frameB[16];
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              a->id, kTrackTarget, 1024.0, 0, frameA) == 1);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              b->id, kTrackTarget, 1024.0, 0, frameB) == 0);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              b->id, kTrackTarget, 1001.0, 0, frameB) == 1);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              a->id, kTrackTarget, 1001.0, 0, frameA) == 0);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              a->id, kTrackTarget, 1024.0, 0, frameA) == 1);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(a->id, kTrackTarget, 1024.0,
+                                                   0, frameA) == 1);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(b->id, kTrackTarget, 1024.0,
+                                                   0, frameB) == 0);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(b->id, kTrackTarget, 1001.0,
+                                                   0, frameB) == 1);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(a->id, kTrackTarget, 1001.0,
+                                                   0, frameA) == 0);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(a->id, kTrackTarget, 1024.0,
+                                                   0, frameA) == 1);
     // The spline swings TrackTarget from x=-8 at 1001 to x=+8 at 1024.
     CHECK(std::abs(frameA[12] - frameB[12]) > 1.0);
     // C, a different rig, still publishes its own frame 1001.
     double frameC[16];
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              c->id, kTail1, 1001.0, 0, frameC) == 1);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              c->id, kTail1, 1024.0, 0, frameC) == 0);
-    CHECK(RigExecImaging_GetControlFrameAssetSpace(
-              c->id, kTrackTarget, 1001.0, 0, frameC) == 0);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(c->id, kTail1, 1001.0, 0,
+                                                   frameC) == 1);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(c->id, kTail1, 1024.0, 0,
+                                                   frameC) == 0);
+    CHECK(RigExecImaging_GetControlFrameAssetSpace(c->id, kTrackTarget, 1001.0,
+                                                   0, frameC) == 0);
     CHECK(RigExecImaging_ContextCount() ==
           int(RigExecImagingRegistry::ContextCount()));
 
@@ -822,27 +832,27 @@ TestMultiStage(const std::string &examplesDir)
         CHECK(RigExecImaging_GetGuideBoundsAssetSpaceForStage(
                   b->id, kTrackTarget, boundsB) == 1);
         CHECK(boundsA[0] > 0.0 && boundsB[3] < 0.0);
-        CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(
-                  a->id, all) == 1);
+        CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(a->id, all) ==
+              1);
         CHECK(all[3] >= boundsA[3]);
-        CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(
-                  b->id, all) == 1);
+        CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(b->id, all) ==
+              1);
         CHECK(all[0] <= boundsB[0]);
-        // The legacy spelling answers for the current context (C, the
-        // last legacy activation), which has no such control.
-        CHECK(RigExecImaging_GetGuideBoundsAssetSpace(kTrackTarget,
-                                                       boundsA) == 0);
+        // C is the different rig: the same control path declines for
+        // ITS stage, which has no such control.
+        CHECK(RigExecImaging_GetGuideBoundsAssetSpaceForStage(
+                  c->id, kTrackTarget, boundsA) == 0);
     }
     // Moved floats: the turret publishes none; a stage with no context and
     // an unknown id answer as an inactive registry.
     {
         const std::string packed = std::string(kTrackTarget) + ".avars:tx";
         float moved[1] = {7.0f};
-        CHECK(RigExecImaging_GetMovedFloatsForStage(
-                  a->id, packed.c_str(), moved, 1) == 0);
+        CHECK(RigExecImaging_GetMovedFloatsForStage(a->id, packed.c_str(),
+                                                    moved, 1) == 0);
         CHECK(moved[0] == 0.0f);
-        CHECK(RigExecImaging_GetMovedFloatsForStage(
-                  -12345, packed.c_str(), moved, 1) == 0);
+        CHECK(RigExecImaging_GetMovedFloatsForStage(-12345, packed.c_str(),
+                                                    moved, 1) == 0);
     }
     // The weight overlay: set on A republishes A only.
     {
@@ -853,8 +863,8 @@ TestMultiStage(const std::string &examplesDir)
         CHECK(RigExecImaging_GetGenerationForStage(b->id) == genB);
         CHECK(RigExecImaging_SetWeightOverlayForStage(a->id, "") == 0);
         CHECK(RigExecImaging_GetGenerationForStage(b->id) == genB);
-        CHECK(RigExecImaging_SetWeightOverlayForStage(a->id, "not a path")
-              != 0);
+        CHECK(RigExecImaging_SetWeightOverlayForStage(a->id, "not a path") !=
+              0);
     }
     // Frame states and cache clears stay on their stage. (The example rigs
     // carry no baked program, so they never warm in the background; the
@@ -888,10 +898,9 @@ TestMultiStage(const std::string &examplesDir)
         CHECK(RigExecImaging_OnEditCommittedForStage(a->id) == 0);
         CHECK(RigExecImaging_OnIdleForStage(a->id) == 0);
         const double range[3] = {1030.0, 1031.0, 1032.0};
-        CHECK(RigExecImaging_WarmRangeForStage(a->id, kTurretRig, range, 3)
-              == 0);
-        CHECK(RigExecImaging_WarmRangeForStage(a->id, "/Nope", range, 3)
-              == -1);
+        CHECK(RigExecImaging_WarmRangeForStage(a->id, kTurretRig, range, 3) ==
+              0);
+        CHECK(RigExecImaging_WarmRangeForStage(a->id, "/Nope", range, 3) == -1);
         contextA->WaitUntilBackgroundIdle();
         CHECK(RigExecImaging_ClearFrameCacheForStage(a->id, kTurretRig) == 0);
         CHECK(RigExecImaging_GetFrameStatesForStage(
@@ -909,11 +918,11 @@ TestMultiStage(const std::string &examplesDir)
                   a->id, "/TailAsset/Rig", frames.data(), statesA, 2) == -1);
 
         // The profile summary is per stage too (header plus A's rows).
-        const std::string profile =
-            (std::filesystem::temp_directory_path() /
-             "testRigExecImagingMultiStage_profile.txt").string();
-        CHECK(RigExecImaging_WriteProfileSummaryForStage(
-                  a->id, profile.c_str()) == 0);
+        const std::string profile = (std::filesystem::temp_directory_path() /
+                                     "testRigExecImagingMultiStage_profile.txt")
+                                        .string();
+        CHECK(RigExecImaging_WriteProfileSummaryForStage(a->id,
+                                                         profile.c_str()) == 0);
         CHECK(std::filesystem::exists(profile));
         std::error_code ignored;
         std::filesystem::remove(profile, ignored);
@@ -1003,8 +1012,9 @@ TestMultiStage(const std::string &examplesDir)
                   d->id, "/Plain.xformOp:translate") == 3);
         const double translate[3] = {11.0, 2.0, 3.0};
         CHECK(RigExecImaging_UpdatePreviewForStage(d->id, translate, 3) == 0);
-        CHECK(std::abs(_WorldOf(d->Terminal(), childPath)
-                           .ExtractTranslation()[0] - 11.0) < 1e-9);
+        CHECK(std::abs(
+                  _WorldOf(d->Terminal(), childPath).ExtractTranslation()[0] -
+                  11.0) < 1e-9);
         CHECK(_Close(_WorldOf(e->Terminal(), childPath), childE));
         CHECK(RigExecImaging_EndPreviewForStage(d->id) == 0);
         CHECK(_Close(_WorldOf(d->Terminal(), childPath), childD));
@@ -1018,8 +1028,8 @@ TestMultiStage(const std::string &examplesDir)
         // The displayed frame is also the preview clock on a stage without
         // rigs. Default-time composition would double the animated offset.
         const UsdStageRefPtr stage = _PlainStage();
-        const UsdAttribute translate = stage->GetAttributeAtPath(
-            SdfPath("/Plain.xformOp:translate"));
+        const UsdAttribute translate =
+            stage->GetAttributeAtPath(SdfPath("/Plain.xformOp:translate"));
         CHECK(translate.Clear());
         CHECK(translate.Set(GfVec3d(-2, 0, 0), UsdTimeCode(1)));
         CHECK(translate.Set(GfVec3d(-1.5, 0, 0), UsdTimeCode(3)));
@@ -1030,18 +1040,20 @@ TestMultiStage(const std::string &examplesDir)
         baseline.SetTranslate(GfVec3d(-1.75, 0, 0));
         CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), baseline));
         CHECK(RigExecImaging_BeginPreviewForStage(
-            viewport->id, translate.GetPath().GetText()) == 3);
+                  viewport->id, translate.GetPath().GetText()) == 3);
         // Retain the inactive return code while remembering frame 2.
         CHECK(RigExecImaging_SetTimeForStage(viewport->id, 2) == 1);
         CHECK(RigExecImaging_IsActiveForStage(viewport->id) == 0);
         const double sample[3] = {-1.25, 0, 0};
-        CHECK(RigExecImaging_UpdatePreviewForStage(viewport->id, sample, 3) == 0);
+        CHECK(RigExecImaging_UpdatePreviewForStage(viewport->id, sample, 3) ==
+              0);
         GfMatrix4d expected(1.0);
         expected.SetTranslate(GfVec3d(-1.25, 0, 0));
         CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), expected));
         VtValue defaultValue;
         CHECK(!translate.Get(&defaultValue, UsdTimeCode::Default()));
-        CHECK(RigExecImaging_EndPreviewWithoutPublishForStage(viewport->id) == 0);
+        CHECK(RigExecImaging_EndPreviewWithoutPublishForStage(viewport->id) ==
+              0);
         CHECK(translate.Set(GfVec3d(-1.25, 0, 0), UsdTimeCode(2)));
         viewport->indices.stageSceneIndex->ApplyPendingUpdates();
         CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), expected));
@@ -1052,10 +1064,9 @@ TestMultiStage(const std::string &examplesDir)
         // First-use manipulations create an ordered op before authoring its
         // value. Its authored contribution is identity, but the supplied
         // preview must already move the real imaging chain and descendants.
-        for (const UsdGeomXformOp::Type type : {
-                 UsdGeomXformOp::TypeTranslate,
-                 UsdGeomXformOp::TypeRotateXYZ,
-                 UsdGeomXformOp::TypeScale}) {
+        for (const UsdGeomXformOp::Type type :
+             {UsdGeomXformOp::TypeTranslate, UsdGeomXformOp::TypeRotateXYZ,
+              UsdGeomXformOp::TypeScale}) {
             const UsdStageRefPtr stage = UsdStage::CreateInMemory();
             const UsdGeomXform parent =
                 UsdGeomXform::Define(stage, SdfPath("/Parent"));
@@ -1066,37 +1077,42 @@ TestMultiStage(const std::string &examplesDir)
             const UsdGeomXform target =
                 UsdGeomXform::Define(stage, SdfPath("/Parent/Plain"));
             const UsdGeomXformOp op = type == UsdGeomXformOp::TypeTranslate
-                ? target.AddTranslateOp()
-                : type == UsdGeomXformOp::TypeRotateXYZ
-                    ? target.AddRotateXYZOp() : target.AddScaleOp();
+                                          ? target.AddTranslateOp()
+                                      : type == UsdGeomXformOp::TypeRotateXYZ
+                                          ? target.AddRotateXYZOp()
+                                          : target.AddScaleOp();
             const SdfPath childPath("/Parent/Plain/Child");
             const UsdGeomMesh child = UsdGeomMesh::Define(stage, childPath);
-            child.CreatePointsAttr(VtValue(VtVec3fArray{
-                GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)}));
+            child.CreatePointsAttr(VtValue(
+                VtVec3fArray{GfVec3f(0), GfVec3f(1, 0, 0), GfVec3f(0, 1, 0)}));
             child.CreateFaceVertexCountsAttr(VtValue(VtIntArray{3}));
             child.CreateFaceVertexIndicesAttr(VtValue(VtIntArray{0, 1, 2}));
             VtValue authored;
             CHECK(!op.GetAttr().Get(&authored));
             std::unique_ptr<_Viewport> viewport = _Open(stage);
-            CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), parentWorld));
+            CHECK(
+                _Close(_WorldOf(viewport->Terminal(), childPath), parentWorld));
             std::string before;
             CHECK(stage->GetRootLayer()->ExportToString(&before));
             CHECK(RigExecImaging_BeginPreviewForStage(
-                viewport->id, op.GetAttr().GetPath().GetText()) == 3);
+                      viewport->id, op.GetAttr().GetPath().GetText()) == 3);
             const double sample[3] = {2, 3, 4};
-            CHECK(RigExecImaging_UpdatePreviewForStage(
-                viewport->id, sample, 3) == 0);
+            CHECK(RigExecImaging_UpdatePreviewForStage(viewport->id, sample,
+                                                       3) == 0);
             const VtValue value = type == UsdGeomXformOp::TypeTranslate
-                ? VtValue(GfVec3d(2, 3, 4)) : VtValue(GfVec3f(2, 3, 4));
+                                      ? VtValue(GfVec3d(2, 3, 4))
+                                      : VtValue(GfVec3f(2, 3, 4));
             const GfMatrix4d expected =
-                UsdGeomXformOp::GetOpTransform(type, value, false) * parentWorld;
+                UsdGeomXformOp::GetOpTransform(type, value, false) *
+                parentWorld;
             CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), expected));
             CHECK(!op.GetAttr().Get(&authored));
             std::string after;
             CHECK(stage->GetRootLayer()->ExportToString(&after));
             CHECK(before == after);
             CHECK(RigExecImaging_EndPreviewForStage(viewport->id) == 0);
-            CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), parentWorld));
+            CHECK(
+                _Close(_WorldOf(viewport->Terminal(), childPath), parentWorld));
             _Close(viewport);
         }
     }
@@ -1105,7 +1121,8 @@ TestMultiStage(const std::string &examplesDir)
         // A pivot is one value used by both forward and inverse ordered ops.
         // Preview both uses before the first value is authored.
         const UsdStageRefPtr stage = UsdStage::CreateInMemory();
-        const UsdGeomXform target = UsdGeomXform::Define(stage, SdfPath("/Pivot"));
+        const UsdGeomXform target =
+            UsdGeomXform::Define(stage, SdfPath("/Pivot"));
         const UsdGeomXformOp pivot = target.AddTranslateOp(
             UsdGeomXformOp::PrecisionDouble, TfToken("pivot"));
         const UsdGeomXformOp rotation = target.AddRotateXYZOp();
@@ -1119,19 +1136,22 @@ TestMultiStage(const std::string &examplesDir)
         std::string before;
         CHECK(stage->GetRootLayer()->ExportToString(&before));
         CHECK(RigExecImaging_BeginPreviewForStage(
-            viewport->id, pivot.GetAttr().GetPath().GetText()) == 3);
+                  viewport->id, pivot.GetAttr().GetPath().GetText()) == 3);
         const double sample[3] = {0.5, 0.25, -0.75};
-        CHECK(RigExecImaging_UpdatePreviewForStage(viewport->id, sample, 3) == 0);
+        CHECK(RigExecImaging_UpdatePreviewForStage(viewport->id, sample, 3) ==
+              0);
         const VtValue value(GfVec3d(sample[0], sample[1], sample[2]));
-        const GfMatrix4d expected = UsdGeomXformOp::GetOpTransform(
-            inverse.GetOpType(), value, true) * rotation.GetOpTransform(UsdTimeCode(1)) *
+        const GfMatrix4d expected =
+            UsdGeomXformOp::GetOpTransform(inverse.GetOpType(), value, true) *
+            rotation.GetOpTransform(UsdTimeCode(1)) *
             UsdGeomXformOp::GetOpTransform(pivot.GetOpType(), value, false);
         CHECK(!_Close(baseline, expected));
         CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), expected));
         std::string after;
         CHECK(stage->GetRootLayer()->ExportToString(&after));
         CHECK(before == after);
-        CHECK(RigExecImaging_EndPreviewWithoutPublishForStage(viewport->id) == 0);
+        CHECK(RigExecImaging_EndPreviewWithoutPublishForStage(viewport->id) ==
+              0);
         CHECK(pivot.Set(value));
         viewport->indices.stageSceneIndex->ApplyPendingUpdates();
         CHECK(_Close(_WorldOf(viewport->Terminal(), childPath), expected));
@@ -1139,66 +1159,75 @@ TestMultiStage(const std::string &examplesDir)
     }
 
     {
-        // The last legacy activation (C) is current.
-        CHECK(RigExecImagingRegistry::Current() ==
-              RigExecImagingRegistry::ForStage(c->stage, false));
-        CHECK(RigExecImaging_GetGeneration() ==
-              RigExecImaging_GetGenerationForStage(c->id));
-        const long long genB = RigExecImaging_GetGenerationForStage(b->id);
-        const long long genC = RigExecImaging_GetGenerationForStage(c->id);
-        CHECK(RigExecImaging_SetTime(1030.0) == 0);
-        CHECK(RigExecImaging_GetGenerationForStage(c->id) == genC + 1);
-        CHECK(RigExecImaging_GetGenerationForStage(b->id) == genB);
-
-        // GetInstance().Activate with a stage that already has a context:
-        // forwarded to it, no new context, and it becomes current.
-        RigExecImagingRegistry &legacy = RigExecImagingRegistry::GetInstance();
+        // Activate on a REAL context with a stage other than its own:
+        // forwarded to that stage's context, no second context created,
+        // and the caller itself untouched.
         const size_t count = RigExecImagingRegistry::ContextCount();
+        const RigExecImagingRegistry::Ptr contextA = _ContextOf(a->stage);
+        const RigExecImagingRegistry::Ptr contextB = _ContextOf(b->stage);
+        const RigExecImagingRegistry::Ptr contextC = _ContextOf(c->stage);
+        CHECK(contextA && contextB && contextC);
+        if (!contextA || !contextB || !contextC) {
+            return;
+        }
         std::vector<std::string> errors;
-        CHECK(legacy.Activate(b->stage, SdfPath(), UsdTimeCode(1001.0),
-                              &errors));
+        const long long genB = RigExecImaging_GetGenerationForStage(b->id);
+        CHECK(contextA->Activate(b->stage, SdfPath(), UsdTimeCode(1001.0),
+                                 &errors));
         CHECK(RigExecImagingRegistry::ContextCount() == count);
-        const RigExecImagingRegistry::Ptr contextB =
-            RigExecImagingRegistry::ForStage(b->stage, false);
-        CHECK(RigExecImagingRegistry::Current() == contextB);
-        CHECK(legacy.GetStore() == contextB->GetStore());
-        CHECK(legacy.IsActive());
-        CHECK(RigExecImaging_GetGeneration() ==
-              RigExecImaging_GetGenerationForStage(b->id));
+        CHECK(contextB->IsActive());
+        // The store that republished is the one B's own chain reads.
+        CHECK(b->results->GetStore() == contextB->GetStore());
+        // The target context's OWN store republished at the new time.
+        CHECK(RigExecImaging_GetGenerationForStage(b->id) > genB);
+        // The caller stayed inactive: the forwarded call computed nothing
+        // on it and took no activation there.
+        CHECK(!contextA->IsActive());
         // Nothing was replaced: C keeps evaluating.
         CHECK(RigExecImaging_IsActiveForStage(c->id) == 1);
 
-        // A stage with no context yet: the legacy activation creates it.
+        // The automatic path forwards the same way, and a live explicit
+        // activation is left alone.
+        CHECK(contextA->EnsureActivated(b->stage, UsdTimeCode(1030.0)));
+        CHECK(RigExecImagingRegistry::ContextCount() == count);
+        CHECK(contextB->IsActive() && !contextB->IsAutoActivated());
+
+        // A stage with no context yet: an activation for it creates one.
         const UsdStageRefPtr fresh = UsdStage::Open(turretFile);
         CHECK(!RigExecImagingRegistry::ForStage(fresh, false));
-        CHECK(legacy.Activate(fresh, SdfPath(), UsdTimeCode(1001.0),
-                              &errors));
+        CHECK(
+            contextA->Activate(fresh, SdfPath(), UsdTimeCode(1001.0), &errors));
         CHECK(RigExecImagingRegistry::ContextCount() == count + 1);
-        CHECK(RigExecImagingRegistry::Current() ==
-              RigExecImagingRegistry::ForStage(fresh, false));
+        const RigExecImagingRegistry::Ptr contextFresh =
+            RigExecImagingRegistry::ForStage(fresh, false);
+        CHECK(contextFresh && contextFresh->IsActive());
 
-        // The legacy Deactivate deactivates the current context only.
-        RigExecImaging_Deactivate();
-        CHECK(!RigExecImagingRegistry::ForStage(fresh, false)->IsActive());
+        // Deactivating one context reaches only the named stage.
+        contextFresh->Deactivate();
+        CHECK(!contextFresh->IsActive());
         CHECK(RigExecImaging_IsActiveForStage(b->id) == 1);
         CHECK(RigExecImaging_IsActiveForStage(c->id) == 1);
 
-        // A failed legacy activation of another stage leaves the current
-        // context -- and everything else -- exactly as it was.
-        CHECK(legacy.Activate(b->stage, SdfPath(), UsdTimeCode(1001.0),
-                              &errors));
+        // A failed activation of a third stage leaves the two live
+        // publications and their activation modes exactly as they were.
+        const long long genB2 = RigExecImaging_GetGenerationForStage(b->id);
+        const long long genC2 = RigExecImaging_GetGenerationForStage(c->id);
+        CHECK(!contextB->IsAutoActivated() && !contextC->IsAutoActivated());
         const UsdStageRefPtr empty = UsdStage::CreateInMemory();
         errors.clear();
-        CHECK(!legacy.Activate(empty, SdfPath(), UsdTimeCode(1.0), &errors));
+        CHECK(!contextB->Activate(empty, SdfPath(), UsdTimeCode(1.0), &errors));
         CHECK(!errors.empty());
-        CHECK(RigExecImagingRegistry::Current() == contextB);
-        CHECK(legacy.IsActive());
+        CHECK(contextB->IsActive() && contextC->IsActive());
+        CHECK(!contextB->IsAutoActivated() && !contextC->IsAutoActivated());
+        CHECK(RigExecImaging_GetGenerationForStage(b->id) == genB2);
+        CHECK(RigExecImaging_GetGenerationForStage(c->id) == genC2);
     }
 
     {
-        // A live explicit activation stays current throughout, so the
-        // automatic activation below never becomes the legacy current one.
-        CHECK(RigExecImaging_Activate(c->id, "", 1001.0) == 0);
+        // An explicit activation holds its stage's lifetime: the engine
+        // below auto-activates its OWN stage, and neither activation
+        // reaches the other stage's context.
+        CHECK(RigExecImaging_ActivateForStage(c->id, "", 1001.0) == 0);
         const size_t before = RigExecImagingRegistry::ContextCount();
         UsdStageRefPtr stage = UsdStage::Open(turretFile);
         UsdImagingSceneIndices indices;
@@ -1215,8 +1244,6 @@ TestMultiStage(const std::string &examplesDir)
         const uint64_t key = _KeyOf(stage);
         CHECK(key != 0 && results && results->GetContextKey() == key);
         CHECK(!weak.expired() && weak.lock()->IsActive());
-        CHECK(RigExecImagingRegistry::Current() !=
-              RigExecImagingRegistry::ForStage(stage, false));
 
         // The adapter activated it: the library owns that activation.
         CHECK(weak.lock()->IsAutoActivated());
@@ -1233,8 +1260,18 @@ TestMultiStage(const std::string &examplesDir)
               weak.lock()->MutableSchedulerProfiler() == nullptr);
         stage.Reset();
         CHECK(RigExecImagingRegistry::ContextCount() == before);
-        CHECK(weak.expired());
         CHECK(!RigExecImagingRegistry::ForKey(key));
+        // Nothing else holds a context once its stage is gone: the
+        // directory's entry is its only owner, and the pruning that drops
+        // the entry releases the context.
+        CHECK(weak.expired());
+        const UsdStageRefPtr successor = UsdStage::Open(turretFile);
+        TfWeakPtr<RigExecResultsSceneIndex> later;
+        UsdImagingSceneIndices next = _Engine(successor, &later);
+        // The successor stage gets its own context, and its own key.
+        CHECK(later && later->GetContextKey() != key);
+        CHECK(RigExecImagingRegistry::ContextCount() == before + 1);
+        next = UsdImagingSceneIndices();
     }
     {
         // Released, not host-deactivated: a later engine on the same stage
@@ -1257,15 +1294,12 @@ TestMultiStage(const std::string &examplesDir)
         CHECK(!context->IsActive());
 
         // An explicit activation takes the lifetime over: it outlives its
-        // engine until the host deactivates it. The stage-scoped activation
-        // never moves the legacy current context.
+        // engine until the host deactivates it. The stage-scoped
+        // activation reaches only this stage's context.
         const long long id =
             UsdUtilsStageCache::Get().Insert(stage).ToLongInt();
         one = _Engine(stage, &first);
-        const RigExecImagingRegistry::Ptr current =
-            RigExecImagingRegistry::Current();
         CHECK(RigExecImaging_ActivateForStage(id, "", 1001.0) == 0);
-        CHECK(RigExecImagingRegistry::Current() == current);
         CHECK(context->IsActive() && !context->IsAutoActivated());
         one = UsdImagingSceneIndices();
         CHECK(context->IsActive());
@@ -1294,8 +1328,8 @@ TestMultiStage(const std::string &examplesDir)
         auto binding = RigExecBindingResolvingSceneIndex::New(xforms);
         auto results = RigExecResultsSceneIndex::New(
             binding, std::make_shared<RigExecSnapshotStore>());
-        RigExecImagingRegistry::RegisterUnboundChain(
-            pruning, binding, results, xforms);
+        RigExecImagingRegistry::RegisterUnboundChain(pruning, binding, results,
+                                                     xforms);
         CHECK(results->GetContextKey() == 0);
         RigExecImagingRegistry::BindChain(get_pointer(results), key);
         CHECK(results->GetContextKey() == key);
@@ -1331,8 +1365,9 @@ TestMultiStage(const std::string &examplesDir)
         const uint64_t keyOther = _KeyOf(other);
         CHECK(keyOther != 0);
         CHECK(h->results && h->results->GetContextKey() == keyOther);
-        CHECK(h->results && h->results->GetStore() ==
-              RigExecImagingRegistry::ForKey(keyOther)->GetStore());
+        CHECK(h->results &&
+              h->results->GetStore() ==
+                  RigExecImagingRegistry::ForKey(keyOther)->GetStore());
         CHECK(RigExecImaging_IsActiveForStage(otherId) == 1);
         // The chain now serves the tail rig: its joints draw guides.
         CHECK(_HasGuideChild(h->Terminal(),
@@ -1375,7 +1410,7 @@ TestMultiStage(const std::string &examplesDir)
         CHECK(RigExecImaging_IsActiveForStage(j->id) == 0);
         CHECK(j->results && j->results->GetContextKey() == _KeyOf(j->stage));
         // ...while an explicit activation does, as always.
-        CHECK(RigExecImaging_Activate(j->id, "", 1001.0) == 0);
+        CHECK(RigExecImaging_ActivateForStage(j->id, "", 1001.0) == 0);
         CHECK(RigExecImaging_IsActiveForStage(j->id) == 1);
         RigExecImaging_DeactivateForStage(j->id);
         _Close(j);
@@ -1424,8 +1459,7 @@ TestMultiStage(const std::string &examplesDir)
               statesQ[2] == statesQ0[2]);
 
         // P's clear drops P's frames only.
-        CHECK(RigExecImaging_ClearFrameCacheForStage(p->id, "/Asset/Rig")
-              == 0);
+        CHECK(RigExecImaging_ClearFrameCacheForStage(p->id, "/Asset/Rig") == 0);
         CHECK(RigExecImaging_GetFrameStatesForStage(
                   p->id, "/Asset/Rig", frames.data(), states, 3) == 3);
         CHECK(states[0] == 0 && states[1] == 0 && states[2] == 0);
@@ -1440,12 +1474,10 @@ TestMultiStage(const std::string &examplesDir)
         const RigExecBackgroundSchedulerStats retired =
             contextP->GetBackgroundStats();
         CHECK(retired.queuedDepth == 0 && retired.running == 0);
-        CHECK(RigExecImaging_GetWarmingCompletedCountForStage(p->id) ==
-              warmed);
+        CHECK(RigExecImaging_GetWarmingCompletedCountForStage(p->id) == warmed);
         // ...and a re-activation counts on from there.
         CHECK(RigExecImaging_ActivateForStage(p->id, "", 2.0) == 0);
-        CHECK(RigExecImaging_GetWarmingCompletedCountForStage(p->id) >=
-              warmed);
+        CHECK(RigExecImaging_GetWarmingCompletedCountForStage(p->id) >= warmed);
         CHECK(RigExecImaging_OnEditCommittedForStage(p->id) == 0);
         contextP->WaitUntilBackgroundIdle();
         if (_WarmingRuns()) {
@@ -1470,8 +1502,8 @@ TestMultiStage(const std::string &examplesDir)
             const int faces = RigExecTouchPose_GetFaceCount(handle);
             CHECK(faces > 0);
             std::vector<int32_t> regions(size_t(std::max(faces, 0)), 0);
-            CHECK(RigExecTouchPose_SetFaceRegions(
-                      handle, regions.data(), faces, 1) >= 0);
+            CHECK(RigExecTouchPose_SetFaceRegions(handle, regions.data(), faces,
+                                                  1) >= 0);
             CHECK(RigExecTouchPose_SetHighlightEnabled(handle, 1) == 0);
             CHECK(_HasTouchPrimvar(a->Terminal(), kBarrel));
             CHECK(!_HasTouchPrimvar(b->Terminal(), kBarrel));
@@ -1489,7 +1521,7 @@ TestMultiStage(const std::string &examplesDir)
     _Close(c);
 }
 
-}  // namespace
+} // namespace
 
 int
 main(int argc, char **argv)
@@ -1503,8 +1535,7 @@ main(int argc, char **argv)
     const std::string examplesDir = argv[1];
     const std::string resources = _SchemaResourceDir(examplesDir);
     if (PlugRegistry::GetInstance().RegisterPlugins(resources).empty()) {
-        std::printf("FATAL: no schema plugin found at %s\n",
-                    resources.c_str());
+        std::printf("FATAL: no schema plugin found at %s\n", resources.c_str());
         return 2;
     }
     // The rig adapter's keyless registration and the scene-index plugins,
@@ -1514,8 +1545,7 @@ main(int argc, char **argv)
         std::printf("FATAL: the build did not provide the imaging plugInfo\n");
         return 2;
     }
-    if (PlugRegistry::GetInstance().RegisterPlugins(
-            imagingResources).empty()) {
+    if (PlugRegistry::GetInstance().RegisterPlugins(imagingResources).empty()) {
         std::printf("FATAL: no imaging plugin found at %s\n",
                     imagingResources.c_str());
         return 2;

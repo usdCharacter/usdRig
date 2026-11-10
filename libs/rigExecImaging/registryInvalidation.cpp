@@ -135,9 +135,6 @@ RigExecImagingRegistry::_RefreshReadRoots()
 RigExecFrameGeneration
 RigExecImagingRegistry::CurrentFrameGeneration(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->CurrentFrameGeneration(rig);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     if (_sessions.empty() || !_scheduler) {
         return 0;
@@ -153,9 +150,6 @@ RigExecImagingRegistry::CurrentFrameGeneration(const SdfPath &rig)
 RigExecWarmFenceToken
 RigExecImagingRegistry::CurrentFenceToken(const SdfPath &rig, UsdTimeCode time)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->CurrentFenceToken(rig, time);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     if (_sessions.empty() || !_scheduler) {
         return 0;
@@ -430,10 +424,6 @@ RigExecImagingRegistry::_RetireAffectedTimesLocked(
 void
 RigExecImagingRegistry::CancelFrameGeneration(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->CancelFrameGeneration(rig);
-        return;
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     _CancelGenerationLocked(rig);
 }

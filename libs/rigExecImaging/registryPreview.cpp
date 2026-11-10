@@ -74,25 +74,6 @@ RigExecImagingRegistry::_PreviewStageLocked() const
 bool
 RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
 {
-    if (_legacyHandle) {
-        // The legacy selection is remembered on the handle whatever it
-        // routes to -- the old singleton's viewer mode outlived every
-        // activation, so the next legacy activation carries it (see
-        // _LegacyActivate) -- and applied to the current context now.
-        SdfPath resolved;
-        if (!_ParseOverlayPath(weightPrimPath, &resolved)) {
-            return false;
-        }
-        {
-            std::lock_guard<std::mutex> lock(_mutex);
-            _weightOverlay = resolved;
-            _legacyOverlaySet = true;
-        }
-        if (const Ptr routed = _Routed()) {
-            return routed->SetWeightOverlay(weightPrimPath);
-        }
-        return true;
-    }
     UsdTimeCode time;
     // Fenced cancel-THEN-clear like ClearFrameCache: the fence
     // is outermost, so it is taken before the registry lock below and held
@@ -112,7 +93,7 @@ RigExecImagingRegistry::SetWeightOverlay(const std::string &weightPrimPath)
         std::lock_guard<std::mutex> lock(_mutex);
         // An arbitrary caller-supplied string reaches SdfPath here and its
         // constructor is loud about a malformed one. Ask first -- the same
-        // guard RigExecImaging_GetGuideBoundsAssetSpace uses.
+        // guard RigExecImaging_GetGuideBoundsAssetSpaceForStage uses.
         SdfPath resolved;
         if (!_ParseOverlayPath(weightPrimPath, &resolved)) {
             return false;
@@ -375,9 +356,6 @@ _SplitLines(const std::string &packed)
 int
 RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->BeginPreview(packedAttributePaths);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     // The active stage, else the one this context belongs to: a stage with
     // no rig still previews its Xforms, through this context's chains only.
@@ -455,9 +433,6 @@ RigExecImagingRegistry::BeginPreview(const std::string &packedAttributePaths)
 bool
 RigExecImagingRegistry::IsPreviewActive() const
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->IsPreviewActive();
-    }
     return _previewActive;
 }
 
@@ -580,9 +555,6 @@ RigExecImagingRegistry::_SetChainXformDeltas(
 bool
 RigExecImagingRegistry::UpdatePreview(const double *values, size_t count)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->UpdatePreview(values, count);
-    }
     UsdTimeCode time;
     bool needsRigPublish = false;
     {
@@ -633,9 +605,6 @@ RigExecImagingRegistry::UpdatePreview(const double *values, size_t count)
 bool
 RigExecImagingRegistry::EndPreview(bool publish)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->EndPreview(publish);
-    }
     UsdTimeCode time;
     bool hadRigOverrides = false;
     {

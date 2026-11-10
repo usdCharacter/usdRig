@@ -30,10 +30,6 @@ namespace rigExec {
 void
 RigExecImagingRegistry::RefreshFrameCacheSettings()
 {
-    if (const Ptr routed = _Routed()) {
-        routed->RefreshFrameCacheSettings();
-        return;
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     for (RigSession &session : _sessions) {
         if (session.bridge) {
@@ -45,10 +41,6 @@ RigExecImagingRegistry::RefreshFrameCacheSettings()
 void
 RigExecImagingRegistry::ClearFrameCache(const SdfPath &rig)
 {
-    if (const Ptr routed = _Routed()) {
-        routed->ClearFrameCache(rig);
-        return;
-    }
     // The fence is outermost: read the scheduler under a short lock, then
     // hold the fence across the whole cancel-THEN-clear below. Lock order
     // fence, then registry, then scheduler, then cache shards, then the
@@ -96,9 +88,6 @@ bool
 RigExecImagingRegistry::SetWarmRange(const SdfPath &rig,
                                      const std::vector<double> &frames)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->SetWarmRange(rig, frames);
-    }
     bool found = false;
     bool repull = false;
     {
@@ -163,9 +152,6 @@ std::vector<RigExecWarmFrameState>
 RigExecImagingRegistry::GetFrameStates(const SdfPath &rig,
                                        const std::vector<double> &frames)
 {
-    if (const Ptr routed = _Routed()) {
-        return routed->GetFrameStates(rig, frames);
-    }
     std::lock_guard<std::mutex> lock(_mutex);
     if (rig.IsEmpty() || frames.empty() || frames.size() > 100000) {
         return {};

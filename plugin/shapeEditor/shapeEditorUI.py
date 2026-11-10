@@ -32,19 +32,28 @@ _NEUTRAL = QtGui.QColor(120, 125, 135)
 
 
 def _Imaging():
-    """The imaging library publishing the viewport snapshot."""
+    """
+    The imaging library, bound to its stage-scoped surface.
+
+    Reads go through the per-stage handle of _StageHandle, so nothing
+    here names a stage-less symbol. BindLibrary signs every scoped
+    symbol the library exports; a library missing the required ones is
+    reported and answers None -- the panel keeps its rest weights with
+    the reason in the log, rather than dying silently on a lookup that
+    could never work.
+    """
     try:
         from rigExecUsdview import ImagingLibraryPath
+    except ImportError:
+        return None     # no rigExecUsdview on the path: no imaging, as before
+    try:
         lib = ctypes.CDLL(ImagingLibraryPath())
-        lib.RigExecImaging_GetGeneration.restype = ctypes.c_longlong
-        try:
-            lib.RigExecImaging_GetMovedFloats.argtypes = [
-                ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int]
-            lib.RigExecImaging_GetMovedFloats.restype = ctypes.c_int
-        except AttributeError:
-            pass
+        import imagingHandle
+        imagingHandle.BindLibrary(lib)
         return lib
-    except Exception:
+    except (ImportError, OSError, AttributeError) as error:
+        Tf.Warn("shapeEditor: rigExecImaging unusable (%s); published "
+                "weights are unavailable." % error)
         return None
 
 

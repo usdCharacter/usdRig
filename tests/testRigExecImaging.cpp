@@ -3273,14 +3273,16 @@ TestExampleControlGuides(const std::string &examplesDir)
 static void
 TestMultiRigAtomicActivation(const std::string &examplesDir)
 {
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
-    registry.Deactivate();
-
     // Two independent references exercise different character roots while
     // keeping the fixture small and identical to the single-rig goldens.
     UsdStageRefPtr stage = UsdStage::CreateInMemory();
     CHECK(stage);
     if (!stage)
+        return;
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
         return;
     const std::string asset = TfAbsPath(examplesDir + "/ArmRig.usda");
     const UsdPrim armA = stage->DefinePrim(SdfPath("/ArmA"), TfToken("Xform"));
@@ -3297,14 +3299,14 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
               .Set(0.0));
 
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, SdfPath(), UsdTimeCode(1001.0), &errors));
+    CHECK(registry->Activate(stage, SdfPath(), UsdTimeCode(1001.0), &errors));
     for (const std::string &error : errors) {
         std::printf("  multi-rig activation: %s\n", error.c_str());
     }
-    RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
+    RigExecImagingSnapshotConstPtr snapshot = registry->GetStore()->Get();
     CHECK(snapshot);
     if (!snapshot) {
-        registry.Deactivate();
+        registry->Deactivate();
         return;
     }
     CHECK(snapshot->Describes(stage, UsdTimeCode(1001.0)));
@@ -3322,14 +3324,17 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     if (guideB != snapshot->prims.end()) {
         CHECK(guideB->second.assetRoot == SdfPath("/ArmB"));
     }
+    const UsdStageCache::Id stageId = UsdUtilsStageCache::Get().Insert(stage);
     double bounds[6];
-    CHECK(RigExecImaging_GetGuideBoundsAssetSpace(
-              "/ArmA/Rig/Controls/ShoulderFK", bounds) == 1);
-    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(bounds) == 0);
+    CHECK(RigExecImaging_GetGuideBoundsAssetSpaceForStage(
+              stageId.ToLongInt(), "/ArmA/Rig/Controls/ShoulderFK", bounds) ==
+          1);
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(
+              stageId.ToLongInt(), bounds) == 0);
 
     const uint64_t generation = snapshot->generation;
-    CHECK(registry.SetTime(UsdTimeCode(1024.0)));
-    snapshot = registry.GetStore()->Get();
+    CHECK(registry->SetTime(UsdTimeCode(1024.0)));
+    snapshot = registry->GetStore()->Get();
     CHECK(snapshot && snapshot->generation == generation + 1);
     CHECK(snapshot &&
           snapshot->prims.count(SdfPath("/ArmA/Geom/ArmBody")) != 0);
@@ -3339,34 +3344,35 @@ TestMultiRigAtomicActivation(const std::string &examplesDir)
     // Same-frame edits evaluate only the affected character session; the
     // atomic combined publication reuses the other character's snapshot.
     const SdfPath rigA("/ArmA/Rig"), rigB("/ArmB/Rig");
-    const size_t pullsA = registry.GetSessionEvaluationCount(rigA);
-    const size_t pullsB = registry.GetSessionEvaluationCount(rigB);
+    const size_t pullsA = registry->GetSessionEvaluationCount(rigA);
+    const size_t pullsB = registry->GetSessionEvaluationCount(rigB);
     CHECK(stage
               ->GetAttributeAtPath(
                   SdfPath("/ArmA/Rig/Controls/ShoulderFK.avars:tx"))
               .Set(1.0));
-    CHECK(registry.GetSessionEvaluationCount(rigA) == pullsA + 1);
-    CHECK(registry.GetSessionEvaluationCount(rigB) == pullsB);
-    CHECK(registry.SetTime(UsdTimeCode(1024.0)));
-    CHECK(registry.GetSessionEvaluationCount(rigA) == pullsA + 1);
-    CHECK(registry.GetSessionEvaluationCount(rigB) == pullsB);
-    CHECK(registry.SetTime(UsdTimeCode(1025.0)));
-    CHECK(registry.GetSessionEvaluationCount(rigA) == pullsA + 2);
-    CHECK(registry.GetSessionEvaluationCount(rigB) == pullsB + 1);
-    snapshot = registry.GetStore()->Get();
+    CHECK(registry->GetSessionEvaluationCount(rigA) == pullsA + 1);
+    CHECK(registry->GetSessionEvaluationCount(rigB) == pullsB);
+    CHECK(registry->SetTime(UsdTimeCode(1024.0)));
+    CHECK(registry->GetSessionEvaluationCount(rigA) == pullsA + 1);
+    CHECK(registry->GetSessionEvaluationCount(rigB) == pullsB);
+    CHECK(registry->SetTime(UsdTimeCode(1025.0)));
+    CHECK(registry->GetSessionEvaluationCount(rigA) == pullsA + 2);
+    CHECK(registry->GetSessionEvaluationCount(rigB) == pullsB + 1);
+    snapshot = registry->GetStore()->Get();
 
     // A replacement that cannot compile/evaluate must not tear down or
     // overwrite the coherent stage that is already active.
     const RigExecImagingSnapshotConstPtr beforeFailure = snapshot;
     const UsdStageRefPtr noRig = UsdStage::CreateInMemory();
     errors.clear();
-    CHECK(!registry.Activate(noRig, SdfPath(), UsdTimeCode(1.0), &errors));
+    CHECK(!registry->Activate(noRig, SdfPath(), UsdTimeCode(1.0), &errors));
     CHECK(!errors.empty());
-    CHECK(registry.IsActive());
-    CHECK(registry.GetStore()->Get() == beforeFailure);
+    CHECK(registry->IsActive());
+    CHECK(registry->GetStore()->Get() == beforeFailure);
 
-    registry.Deactivate();
-    CHECK(!registry.GetStore()->Get());
+    registry->Deactivate();
+    CHECK(!registry->GetStore()->Get());
+    UsdUtilsStageCache::Get().Erase(stageId);
 }
 
 static void
@@ -3376,17 +3382,21 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
     CHECK(stage);
     if (!stage)
         return;
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(stage, SdfPath("/ArmAsset/Rig"),
-                                             UsdTimeCode(1.0), &errors);
+    const bool activated = registry->Activate(stage, SdfPath("/ArmAsset/Rig"),
+                                              UsdTimeCode(1.0), &errors);
     for (const std::string &e : errors) {
         std::printf("activate error: %s\n", e.c_str());
     }
     CHECK(activated);
     if (!activated)
         return;
-    const uint64_t generation0 = registry.GetStore()->Get()->generation;
+    const uint64_t generation0 = registry->GetStore()->Get()->generation;
 
     // A value edit on a solver input that factors into the final frame
     // republishes without any timeline change.
@@ -3394,7 +3404,7 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
         ->GetAttributeAtPath(
             SdfPath("/ArmAsset/Rig/Solvers/IKFKBlend.inputs:weight"))
         .Set(0.75f);
-    RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
+    RigExecImagingSnapshotConstPtr snapshot = registry->GetStore()->Get();
     CHECK(snapshot && snapshot->generation > generation0);
 
     // A joint guide-styling edit republishes too.
@@ -3402,7 +3412,7 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
     stage->GetPrimAtPath(SdfPath("/ArmAsset/Rig/Joints/Shoulder/Elbow/Wrist"))
         .GetAttribute(TfToken("guide:radius"))
         .Set(0.75);
-    snapshot = registry.GetStore()->Get();
+    snapshot = registry->GetStore()->Get();
     CHECK(snapshot && snapshot->generation > generation1);
 
     // ...as does a control guide edit, which is how an animator retyping a
@@ -3413,7 +3423,7 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
     CHECK(stage->GetPrimAtPath(shoulderFk)
               .GetAttribute(TfToken("guide:shape"))
               .Set(TfToken("pyramid")));
-    snapshot = registry.GetStore()->Get();
+    snapshot = registry->GetStore()->Get();
     CHECK(snapshot && snapshot->generation > generationGuide);
     if (snapshot) {
         const auto it = snapshot->prims.find(shoulderFk);
@@ -3430,10 +3440,10 @@ TestEditTriggeredReevaluation(const std::string &examplesDir)
     stage->GetPrimAtPath(SdfPath("/Elsewhere"))
         .CreateAttribute(TfToken("unrelated"), SdfValueTypeNames->Float)
         .Set(1.0f);
-    snapshot = registry.GetStore()->Get();
+    snapshot = registry->GetStore()->Get();
     CHECK(snapshot && snapshot->generation == generation2);
 
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 class _TestMotionMatrix final : public HdTypedSampledDataSource<GfMatrix4d> {
@@ -4105,8 +4115,6 @@ def Xform "Asset" {
 static void
 TestFailedActivationKeepsLiveNoticeOrdering()
 {
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
-    registry.Deactivate();
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
     const SdfPath rigPath("/Asset/Rig");
@@ -4118,13 +4126,18 @@ TestFailedActivationKeepsLiveNoticeOrdering()
     CHECK(tx && tx.Set(0.0));
     CHECK(control.GetAttribute(TfToken("avars:sx")).Set(3.0));
     const auto stageId = UsdUtilsStageCache::Get().Insert(stage);
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
 
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(1.0), &errors));
-    const RigExecImagingSnapshotConstPtr before = registry.GetStore()->Get();
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(1.0), &errors));
+    const RigExecImagingSnapshotConstPtr before = registry->GetStore()->Get();
     CHECK(before);
     if (!before) {
-        registry.Deactivate();
+        registry->Deactivate();
         return;
     }
     double fullFrame[16];
@@ -4147,14 +4160,14 @@ TestFailedActivationKeepsLiveNoticeOrdering()
     // An explicit invalid path reaches the rollback after its candidate
     // notice registration; an empty stage without a rig returns earlier.
     const UsdStageRefPtr replacement = UsdStage::CreateInMemory();
-    CHECK(!registry.Activate(replacement, SdfPath("/MissingRig"),
-                             UsdTimeCode(1.0), &errors));
-    CHECK(registry.GetStore()->Get() == before);
-    CHECK(registry.IsActive());
+    CHECK(!registry->Activate(replacement, SdfPath("/MissingRig"),
+                              UsdTimeCode(1.0), &errors));
+    CHECK(registry->GetStore()->Get() == before);
+    CHECK(registry->IsActive());
     for (double value : {3.0, 7.0}) {
         CHECK(tx.Set(value));
         const RigExecImagingSnapshotConstPtr snapshot =
-            registry.GetStore()->Get();
+            registry->GetStore()->Get();
         CHECK(snapshot && snapshot->generation > before->generation);
         if (!snapshot)
             continue;
@@ -4167,19 +4180,22 @@ TestFailedActivationKeepsLiveNoticeOrdering()
                          value) < 1e-9);
         }
     }
-    registry.Deactivate();
+    registry->Deactivate();
     UsdUtilsStageCache::Get().Erase(stageId);
 }
 
 static void
 TestExternalReadEditsRepublish()
 {
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
-    registry.Deactivate();
     const UsdStageRefPtr stage = UsdStage::CreateInMemory();
     stage->DefinePrim(SdfPath("/Asset"), TfToken("Xform"));
     const SdfPath rigPath("/Asset/Rig");
     stage->DefinePrim(rigPath, TfToken("RigExecRoot"));
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     const UsdPrim mesh =
         stage->DefinePrim(SdfPath("/Asset/Geom"), TfToken("Points"));
     CHECK(mesh.GetAttribute(TfToken("points")).Set(VtVec3fArray{GfVec3f(0)}));
@@ -4203,10 +4219,10 @@ TestExternalReadEditsRepublish()
     CHECK(mover.GetRelationship(TfToken("rigExec:transform"))
               .SetTargets({driver.GetPath()}));
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(1), &errors));
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(1), &errors));
     const auto expect = [&](float x) {
         const RigExecImagingSnapshotConstPtr snapshot =
-            registry.GetStore()->Get();
+            registry->GetStore()->Get();
         CHECK(snapshot);
         if (!snapshot)
             return;
@@ -4231,10 +4247,10 @@ TestExternalReadEditsRepublish()
     CHECK(tx.ClearConnections());
     expect(5.0f);
     const RigExecImagingSnapshotConstPtr disconnected =
-        registry.GetStore()->Get();
+        registry->GetStore()->Get();
     CHECK(source.Set(11.0));
-    CHECK(registry.GetStore()->Get() == disconnected);
-    registry.Deactivate();
+    CHECK(registry->GetStore()->Get() == disconnected);
+    registry->Deactivate();
 }
 
 // A constraint-driven Xform reaches the snapshot as a transform, and it
@@ -4422,10 +4438,14 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
         return;
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(stage, SdfPath("/TurretAsset/Rig"),
-                                             UsdTimeCode(1024), &errors);
+    const bool activated = registry->Activate(
+        stage, SdfPath("/TurretAsset/Rig"), UsdTimeCode(1024), &errors);
     for (const std::string &e : errors) {
         std::printf("  activate error: %s\n", e.c_str());
     }
@@ -4433,7 +4453,7 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
     if (!activated)
         return;
 
-    RigExecImagingSnapshotConstPtr snapshot = registry.GetStore()->Get();
+    RigExecImagingSnapshotConstPtr snapshot = registry->GetStore()->Get();
     CHECK(snapshot != nullptr);
     CHECK(snapshot && snapshot->prims.count(turret) &&
           snapshot->prims.at(turret).hasXform);
@@ -4444,7 +4464,7 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
         .GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({});
 
-    snapshot = registry.GetStore()->Get();
+    snapshot = registry->GetStore()->Get();
     const bool stillDriven = snapshot && snapshot->prims.count(turret) &&
                              snapshot->prims.at(turret).hasXform;
     if (stillDriven) {
@@ -4459,7 +4479,7 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
         .GetRelationship(TfToken("rigExec:moves"))
         .SetTargets({turret});
 
-    snapshot = registry.GetStore()->Get();
+    snapshot = registry->GetStore()->Get();
     const bool drivenAgain = snapshot && snapshot->prims.count(turret) &&
                              snapshot->prims.at(turret).hasXform;
     if (!drivenAgain) {
@@ -4468,7 +4488,7 @@ TestRelationshipEditTriggersReevaluation(const std::string &examplesDir)
     }
     CHECK(drivenAgain);
 
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 static void
@@ -5052,12 +5072,24 @@ TestDrivenXformConditioning()
 static void
 TestGuideBoundsExport()
 {
-    // Publishing straight into the process-global store the export reads.
-    // Deactivating first so a bridge left over from an earlier test cannot
-    // republish over the fixture and make this order-dependent.
-    RigExecImaging_Deactivate();
+    // Publishing straight into one stage's context store, which the
+    // stage-scoped export reads for that stage's cache id. A fresh stage
+    // owns a fresh context, so nothing an earlier test left can republish
+    // over the fixture.
+    const UsdStageRefPtr fixtureStage = UsdStage::CreateInMemory();
+    fixtureStage->DefinePrim(SdfPath("/R"), TfToken("Scope"));
+    const UsdStageCache::Id fixtureId =
+        UsdUtilsStageCache::Get().Insert(fixtureStage);
+    const RigExecImagingRegistry::Ptr fixtureContext =
+        RigExecImagingRegistry::ForStage(fixtureStage, /* create = */ true);
+    CHECK(fixtureContext);
+    if (!fixtureContext) {
+        UsdUtilsStageCache::Get().Erase(fixtureId);
+        return;
+    }
     const std::shared_ptr<RigExecSnapshotStore> &store =
-        RigExecImagingRegistry::GetInstance().GetStore();
+        fixtureContext->GetStore();
+    const long long fixtureCacheId = fixtureId.ToLongInt();
 
     const SdfPath joint("/R/Joint");
     const SdfPath control("/R/Ctrl");
@@ -5111,9 +5143,9 @@ TestGuideBoundsExport()
     store->Publish(snapshot);
 
     double b[6] = {0, 0, 0, 0, 0, 0};
-    auto bounds = [&b](const SdfPath &path) {
-        return RigExecImaging_GetGuideBoundsAssetSpace(path.GetString().c_str(),
-                                                       b);
+    auto bounds = [&b, fixtureCacheId](const SdfPath &path) {
+        return RigExecImaging_GetGuideBoundsAssetSpaceForStage(
+            fixtureCacheId, path.GetString().c_str(), b);
     };
     auto matches = [&b](const GfVec3d &min, const GfVec3d &max) {
         for (size_t i = 0; i < 3; ++i) {
@@ -5143,11 +5175,14 @@ TestGuideBoundsExport()
     // which would frame the camera on empty space.
     CHECK(bounds(silent) == 0);
     CHECK(bounds(SdfPath("/R/Absent")) == 0);
-    CHECK(RigExecImaging_GetGuideBoundsAssetSpace("not a path", b) == 0);
-    CHECK(RigExecImaging_GetGuideBoundsAssetSpace(nullptr, b) == 0);
+    CHECK(RigExecImaging_GetGuideBoundsAssetSpaceForStage(
+              fixtureCacheId, "not a path", b) == 0);
+    CHECK(RigExecImaging_GetGuideBoundsAssetSpaceForStage(fixtureCacheId,
+                                                          nullptr, b) == 0);
 
     // The whole-rig union, which is what framing the RigExecRoot uses.
-    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(b) == 1);
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(fixtureCacheId,
+                                                             b) == 1);
     CHECK(matches(GfVec3d(-3, -2, -4), GfVec3d(16, 8, 4)));
 
     // Imported shapes have arbitrary local vertices, including asymmetric
@@ -5236,7 +5271,8 @@ TestGuideBoundsExport()
 
     // The all-guides path is unchanged by the rejected prims...
     double before[6] = {0, 0, 0, 0, 0, 0};
-    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(before) == 1);
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(fixtureCacheId,
+                                                             before) == 1);
 
     // ...and rejection is per element: a representable element beside a
     // rejected one yields exactly its own box on both API paths.
@@ -5256,7 +5292,8 @@ TestGuideBoundsExport()
     store->Publish(snapshot);
     CHECK(bounds(mixed) == 1);
     CHECK(matches(GfVec3d(-1, -1, -1), GfVec3d(1, 1, 1)));
-    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(b) == 1);
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(fixtureCacheId,
+                                                             b) == 1);
     bool unchanged = true;
     for (size_t i = 0; i < 6; ++i) {
         unchanged = unchanged && b[i] == before[i];
@@ -5265,8 +5302,10 @@ TestGuideBoundsExport()
 
     // An empty generation draws nothing at all.
     store->Publish(nullptr);
-    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(b) == 0);
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpaceForStage(fixtureCacheId,
+                                                             b) == 0);
     CHECK(bounds(joint) == 0);
+    UsdUtilsStageCache::Get().Erase(fixtureId);
 }
 
 static void
@@ -5600,12 +5639,16 @@ TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
     if (!boundable)
         return;
 
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     std::vector<std::string> errors;
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(1024), &errors));
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(1024), &errors));
     VtVec3fArray before;
     CHECK(boundable.ComputeExtent(UsdTimeCode(1024), &before));
-    registry.Deactivate();
+    registry->Deactivate();
 
     // Reparent nothing: put the op on the Controls scope's own Xform-able
     // ancestor by making one. The rig root stays where it is, so the asset
@@ -5617,10 +5660,10 @@ TestInterveningXformLeavesTheLocalExtentAlone(const std::string &examplesDir)
     intervening.AddTranslateOp().Set(GfVec3d(0, 13, 0));
 
     errors.clear();
-    CHECK(registry.Activate(stage, rigPath, UsdTimeCode(1024), &errors));
+    CHECK(registry->Activate(stage, rigPath, UsdTimeCode(1024), &errors));
     VtVec3fArray after;
     CHECK(boundable.ComputeExtent(UsdTimeCode(1024), &after));
-    registry.Deactivate();
+    registry->Deactivate();
 
     CHECK(before.size() == 2 && after.size() == 2);
     if (before.size() == 2 && after.size() == 2) {
@@ -5659,17 +5702,21 @@ TestSnapshotBackedExtent(const std::string &examplesDir)
     };
 
     // Nothing activated: the rest fallback answers, from authored data.
-    RigExecImaging_Deactivate();
+    // This fresh stage owns a fresh context, so its store holds nothing.
     VtVec3fArray rest;
     CHECK(extentAt(1024, &rest));
     CHECK(rest.size() == 2);
 
     // Now publish a real generation. Frame 1024 rotates the tail, so the
     // control's posed frame is not its rest frame.
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(stage, SdfPath("/TailAsset/Rig"),
-                                             UsdTimeCode(1024), &errors);
+    const bool activated = registry->Activate(stage, SdfPath("/TailAsset/Rig"),
+                                              UsdTimeCode(1024), &errors);
     CHECK(activated);
     if (!activated)
         return;
@@ -5687,14 +5734,15 @@ TestSnapshotBackedExtent(const std::string &examplesDir)
         }
         CHECK(moved);
     }
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 // The extent callback is a PURE FUNCTION of (stage, time).
-// The snapshot store is a process-global singleton and USD calls this
-// callback with a stage and a time of its own choosing, so a lookup by
-// path alone answers a query about one stage/frame with another's pose --
-// plausible, wrong, and invisible downstream. Both halves are pinned here.
+// Each consulted generation belongs to one stage's imaging context, and
+// USD calls this callback with a stage and a time of its own choosing, so
+// a lookup by path alone answers a query about one stage/frame with
+// another's pose -- plausible, wrong, and invisible downstream. Both
+// halves are pinned here.
 // Also pins the documented CACHING contract. UsdGeomBBoxCache caches a
 // plugin-computed extent as constant: nothing about it is time-varying,
 // because RigExec authors no extent attribute (and must not -- see
@@ -5721,13 +5769,17 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
                    : GfVec3d(1e9);
     };
 
-    RigExecImaging_Deactivate();
+    // A fresh stage owns a fresh context: no generation stands to answer.
     const GfVec3d rest = extent(boundable, 1024);
 
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+    CHECK(registry);
+    if (!registry)
+        return;
     std::vector<std::string> errors;
-    const bool activated = registry.Activate(stage, SdfPath("/TailAsset/Rig"),
-                                             UsdTimeCode(1024), &errors);
+    const bool activated = registry->Activate(stage, SdfPath("/TailAsset/Rig"),
+                                              UsdTimeCode(1024), &errors);
     CHECK(activated);
     if (!activated)
         return;
@@ -5784,7 +5836,7 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
         const GfRange3d atPosed =
             longLived.ComputeWorldBound(stage->GetPrimAtPath(control))
                 .ComputeAlignedRange();
-        registry.SetTime(UsdTimeCode(1001));
+        registry->SetTime(UsdTimeCode(1001));
         longLived.SetTime(UsdTimeCode(1001));
         const GfRange3d afterSetTime =
             longLived.ComputeWorldBound(stage->GetPrimAtPath(control))
@@ -5803,7 +5855,7 @@ TestExtentIsPureFunctionOfStageAndTime(const std::string &examplesDir)
         CHECK(afterSetTime.GetMin() == atPosed.GetMin());
         CHECK(freshRange.GetMin() != atPosed.GetMin());
     }
-    registry.Deactivate();
+    registry->Deactivate();
 }
 
 // One extent carries ONE purpose: a descendant whose resolved
@@ -5835,7 +5887,8 @@ TestPurposeScopedBounds(const std::string &examplesDir)
 
     // The joint's guide-purpose bound must not swallow it: at y=60 the
     // control is nowhere near the joint chain, so inclusion is obvious.
-    RigExecImaging_Deactivate();
+    // A fresh stage owns a fresh imaging context, so no generation of an
+    // earlier activation can answer here.
     UsdGeomBBoxCache guideOnly(UsdTimeCode(1001), {UsdGeomTokens->guide});
     const GfRange3d jointRange =
         guideOnly.ComputeWorldBound(stage->GetPrimAtPath(joint))
@@ -6049,10 +6102,10 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
         return;
     }
 
-    // Isolated from whatever earlier tests published: the store is cleared,
-    // and the per-session evaluation count below starts from each new
-    // session's own zero, so earlier publications cannot move these asserts.
-    RigExecImaging_Deactivate();
+    // Isolation comes from the stage: this freshly opened stage owns a
+    // fresh imaging context, its store starts empty, and the per-session
+    // evaluation count below starts from this session's own zero, so
+    // earlier publications cannot move these asserts.
 
     // The REAL chain, exactly as usdview/usdrecord build it: the RigExec
     // scene index plugin inserts itself, and the rig adapter discovers the
@@ -6068,11 +6121,22 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
     }
 
     // Populate alone activated the rig and evaluated it exactly once: one
-    // generation, no pulls, no SetTime.
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
-    const long long genPopulate = RigExecImaging_GetGeneration();
+    // generation, no pulls, no SetTime. The chain's own activation created
+    // this stage's context; read that context directly.
+    const RigExecImagingRegistry::Ptr registry =
+        RigExecImagingRegistry::ForStage(stage, /* create = */ false);
+    CHECK(registry);
+    if (!registry) {
+        return;
+    }
+    const auto generation = [&registry]() {
+        const RigExecImagingSnapshotConstPtr snapshot =
+            registry->GetStore()->Get();
+        return snapshot ? static_cast<long long>(snapshot->generation) : 0LL;
+    };
+    const long long genPopulate = generation();
     CHECK(genPopulate > 0);
-    CHECK(registry.GetSessionEvaluationCount(rigPath) == 1);
+    CHECK(registry->GetSessionEvaluationCount(rigPath) == 1);
 
     const SdfPath turret("/TurretAsset/Geom/Turret");
     auto worldOf = [&](const SdfPath &p) {
@@ -6086,14 +6150,14 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
 
     // SetTime alone drives one fresh evaluated generation per frame...
     sceneIndices.stageSceneIndex->SetTime(UsdTimeCode(1001));
-    CHECK(RigExecImaging_GetGeneration() == genPopulate + 1);
-    CHECK(registry.GetSessionEvaluationCount(rigPath) == 2);
+    CHECK(generation() == genPopulate + 1);
+    CHECK(registry->GetSessionEvaluationCount(rigPath) == 2);
     const GfMatrix4d at1001 = worldOf(turret);
     observer.dirtied.clear();
     observer.dirtiedLocators.clear();
     sceneIndices.stageSceneIndex->SetTime(UsdTimeCode(1024));
-    CHECK(RigExecImaging_GetGeneration() == genPopulate + 2);
-    CHECK(registry.GetSessionEvaluationCount(rigPath) == 3);
+    CHECK(generation() == genPopulate + 2);
+    CHECK(registry->GetSessionEvaluationCount(rigPath) == 3);
     const GfMatrix4d at1024 = worldOf(turret);
     CHECK(at1001 != at1024);
 
@@ -6110,19 +6174,19 @@ TestSetTimeDrivenEvaluation(const std::string &examplesDir)
     // ...and identical to the explicit path: the same frames driven through
     // the C entry point publish the same values, and re-driving an already
     // published frame is free through the redundant-call guard.
-    CHECK(RigExecImaging_SetTime(1001.0) == 0);
+    CHECK(registry->SetTime(UsdTimeCode(1001.0)));
     CHECK(worldOf(turret) == at1001);
-    CHECK(RigExecImaging_SetTime(1024.0) == 0);
+    CHECK(registry->SetTime(UsdTimeCode(1024.0)));
     CHECK(worldOf(turret) == at1024);
-    const long long genExplicit = RigExecImaging_GetGeneration();
-    const size_t countExplicit = registry.GetSessionEvaluationCount(rigPath);
+    const long long genExplicit = generation();
+    const size_t countExplicit = registry->GetSessionEvaluationCount(rigPath);
     sceneIndices.stageSceneIndex->SetTime(UsdTimeCode(1024));
-    CHECK(RigExecImaging_GetGeneration() == genExplicit);
-    CHECK(registry.GetSessionEvaluationCount(rigPath) == countExplicit);
+    CHECK(generation() == genExplicit);
+    CHECK(registry->GetSessionEvaluationCount(rigPath) == countExplicit);
     CHECK(worldOf(turret) == at1024);
 
     terminal->RemoveObserver(HdSceneIndexObserverPtr(&observer));
-    RigExecImaging_Deactivate();
+    registry->Deactivate();
 }
 
 // A policy-carrying rig activates without taking the registry down, and
@@ -6140,23 +6204,28 @@ TestPolicyRigActivationSurvivesItsOwnDerivation(const std::string &examplesDir)
         "/biped/Biped.usda",
         "/biped/Biped_body.usda",
     };
-    RigExecImagingRegistry &registry = RigExecImagingRegistry::GetInstance();
     for (const char *file : files) {
         UsdStageRefPtr stage = UsdStage::Open(examplesDir + file);
         CHECK(stage);
         if (!stage) {
             continue;
         }
+        const RigExecImagingRegistry::Ptr registry =
+            RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+        CHECK(registry);
+        if (!registry) {
+            continue;
+        }
         std::vector<std::string> errors;
-        CHECK(registry.Activate(stage, SdfPath("/Biped/Rig"), UsdTimeCode(1.0),
-                                &errors));
-        CHECK(registry.GetStore()->Get());
-        CHECK(registry.SetTime(UsdTimeCode(2.0)));
-        CHECK(registry.GetStore()->Get());
+        CHECK(registry->Activate(stage, SdfPath("/Biped/Rig"), UsdTimeCode(1.0),
+                                 &errors));
+        CHECK(registry->GetStore()->Get());
+        CHECK(registry->SetTime(UsdTimeCode(2.0)));
+        CHECK(registry->GetStore()->Get());
         std::string session;
         CHECK(stage->GetSessionLayer()->ExportToString(&session));
         CHECK(session.find("rigExec:startFrame") == std::string::npos);
-        registry.Deactivate();
+        registry->Deactivate();
     }
 }
 
@@ -8872,15 +8941,18 @@ TestGuideCacheInvalidationBareVersusForwarded()
     // rules decide through the registry's own store.
     {
         UsdStageRefPtr stage = _MakeGuideStyleRig();
-        RigExecImagingRegistry &registry =
-            RigExecImagingRegistry::GetInstance();
+        const RigExecImagingRegistry::Ptr registry =
+            RigExecImagingRegistry::ForStage(stage, /* create = */ true);
+        CHECK(registry);
+        if (!registry)
+            return;
         std::vector<std::string> errors;
-        CHECK(registry.Activate(stage, SdfPath("/Asset/Rig"),
-                                UsdTimeCode::Default(), &errors));
-        CHECK(registry.GetBridge(SdfPath("/Asset/Rig")) != nullptr);
+        CHECK(registry->Activate(stage, SdfPath("/Asset/Rig"),
+                                 UsdTimeCode::Default(), &errors));
+        CHECK(registry->GetBridge(SdfPath("/Asset/Rig")) != nullptr);
         const auto colorAt = [&](const SdfPath &prim) {
             const RigExecImagingSnapshotConstPtr snap =
-                registry.GetStore()->Get();
+                registry->GetStore()->Get();
             if (!snap) {
                 return GfVec3f(-1.0f, -1.0f, -1.0f);
             }
@@ -8895,17 +8967,17 @@ TestGuideCacheInvalidationBareVersusForwarded()
         // next published generation keeps the cached styling.
         CHECK(
             stage->GetPrimAtPath(x).GetAttribute(TfToken("avars:tx")).Set(3.0));
-        CHECK(registry.SetTime(UsdTimeCode(2.0)));
+        CHECK(registry->SetTime(UsdTimeCode(2.0)));
         CHECK(colorAt(x) == GfVec3f(1.0f, 0.0f, 0.0f));
 
         // A guide edit routed by the registry updates exactly its prim:
         // X publishes the new color, Y's cached styling stands.
         CHECK(stage->GetPrimAtPath(x).GetAttribute(colorName).Set(
             GfVec3f(0.0f, 1.0f, 0.0f)));
-        CHECK(registry.SetTime(UsdTimeCode(3.0)));
+        CHECK(registry->SetTime(UsdTimeCode(3.0)));
         CHECK(colorAt(x) == GfVec3f(0.0f, 1.0f, 0.0f));
         CHECK(colorAt(y) == GfVec3f(1.0f, 0.0f, 0.0f));
-        registry.Deactivate();
+        registry->Deactivate();
     }
 }
 
