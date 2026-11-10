@@ -15,6 +15,7 @@
 #include "rigExecBake/bake.h"
 #include "rigExecBinary/format.h"
 #include "rigExecMath/avarScale.h"
+#include "rigExecSchema/schemaTokens.h"
 #include "rigExec/bakedProgramImpl.h"
 #include "rigExec/bakedSchedule.h"
 #include "rigExec/bakedTrace.h"
@@ -5172,6 +5173,96 @@ TestGuideBoundsExport()
     store->Publish(snapshot);
     CHECK(bounds(SdfPath("/R/Custom")) == 0);
 
+    // Malformed authored inputs are dropped, legal degenerate elements
+    // are kept: NaN radius, negative radius, and negative length skip
+    // their element; a zero-radius link and a zero-length sphere-only
+    // leaf stay, so the box comes from the one full element.
+    const SdfPath broken("/R/Broken");
+    {
+        RigExecPublishedPrim &published = snapshot->prims[broken];
+        published.hasGuides = true;
+        GfMatrix4d atOrigin(1.0);
+        published.guideFrames.push_back(atOrigin);
+        published.guideRadii.push_back(
+            std::numeric_limits<double>::quiet_NaN());
+        published.guideLengths.push_back(1.0);
+        published.guideFrames.push_back(atOrigin);
+        published.guideRadii.push_back(-1.0);
+        published.guideLengths.push_back(1.0);
+        published.guideFrames.push_back(atOrigin);
+        published.guideRadii.push_back(-2.0);
+        published.guideLengths.push_back(-2.0);
+        published.guideFrames.push_back(atOrigin);
+        published.guideRadii.push_back(0.0);
+        published.guideLengths.push_back(0.0);
+        published.guideFrames.push_back(atOrigin);
+        published.guideRadii.push_back(1.0);
+        published.guideLengths.push_back(0.0);
+    }
+    store->Publish(snapshot);
+    CHECK(bounds(broken) == 1);
+    CHECK(matches(GfVec3d(-1, -1, -1), GfVec3d(1, 1, 1)));
+
+    // Overflow regression: finite but huge authored values overflow an
+    // element's corners to infinity. The element is rejected whole: the
+    // overflowing corner and the collapsed zero of origin - extent (a DBL_MAX
+    // radius under a DBL_MAX translation) must not touch the caller's range.
+    const SdfPath huge("/R/Huge");
+    const double maxd = std::numeric_limits<double>::max();
+    {
+        RigExecPublishedPrim &published = snapshot->prims[huge];
+        published.hasGuides = true;
+        GfMatrix4d frame(1.0);
+        frame.SetTranslateOnly(GfVec3d(3.0 * (maxd / 4.0), 0.0, 0.0));
+        published.guideFrames.push_back(frame);
+        published.guideRadii.push_back(2.0 * (maxd / 4.0));
+        published.guideLengths.push_back(0.0);
+        GfMatrix4d collapsed(1.0);
+        collapsed.SetTranslateOnly(GfVec3d(maxd, maxd, maxd));
+        published.guideFrames.push_back(collapsed);
+        published.guideRadii.push_back(maxd);
+        published.guideLengths.push_back(0.0);
+    }
+    store->Publish(snapshot);
+    for (double &v : b) {
+        v = -777.0;
+    }
+    CHECK(bounds(huge) == 0);
+    bool untouched = true;
+    for (double v : b) {
+        untouched = untouched && v == -777.0;
+    }
+    CHECK(untouched);
+
+    // The all-guides path is unchanged by the rejected prims...
+    double before[6] = {0, 0, 0, 0, 0, 0};
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(before) == 1);
+
+    // ...and rejection is per element: a representable element beside a
+    // rejected one yields exactly its own box on both API paths.
+    const SdfPath mixed("/R/Mixed");
+    {
+        RigExecPublishedPrim &published = snapshot->prims[mixed];
+        published.hasGuides = true;
+        GfMatrix4d collapsed(1.0);
+        collapsed.SetTranslateOnly(GfVec3d(maxd, maxd, maxd));
+        published.guideFrames.push_back(collapsed);
+        published.guideRadii.push_back(maxd);
+        published.guideLengths.push_back(0.0);
+        published.guideFrames.push_back(GfMatrix4d(1.0));
+        published.guideRadii.push_back(1.0);
+        published.guideLengths.push_back(0.0);
+    }
+    store->Publish(snapshot);
+    CHECK(bounds(mixed) == 1);
+    CHECK(matches(GfVec3d(-1, -1, -1), GfVec3d(1, 1, 1)));
+    CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(b) == 1);
+    bool unchanged = true;
+    for (size_t i = 0; i < 6; ++i) {
+        unchanged = unchanged && b[i] == before[i];
+    }
+    CHECK(unchanged);
+
     // An empty generation draws nothing at all.
     store->Publish(nullptr);
     CHECK(RigExecImaging_GetAllGuideBoundsAssetSpace(b) == 0);
@@ -5256,6 +5347,81 @@ TestCustomControlRestExtent()
               .Set(VtIntArray{3}));
     CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
         boundable, UsdTimeCode::Default(), &extent));
+}
+
+// Overflow regressions for the cold (never-evaluated) default-pose
+// extent: authored values that are finite doubles outside the float
+// range must not reach the host as infinities in the float extent.
+static void
+TestColdExtentFloatRepresentability()
+{
+    const UsdStageRefPtr stage = UsdStage::CreateInMemory();
+    stage->DefinePrim(SdfPath("/Rig"), SchemaType::RigExecRoot);
+    VtVec3fArray extent;
+
+    const UsdPrim joint =
+        stage->DefinePrim(SdfPath("/Rig/Joint"), SchemaType::RigExecJoint);
+    const UsdGeomBoundable jointBoundable(joint);
+
+    // A huge radius still inside the float range frames normally.
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(1e30));
+    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
+        jointBoundable, UsdTimeCode::Default(), &extent));
+    bool finite = true;
+    for (const GfVec3f &corner : extent) {
+        for (int axis = 0; axis < 3; ++axis) {
+            finite = finite && std::isfinite(corner[axis]);
+        }
+    }
+    CHECK(finite);
+
+    // A finite double radius outside the float range: no extent rather
+    // than infinities in the float box.
+    const double huge = std::numeric_limits<double>::max() / 4.0;
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(huge));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        jointBoundable, UsdTimeCode::Default(), &extent));
+
+    // A finite huge rest translation with a normal radius: the same
+    // rejection for the other component of the joint's cold bounds.
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(1.0));
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace)
+              .Set(GfMatrix4d(1.0).SetTranslateOnly(
+                  GfVec3d(0.0, 3.0 * huge, 0.0))));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        jointBoundable, UsdTimeCode::Default(), &extent));
+
+    // Combined DBL_MAX radius and translation: origin - extent collapses
+    // to zero while origin + extent overflows. The element is rejected
+    // whole, so no invented point-extent survives at the origin.
+    const double dblMax = std::numeric_limits<double>::max();
+    CHECK(joint.GetAttribute(SchemaAttr::guideRadius).Set(dblMax));
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace)
+              .Set(GfMatrix4d(1.0).SetTranslateOnly(
+                  GfVec3d(dblMax, dblMax, dblMax))));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        jointBoundable, UsdTimeCode::Default(), &extent));
+
+    // Rejection leaves the shared range unchanged: a unit joint nested
+    // under the rejected one frames exactly its own sphere. The outer
+    // joint's placement is reset to identity (its rest composes into the
+    // nested joint); its DBL_MAX sphere corners are still rejected whole.
+    CHECK(joint.GetAttribute(SchemaAttr::restSpace).Set(GfMatrix4d(1.0)));
+    stage->DefinePrim(SdfPath("/Rig/Joint/Small"), SchemaType::RigExecJoint);
+    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
+        jointBoundable, UsdTimeCode::Default(), &extent));
+    CHECK(extent == VtVec3fArray({GfVec3f(-1, -1, -1), GfVec3f(1, 1, 1)}));
+
+    // A control guide goes through the same guard.
+    const UsdPrim control =
+        stage->DefinePrim(SdfPath("/Rig/Ctrl"), SchemaType::RigExecControl);
+    const UsdGeomBoundable controlBoundable(control);
+    CHECK(control.GetAttribute(SchemaAttr::guideScaleX).Set(huge));
+    CHECK(!UsdGeomBoundable::ComputeExtentFromPlugins(
+        controlBoundable, UsdTimeCode::Default(), &extent));
+    CHECK(control.GetAttribute(SchemaAttr::guideScaleX).Set(1e30));
+    CHECK(UsdGeomBoundable::ComputeExtentFromPlugins(
+        controlBoundable, UsdTimeCode::Default(), &extent));
 }
 
 // The codeless schema's resource directory.
@@ -8825,6 +8991,7 @@ main(int argc, char **argv)
     TestStandaloneControlGuide();
     TestClothConstraintGuides();
     TestCustomControlRestExtent();
+    TestColdExtentFloatRepresentability();
     TestControlGuideSource();
     TestJointHierarchyGuides(examplesDir);
     TestSimpleRigControlAndDeformation(examplesDir);

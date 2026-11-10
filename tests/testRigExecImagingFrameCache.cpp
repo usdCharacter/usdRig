@@ -2267,6 +2267,15 @@ TestCachedServeSkipsLookupSample()
             CHECK(states[1] == RigExecWarmFrameState::Cached);
         }
     }
+    // Entry validation: states are positional per frame, so a non-finite
+    // frame is a malformed request; an empty path, an unactivated path,
+    // and a scope that is not a RigExecRoot all decline.
+    CHECK(registry
+              .GetFrameStates(rig,
+                              {1.0, std::numeric_limits<double>::quiet_NaN()})
+              .empty());
+    CHECK(registry.GetFrameStates(SdfPath(), {1.0}).empty());
+    CHECK(registry.GetFrameStates(SdfPath("/Asset/Rig/Movers"), {1.0}).empty());
     RigExecProfiler *profiler = registry.MutableBridgeProfiler(rig);
     CHECK(profiler != nullptr);
     if (profiler) {

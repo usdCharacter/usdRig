@@ -353,7 +353,7 @@ picture moves and only the final value is wrong.
 *first*. A listener that re-evaluates must therefore run after every
 listener that drops cached values for the same edit, or it publishes a
 pre-edit answer. The registry registers its listener before `Compile()`
-(`libs/rigExecImaging/registry.cpp:1511`), which puts it at the back of the
+(`libs/rigExecImaging/registryLifecycle.cpp:233`), which puts it at the back of the
 delivery list.
 
 Production evaluation holds no OpenExec `ExecUsdSystem`, whose
@@ -361,7 +361,7 @@ Production evaluation holds no OpenExec `ExecUsdSystem`, whose
 authored. Only the `RigExecTapSet` requests of the
 [reference check](../concepts/baked-vs-dynamic.md#openexec-reference-checks)
 and of tests create one. `_OnObjectsChanged` first calls
-`RigExecTapSet::PrepareStageChange` (`registry.cpp:4324`), which retires
+`RigExecTapSet::PrepareStageChange` (`registryInvalidation.cpp:499`), which retires
 those requests when a prim is removed.
 
 Two things are worth carrying forward. First, a direct `SetTime()` call

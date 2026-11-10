@@ -8,7 +8,8 @@ was one process-global object: one stage, one snapshot store, one chain list,
 and one preview. Only the most recent activation evaluated, and every other
 viewport showed its rest pose.
 
-Code: `libs/rigExecImaging/registry.{h,cpp}`, `sceneIndices.{h,cpp}`,
+Code: `libs/rigExecImaging/registry.h` with the `registry*.cpp` domain
+sources, `sceneIndices.{h,cpp}`,
 `sceneIndexPlugin.cpp`, `rigAdapter.cpp`, `touchPose*.{h,cpp}`; for the usdview
 plugins, `plugin/rigExecUsdview/imagingHandle.py` and `sessionRegistry.py`
 (see "usdview plugins").
@@ -57,7 +58,7 @@ belongs to the scheduler, and is null while no rig is active.
 ## The directory
 
 The directory is a process-level map from stage to context. It lives in
-`registry.cpp` as `RigExecImagingDirectory`.
+`registryDirectory.cpp` as `RigExecImagingDirectory`.
 
 ```cpp
 static Ptr ForStage(const UsdStageRefPtr &stage, bool create = true);
