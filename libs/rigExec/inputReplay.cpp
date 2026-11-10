@@ -27,7 +27,9 @@
 #include <memory>
 #include <set>
 #include <thread>
+#include <type_traits>
 #include <typeinfo>
+#include <utility>
 
 namespace rigExec {
 namespace {
@@ -625,6 +627,20 @@ private:
         Record(Op::PopPath, p, f, VtValue(v));
     }
 };
+
+// Real-arity gate for New(): the passkey is private and not
+// default-constructible, so a braced empty list cannot reach the tagged
+// constructor at its true arity.
+template <class T, class Params, class = void>
+struct _BraceConstructible : std::false_type {};
+
+template <class T, class... Args>
+struct _BraceConstructible<
+    T, void(Args...), std::void_t<decltype(T({}, std::declval<Args>()...))>>
+    : std::true_type {};
+
+static_assert(!_BraceConstructible<SourceDelegate, void(unsigned)>::value,
+              "SourceDelegate: New() is the only admission");
 
 class Recorder : public TfWeakBase {
 public:

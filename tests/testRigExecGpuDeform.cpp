@@ -355,7 +355,10 @@ RigExecGpuDeformExecutor *g_startupResults[kStartupCallers] = {};
 /// (the forced-throw child run); otherwise the shared result is either the
 /// device or the remembered device failure. The wait is bounded so a caller
 /// stuck on the starting state fails here instead of hanging the suite.
-void
+/// Returns false when the wait timed out, so the caller stops before asking
+/// Get() again: a stalled start has no terminal result to read, and another
+/// Get() would wait on _Starting forever.
+bool
 CheckExecutorStartup(bool requireNull)
 {
     std::vector<std::thread> callers;
@@ -379,7 +382,7 @@ CheckExecutorStartup(bool requireNull)
     if (!settled) {
         for (std::thread &t : callers)
             t.detach();
-        return;
+        return false;
     }
     for (std::thread &t : callers)
         t.join();
@@ -392,6 +395,7 @@ CheckExecutorStartup(bool requireNull)
     CHECK(RigExecGpuDeformExecutor::Get() == g_startupResults[0]);
     if (requireNull)
         CHECK(g_startupResults[0] == nullptr);
+    return true;
 }
 
 } // namespace
@@ -519,7 +523,10 @@ main()
     // the terminal failed state with null, and a never-started device must
     // ignore ReleaseKey.
     if (std::getenv("RIGEXEC_GPU_TEST_THROW_STARTUP")) {
-        CheckExecutorStartup(/*requireNull=*/true);
+        if (!CheckExecutorStartup(/*requireNull=*/true)) {
+            std::fprintf(stderr, "thrown startup: callers stalled\n");
+            return 1;
+        }
         RigExecGpuDeformExecutor::ReleaseKey(1);
         CHECK(RigExecGpuDeformExecutor::Get() == nullptr);
         if (g_failures) {
@@ -529,7 +536,10 @@ main()
         std::printf("thrown startup ok\n");
         return 0;
     }
-    CheckExecutorStartup(/*requireNull=*/false);
+    if (!CheckExecutorStartup(/*requireNull=*/false)) {
+        std::fprintf(stderr, "executor startup: callers stalled\n");
+        return 1;
+    }
     if (RigExecGpuDeformExecutor *executor = RigExecGpuDeformExecutor::Get()) {
         std::printf("GPU device: %s\n", executor->Describe().c_str());
         TimeBodySizedChain(executor);

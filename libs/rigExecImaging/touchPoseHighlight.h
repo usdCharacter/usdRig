@@ -47,6 +47,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -239,6 +240,23 @@ private:
     std::map<SdfPath, std::set<SdfPath>> _materialsByMesh;
     std::map<SdfPath, int> _wrapCount;
 };
+
+// Factory gate: New() is the only admission. The probe spells the real arity
+// so it is false for the private non-aggregate passkey, not for a missing
+// argument.
+namespace {
+template <class T, class Params, class = void>
+struct _BraceConstructible : std::false_type {};
+
+template <class T, class... Args>
+struct _BraceConstructible<
+    T, void(Args...), std::void_t<decltype(T({}, std::declval<Args>()...))>>
+    : std::true_type {};
+} // namespace
+
+static_assert(!_BraceConstructible<RigExecTouchPoseSceneIndex,
+                                   void(HdSceneIndexBaseRefPtr)>::value,
+              "RigExecTouchPoseSceneIndex: New() is the only admission");
 
 } // namespace rigExec
 
