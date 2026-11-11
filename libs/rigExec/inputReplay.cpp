@@ -1750,7 +1750,7 @@ struct InitialSpec {
 namespace {
 class HeldReplayRouter : public TfWeakBase {
 public:
-    HeldReplayRouter(const UsdStageRefPtr &stage, RigExecBakedProgram *program)
+    HeldReplayRouter(const UsdStageRefPtr &stage, RigExecBakedProgram &program)
         : _program(program)
     {
         _key = TfNotice::Register(TfCreateWeakPtr(this),
@@ -1765,10 +1765,10 @@ private:
     void Changed(const UsdNotice::ObjectsChanged &notice,
                  const UsdStageWeakPtr &)
     {
-        if (!_program->ApplyValueEdits(notice))
-            _program->BumpProgramStamp();
+        if (!_program.ApplyValueEdits(notice))
+            _program.BumpProgramStamp();
     }
-    RigExecBakedProgram *_program;
+    RigExecBakedProgram &_program;
     TfNotice::Key _key;
 };
 struct HeldReplayProgram {
@@ -2136,15 +2136,15 @@ struct Session {
                 std::fprintf(stderr, "  %s\n", line.c_str());
     }
 
-    void ApplyCompile(RigExecRigEvaluator *evaluator, uint64_t ordinal)
+    void ApplyCompile(RigExecRigEvaluator &evaluator, uint64_t ordinal)
     {
         std::vector<std::string> diagnostics;
         NumericalReplayScope scope(audit);
-        if (!evaluator->Compile(&diagnostics))
+        if (!evaluator.Compile(&diagnostics))
             ReportCompileRefusal(ordinal, diagnostics, true);
     }
 
-    void ApplyCompileObserved(RigExecRigEvaluator *evaluator, unsigned owner,
+    void ApplyCompileObserved(RigExecRigEvaluator &evaluator, unsigned owner,
                               uint64_t ordinal, Reader &r)
     {
         if (!lifetimes)
@@ -2162,11 +2162,11 @@ struct Session {
         r.Finish();
         const auto call = compileCalls.at(owner)++;
         const auto golden = RigExecBeginCompileGolden(
-            owner, evaluator->GetRigPath(), call, requested != 0, diagnostics);
+            owner, evaluator.GetRigPath(), call, requested != 0, diagnostics);
         bool returned;
         {
             NumericalReplayScope scope(audit);
-            returned = evaluator->Compile(requested ? &diagnostics : nullptr);
+            returned = evaluator.Compile(requested ? &diagnostics : nullptr);
         }
         RigExecRecordCompileGolden(golden, returned,
                                    requested ? &diagnostics : nullptr);
@@ -2174,7 +2174,7 @@ struct Session {
             ReportCompileRefusal(ordinal, diagnostics, requested != 0);
     }
 
-    void ApplyEvaluate(RigExecRigEvaluator *evaluator, unsigned owner,
+    void ApplyEvaluate(RigExecRigEvaluator &evaluator, unsigned owner,
                        uint64_t ordinal, Reader &r)
     {
         const auto atDefault = r.U8();
@@ -2182,8 +2182,8 @@ struct Session {
         if (atDefault > 1)
             throw std::runtime_error("invalid time identity");
         NumericalReplayScope scope(audit);
-        const auto pose = evaluator->Evaluate(atDefault ? UsdTimeCode::Default()
-                                                        : UsdTimeCode(time));
+        const auto pose = evaluator.Evaluate(atDefault ? UsdTimeCode::Default()
+                                                       : UsdTimeCode(time));
         if (!pose.valid) {
             ++invalidVisits;
             std::fprintf(stderr, "input replay invalid visit at event %llu\n",
@@ -2192,7 +2192,7 @@ struct Session {
         ++visits[owner];
     }
 
-    void ApplyProgramBuild(RigExecRigEvaluator *evaluator, unsigned owner,
+    void ApplyProgramBuild(RigExecRigEvaluator &evaluator, unsigned owner,
                            Reader &r)
     {
         if (!extended)
@@ -2206,12 +2206,12 @@ struct Session {
         HeldReplayProgram program;
         program.owner = owner;
         program.golden = RigExecHeldProgramGoldenObserver::Create(
-            id, evaluator->GetRigPath());
+            id, evaluator.GetRigPath());
         std::vector<std::string> reasons;
         {
             NumericalReplayScope scope(audit);
             program.program = RigExecBakedProgram::Build(
-                evaluator, reasonsRequested ? &reasons : nullptr);
+                &evaluator, reasonsRequested ? &reasons : nullptr);
         }
         if (program.golden)
             program.golden->RecordBuild(bool(program.program), reasons);
@@ -2244,7 +2244,7 @@ struct Session {
                     "invalid/duplicate held router transition");
             if (enabled)
                 program.router = std::make_unique<HeldReplayRouter>(
-                    stages.at(ownerStages.at(owner)), program.program.get());
+                    stages.at(ownerStages.at(owner)), *program.program);
             else
                 program.router.reset();
             return;
@@ -2279,10 +2279,10 @@ struct Session {
         ++actions[owner];
         switch (event) {
         case Event::Compile:
-            ApplyCompile(ptr.get(), ordinal);
+            ApplyCompile(*ptr, ordinal);
             break;
         case Event::CompileObserved:
-            ApplyCompileObserved(ptr.get(), owner, ordinal, r);
+            ApplyCompileObserved(*ptr, owner, ordinal, r);
             break;
         case Event::Options: {
             const auto guides = r.U8(), fields = r.U8();
@@ -2302,10 +2302,10 @@ struct Session {
             ptr->SetUpstreamInputs(ReadRequests(r, aliases));
             break;
         case Event::Evaluate:
-            ApplyEvaluate(ptr.get(), owner, ordinal, r);
+            ApplyEvaluate(*ptr, owner, ordinal, r);
             break;
         case Event::ProgramBuild:
-            ApplyProgramBuild(ptr.get(), owner, r);
+            ApplyProgramBuild(*ptr, owner, r);
             break;
         case Event::ProgramRun:
         case Event::ProgramRouter:
