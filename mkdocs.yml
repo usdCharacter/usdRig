@@ -11,7 +11,7 @@
 # icons/ beside the pages, points links to files outside docs/ at GitHub,
 # and makes docs/home.md the landing page with the catalog at /reference/.
 
-site_name: RigExec
+site_name: usdRig
 site_description: >-
   An experimental character-rig evaluator for OpenUSD: controls, solvers,
   constraints and deformers evaluated live and published through Hydra.
