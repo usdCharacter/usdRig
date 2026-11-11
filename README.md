@@ -1,12 +1,15 @@
-# RigExec
+# usdRig
 
 > **Warning: work in progress.** RigExec is an early AI-generated prototype
 > under active development. APIs, behavior, and file formats may change without
 > notice. See [layer readiness](STATUS.md) for per-layer status.
 
-RigExec is an experimental character-rig evaluator for OpenUSD 26.08. It
-evaluates controls, constraints, solvers, and geometry deformers in memory,
-then publishes the results through Hydra for live playback in `usdview`.
+usdRig is an OpenUSD-based character-rigging project. Its engine, **RigExec**,
+is an experimental character-rig evaluator for OpenUSD 26.08. RigExec evaluates
+controls, constraints, solvers, and geometry deformers in memory, then publishes
+the results through Hydra for live playback in `usdview`.
+
+See the [domain glossary](CONTEXT.md) for canonical project and engine terminology.
 
 **Status: 0.1 alpha.** APIs and file formats may change. Original project code
 is [MIT licensed](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md)
