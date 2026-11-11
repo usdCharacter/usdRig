@@ -13,7 +13,14 @@ the buffer it lands in). `make_unique`/`make_shared` are the replacements.
 Macro bodies are scanned: `#define MAKE_WIDGET() new Widget()` is a hit.
 Only `#include` is exempt, since `#include <new>` names the allocator header
 rather than allocating. A raw string ends at its own delimiter, so a bare `)`
-inside `R"tag(...)tag"` does not close it. Blanked regions keep their
+inside `R"tag(...)tag"` does not close it. A character literal is read as a
+whole literal, so the double quote in `char q = '"';` and a multi-character
+constant such as `'a"'` do not open a string and hide the allocation on the
+next line. Numeric tokens are read as whole pp-numbers, so digit separators
+in 1'000'000, 1e1'0, 0x1.A'Bp0 and 0x1p1'0 are part of the number and cannot
+start a literal; an apostrophe with no closing quote on its own line is left
+alone rather than swallowing the rest of the file.
+Blanked regions keep their
 newlines, so every hit reports the line it is really on, and a region with no
 newline is replaced by a space so `new/**/Widget()` is still a hit.
 Every hit must appear in tools/allocations_allowlist.txt; a hit that does not
@@ -61,10 +68,40 @@ _OPERATOR_NEW = re.compile(r"operator\s+new\b")
 # An include names the allocator header; every other directive's body can
 # still hold an allocation the rule bans.
 _INCLUDE = re.compile(r"#\s*include\b")
+# A pp-number is the C++ preprocessing number: a digit, or a '.' followed by
+# a digit, then digits, hex or binary digits, exponent letters, suffixes and
+# C++14 digit separators. Reading the whole token keeps a separator from
+# opening a character literal that blanks the code after it. A digit right
+# after an identifier character belongs to the name, or to a character-literal
+# prefix such as u8, not to a number.
+_PP_NUMBER = re.compile(r"[0-9][0-9a-zA-Z_.']*|[.][0-9][0-9a-zA-Z_.']*")
+_AFTER_NAME = re.compile(r"[0-9a-zA-Z_]")
+
+
+def _char_literal_end(text, start):
+    """End of the character literal opening at `start`, or None.
+
+    A literal runs to the next unescaped quote on the same line, so the
+    double quote in `'"'` and a multi-character constant such as `'a"'` are
+    read as one literal. Digit separators never reach here: they are lexed
+    with their numeric token. With no closing quote on the line the
+    apostrophe belongs to something else, and the code after it stays
+    visible instead of being blanked.
+    """
+    i = start + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "'":
+            return i + 1
+        if ch == "\n":
+            return None
+        i += 2 if ch == "\\" else 1
+    return None
 
 
 def _code_of(text):
-    """Return the source with comments and string contents blanked out.
+    """Return the source with comments, strings and char literals blanked.
 
     Blanked regions keep their newlines so a hit still reports its real line,
     and a region with no newline becomes one space so the tokens on either
@@ -99,6 +136,24 @@ def _code_of(text):
             delimiter = text[i + 2:opener]
             closer = text.find(")" + delimiter + '"', opener + 1)
             i = skip(n if closer < 0 else closer + len(delimiter) + 2)
+            continue
+        if ch.isdigit() and not (i > 0 and _AFTER_NAME.match(text[i - 1])):
+            match = _PP_NUMBER.match(text, i)
+            out.append(match.group())
+            i = match.end()
+            continue
+        if ch == "." and i + 1 < n and text[i + 1].isdigit():
+            match = _PP_NUMBER.match(text, i)
+            out.append(match.group())
+            i = match.end()
+            continue
+        if ch == "'":
+            end = _char_literal_end(text, i)
+            if end is None:
+                out.append(ch)
+                i += 1
+                continue
+            i = skip(end)
             continue
         if ch == '"':
             j = i + 1
@@ -239,6 +294,80 @@ _SELF_CASES = [
     ("auto p = /* note\nline */\n    new Widget();", [("bare-new", 3)]),
     ("auto p = new\n/**/Widget[2]();", [("bare-new", 1)]),
     ("renew/**/Widget();", []),
+    # Character literals. A double quote inside one must not open a string,
+    # and an apostrophe that is not a literal must not blank the file.
+    ('char quote = \'"\';\nauto p = new Widget();', [("bare-new", 2)]),
+    ('char quote = \'"\'; auto p = new Widget();', [("bare-new", 1)]),
+    ("char escaped = '\\'';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("char backslash = '\\\\';\nauto p = new Widget[2];", [("bare-new", 2)]),
+    ("char newline = '\\n';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("char hex = '\\x41';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("char octal = '\\101';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("char wide = L'\"';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("char utf8 = u8'\"';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("auto c = '\"';\nauto p = new Widget();\nauto q = new Widget[3];",
+     [("bare-new", 2), ("bare-new", 3)]),
+    # Digit separators are not character literals: they must not hide a hit,
+    # and an unbalanced apostrophe must not blank the rest of the file.
+    ("int n = 1'000'000;\nauto p = new Widget();", [("bare-new", 2)]),
+    ("auto p = new Widget[1'000];", [("bare-new", 1)]),
+    ("int n = 1'000;\nauto p = new Widget();", [("bare-new", 2)]),
+    # An apostrophe in a comment, a string or a raw string is already covered
+    # by the region that contains it.
+    ("// don't allocate\nauto p = new Widget();", [("bare-new", 2)]),
+    ("/* don't\nallocate */\nauto p = new Widget();", [("bare-new", 3)]),
+    ('const char *s = "don\'t";\nauto p = new Widget();', [("bare-new", 2)]),
+    ('auto s = R"(don\'t)";\nauto p = new Widget();', [("bare-new", 2)]),
+    ("#define Q(c) c\n#define MAKE() new Widget()\nchar q = Q('\"');",
+     [("bare-new", 2)]),
+    # A character literal ending a line keeps the hit on its own line.
+    ('char c = \'\\n\'; /* new Widget() */\nauto p = new Widget();',
+     [("bare-new", 2)]),
+    # Multi-character constants are ill-formed but accepted, so they are read
+    # as one literal: neither the quote nor the keyword text inside leaks.
+    ('int marker = \'a"\';\nauto p = new Widget();', [("bare-new", 2)]),
+    ('int marker = \'a"\'; auto p = new Widget();', [("bare-new", 1)]),
+    ("int marker = 'ab';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("int marker = 'new Widget';\nauto p = new Widget();", [("bare-new", 2)]),
+    ('int marker = \'new " Widget\';\nauto p = new Widget[3];',
+     [("bare-new", 2)]),
+    ("auto wide = L'abcd';\nauto p = new Widget();", [("bare-new", 2)]),
+    ("int marker = 'a\\'';\nauto p = new Widget();", [("bare-new", 2)]),
+    # Digit separators next to real code stay invisible to the literal scan.
+    ("int n = 1'000; auto p = new Widget(); char c = 'a';",
+     [("bare-new", 1)]),
+    # Digit separators belong to the numeric token in decimal, hex and
+    # binary, and a character-literal prefix (u8) is not a number.
+    ("int n = 0xA'B; auto p = new Widget(); char c = 'a';", [("bare-new", 1)]),
+    ("auto c = u8'1'; auto p = new Widget(); char d = 'a';", [("bare-new", 1)]),
+    ("int n = 0b101'1;\nauto p = new Widget();", [("bare-new", 2)]),
+    ("auto p = new Widget[0xA'F]; char c = '\"';", [("bare-new", 1)]),
+    ("double d = 1'000.5;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("int n = 1'000'000; auto p = new Widget(); char c = 'a'; char e = '\"';",
+     [("bare-new", 1)]),
+    # Separators inside fractions and exponents are still part of the same
+    # pp-number, so the allocation after the number stays visible.
+    ("auto n = 1e1'0; auto p = new Widget(); char c = 'a';",
+     [("bare-new", 1)]),
+    ("auto n = 0x1.A'Bp0; auto p = new Widget(); char c = 'a';",
+     [("bare-new", 1)]),
+    ("auto n = 0x1p1'0; auto p = new Widget(); char c = 'a';",
+     [("bare-new", 1)]),
+    ("auto n = 1e+1'0;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("auto n = 1E-1'0;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("auto n = 0x1p-1'0;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("auto n = .5'0;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("auto n = 1'0e1'0u;\nauto p = new Widget(); char c = '\"';",
+     [("bare-new", 2)]),
+    ("auto n = 0xFF'FF'FFull;\nauto p = new Widget(); char c = 'a';",
+     [("bare-new", 2)]),
+    ("auto n = 1.5e1'0f; auto p = new Widget(); char c = 'a'; char q = '\"';",
+     [("bare-new", 1)]),
 ]
 
 

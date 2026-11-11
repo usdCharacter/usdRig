@@ -7,7 +7,9 @@ AGENTS.md ("Allocation and ownership") bans bare `new` expressions in the
 owned sources. tools/check_allocations.py is a textual scan, so its extractor
 is golden-tested here on synthetic sources covering every banned form (bare,
 brace-init, array, split across lines, placement) and every non-hit (comments,
-string literals, `#include <new>`, `operator new` definitions, renewWidget,
+string literals, character literals (single, escaped, multi-character),
+numeric tokens with digit separators (decimal, hex, binary, fractions and
+exponents), `#include <new>`, `operator new` definitions, renewWidget,
 News), then the repository scan runs so a new hit fails the test rather than
 only CI.
 """
