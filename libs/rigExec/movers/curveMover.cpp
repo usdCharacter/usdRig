@@ -651,8 +651,9 @@ _ValidateCurveMover(const rigExec::RigExecMoverValidateContext &ctx,
 rigExec::RigExecMoverHandler
 _MakeHandler()
 {
-    rigExec::RigExecMoverHandler handler("RigExecCurveMover", &_ResolveCurveOp,
-                                         rigExec::RigExecMoverDomain::Points);
+    rigExec::RigExecMoverHandler handler(
+        rigExec::SchemaTypeName::RigExecCurveMover, &_ResolveCurveOp,
+        rigExec::RigExecMoverDomain::Points);
     handler.frameRelationships = {
         rigExec::SchemaAttrText::rigExecDriverTransforms,
         rigExec::SchemaAttrText::rigExecDriverTransformSpaces,

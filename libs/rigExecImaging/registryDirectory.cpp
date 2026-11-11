@@ -102,8 +102,7 @@ public:
             }
             if (!result && create) {
                 const uint64_t key = ++_nextKey;
-                result = std::make_shared<Ctx>(Ctx::_FactoryTag{0}, key,
-                                             stage);
+                result = std::make_shared<Ctx>(Ctx::_FactoryTag{0}, key, stage);
                 _entries[key] = Entry{UsdStageWeakPtr(stage), result};
                 _keyByStage[raw] = key;
             }

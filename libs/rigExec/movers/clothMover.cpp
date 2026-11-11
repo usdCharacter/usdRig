@@ -967,14 +967,15 @@ Validate(const RigExecMoverValidateContext &ctx, std::string *error)
 
 namespace rigExec {
 RigExecMoverHandler
-RigExecClothUsdAdapter(const char *schemaType)
+RigExecClothUsdAdapter(std::string_view schemaType)
 {
     RigExecMoverHandler h(schemaType,
                           &RigExecFixedMoverOp<RigExecRevisionOp::External>,
                           RigExecMoverDomain::Points);
     h.singleTarget = true;
-    h.sceneDataSchemas = {"RigExecClothConstraintSet", "RigExecClothBinding",
-                          "RigExecClothMap"};
+    h.sceneDataSchemas = {SchemaTypeName::RigExecClothConstraintSet,
+                          SchemaTypeName::RigExecClothBinding,
+                          SchemaTypeName::RigExecClothMap};
     h.hasScalarOracle = false;
     h.bind = &Bind;
     h.validate = &Validate;

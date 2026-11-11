@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -155,7 +156,7 @@ struct RigExecMoverValidateContext {
 /// it needs before registering.
 struct RigExecMoverHandler {
     RigExecMoverHandler(
-        const char *schemaType,
+        std::string_view schemaType,
         std::optional<RigExecRevisionOp> (*resolveOp)(const TfToken &),
         RigExecMoverDomain domain)
         : schemaType(schemaType), resolveOp(resolveOp), domain(domain)
@@ -163,7 +164,9 @@ struct RigExecMoverHandler {
     }
 
     /// The schema type name, e.g. "RigExecMatrixMover". The lookup key.
-    const char *schemaType;
+    /// Registration copies it into a std::string and re-points this view at
+    /// that copy, so it stays valid for the registry's lifetime.
+    std::string_view schemaType;
     /// The revision op this mover performs. Most movers return a fixed
     /// op; the curve mover resolves its authored mode; property movers
     /// return nullopt (they revise no point chain).

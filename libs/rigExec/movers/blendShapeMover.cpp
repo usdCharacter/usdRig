@@ -576,7 +576,7 @@ rigExec::RigExecMoverHandler
 _MakeHandler()
 {
     rigExec::RigExecMoverHandler handler(
-        "RigExecBlendShapeMover",
+        rigExec::SchemaTypeName::RigExecBlendShapeMover,
         &rigExec::RigExecFixedMoverOp<rigExec::RigExecRevisionOp::BlendShape>,
         rigExec::RigExecMoverDomain::Points);
     handler.bind = &_BindBlendShapeMover;
@@ -593,7 +593,7 @@ rigExec::RigExecMoverHandler
 _MakeMlHandler()
 {
     rigExec::RigExecMoverHandler handler = _MakeHandler();
-    handler.schemaType = "RigExecMlMover";
+    handler.schemaType = rigExec::SchemaTypeName::RigExecMlMover;
     return handler;
 }
 

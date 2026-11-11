@@ -15,6 +15,7 @@
 
 #include "pxr/base/tf/diagnostic.h"
 
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -118,7 +119,7 @@ RigExecBridgeFrameCache::_SyncAffectedIndex(const RigExecCacheCall &call)
         _affectedCompiledRig == compiledRig && _affectedProgram == program) {
         return _affectedIndex.get();
     }
-    _affectedIndex.reset(new RigExecOutputAffectedIndex());
+    _affectedIndex = std::make_unique<RigExecOutputAffectedIndex>();
     _affectedIndex->Build(impl, compiledRig);
     _affectedCompiledRig = compiledRig;
     _affectedProgram = program;

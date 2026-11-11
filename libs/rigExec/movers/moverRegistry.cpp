@@ -41,7 +41,7 @@ struct _Entry {
     explicit _Entry(RigExecMoverHandler value)
         : schemaType(value.schemaType), handler(std::move(value))
     {
-        handler.schemaType = schemaType.c_str();
+        handler.schemaType = std::string_view(schemaType);
         registration.handler = &handler;
         registration.schemaType = TfToken(schemaType);
         registration.transformRelationship =
@@ -125,7 +125,7 @@ RigExecRegisterMoverHandler(RigExecMoverHandler handler, std::string *error)
         }
         return false;
     };
-    if (!handler.schemaType || !*handler.schemaType || !handler.resolveOp) {
+    if (handler.schemaType.empty() || !handler.resolveOp) {
         return fail("Mover registration requires a schema type and resolveOp");
     }
     const bool external =
