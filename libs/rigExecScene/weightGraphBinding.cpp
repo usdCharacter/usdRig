@@ -295,7 +295,7 @@ RigExecBindWeightGraph(const RigExecSceneWeightProgram &program,
             RigExecValueId *value, std::string *why) {
             if (role == RigExecWeightValueRole::Packet)
                 return context.weightPacket &&
-                       context.weightPacket(source, value, why);
+                       context.weightPacket(source, *value, why);
             if (!context.resolve)
                 return Fail(why, "weight graph has no typed value resolver");
             RigExecSceneGraphReadRequest request;
@@ -317,7 +317,7 @@ RigExecBindWeightGraph(const RigExecSceneWeightProgram &program,
                 if (role == RigExecWeightValueRole::Placement)
                     request.phase = placementPhase;
             }
-            return context.resolve(request, value, why);
+            return context.resolve(request, *value, why);
         },
         &context, output, error);
 }

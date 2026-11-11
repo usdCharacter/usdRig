@@ -24,7 +24,7 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
     result.descriptor = descriptor;
     auto resolve = [&](const SdfPath &consumer, const SdfPath &source,
                        const TfToken &phase, RigExecSceneValueDomain domain,
-                       bool atDefault, bool raw, RigExecValueId *id) {
+                       bool atDefault, bool raw, RigExecValueId &id) {
         if (source.IsEmpty())
             return true;
         RigExecSceneGraphReadRequest request;
@@ -37,7 +37,7 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
         request.raw = raw;
         if (!context.resolve(request, id, error))
             return false;
-        result.reads.push_back(*id);
+        result.reads.push_back(id);
         return true;
     };
     result.leaves.resize(descriptor.record.leaves.keys.size(), UINT64_MAX);
@@ -55,7 +55,7 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
             }
             auto reader = context;
             reader.resolve = [&](RigExecSceneGraphReadRequest request,
-                                 RigExecValueId *id, std::string *diagnostic) {
+                                 RigExecValueId &id, std::string *diagnostic) {
                 request.reader = descriptor.mover;
                 request.atDefault =
                     key.time == RigExecRevisionLeafTime::AtDefault;
@@ -64,7 +64,7 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
                     request.domain = RigExecSceneValueDomain::Points;
                 if (!context.resolve(request, id, diagnostic))
                     return false;
-                result.reads.push_back(*id);
+                result.reads.push_back(id);
                 return true;
             };
             if (!RigExecBindGraphTypedRead(descriptor.typedLeaves[k], reader,
@@ -82,7 +82,7 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
         if (!resolve(input.consumer, input.source, input.readPhase, domain,
                      key.time == RigExecRevisionLeafTime::AtDefault,
                      key.flavour == RigExecRevisionLeafFlavour::Raw,
-                     &result.leaves[k]))
+                     result.leaves[k]))
             return false;
     }
     const auto &binding = descriptor.record.binding;
@@ -95,30 +95,30 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
             : _tokens->base;
     if (!resolve(binding.transform, binding.transform, phase,
                  RigExecSceneValueDomain::Pose, false, false,
-                 &result.transform) ||
+                 result.transform) ||
         !resolve(binding.transformSpace, binding.transformSpace, phase,
                  RigExecSceneValueDomain::Pose, false, false,
-                 &result.transformSpace) ||
+                 result.transformSpace) ||
         !resolve(binding.carrySpace, binding.carrySpace, phase,
-                 RigExecSceneValueDomain::Pose, false, false, &result.carry))
+                 RigExecSceneValueDomain::Pose, false, false, result.carry))
         return false;
     result.influences.resize(binding.influences.size(), UINT64_MAX);
     for (size_t i = 0; i < binding.influences.size(); ++i)
         if (!resolve(binding.influences[i], binding.influences[i], phase,
                      RigExecSceneValueDomain::Pose, false, false,
-                     &result.influences[i]))
+                     result.influences[i]))
             return false;
     if (!binding.weightObject.IsEmpty()) {
         if (!context.weightPacket ||
-            !context.weightPacket(binding.weightObject, &result.weights, error))
+            !context.weightPacket(binding.weightObject, result.weights, error))
             return false;
         result.reads.push_back(result.weights);
     }
     if (!resolve(binding.driverFrames, binding.driverFrames, phase,
                  RigExecSceneValueDomain::SolverAggregate, false, false,
-                 &result.driverFrames))
+                 result.driverFrames))
         return false;
-    auto rest = [&](const SdfPath &path, RigExecValueId *id) {
+    auto rest = [&](const SdfPath &path, RigExecValueId &id) {
         if (path.IsEmpty())
             return true;
         RigExecSceneGraphReadRequest request;
@@ -130,16 +130,16 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
         request.atDefault = true;
         if (!context.resolve(request, id, error))
             return false;
-        result.reads.push_back(*id);
+        result.reads.push_back(id);
         return true;
     };
-    if (!rest(binding.transform, &result.transformRest) ||
-        !rest(binding.transformSpace, &result.transformSpaceRest) ||
-        !rest(binding.carrySpace, &result.carryRest))
+    if (!rest(binding.transform, result.transformRest) ||
+        !rest(binding.transformSpace, result.transformSpaceRest) ||
+        !rest(binding.carrySpace, result.carryRest))
         return false;
     result.influenceRest.resize(binding.influences.size(), UINT64_MAX);
     for (size_t i = 0; i < binding.influences.size(); ++i)
-        if (!rest(binding.influences[i], &result.influenceRest[i]))
+        if (!rest(binding.influences[i], result.influenceRest[i]))
             return false;
     if (RigExecIsDerivedMatrixOp(descriptor.record.op)) {
         const SdfPath providers[3] = {binding.transform, binding.transformSpace,
@@ -147,10 +147,10 @@ RigExecBindGeometryGraph(const RigExecSceneGeometryDescriptor &descriptor,
         for (int k = 0; k < 3; ++k) {
             if (!resolve(providers[k], providers[k], _tokens->base,
                          RigExecSceneValueDomain::Pose, false, false,
-                         &result.projectorBase[k]) ||
+                         result.projectorBase[k]) ||
                 !resolve(providers[k], providers[k], _tokens->final,
                          RigExecSceneValueDomain::Pose, false, false,
-                         &result.projectorFinal[k]))
+                         result.projectorFinal[k]))
                 return false;
         }
     }

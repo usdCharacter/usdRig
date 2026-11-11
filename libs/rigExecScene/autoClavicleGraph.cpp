@@ -129,7 +129,7 @@ RigExecBindAutoClavicle(const RigExecSceneDescriptors &scene,
             provider.HasPrefix(target) ? _tokens->preceding : _tokens->base;
         if (computation)
             request.computation = computation;
-        if (!context.resolve(request, &result.frames[index], error))
+        if (!context.resolve(request, result.frames[index], error))
             return false;
         result.reads.push_back(result.frames[index]);
         return true;

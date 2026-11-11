@@ -221,17 +221,18 @@ RigExecSceneProgramLayout::BindingContext(
     const RigExecSceneDescriptors &scene) const
 {
     RigExecSceneGraphBindingContext context;
-    context.resolve = [this, &scene](const auto &request, auto *out,
-                                     auto *error) {
-        return Resolve(scene, request, out, error);
+    context.resolve = [this,
+                       &scene](const RigExecSceneGraphReadRequest &request,
+                               RigExecValueId &value, std::string *error) {
+        return Resolve(scene, request, &value, error);
     };
-    context.weightPacket = [this](const SdfPath &path, RigExecValueId *out,
+    context.weightPacket = [this](const SdfPath &path, RigExecValueId &value,
                                   std::string *error) {
         const auto found = weightPackets.find(path);
-        if (!out || found == weightPackets.end())
+        if (found == weightPackets.end())
             return Fail(error,
                         "missing scene weight packet: " + path.GetString());
-        *out = found->second;
+        value = found->second;
         return true;
     };
     return context;

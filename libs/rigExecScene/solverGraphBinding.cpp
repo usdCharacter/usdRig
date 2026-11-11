@@ -84,7 +84,7 @@ RigExecBindGraphInputs(
             request.reader = reader;
             request.phase = input.readPhase;
             request.raw = input.route == RigExecSceneReadRoute::Raw;
-            if (!context.resolve(request, &bound.direct, error))
+            if (!context.resolve(request, bound.direct, error))
                 return false;
             if (bound.direct == UINT64_MAX)
                 return Fail(error, "graph input resolver returned no value ID");
@@ -176,7 +176,7 @@ RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
             }
     }
     const auto bind = [&](const SdfPath &path, const TfToken &name,
-                          RigExecValueId *id, bool aggregate = false,
+                          RigExecValueId &id, bool aggregate = false,
                           bool *required = nullptr) {
         if (path.IsEmpty() || source.record.degenerate)
             return true;
@@ -194,37 +194,37 @@ RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
             *required = request.phase != "base";
         if (!context.resolve(request, id, error))
             return false;
-        if (*id == UINT64_MAX)
+        if (id == UINT64_MAX)
             return Fail(error, "solver resolver returned no value ID");
-        Add(&bound.reads, *id);
+        Add(&bound.reads, id);
         return true;
     };
     for (const auto &control : source.controls) {
         bound.controls.push_back(UINT64_MAX);
-        if (!bind(control, _tokens->rigExecControls, &bound.controls.back()))
+        if (!bind(control, _tokens->rigExecControls, bound.controls.back()))
             return false;
     }
     const bool twist =
         source.record.kind == RigExecSolverKind::TwistDistribution;
     const bool ik = source.record.kind == RigExecSolverKind::TwoBoneIk;
-    if (!bind(source.start, _tokens->rigExecStartFrame, &bound.start) ||
+    if (!bind(source.start, _tokens->rigExecStartFrame, bound.start) ||
         !bind(source.root,
               twist ? _tokens->rigExecStart : _tokens->rigExecRootControl,
-              &bound.root) ||
-        !bind(source.mid, _tokens->rigExecMidControl, &bound.mid) ||
+              bound.root) ||
+        !bind(source.mid, _tokens->rigExecMidControl, bound.mid) ||
         !bind(source.end,
               twist ? _tokens->rigExecEnd
               : ik  ? _tokens->rigExecEffectorControl
                     : _tokens->rigExecEndControl,
-              &bound.end) ||
-        !bind(source.pole, _tokens->rigExecPoleControl, &bound.pole) ||
-        !bind(source.space, _tokens->rigExecSpace, &bound.space) ||
-        !bind(source.blendA, _tokens->rigExecInputA, &bound.blendA, true,
+              bound.end) ||
+        !bind(source.pole, _tokens->rigExecPoleControl, bound.pole) ||
+        !bind(source.space, _tokens->rigExecSpace, bound.space) ||
+        !bind(source.blendA, _tokens->rigExecInputA, bound.blendA, true,
               &bound.blendARequired) ||
-        !bind(source.blendB, _tokens->rigExecInputB, &bound.blendB, true,
+        !bind(source.blendB, _tokens->rigExecInputB, bound.blendB, true,
               &bound.blendBRequired))
         return false;
-    const auto rest = [&](const SdfPath &path, RigExecValueId *id,
+    const auto rest = [&](const SdfPath &path, RigExecValueId &id,
                           bool live = false, bool *liveRest = nullptr) {
         if (path.IsEmpty() || source.record.degenerate)
             return true;
@@ -238,29 +238,28 @@ RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
         request.liveRest = liveRest;
         if (!context.resolve(request, id, error))
             return false;
-        if (*id == UINT64_MAX)
+        if (id == UINT64_MAX)
             return Fail(error, "solver resolver returned no value ID");
-        Add(&bound.reads, *id);
+        Add(&bound.reads, id);
         return true;
     };
     for (const auto &control : source.controls) {
         bound.controlRests.push_back(UINT64_MAX);
-        if (!rest(control, &bound.controlRests.back()))
+        if (!rest(control, bound.controlRests.back()))
             return false;
     }
     for (const auto &joint : source.joints) {
         bound.jointRests.push_back(UINT64_MAX);
         bool liveRest = false;
-        if (!rest(joint, &bound.jointRests.back(), true, &liveRest))
+        if (!rest(joint, bound.jointRests.back(), true, &liveRest))
             return false;
         bound.jointRestLive.push_back(liveRest);
     }
     bound.jointElements = source.jointElements;
-    if (!rest(source.start, &bound.startRest) ||
-        !rest(source.root, &bound.rootRest) ||
-        !rest(source.mid, &bound.midRest) ||
-        !rest(source.end, &bound.endRest) ||
-        !rest(source.space, &bound.spaceRestId))
+    if (!rest(source.start, bound.startRest) ||
+        !rest(source.root, bound.rootRest) ||
+        !rest(source.mid, bound.midRest) || !rest(source.end, bound.endRest) ||
+        !rest(source.space, bound.spaceRestId))
         return false;
     if (source.record.kind == RigExecSolverKind::Ribbon &&
         !source.ribbonPoints.IsEmpty()) {
@@ -271,7 +270,7 @@ RigExecBindSolverGraph(const RigExecSceneSolverDescriptor &source,
         request.domain = RigExecSceneValueDomain::Points;
         request.raw = true;
         request.atDefault = true;
-        if (!context.resolve(request, &bound.ribbonRestPoints, error))
+        if (!context.resolve(request, bound.ribbonRestPoints, error))
             return false;
         if (bound.ribbonRestPoints == UINT64_MAX)
             return Fail(error, "ribbon rest resolver returned no value ID");

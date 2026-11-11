@@ -4250,11 +4250,11 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
         }
         RigExecValueId next = 1;
         RigExecSceneGraphBindingContext link;
-        // resolve's out-parameters are the binding contract's: the id is
-        // required, the reason is optional and only filled when asked for.
+        // resolve's required id is a reference; the reason is optional and
+        // only filled when asked for.
         link.resolve = [&](const RigExecSceneGraphReadRequest &request,
-                           RigExecValueId *id, std::string *why) {
-            *id = next++;
+                           RigExecValueId &id, std::string *why) {
+            id = next++;
             if (request.domain == RigExecSceneValueDomain::Pose) {
                 const int slot = slotOf(request.source);
                 if (slot < 0) {
@@ -4264,7 +4264,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
                     return false;
                 }
                 RigExecBakedProgramImpl::AutoClavicle::FrameRead read;
-                read.value = *id;
+                read.value = id;
                 read.slot = slot;
                 read.computation = request.computation;
                 if (read.computation.empty() &&
@@ -4294,7 +4294,7 @@ RigExecBakedProgram::_BuildWithSceneCaptureAttempt(
             if (!attribute)
                 return false;
             RigExecBakedProgramImpl::AutoClavicle::ScalarRead read;
-            read.value = *id;
+            read.value = id;
             read.isFloat = attribute.GetTypeName() == SdfValueTypeNames->Float;
             if (read.isFloat)
                 read.narrow = ctx.Bind<float>(attribute.GetPrim(),

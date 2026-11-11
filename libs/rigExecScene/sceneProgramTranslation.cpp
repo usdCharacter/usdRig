@@ -782,12 +782,12 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
     std::map<std::string, RigExecValueId> contexts;
     std::map<RigExecValueId, RigExecValueId> defaultEffectiveInputs;
     context.resolve = [&](const RigExecSceneGraphReadRequest &request,
-                          RigExecValueId *output, std::string *why) {
+                          RigExecValueId &output, std::string *why) {
         RigExecValueId source;
-        if (!directResolve(request, &source, why))
+        if (!directResolve(request, source, why))
             return false;
         if (request.raw || (request.liveRest && *request.liveRest)) {
-            *output = source;
+            output = source;
             return true;
         }
         const auto consumerFact = scene.attributes.find(request.consumer);
@@ -799,7 +799,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             (!request.computation.empty() &&
              request.computation != SchemaComputationText::computeRestFrame) ||
             source >= program.layout.providers.valueKeys.size()) {
-            *output = source;
+            output = source;
             return true;
         }
         const auto phase =
@@ -810,7 +810,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                          (request.atDefault ? "|default" : "|current");
         const auto cached = contexts.find(key);
         if (cached != contexts.end()) {
-            *output = cached->second;
+            output = cached->second;
             return true;
         }
         std::map<RigExecValueId, RigExecValueId> selected;
@@ -850,7 +850,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 &program.layout.providers, program.layout.valueKeys, source,
                 request.consumer,
                 phase.GetString() + (request.atDefault ? ":default" : ""),
-                selected, output, &begin, why))
+                selected, &output, &begin, why))
             return false;
         program.layout.valueKeys = program.layout.providers.valueKeys;
         for (size_t i = begin; i < program.layout.providers.ops.size(); ++i) {
@@ -862,11 +862,11 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                                 std::move(op), why))
                 return false;
         }
-        contexts.emplace(key, *output);
+        contexts.emplace(key, output);
         return true;
     };
     context.effectiveRead = [&](const RigExecGraphTypedRead &read,
-                                RigExecValueId *output, std::string *why) {
+                                RigExecValueId &output, std::string *why) {
         RigExecSceneEffectiveReadOp op;
         op.read = read;
         op.output = program.layout.Allocate(
@@ -876,7 +876,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 for (auto id : {hop.raw, hop.overlay})
                     if (id != UINT64_MAX)
                         op.reads.push_back(id);
-        *output = op.output;
+        output = op.output;
         return program.Append("effectiveRead:" + std::to_string(op.output),
                               std::move(op), why);
     };
@@ -902,7 +902,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 const auto resolveDefault = context.resolve;
                 defaultContext.resolve =
                     [&](const RigExecSceneGraphReadRequest &request,
-                        RigExecValueId *id, std::string *error) {
+                        RigExecValueId &id, std::string *error) {
                         auto atDefault = request;
                         atDefault.atDefault = true;
                         return resolveDefault(atDefault, id, error);
@@ -1347,13 +1347,13 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                     auto switchContext = context;
                     switchContext.resolve =
                         [&](const RigExecSceneGraphReadRequest &request,
-                            RigExecValueId *id, std::string *why) {
+                            RigExecValueId &id, std::string *why) {
                             if (request.computation ==
                                 SchemaComputationText::computePointFrame) {
                                 const auto selected =
                                     switchedComposition.find(request.source);
                                 if (selected != switchedComposition.end()) {
-                                    *id = selected->second;
+                                    id = selected->second;
                                     return true;
                                 }
                             }
@@ -1426,7 +1426,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                 request.reader = a.owner;
                 request.domain = RigExecSceneValueDomain::Pose;
                 request.phase = _tokens->preceding;
-                if (!context.resolve(request, &target.carry, error))
+                if (!context.resolve(request, target.carry, error))
                     return false;
             }
             if (source.record.kind == RigExecConstraintKind::SingleChainIk) {
@@ -1443,7 +1443,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                     request.computation =
                         SchemaComputationText::computeRestFrame;
                     RigExecValueId rest;
-                    if (!context.resolve(request, &rest, error))
+                    if (!context.resolve(request, rest, error))
                         return false;
                     target.chainRests.push_back(rest);
                     target.restLive.push_back(extracted.count(joint) != 0);
@@ -1547,11 +1547,11 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             const auto *relation = compileInputs.Relationship(request.consumer);
             request.phase =
                 relation ? relation->readPhase : RigExecSceneBasePhase;
-            if (!context.resolve(request, &match->sources[i], error))
+            if (!context.resolve(request, match->sources[i], error))
                 return false;
             bound.reads.push_back(match->sources[i]);
         }
-        const auto restOf = [&](const SdfPath &provider, RigExecValueId *id) {
+        const auto restOf = [&](const SdfPath &provider, RigExecValueId &id) {
             RigExecSceneGraphReadRequest request;
             request.source = provider;
             request.reader = path;
@@ -1560,14 +1560,14 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             request.computation = SchemaComputationText::computeRestFrame;
             if (!context.resolve(request, id, error))
                 return false;
-            bound.reads.push_back(*id);
+            bound.reads.push_back(id);
             return true;
         };
         for (size_t i = 0; i < 3; ++i)
-            if (!restOf(sourcePaths[i], &match->rests[i]))
+            if (!restOf(sourcePaths[i], match->rests[i]))
                 return false;
         for (size_t k = 0; k < 5; ++k)
-            if (!restOf(controls[k], &match->rests[3 + k]))
+            if (!restOf(controls[k], match->rests[3 + k]))
                 return false;
         // The IK solve's space: its posed frame is the carry a constraint's
         // rigExec:space reads, and its rest frame measures the rest lengths.
@@ -1577,8 +1577,8 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
             request.reader = path;
             request.domain = RigExecSceneValueDomain::Pose;
             request.phase = _tokens->preceding;
-            if (!context.resolve(request, &bound.target.carry, error) ||
-                !restOf(source.space, &match->spaceRest))
+            if (!context.resolve(request, bound.target.carry, error) ||
+                !restOf(source.space, match->spaceRest))
                 return false;
             bound.reads.push_back(bound.target.carry);
         }
@@ -1766,7 +1766,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                     request.reader = attribute;
                     request.phase = fact.readPhase;
                     request.domain = RigExecSceneValueDomain::ProviderSpace;
-                    if (!context.resolve(request, bound, why))
+                    if (!context.resolve(request, *bound, why))
                         return false;
                 } else
                     *bound = original;
@@ -1789,7 +1789,7 @@ TranslateSceneProgramOnce(const RigExecSceneDescriptors &captured,
                              : RigExecSceneValueDomain::Property;
         RigExecSceneCopyOp op;
         op.output = routed.value;
-        if (!context.resolve(request, &op.input, error))
+        if (!context.resolve(request, op.input, error))
             return false;
         auto &leaves = program.layout.leaves;
         leaves.erase(std::remove(leaves.begin(), leaves.end(), op.output),

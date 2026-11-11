@@ -80,7 +80,7 @@ RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
     TypedInputs(packet.active, &packet.reads);
     const auto named = [&](const SdfPath &provider,
                            const std::string &computation,
-                           RigExecValueId *value) {
+                           RigExecValueId &value) {
         if (provider.IsEmpty())
             return true;
         RigExecSceneGraphReadRequest request;
@@ -92,10 +92,10 @@ RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         request.computation = computation;
         if (!context.resolve(request, value, error))
             return false;
-        packet.reads.push_back(*value);
+        packet.reads.push_back(value);
         return true;
     };
-    const auto attribute = [&](const TfToken &name, RigExecValueId *value) {
+    const auto attribute = [&](const TfToken &name, RigExecValueId &value) {
         RigExecSceneGraphReadRequest request;
         request.source = source.target.AppendProperty(name);
         request.consumer = request.source;
@@ -104,7 +104,7 @@ RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         request.domain = RigExecSceneValueDomain::ProviderSpace;
         if (!context.resolve(request, value, error))
             return false;
-        packet.reads.push_back(*value);
+        packet.reads.push_back(value);
         return true;
     };
     SdfPath parent;
@@ -126,23 +126,23 @@ RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         }
     }
     if (!named(source.target, SchemaComputationText::computeAvarMatrix,
-               &packet.avars) ||
-        !attribute(_tokens->posedDefaultSpace, &packet.posedDefault) ||
-        !attribute(_tokens->parentDefaultSpace, &packet.parentExpression) ||
+               packet.avars) ||
+        !attribute(_tokens->posedDefaultSpace, packet.posedDefault) ||
+        !attribute(_tokens->parentDefaultSpace, packet.parentExpression) ||
         !(parentContext != UINT64_MAX
               ? (packet.parentPosed = parentContext,
                  packet.reads.push_back(parentContext), true)
               : named(parent, SchemaComputationText::computePointFrame,
-                      &packet.parentPosed)) ||
+                      packet.parentPosed)) ||
         !named(parent, SchemaComputationText::computedDefaultSpace,
-               &packet.parentDefault) ||
+               packet.parentDefault) ||
         !(spaceContext != UINT64_MAX
               ? (packet.spacePosed = spaceContext,
                  packet.reads.push_back(spaceContext), true)
               : named(source.space, SchemaComputationText::computePointFrame,
-                      &packet.spacePosed)) ||
+                      packet.spacePosed)) ||
         !named(source.space, SchemaComputationText::computedDefaultSpace,
-               &packet.spaceDefault))
+               packet.spaceDefault))
         return false;
     packet.inputs.hasCarry = !source.space.IsEmpty();
     packet.inputs.sources.resize(source.sources.size());
@@ -152,9 +152,9 @@ RigExecBindSceneSpaceSwitch(const RigExecSceneDescriptors &scene,
         packet.inputs.sources[k].world = source.sources[k].IsEmpty();
         if (!named(source.sources[k],
                    SchemaComputationText::computedDefaultSpace,
-                   &packet.sourceDefault[k]) ||
+                   packet.sourceDefault[k]) ||
             !named(source.sources[k], SchemaComputationText::computePointFrame,
-                   &packet.sourcePosed[k]))
+                   packet.sourcePosed[k]))
             return false;
     }
     Unique(&packet.reads);
@@ -212,7 +212,7 @@ RigExecBindScenePoseInterpolator(
     }
     packet.inputs.numeric.resize(packet.numeric.size());
     const auto frame = [&](const SdfPath &provider, bool rest,
-                           RigExecValueId *id) {
+                           RigExecValueId &id) {
         if (provider.IsEmpty())
             return true;
         RigExecSceneGraphReadRequest request;
@@ -225,22 +225,22 @@ RigExecBindScenePoseInterpolator(
             request.computation = SchemaComputationText::computeRestFrame;
         if (!context.resolve(request, id, error))
             return false;
-        packet.reads.push_back(*id);
+        packet.reads.push_back(id);
         return true;
     };
     if ((packet.numeric.empty() || source.ml) &&
-        (!frame(source.driver, false, &packet.driverFinal) ||
-         !frame(source.driver, true, &packet.driverRest) ||
-         !frame(source.parent, false, &packet.parentFinal) ||
-         !frame(source.parent, true, &packet.parentRest)))
+        (!frame(source.driver, false, packet.driverFinal) ||
+         !frame(source.driver, true, packet.driverRest) ||
+         !frame(source.parent, false, packet.parentFinal) ||
+         !frame(source.parent, true, packet.parentRest)))
         return false;
     for (size_t k = 0; k < source.extraDrivers.size(); ++k) {
         std::array<RigExecValueId, 4> ids{
             {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX}};
-        if (!frame(source.extraDrivers[k], false, &ids[0]) ||
-            !frame(source.extraDrivers[k], true, &ids[1]) ||
-            !frame(source.extraParents[k], false, &ids[2]) ||
-            !frame(source.extraParents[k], true, &ids[3]))
+        if (!frame(source.extraDrivers[k], false, ids[0]) ||
+            !frame(source.extraDrivers[k], true, ids[1]) ||
+            !frame(source.extraParents[k], false, ids[2]) ||
+            !frame(source.extraParents[k], true, ids[3]))
             return false;
         packet.extraDrivers.push_back(ids);
     }

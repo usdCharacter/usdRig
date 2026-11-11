@@ -74,7 +74,7 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
         Add(&bound.reads, id);
     const RigExecSceneCompileInputs facts(scene);
     const auto bind = [&](const SdfPath &path, const TfToken &name,
-                          RigExecValueId *id) {
+                          RigExecValueId &id) {
         if (path.IsEmpty())
             return true;
         RigExecSceneGraphReadRequest request;
@@ -86,16 +86,16 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
         request.phase = relation ? relation->readPhase : RigExecSceneBasePhase;
         if (!context.resolve(request, id, error))
             return false;
-        if (*id == UINT64_MAX)
+        if (id == UINT64_MAX)
             return Fail(error, "constraint resolver returned no value ID");
-        Add(&bound.reads, *id);
+        Add(&bound.reads, id);
         return true;
     };
     const auto many = [&](const SdfPathVector &paths, const TfToken &name,
                           std::vector<RigExecValueId> *ids) {
         for (const auto &path : paths) {
             ids->push_back(UINT64_MAX);
-            if (!bind(path, name, &ids->back()))
+            if (!bind(path, name, ids->back()))
                 return false;
         }
         return true;
@@ -108,9 +108,9 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
               &bound.sources) ||
         !many(source.poleObjects, _tokens->rigExecPoleVectorObjects,
               &bound.poles) ||
-        !bind(source.effector, _tokens->rigExecEffector, &bound.effector) ||
+        !bind(source.effector, _tokens->rigExecEffector, bound.effector) ||
         !bind(source.worldUpObject, _tokens->rigExecWorldUpObject,
-              &bound.worldUp))
+              bound.worldUp))
         return false;
     for (const auto &joint : source.ikChain) {
         RigExecSceneGraphReadRequest request;
@@ -120,7 +120,7 @@ RigExecBindConstraintGraph(const RigExecSceneDescriptors &scene,
         request.domain = RigExecSceneValueDomain::Pose;
         request.phase = RigExecScenePrecedingPhase;
         bound.chain.push_back(UINT64_MAX);
-        if (!context.resolve(request, &bound.chain.back(), error))
+        if (!context.resolve(request, bound.chain.back(), error))
             return false;
         if (bound.chain.back() == UINT64_MAX)
             return Fail(error,
